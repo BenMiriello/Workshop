@@ -1,0 +1,40 @@
+# Build artifacts
+node_modules/
+.venv/
+backend/.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.next/
+.cache/
+.vite/
+
+# Mobile / Expo
+mobile/.expo/
+mobile/node_modules/
+
+# Runtime state — local cache + ephemeral runs, never source
+.runtime/
+*.log
+cron_agent.log
+/tmp/
+
+# Secrets — defense in depth (also handled by symlink layout)
+*.env
+secrets.env
+auth.env
+
+# Generated
+status.md
+.runtime/finance-cache.json
+
+# Infra deploy state (containers, secrets dropped in by deploy scripts)
+infra/open-wearables/repo/
+
+# Editor / OS
+.DS_Store
+*.swp
+.idea/
+.vscode/

@@ -1,0 +1,41 @@
+# Memory inheritance tree — doc spec (Tab 4, "Rules and context scoped to
+# specific personas or full fleet — a tree where inheritance flows down").
+#
+# Each node lists `blocks` (global memory blocks) and `archival_namespaces`
+# (Letta archival namespaces) inherited at that level. An agent's effective
+# memory = union of its node + all ancestors.
+#
+# Backend uses `services.memory_tree.effective_memory(agent_id, persona)` to
+# build the list. masini's persona = "ops/personal-ai" → inherits root + ops.
+# plaid-watcher's persona = "ops/event-watchers" → inherits root + ops.
+
+root:
+  blocks:
+    - workshop-context      # global operator profile + active services (shared/global-memory.md)
+  archival_namespaces:
+    - workshop.shared       # any agent can read repo-wide notes
+  children:
+    ops:
+      blocks: []
+      archival_namespaces:
+        - workshop.ops      # operational logs, runtime state, incidents
+      children:
+        personal-ai:
+          # masini lives here — full operator-facing assistant.
+          blocks:
+            - operator-preferences   # tone, defaults, hard rules (future block)
+          archival_namespaces:
+            - masini.private         # masini's own learnings
+          children: {}
+        event-watchers:
+          # Plaid-watcher, gmail-watcher, calendar-watcher, etc.
+          blocks: []
+          archival_namespaces:
+            - event-watchers.shared  # cross-watcher patterns
+          children: {}
+    build:
+      # cron_agent and any future build-class agents
+      blocks: []
+      archival_namespaces:
+        - build.history     # past TODO completions, failures, patterns
+      children: {}
