@@ -1,7 +1,7 @@
-"""Letta global memory block (workshop-context).
+"""Letta global memory block (operator-context).
 
 Source-of-truth: `~/workshop/shared/global-memory.md`.
-On backend startup we ensure a Letta block named `workshop-context` exists and
+On backend startup we ensure a Letta block named `operator-context` exists and
 matches the file contents; its id is cached at `.runtime/global-block-id` so
 we attach the same block on every new agent without recreating it.
 
@@ -32,7 +32,7 @@ GLOBAL_ID_CACHE = Path(os.environ.get(
 ))
 LETTA_URL = os.environ.get("LETTA_URL", "http://127.0.0.1:8283")
 LETTA_PASS = os.environ.get("LETTA_SERVER_PASS", "workshop-local")
-BLOCK_LABEL = "workshop-context"
+BLOCK_LABEL = "operator-context"
 
 
 def _headers() -> dict:
@@ -40,11 +40,11 @@ def _headers() -> dict:
 
 
 async def _read_file() -> str:
-    return GLOBAL_FILE.read_text() if GLOBAL_FILE.exists() else "# workshop-context\n(empty)"
+    return GLOBAL_FILE.read_text() if GLOBAL_FILE.exists() else "# operator-context\n(empty)"
 
 
 async def ensure_block() -> str:
-    """Idempotent: return the Letta block_id for workshop-context.
+    """Idempotent: return the Letta block_id for operator-context.
     If cached id exists and Letta still has the block, return as-is.
     If not, create the block, cache, return.
     Always re-syncs value from disk so file edits propagate on next backend start."""

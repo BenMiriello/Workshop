@@ -312,7 +312,7 @@ async def per_channel_unmap(chat_id: str):
 
 @router.post("/global-memory/sync")
 async def sync_global_memory():
-    """Re-read shared/global-memory.md and PATCH the Letta workshop-context
+    """Re-read shared/global-memory.md and PATCH the Letta operator-context
     block. All agents already attached will see the new value on next inference
     (Letta refreshes blocks per-request)."""
     try:

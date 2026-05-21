@@ -1,4 +1,4 @@
-# workshop-context (global memory block)
+# operator-context (global memory block)
 
 Mounted on every Workshop-Letta agent at creation. Read-only for the agent;
 authoritative copy lives here on disk. Sync via `POST /agents/sync-global-block`.

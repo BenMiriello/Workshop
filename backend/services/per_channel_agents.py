@@ -9,7 +9,7 @@ new chat_id. The spinoff inherits persona, human, tools, autonomy mode,
 and persona_path (which resolves to shared global memory blocks +
 archival namespaces). Each agent has its own conversation history and its
 own archival namespace, so per-channel context is isolated but operator
-profile is shared via the auto-attached `workshop-context` global block.
+profile is shared via the auto-attached `operator-context` global block.
 
 Map of {chat_id: agent_id} cached at `.runtime/channel-agent-map.json`.
 

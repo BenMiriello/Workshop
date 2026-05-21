@@ -11,7 +11,7 @@
 
 root:
   blocks:
-    - workshop-context      # global operator profile + active services (shared/global-memory.md)
+    - operator-context      # global operator profile + active services (shared/global-memory.md)
   archival_namespaces:
     - workshop.shared       # any agent can read repo-wide notes
   children:
