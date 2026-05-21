@@ -36,7 +36,8 @@ OLLAMA_CONCURRENT_LIMIT = int(os.environ.get("WORKSHOP_OLLAMA_CONCURRENCY", "2")
 
 
 # Global semaphore — shared across all supervised agents to cap Ollama load.
-# Future: per-agent token budget enforcement reads from agent.metadata.
+# Per-agent call-count budget is enforced in services/budget.py + the
+# cron consumer (cron_agent.sh checks /agents/{id}/budget before firing).
 ollama_semaphore: asyncio.Semaphore | None = None
 
 
@@ -68,13 +69,98 @@ def _is_continuous(agent: dict) -> bool:
     return meta.get("autonomy") == "continuous"
 
 
-async def _agent_loop(agent: dict) -> None:
-    """One iteration of supervised work for one agent. Heartbeat + a no-op
-    poll for now (the agent's actual work is TBD — for plaid-watcher this
-    will eventually mean: drain new events from /events/recent?source=plaid
-    and forward to Letta). For now: write heartbeat, sleep 30s, repeat."""
+COMPLETED_PATH = Path(os.environ.get(
+    "WORKSHOP_COMPLETED_RUNS",
+    "/home/clawd-a/workshop/.runtime/agent-runs-completed.jsonl",
+))
+ARCHIVED_OFFSET_FILE = Path(os.environ.get(
+    "WORKSHOP_SUPERVISOR_ARCHIVED_OFFSET",
+    "/home/clawd-a/workshop/.runtime/supervisor-archived-offset.json",
+))
+
+
+def _load_archived_offsets() -> dict:
+    try:
+        return json.loads(ARCHIVED_OFFSET_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_archived_offsets(d: dict) -> None:
+    ARCHIVED_OFFSET_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = ARCHIVED_OFFSET_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d))
+    tmp.replace(ARCHIVED_OFFSET_FILE)
+
+
+async def _drain_events_to_archival(agent: dict, client: httpx.AsyncClient) -> int:
+    """Read all completed-runs records for this agent since the last drain,
+    summarize each into the agent's Letta archival memory. Returns count drained.
+
+    This is the actual continuous-autonomy work: completed events accumulate
+    in agent-runs-completed.jsonl (written by the cron's Layer 4 consumer);
+    the supervisor's job is to fold them into the agent's persistent memory
+    so the agent can recall what's happened without re-reading raw logs."""
+    if not COMPLETED_PATH.exists():
+        return 0
     aid = agent["id"]
-    _write_heartbeat(aid, "running", "supervisor loop iteration")
+    offsets = _load_archived_offsets()
+    last_offset = offsets.get(aid, 0)
+    new_offset = COMPLETED_PATH.stat().st_size
+    if new_offset <= last_offset:
+        return 0
+    # Read only the new bytes
+    with COMPLETED_PATH.open("rb") as f:
+        f.seek(last_offset)
+        chunk = f.read(new_offset - last_offset).decode("utf-8", errors="replace")
+    drained = 0
+    for line in chunk.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("agent_id") != aid:
+            continue
+        # Compose a terse memory entry. Keep it short — archival storage is
+        # cheap but retrieval relevance scales with signal density.
+        summary = f"[{rec.get('ts', '?')}] event from {rec.get('source','?')}: status={rec.get('status','?')} exit={rec.get('exit_code','?')} route={rec.get('relay_route','?')}"
+        try:
+            r = await client.post(
+                f"/v1/agents/{aid}/archival-memory",
+                json={"text": summary},
+                headers={"Authorization": f"Bearer {LETTA_PASS}"},
+            )
+            if r.status_code < 400:
+                drained += 1
+        except Exception:
+            pass
+    offsets[aid] = new_offset
+    _save_archived_offsets(offsets)
+    return drained
+
+
+async def _agent_loop(agent: dict) -> None:
+    """One iteration of supervised work for one agent.
+
+    Concrete work per iteration:
+    1. Drain new completed-events for this agent into Letta archival memory
+       (so the agent has persistent recall of what happened to it).
+    2. Heartbeat.
+    3. Sleep until next iteration.
+
+    Future per-agent-type work (e.g., commute polling for a masini-commute
+    agent, gmail batch-triage for email-triager) can dispatch on agent.metadata.role.
+    The simple universal work — archival drain — applies to all continuous agents."""
+    aid = agent["id"]
+    drained = 0
+    async with httpx.AsyncClient(base_url=LETTA_URL, timeout=30.0) as client:
+        try:
+            drained = await _drain_events_to_archival(agent, client)
+        except Exception as e:
+            log.warning("supervisor: drain failed for %s: %s", aid, e)
+    _write_heartbeat(aid, "running", f"loop iter drained={drained}")
     await asyncio.sleep(HEARTBEAT_INTERVAL_S)
 
 

@@ -49,26 +49,31 @@ def _verify_none(headers: dict, body: bytes) -> tuple[bool, str]:
 
 
 def _verify_plaid(headers: dict, body: bytes) -> tuple[bool, str]:
-    """Plaid sends a `Plaid-Verification` JWT signed with their per-webhook key.
-    Full verification needs `/webhook_verification_key/get` lookup. SCAFFOLDING:
-    requires the header is present and looks JWT-shaped; full crypto verify is
-    a TODO when Plaid sandbox webhooks start arriving."""
+    """Full Plaid JWT crypto verify — fetches per-webhook ES256 key from
+    /webhook_verification_key/get, verifies signature, checks request body
+    sha256, enforces 5-min replay window. Implementation in services/plaid_verify.
+
+    Falls back to shape-check only when PLAID_CLIENT_ID/PLAID_SECRET are not
+    set in the environment (degraded but unblocked for sandbox testing —
+    real production traffic will fail crypto until creds are wired)."""
     jwt_header = headers.get("plaid-verification", "")
-    if not jwt_header or jwt_header.count(".") != 2:
-        return False, "missing_or_malformed_plaid_verification_jwt"
-    return True, "jwt_shape_ok_scaffold_only_no_crypto_verify_yet"
+    from services.plaid_verify import verify
+    return verify(jwt_header, body)
 
 
 def _verify_github(headers: dict, body: bytes) -> tuple[bool, str]:
     """GitHub uses `X-Hub-Signature-256: sha256=<hex>` HMAC over the body with
-    the webhook secret. SCAFFOLDING: validates header presence; full HMAC verify
-    needs the per-repo secret loaded from secrets.env (GITHUB_WEBHOOK_SECRET)."""
+    the webhook secret. Enforces full HMAC if `GITHUB_WEBHOOK_SECRET` env is
+    set; rejects entirely if header is missing OR secret-set-but-mismatched.
+    If the secret is NOT set, we refuse the webhook (changed from previous
+    behavior that permissively passed missing-secret) — there's no GitHub
+    integration wired today, so any github-source POST is suspect."""
     sig = headers.get("x-hub-signature-256", "")
     if not sig.startswith("sha256="):
         return False, "missing_or_malformed_x_hub_signature_256"
     secret = os.environ.get("GITHUB_WEBHOOK_SECRET")
     if not secret:
-        return True, "header_present_but_GITHUB_WEBHOOK_SECRET_unset_scaffold_only"
+        return False, "GITHUB_WEBHOOK_SECRET_unset_refusing_until_configured"
     import hmac, hashlib
     expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected, sig), "hmac_strict"
