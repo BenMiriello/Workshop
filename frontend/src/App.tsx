@@ -3,9 +3,7 @@ import Agents from "./pages/Agents";
 import AgentConfig from "./pages/AgentConfig";
 import Projects from "./pages/Projects";
 import Apps from "./pages/Apps";
-import Services from "./pages/Services";
-import Events from "./pages/Events";
-import Runs from "./pages/Runs";
+import Activity from "./pages/Activity";
 
 export default function App() {
   return (
@@ -16,9 +14,7 @@ export default function App() {
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/projects">Projects</NavLink>
           <NavLink to="/apps">Apps</NavLink>
-          <NavLink to="/services">Services</NavLink>
-          <NavLink to="/events">Events</NavLink>
-          <NavLink to="/runs">Runs</NavLink>
+          <NavLink to="/activity">Activity</NavLink>
         </nav>
       </header>
       <main>
@@ -28,9 +24,11 @@ export default function App() {
           <Route path="/agents/:agentId" element={<AgentConfig />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/apps" element={<Apps />} />
-          <Route path="/services" element={<Services />} />
-          <Route path="/events" element={<Events />} />
-          <Route path="/runs" element={<Runs />} />
+          <Route path="/activity" element={<Activity />} />
+          {/* Direct-access shortcuts kept for bookmarks/links — they redirect into Activity with the right sub-tab. */}
+          <Route path="/services" element={<Navigate to="/activity#services" replace />} />
+          <Route path="/events" element={<Navigate to="/activity#events" replace />} />
+          <Route path="/runs" element={<Navigate to="/activity#runs" replace />} />
         </Routes>
       </main>
     </div>
