@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
 from services.budget import budget_for
-from services import global_memory
+from services import global_memory, per_channel_agents
 
 router = APIRouter()
 
@@ -281,6 +281,33 @@ async def delete_agent(agent_id: str, request: Request):
         return await request.app.state.letta.delete_agent(agent_id)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Letta unreachable: {e}")
+
+
+@router.post("/per-channel/ensure")
+async def per_channel_ensure(chat_id: str, channel_name: str = ""):
+    """Return (or create) the masini spinoff agent for a Discord channel.
+    chat_id is the Discord channel snowflake. channel_name is optional human
+    label used for slug generation. Idempotent — repeat calls return the same
+    agent_id unless the underlying Letta agent has been deleted."""
+    if not chat_id:
+        raise HTTPException(status_code=422, detail="chat_id required")
+    try:
+        return await per_channel_agents.ensure(chat_id, channel_name or None)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"per-channel ensure failed: {e}")
+
+
+@router.get("/per-channel/list")
+async def per_channel_list():
+    """Diagnostic: full map of {chat_id: agent_id}."""
+    return per_channel_agents.list_all()
+
+
+@router.delete("/per-channel/{chat_id}")
+async def per_channel_unmap(chat_id: str):
+    """Remove a chat_id → agent_id mapping. Does NOT delete the Letta agent."""
+    removed = per_channel_agents.unmap(chat_id)
+    return {"removed": removed, "chat_id": chat_id}
 
 
 @router.post("/global-memory/sync")
