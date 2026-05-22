@@ -69,6 +69,50 @@ label {
 .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table-scroll table { width: 100%; min-width: 520px; border-collapse: collapse; }
 
+/* Sticky action bar — Save/Cancel/Delete on long forms (AgentConfig). On
+   mobile the form scrolls forever; keeping the primary actions pinned to the
+   viewport bottom means the operator can always tap Save/Cancel without
+   scrolling past hundreds of px of textareas. */
+.form-actions-sticky {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg);
+  padding: 0.75rem 0;
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  z-index: 5;
+}
+.form-actions-sticky button {
+  font-size: 1rem;
+  padding: 0.55rem 1.1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+}
+.form-actions-sticky button.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.form-actions-sticky button[disabled] { opacity: 0.6; cursor: wait; }
+.form-actions-sticky .destructive {
+  margin-left: auto;
+  color: var(--err);
+  background: transparent;
+  border-color: transparent;
+}
+.form-actions-sticky .saved-flash {
+  color: var(--accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 /* Mobile: drop the "Workshop" wordmark (redundant — they're in the app),
    nav alone owns the row, evenly distributed, no scroll needed, single line. */
 @media (max-width: 640px) {

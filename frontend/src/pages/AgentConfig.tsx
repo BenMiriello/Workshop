@@ -2,19 +2,25 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 
 type MemoryBlock = { label: string; value: string };
+type AgentMetadata = {
+  tools?: string[];
+  autonomy_mode?: string;
+  cron_expression?: string;
+  event_sources?: string[];
+  persona_path?: string;
+  effective_blocks?: string[];
+  effective_namespaces?: string[];
+};
+
 type AgentDetail = {
   id: string;
   name: string;
   memory: { blocks: MemoryBlock[] };
-  metadata_?: {
-    tools?: string[];
-    autonomy_mode?: string;
-    cron_expression?: string;
-    event_sources?: string[];
-    persona_path?: string;
-    effective_blocks?: string[];
-    effective_namespaces?: string[];
-  };
+  // Letta's GET returns the field as `metadata` (no trailing underscore) while
+  // some older code paths used `metadata_`. Read either; prefer underscore form
+  // if both are present.
+  metadata_?: AgentMetadata;
+  metadata?: AgentMetadata;
 };
 
 type AutonomyMode = "off" | "scheduled" | "event-driven" | "continuous";
@@ -42,6 +48,7 @@ export default function AgentConfig() {
   const [resolving, setResolving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
 
   useEffect(() => {
     if (isNew) return;
@@ -53,14 +60,15 @@ export default function AgentConfig() {
         const blocks = a.memory?.blocks || [];
         setPersona(blocks.find((b) => b.label === "persona")?.value || "");
         setHuman(blocks.find((b) => b.label === "human")?.value || "");
-        setTools(a.metadata_?.tools || []);
-        setAutonomyMode((a.metadata_?.autonomy_mode as AutonomyMode) || "off");
-        setCronExpression(a.metadata_?.cron_expression || "");
-        setEventSources(a.metadata_?.event_sources || []);
-        const pp = a.metadata_?.persona_path || "";
+        const md = a.metadata_ ?? a.metadata;
+        setTools(md?.tools || []);
+        setAutonomyMode((md?.autonomy_mode as AutonomyMode) || "off");
+        setCronExpression(md?.cron_expression || "");
+        setEventSources(md?.event_sources || []);
+        const pp = md?.persona_path || "";
         setPersonaPath(pp);
-        setResolvedBlocks(a.metadata_?.effective_blocks || []);
-        setResolvedNamespaces(a.metadata_?.effective_namespaces || []);
+        setResolvedBlocks(md?.effective_blocks || []);
+        setResolvedNamespaces(md?.effective_namespaces || []);
       })
       .catch((e) => setErr(String(e)));
   }, [agentId, isNew]);
@@ -111,13 +119,20 @@ export default function AgentConfig() {
         if (!r.ok) throw new Error(await r.text());
         navigate("/agents");
       } else {
+        // Save memory blocks first. Collect errors but don't bail — metadata
+        // (autonomy_mode etc.) must persist even if a memory PATCH fails so
+        // the operator can still toggle autonomy on an agent whose blocks are
+        // in an unexpected shape.
+        const memErrs: string[] = [];
+        const existingLabels = new Set((agent?.memory?.blocks || []).map((b) => b.label));
         for (const [label, value] of [["persona", persona], ["human", human]] as const) {
+          if (!existingLabels.has(label)) continue; // skip blocks the agent doesn't have
           const r = await fetch(`/api/agents/${agentId}/memory/${label}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ value }),
           });
-          if (!r.ok) throw new Error(await r.text());
+          if (!r.ok) memErrs.push(`${label}: ${await r.text()}`);
         }
         const r = await fetch(`/api/agents/${agentId}/metadata`, {
           method: "PATCH",
@@ -131,7 +146,15 @@ export default function AgentConfig() {
           }),
         });
         if (!r.ok) throw new Error(await r.text());
-        navigate("/agents");
+        if (memErrs.length > 0) {
+          setErr(`Saved metadata, but memory blocks failed: ${memErrs.join("; ")}`);
+        } else {
+          // Flash "saved" so the operator sees the action completed; navigate
+          // after a beat so the confirmation is visible on mobile (where the
+          // viewport doesn't otherwise change to acknowledge the save).
+          setSavedFlash(true);
+          setTimeout(() => navigate("/agents"), 700);
+        }
       }
     } catch (e) {
       setErr(String(e));
@@ -289,10 +312,17 @@ export default function AgentConfig() {
         )}
       </div>
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
-        <button onClick={save} disabled={saving || !name}>{saving ? "Saving…" : "Save"}</button>
+      <div className="form-actions-sticky">
+        <button onClick={save} disabled={saving || !name} className="primary">
+          {saving ? "Saving…" : savedFlash ? "Saved ✓" : "Save"}
+        </button>
         <button onClick={() => navigate("/agents")} type="button">Cancel</button>
-        {!isNew && <button onClick={destroy} type="button" style={{ marginLeft: "auto", color: "var(--err)" }}>Delete</button>}
+        {savedFlash && <span className="saved-flash">saved</span>}
+        {!isNew && (
+          <button onClick={destroy} type="button" className="destructive">
+            Delete
+          </button>
+        )}
       </div>
     </div>
   );
