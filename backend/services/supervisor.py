@@ -189,6 +189,8 @@ class AgentSupervisor:
         self._scan_task: asyncio.Task | None = None
         self._client: httpx.AsyncClient | None = None
         self.started_at: str | None = None
+        self.paused: bool = False
+        self.paused_at: str | None = None
         global ollama_semaphore
         if ollama_semaphore is None:
             ollama_semaphore = asyncio.Semaphore(OLLAMA_CONCURRENT_LIMIT)
@@ -196,8 +198,41 @@ class AgentSupervisor:
     async def start(self) -> None:
         self._client = httpx.AsyncClient(base_url=LETTA_URL, timeout=30.0)
         self.started_at = _now()
+        self.paused = False
+        self.paused_at = None
         self._scan_task = asyncio.create_task(self._scan_loop(), name="supervisor-scan")
         log.info("supervisor: started")
+
+    async def pause(self) -> None:
+        """Stop scan loop + all heartbeat tasks but keep the HTTP client alive
+        so resume() is cheap. Idempotent."""
+        if self.paused:
+            return
+        if self._scan_task and not self._scan_task.done():
+            self._scan_task.cancel()
+        for t in self._tasks.values():
+            t.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks.values(), return_exceptions=True)
+        self._tasks.clear()
+        self._scan_task = None
+        self.paused = True
+        self.paused_at = _now()
+        log.info("supervisor: paused")
+
+    async def resume(self) -> None:
+        """Restart scan loop after pause(). Recreates the HTTP client if it
+        was closed. Idempotent."""
+        if not self.paused and self._scan_task and not self._scan_task.done():
+            return
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(base_url=LETTA_URL, timeout=30.0)
+        self.started_at = _now()
+        self.paused = False
+        self.paused_at = None
+        if self._scan_task is None or self._scan_task.done():
+            self._scan_task = asyncio.create_task(self._scan_loop(), name="supervisor-scan")
+        log.info("supervisor: resumed")
 
     async def stop(self) -> None:
         if self._scan_task:
@@ -237,6 +272,8 @@ class AgentSupervisor:
     def status(self) -> dict:
         return {
             "started_at": self.started_at,
+            "paused": self.paused,
+            "paused_at": self.paused_at,
             "supervised_agents": [
                 {"agent_id": aid, "task_name": t.get_name(), "done": t.done()}
                 for aid, t in self._tasks.items()

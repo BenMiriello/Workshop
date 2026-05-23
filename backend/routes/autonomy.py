@@ -1,0 +1,214 @@
+"""Autonomy power switches and GPU memory control.
+
+Three independent off-switches for the Workshop autonomy stack:
+
+  1. Supervisor pause/resume — stops the Wave-2 Letta heartbeat loop
+     in-process without restarting the backend.
+  2. Cron autonomy disable/enable — drops a flag file that cron_agent.sh
+     and curriculum_tick.sh check at their top and early-exit on. Halts the
+     Wave-1 Ralph loop without touching crontab.
+  3. Ollama unload — sends keep_alive=0 to each currently-resident model so
+     the GPU is freed for other workloads (ComfyUI, another tenant, etc.).
+
+Plus read-only status endpoints feeding the Settings UI.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import shutil
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+
+
+router = APIRouter(tags=["autonomy"])
+
+
+AUTONOMY_FLAG = Path(os.environ.get(
+    "WORKSHOP_AUTONOMY_FLAG",
+    "/home/clawd-a/workshop/.runtime/AUTONOMY_DISABLED",
+))
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ============================================================
+# Supervisor pause / resume
+# ============================================================
+
+
+@router.post("/agents/supervisor/pause")
+async def supervisor_pause(request: Request):
+    await request.app.state.supervisor.pause()
+    return {"ok": True, "paused": True, "at": request.app.state.supervisor.paused_at}
+
+
+@router.post("/agents/supervisor/resume")
+async def supervisor_resume(request: Request):
+    await request.app.state.supervisor.resume()
+    return {"ok": True, "paused": False, "started_at": request.app.state.supervisor.started_at}
+
+
+# ============================================================
+# Cron autonomy flag
+# ============================================================
+
+
+@router.post("/agents/autonomy/disable")
+async def autonomy_disable():
+    AUTONOMY_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    AUTONOMY_FLAG.write_text(_now_iso() + "\n")
+    return {"ok": True, "disabled": True, "at": _now_iso()}
+
+
+@router.post("/agents/autonomy/enable")
+async def autonomy_enable():
+    try:
+        AUTONOMY_FLAG.unlink()
+    except FileNotFoundError:
+        pass
+    return {"ok": True, "disabled": False}
+
+
+@router.get("/agents/autonomy/status")
+async def autonomy_status(request: Request):
+    sup = request.app.state.supervisor.status()
+    flag_text = None
+    if AUTONOMY_FLAG.exists():
+        try:
+            flag_text = AUTONOMY_FLAG.read_text().strip()
+        except OSError:
+            flag_text = ""
+    return {
+        "supervisor": {
+            "paused": sup.get("paused", False),
+            "paused_at": sup.get("paused_at"),
+            "started_at": sup.get("started_at"),
+            "agent_count": len(sup.get("supervised_agents") or []),
+        },
+        "cron_autonomy": {
+            "disabled": AUTONOMY_FLAG.exists(),
+            "disabled_at": flag_text,
+            "flag_path": str(AUTONOMY_FLAG),
+        },
+    }
+
+
+# ============================================================
+# Ollama GPU control
+# ============================================================
+
+
+def _nvidia_smi_snapshot() -> dict:
+    """Single nvidia-smi sample of memory.used / memory.free / memory.total /
+    utilization.gpu. Returns dict with int MiB / percent. Missing nvidia-smi
+    (e.g. running on a workstation without it) returns {available: False}."""
+    if shutil.which("nvidia-smi") is None:
+        return {"available": False}
+    try:
+        out = subprocess.check_output(
+            ["nvidia-smi",
+             "--query-gpu=memory.used,memory.free,memory.total,utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            timeout=3,
+        ).decode().strip()
+    except (subprocess.SubprocessError, OSError) as e:
+        return {"available": False, "error": str(e)}
+    # First GPU only — host has a single 24GB card.
+    first_line = out.splitlines()[0].strip()
+    parts = [p.strip() for p in first_line.split(",")]
+    if len(parts) < 4:
+        return {"available": False, "error": f"unexpected nvidia-smi output: {out!r}"}
+    try:
+        used_mib = int(parts[0])
+        free_mib = int(parts[1])
+        total_mib = int(parts[2])
+        util_pct = int(parts[3])
+    except ValueError as e:
+        return {"available": False, "error": str(e)}
+    return {
+        "available": True,
+        "memory_used_mib": used_mib,
+        "memory_free_mib": free_mib,
+        "memory_total_mib": total_mib,
+        "utilization_pct": util_pct,
+    }
+
+
+@router.get("/ollama/status")
+async def ollama_status():
+    """Snapshot of Ollama + GPU state for the Settings UI."""
+    async with httpx.AsyncClient(timeout=3.0) as client:
+        try:
+            r = await client.get(f"{OLLAMA_URL}/api/ps")
+            r.raise_for_status()
+            loaded = r.json().get("models", []) or []
+            ollama_up = True
+        except (httpx.HTTPError, ValueError):
+            loaded = []
+            ollama_up = False
+    return {
+        "ollama_up": ollama_up,
+        "loaded_models": [
+            {
+                "name": m.get("name"),
+                "size_vram_bytes": m.get("size_vram"),
+                "expires_at": m.get("expires_at"),
+            }
+            for m in loaded
+        ],
+        "gpu": _nvidia_smi_snapshot(),
+    }
+
+
+async def _unload_one(client: httpx.AsyncClient, model: str) -> dict:
+    """Tell Ollama to evict `model` by sending keep_alive=0 with an empty
+    prompt. This is the documented unload mechanism."""
+    try:
+        r = await client.post(
+            f"{OLLAMA_URL}/api/generate",
+            json={"model": model, "keep_alive": 0, "prompt": ""},
+            timeout=10.0,
+        )
+        return {"model": model, "ok": r.status_code < 400, "status": r.status_code}
+    except httpx.HTTPError as e:
+        return {"model": model, "ok": False, "error": str(e)}
+
+
+@router.post("/ollama/unload")
+async def ollama_unload():
+    """Evict every currently-resident Ollama model so the GPU is freed.
+
+    Returns the post-unload GPU snapshot so the UI can show the freed memory
+    immediately."""
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            r = await client.get(f"{OLLAMA_URL}/api/ps")
+            r.raise_for_status()
+            loaded = r.json().get("models", []) or []
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(status_code=502, detail=f"ollama unreachable: {e}")
+        if not loaded:
+            return {
+                "ok": True,
+                "unloaded": [],
+                "gpu": _nvidia_smi_snapshot(),
+                "note": "no models were resident",
+            }
+        results = await asyncio.gather(*(
+            _unload_one(client, m["name"]) for m in loaded if m.get("name")
+        ))
+    # Give Ollama a moment to actually release VRAM before snapshotting.
+    await asyncio.sleep(1.0)
+    return {
+        "ok": all(r["ok"] for r in results),
+        "unloaded": results,
+        "gpu": _nvidia_smi_snapshot(),
+    }

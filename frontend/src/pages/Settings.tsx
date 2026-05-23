@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, TrainFront, Bot, Banknote, Server, Heart, Eye, EyeOff, Copy, Check } from "lucide-react";
+import { MapPin, TrainFront, Bot, Banknote, Server, Heart, Eye, EyeOff, Copy, Check, Power, Cpu } from "lucide-react";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -45,6 +45,7 @@ export default function Settings() {
       <HealthSection />
       <CommuteSection />
       <AgentsSection />
+      <AutonomySection />
       <FinanceSection />
       <SystemSection />
     </div>
@@ -537,6 +538,233 @@ function FinanceSection() {
       <Row label="connected">
         <Link to="/apps/finance" style={{ color: "var(--accent)" }}>view balances + transactions ↗</Link>
       </Row>
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Autonomy & GPU section
+// Three independent off-switches:
+//   - Supervisor heartbeats (in-process)
+//   - Cron autonomy (AUTONOMY_DISABLED flag file)
+//   - Ollama GPU residency (unload resident models)
+// "Stop all" pauses both AND frees the GPU in one click (ordered so models
+// can't be reloaded between pause and unload).
+// ----------------------------------------------------------------------------
+type AutonomyStatus = {
+  supervisor: {
+    paused: boolean;
+    paused_at: string | null;
+    started_at: string | null;
+    agent_count: number;
+  };
+  cron_autonomy: {
+    disabled: boolean;
+    disabled_at: string | null;
+    flag_path: string;
+  };
+};
+
+type LoadedModel = {
+  name: string;
+  size_vram_bytes: number | null;
+  expires_at: string | null;
+};
+
+type OllamaStatus = {
+  ollama_up: boolean;
+  loaded_models: LoadedModel[];
+  gpu: {
+    available: boolean;
+    memory_used_mib?: number;
+    memory_free_mib?: number;
+    memory_total_mib?: number;
+    utilization_pct?: number;
+    error?: string;
+  };
+};
+
+const fmtMiB = (m: number | undefined) =>
+  m == null ? "—" : m >= 1024 ? `${(m / 1024).toFixed(1)} GiB` : `${m} MiB`;
+
+const fmtBytes = (b: number | null) => {
+  if (b == null) return "—";
+  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GiB`;
+  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(0)} MiB`;
+  return `${b} B`;
+};
+
+function AutonomySection() {
+  const [auto, setAuto] = useState<AutonomyStatus | null>(null);
+  const [oll, setOll] = useState<OllamaStatus | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [a, o] = await Promise.all([
+        fetch("/api/agents/autonomy/status").then((r) => r.ok ? r.json() : null),
+        fetch("/api/ollama/status").then((r) => r.ok ? r.json() : null),
+      ]);
+      setAuto(a);
+      setOll(o);
+    } catch {
+      // keep prior state
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const post = useCallback(async (label: string, path: string) => {
+    setBusy(label);
+    try {
+      await fetch(path, { method: "POST" });
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  }, [load]);
+
+  const supPaused = !!auto?.supervisor.paused;
+  const cronDisabled = !!auto?.cron_autonomy.disabled;
+  const allStopped = supPaused && cronDisabled;
+
+  const onStopAll = async () => {
+    if (!confirm("Stop all autonomy AND free GPU?\n\n• Pause supervisor heartbeats\n• Disable the cron autonomy loop\n• Unload all resident Ollama models")) return;
+    setBusy("stop-all");
+    try {
+      // Order matters: pause supervisor and disable cron FIRST so nothing
+      // can reload models the moment after we unload them.
+      await Promise.all([
+        fetch("/api/agents/supervisor/pause", { method: "POST" }),
+        fetch("/api/agents/autonomy/disable", { method: "POST" }),
+      ]);
+      await fetch("/api/ollama/unload", { method: "POST" });
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onStartAll = async () => {
+    setBusy("start-all");
+    try {
+      await Promise.all([
+        fetch("/api/agents/supervisor/resume", { method: "POST" }),
+        fetch("/api/agents/autonomy/enable", { method: "POST" }),
+      ]);
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const onUnload = async () => {
+    if (!confirm("Unload all resident Ollama models to free GPU memory? Next agent tick will reload qwen2.5:32b (~20s warm-up).")) return;
+    setBusy("unload");
+    try {
+      await fetch("/api/ollama/unload", { method: "POST" });
+      await load();
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Section icon={Power} title="Autonomy & GPU">
+      <Row label="all autonomy">
+        {auto == null ? "loading…" : (
+          <>
+            <span style={{ color: allStopped ? "var(--err)" : "#16a34a", marginRight: "0.6rem" }}>
+              {allStopped ? "stopped" : (supPaused || cronDisabled ? "partial" : "running")}
+            </span>
+            {allStopped ? (
+              <button onClick={onStartAll} disabled={busy != null} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem" }}>
+                {busy === "start-all" ? "starting…" : "start all"}
+              </button>
+            ) : (
+              <button onClick={onStopAll} disabled={busy != null} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
+                {busy === "stop-all" ? "stopping…" : "stop all"}
+              </button>
+            )}
+          </>
+        )}
+      </Row>
+
+      <Row label="supervisor">
+        {auto == null ? "—" : (
+          <>
+            <span style={{ color: supPaused ? "var(--err)" : "#16a34a", marginRight: "0.6rem" }}>
+              {supPaused ? "paused" : `ticking ${auto.supervisor.agent_count} agent${auto.supervisor.agent_count === 1 ? "" : "s"}`}
+            </span>
+            <button
+              onClick={() => post(supPaused ? "resume" : "pause", supPaused ? "/api/agents/supervisor/resume" : "/api/agents/supervisor/pause")}
+              disabled={busy != null}
+              style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: supPaused ? undefined : "var(--err)" }}
+            >
+              {busy === "pause" ? "pausing…" : busy === "resume" ? "resuming…" : (supPaused ? "resume" : "pause")}
+            </button>
+            {supPaused && auto.supervisor.paused_at && (
+              <span className="muted" style={{ marginLeft: "0.6rem", fontSize: "0.8rem" }}>
+                since {fmtAge(auto.supervisor.paused_at)}
+              </span>
+            )}
+          </>
+        )}
+      </Row>
+
+      <Row label="cron loop">
+        {auto == null ? "—" : (
+          <>
+            <span style={{ color: cronDisabled ? "var(--err)" : "#16a34a", marginRight: "0.6rem" }}>
+              {cronDisabled ? "disabled" : "enabled (Ralph fires every 20m)"}
+            </span>
+            <button
+              onClick={() => post(cronDisabled ? "enable" : "disable", cronDisabled ? "/api/agents/autonomy/enable" : "/api/agents/autonomy/disable")}
+              disabled={busy != null}
+              style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: cronDisabled ? undefined : "var(--err)" }}
+            >
+              {busy === "enable" ? "enabling…" : busy === "disable" ? "disabling…" : (cronDisabled ? "enable" : "disable")}
+            </button>
+          </>
+        )}
+      </Row>
+
+      <Row label="gpu memory">
+        {oll == null || !oll.gpu.available ? (
+          oll?.gpu.error ? <span className="muted">no nvidia-smi</span> : "loading…"
+        ) : (
+          <>
+            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
+              {fmtMiB(oll.gpu.memory_used_mib)} / {fmtMiB(oll.gpu.memory_total_mib)}
+              {" · "}{oll.gpu.utilization_pct}% util
+            </span>
+            <button
+              onClick={onUnload}
+              disabled={busy != null || !oll.ollama_up || oll.loaded_models.length === 0}
+              style={{ marginLeft: "0.6rem", padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}
+            >
+              {busy === "unload" ? "unloading…" : "free GPU"}
+            </button>
+          </>
+        )}
+      </Row>
+
+      {oll && oll.loaded_models.length > 0 && (
+        <Row label="loaded">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+            {oll.loaded_models.map((m) => (
+              <span key={m.name} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
+                <Cpu size={11} strokeWidth={1.8} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
+                {m.name} · {fmtBytes(m.size_vram_bytes)}
+              </span>
+            ))}
+          </div>
+        </Row>
+      )}
     </Section>
   );
 }

@@ -3,7 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from routes import agents, projects, finance, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health
+from routes import agents, projects, finance, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health, autonomy
 from services.supervisor import AgentSupervisor
 from services import global_memory, finance_cache
 from letta_legacy_client import LettaClient
@@ -89,6 +89,7 @@ app.include_router(health.router)
 app.include_router(redaction.router)
 app.include_router(redaction.restore_router)
 app.include_router(tools.router)
+app.include_router(autonomy.router)
 
 
 @app.get("/")

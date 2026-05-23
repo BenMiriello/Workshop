@@ -48,6 +48,15 @@ fi
 
 cd "$WORKSHOP" || { echo "[$(date -Iseconds)] cannot cd to $WORKSHOP" >> "$LOG"; exit 1; }
 
+# Operator off-switch. Touched by /agents/autonomy/disable (Settings UI) or by
+# hand. While present, the cron worker exits early without doing any work, so
+# pausing autonomy doesn't require touching crontab or restarting the backend.
+AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
+if [[ -f "$AUTONOMY_FLAG" ]]; then
+  echo "[$(date -Iseconds)] autonomy disabled (flag: $AUTONOMY_FLAG); skipping tick" >> "$LOG"
+  exit 0
+fi
+
 # Bail-out for TODO is below the pending-queue consumer — events should still
 # fire even when the TODO is idle.
 NO_PENDING_TASKS=0
