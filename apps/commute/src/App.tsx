@@ -24,6 +24,15 @@ type ServiceAlert = {
   effect?: number | string;
 };
 
+type LocationStatus = {
+  available: boolean;
+  reason?: string;
+  at_destination?: boolean;
+  distance_m?: number;
+  source?: string;
+  age_s?: number;
+};
+
 type Brief = {
   ts: string;
   ts_local: string;
@@ -46,6 +55,7 @@ type Brief = {
   late_by_min?: number;
   alerts?: ServiceAlert[];
   legs?: Leg[];
+  location?: LocationStatus;
 };
 
 type AlertRecord = {
@@ -173,8 +183,9 @@ function StatusCard({ brief }: { brief: Brief | null }) {
       <div className="card">
         <span className="status-banner inactive">inactive</span>
         <p className="muted" style={{ marginTop: "0.6rem" }}>
-          No active schedule right now.{brief.reason ? ` (${brief.reason})` : ""}
+          {brief.reason || "No active schedule right now."}
         </p>
+        <LocationFooter loc={brief.location} />
         {brief.alerts && brief.alerts.length > 0 && (
           <div style={{ marginTop: "0.8rem" }}>
             <strong>Service alerts on route</strong>
@@ -248,7 +259,27 @@ function StatusCard({ brief }: { brief: Brief | null }) {
           </ul>
         </>
       )}
+      <LocationFooter loc={brief.location} />
     </div>
+  );
+}
+
+function LocationFooter({ loc }: { loc: LocationStatus | undefined }) {
+  if (!loc) return null;
+  if (!loc.available) {
+    return (
+      <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+        location-aware: off ({loc.reason})
+      </p>
+    );
+  }
+  const km = loc.distance_m != null ? (loc.distance_m / 1000).toFixed(2) : "?";
+  return (
+    <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
+      location: {loc.at_destination ? "at destination" : `${km} km away`}
+      {loc.source ? ` · ${loc.source}` : ""}
+      {loc.age_s != null ? ` · ${Math.round(loc.age_s / 60)}m ago` : ""}
+    </p>
   );
 }
 
