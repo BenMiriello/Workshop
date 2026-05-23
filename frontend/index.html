@@ -4,7 +4,43 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
+    <!-- iOS Safari requires an explicit Permissions-Policy grant before it will
+         honor navigator.geolocation.getCurrentPosition / watchPosition, even on
+         HTTPS. Without this, WebKit returns PositionError code 1 with message
+         "Origin does not have permission to use Geolocation service." The HTTP
+         response-header equivalent is also set by Vite middleware (vite.config.ts);
+         this meta tag is the fallback for environments where the header is stripped. -->
+    <meta http-equiv="Permissions-Policy" content="geolocation=(self)" />
     <title>Workshop</title>
+    <!-- BLOCKING service-worker killer. Runs before any module loads so a
+         stale cached SW from an earlier deploy can't intercept fetches.
+         Triggers a single reload after cleanup so the page is served from
+         the network. No-op once the origin is clean. -->
+    <script>
+      (function () {
+        try {
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              var hadSW = regs.length > 0;
+              Promise.all(regs.map(function (r) { return r.unregister(); }))
+                .then(function () {
+                  if (window.caches && caches.keys) {
+                    return caches.keys().then(function (keys) {
+                      return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+                    });
+                  }
+                })
+                .then(function () {
+                  if (hadSW && !sessionStorage.getItem('__sw_killed__')) {
+                    sessionStorage.setItem('__sw_killed__', '1');
+                    location.reload();
+                  }
+                });
+            });
+          }
+        } catch (e) { /* ignore */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
