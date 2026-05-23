@@ -8,6 +8,16 @@ import LocationApp from "./pages/apps/Location";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 
+// Commute is its own app at https://debian.tail38e62e.ts.net:8444/.
+// It is NOT a tab inside Workshop — apps live at their own ports. The
+// Apps tab has the Commute tile; tapping it opens the standalone app.
+const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
+
+function RedirectExternal({ to }: { to: string }) {
+  if (typeof window !== "undefined") window.location.replace(to);
+  return null;
+}
+
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
 // INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
 // Apps tab is the discovery surface.
@@ -39,6 +49,8 @@ export default function App() {
           <Route path="/apps" element={<Apps />} />
           <Route path="/apps/finance" element={<Finance />} />
           <Route path="/apps/location" element={<LocationApp />} />
+          {/* Any /commute link from old bookmarks → bounce to standalone Commute app at :8444. */}
+          <Route path="/commute" element={<RedirectExternal to={COMMUTE_URL} />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/activity" element={<Activity />} />
           {/* Direct-access shortcuts kept for bookmarks/links — they redirect into Activity with the right sub-tab. */}

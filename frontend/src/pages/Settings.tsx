@@ -178,7 +178,7 @@ function LocationSection() {
 function OwntracksCredentials() {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const url = "https://debian.tail38e62e.ts.net/api/location/owntracks";
+  const url = "https://debian.tail38e62e.ts.net:8446/api/location/owntracks";
 
   const copy = async (label: string, value: string) => {
     try {

@@ -14,7 +14,7 @@ no third party.
 1. App Store → install **Owntracks** (free, no account required).
 2. Open the app → Settings (gear icon).
 3. **Mode:** HTTP.
-4. **URL:** `https://debian.tail38e62e.ts.net/api/location/owntracks`
+4. **URL:** `https://debian.tail38e62e.ts.net:8446/api/location/owntracks`
 5. **Authentication:** Basic.
    - **Username:** `workshop`
    - **Password:** (in `~/.config/clawdbot/owntracks-auth.env` on the box)

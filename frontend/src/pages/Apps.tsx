@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { Link } from "react-router-dom";
-import { Banknote, TrainFront, Watch, BookOpen, ExternalLink, type LucideProps } from "lucide-react";
+import { Banknote, TrainFront, Watch, ExternalLink, type LucideProps } from "lucide-react";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
@@ -84,7 +84,6 @@ function CardBody({ card }: { card: AppCard }) {
 // own port — no app is "the root". The launcher at :443 lists all three.
 const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
 const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
-const OW_DOCS_URL = `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:8100/docs`;
 
 export default function Apps() {
   const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null; stale: boolean } | null>(null);
@@ -171,15 +170,8 @@ export default function Apps() {
           : { text: `down — ${probe.notes || `HTTP ${probe.http_status}`}`, tone: "err" } as const;
       })(),
     },
-    {
-      key: "ow-docs",
-      Icon: BookOpen,
-      title: "OW API docs",
-      tagline: "Open Wearables backend reference",
-      href: OW_DOCS_URL,
-      external: true,
-      status: { text: "tap to open", tone: "muted" },
-    },
+    // OW API docs removed from Apps tile — docs aren't an app. Reachable
+    // directly at http://<host>:8100/docs when needed.
   ];
 
   return (
