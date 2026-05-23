@@ -1,258 +1,252 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState, type ComponentType } from "react";
+import { Link } from "react-router-dom";
+import { Banknote, TrainFront, Watch, BookOpen, MapPin, ExternalLink, type LucideProps } from "lucide-react";
 
-type Account = {
-  id: string;
-  name: string;
-  official_name?: string;
-  type: string;
-  subtype?: string;
-  mask?: string;
-  balance: {
-    current: number | null;
-    available: number | null;
-    iso_currency_code: string | null;
-    limit: number | null;
-  };
-};
-
-type Item = {
-  item_id: string;
-  institution_name: string | null;
-  accounts: Account[];
-  error?: string;
-};
-
-type Transaction = {
-  id: string;
-  date: string;
-  name: string;
-  merchant_name?: string;
-  amount: number;
-  iso_currency_code?: string;
-  category?: string;
-  pending?: boolean;
-  institution_name?: string;
-};
+// Apps page: a uniform grid of cards. Every app — internal or external — looks
+// the same here. Tap a card to enter the app. Privacy-on-glance: cards show
+// generic status (counts / freshness / health) but never specific values like
+// dollar amounts. Real data lives one tap deeper, on each app's full page.
 
 type CacheMeta = { cached: boolean; ts: number; age_s: number; ttl_s: number };
-type BalancesResp = { items: Item[]; _cache?: CacheMeta };
-type TransactionsResp = { transactions: Transaction[]; _cache?: CacheMeta };
 
-type ServiceProbe = { name: string; status: "up" | "down" | string; http_status?: number | null; latency_ms?: number | null; notes?: string | null };
-type ServicesResp = { services: ServiceProbe[] };
-
-const fmt = (n: number | null, ccy: string | null) => {
-  if (n == null) return "—";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: ccy || "USD" }).format(n);
+type FinanceStatusEntry = { ts: number; age_s: number; ttl_s: number; size_bytes: number };
+type FinanceStatusResp = {
+  entries: Record<string, FinanceStatusEntry>;
 };
 
+type FinanceBalancesShape = { items: { accounts: unknown[] }[]; _cache?: CacheMeta };
+
+type ServiceProbe = {
+  name: string;
+  status: "up" | "down" | string;
+  http_status?: number | null;
+  latency_ms?: number | null;
+  notes?: string | null;
+};
+type ServicesResp = { services: ServiceProbe[] };
+
 const fmtAge = (sec: number) => {
+  if (sec <= 0) return "just now";
   if (sec < 60) return `${Math.round(sec)}s ago`;
   if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
   if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
   return `${Math.round(sec / 86400)}d ago`;
 };
 
-const REVEAL_KEY = "workshop:finance:revealed";
+type Tone = "ok" | "warn" | "err" | "muted";
+
+// One unified card shape. `to` is internal react-router; `href` is for cards
+// that point at a non-Workshop URL but should still navigate same-tab so the
+// experience feels like one app.
+type AppCard = {
+  key: string;
+  Icon: ComponentType<LucideProps>;
+  title: string;
+  tagline: string;
+  status: { text: string; tone?: Tone } | null;
+  to?: string;        // internal Workshop route — react-router Link
+  href?: string;      // same-origin path-prefixed app or external URL
+  external?: boolean; // true => render an ExternalLink hint; we still navigate same-tab
+};
+
+const toneColor = (tone: Tone | undefined) => {
+  switch (tone) {
+    case "ok":   return "#16a34a";
+    case "warn": return "var(--err)";   // err palette doubles as warn
+    case "err":  return "var(--err)";
+    case "muted":
+    default:     return "var(--muted)";
+  }
+};
+
+function CardBody({ card }: { card: AppCard }) {
+  const Icon = card.Icon;
+  return (
+    <div style={{ padding: "1rem", height: "100%" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
+        <Icon size={22} strokeWidth={1.8} aria-hidden style={{ flexShrink: 0 }} />
+        <h3 style={{ margin: 0, fontSize: "1rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+          {card.title}
+          {card.external && (
+            <ExternalLink size={14} strokeWidth={1.8} aria-hidden style={{ color: "var(--muted)" }} />
+          )}
+        </h3>
+      </div>
+      <p className="muted" style={{ margin: "0 0 0.5rem" }}>{card.tagline}</p>
+      {card.status && (
+        <p style={{ margin: 0, fontSize: "0.8rem", color: toneColor(card.status.tone) }}>{card.status.text}</p>
+      )}
+    </div>
+  );
+}
+
+// Per-port HTTPS via Tailscale Serve. Each Workshop app is a peer on its
+// own port — no app is "the root". The launcher at :443 lists all three.
+const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
+const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
+const OW_DOCS_URL = `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:8100/docs`;
+
+type LocationLatest = {
+  ts?: string;
+  lat?: number;
+  lng?: number;
+  accuracy_m?: number;
+  source?: string;
+} | null;
 
 export default function Apps() {
-  const [items, setItems] = useState<Item[] | null>(null);
-  const [txns, setTxns] = useState<Transaction[] | null>(null);
+  const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null; stale: boolean } | null>(null);
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
-  const [balCache, setBalCache] = useState<CacheMeta | null>(null);
-  const [txnCache, setTxnCache] = useState<CacheMeta | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [accountsOpen, setAccountsOpen] = useState(false);
-  const [txnsOpen, setTxnsOpen] = useState(false);
-  // Privacy: hide $$$ by default. localStorage persists per session so once
-  // operator reveals it stays revealed across navigations until tab closes
-  // (sessionStorage so it resets when the browser closes — privacy default).
-  const [revealed, setRevealed] = useState<boolean>(() => {
-    try { return sessionStorage.getItem(REVEAL_KEY) === "1"; } catch { return false; }
-  });
-  const setRevealedPersist = (v: boolean) => {
-    setRevealed(v);
-    try { v ? sessionStorage.setItem(REVEAL_KEY, "1") : sessionStorage.removeItem(REVEAL_KEY); } catch {}
-  };
-  const mask = (v: string) => revealed ? v : v.replace(/[0-9]/g, "•");
+  const [loc, setLoc] = useState<LocationLatest>(null);
 
-  const load = useCallback(async (force: boolean = false) => {
-    setRefreshing(true);
-    setErr(null);
+  // Load finance ACCOUNT COUNT + freshness only — never the dollar values. This
+  // is what differentiates the Apps grid from the Finance app page itself.
+  const loadFinance = useCallback(async () => {
     try {
-      const q = force ? "?refresh=1" : "";
-      const [b, t, s] = await Promise.all([
-        fetch(`/api/finance/balances${q}`).then((r) => r.json() as Promise<BalancesResp>),
-        fetch(`/api/finance/transactions?days=30${force ? "&refresh=1" : ""}`).then((r) => r.json() as Promise<TransactionsResp>),
-        fetch("/api/services/").then((r) => r.ok ? r.json() as Promise<ServicesResp> : { services: [] }),
+      // /finance/cache gives us per-key TS + TTL without re-fetching from Plaid.
+      const [statusR, balR] = await Promise.all([
+        fetch("/api/finance/cache"),
+        fetch("/api/finance/balances"),
       ]);
-      setItems(b.items || []);
-      setTxns(t.transactions || []);
-      setServices(s.services || []);
-      setBalCache(b._cache || null);
-      setTxnCache(t._cache || null);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setRefreshing(false);
+      const status = statusR.ok ? ((await statusR.json()) as FinanceStatusResp) : { entries: {} };
+      const bal = balR.ok ? ((await balR.json()) as FinanceBalancesShape) : { items: [] };
+      const accountCount = (bal.items || []).reduce((s, it) => s + (it.accounts?.length || 0), 0);
+      const entry = status.entries?.["balances"];
+      const ageS = entry ? Math.max(0, entry.age_s) : null;
+      const ttlS = entry?.ttl_s ?? 600;
+      setFinanceStatus({ accountCount, ageS, stale: ageS != null && ageS > ttlS });
+    } catch {
+      setFinanceStatus({ accountCount: null, ageS: null, stale: false });
     }
   }, []);
 
-  useEffect(() => { load(false); }, [load]);
+  const loadServices = useCallback(async () => {
+    try {
+      const r = await fetch("/api/services/");
+      const s = r.ok ? ((await r.json()) as ServicesResp) : { services: [] };
+      setServices(s.services || []);
+    } catch {
+      setServices([]);
+    }
+  }, []);
+
+  const loadLocation = useCallback(async () => {
+    try {
+      const r = await fetch("/api/location/latest");
+      const j = r.ok ? await r.json() : { latest: null };
+      setLoc(j.latest as LocationLatest);
+    } catch {
+      setLoc(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFinance();
+    loadServices();
+    loadLocation();
+    const t = setInterval(loadLocation, 60_000);
+    return () => clearInterval(t);
+  }, [loadFinance, loadServices, loadLocation]);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 
-  const accounts = useMemo(() => items?.flatMap((i) => i.accounts.map((a) => ({ ...a, institution: i.institution_name }))) || [], [items]);
-
-  const summary = useMemo(() => {
-    if (!items) return null;
-    const all = items.flatMap((i) => i.accounts);
-    const liquid = all.filter((a) => a.type === "depository").reduce((s, a) => s + (a.balance.current ?? 0), 0);
-    const creditAvail = all.filter((a) => a.type === "credit").reduce((s, a) => s + (a.balance.available ?? 0), 0);
-    const creditUsed = all.filter((a) => a.type === "credit").reduce((s, a) => s + (a.balance.current ?? 0), 0);
-    return { liquid, creditAvail, creditUsed, accountCount: all.length };
-  }, [items]);
-
-  if (err) return <p className="err">Backend error: {err}</p>;
-  if (!items || !txns) return <p>Loading apps…</p>;
-
-  const oldestCacheAge = Math.max(balCache?.age_s ?? 0, txnCache?.age_s ?? 0);
-  const cacheStale = oldestCacheAge > (balCache?.ttl_s ?? 300);
+  // Build the cards list. Privacy: finance card shows account count + freshness,
+  // NOT dollar amounts. To see real data, tap into the app.
+  const cards: AppCard[] = [
+    {
+      key: "finance",
+      Icon: Banknote,
+      title: "Finance",
+      tagline: "Balances, accounts, recent transactions",
+      to: "/apps/finance",
+      status: financeStatus == null
+        ? { text: "loading…", tone: "muted" }
+        : financeStatus.accountCount == null
+          ? { text: "unavailable", tone: "err" }
+          : {
+              text: `${financeStatus.accountCount} account${financeStatus.accountCount === 1 ? "" : "s"} · ${financeStatus.ageS != null ? `updated ${fmtAge(financeStatus.ageS)}` : "no data yet"}`,
+              tone: financeStatus.stale ? "warn" : "muted",
+            },
+    },
+    {
+      key: "commute",
+      Icon: TrainFront,
+      title: "Commute",
+      tagline: "Day-of departures + weather",
+      href: COMMUTE_URL,
+      external: true,
+      status: { text: "tap to open", tone: "muted" },
+    },
+    {
+      key: "wearables",
+      Icon: Watch,
+      title: "Open Wearables",
+      tagline: "Wearables data UI",
+      href: OW_URL,
+      external: true,
+      status: (() => {
+        const probe = findService("open-wearables-backend");
+        if (services === null) return { text: "probing…", tone: "muted" } as const;
+        if (!probe) return { text: "no probe configured", tone: "muted" } as const;
+        return probe.status === "up"
+          ? { text: `up · ${probe.http_status} · ${probe.latency_ms}ms`, tone: "ok" } as const
+          : { text: `down — ${probe.notes || `HTTP ${probe.http_status}`}`, tone: "err" } as const;
+      })(),
+    },
+    {
+      key: "ow-docs",
+      Icon: BookOpen,
+      title: "OW API docs",
+      tagline: "Open Wearables backend reference",
+      href: OW_DOCS_URL,
+      external: true,
+      status: { text: "tap to open", tone: "muted" },
+    },
+    {
+      key: "location",
+      Icon: MapPin,
+      title: "Location",
+      tagline: "Phone position (Owntracks iOS)",
+      to: "/apps/location",
+      status: (() => {
+        if (loc === null) return { text: "no data yet — install Owntracks", tone: "muted" } as const;
+        if (!loc?.ts) return { text: "no data yet", tone: "muted" } as const;
+        const ageS = Math.max(0, Math.round((Date.now() - Date.parse(loc.ts)) / 1000));
+        const stale = ageS > 60 * 60; // > 1 hour with no ping → stale
+        return {
+          text: `${loc.source || "unknown"} · updated ${fmtAge(ageS)}`,
+          tone: stale ? "warn" : "ok",
+        } as const;
+      })(),
+    },
+  ];
 
   return (
     <div>
-      <section>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem", flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0 }}>Finance</h2>
-          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-            <span className="muted" style={{ fontSize: "0.8rem", color: cacheStale ? "var(--err)" : undefined }}>
-              {oldestCacheAge > 0 ? `updated ${fmtAge(oldestCacheAge)}` : "fresh"}
-            </span>
-            <button onClick={() => setRevealedPersist(!revealed)} style={{ fontSize: "0.85rem", padding: "0.25rem 0.6rem" }} title={revealed ? "Hide values" : "Reveal values"}>
-              {revealed ? "Hide" : "Reveal"}
-            </button>
-            <button onClick={() => load(true)} disabled={refreshing} style={{ fontSize: "0.85rem", padding: "0.25rem 0.6rem" }}>
-              {refreshing ? "…" : "Refresh"}
-            </button>
-          </div>
-        </div>
-
-        {/* Top-line summary — always visible, no clicks needed */}
-        {summary && (
-          <div className="card" style={{ marginBottom: "0.75rem" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem 1rem" }}>
-              <div>
-                <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Liquid</p>
-                <p style={{ margin: "0.1rem 0 0", fontSize: "1.4rem", fontWeight: 600 }}>{mask(fmt(summary.liquid, "USD"))}</p>
-              </div>
-              <div>
-                <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Credit avail</p>
-                <p style={{ margin: "0.1rem 0 0", fontSize: "1.4rem", fontWeight: 600 }}>{mask(fmt(summary.creditAvail, "USD"))}</p>
-              </div>
-              <div>
-                <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Credit used</p>
-                <p style={{ margin: "0.1rem 0 0", fontSize: "1rem" }}>{mask(fmt(summary.creditUsed, "USD"))}</p>
-              </div>
-              <div>
-                <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Accounts</p>
-                <p style={{ margin: "0.1rem 0 0", fontSize: "1rem" }}>{summary.accountCount} · {items.length} institution{items.length === 1 ? "" : "s"}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Accounts collapsed by default — operator complaint: "always all open" */}
-        <details open={accountsOpen} onToggle={(e) => setAccountsOpen((e.target as HTMLDetailsElement).open)} style={{ marginBottom: "0.5rem" }}>
-          <summary style={{ cursor: "pointer", padding: "0.5rem 0", userSelect: "none" }}>
-            <span style={{ fontWeight: 500 }}>Accounts ({accounts.length})</span>
-            <span className="muted" style={{ marginLeft: "0.5rem", fontSize: "0.85rem" }}>{accountsOpen ? "collapse" : "expand"}</span>
-          </summary>
-          <ul className="cards" style={{ marginTop: "0.5rem" }}>
-            {accounts.map((a) => (
-              <li key={a.id} className="card">
-                <h3 style={{ margin: 0, fontSize: "1rem" }}>{a.name}</h3>
-                <p className="muted">{a.institution} · {a.subtype || a.type}{a.mask ? ` · ··${a.mask}` : ""}</p>
-                <p style={{ fontSize: "1.15rem", margin: "0.25rem 0" }}>{mask(fmt(a.balance.current, a.balance.iso_currency_code))}</p>
-                {a.balance.available != null && a.balance.available !== a.balance.current && (
-                  <p className="muted">Available: {mask(fmt(a.balance.available, a.balance.iso_currency_code))}</p>
-                )}
-              </li>
-            ))}
-          </ul>
-        </details>
-
-        {/* Transactions collapsed by default */}
-        <details open={txnsOpen} onToggle={(e) => setTxnsOpen((e.target as HTMLDetailsElement).open)}>
-          <summary style={{ cursor: "pointer", padding: "0.5rem 0", userSelect: "none" }}>
-            <span style={{ fontWeight: 500 }}>Recent transactions ({txns.length} · 30d)</span>
-            <span className="muted" style={{ marginLeft: "0.5rem", fontSize: "0.85rem" }}>{txnsOpen ? "collapse" : "expand"}</span>
-          </summary>
-          {txns.length === 0 ? (
-            <p className="muted">No transactions.</p>
-          ) : (
-            <div className="table-scroll" style={{ marginTop: "0.5rem" }}>
-              <table>
-                <thead>
-                  <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-                    <th>Date</th><th>Name</th><th>Category</th><th style={{ textAlign: "right" }}>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txns.slice(0, 50).map((t) => (
-                    <tr key={t.id} style={{ borderBottom: "1px solid var(--border)", opacity: t.pending ? 0.6 : 1 }}>
-                      <td className="muted">{t.date}</td>
-                      <td>{t.merchant_name || t.name}</td>
-                      <td className="muted">{t.category}</td>
-                      <td style={{ textAlign: "right" }}>{mask(fmt(-t.amount, t.iso_currency_code || "USD"))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </details>
-      </section>
-
-      <section style={{ marginTop: "2rem" }}>
-        <h2>Health</h2>
-        <ul className="cards">
-          <li className="card" style={{ padding: 0 }}>
-            <a
-              href={`http://${window.location.hostname}:3100`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: "block", padding: "1rem", color: "inherit", textDecoration: "none" }}
-            >
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>Open Wearables ↗</h3>
-              <p className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
-                {`http://${window.location.hostname}:3100`}
-              </p>
-              <p className="muted">Wearables data UI</p>
-            </a>
+      <p className="muted" style={{ marginBottom: "1rem" }}>{cards.length} app{cards.length === 1 ? "" : "s"}</p>
+      <ul className="cards">
+        {cards.map((card) => (
+          <li key={card.key} className="card" style={{ padding: 0, overflow: "hidden" }}>
+            {card.to ? (
+              <Link to={card.to} style={{ display: "block", height: "100%", color: "inherit", textDecoration: "none" }}>
+                <CardBody card={card} />
+              </Link>
+            ) : (
+              // No target=_blank. Operator wants every card to feel like one app —
+              // including the path-prefixed sibling Vite apps (Commute) and the
+              // cross-origin tools. Same-tab navigation across origins is fine for
+              // a phone-first dashboard; back button returns to Workshop.
+              <a
+                href={card.href}
+                rel="noopener noreferrer"
+                style={{ display: "block", height: "100%", color: "inherit", textDecoration: "none" }}
+              >
+                <CardBody card={card} />
+              </a>
+            )}
           </li>
-          <li className="card" style={{ padding: 0 }}>
-            <a
-              href={`http://${window.location.hostname}:8100/docs`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ display: "block", padding: "1rem", color: "inherit", textDecoration: "none" }}
-            >
-              <h3 style={{ margin: 0, fontSize: "1rem" }}>OW API docs ↗</h3>
-              <p className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
-                {`http://${window.location.hostname}:8100/docs`}
-              </p>
-              {(() => {
-                const probe = findService("open-wearables-backend");
-                if (!probe) return <p className="muted">status: probing…</p>;
-                return probe.status === "up"
-                  ? <p className="muted" style={{ color: "#16a34a" }}>● up · {probe.http_status} · {probe.latency_ms}ms</p>
-                  : <p className="err" style={{ fontSize: "0.8rem" }}>● down — {probe.notes || `HTTP ${probe.http_status}`}</p>;
-              })()}
-            </a>
-          </li>
-        </ul>
-      </section>
+        ))}
+      </ul>
     </div>
   );
 }
