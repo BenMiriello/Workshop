@@ -49,6 +49,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Workshop", lifespan=lifespan)
 
+
+# Tailscale Serve mounts the backend directly at :443/, so paths from the
+# launcher/Owntracks come in as /location/... — but the Workshop and Commute
+# vite proxies use /api/... and strip that prefix. Accept both so callers
+# don't have to care which entry point they used.
+@app.middleware("http")
+async def strip_api_prefix(request, call_next):
+    path = request.scope.get("path", "")
+    if path == "/api" or path.startswith("/api/"):
+        new_path = path[4:] or "/"
+        request.scope["path"] = new_path
+        request.scope["raw_path"] = new_path.encode("ascii", errors="ignore")
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
