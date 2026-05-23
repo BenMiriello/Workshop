@@ -6,6 +6,7 @@ import Apps from "./pages/Apps";
 import Finance from "./pages/apps/Finance";
 import LocationApp from "./pages/apps/Location";
 import Activity from "./pages/Activity";
+import Settings from "./pages/Settings";
 
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
 // INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
@@ -26,6 +27,7 @@ export default function App() {
           <NavLink to="/projects">Projects</NavLink>
           <NavLink to="/apps">Apps</NavLink>
           <NavLink to="/activity">Activity</NavLink>
+          <NavLink to="/settings">Settings</NavLink>
         </nav>
       </header>
       <main>
@@ -37,6 +39,7 @@ export default function App() {
           <Route path="/apps" element={<Apps />} />
           <Route path="/apps/finance" element={<Finance />} />
           <Route path="/apps/location" element={<LocationApp />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="/activity" element={<Activity />} />
           {/* Direct-access shortcuts kept for bookmarks/links — they redirect into Activity with the right sub-tab. */}
           <Route path="/services" element={<Navigate to="/activity#services" replace />} />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { Link } from "react-router-dom";
-import { Banknote, TrainFront, Watch, BookOpen, MapPin, ExternalLink, type LucideProps } from "lucide-react";
+import { Banknote, TrainFront, Watch, BookOpen, ExternalLink, type LucideProps } from "lucide-react";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
@@ -86,18 +86,9 @@ const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
 const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
 const OW_DOCS_URL = `http://${typeof window !== "undefined" ? window.location.hostname : "localhost"}:8100/docs`;
 
-type LocationLatest = {
-  ts?: string;
-  lat?: number;
-  lng?: number;
-  accuracy_m?: number;
-  source?: string;
-} | null;
-
 export default function Apps() {
   const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null; stale: boolean } | null>(null);
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
-  const [loc, setLoc] = useState<LocationLatest>(null);
 
   // Load finance ACCOUNT COUNT + freshness only — never the dollar values. This
   // is what differentiates the Apps grid from the Finance app page itself.
@@ -130,23 +121,10 @@ export default function Apps() {
     }
   }, []);
 
-  const loadLocation = useCallback(async () => {
-    try {
-      const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : { latest: null };
-      setLoc(j.latest as LocationLatest);
-    } catch {
-      setLoc(null);
-    }
-  }, []);
-
   useEffect(() => {
     loadFinance();
     loadServices();
-    loadLocation();
-    const t = setInterval(loadLocation, 60_000);
-    return () => clearInterval(t);
-  }, [loadFinance, loadServices, loadLocation]);
+  }, [loadFinance, loadServices]);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 
@@ -201,23 +179,6 @@ export default function Apps() {
       href: OW_DOCS_URL,
       external: true,
       status: { text: "tap to open", tone: "muted" },
-    },
-    {
-      key: "location",
-      Icon: MapPin,
-      title: "Location",
-      tagline: "Phone position (Owntracks iOS)",
-      to: "/apps/location",
-      status: (() => {
-        if (loc === null) return { text: "no data yet — install Owntracks", tone: "muted" } as const;
-        if (!loc?.ts) return { text: "no data yet", tone: "muted" } as const;
-        const ageS = Math.max(0, Math.round((Date.now() - Date.parse(loc.ts)) / 1000));
-        const stale = ageS > 60 * 60; // > 1 hour with no ping → stale
-        return {
-          text: `${loc.source || "unknown"} · updated ${fmtAge(ageS)}`,
-          tone: stale ? "warn" : "ok",
-        } as const;
-      })(),
     },
   ];
 
