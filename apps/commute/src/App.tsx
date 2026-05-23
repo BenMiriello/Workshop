@@ -73,8 +73,9 @@ const API = "/api/commute";
 type Tab = "status" | "config";
 
 // Commute is an app WITHIN Workshop. Top-left link goes back to Workshop
-// at the root; that's the parent.
-const WORKSHOP_URL = "https://debian.tail38e62e.ts.net/";
+// at its own port (each Workshop app is at its own port like a normal
+// self-hosted service; the parent IS Workshop, not "root").
+const WORKSHOP_URL = "https://debian.tail38e62e.ts.net:8443/";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("status");

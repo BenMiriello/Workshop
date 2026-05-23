@@ -1,9 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, RedirectResponse
-
-from services.landing import LANDING_HTML
+from fastapi.responses import RedirectResponse
 
 from routes import agents, projects, finance, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks
 from services.supervisor import AgentSupervisor
@@ -89,20 +87,19 @@ app.include_router(location.router)
 app.include_router(owntracks.router)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def landing(request: Request):
-    """Workshop launcher. Served at https://debian.tail38e62e.ts.net/ via
-    Tailscale Serve mount :443 → :8000.
+@app.get("/")
+async def root_redirect(request: Request):
+    """Tailscale Serve mounts the backend at :443/ so /api/* works for
+    Owntracks etc. The bare URL `https://debian.tail38e62e.ts.net/` (no
+    port) just redirects to Workshop at :8443 — each app lives at its
+    own port like a normal self-hosted service.
 
-    If someone hit us at the Tailscale IP form over HTTP (insecure context,
-    no geolocation), redirect to the canonical HTTPS hostname so bookmarks
-    self-correct."""
+    If someone hits us at the raw Tailscale IP over HTTP (insecure
+    context), bounce them to the canonical magicdns HTTPS URL first."""
     host = request.headers.get("host", "")
-    # Anything other than the tail38e62e magicdns name (with optional port)
-    # gets bounced. Match by suffix so app ports (8443/8444/8445) are fine too.
     if "tail38e62e.ts.net" not in host:
-        return RedirectResponse(url="https://debian.tail38e62e.ts.net/", status_code=302)
-    return HTMLResponse(LANDING_HTML)
+        return RedirectResponse(url="https://debian.tail38e62e.ts.net:8443/", status_code=302)
+    return RedirectResponse(url="https://debian.tail38e62e.ts.net:8443/", status_code=302)
 
 
 @app.get("/healthz")
