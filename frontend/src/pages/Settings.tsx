@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, TrainFront, Bot, Banknote, Server, Eye, EyeOff, Copy, Check } from "lucide-react";
+import { MapPin, TrainFront, Bot, Banknote, Server, Heart, Eye, EyeOff, Copy, Check } from "lucide-react";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -42,6 +42,7 @@ export default function Settings() {
     <div style={{ maxWidth: 760 }}>
       <h2 style={{ margin: "0 0 1.25rem" }}>Settings</h2>
       <LocationSection />
+      <HealthSection />
       <CommuteSection />
       <AgentsSection />
       <FinanceSection />
@@ -206,6 +207,116 @@ function OwntracksCredentials() {
         {revealed && (
           <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--muted)" }}>
             from <code>~/.config/clawdbot/owntracks-auth.env</code>
+          </span>
+        )}
+      </Row>
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Health section — Apple Health data via Health Auto Export iOS app
+// ----------------------------------------------------------------------------
+function HealthSection() {
+  const [metrics, setMetrics] = useState<Record<string, { ts?: string; date?: string; qty?: unknown; units?: string }> | null>(null);
+  const [, setTick] = useState(0);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/health/latest");
+      const j = r.ok ? await r.json() : { metrics: {} };
+      setMetrics(j.metrics || {});
+    } catch {
+      setMetrics({});
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 60_000);
+    const tick = setInterval(() => setTick((x) => x + 1), 15_000);
+    return () => { clearInterval(t); clearInterval(tick); };
+  }, [load]);
+
+  const onClear = async () => {
+    if (!confirm("Erase ALL stored Apple Health data?")) return;
+    await fetch("/api/health/history", { method: "DELETE" });
+    await load();
+  };
+
+  const entries = metrics ? Object.entries(metrics) : [];
+  // Latest ts across all metrics → top-line status
+  const latestTs = entries.reduce<string | null>((acc, [, v]) => {
+    if (!v?.ts) return acc;
+    if (!acc) return v.ts;
+    return v.ts > acc ? v.ts : acc;
+  }, null);
+  const ageS = latestTs ? Math.max(0, Math.round((Date.now() - Date.parse(latestTs)) / 1000)) : null;
+  const stale = ageS != null && ageS > 24 * 3600; // > 24h with no push → likely a problem
+
+  return (
+    <Section icon={Heart} title="Health (Apple Health)">
+      <Row label="status">
+        {!latestTs ? (
+          <span style={{ color: "var(--err)" }}>no data — install Health Auto Export</span>
+        ) : stale ? (
+          <span style={{ color: "var(--err)" }}>stale ({fmtAge(latestTs)}) — check Health Auto Export</span>
+        ) : (
+          <span style={{ color: "#16a34a" }}>{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {fmtAge(latestTs)}</span>
+        )}
+      </Row>
+      <Row label="iOS app">
+        <a href="https://apps.apple.com/us/app/health-auto-export/id1115567069" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
+          Health Auto Export
+        </a>{" · "}~$5 · config walkthrough at <code style={{ fontSize: "0.8rem" }}>docs/health-auto-export-ios.md</code>
+      </Row>
+      <HealthCredentials />
+      {entries.slice(0, 8).map(([name, v]) => (
+        <Row key={name} label={name}>
+          <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
+            {String(v.qty ?? "—")}{v.units ? ` ${v.units}` : ""}
+            {v.date && <span className="muted" style={{ marginLeft: "0.5rem", fontSize: "0.78rem" }}>{v.date}</span>}
+          </span>
+        </Row>
+      ))}
+      <Row label="history">
+        <button onClick={onClear} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
+          clear all data
+        </button>
+      </Row>
+    </Section>
+  );
+}
+
+function HealthCredentials() {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const url = "https://debian.tail38e62e.ts.net:8446/api/health/ingest";
+
+  const copy = async (label: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(label);
+      setTimeout(() => setCopied(null), 1200);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <>
+      <Row label="endpoint URL">
+        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem", wordBreak: "break-all" }}>{url}</span>
+        <button onClick={() => copy("health-url", url)} style={{ marginLeft: "0.4rem", padding: "0.2rem 0.4rem", fontSize: "0.75rem" }}>
+          {copied === "health-url" ? <Check size={12} strokeWidth={2} /> : <Copy size={12} strokeWidth={1.8} />}
+        </button>
+      </Row>
+      <Row label="auth">
+        Basic · user <code style={{ fontSize: "0.8rem" }}>workshop</code> · pass{" "}
+        <button onClick={() => setRevealed((v) => !v)} style={{ marginLeft: "0.3rem", padding: "0.2rem 0.4rem", fontSize: "0.75rem" }}>
+          {revealed ? <EyeOff size={12} strokeWidth={1.8} /> : <Eye size={12} strokeWidth={1.8} />}
+        </button>
+        {revealed && (
+          <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--muted)" }}>
+            from <code>~/.config/clawdbot/health-auth.env</code>
           </span>
         )}
       </Row>

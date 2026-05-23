@@ -243,53 +243,74 @@ function StatusTab({ brief, onPollNow, polling }: {
   );
 }
 
+// ── ScheduleTab — proper form UI (no more JSON textarea) ─────────────────
+
+type DayKey = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+const DAYS: { key: DayKey; label: string }[] = [
+  { key: "mon", label: "M" },
+  { key: "tue", label: "T" },
+  { key: "wed", label: "W" },
+  { key: "thu", label: "T" },
+  { key: "fri", label: "F" },
+  { key: "sat", label: "S" },
+  { key: "sun", label: "S" },
+];
+
+type ScheduleEntry = {
+  id: string;
+  direction: "to-work" | "to-home";
+  days: string[];
+  target_depart_home?: string;
+  target_arrive_work?: string;
+  target_depart_work?: string;
+  target_arrive_home?: string;
+  flex_minutes_late?: number;
+  flex_minutes_early?: number | null;
+  legs_id?: string;
+};
+
+type ScheduleDoc = {
+  operator?: string;
+  home?: { address?: string; lat?: number | null; lon?: number | null };
+  work?: { address?: string; lat?: number | null; lon?: number | null };
+  schedules: ScheduleEntry[];
+  notes?: string;
+};
+
 function ScheduleTab() {
-  const [text, setText] = useState<string>("");
+  const [doc, setDoc] = useState<ScheduleDoc | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [parseErr, setParseErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch("/api/commute/schedule");
-        if (!r.ok) throw new Error(`${r.status}`);
-        const data = await r.json();
-        setText(JSON.stringify(data, null, 2));
-      } catch (e) {
-        setErr(String(e));
-      } finally {
-        setLoading(false);
-      }
-    })();
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/commute/schedule");
+      if (!r.ok) throw new Error(`${r.status}`);
+      setDoc(await r.json());
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const onChange = (v: string) => {
-    setText(v);
-    setSaved(false);
-    try {
-      JSON.parse(v);
-      setParseErr(null);
-    } catch (e) {
-      setParseErr(String(e));
-    }
-  };
+  useEffect(() => { load(); }, [load]);
 
   const save = async () => {
-    if (parseErr) return;
-    setSaving(true);
-    setErr(null);
+    if (!doc) return;
+    setSaving(true); setErr(null); setSaved(false);
     try {
-      const data = JSON.parse(text);
       const r = await fetch("/api/commute/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data }),
+        body: JSON.stringify({ data: doc }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setSaved(true);
+      setTimeout(() => setSaved(false), 1800);
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -297,45 +318,210 @@ function ScheduleTab() {
     }
   };
 
+  const updateAddress = (which: "home" | "work", address: string) => {
+    if (!doc) return;
+    setDoc({ ...doc, [which]: { ...(doc[which] || {}), address } });
+  };
+
+  const updateSchedule = (idx: number, patch: Partial<ScheduleEntry>) => {
+    if (!doc) return;
+    const next = [...doc.schedules];
+    next[idx] = { ...next[idx], ...patch };
+    setDoc({ ...doc, schedules: next });
+  };
+
+  const toggleDay = (idx: number, day: DayKey) => {
+    if (!doc) return;
+    const cur = new Set(doc.schedules[idx].days || []);
+    if (cur.has(day)) cur.delete(day); else cur.add(day);
+    updateSchedule(idx, { days: Array.from(cur) });
+  };
+
+  const addSchedule = (direction: "to-work" | "to-home") => {
+    if (!doc) return;
+    const newEntry: ScheduleEntry = {
+      id: `${direction}-${Date.now()}`,
+      direction,
+      days: ["mon", "tue", "wed", "thu", "fri"],
+      flex_minutes_late: 15,
+      legs_id: direction === "to-work" ? "to-work-default" : "to-home-default",
+      ...(direction === "to-work"
+        ? { target_depart_home: "07:30", target_arrive_work: "09:00" }
+        : { target_depart_work: "18:00", target_arrive_home: "19:45" }),
+    };
+    setDoc({ ...doc, schedules: [...doc.schedules, newEntry] });
+  };
+
+  const removeSchedule = (idx: number) => {
+    if (!doc) return;
+    if (!confirm(`Remove schedule "${doc.schedules[idx].id}"?`)) return;
+    setDoc({ ...doc, schedules: doc.schedules.filter((_, i) => i !== idx) });
+  };
+
   if (loading) return <p>Loading schedule…</p>;
+  if (!doc) return <p className="err">{err || "no schedule loaded"}</p>;
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-        <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
-          schedule.json — edit and save to backend
-        </p>
-        <button onClick={save} disabled={saving || !!parseErr}>
-          {saving ? "saving…" : saved ? "saved" : "save"}
-        </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.5rem", flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</h3>
+        <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+          {saved && <span style={{ color: "#16a34a", fontSize: "0.85rem" }}>saved ✓</span>}
+          {err && <span style={{ color: "var(--err)", fontSize: "0.82rem" }}>{err}</span>}
+          <button onClick={save} disabled={saving}>{saving ? "saving…" : "save"}</button>
+        </div>
       </div>
-      {parseErr && (
-        <p style={{ color: "#ef4444", fontSize: "0.82rem", margin: "0 0 0.5rem" }}>{parseErr}</p>
-      )}
-      {err && (
-        <p style={{ color: "#ef4444", fontSize: "0.82rem", margin: "0 0 0.5rem" }}>{err}</p>
-      )}
-      <textarea
-        value={text}
-        onChange={(e) => onChange(e.target.value)}
-        spellCheck={false}
-        style={{
-          width: "100%",
-          minHeight: "420px",
-          fontFamily: "ui-monospace, monospace",
-          fontSize: "0.82rem",
-          resize: "vertical",
-          background: "var(--card)",
-          color: "var(--text)",
-          border: "1px solid var(--border)",
-          borderRadius: "6px",
-          padding: "0.75rem",
-          boxSizing: "border-box",
-        }}
-      />
+
+      <div className="card" style={{ marginBottom: "1rem" }}>
+        <h4 style={{ margin: "0 0 0.6rem", fontSize: "0.85rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Endpoints</h4>
+        <div style={{ display: "grid", gridTemplateColumns: "min(110px, 30%) 1fr", gap: "0.5rem 0.75rem", alignItems: "center" }}>
+          <label htmlFor="home-addr">home</label>
+          <input
+            id="home-addr"
+            value={doc.home?.address || ""}
+            onChange={(e) => updateAddress("home", e.target.value)}
+            placeholder="street, city, state zip"
+            style={inputStyle}
+          />
+          <label htmlFor="work-addr">work</label>
+          <input
+            id="work-addr"
+            value={doc.work?.address || ""}
+            onChange={(e) => updateAddress("work", e.target.value)}
+            placeholder="street, city, state zip"
+            style={inputStyle}
+          />
+        </div>
+        <p className="muted" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
+          coords for location-aware "already at destination" detection live in Workshop → Settings → Commute
+        </p>
+      </div>
+
+      {doc.schedules.map((s, i) => (
+        <div key={`${s.id}-${i}`} className="card" style={{ marginBottom: "0.85rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem", flexWrap: "wrap" }}>
+            <strong style={{ fontSize: "0.95rem" }}>
+              {s.direction === "to-work" ? "→ Work" : "→ Home"}
+            </strong>
+            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+              <input
+                value={s.id}
+                onChange={(e) => updateSchedule(i, { id: e.target.value })}
+                style={{ ...inputStyle, fontSize: "0.78rem", fontFamily: "ui-monospace, monospace", width: "auto", padding: "0.25rem 0.4rem" }}
+                title="schedule id"
+              />
+              <button onClick={() => removeSchedule(i)} style={{ fontSize: "0.78rem", padding: "0.25rem 0.55rem", color: "var(--err)" }}>
+                remove
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: "0.6rem" }}>
+            <div style={{ fontSize: "0.78rem", color: "var(--muted)", marginBottom: "0.3rem" }}>days</div>
+            <div style={{ display: "flex", gap: "0.25rem" }}>
+              {DAYS.map((d) => {
+                const on = (s.days || []).includes(d.key);
+                return (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => toggleDay(i, d.key)}
+                    style={{
+                      width: "34px",
+                      height: "34px",
+                      borderRadius: "50%",
+                      border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
+                      background: on ? "var(--accent)" : "transparent",
+                      color: on ? "white" : "var(--muted)",
+                      fontWeight: on ? 600 : 400,
+                      fontSize: "0.85rem",
+                      cursor: "pointer",
+                    }}
+                    title={d.key}
+                  >
+                    {d.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "min(140px, 40%) 1fr", gap: "0.4rem 0.75rem", alignItems: "center", marginBottom: "0.4rem" }}>
+            {s.direction === "to-work" ? (
+              <>
+                <label>depart home</label>
+                <input
+                  type="time"
+                  value={s.target_depart_home || ""}
+                  onChange={(e) => updateSchedule(i, { target_depart_home: e.target.value })}
+                  style={inputStyle}
+                />
+                <label>arrive work</label>
+                <input
+                  type="time"
+                  value={s.target_arrive_work || ""}
+                  onChange={(e) => updateSchedule(i, { target_arrive_work: e.target.value })}
+                  style={inputStyle}
+                />
+              </>
+            ) : (
+              <>
+                <label>depart work</label>
+                <input
+                  type="time"
+                  value={s.target_depart_work || ""}
+                  onChange={(e) => updateSchedule(i, { target_depart_work: e.target.value })}
+                  style={inputStyle}
+                />
+                <label>arrive home</label>
+                <input
+                  type="time"
+                  value={s.target_arrive_home || ""}
+                  onChange={(e) => updateSchedule(i, { target_arrive_home: e.target.value })}
+                  style={inputStyle}
+                />
+              </>
+            )}
+            <label>flex (late)</label>
+            <input
+              type="number"
+              min={0}
+              max={120}
+              value={s.flex_minutes_late ?? 15}
+              onChange={(e) => updateSchedule(i, { flex_minutes_late: Number(e.target.value) })}
+              style={inputStyle}
+            />
+            <label>legs preset</label>
+            <input
+              value={s.legs_id || ""}
+              onChange={(e) => updateSchedule(i, { legs_id: e.target.value })}
+              placeholder="to-work-default"
+              style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", fontSize: "0.82rem" }}
+            />
+          </div>
+        </div>
+      ))}
+
+      <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
+        <button onClick={() => addSchedule("to-work")}>+ AM (to-work)</button>
+        <button onClick={() => addSchedule("to-home")}>+ PM (to-home)</button>
+      </div>
     </div>
   );
 }
+
+const inputStyle: React.CSSProperties = {
+  display: "block",
+  width: "100%",
+  padding: "0.4rem 0.55rem",
+  background: "var(--card)",
+  color: "var(--fg)",
+  border: "1px solid var(--border)",
+  borderRadius: 4,
+  fontFamily: "inherit",
+  fontSize: "0.9rem",
+  boxSizing: "border-box",
+};
 
 function SourcesTab() {
   const [data, setData] = useState<SourcesResp | null>(null);
