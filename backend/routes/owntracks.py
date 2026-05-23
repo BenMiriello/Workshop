@@ -18,6 +18,18 @@ from services import owntracks
 router = APIRouter(prefix="/location", tags=["location"])
 
 
+@router.get("/owntracks")
+async def owntracks_help() -> dict[str, Any]:
+    """Browsers that GET this URL by accident get a clear hint instead of a
+    'method not allowed' wall. The real endpoint is POST-only, called by
+    Owntracks iOS in HTTP mode."""
+    return {
+        "ok": False,
+        "hint": "POST-only endpoint. This URL is meant for Owntracks iOS to publish location pings.",
+        "viewer": "https://debian.tail38e62e.ts.net/apps/location",
+    }
+
+
 @router.post("/owntracks")
 async def post_owntracks(
     request: Request,

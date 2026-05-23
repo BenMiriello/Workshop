@@ -7,32 +7,25 @@ import Finance from "./pages/apps/Finance";
 import LocationApp from "./pages/apps/Location";
 import Activity from "./pages/Activity";
 
-// Workshop top nav. Companion apps (Commute, Open Wearables) live on their
-// own Tailscale Serve ports — each is a peer, not a sub-path. The launcher
-// at https://debian.tail38e62e.ts.net/ lists all three as equals.
-const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
-const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
-const LAUNCHER_URL = "https://debian.tail38e62e.ts.net/";
+// Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
+// INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
+// Apps tab is the discovery surface.
 
 export default function App() {
   return (
     <div className="app">
       <header>
         <h1>
-          <a href={LAUNCHER_URL} className="brand-link" title="Launcher">
+          <NavLink to="/" className="brand-link">
             <span className="brand-full">Workshop</span>
             <span className="brand-short">W</span>
-          </a>
+          </NavLink>
         </h1>
         <nav>
           <NavLink to="/agents">Agents</NavLink>
           <NavLink to="/projects">Projects</NavLink>
           <NavLink to="/apps">Apps</NavLink>
           <NavLink to="/activity">Activity</NavLink>
-        </nav>
-        <nav className="peer-apps">
-          <a href={COMMUTE_URL}>Commute ↗</a>
-          <a href={OW_URL}>Wearables ↗</a>
         </nav>
       </header>
       <main>

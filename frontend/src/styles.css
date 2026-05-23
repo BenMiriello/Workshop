@@ -37,23 +37,6 @@ header h1 { margin: 0; font-size: 1.5rem; }
 }
 .brand-link:hover { opacity: 0.7; }
 .brand-short { display: none; }
-.peer-apps {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  font-size: 0.85rem;
-}
-.peer-apps a {
-  color: var(--muted);
-  text-decoration: none;
-  padding: 0.3rem 0.55rem;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-}
-.peer-apps a:hover { color: var(--fg); background: var(--card); }
 nav { display: flex; gap: 0.25rem; flex-wrap: wrap; }
 nav a {
   color: var(--muted);

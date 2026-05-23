@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import Config from "./Config";
-import { ArrowRight, ExternalLink } from "lucide-react";
+import { ArrowRight, ChevronLeft } from "lucide-react";
 
 // Commute app — day-of status + config. Reads /api/commute/* on the Workshop
 // backend. Lives on its own Tailscale Serve port; each Workshop app is a
@@ -72,9 +72,9 @@ const API = "/api/commute";
 
 type Tab = "status" | "config";
 
-const WORKSHOP_URL = "https://debian.tail38e62e.ts.net:8443/";
-const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
-const LAUNCHER_URL = "https://debian.tail38e62e.ts.net/";
+// Commute is an app WITHIN Workshop. Top-left link goes back to Workshop
+// at the root; that's the parent.
+const WORKSHOP_URL = "https://debian.tail38e62e.ts.net/";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("status");
@@ -82,8 +82,8 @@ export default function App() {
   return (
     <div className="app">
       <header className="system-nav">
-        <a className="brand" href={LAUNCHER_URL} title="Launcher">
-          🏠
+        <a className="brand" href={WORKSHOP_URL}>
+          <ChevronLeft size={16} strokeWidth={1.8} aria-hidden /> Workshop
         </a>
         <h1 className="app-name">Commute</h1>
         <nav className="app-tabs">
@@ -96,10 +96,6 @@ export default function App() {
               {t}
             </button>
           ))}
-        </nav>
-        <nav className="peer-apps">
-          <a href={WORKSHOP_URL}>Workshop <ExternalLink size={11} strokeWidth={1.8} aria-hidden /></a>
-          <a href={OW_URL}>Wearables <ExternalLink size={11} strokeWidth={1.8} aria-hidden /></a>
         </nav>
       </header>
 
