@@ -62,6 +62,7 @@ export default function Locations() {
             name={L.name}
             sub={`${L.species} species · ${L.detections} detections${L.devices.length ? ` · ${L.devices.join(", ")}` : ""}`}
             isHome={home === `loc:${L.id}`} onHome={() => setAsHome(`loc:${L.id}`)}
+            needsAddress={L.lat == null}
             icon={<MapPin size={16} />} />
         ))}
         {locs.length === 0 && !yardAvailable && (
@@ -72,14 +73,18 @@ export default function Locations() {
   );
 }
 
-function SourceCard({ to, name, sub, isHome, onHome, icon }: {
-  to: string; name: string; sub: string; isHome: boolean; onHome: () => void; icon: React.ReactNode;
+function SourceCard({ to, name, sub, isHome, onHome, icon, needsAddress }: {
+  to: string; name: string; sub: string; isHome: boolean; onHome: () => void;
+  icon: React.ReactNode; needsAddress?: boolean;
 }) {
   return (
     <div className="card" style={{ padding: ".7rem .9rem", display: "flex", alignItems: "center", gap: ".7rem" }}>
       <span className="muted" style={{ flexShrink: 0 }}>{icon}</span>
       <Link to={to} style={{ flex: 1, minWidth: 0, textDecoration: "none", color: "inherit" }}>
-        <div style={{ fontWeight: 600 }}>{name}</div>
+        <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: ".4rem" }}>
+          {name}
+          {needsAddress && <span className="pill" style={{ fontSize: ".68rem", color: "#f5a623", borderColor: "#f5a62355" }}>set address</span>}
+        </div>
         <div className="muted" style={{ fontSize: ".8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>
       </Link>
       <button onClick={onHome} title={isHome ? "Home" : "Set as home"}

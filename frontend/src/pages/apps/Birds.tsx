@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Bird, ChevronLeft, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
-  SlidersHorizontal, Smartphone,
+  SlidersHorizontal, Smartphone, AlertTriangle,
 } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
 import Spectrogram from "./birds/Spectrogram";
+import AddressPicker from "./birds/AddressPicker";
+import type { Place } from "./birds/geocode";
 import { useShowNonBird, nonBirdQuery } from "./birds/settings";
 import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./birds/ui";
 
@@ -163,6 +165,8 @@ function LivePanel() {
 
       <Spectrogram height={150} />
 
+      {rec.needsLocation && <SetLocationInline />}
+
       <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
         {hearing.length > 0 ? (
           <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
@@ -193,6 +197,39 @@ function LivePanel() {
       {rec.err && <p className="error" style={{ marginBottom: 0 }}>{rec.err}</p>}
       {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
     </section>
+  );
+}
+
+// Shown while listening when this device has no real location to file
+// detections under (adaptive device, GPS denied/unavailable). Picking a place
+// creates the location and pins this device to it so detections start saving.
+function SetLocationInline() {
+  const rec = useRecorder();
+  const [busy, setBusy] = useState(false);
+  const pick = (p: Place) => {
+    setBusy(true);
+    const fd = new FormData();
+    fd.append("name", p.short);
+    fd.append("lat", String(p.lat)); fd.append("lon", String(p.lon));
+    fd.append("address", p.label || p.short);
+    fetch(`${API}/location`, { method: "POST", body: fd })
+      .then((r) => r.json())
+      .then((d) => {
+        const id = d.location?.id;
+        if (id) { rec.setMode("fixed"); rec.setFixedLocation(String(id)); }
+      })
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="card" style={{ padding: ".7rem .9rem", margin: ".6rem 0", border: "1px solid #f5a62355" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".5rem" }}>
+        <AlertTriangle size={16} style={{ color: "#f5a623" }} />
+        <span style={{ fontSize: ".88rem" }}>
+          {busy ? "Saving location…" : "No location for this device yet — pick where you are so detections save."}
+        </span>
+      </div>
+      <AddressPicker onPick={pick} />
+    </div>
   );
 }
 

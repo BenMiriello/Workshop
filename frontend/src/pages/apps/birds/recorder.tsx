@@ -1,6 +1,7 @@
 import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
+import { reverseGeocode } from "./geocode";
 
 // App-root recorder: captures THIS device's mic and streams live BirdNET
 // detections. Lives above the router so listening keeps running while you move
@@ -42,6 +43,7 @@ type Ctx = {
   status: "idle" | "listening" | "analyzing";
   elapsed: number;
   location: string | null;
+  needsLocation: boolean;
   nowHearing: Det[];
   liveLog: LogEntry[];
   sessionSpecies: SpeciesRow[];
@@ -113,6 +115,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [status, setStatus] = useState<"idle" | "listening" | "analyzing">("idle");
   const [elapsed, setElapsed] = useState(0);
   const [location, setLocation] = useState<string | null>(null);
+  const [needsLocation, setNeedsLocation] = useState(false);
   const [nowHearing, setNowHearing] = useState<Det[]>([]);
   const [liveLog, setLiveLog] = useState<LogEntry[]>([]);
   const [sessionSpecies, setSessionSpecies] = useState<SpeciesRow[]>([]);
@@ -127,7 +130,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const bufRef = useRef<Float32Array[]>([]);
   const bufLenRef = useRef(0);
   const sinceStepRef = useRef(0);
-  const posRef = useRef<{ lat: number; lon: number } | null>(null);
+  const posRef = useRef<{ lat: number; lon: number; address: string } | null>(null);
   const timerRef = useRef<number | null>(null);
   const wakeRef = useRef<WakeLockSentinel | null>(null);
   const inFlightRef = useRef(0);
@@ -166,6 +169,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     if (dev.mode !== "fixed" && posRef.current) {
       fd.append("lat", String(posRef.current.lat));
       fd.append("lon", String(posRef.current.lon));
+      if (posRef.current.address) fd.append("address", posRef.current.address);
     }
     inFlightRef.current += 1;
     setStatus("analyzing");
@@ -173,6 +177,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       .then((r) => r.json())
       .then((res) => {
         if (res.location) setLocation(res.location);
+        setNeedsLocation(!!res.needs_location);
         const dets: Det[] = res.detections || [];
         setNowHearing(dets);
         const stored = dets.filter((d) => d.stored !== false);
@@ -215,16 +220,21 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     nodeRef.current = null; srcRef.current = null; streamRef.current = null;
     analyserRef.current = null; ctxRef.current = null; wakeRef.current = null;
     bufRef.current = []; bufLenRef.current = 0; sinceStepRef.current = 0; inFlightRef.current = 0;
-    setRecording(false); setStatus("idle"); setNowHearing([]);
+    setRecording(false); setStatus("idle"); setNowHearing([]); setNeedsLocation(false);
   }, []);
 
   const start = useCallback(async () => {
     setErr(null); setLiveLog([]); setSessionSpecies([]); setNowHearing([]);
-    setElapsed(0); setLocation(null);
+    setElapsed(0); setLocation(null); setNeedsLocation(false);
     posRef.current = null;
     const dev = deviceRef.current;
     postDevice(dev);
-    if (dev.mode !== "fixed") getPosition().then((p) => { posRef.current = p; });
+    if (dev.mode !== "fixed") getPosition().then(async (p) => {
+      if (!p) return;
+      posRef.current = { lat: p.lat, lon: p.lon, address: "" };
+      const place = await reverseGeocode(p.lat, p.lon); // name the location by its real address
+      if (place && posRef.current) posRef.current = { lat: p.lat, lon: p.lon, address: place.short };
+    });
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
@@ -287,10 +297,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<Ctx>(() => ({
     device, setDeviceName, setMode, setFixedLocation,
-    recording, status, elapsed, location, nowHearing, liveLog, sessionSpecies,
+    recording, status, elapsed, location, needsLocation, nowHearing, liveLog, sessionSpecies,
     analyzerUp, err, analyserRef, start, stop,
   }), [device, setDeviceName, setMode, setFixedLocation, recording, status, elapsed,
-    location, nowHearing, liveLog, sessionSpecies, analyzerUp, err, start, stop]);
+    location, needsLocation, nowHearing, liveLog, sessionSpecies, analyzerUp, err, start, stop]);
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
 }

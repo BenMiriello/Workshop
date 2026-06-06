@@ -126,18 +126,20 @@ def _conn() -> sqlite3.Connection:
             c.execute("INSERT OR IGNORE INTO devices(token,name,mode,created_at,last_seen) "
                       "VALUES(?,?,'adaptive',?,?)",
                       (s["token"], s["label"], s["created_at"], s["last_seen"]))
+    # Legacy detections have no real place. File them under a single "Untitled
+    # location" the operator must pin to a real address/GPS; never name a place
+    # after a device.
     legacy = c.execute(
         "SELECT DISTINCT station FROM browser_detections "
         "WHERE location_id IS NULL AND station IS NOT NULL AND station<>''").fetchall()
-    for row in legacy:
-        name = row["station"]
-        loc = c.execute("SELECT id FROM locations WHERE name=?", (name,)).fetchone()
-        lid = loc["id"] if loc else None
-        if lid is None:
-            lid = c.execute("INSERT INTO locations(name,created_at) VALUES(?,?)", (name, _now())).lastrowid
-        c.execute("UPDATE browser_detections SET location_id=?, "
-                  "device_name=COALESCE(device_name,station) "
-                  "WHERE station=? AND location_id IS NULL", (lid, name))
+    if legacy:
+        u = c.execute("SELECT id FROM locations WHERE name='Untitled location'").fetchone()
+        uid = u["id"] if u else c.execute(
+            "INSERT INTO locations(name,created_at) VALUES('Untitled location',?)", (_now(),)).lastrowid
+        for row in legacy:
+            c.execute("UPDATE browser_detections SET location_id=?, "
+                      "device_name=COALESCE(device_name,station) "
+                      "WHERE station=? AND location_id IS NULL", (uid, row["station"]))
     c.commit()
     return c
 
@@ -219,15 +221,20 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 def resolve_location(c: sqlite3.Connection, token: str, device_name: str, mode: str,
                      lat: float | None, lon: float | None, address: str,
-                     location_id: int | None) -> tuple[int, str]:
-    """Map a listening device + its current position to a location id+name.
+                     location_id: int | None) -> tuple[int | None, str | None]:
+    """Map a listening device + its current position to a REAL location id+name.
+
+    A location is always a real place - a verified street address or GPS point -
+    NEVER a device name. So this can return (None, None), which the caller turns
+    into a "needs_location" signal asking the user to pin one.
 
     fixed device   -> its pinned location (or the explicit location_id).
     adaptive + GPS -> the nearest existing location within its merge radius
                       (so a phone returning to the same yard re-uses it), else a
-                      new location is created at those coordinates.
-    no GPS          -> the device's last location, else a location named after
-                      the device (legacy single-"station" behaviour).
+                      new location is created at those coordinates (named by the
+                      reverse-geocoded address the client passes, else the coords).
+    no GPS          -> only the device's last REAL location is reused; we never
+                      invent a place out of thin air.
     """
     if mode == "fixed":
         lid = location_id
@@ -249,11 +256,13 @@ def resolve_location(c: sqlite3.Connection, token: str, device_name: str, mode: 
                 best, best_d = loc, d
         if best:
             return best["id"], best["name"]
-        name = (address or "").strip() or f"{lat:.4f}, {lon:.4f}"
+        name = (address or "").strip() or f"{lat:.5f}, {lon:.5f}"
         cur = c.execute("INSERT INTO locations(name,lat,lon,address,created_at) VALUES(?,?,?,?,?)",
                         (name, lat, lon, address or None, _now()))
         return cur.lastrowid, name
 
+    # No GPS: reuse the device's last real location if it has one, but never
+    # create a device-named placeholder.
     last = c.execute(
         "SELECT location_id FROM browser_detections WHERE device_token=? "
         "AND location_id IS NOT NULL ORDER BY id DESC LIMIT 1", (token,)).fetchone()
@@ -261,13 +270,7 @@ def resolve_location(c: sqlite3.Connection, token: str, device_name: str, mode: 
         row = c.execute("SELECT id,name FROM locations WHERE id=?", (last["location_id"],)).fetchone()
         if row:
             return row["id"], row["name"]
-
-    name = (device_name or "").strip() or "Unknown location"
-    row = c.execute("SELECT id,name FROM locations WHERE name=?", (name,)).fetchone()
-    if row:
-        return row["id"], row["name"]
-    cur = c.execute("INSERT INTO locations(name,created_at) VALUES(?,?)", (name, _now()))
-    return cur.lastrowid, name
+    return None, None
 
 
 def analyze_chunk(audio: bytes, content_type: str, station: str,
@@ -305,10 +308,13 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                 "name=COALESCE(NULLIF(excluded.name,''),devices.name), "
                 "mode=excluded.mode, last_seen=excluded.last_seen",
                 (token, dev_name, mode, ts, ts))
-        # Only resolve/create a location when there is something to attribute
-        # (a detection or a real GPS fix) so idle chunks don't spawn junk places.
+        # Only resolve a location when there is something to attribute (a
+        # detection or a real GPS fix). A location is always a real place, so
+        # this can come back empty; we then ask the UI to pin one.
         if detections or lat is not None:
             loc_id, loc_name = resolve_location(c, token, dev_name, mode, lat, lon, address, location_id)
+        if loc_id is None:
+            loc_name = None
         if detections and loc_id is not None:
             # The UI sends overlapping 3s windows every 1s for a live feel, so the
             # same continuous song lands in several consecutive chunks. Dedup on
@@ -347,7 +353,12 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                 "INSERT INTO stations(token,label,created_at,last_seen) VALUES(?,?,?,?) "
                 "ON CONFLICT(token) DO UPDATE SET label=excluded.label, last_seen=excluded.last_seen",
                 (token, dev_name, ts, ts))
-    return {"ts": ts, "detections": detections, "location": loc_name, "location_id": loc_id}
+    # "needs_location" = we heard something but have nowhere real to file it
+    # (adaptive device with no GPS and no prior place). The UI prompts the user
+    # to pin an address; the live detections still ride back so they see them.
+    needs_location = loc_id is None and bool(detections)
+    return {"ts": ts, "detections": detections, "location": loc_name,
+            "location_id": loc_id, "needs_location": needs_location}
 
 
 def recent(station: str, limit: int = 100, include_nonbird: bool = False) -> list[dict]:
@@ -602,6 +613,19 @@ def update_location(location_id: int, name: str | None = None, lat: float | None
         if sets:
             args.append(location_id)
             c.execute(f"UPDATE locations SET {','.join(sets)} WHERE id=?", args)
+        # If this location now sits on top of another (e.g. two devices' legacy
+        # places both pinned to the same address), absorb the others into it so
+        # there is one real place, not duplicates.
+        me = c.execute("SELECT lat,lon,radius_m FROM locations WHERE id=?", (location_id,)).fetchone()
+        if me and me["lat"] is not None and me["lon"] is not None:
+            for other in c.execute(
+                    "SELECT id,lat,lon,radius_m FROM locations "
+                    "WHERE id<>? AND lat IS NOT NULL AND lon IS NOT NULL", (location_id,)).fetchall():
+                d = _haversine_m(me["lat"], me["lon"], other["lat"], other["lon"])
+                if d <= max(me["radius_m"] or 40, other["radius_m"] or 40):
+                    c.execute("UPDATE browser_detections SET location_id=? WHERE location_id=?", (location_id, other["id"]))
+                    c.execute("UPDATE devices SET fixed_location_id=? WHERE fixed_location_id=?", (location_id, other["id"]))
+                    c.execute("DELETE FROM locations WHERE id=?", (other["id"],))
     return get_location(location_id)
 
 

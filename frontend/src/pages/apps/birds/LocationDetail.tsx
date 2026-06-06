@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  ChevronLeft, MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, Crosshair,
+  ChevronLeft, MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
 } from "lucide-react";
 import { useRecorder } from "./recorder";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./ui";
+import AddressPicker from "./AddressPicker";
+import type { Place } from "./geocode";
 
 // Everything heard at one place: the devices reporting here, summary, activity
 // over time and by hour, and the species list (each opens the bird page scoped
@@ -56,6 +58,12 @@ export default function LocationDetail() {
     return () => clearInterval(t);
   }, [refresh]);
 
+  // A location with no pinned place needs one - open the editor automatically.
+  const autoOpened = useRef(false);
+  useEffect(() => {
+    if (summary && summary.lat == null && !autoOpened.current) { autoOpened.current = true; setEditing(true); }
+  }, [summary]);
+
   const peak = useMemo(() => {
     if (!activity?.hourly?.length) return null;
     const m = activity.hourly.reduce((a, b) => (b.count > a.count ? b : a), activity.hourly[0]);
@@ -77,6 +85,15 @@ export default function LocationDetail() {
   return (
     <Wrap name={summary.name} isHome={isHome} onHome={setAsHome} onEdit={() => setEditing((v) => !v)}>
       {editing && <EditLocation summary={summary} onDone={() => { setEditing(false); refresh(); }} />}
+
+      {!editing && summary.lat == null && (
+        <div className="card" style={{ padding: ".7rem .9rem", marginBottom: "1rem", border: "1px solid #f5a62355",
+          display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
+          <AlertTriangle size={16} style={{ color: "#f5a623" }} />
+          <span style={{ flex: 1, fontSize: ".88rem" }}>This location has no real place yet.</span>
+          <button className="pill" onClick={() => setEditing(true)} style={{ cursor: "pointer" }}>Set address</button>
+        </div>
+      )}
 
       {summary.devices.length > 0 && (
         <p className="muted" style={{ margin: "0 0 .8rem", fontSize: ".85rem" }}>
@@ -139,62 +156,50 @@ export default function LocationDetail() {
 }
 
 function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => void }) {
-  const [name, setName] = useState(summary.name);
-  const [lat, setLat] = useState(summary.lat != null ? String(summary.lat) : "");
-  const [lon, setLon] = useState(summary.lon != null ? String(summary.lon) : "");
-  const [address, setAddress] = useState(summary.address || "");
+  const hasPlace = summary.lat != null && summary.lon != null;
+  const [name, setName] = useState(summary.name && summary.name !== "Untitled location" ? summary.name : "");
+  const [place, setPlace] = useState<Place | null>(
+    hasPlace ? { short: summary.name, label: summary.address || "", lat: summary.lat!, lon: summary.lon! } : null);
   const [busy, setBusy] = useState(false);
 
-  const useCurrent = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (p) => { setLat(p.coords.latitude.toFixed(5)); setLon(p.coords.longitude.toFixed(5)); },
-      () => {}, { enableHighAccuracy: true, timeout: 8000 });
-  };
-
   const save = () => {
+    if (!place) return;
     setBusy(true);
     const fd = new FormData();
     fd.append("location_id", String(summary.id));
-    fd.append("name", name);
-    if (lat) fd.append("lat", lat);
-    if (lon) fd.append("lon", lon);
-    fd.append("address", address);
+    fd.append("name", name.trim() || place.short);
+    fd.append("lat", String(place.lat));
+    fd.append("lon", String(place.lon));
+    fd.append("address", place.label || place.short);
     fetch(`${API}/location`, { method: "POST", body: fd }).finally(() => { setBusy(false); onDone(); });
   };
 
   return (
     <section className="card" style={{ ...card, border: "1px solid #1f6feb55" }}>
-      <h3 style={h3}>Edit location</h3>
-      <div style={{ display: "grid", gap: ".5rem", maxWidth: 420 }}>
-        <label className="muted" style={lbl}>Name
-          <input className="num-in" value={name} onChange={(e) => setName(e.target.value)} style={inp} />
-        </label>
-        <label className="muted" style={lbl}>Street address (optional)
-          <input className="num-in" value={address} placeholder="123 Main St" onChange={(e) => setAddress(e.target.value)} style={inp} />
-        </label>
-        <div style={{ display: "flex", gap: ".5rem" }}>
-          <label className="muted" style={{ ...lbl, flex: 1 }}>Latitude
-            <input className="num-in" value={lat} onChange={(e) => setLat(e.target.value)} style={inp} />
-          </label>
-          <label className="muted" style={{ ...lbl, flex: 1 }}>Longitude
-            <input className="num-in" value={lon} onChange={(e) => setLon(e.target.value)} style={inp} />
-          </label>
+      <h3 style={h3}>{hasPlace ? "Edit location" : "Set a real location"}</h3>
+      <div style={{ display: "grid", gap: ".6rem", maxWidth: 460 }}>
+        <div>
+          <div className="muted" style={lbl}>Address or GPS</div>
+          <AddressPicker value={place} onPick={setPlace} />
         </div>
+        <label className="muted" style={lbl}>Display name (optional)
+          <input className="num-in" value={name} placeholder={place?.short || "e.g. Home, Back deck"}
+            onChange={(e) => setName(e.target.value)} style={inp} />
+        </label>
         <p className="muted" style={{ fontSize: ".75rem", margin: 0 }}>
-          Pinning coordinates lets adaptive devices within ~40 m merge into this location automatically.
+          A location must be a verified address or GPS point. Adaptive devices within ~40 m merge into it automatically.
         </p>
         <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
-          <button className="pill" onClick={useCurrent} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
-            <Crosshair size={14} /> Use my current location
-          </button>
-          <button className="pill" onClick={save} disabled={busy}
-            style={{ cursor: "pointer", background: "#1f6feb", color: "#fff", borderColor: "#1f6feb", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
+          <button className="pill" onClick={save} disabled={busy || !place}
+            style={{ cursor: place ? "pointer" : "not-allowed", opacity: place ? 1 : 0.5,
+              background: "#1f6feb", color: "#fff", borderColor: "#1f6feb", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
             <Check size={14} /> Save
           </button>
-          <button className="pill" onClick={onDone} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
-            <X size={14} /> Cancel
-          </button>
+          {hasPlace && (
+            <button className="pill" onClick={onDone} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
+              <X size={14} /> Cancel
+            </button>
+          )}
         </div>
       </div>
     </section>
