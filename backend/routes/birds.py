@@ -115,18 +115,39 @@ async def analyze_health():
     return birds_analyze.analyzer_health()
 
 
+def _opt_float(v: str) -> float | None:
+    v = (v or "").strip()
+    if not v:
+        return None
+    try:
+        return float(v)
+    except ValueError:
+        return None
+
+
 @router.post("/analyze")
-async def analyze(audio: UploadFile, station: str = Form("Mic test"),
-                  token: str = Form(""), min_conf: float = Form(0.25)):
-    """Analyze one audio chunk from the web app and return its detections live.
-    The UI posts rolling ~3s chunks while recording."""
+async def analyze(audio: UploadFile, station: str = Form(""),
+                  token: str = Form(""), min_conf: float = Form(0.25),
+                  device_name: str = Form(""), mode: str = Form("adaptive"),
+                  lat: str = Form(""), lon: str = Form(""), address: str = Form(""),
+                  location_id: str = Form("")):
+    """Analyze one audio chunk from the web app and return its detections live,
+    attributed to the posting device and its resolved location. The UI posts
+    rolling 1s chunks while listening."""
     data = await audio.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty audio")
+    name = device_name.strip() or station.strip()
+    lid = None
+    if location_id.strip().isdigit():
+        lid = int(location_id.strip())
     try:
         result = birds_analyze.analyze_chunk(
-            data, audio.content_type or "", station.strip() or "Mic test",
-            token.strip(), max(0.05, min(min_conf, 0.99)))
+            data, audio.content_type or "", name or "Untitled device",
+            token.strip(), max(0.05, min(min_conf, 0.99)),
+            device_name=name, mode=(mode.strip() or "adaptive"),
+            lat=_opt_float(lat), lon=_opt_float(lon), address=address.strip(),
+            location_id=lid)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"analyze failed: {e}")
     return {"ok": True, **result}
@@ -177,6 +198,88 @@ async def station_activity(station: str, include_nonbird: bool = False):
 @router.get("/station/species-detail")
 async def station_species_detail(station: str, sci: str):
     return birds_analyze.species_detail(station, sci)
+
+
+# --------------------------------------------------------------------------
+# Devices, locations, the home source, and per-bird detail (new model)
+# --------------------------------------------------------------------------
+
+@router.get("/devices")
+async def devices_list():
+    return {"devices": birds_analyze.list_devices()}
+
+
+@router.get("/device")
+async def device_get(token: str):
+    return {"device": birds_analyze.get_device(token)}
+
+
+@router.post("/device")
+async def device_upsert(token: str = Form(...), name: str = Form(None),
+                        mode: str = Form(None), fixed_location_id: str = Form(None)):
+    fid = int(fixed_location_id) if (fixed_location_id or "").strip().isdigit() else (
+        0 if (fixed_location_id or "").strip() == "0" else None)
+    dev = birds_analyze.upsert_device(token.strip(), name=name, mode=mode, fixed_location_id=fid)
+    return {"ok": True, "device": dev}
+
+
+@router.get("/locations")
+async def locations_list(include_nonbird: bool = False):
+    return birds_analyze.list_locations(include_nonbird)
+
+
+@router.get("/location")
+async def location_get(location_id: int):
+    loc = birds_analyze.get_location(location_id)
+    if not loc:
+        raise HTTPException(status_code=404, detail="location not found")
+    return loc
+
+
+@router.post("/location")
+async def location_create_or_update(location_id: str = Form(None), name: str = Form(None),
+                                    lat: str = Form(None), lon: str = Form(None),
+                                    address: str = Form(None)):
+    flat, flon = _opt_float(lat or ""), _opt_float(lon or "")
+    if (location_id or "").strip().isdigit():
+        loc = birds_analyze.update_location(int(location_id), name=name, lat=flat,
+                                            lon=flon, address=address)
+        if not loc:
+            raise HTTPException(status_code=404, detail="location not found")
+        return {"ok": True, "location": loc}
+    return {"ok": True, "location": birds_analyze.create_location(
+        (name or "New location"), lat=flat, lon=flon, address=(address or ""))}
+
+
+@router.get("/location/summary")
+async def location_summary_ep(location_id: int, include_nonbird: bool = False):
+    return birds_analyze.location_summary(location_id, include_nonbird)
+
+
+@router.get("/location/species")
+async def location_species_ep(location_id: int, include_nonbird: bool = False):
+    return {"location_id": location_id, "species": birds_analyze.location_species(location_id, include_nonbird)}
+
+
+@router.get("/location/activity")
+async def location_activity_ep(location_id: int, include_nonbird: bool = False):
+    return {"location_id": location_id, **birds_analyze.location_activity(location_id, include_nonbird)}
+
+
+@router.get("/bird")
+async def bird_detail_ep(sci: str, location_id: int | None = None):
+    return birds_analyze.bird_detail(sci, location_id)
+
+
+@router.get("/home")
+async def home_get():
+    return {"home": birds_analyze.get_setting("home_source")}
+
+
+@router.post("/home")
+async def home_set(source: str = Form(...)):
+    birds_analyze.set_setting("home_source", source.strip())
+    return {"ok": True, "home": source.strip()}
 
 
 # --------------------------------------------------------------------------
