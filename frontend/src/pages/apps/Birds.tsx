@@ -1,334 +1,303 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
-  Bird, ChevronLeft, Sunrise, Volume2, TrendingUp, Sparkles, MapPin, SlidersHorizontal,
+  Bird, ChevronLeft, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
+  SlidersHorizontal, Smartphone,
 } from "lucide-react";
-import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from "recharts";
-import MicTest from "./birds/MicTest";
+import { useRecorder } from "./birds/recorder";
+import Spectrogram from "./birds/Spectrogram";
 import { useShowNonBird, nonBirdQuery } from "./birds/settings";
+import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./birds/ui";
 
-// Backyard bird-song dashboard. Reads the BirdNET-Go detection DB through the
-// Workshop backend (/api/birds/*). PRIVATE build (this one) shows full fidelity:
-// audio playback, exact detection times. The public Cloudflare build is a
-// SEPARATE app fed only the sanitized aggregate dataset (no audio, no times,
-// no location) - see birdnet/public-site. PUBLIC flips off the sensitive bits
-// if this same component is ever reused there.
+// Yard Birds home. Dynamic across sources: the always-on yard (Pi) plus every
+// device-created location. Whichever source you mark home is shown by default.
+// Two actions: listen on this device, or browse locations. The live panel (with
+// a Merlin-style spectrogram) appears while this device is listening.
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
 
-const API = "/api/birds";
-
-type Summary = {
-  available: boolean;
-  total_detections: number;
-  species_count: number;
-  first_date?: string | null;
-  last_date?: string | null;
-  active_days?: number;
-  today: { detections: number; species: number; date: string | null };
-  last_detection: { date: string; time: string; common_name: string; scientific_name: string; confidence: number } | null;
-};
-type Species = {
-  scientific_name: string; common_name: string; species_code: string;
-  count: number; first_date: string; last_date: string; max_conf: number; avg_conf: number;
-};
-type Arrival = { scientific_name: string; common_name: string; first_date: string; count: number; max_conf: number };
-type Detection = {
-  id: number; date: string; time: string; common_name: string; scientific_name: string;
-  species_code: string; confidence: number; clip_name: string | null;
-};
-
-const fmtPct = (c: number) => `${Math.round(c * 100)}%`;
-const fmtDate = (d?: string | null) => (d ? d : "—");
-
-async function jget<T>(path: string): Promise<T> {
-  const r = await fetch(`${API}${path}`);
-  if (!r.ok) throw new Error(`${r.status}`);
-  return r.json() as Promise<T>;
-}
+type Loc = { id: number; name: string; detections: number; species: number; devices: string[] };
+type Source = { key: string; name: string; kind: "yard" | "loc"; id?: number };
 
 export default function Birds() {
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [species, setSpecies] = useState<Species[]>([]);
-  const [arrivals, setArrivals] = useState<Arrival[]>([]);
-  const [hourly, setHourly] = useState<{ hour: number; count: number }[]>([]);
-  const [daily, setDaily] = useState<{ date: string; count: number; species: number }[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
-  const [detections, setDetections] = useState<Detection[]>([]);
-  const [sort, setSort] = useState<"count" | "recent" | "conf">("count");
-  const [err, setErr] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const [locs, setLocs] = useState<Loc[]>([]);
+  const [home, setHome] = useState<string | null>(null);
+  const [yardAvailable, setYardAvailable] = useState(false);
   const [showNonBird] = useShowNonBird();
   const nb = nonBirdQuery(showNonBird);
+  const rec = useRecorder();
 
-  useEffect(() => {
-    Promise.all([
-      jget<Summary>(`/summary?_=1${nb}`),
-      jget<{ species: Species[] }>(`/species?_=1${nb}`),
-      jget<{ arrivals: Arrival[] }>(`/recent-arrivals?days=14${nb}`),
-      jget<{ hourly: { hour: number; count: number }[] }>(`/activity/hourly?days=30${nb}`),
-      jget<{ daily: { date: string; count: number; species: number }[] }>(`/activity/daily?days=45${nb}`),
-    ])
-      .then(([s, sp, ar, h, d]) => {
-        setSummary(s); setSpecies(sp.species); setArrivals(ar.arrivals);
-        setHourly(h.hourly); setDaily(d.daily);
-      })
-      .catch((e) => setErr(String(e)));
+  const load = useCallback(() => {
+    jget<{ locations: Loc[]; home: string | null }>(`/locations?_=1${nb}`)
+      .then((d) => { setLocs(d.locations); setHome(d.home); }).catch(() => {});
+    jget<{ available: boolean; total_detections: number }>(`/summary?_=1`)
+      .then((s) => setYardAvailable(s.available && s.total_detections > 0)).catch(() => {});
   }, [nb]);
+  useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
 
-  const loadDetections = useCallback((sci: string) => {
-    setSelected(sci);
-    jget<{ detections: Detection[] }>(`/detections?species=${encodeURIComponent(sci)}&limit=50${nb}`)
-      .then((d) => setDetections(d.detections))
-      .catch(() => setDetections([]));
-  }, [nb]);
+  const sources = useMemo<Source[]>(() => {
+    const out: Source[] = [];
+    if (yardAvailable) out.push({ key: "yard", name: "Yard", kind: "yard" });
+    for (const L of locs) out.push({ key: `loc:${L.id}`, name: L.name, kind: "loc", id: L.id });
+    return out;
+  }, [yardAvailable, locs]);
 
-  const sortedSpecies = useMemo(() => {
-    const s = [...species];
-    if (sort === "count") s.sort((a, b) => b.count - a.count);
-    else if (sort === "recent") s.sort((a, b) => b.last_date.localeCompare(a.last_date));
-    else s.sort((a, b) => b.max_conf - a.max_conf);
-    return s;
-  }, [species, sort]);
+  // Selected source: explicit ?source=, else home, else first available.
+  const selKey = params.get("source") || home || sources[0]?.key || "";
+  const selected = sources.find((s) => s.key === selKey) || sources[0] || null;
 
-  const peakHour = useMemo(() => {
-    if (!hourly.length) return null;
-    return hourly.reduce((m, h) => (h.count > m.count ? h : m), hourly[0]);
-  }, [hourly]);
+  const setHomeSource = useCallback((key: string) => {
+    const fd = new FormData(); fd.append("source", key);
+    fetch(`${API}/home`, { method: "POST", body: fd }).then(() => setHome(key)).catch(() => {});
+  }, []);
 
-  if (err) return <Shell><p className="error">Could not load bird data: {err}</p></Shell>;
-  if (!summary) return <Shell><p className="muted">Loading…</p></Shell>;
-
-  if (!summary.available || summary.total_detections === 0) {
-    return (
-      <Shell>
-        <div className="card" style={{ padding: "1.5rem" }}>
-          <h3 style={{ marginTop: 0 }}>No detections yet</h3>
-          <p className="muted">
-            The capture node and BirdNET-Go are not reporting yet. Once the Pi is
-            streaming and the Brain is detecting, species and activity will appear
-            here automatically. Nothing to configure in this view.
-          </p>
-        </div>
-      </Shell>
-    );
-  }
-
-  return (
-    <Shell>
-      {/* Summary stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: "0.75rem", marginBottom: "1rem" }}>
-        <Stat label="Species" value={summary.species_count} />
-        <Stat label="Detections" value={summary.total_detections.toLocaleString()} />
-        <Stat label="Today" value={`${summary.today.detections} · ${summary.today.species} sp`} />
-        <Stat label="Active days" value={summary.active_days ?? 0} />
-      </div>
-
-      {summary.last_detection && (
-        <p className="muted" style={{ margin: "0 0 1rem" }}>
-          Last: <strong>{summary.last_detection.common_name}</strong> at{" "}
-          {summary.last_detection.time} ({fmtPct(summary.last_detection.confidence)})
-        </p>
-      )}
-
-      {/* Recent arrivals */}
-      {arrivals.length > 0 && (
-        <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
-          <h3 style={{ margin: "0 0 0.6rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <Sparkles size={18} strokeWidth={1.8} /> Recent arrivals
-          </h3>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem" }}>
-            {arrivals.map((a) => (
-              <button key={a.scientific_name} className="pill" onClick={() => loadDetections(a.scientific_name)}
-                style={{ cursor: "pointer", border: "1px solid var(--border,#2a3344)" }}>
-                {a.common_name} <span className="muted">· first {fmtDate(a.first_date)}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Diel activity */}
-      <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
-        <h3 style={{ margin: "0 0 0.4rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <Sunrise size={18} strokeWidth={1.8} /> Activity by hour
-          {peakHour && <span className="muted" style={{ fontWeight: 400, fontSize: "0.85rem" }}>
-            · peak {String(peakHour.hour).padStart(2, "0")}:00</span>}
-        </h3>
-        <div style={{ height: 160 }}>
-          <ResponsiveContainer>
-            <BarChart data={hourly} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border,#222b3a)" />
-              <XAxis dataKey="hour" tick={{ fontSize: 11 }} interval={1} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip labelFormatter={(h) => `${String(h).padStart(2, "0")}:00`} />
-              <Bar dataKey="count" fill="#4ea1ff" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
-
-      {/* Daily activity */}
-      <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
-        <h3 style={{ margin: "0 0 0.4rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-          <TrendingUp size={18} strokeWidth={1.8} /> Detections per day
-        </h3>
-        <div style={{ height: 160 }}>
-          <ResponsiveContainer>
-            <BarChart data={daily} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border,#222b3a)" />
-              <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={(d) => d.slice(5)} minTickGap={24} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
-              <Bar dataKey="count" fill="#34d399" radius={[2, 2, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </section>
-
-      {/* Species table */}
-      <section className="card" style={{ padding: "1rem" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.6rem" }}>
-          <h3 style={{ margin: 0 }}>Species ({species.length})</h3>
-          <div style={{ display: "flex", gap: "0.3rem" }}>
-            {(["count", "recent", "conf"] as const).map((k) => (
-              <button key={k} className="pill" onClick={() => setSort(k)}
-                style={{ cursor: "pointer", opacity: sort === k ? 1 : 0.55 }}>
-                {k === "count" ? "Most" : k === "recent" ? "Recent" : "Confidence"}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
-            <thead>
-              <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                <th style={th}>Bird</th><th style={th}>Count</th>
-                <th style={th}>First</th><th style={th}>Last</th><th style={th}>Best</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedSpecies.map((s) => (
-                <tr key={s.scientific_name}
-                  onClick={() => loadDetections(s.scientific_name)}
-                  style={{ cursor: "pointer", borderTop: "1px solid var(--border,#1e2636)",
-                    background: selected === s.scientific_name ? "rgba(78,161,255,0.08)" : undefined }}>
-                  <td style={td}>
-                    <div>{s.common_name}</div>
-                    <div className="muted" style={{ fontStyle: "italic", fontSize: "0.78rem" }}>{s.scientific_name}</div>
-                  </td>
-                  <td style={td}>{s.count}</td>
-                  <td style={td}>{fmtDate(s.first_date)}</td>
-                  <td style={td}>{fmtDate(s.last_date)}</td>
-                  <td style={td}>{fmtPct(s.max_conf)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      {/* Per-species detections + audio (PRIVATE only) */}
-      {selected && (
-        <section className="card" style={{ padding: "1rem", marginTop: "1rem" }}>
-          <h3 style={{ marginTop: 0 }}>
-            {species.find((s) => s.scientific_name === selected)?.common_name ?? selected}
-            <span className="muted" style={{ fontWeight: 400 }}> · {detections.length} recent</span>
-          </h3>
-          {detections.length === 0 && <p className="muted">No detections loaded.</p>}
-          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-            {detections.map((d) => (
-              <li key={d.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem",
-                padding: "0.4rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
-                <span className="mono" style={{ fontSize: "0.82rem", minWidth: 150 }}>
-                  {d.date} {PUBLIC ? "" : d.time}
-                </span>
-                <span className="pill">{fmtPct(d.confidence)}</span>
-                {!PUBLIC && d.clip_name && (
-                  <audio controls preload="none" src={`${API}/clip/${d.id}`} style={{ height: 30, flex: 1 }}>
-                    <Volume2 size={14} />
-                  </audio>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </Shell>
-  );
-}
-
-function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".75rem" }}>
         <Link to="/apps" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
           <ChevronLeft size={18} /> Apps
         </Link>
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem" }}>
-        <h2 style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: 0 }}>
+        <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
           <Bird size={24} strokeWidth={1.8} /> Yard Birds
         </h2>
         {!PUBLIC && (
-          <Link to="/apps/birds/settings" className="muted"
-            style={{ display: "inline-flex", alignItems: "center", gap: ".3rem", fontSize: ".85rem" }}>
+          <Link to="/apps/birds/settings" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".3rem", fontSize: ".85rem" }}>
             <SlidersHorizontal size={15} /> Settings
           </Link>
         )}
       </div>
-      {/* Live mic-test tool is always available at the top — it needs no
-          hardware and is the way to test detection from a phone/laptop. */}
-      {!PUBLIC && <MicTest />}
-      {!PUBLIC && <StationsList />}
-      {children}
+
+      {/* Actions */}
+      {!PUBLIC && (
+        <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", margin: ".25rem 0 1rem" }}>
+          <ListenButton />
+          <Link to="/apps/birds/locations" className="pill" style={btn}>
+            <List size={16} /> Locations
+          </Link>
+          <Link to="/apps/birds/devices" className="pill" style={btn}>
+            <Smartphone size={16} /> Devices
+          </Link>
+        </div>
+      )}
+
+      {!PUBLIC && rec.recording && <LivePanel />}
+
+      {/* Source selector (only when there's a choice) */}
+      {sources.length > 1 && (
+        <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+          {sources.map((s) => {
+            const active = s.key === selected?.key;
+            const isHome = s.key === home;
+            return (
+              <span key={s.key} className="pill"
+                style={{ display: "inline-flex", alignItems: "center", gap: ".35rem", cursor: "pointer",
+                  opacity: active ? 1 : 0.6, borderColor: active ? "#1f6feb" : undefined }}>
+                <span onClick={() => setParams({ source: s.key })}>{s.kind === "yard" ? <Radio size={12} style={{ verticalAlign: "-2px" }} /> : null} {s.name}</span>
+                <Star size={13} fill={isHome ? "#f5c518" : "none"} color={isHome ? "#f5c518" : "currentColor"}
+                  onClick={() => setHomeSource(s.key)} style={{ cursor: "pointer" }} />
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {selected
+        ? <Dashboard source={selected} nb={nb} />
+        : !rec.recording && (
+          <div className="card" style={{ padding: "1.5rem", textAlign: "center" }}>
+            <p className="muted" style={{ margin: 0 }}>
+              No sources yet. Tap <strong>Listen</strong> to detect birds from this device, or set up the yard node.
+            </p>
+          </div>
+        )}
     </div>
   );
 }
 
-type StationRow = { station: string; detections: number; species: number; last_ts: string | null };
+// --- Listen button (handles first-run device naming) ---------------------
+function ListenButton() {
+  const rec = useRecorder();
+  const [naming, setNaming] = useState(false);
+  const [name, setName] = useState("");
 
-function StationsList() {
-  const [stations, setStations] = useState<StationRow[]>([]);
-  const [showNonBird] = useShowNonBird();
-  const nb = nonBirdQuery(showNonBird);
-  useEffect(() => {
-    const load = () => fetch(`${API}/stations?_=1${nb}`).then((r) => r.json())
-      .then((d) => setStations(d.stations || [])).catch(() => {});
-    load();
-    const t = setInterval(load, 8000); // auto-update the list as devices report
-    return () => clearInterval(t);
-  }, [nb]);
-  if (stations.length === 0) return null;
+  if (rec.recording) {
+    return <button className="pill" onClick={rec.stop} style={btn}><Square size={15} /> Stop listening</button>;
+  }
+  if (naming) {
+    const go = () => { const n = name.trim(); if (!n) return; rec.setDeviceName(n); setNaming(false); rec.start(); };
+    return (
+      <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center", flexWrap: "wrap" }}>
+        <input className="num-in" autoFocus placeholder="Name this device (e.g. My phone)" value={name}
+          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} style={{ minWidth: 200 }} />
+        <button className="pill" onClick={go} style={{ ...btn, background: "#1f6feb", color: "#fff", borderColor: "#1f6feb" }}>Start</button>
+      </span>
+    );
+  }
+  const onClick = () => { if (!rec.device.name) setNaming(true); else rec.start(); };
   return (
-    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
-      <h3 style={{ margin: "0 0 0.6rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-        <MapPin size={18} strokeWidth={1.8} /> Your locations
-      </h3>
-      <div style={{ display: "grid", gap: "0.5rem" }}>
-        {stations.map((s) => (
-          <Link key={s.station} to={`/apps/birds/station?s=${encodeURIComponent(s.station)}`}
-            className="card" style={{ padding: "0.6rem 0.8rem", display: "flex", justifyContent: "space-between",
-              alignItems: "center", textDecoration: "none", color: "inherit" }}>
-            <span style={{ fontWeight: 500 }}>{s.station}</span>
-            <span className="muted" style={{ fontSize: "0.82rem" }}>
-              {s.species} species · {s.detections} detections
-            </span>
-          </Link>
-        ))}
+    <button className="pill" onClick={onClick} disabled={rec.analyzerUp === false}
+      style={{ ...btn, background: "#1f6feb", color: "#fff", borderColor: "#1f6feb" }}>
+      <Mic size={16} /> Listen on this device
+    </button>
+  );
+}
+
+// --- Live panel: spectrogram + now hearing + session species -------------
+function LivePanel() {
+  const rec = useRecorder();
+  const [showNonBird] = useShowNonBird();
+  const species = showNonBird ? rec.sessionSpecies : rec.sessionSpecies.filter((s) => s.is_bird);
+  const hearing = (showNonBird ? rec.nowHearing : rec.nowHearing.filter((d) => d.is_bird))
+    .sort((a, b) => b.confidence - a.confidence);
+
+  return (
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem", border: "1px solid #1f6feb55" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".6rem", flexWrap: "wrap" }}>
+        {rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "#16a34a" }} />}
+        <strong>{rec.device.name || "This device"}</strong>
+        <span className="muted" style={{ fontSize: ".85rem" }}>{rec.location ? `· ${rec.location}` : "· locating…"}</span>
+        <button className="pill" onClick={rec.stop} style={{ ...btn, marginLeft: "auto" }}><Square size={14} /> Stop</button>
       </div>
+
+      <Spectrogram height={150} />
+
+      <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
+        {hearing.length > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
+            <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
+            {hearing.slice(0, 4).map((d, i) => (
+              <span key={i} className="pill" style={{ background: "#16331f", borderColor: "#16a34a55" }}>
+                {d.common_name} <span className="muted">{pct(d.confidence)}</span>
+              </span>
+            ))}
+          </div>
+        ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening… make a bird sound or wait for one.</span>}
+      </div>
+
+      {species.length > 0 && (
+        <>
+          <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
+            {species.map((s) => (
+              <SpeciesLink key={s.scientific_name} sci={s.scientific_name}>
+                <span className="pill" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.6, borderStyle: "dashed", cursor: "pointer" }}>
+                  {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
+                </span>
+              </SpeciesLink>
+            ))}
+          </div>
+        </>
+      )}
+      {rec.err && <p className="error" style={{ marginBottom: 0 }}>{rec.err}</p>}
+      {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
     </section>
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+// --- Dashboard: stats + activity + species for any source ----------------
+type Norm = {
+  species: number; detections: number; today: number; active_days: number;
+  last: { common_name: string; confidence: number; at: string } | null;
+  daily: { date: string; count: number }[];
+  hourly: { hour: number; count: number }[];
+  speciesList: { scientific_name: string; common_name: string; count: number; max_conf: number; days_seen?: number; last_date?: string }[];
+};
+
+function Dashboard({ source, nb }: { source: Source; nb: string }) {
+  const [d, setD] = useState<Norm | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    if (source.kind === "loc" && source.id) {
+      const id = source.id;
+      Promise.all([
+        jget<any>(`/location/summary?location_id=${id}${nb}`),
+        jget<any>(`/location/activity?location_id=${id}${nb}`),
+        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}`),
+      ]).then(([s, a, sp]) => setD({
+        species: s.species, detections: s.detections, today: s.today, active_days: s.active_days,
+        last: s.last_detection, daily: a.daily, hourly: a.hourly, speciesList: sp.species,
+      })).catch((e) => setErr(String(e)));
+    } else {
+      Promise.all([
+        jget<any>(`/summary?_=1${nb}`),
+        jget<{ hourly: any[] }>(`/activity/hourly?days=30${nb}`),
+        jget<{ daily: any[] }>(`/activity/daily?days=45${nb}`),
+        jget<{ species: any[] }>(`/species?_=1${nb}`),
+      ]).then(([s, h, dd, sp]) => setD({
+        species: s.species_count, detections: s.total_detections, today: s.today?.detections || 0,
+        active_days: s.active_days || 0,
+        last: s.last_detection ? { common_name: s.last_detection.common_name, confidence: s.last_detection.confidence, at: s.last_detection.time } : null,
+        daily: dd.daily, hourly: h.hourly, speciesList: sp.species,
+      })).catch((e) => setErr(String(e)));
+    }
+  }, [source.kind, source.id, nb]);
+
+  useEffect(() => { setD(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
+
+  const peak = useMemo(() => {
+    if (!d?.hourly?.length) return null;
+    const m = d.hourly.reduce((a, b) => (b.count > a.count ? b : a), d.hourly[0]);
+    return m.count > 0 ? m : null;
+  }, [d]);
+
+  if (err && !d) return <p className="error">Could not load: {err}</p>;
+  if (!d) return <p className="muted">Loading…</p>;
+  const locId = source.kind === "loc" ? source.id : undefined;
+
   return (
-    <div className="card" style={{ padding: "0.75rem 1rem" }}>
-      <div className="muted" style={{ fontSize: "0.78rem" }}>{label}</div>
-      <div style={{ fontSize: "1.3rem", fontWeight: 600 }}>{value}</div>
-    </div>
+    <>
+      <StatGrid>
+        <Stat label="Species" value={d.species} />
+        <Stat label="Detections" value={d.detections.toLocaleString()} />
+        <Stat label="Today" value={d.today} />
+        <Stat label="Active days" value={d.active_days} />
+      </StatGrid>
+      {d.last && (
+        <p className="muted" style={{ margin: "0 0 1rem" }}>
+          Last: <strong>{d.last.common_name}</strong> at {d.last.at} ({pct(d.last.confidence)})
+        </p>
+      )}
+
+      {d.daily.length > 0 && (
+        <section className="card" style={card}>
+          <h3 style={h3}><TrendingUp size={17} /> Detections per day</h3>
+          <Chart data={d.daily} x="date" fill="#34d399" xfmt={(x: string) => x.slice(5)} />
+        </section>
+      )}
+      <section className="card" style={card}>
+        <h3 style={h3}><Sunrise size={17} /> Activity by hour
+          {peak && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}
+        </h3>
+        <Chart data={d.hourly} x="hour" fill="#4ea1ff" xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
+      </section>
+
+      <section className="card" style={card}>
+        <h3 style={h3}>Species ({d.speciesList.length})</h3>
+        {d.speciesList.length === 0 && <p className="muted">Nothing yet.</p>}
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {d.speciesList.map((s) => (
+            <SpeciesLink key={s.scientific_name} sci={s.scientific_name} locationId={locId}>
+              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
+                <BirdThumb sci={s.scientific_name} common={s.common_name} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block" }}>{s.common_name}</span>
+                  <span className="muted" style={{ fontStyle: "italic", fontSize: ".78rem" }}>{s.scientific_name}</span>
+                </span>
+                <span className="muted" style={{ fontSize: ".8rem", textAlign: "right" }}>
+                  {s.count}×<br />best {pct(s.max_conf)}
+                </span>
+              </div>
+            </SpeciesLink>
+          ))}
+        </div>
+      </section>
+    </>
   );
 }
 
-const th: React.CSSProperties = { padding: "0.3rem 0.5rem", fontWeight: 500, fontSize: "0.8rem" };
-const td: React.CSSProperties = { padding: "0.45rem 0.5rem", verticalAlign: "top" };
+const btn: React.CSSProperties = { cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".4rem" };
+const card: React.CSSProperties = { padding: "1rem", marginBottom: "1rem" };
+const h3: React.CSSProperties = { margin: "0 0 .4rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" };

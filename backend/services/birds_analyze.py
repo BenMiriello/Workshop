@@ -27,6 +27,10 @@ def _now() -> str:
 BROWSER_DB = Path(os.environ.get("BIRDNET_BROWSER_DB", "/home/clawd-a/birdnet/data/browser-stations.db"))
 ANALYZER_URL = os.environ.get("BIRDNET_ANALYZER_URL", "http://127.0.0.1:8012")
 
+# Same species at the same location within this many seconds is treated as one
+# continuing detection (the live UI sends overlapping 3s windows every 1s).
+DEDUP_S = 2.5
+
 # BirdNET GLOBAL_6K_V2.4 recognizes some non-avian classes. We always STORE them
 # (the model keeps detecting), but flag them so the UI can hide them by default.
 # Two groups: (1) noise/human/machine pseudo-classes, which use a self-named
@@ -306,15 +310,37 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
         if detections or lat is not None:
             loc_id, loc_name = resolve_location(c, token, dev_name, mode, lat, lon, address, location_id)
         if detections and loc_id is not None:
-            c.executemany(
-                "INSERT INTO browser_detections(station,ts,scientific_name,common_name,"
-                "confidence,start_s,end_s,device_token,is_bird,device_name,location_id,lat,lon) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                [(loc_name, ts, d["scientific_name"], d["common_name"], d["confidence"],
-                  d.get("start_s", 0.0), d.get("end_s", 0.0), token, 1 if d["is_bird"] else 0,
-                  dev_name, loc_id, lat, lon)
-                 for d in detections],
-            )
+            # The UI sends overlapping 3s windows every 1s for a live feel, so the
+            # same continuous song lands in several consecutive chunks. Dedup on
+            # store: skip a detection if the same species was just recorded at
+            # this location within DEDUP_S. It still rides back in the live
+            # response (flagged stored=False) so the UI shows it without
+            # inflating stored counts.
+            to_store = []
+            for d in detections:
+                prev = c.execute(
+                    "SELECT ts FROM browser_detections WHERE location_id=? AND scientific_name=? "
+                    "ORDER BY id DESC LIMIT 1", (loc_id, d["scientific_name"])).fetchone()
+                dup = False
+                if prev:
+                    try:
+                        dup = (datetime.fromisoformat(ts) -
+                               datetime.fromisoformat(prev["ts"])).total_seconds() < DEDUP_S
+                    except ValueError:
+                        dup = False
+                d["stored"] = not dup
+                if not dup:
+                    to_store.append(d)
+            if to_store:
+                c.executemany(
+                    "INSERT INTO browser_detections(station,ts,scientific_name,common_name,"
+                    "confidence,start_s,end_s,device_token,is_bird,device_name,location_id,lat,lon) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    [(loc_name, ts, d["scientific_name"], d["common_name"], d["confidence"],
+                      d.get("start_s", 0.0), d.get("end_s", 0.0), token, 1 if d["is_bird"] else 0,
+                      dev_name, loc_id, lat, lon)
+                     for d in to_store],
+                )
         # Mirror into the legacy stations table so old /station/* keeps resolving.
         if token and dev_name:
             c.execute(

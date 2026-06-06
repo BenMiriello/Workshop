@@ -4,19 +4,19 @@ import AgentConfig from "./pages/AgentConfig";
 import Projects from "./pages/Projects";
 import Apps from "./pages/Apps";
 import Finance from "./pages/apps/Finance";
+import Budget from "./pages/apps/Budget";
 import LocationApp from "./pages/apps/Location";
+import Birds from "./pages/apps/Birds";
+import Locations from "./pages/apps/birds/Locations";
+import LocationDetail from "./pages/apps/birds/LocationDetail";
+import Devices from "./pages/apps/birds/Devices";
+import BirdDetail from "./pages/apps/birds/BirdDetail";
+import BirdSettings from "./pages/apps/birds/BirdSettings";
+import { RecorderProvider } from "./pages/apps/birds/recorder";
+import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
-
-// Commute is its own app at https://debian.tail38e62e.ts.net:8444/.
-// It is NOT a tab inside Workshop — apps live at their own ports. The
-// Apps tab has the Commute tile; tapping it opens the standalone app.
-const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
-
-function RedirectExternal({ to }: { to: string }) {
-  if (typeof window !== "undefined") window.location.replace(to);
-  return null;
-}
+import Commute from "./pages/Commute";
 
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
 // INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
@@ -24,6 +24,7 @@ function RedirectExternal({ to }: { to: string }) {
 
 export default function App() {
   return (
+    <RecorderProvider>
     <div className="app">
       <header>
         <h1>
@@ -48,9 +49,17 @@ export default function App() {
           <Route path="/projects" element={<Projects />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/apps/finance" element={<Finance />} />
+          <Route path="/apps/budget" element={<Budget />} />
           <Route path="/apps/location" element={<LocationApp />} />
-          {/* Any /commute link from old bookmarks → bounce to standalone Commute app at :8444. */}
-          <Route path="/commute" element={<RedirectExternal to={COMMUTE_URL} />} />
+          <Route path="/apps/birds" element={<Birds />} />
+          <Route path="/apps/birds/locations" element={<Locations />} />
+          <Route path="/apps/birds/location" element={<LocationDetail />} />
+          <Route path="/apps/birds/devices" element={<Devices />} />
+          <Route path="/apps/birds/bird" element={<BirdDetail />} />
+          {/* Old per-station route now resolves to the location page by name is gone;
+              StationDetail is superseded by LocationDetail (by id). */}
+          <Route path="/apps/birds/settings" element={<BirdSettings />} />
+          <Route path="/commute" element={<Commute />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/activity" element={<Activity />} />
           {/* Direct-access shortcuts kept for bookmarks/links — they redirect into Activity with the right sub-tab. */}
@@ -62,6 +71,8 @@ export default function App() {
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />
         </Routes>
       </main>
+      <RecorderBar />
     </div>
+    </RecorderProvider>
   );
 }
