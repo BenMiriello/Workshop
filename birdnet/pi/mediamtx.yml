@@ -1,0 +1,45 @@
+# mediamtx on the Pi capture node. One job: take the USB sound card's mono mic
+# input and publish it as an RTSP stream on the tailnet for the Brain to pull.
+#
+# Why mediamtx (over go2rtc): single static Go binary, it IS an RTSP server (no
+# separate server + client to babysit), and it can own the ffmpeg capture
+# process itself via runOnInit with auto-restart. go2rtc shines at restreaming
+# many sources to WebRTC/HLS; we have exactly one mic to one RTSP consumer, so
+# mediamtx is the smaller, sturdier fit.
+#
+# Audio format rationale: 48kHz mono PCM. The BirdNET model is 16-bit, so 24-bit
+# is pointless; PCM (not mp3) because lossy compression measurably hurts
+# detection. L16 big-endian (pcm_s16be) is the RTP-native PCM payload.
+
+logLevel: info
+logDestinations: [stdout]
+
+# RTSP only. No HLS/WebRTC/RTMP needed for a single audio feed.
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]
+hls: no
+webrtc: no
+rtmp: no
+srt: no
+
+# Bind to the tailnet only is enforced at the Pi firewall / by the fact that
+# :8554 is reachable only over WireGuard in practice. mediamtx itself listens on
+# all interfaces; lock down with the Pi's ufw if the yard wifi is shared.
+
+paths:
+  yard:
+    # mediamtx starts and supervises ffmpeg. ffmpeg reads ALSA and publishes
+    # back into this same path over loopback RTSP. ${MTX_ALSA_DEVICE} comes from
+    # the systemd unit env (default plughw:1,0; confirm with `arecord -l`).
+    # plughw: lets ALSA convert the card's native rate/format to 48k mono s16.
+    runOnInit: >
+      ffmpeg -hide_banner -loglevel warning
+      -f alsa -channels 1 -sample_rate 48000 -i ${MTX_ALSA_DEVICE}
+      -af "highpass=f=80, afftdn=nf=-25"
+      -c:a pcm_s16be
+      -f rtsp -rtsp_transport tcp rtsp://localhost:$RTSP_PORT/yard
+    runOnInitRestart: yes
+    # Note on the -af chain: a gentle 80Hz highpass kills wind/handling rumble
+    # and an mild FFT denoise trims the noise floor. Keep it light; aggressive
+    # denoise eats quiet bird calls. Drop the -af entirely if detection suffers.

@@ -1,0 +1,11 @@
+# Sanitizing publish job (oneshot, driven by birds-publish.timer). Install on
+# the Brain. Pushes the scrubbed dataset to Cloudflare R2 on a schedule.
+[Unit]
+Description=Publish sanitized bird stats to Cloudflare R2
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=clawd-a
+ExecStart=/home/clawd-a/workshop/birdnet/publish/publish.sh

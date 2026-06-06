@@ -1,0 +1,17 @@
+# Persistent BirdNET analyzer service. Install on the box that runs the backend.
+#   sudo cp birdnet-analyzer.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now birdnet-analyzer
+[Unit]
+Description=BirdNET analyzer service (model resident, for the mic-test feed)
+After=network-online.target
+
+[Service]
+Type=simple
+User=clawd-a
+WorkingDirectory=/home/clawd-a/workshop/birdnet/analyzer
+ExecStart=/home/clawd-a/workshop/birdnet/analyzer/.venv/bin/python /home/clawd-a/workshop/birdnet/analyzer/service.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

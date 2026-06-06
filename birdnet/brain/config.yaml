@@ -1,0 +1,112 @@
+# BirdNET-Go config for the Debian box (the "Brain").
+#
+# This is a TEMPLATE. BirdNET-Go writes a full default config on first run; the
+# exact key set drifts between releases. Before trusting this file:
+#
+#   1. Install BirdNET-Go (see brain/install.md), let it generate its default
+#      config once, then reconcile the keys below against that generated file
+#      and `birdnet-go realtime --help`.
+#   2. Lat/long are NOT in this file. They load from brain/secrets.env (git
+#      ignored) and are injected by the systemd unit as env, referenced here as
+#      ${BIRDNET_LATITUDE} / ${BIRDNET_LONGITUDE}. BirdNET-Go expands env in
+#      config values. If a given release does not expand env in YAML, set them
+#      directly in a copy of this file kept OUTSIDE git.
+#
+# No em-dashes, plain text, on purpose.
+
+birdnet:
+  # Detection model. 2.4 is the current default BirdNET model.
+  modelpath: ""            # empty = use embedded BirdNET 2.4
+  locale: en               # common-name language
+  threads: 0               # 0 = auto (all cores). CPU is fine for vanilla detection.
+  latitude: ${BIRDNET_LATITUDE}
+  longitude: ${BIRDNET_LONGITUDE}
+  sensitivity: 1.0         # 0.5 - 1.5, higher = more sensitive
+  threshold: 0.3           # min confidence to record a detection (0.0 - 1.0)
+  overlap: 0.0             # analysis window overlap in seconds (0 - 2.9)
+  # rangefilter uses lat/long + week-of-year to suppress species not plausible
+  # here. Keep it on so the species list stays local and believable.
+  rangefilter:
+    model: latest
+    threshold: 0.03
+
+realtime:
+  interval: 15             # seconds between detections of the SAME species (dedup)
+  processingtime: false
+
+  # Audio comes from the Pi over the tailnet as RTSP. No local sound card on
+  # the Brain. The Pi publishes mono 48kHz PCM; see pi/mediamtx.yml.
+  rtsp:
+    transport: tcp         # tcp is robust over wifi; udp drops on congestion
+    urls:
+      - rtsp://${PI_TAILSCALE_HOST}:8554/yard
+
+  audio:
+    # No local capture device on the Brain; source is RTSP above.
+    source: ""
+    # Clip export: keep clips so the private UI can play detections back.
+    # These live ONLY on the Brain and are never published. Retention below
+    # bounds how long voice-capable audio survives on disk.
+    export:
+      enabled: true
+      path: /home/clawd-a/birdnet/clips
+      type: wav            # wav keeps detection-fidelity; mp3 would hurt re-analysis
+      bitrate: 192k
+
+  # Stock embedded dashboard. Tailnet-only; do not expose publicly. The custom
+  # private UI (Workshop /apps/birds) reads the same SQLite DB read-only.
+  web:
+    enabled: true
+    port: 8080
+    autotls: false
+
+# Detection database. SQLite is the source of truth the Workshop app reads.
+output:
+  sqlite:
+    enabled: true
+    path: /home/clawd-a/birdnet/data/birdnet.db
+  mysql:
+    enabled: false
+
+# Audio retention. The mic is always listening and can catch human voices, so
+# exported clips are pruned on a bounded schedule. Detection ROWS in SQLite are
+# kept (they hold no audio); only the WAV clips age out.
+retention:
+  policy: age              # none | age | usage
+  maxage: 14d              # prune exported clips older than 14 days
+  maxusage: 80%            # also prune if clips dir exceeds this disk share
+  minclips: 5              # keep at least N newest clips per species
+  checkInterval: 60        # minutes between cleanup passes
+
+# Event output into the home assistant (OpenClaw). Webhook chosen over MQTT
+# because no broker exists on the box and a single HTTP POST is enough. The
+# Workshop backend receives this, enriches it with a first-seen flag computed
+# from SQLite, and forwards it onto the agent event bus.
+#
+# The exact webhook/notification config block name changed across releases
+# (older builds used a top-level `webhook:`; newer builds route notifications
+# through an alert-rules engine using shoutrrr generic webhooks). Reconcile
+# this block with the installed release. The target and JSON contract are what
+# matter and are fixed:
+#
+#   POST http://127.0.0.1:8000/birds/webhook
+#   Content-Type: application/json
+#   {
+#     "scientific_name": "{{.ScientificName}}",
+#     "common_name":     "{{.CommonName}}",
+#     "species_code":    "{{.SpeciesCode}}",
+#     "confidence":      {{.Confidence}},
+#     "time":            "{{.Time}}",
+#     "date":            "{{.Date}}",
+#     "clip_name":       "{{.ClipName}}",
+#     "source_node":     "{{.SourceNode}}"
+#   }
+#
+# See brain/webhook-template.json for the exact body to paste into the
+# notification provider, and routes/birds.py for the receiver.
+notification:
+  webhook:
+    enabled: true
+    url: http://127.0.0.1:8000/birds/webhook
+    method: POST
+    # body template lives in brain/webhook-template.json

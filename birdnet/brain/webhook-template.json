@@ -1,0 +1,10 @@
+{
+  "scientific_name": "{{.ScientificName}}",
+  "common_name": "{{.CommonName}}",
+  "species_code": "{{.SpeciesCode}}",
+  "confidence": {{.Confidence}},
+  "time": "{{.Time}}",
+  "date": "{{.Date}}",
+  "clip_name": "{{.ClipName}}",
+  "source_node": "{{.SourceNode}}"
+}
