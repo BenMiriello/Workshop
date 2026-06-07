@@ -67,6 +67,7 @@ export function Map({
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
   const [hasBasemap, setHasBasemap] = useState<boolean | null>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   // Probe for the basemap file once.
   useEffect(() => {
@@ -96,7 +97,8 @@ export function Map({
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
-    return () => { map.remove(); mapRef.current = null; };
+    setMapReady(true);
+    return () => { map.remove(); mapRef.current = null; setMapReady(false); };
   }, [hasBasemap]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync the track polyline + marker + bounds whenever inputs change.
@@ -141,7 +143,7 @@ export function Map({
     };
     if (map.isStyleLoaded()) applyStyleBits();
     else map.once("load", applyStyleBits);
-  }, [track, marker]);
+  }, [track, marker, mapReady]);
 
   return (
     <div className={className} style={{ position: "relative" }}>
