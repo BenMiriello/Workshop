@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import ChatDock from "../../components/ChatDock";
 import { AppGroupNav } from "../../components/appNav";
 import { PageHeader } from "../../ui";
+// Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
+// every page that touches the design system.
+import { Map, type LngLat } from "../../ui/Map";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
@@ -108,6 +111,10 @@ export default function Location() {
     }
   };
 
+  // Breadcrumb in chronological order (history is newest-first); marker = latest.
+  const track: LngLat[] = records.map((r) => [r.lng, r.lat] as LngLat).reverse();
+  const marker: LngLat | null = latest ? [latest.lng, latest.lat] : null;
+
   return (
     <div>
       <PageHeader title="Location" actions={<AppGroupNav />} />
@@ -137,6 +144,13 @@ export default function Location() {
             No position recorded yet. Configure Owntracks iOS — see <code>docs/owntracks-ios.md</code>.
           </p>
         )}
+      </div>
+
+      <div className="card">
+        <strong>Map</strong>
+        <div style={{ marginTop: "0.5rem" }}>
+          <Map track={track} marker={marker} height={380} />
+        </div>
       </div>
 
       <div className="card">
