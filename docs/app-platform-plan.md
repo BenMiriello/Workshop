@@ -217,3 +217,46 @@ Each phase is independently shippable and leaves the system working.
    can revoke? (Revocable token recommended.)
 4. **Keep or retire `:8444`** once Commute is integrated.
 5. **Basemap scope**: Bay Area only, or wider (you travel)? Affects PMTiles file size.
+
+---
+
+## Status log
+
+- **2026-06-06:** Phase 0 done. Phase 1 partially done — Commute is in-workshop
+  (`/apps/commute`, `@commute` alias, no fork) and the `@workshop/ui` design system
+  is now shared into `apps/commute` (Stepper extracted as a primitive; commute uses
+  it; status hexes → tokens). Remaining Phase-1 cleanup: full token migration of the
+  rest of the commute component; optional `:8444` retirement.
+
+### Phase 2 — PMTiles map: BLOCKED on operator-run setup (egress)
+
+The map code is egress-free for me to write, but the two prerequisites are not:
+the box's `egress-guard` hook blocks the shell from `registry.npmjs.org` and
+`build.protomaps.com`. **Run these two from your own terminal**, then I'll write +
+wire + verify the `Map` primitive and the Location-app map view:
+
+```bash
+# 1) Map libraries (frontend)
+cd ~/workshop/frontend
+npm install maplibre-gl pmtiles protomaps-themes-base
+
+# 2) Bay Area basemap (single self-hosted file — no per-tile callouts).
+#    Needs the go-pmtiles CLI: https://github.com/protomaps/go-pmtiles/releases
+#    Extract a Peninsula+SF+East-Bay bbox from the daily planet build:
+mkdir -p ~/workshop/frontend/public/basemap
+pmtiles extract https://build.protomaps.com/$(date -u +%Y%m%d).pmtiles \
+  ~/workshop/frontend/public/basemap/bayarea.pmtiles \
+  --bbox=-122.6,37.2,-121.7,38.1
+# (widen the bbox if you want more than the Bay Area — see open decision #5)
+```
+
+Once those exist, the implementation (mine, no egress needed) is:
+- `frontend/src/ui/Map.tsx` — a `Map` primitive: registers the `pmtiles://` protocol,
+  builds a MapLibre style from `protomaps-themes-base` pointed at the local
+  `/basemap/bayarea.pmtiles`, exposes props for a current-position marker + a
+  breadcrumb polyline + a time-range. Reused later by Birds location pages.
+- `frontend/src/pages/apps/Location.tsx` — add the map above the existing history
+  list, fed by `/location/latest` + `/location/history` (already exist); time-range
+  filter (today / 7d / all). Four list-states.
+- Glyphs (fonts): use protomaps' glyph CDN initially (generic font PBFs reveal no
+  location); self-host later if we want zero external calls.
