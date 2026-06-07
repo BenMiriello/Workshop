@@ -112,15 +112,13 @@ function loadJSON<T>(k: string, fallback: T): T {
   try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : fallback; } catch { return fallback; }
 }
 
-function getPosition(): Promise<{ lat: number; lon: number } | null> {
-  return new Promise((res) => {
-    if (!navigator.geolocation) return res(null);
-    navigator.geolocation.getCurrentPosition(
-      (p) => res({ lat: p.coords.latitude, lon: p.coords.longitude }),
-      () => res(null),
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
-    );
-  });
+// Metres between two lat/lon points - used to decide when an adaptive device has
+// moved far enough to re-name (re-geocode) its location while recording.
+function distM(aLat: number, aLon: number, bLat: number, bLon: number): number {
+  const R = 6371000, p1 = aLat * Math.PI / 180, p2 = bLat * Math.PI / 180;
+  const dphi = (bLat - aLat) * Math.PI / 180, dl = (bLon - aLon) * Math.PI / 180;
+  const h = Math.sin(dphi / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
 async function postDevice(d: Device) {
@@ -164,6 +162,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const bufLenRef = useRef(0);
   const sinceStepRef = useRef(0);
   const posRef = useRef<{ lat: number; lon: number; address: string } | null>(null);
+  const watchRef = useRef<number | null>(null);
   const timerRef = useRef<number | null>(null);
   const wakeRef = useRef<WakeLockSentinel | null>(null);
   const inFlightRef = useRef(0);
@@ -279,6 +278,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
 
   const stop = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (watchRef.current != null) { navigator.geolocation.clearWatch(watchRef.current); watchRef.current = null; }
     nodeRef.current?.disconnect();
     srcRef.current?.disconnect();
     analyserRef.current?.disconnect();
@@ -299,12 +299,25 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     posRef.current = null;
     const dev = deviceRef.current;
     postDevice(dev);
-    if (dev.mode !== "fixed") getPosition().then(async (p) => {
-      if (!p) return;
-      posRef.current = { lat: p.lat, lon: p.lon, address: "" };
-      const place = await reverseGeocode(p.lat, p.lon); // name the location by its real address
-      if (place && posRef.current) posRef.current = { lat: p.lat, lon: p.lon, address: place.short };
-    });
+    // Adaptive devices TRACK position for the whole session (watchPosition, not a
+    // one-shot), so as you move, detections follow you - the backend merges into
+    // a nearby location within ~40 m or creates a new one past that. Re-geocode
+    // the name only after moving >40 m to avoid hammering the geocoder.
+    if (dev.mode !== "fixed" && navigator.geolocation) {
+      watchRef.current = navigator.geolocation.watchPosition(
+        async (p) => {
+          const lat = p.coords.latitude, lon = p.coords.longitude;
+          const prev = posRef.current;
+          posRef.current = { lat, lon, address: prev?.address || "" };
+          if (!prev || distM(prev.lat, prev.lon, lat, lon) > 40) {
+            const place = await reverseGeocode(lat, lon);
+            if (place && posRef.current) posRef.current = { lat: posRef.current.lat, lon: posRef.current.lon, address: place.short };
+          }
+        },
+        () => { /* permission denied / unavailable: backend will prompt for a location */ },
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 },
+      );
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
