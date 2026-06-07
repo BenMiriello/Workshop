@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Circle } from "lucide-react";
+import { AlertTriangle, Circle, ChevronUp, ChevronDown, RefreshCw, CalendarClock, Check, Play, Dot } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -39,6 +39,14 @@ type Brief = {
   timeline?: Leg[];
   alerts?: Alert[];
   realtime_status?: { available: boolean; reason?: string };
+  next_schedule?: {
+    schedule_id?: string;
+    direction?: string;
+    day?: string;
+    date_local?: string;
+    leave_by_local?: string;
+    target_arrive_local?: string;
+  } | null;
 };
 
 type SourceStatus = {
@@ -88,13 +96,122 @@ const statusColor = (s: string): string => {
   return "#ef4444";
 };
 
-const legStatusIcon: Record<string, string> = {
-  past: "✓",
-  current: "▶",
-  before: "·",
+// Leg status → lucide icon (no emoji — operator rule).
+const legStatusIcon = {
+  past: Check,
+  current: Play,
+  before: Dot,
+} as const;
+
+// Custom number stepper — replaces the browser's default number spinners with a
+// clean editable field + stacked up/down chevrons. Clamps to [min,max].
+const stepBtnStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 26,
+  flex: 1,
+  border: "none",
+  background: "transparent",
+  color: "var(--muted)",
+  cursor: "pointer",
+  padding: 0,
 };
 
+function Stepper({
+  value,
+  onChange,
+  min = 0,
+  max = 999,
+  step = 1,
+  suffix,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  suffix?: string;
+}) {
+  const set = (v: number) => onChange(Math.max(min, Math.min(max, v)));
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "stretch",
+        border: "1px solid var(--border)",
+        borderRadius: 6,
+        background: "var(--card)",
+        overflow: "hidden",
+        height: 36,
+      }}
+    >
+      <input
+        type="text"
+        inputMode="numeric"
+        value={value}
+        onChange={(e) => {
+          const n = parseInt(e.target.value.replace(/[^0-9-]/g, ""), 10);
+          if (!Number.isNaN(n)) set(n);
+        }}
+        style={{
+          width: 44,
+          border: "none",
+          background: "transparent",
+          color: "var(--fg)",
+          textAlign: "center",
+          fontSize: "0.95rem",
+          fontVariantNumeric: "tabular-nums",
+          padding: 0,
+          outline: "none",
+        }}
+        aria-label="value"
+      />
+      {suffix && (
+        <span style={{ display: "inline-flex", alignItems: "center", color: "var(--muted)", fontSize: "0.72rem", paddingRight: "0.45rem" }}>
+          {suffix}
+        </span>
+      )}
+      <div style={{ display: "flex", flexDirection: "column", borderLeft: "1px solid var(--border)" }}>
+        <button type="button" tabIndex={-1} aria-label="increment" onClick={() => set(value + step)} disabled={value >= max} style={stepBtnStyle}>
+          <ChevronUp size={13} strokeWidth={2.2} aria-hidden />
+        </button>
+        <button type="button" tabIndex={-1} aria-label="decrement" onClick={() => set(value - step)} disabled={value <= min} style={{ ...stepBtnStyle, borderTop: "1px solid var(--border)" }}>
+          <ChevronDown size={13} strokeWidth={2.2} aria-hidden />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Tab components ────────────────────────────────────────────────────────────
+
+// Re-fetch live transit data on demand. Labeled + subtitled so it's obvious
+// what it does (the old bare "poll now" wasn't).
+function RefreshButton({ onPollNow, polling, compact }: {
+  onPollNow: () => void;
+  polling: boolean;
+  compact?: boolean;
+}) {
+  const btn = (
+    <button
+      onClick={onPollNow}
+      disabled={polling}
+      title="Re-fetch live Caltrain & Muni arrival data right now"
+      style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}
+    >
+      <RefreshCw size={13} strokeWidth={2} aria-hidden />
+      {polling ? "Refreshing…" : "Refresh transit data"}
+    </button>
+  );
+  if (compact) return btn;
+  return (
+    <div style={{ display: "inline-flex", flexDirection: "column", gap: "0.2rem" }}>
+      {btn}
+      <span className="muted" style={{ fontSize: "0.72rem" }}>Re-fetches live Caltrain &amp; Muni arrivals now</span>
+    </div>
+  );
+}
 
 function StatusTab({ brief, onPollNow, polling }: {
   brief: Brief | null;
@@ -104,10 +221,32 @@ function StatusTab({ brief, onPollNow, polling }: {
   if (!brief) return <p>Loading status…</p>;
 
   if (!brief.active) {
+    const nx = brief.next_schedule;
     return (
       <div>
-        <p className="muted">No active schedule right now.</p>
-        <button onClick={onPollNow} disabled={polling}>{polling ? "Polling…" : "poll now"}</button>
+        {nx ? (
+          <div className="card" style={{ padding: "1rem 1.1rem", marginBottom: "1rem" }}>
+            <p className="muted" style={{ margin: "0 0 0.4rem", display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              <CalendarClock size={14} aria-hidden /> Next commute
+            </p>
+            <p style={{ margin: 0, fontSize: "1.05rem", fontWeight: 600 }}>
+              {nx.date_local} · {nx.direction === "to-work" ? "→ Work" : "→ Home"}
+            </p>
+            <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.55rem" }}>
+              <div>
+                <p className="muted" style={{ margin: 0, fontSize: "0.72rem" }}>leave by</p>
+                <p style={{ margin: 0, fontWeight: 700 }}>{nx.leave_by_local}</p>
+              </div>
+              <div>
+                <p className="muted" style={{ margin: 0, fontSize: "0.72rem" }}>arrive by</p>
+                <p style={{ margin: 0 }}>{nx.target_arrive_local}</p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="muted" style={{ marginBottom: "1rem" }}>No active schedule right now, and nothing upcoming on the calendar.</p>
+        )}
+        <RefreshButton onPollNow={onPollNow} polling={polling} />
       </div>
     );
   }
@@ -130,9 +269,7 @@ function StatusTab({ brief, onPollNow, polling }: {
             </span>
           )}
         </div>
-        <button onClick={onPollNow} disabled={polling} style={{ fontSize: "0.85rem" }}>
-          {polling ? "polling…" : "poll now"}
-        </button>
+        <RefreshButton onPollNow={onPollNow} polling={polling} compact />
       </div>
 
       {/* Realtime data banner */}
@@ -183,7 +320,7 @@ function StatusTab({ brief, onPollNow, polling }: {
           <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
             {brief.timeline.map((leg, i) => {
               const isCurrent = leg.status === "current";
-              const icon = legStatusIcon[leg.status ?? "before"] ?? "·";
+              const LegIcon = legStatusIcon[(leg.status ?? "before") as keyof typeof legStatusIcon] ?? Dot;
               const rt = leg.realtime;
               const rtTag = !rt ? "(no data)"
                 : rt.available
@@ -207,7 +344,9 @@ function StatusTab({ brief, onPollNow, polling }: {
                     border: isCurrent ? "1px solid var(--accent)" : "1px solid transparent",
                   }}
                 >
-                  <span style={{ color: isCurrent ? "var(--accent)" : "var(--muted)", flexShrink: 0, width: "1ch" }}>{icon}</span>
+                  <span style={{ color: isCurrent ? "var(--accent)" : "var(--muted)", flexShrink: 0, display: "inline-flex", alignItems: "center" }}>
+                    <LegIcon size={14} strokeWidth={2.2} fill={isCurrent ? "currentColor" : "none"} aria-hidden />
+                  </span>
                   <span style={{ color: "var(--muted)", flexShrink: 0, fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
                     {leg.depart_local} → {leg.arrive_local}
                   </span>
@@ -256,10 +395,18 @@ const DAYS: { key: DayKey; label: string }[] = [
   { key: "sun", label: "S" },
 ];
 
+type AnchorType = "arrive" | "depart";
+
 type ScheduleEntry = {
   id: string;
   direction: "to-work" | "to-home";
   days: string[];
+  // Anchor model: set the ONE end you care about; the other is derived from
+  // leg durations by the backend (see scoring.resolve_times).
+  anchor?: AnchorType;
+  anchor_time?: string;
+  buffer_minutes?: number;
+  // Legacy two-field form — still read for display of pre-anchor schedules.
   target_depart_home?: string;
   target_arrive_work?: string;
   target_depart_work?: string;
@@ -267,6 +414,17 @@ type ScheduleEntry = {
   flex_minutes_late?: number;
   flex_minutes_early?: number | null;
   legs_id?: string;
+};
+
+// Resolve an entry's anchor with a sensible default + legacy fallback so old
+// saved schedules still populate the editor.
+const entryAnchorType = (s: ScheduleEntry): AnchorType =>
+  s.anchor ?? (s.direction === "to-work" ? "arrive" : "depart");
+const entryAnchorTime = (s: ScheduleEntry): string => {
+  if (s.anchor_time != null) return s.anchor_time;
+  return entryAnchorType(s) === "arrive"
+    ? s.target_arrive_work ?? s.target_arrive_home ?? ""
+    : s.target_depart_home ?? s.target_depart_work ?? "";
 };
 
 type ScheduleDoc = {
@@ -346,8 +504,8 @@ function ScheduleTab() {
       flex_minutes_late: 15,
       legs_id: direction === "to-work" ? "to-work-default" : "to-home-default",
       ...(direction === "to-work"
-        ? { target_depart_home: "07:30", target_arrive_work: "09:00" }
-        : { target_depart_work: "18:00", target_arrive_home: "19:45" }),
+        ? { anchor: "arrive", anchor_time: "09:00", buffer_minutes: 5 }
+        : { anchor: "depart", anchor_time: "18:00" }),
     };
     setDoc({ ...doc, schedules: [...doc.schedules, newEntry] });
   };
@@ -366,7 +524,11 @@ function ScheduleTab() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.5rem", flexWrap: "wrap" }}>
         <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</h3>
         <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
-          {saved && <span style={{ color: "#16a34a", fontSize: "0.85rem" }}>saved ✓</span>}
+          {saved && (
+            <span style={{ color: "#16a34a", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+              <Check size={13} strokeWidth={2.4} aria-hidden /> saved
+            </span>
+          )}
           {err && <span style={{ color: "var(--err)", fontSize: "0.82rem" }}>{err}</span>}
           <button onClick={save} disabled={saving}>{saving ? "saving…" : "save"}</button>
         </div>
@@ -397,7 +559,10 @@ function ScheduleTab() {
         </p>
       </div>
 
-      {doc.schedules.map((s, i) => (
+      {doc.schedules.map((s, i) => {
+        const anchorType = entryAnchorType(s);
+        const anchorTime = entryAnchorTime(s);
+        return (
         <div key={`${s.id}-${i}`} className="card" style={{ marginBottom: "0.85rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem", gap: "0.5rem", flexWrap: "wrap" }}>
             <strong style={{ fontSize: "0.95rem" }}>
@@ -427,8 +592,14 @@ function ScheduleTab() {
                     type="button"
                     onClick={() => toggleDay(i, d.key)}
                     style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
                       width: "34px",
                       height: "34px",
+                      padding: 0,
+                      lineHeight: 1,
+                      boxSizing: "border-box",
                       borderRadius: "50%",
                       border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
                       background: on ? "var(--accent)" : "transparent",
@@ -447,49 +618,54 @@ function ScheduleTab() {
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: "min(140px, 40%) 1fr", gap: "0.4rem 0.75rem", alignItems: "center", marginBottom: "0.4rem" }}>
-            {s.direction === "to-work" ? (
+            <label htmlFor={`anchor-${i}`}>I care about</label>
+            <select
+              id={`anchor-${i}`}
+              value={anchorType}
+              onChange={(e) =>
+                updateSchedule(i, {
+                  anchor: e.target.value as AnchorType,
+                  target_depart_home: undefined, target_arrive_work: undefined,
+                  target_depart_work: undefined, target_arrive_home: undefined,
+                })
+              }
+              style={inputStyle}
+            >
+              <option value="arrive">arrive by</option>
+              <option value="depart">depart at</option>
+            </select>
+            <label>{anchorType === "arrive" ? "arrive by" : "depart at"}</label>
+            <input
+              type="time"
+              value={anchorTime}
+              onChange={(e) =>
+                updateSchedule(i, {
+                  anchor: anchorType, anchor_time: e.target.value,
+                  target_depart_home: undefined, target_arrive_work: undefined,
+                  target_depart_work: undefined, target_arrive_home: undefined,
+                })
+              }
+              style={inputStyle}
+            />
+            {anchorType === "arrive" && (
               <>
-                <label>depart home</label>
-                <input
-                  type="time"
-                  value={s.target_depart_home || ""}
-                  onChange={(e) => updateSchedule(i, { target_depart_home: e.target.value })}
-                  style={inputStyle}
-                />
-                <label>arrive work</label>
-                <input
-                  type="time"
-                  value={s.target_arrive_work || ""}
-                  onChange={(e) => updateSchedule(i, { target_arrive_work: e.target.value })}
-                  style={inputStyle}
-                />
-              </>
-            ) : (
-              <>
-                <label>depart work</label>
-                <input
-                  type="time"
-                  value={s.target_depart_work || ""}
-                  onChange={(e) => updateSchedule(i, { target_depart_work: e.target.value })}
-                  style={inputStyle}
-                />
-                <label>arrive home</label>
-                <input
-                  type="time"
-                  value={s.target_arrive_home || ""}
-                  onChange={(e) => updateSchedule(i, { target_arrive_home: e.target.value })}
-                  style={inputStyle}
+                <label>buffer (min early)</label>
+                <Stepper
+                  value={s.buffer_minutes ?? 0}
+                  min={0}
+                  max={60}
+                  suffix="min"
+                  onChange={(v) => updateSchedule(i, { buffer_minutes: v })}
                 />
               </>
             )}
             <label>flex (late)</label>
-            <input
-              type="number"
+            <Stepper
+              value={s.flex_minutes_late ?? 15}
               min={0}
               max={120}
-              value={s.flex_minutes_late ?? 15}
-              onChange={(e) => updateSchedule(i, { flex_minutes_late: Number(e.target.value) })}
-              style={inputStyle}
+              suffix="min"
+              onChange={(v) => updateSchedule(i, { flex_minutes_late: v })}
             />
             <label>legs preset</label>
             <input
@@ -499,8 +675,14 @@ function ScheduleTab() {
               style={{ ...inputStyle, fontFamily: "ui-monospace, monospace", fontSize: "0.82rem" }}
             />
           </div>
+          <p className="muted" style={{ fontSize: "0.76rem", margin: "0.1rem 0 0" }}>
+            {anchorType === "arrive"
+              ? "Leave-by is computed from leg durations (minus buffer) — shown live on the Status tab."
+              : "Arrival is computed from leg durations — shown live on the Status tab."}
+          </p>
         </div>
-      ))}
+        );
+      })}
 
       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
         <button onClick={() => addSchedule("to-work")}>+ AM (to-work)</button>
@@ -553,37 +735,57 @@ function SourcesTab() {
 
   const registry = data.registry ?? {};
   const status = data.status ?? {};
-  const keys = Array.from(new Set([...Object.keys(registry), ...Object.keys(status)])).sort();
+  // The registry object carries the feed list under `sources` plus non-source
+  // metadata siblings (e.g. `shared_rate_limit_pool`). Only the entries in
+  // `sources` are real pollable feeds — render cards from those, not from every
+  // top-level key (which used to surface phantom "no data" rows).
+  type RegSource = { key?: string; name?: string; status?: string; fallback?: string; notes?: string };
+  const regSources = Array.isArray((registry as { sources?: unknown }).sources)
+    ? ((registry as { sources: RegSource[] }).sources)
+    : [];
+  type SourceRow = { key: string; name?: string; regStatus?: string; note?: string };
+  const byKey = new Map<string, SourceRow>();
+  for (const s of regSources) {
+    if (s && typeof s.key === "string") {
+      byKey.set(s.key, { key: s.key, name: s.name, regStatus: s.status, note: s.fallback ?? s.notes });
+    }
+  }
+  // Defensive: surface any live status whose key isn't in the registry.
+  for (const k of Object.keys(status)) if (!byKey.has(k)) byKey.set(k, { key: k });
+  const sources = Array.from(byKey.values()).sort((a, b) => a.key.localeCompare(b.key));
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <p className="muted" style={{ margin: 0 }}>{keys.length} source{keys.length === 1 ? "" : "s"}</p>
+        <p className="muted" style={{ margin: 0 }}>{sources.length} source{sources.length === 1 ? "" : "s"}</p>
         <button onClick={refresh} disabled={loading}>{loading ? "…" : "Refresh"}</button>
       </div>
-      {keys.length === 0 ? (
+      {sources.length === 0 ? (
         <p className="muted">No sources configured.</p>
       ) : (
         <ul className="cards">
-          {keys.map((key) => {
+          {sources.map((src) => {
+            const key = src.key;
             const st = status[key];
             const color = st ? statusColor(st.status) : "var(--muted)";
             const entityCount = st?.entity_count;
             return (
               <li key={key} className="card">
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-                  <h3 style={{ margin: 0, fontSize: "0.95rem", fontFamily: "ui-monospace, monospace" }}>{key}</h3>
+                  <h3 style={{ margin: 0, fontSize: "0.95rem", fontFamily: "ui-monospace, monospace" }} title={src.name ?? key}>{key}</h3>
                   <span style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem", color, fontSize: "0.82rem", fontWeight: 600 }}>
                     <Circle size={9} fill="currentColor" strokeWidth={0} aria-hidden />
-                    {st?.status ?? "no data"}
+                    {st?.status ?? src.regStatus ?? "not configured"}
                   </span>
                 </div>
                 <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
-                  {st?.ts ? `last poll ${fmtAge(st.ts)}` : "never polled"}
+                  {st?.ts
+                    ? `last poll ${fmtAge(st.ts)}`
+                    : "never polled — no live poller for this source yet"}
                   {entityCount != null ? ` · ${entityCount} entities` : ""}
                 </p>
-                {st?.note && (
-                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.78rem", color: "#f59e0b" }}>{st.note}</p>
+                {(st?.note || (!st && src.note)) && (
+                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.78rem", color: "#f59e0b" }}>{st?.note ?? src.note}</p>
                 )}
               </li>
             );

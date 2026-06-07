@@ -1,11 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { ChevronLeft } from "lucide-react";
+import { RefreshCw } from "lucide-react";
+import ChatDock from "../../components/ChatDock";
+import { AppGroupNav } from "../../components/appNav";
+import {
+  Button,
+  Card,
+  CardGrid,
+  NumCell,
+  PageHeader,
+  SectionLabel,
+  Stat,
+  StateBlock,
+  Table,
+  TableScroll,
+  TimeCell,
+} from "../../ui";
 
 // Full Finance app page. Opens from the Apps grid card. Privacy is handled at
 // the *card* layer (no balances shown on the Apps grid). Once the operator has
 // tapped into the app, they explicitly asked to see real data — no redaction
-// here. The previous design redacted even when expanded, which was the bug.
+// here.
 
 type Account = {
   id: string;
@@ -69,6 +83,7 @@ export default function Finance() {
     try {
       const q = force ? "?refresh=1" : "";
       const r = await fetch(`/api/finance/balances${q}`);
+      if (!r.ok) throw new Error(`balances HTTP ${r.status}`);
       const b = (await r.json()) as BalancesResp;
       setItems(b.items || []);
       setBalCache(b._cache || null);
@@ -80,6 +95,7 @@ export default function Finance() {
   const loadTxns = useCallback(async (force: boolean = false) => {
     try {
       const r = await fetch(`/api/finance/transactions?days=30${force ? "&refresh=1" : ""}`);
+      if (!r.ok) throw new Error(`transactions HTTP ${r.status}`);
       const t = (await r.json()) as TransactionsResp;
       setTxns(t.transactions || []);
       setTxnCache(t._cache || null);
@@ -88,15 +104,18 @@ export default function Finance() {
     }
   }, []);
 
-  const refresh = useCallback(async (force: boolean = false) => {
-    setRefreshing(true);
-    setErr(null);
-    try {
-      await Promise.all([loadBalances(force), loadTxns(force)]);
-    } finally {
-      setRefreshing(false);
-    }
-  }, [loadBalances, loadTxns]);
+  const refresh = useCallback(
+    async (force: boolean = false) => {
+      setRefreshing(true);
+      setErr(null);
+      try {
+        await Promise.all([loadBalances(force), loadTxns(force)]);
+      } finally {
+        setRefreshing(false);
+      }
+    },
+    [loadBalances, loadTxns],
+  );
 
   useEffect(() => {
     loadBalances(false);
@@ -112,9 +131,13 @@ export default function Finance() {
     if (!items) return null;
     const all = items.flatMap((i) => i.accounts);
     const liquid = all.filter((a) => a.type === "depository").reduce((s, a) => s + (a.balance.current ?? 0), 0);
+    const invest = all
+      .filter((a) => a.type === "investment" || a.type === "brokerage")
+      .reduce((s, a) => s + (a.balance.current ?? 0), 0);
     const creditAvail = all.filter((a) => a.type === "credit").reduce((s, a) => s + (a.balance.available ?? 0), 0);
     const creditUsed = all.filter((a) => a.type === "credit").reduce((s, a) => s + (a.balance.current ?? 0), 0);
-    return { liquid, creditAvail, creditUsed, accountCount: all.length };
+    const netWorth = liquid + invest - creditUsed;
+    return { liquid, invest, creditAvail, creditUsed, netWorth, accountCount: all.length };
   }, [items]);
 
   const oldestCacheAge = Math.max(balCache?.age_s ?? 0, txnCache?.age_s ?? 0);
@@ -123,79 +146,85 @@ export default function Finance() {
 
   return (
     <div>
-      {/* Header: back-link + title + freshness + refresh. Mobile-friendly: wraps. */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem", gap: "0.5rem", flexWrap: "wrap" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 0 }}>
-          <Link to="/apps" style={{ color: "var(--muted)", textDecoration: "none", fontSize: "0.9rem", display: "inline-flex", alignItems: "center", gap: "0.2rem" }}>
-            <ChevronLeft size={16} strokeWidth={1.8} aria-hidden /> Apps
-          </Link>
-          <h2 style={{ margin: 0 }}>Finance</h2>
-        </div>
-        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          <span className="muted" style={{ fontSize: "0.8rem", color: cacheStale ? "var(--err)" : undefined }}>
+      <PageHeader
+        title="Finance"
+        sub={
+          <span style={{ color: cacheStale ? "var(--warn)" : undefined }}>
             {financeLoading ? "loading…" : oldestCacheAge > 0 ? `updated ${fmtAge(oldestCacheAge)}` : "fresh"}
           </span>
-          <button onClick={() => refresh(true)} disabled={refreshing} style={{ fontSize: "0.85rem", padding: "0.25rem 0.6rem" }}>
-            {refreshing ? "…" : "Refresh"}
-          </button>
-        </div>
-      </div>
+        }
+        actions={
+          <>
+            <AppGroupNav />
+            <Button size="sm" onClick={() => refresh(true)} loading={refreshing}>
+              <RefreshCw aria-hidden /> Refresh
+            </Button>
+          </>
+        }
+      />
 
-      {err && <p className="err" style={{ marginBottom: "1rem" }}>Backend error: {err}</p>}
-
-      {/* Summary tiles — real data, the operator opened the app to see this. */}
-      {items === null ? (
-        <div className="card" style={{ marginBottom: "1rem", opacity: 0.6 }}>
-          <p className="muted" style={{ margin: 0 }}>Loading balances…</p>
+      {err && (
+        <div style={{ marginBottom: "var(--space-4)" }}>
+          <StateBlock variant="error" title="Couldn't load finance data" hint={err} />
         </div>
-      ) : summary && (
-        <div className="card" style={{ marginBottom: "1rem" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem 1rem" }}>
-            <div>
-              <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Liquid</p>
-              <p style={{ margin: "0.1rem 0 0", fontSize: "1.4rem", fontWeight: 600 }}>{fmt(summary.liquid, "USD")}</p>
-            </div>
-            <div>
-              <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Credit avail</p>
-              <p style={{ margin: "0.1rem 0 0", fontSize: "1.4rem", fontWeight: 600 }}>{fmt(summary.creditAvail, "USD")}</p>
-            </div>
-            <div>
-              <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Credit used</p>
-              <p style={{ margin: "0.1rem 0 0", fontSize: "1rem" }}>{fmt(summary.creditUsed, "USD")}</p>
-            </div>
-            <div>
-              <p className="muted" style={{ margin: 0, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>Accounts</p>
-              <p style={{ margin: "0.1rem 0 0", fontSize: "1rem" }}>{summary.accountCount} · {items?.length ?? 0} institution{(items?.length ?? 0) === 1 ? "" : "s"}</p>
-            </div>
+      )}
+
+      {/* Summary KPI tiles. */}
+      {summary && (
+        <div style={{ marginBottom: "var(--space-5)" }}>
+          <Card style={{ marginBottom: "var(--space-4)" }}>
+            <SectionLabel>Net worth</SectionLabel>
+            <div className="ws-stat__num">{fmt(summary.netWorth, "USD")}</div>
+            <div className="ws-stat__sub">cash + investments − credit owed</div>
+          </Card>
+          <div className="ws-card-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+            <Stat label="Liquid" value={fmt(summary.liquid, "USD")} />
+            <Stat label="Investments" value={fmt(summary.invest, "USD")} />
+            <Stat label="Credit avail" value={fmt(summary.creditAvail, "USD")} />
+            <Stat label="Credit used" value={fmt(summary.creditUsed, "USD")} />
+            <Stat
+              label="Accounts"
+              value={summary.accountCount}
+              sub={`${items?.length ?? 0} institution${(items?.length ?? 0) === 1 ? "" : "s"}`}
+            />
           </div>
         </div>
       )}
 
-      {/* Accounts — always visible inside the app (no more details/summary toggle). */}
+      {/* Accounts. */}
       {items !== null && accounts.length > 0 && (
-        <section style={{ marginBottom: "1.5rem" }}>
-          <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Accounts</h3>
-          <ul className="cards">
+        <section style={{ marginBottom: "var(--space-6)" }}>
+          <SectionLabel>Accounts</SectionLabel>
+          <CardGrid>
             {accounts.map((a) => (
-              <li key={a.id} className="card">
-                <h3 style={{ margin: 0, fontSize: "1rem" }}>{a.name}</h3>
-                <p className="muted">{a.institution} · {a.subtype || a.type}{a.mask ? ` · ··${a.mask}` : ""}</p>
-                <p style={{ fontSize: "1.15rem", margin: "0.25rem 0" }}>{fmt(a.balance.current, a.balance.iso_currency_code)}</p>
-                {a.balance.available != null && a.balance.available !== a.balance.current && (
-                  <p className="muted">Available: {fmt(a.balance.available, a.balance.iso_currency_code)}</p>
-                )}
+              <li key={a.id}>
+                <Card>
+                  <h3 className="ws-card__title">{a.name}</h3>
+                  <p className="ws-card__meta">
+                    {a.institution} · {a.subtype || a.type}
+                    {a.mask ? ` · ··${a.mask}` : ""}
+                  </p>
+                  <p className="ws-num" style={{ fontSize: "var(--fs-lg)", margin: "var(--space-2) 0 0" }}>
+                    {fmt(a.balance.current, a.balance.iso_currency_code)}
+                  </p>
+                  {a.balance.available != null && a.balance.available !== a.balance.current && (
+                    <p className="ws-card__meta">Available: {fmt(a.balance.available, a.balance.iso_currency_code)}</p>
+                  )}
+                </Card>
               </li>
             ))}
-          </ul>
+          </CardGrid>
         </section>
       )}
 
-      {/* Transactions — also always visible, scroll-on-overflow on mobile. */}
+      {/* Transactions. */}
       {txns === null ? (
-        <p className="muted" style={{ opacity: 0.6 }}>Loading transactions…</p>
+        <p className="ws-muted">Loading transactions…</p>
       ) : (
         <TransactionsTable txns={txns} />
       )}
+
+      <ChatDock contextKey="finance" title="Accounts assistant" placeholder="Ask about balances or recent spend…" />
     </div>
   );
 }
@@ -208,37 +237,40 @@ function TransactionsTable({ txns }: { txns: Transaction[] }) {
   const hasMore = visible.length < txns.length;
   return (
     <section>
-      <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+      <SectionLabel>
         Transactions ({visible.length} of {txns.length} · 30d)
-      </h3>
+      </SectionLabel>
       {txns.length === 0 ? (
-        <p className="muted">No transactions.</p>
+        <StateBlock title="No transactions" hint="No spending in the last 30 days, or Plaid hasn't synced yet." />
       ) : (
         <>
-          <div className="table-scroll">
-            <table>
+          <TableScroll>
+            <Table>
               <thead>
-                <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-                  <th>Date</th><th>Name</th><th>Category</th><th style={{ textAlign: "right" }}>Amount</th>
+                <tr>
+                  <th>Date</th>
+                  <th>Name</th>
+                  <th>Category</th>
+                  <th style={{ textAlign: "right" }}>Amount</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((t) => (
-                  <tr key={t.id} style={{ borderBottom: "1px solid var(--border)", opacity: t.pending ? 0.6 : 1 }}>
-                    <td className="muted">{t.date}</td>
+                  <tr key={t.id} aria-disabled={t.pending || undefined}>
+                    <TimeCell>{t.date}</TimeCell>
                     <td>{t.merchant_name || t.name}</td>
-                    <td className="muted">{t.category}</td>
-                    <td style={{ textAlign: "right" }}>{fmt(-t.amount, t.iso_currency_code || "USD")}</td>
+                    <td className="ws-muted">{t.category}</td>
+                    <NumCell>{fmt(-t.amount, t.iso_currency_code || "USD")}</NumCell>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          </div>
+            </Table>
+          </TableScroll>
           {hasMore && (
-            <div style={{ marginTop: "0.7rem", display: "flex", justifyContent: "center" }}>
-              <button onClick={() => setPages((p) => p + 1)}>
+            <div style={{ marginTop: "var(--space-3)", display: "flex", justifyContent: "center" }}>
+              <Button onClick={() => setPages((p) => p + 1)}>
                 Load {Math.min(TXN_PAGE_SIZE, txns.length - visible.length)} more
-              </button>
+              </Button>
             </div>
           )}
         </>

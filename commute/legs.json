@@ -1,0 +1,85 @@
+{
+  "leg_sets": [
+    {
+      "id": "to-work-default",
+      "direction": "to-work",
+      "legs": [
+        {
+          "step": 1,
+          "mode": "drive",
+          "from": "home",
+          "to": "Mountain View Caltrain station",
+          "default_minutes": 10,
+          "source_keys": ["traffic.google"]
+        },
+        {
+          "step": 2,
+          "mode": "rail",
+          "from": "Mountain View Caltrain station",
+          "to": "San Francisco 4th & King",
+          "default_minutes": 60,
+          "preferred_train": "Caltrain express ~07:33",
+          "source_keys": ["caltrain.gtfs_rt"]
+        },
+        {
+          "step": 3,
+          "mode": "transit",
+          "from": "4th & King",
+          "to": "Chinatown / Rose Pak station",
+          "default_minutes": 12,
+          "preferred_route": "T Third (Muni Metro)",
+          "source_keys": ["sfmta.gtfs_rt"],
+          "route_ids": ["T", "TBUS"]
+        },
+        {
+          "step": 4,
+          "mode": "walk",
+          "from": "Chinatown / Rose Pak station",
+          "to": "650 California Ave, San Francisco",
+          "default_minutes": 7,
+          "source_keys": []
+        }
+      ]
+    },
+    {
+      "id": "to-home-default",
+      "direction": "to-home",
+      "legs": [
+        {
+          "step": 1,
+          "mode": "walk",
+          "from": "650 California Ave, San Francisco",
+          "to": "Chinatown / Rose Pak station",
+          "default_minutes": 7,
+          "source_keys": []
+        },
+        {
+          "step": 2,
+          "mode": "transit",
+          "from": "Chinatown / Rose Pak station",
+          "to": "4th & King",
+          "default_minutes": 12,
+          "preferred_route": "T Third (Muni Metro)",
+          "source_keys": ["sfmta.gtfs_rt"],
+          "route_ids": ["T", "TBUS"]
+        },
+        {
+          "step": 3,
+          "mode": "rail",
+          "from": "San Francisco 4th & King",
+          "to": "Mountain View Caltrain station",
+          "default_minutes": 60,
+          "source_keys": ["caltrain.gtfs_rt"]
+        },
+        {
+          "step": 4,
+          "mode": "drive",
+          "from": "Mountain View Caltrain station",
+          "to": "home",
+          "default_minutes": 10,
+          "source_keys": ["traffic.google"]
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { Link } from "react-router-dom";
-import { Banknote, TrainFront, Watch, ExternalLink, type LucideProps } from "lucide-react";
+import { Banknote, PiggyBank, TrainFront, Watch, Bird, MapPin, ExternalLink, type LucideProps } from "lucide-react";
+import { Card, CardGrid, PageHeader, Row, StatusDot, type StatusKind } from "../ui";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show
@@ -33,71 +34,74 @@ const fmtAge = (sec: number) => {
   return `${Math.round(sec / 86400)}d ago`;
 };
 
+// Card status tone maps to the design-system status kinds (or null for neutral
+// muted text). "warn" doubles for degraded; "err" for unreachable.
 type Tone = "ok" | "warn" | "err" | "muted";
 
-// One unified card shape. `to` is internal react-router; `href` is for cards
-// that point at a non-Workshop URL but should still navigate same-tab so the
-// experience feels like one app.
+const toneStatus = (tone: Tone | undefined): StatusKind | null => {
+  switch (tone) {
+    case "ok":
+      return "ok";
+    case "warn":
+      return "warn";
+    case "err":
+      return "danger";
+    default:
+      return null;
+  }
+};
+
 type AppCard = {
   key: string;
   Icon: ComponentType<LucideProps>;
   title: string;
   tagline: string;
   status: { text: string; tone?: Tone } | null;
-  to?: string;        // internal Workshop route — react-router Link
-  href?: string;      // same-origin path-prefixed app or external URL
+  to?: string; // internal Workshop route — react-router Link
+  href?: string; // same-origin path-prefixed app or external URL
   external?: boolean; // true => render an ExternalLink hint; we still navigate same-tab
-};
-
-const toneColor = (tone: Tone | undefined) => {
-  switch (tone) {
-    case "ok":   return "#16a34a";
-    case "warn": return "var(--err)";   // err palette doubles as warn
-    case "err":  return "var(--err)";
-    case "muted":
-    default:     return "var(--muted)";
-  }
 };
 
 function CardBody({ card }: { card: AppCard }) {
   const Icon = card.Icon;
+  const kind = card.status ? toneStatus(card.status.tone) : null;
   return (
-    <div style={{ padding: "1rem", height: "100%" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem" }}>
+    <div style={{ padding: "var(--space-5)", height: "100%" }}>
+      <Row style={{ marginBottom: "var(--space-2)" }}>
         <Icon size={22} strokeWidth={1.8} aria-hidden style={{ flexShrink: 0 }} />
-        <h3 style={{ margin: 0, fontSize: "1rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+        <h3 className="ws-card__title" style={{ display: "flex", alignItems: "center", gap: "var(--space-1)" }}>
           {card.title}
-          {card.external && (
-            <ExternalLink size={14} strokeWidth={1.8} aria-hidden style={{ color: "var(--muted)" }} />
-          )}
+          {card.external && <ExternalLink size={14} strokeWidth={1.8} aria-hidden style={{ color: "var(--muted)" }} />}
         </h3>
-      </div>
-      <p className="muted" style={{ margin: "0 0 0.5rem" }}>{card.tagline}</p>
-      {card.status && (
-        <p style={{ margin: 0, fontSize: "0.8rem", color: toneColor(card.status.tone) }}>{card.status.text}</p>
-      )}
+      </Row>
+      <p className="ws-card__meta">{card.tagline}</p>
+      {card.status &&
+        (kind ? (
+          <div style={{ marginTop: "var(--space-2)", fontSize: "var(--fs-xs)" }}>
+            <StatusDot status={kind}>{card.status.text}</StatusDot>
+          </div>
+        ) : (
+          <p className="ws-card__meta" style={{ marginTop: "var(--space-2)" }}>
+            {card.status.text}
+          </p>
+        ))}
     </div>
   );
 }
 
-// Per-port HTTPS via Tailscale Serve. Each Workshop app is a peer on its
-// own port — no app is "the root". The launcher at :443 lists all three.
-const COMMUTE_URL = "https://debian.tail38e62e.ts.net:8444/";
+// Per-port HTTPS via Tailscale Serve for apps that remain their own origin.
+// (Commute is now in-workshop at /apps/commute; Wearables stays external.)
 const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
 
 export default function Apps() {
   const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null; stale: boolean } | null>(null);
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
+  const [birdStatus, setBirdStatus] = useState<{ species: number; today: number; available: boolean } | null>(null);
+  const [locationStatus, setLocationStatus] = useState<{ ageS: number | null; available: boolean } | null>(null);
 
-  // Load finance ACCOUNT COUNT + freshness only — never the dollar values. This
-  // is what differentiates the Apps grid from the Finance app page itself.
   const loadFinance = useCallback(async () => {
     try {
-      // /finance/cache gives us per-key TS + TTL without re-fetching from Plaid.
-      const [statusR, balR] = await Promise.all([
-        fetch("/api/finance/cache"),
-        fetch("/api/finance/balances"),
-      ]);
+      const [statusR, balR] = await Promise.all([fetch("/api/finance/cache"), fetch("/api/finance/balances")]);
       const status = statusR.ok ? ((await statusR.json()) as FinanceStatusResp) : { entries: {} };
       const bal = balR.ok ? ((await balR.json()) as FinanceBalancesShape) : { items: [] };
       const accountCount = (bal.items || []).reduce((s, it) => s + (it.accounts?.length || 0), 0);
@@ -120,15 +124,42 @@ export default function Apps() {
     }
   }, []);
 
+  const loadBirds = useCallback(async () => {
+    try {
+      const r = await fetch("/api/birds/summary");
+      const s = r.ok ? await r.json() : null;
+      if (s) setBirdStatus({ species: s.species_count || 0, today: s.today?.detections || 0, available: !!s.available });
+      else setBirdStatus({ species: 0, today: 0, available: false });
+    } catch {
+      setBirdStatus({ species: 0, today: 0, available: false });
+    }
+  }, []);
+
+  const loadLocation = useCallback(async () => {
+    try {
+      const r = await fetch("/api/location/latest");
+      const j = r.ok ? await r.json() : { latest: null };
+      const rec = j.latest as { ts?: string } | null;
+      if (rec?.ts) {
+        const ageS = Math.max(0, Math.round((Date.now() - Date.parse(rec.ts)) / 1000));
+        setLocationStatus({ ageS, available: true });
+      } else {
+        setLocationStatus({ ageS: null, available: false });
+      }
+    } catch {
+      setLocationStatus({ ageS: null, available: false });
+    }
+  }, []);
+
   useEffect(() => {
     loadFinance();
     loadServices();
-  }, [loadFinance, loadServices]);
+    loadBirds();
+    loadLocation();
+  }, [loadFinance, loadServices, loadBirds, loadLocation]);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 
-  // Build the cards list. Privacy: finance card shows account count + freshness,
-  // NOT dollar amounts. To see real data, tap into the app.
   const cards: AppCard[] = [
     {
       key: "finance",
@@ -136,23 +167,57 @@ export default function Apps() {
       title: "Finance",
       tagline: "Balances, accounts, recent transactions",
       to: "/apps/finance",
-      status: financeStatus == null
-        ? { text: "loading…", tone: "muted" }
-        : financeStatus.accountCount == null
-          ? { text: "unavailable", tone: "err" }
-          : {
-              text: `${financeStatus.accountCount} account${financeStatus.accountCount === 1 ? "" : "s"} · ${financeStatus.ageS != null ? `updated ${fmtAge(financeStatus.ageS)}` : "no data yet"}`,
-              tone: financeStatus.stale ? "warn" : "muted",
-            },
+      status:
+        financeStatus == null
+          ? { text: "loading…", tone: "muted" }
+          : financeStatus.accountCount == null
+            ? { text: "unavailable", tone: "err" }
+            : {
+                text: `${financeStatus.accountCount} account${financeStatus.accountCount === 1 ? "" : "s"} · ${financeStatus.ageS != null ? `updated ${fmtAge(financeStatus.ageS)}` : "no data yet"}`,
+                tone: financeStatus.stale ? "warn" : "muted",
+              },
+    },
+    {
+      key: "budget",
+      Icon: PiggyBank,
+      title: "Budget",
+      tagline: "Payoff plan, savings goals, projections",
+      to: "/apps/budget",
+      status: { text: "plan & simulate", tone: "muted" },
+    },
+    {
+      key: "birds",
+      Icon: Bird,
+      title: "Yard Birds",
+      tagline: "Backyard bird-song detections, live",
+      to: "/apps/birds",
+      status:
+        birdStatus == null
+          ? { text: "loading…", tone: "muted" }
+          : !birdStatus.available
+            ? { text: "no detections yet", tone: "muted" }
+            : { text: `${birdStatus.species} species · ${birdStatus.today} today`, tone: "ok" },
+    },
+    {
+      key: "location",
+      Icon: MapPin,
+      title: "Location",
+      tagline: "Live position + history from OwnTracks",
+      to: "/apps/location",
+      status:
+        locationStatus == null
+          ? { text: "loading…", tone: "muted" }
+          : !locationStatus.available
+            ? { text: "no pings yet", tone: "muted" }
+            : { text: `last ping ${fmtAge(locationStatus.ageS ?? 0)}`, tone: "ok" },
     },
     {
       key: "commute",
       Icon: TrainFront,
       title: "Commute",
-      tagline: "Day-of departures + weather",
-      href: COMMUTE_URL,
-      external: true,
-      status: { text: "tap to open", tone: "muted" },
+      tagline: "Day-of departures + transit status",
+      to: "/apps/commute",
+      status: { text: "schedule & live status", tone: "muted" },
     },
     {
       key: "wearables",
@@ -166,40 +231,36 @@ export default function Apps() {
         if (services === null) return { text: "probing…", tone: "muted" } as const;
         if (!probe) return { text: "no probe configured", tone: "muted" } as const;
         return probe.status === "up"
-          ? { text: `up · ${probe.http_status} · ${probe.latency_ms}ms`, tone: "ok" } as const
-          : { text: `down — ${probe.notes || `HTTP ${probe.http_status}`}`, tone: "err" } as const;
+          ? ({ text: `up · ${probe.http_status} · ${probe.latency_ms}ms`, tone: "ok" } as const)
+          : ({ text: `down — ${probe.notes || `HTTP ${probe.http_status}`}`, tone: "err" } as const);
       })(),
     },
-    // OW API docs removed from Apps tile — docs aren't an app. Reachable
-    // directly at http://<host>:8100/docs when needed.
   ];
 
   return (
     <div>
-      <p className="muted" style={{ marginBottom: "1rem" }}>{cards.length} app{cards.length === 1 ? "" : "s"}</p>
-      <ul className="cards">
+      <PageHeader title="Apps" sub={`${cards.length} app${cards.length === 1 ? "" : "s"}`} />
+      <CardGrid>
         {cards.map((card) => (
-          <li key={card.key} className="card" style={{ padding: 0, overflow: "hidden" }}>
-            {card.to ? (
-              <Link to={card.to} style={{ display: "block", height: "100%", color: "inherit", textDecoration: "none" }}>
-                <CardBody card={card} />
-              </Link>
-            ) : (
-              // No target=_blank. Operator wants every card to feel like one app —
-              // including the path-prefixed sibling Vite apps (Commute) and the
-              // cross-origin tools. Same-tab navigation across origins is fine for
-              // a phone-first dashboard; back button returns to Workshop.
-              <a
-                href={card.href}
-                rel="noopener noreferrer"
-                style={{ display: "block", height: "100%", color: "inherit", textDecoration: "none" }}
-              >
-                <CardBody card={card} />
-              </a>
-            )}
+          <li key={card.key}>
+            <Card interactive pad0 style={{ overflow: "hidden" }}>
+              {card.to ? (
+                <Link to={card.to} style={{ display: "block", height: "100%", color: "inherit", textDecoration: "none" }}>
+                  <CardBody card={card} />
+                </Link>
+              ) : (
+                <a
+                  href={card.href}
+                  rel="noopener noreferrer"
+                  style={{ display: "block", height: "100%", color: "inherit", textDecoration: "none" }}
+                >
+                  <CardBody card={card} />
+                </a>
+              )}
+            </Card>
           </li>
         ))}
-      </ul>
+      </CardGrid>
     </div>
   );
 }

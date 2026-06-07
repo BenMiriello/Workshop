@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Workshop",
+    "slug": "workshop-mobile",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "workshop",
+    "ios": { "supportsTablet": false, "bundleIdentifier": "com.benmiriello.workshop" },
+    "plugins": ["expo-router"],
+    "extra": {
+      "apiBase": "http://192.168.1.10:8000"
+    }
+  }
+}

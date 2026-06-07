@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bird, Smartphone, Radio, MapPin } from "lucide-react";
-import Breadcrumbs from "../../../components/Breadcrumbs";
+import { Smartphone, Radio, MapPin } from "lucide-react";
 import { useRecorder, type DeviceMode } from "./recorder";
 import { API, jget } from "./ui";
 
@@ -46,7 +45,6 @@ export default function Devices() {
 
   return (
     <div>
-      <Breadcrumbs items={[{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }, { label: "Devices" }]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
           <Smartphone size={22} strokeWidth={1.8} /> Devices

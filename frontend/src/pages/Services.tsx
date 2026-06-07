@@ -1,4 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
+import { ExternalLink, RefreshCw } from "lucide-react";
+import {
+  Button,
+  Card,
+  CardGrid,
+  PageHeader,
+  Row,
+  SectionLabel,
+  StateBlock,
+  StatusDot,
+  StatusPill,
+  type StatusKind,
+} from "../ui";
 
 type ServiceStatus = {
   name: string;
@@ -17,8 +30,8 @@ type ServicesResp = {
   summary: { up: number; degraded: number; down: number };
 };
 
-const statusColor = (s: ServiceStatus["status"]) =>
-  s === "up" ? "#16a34a" : s === "degraded" ? "#f59e0b" : "#ef4444";
+const statusKind = (s: ServiceStatus["status"]): StatusKind =>
+  s === "up" ? "ok" : s === "degraded" ? "warn" : "danger";
 
 // Backend reports service URLs as 127.0.0.1 (its own loopback). From the
 // browser, rewrite to the host the user is actually viewing Workshop from
@@ -60,8 +73,41 @@ export default function Services() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  if (err) return <p className="err">Backend error: {err}</p>;
-  if (!data) return <p>Probing services…</p>;
+  const refreshBtn = (
+    <Button size="sm" onClick={refresh} loading={loading}>
+      <RefreshCw aria-hidden /> Refresh
+    </Button>
+  );
+
+  if (err) {
+    return (
+      <div>
+        <PageHeader title="Services" actions={refreshBtn} />
+        <StateBlock
+          variant="error"
+          title="Couldn't probe services"
+          hint={
+            <>
+              <code>/api/services/</code> — {err}
+            </>
+          }
+          action={
+            <Button size="sm" style={{ marginTop: "var(--space-2)" }} onClick={refresh}>
+              Retry
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div>
+        <PageHeader title="Services" sub="Probing…" actions={refreshBtn} />
+      </div>
+    );
+  }
 
   const byCat = data.services.reduce<Record<string, ServiceStatus[]>>((acc, s) => {
     (acc[s.category] ||= []).push(s);
@@ -70,49 +116,62 @@ export default function Services() {
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <p className="muted">
-          <span style={{ color: "#16a34a" }}>● {data.summary.up} up</span>
-          {data.summary.degraded > 0 && <> · <span style={{ color: "#f59e0b" }}>● {data.summary.degraded} degraded</span></>}
-          {data.summary.down > 0 && <> · <span style={{ color: "#ef4444" }}>● {data.summary.down} down</span></>}
-        </p>
-        <button onClick={refresh} disabled={loading}>{loading ? "…" : "Refresh"}</button>
-      </div>
+      <PageHeader
+        title="Services"
+        sub={
+          <Row wrap>
+            <StatusDot status="ok">{data.summary.up} up</StatusDot>
+            {data.summary.degraded > 0 && <StatusDot status="warn">{data.summary.degraded} degraded</StatusDot>}
+            {data.summary.down > 0 && <StatusDot status="danger">{data.summary.down} down</StatusDot>}
+          </Row>
+        }
+        actions={refreshBtn}
+      />
 
       {Object.entries(byCat).map(([cat, items]) => (
-        <section key={cat} style={{ marginBottom: "1.5rem" }}>
-          <h2 style={{ fontSize: "0.95rem", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--muted)", marginBottom: "0.5rem" }}>{cat}</h2>
-          <ul className="cards">
+        <section key={cat} style={{ marginBottom: "var(--space-6)" }}>
+          <SectionLabel>{cat}</SectionLabel>
+          <CardGrid>
             {items.map((s) => {
               const href = externalUrl(s.url, s.probe_path);
               return (
-                <li key={s.name} className="card" style={{ padding: 0 }}>
-                  <a
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title={`Open ${href}`}
-                    style={{
-                      display: "block",
-                      padding: "1rem",
-                      color: "inherit",
-                      textDecoration: "none",
-                    }}
+                <li key={s.name}>
+                  <Card
+                    interactive
+                    pad0
+                    onClick={() => window.open(href, "_blank", "noopener,noreferrer")}
                   >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                      <h3 style={{ margin: 0, fontSize: "1rem" }}>{s.name} ↗</h3>
-                      <span style={{ color: statusColor(s.status), fontWeight: 600, fontSize: "0.875rem" }}>● {s.status}</span>
-                    </div>
-                    <p className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>{href}</p>
-                    <p className="muted">
-                      {s.http_status != null ? `HTTP ${s.http_status} · ` : ""}{s.latency_ms}ms
-                    </p>
-                    {s.error && <p className="err" style={{ fontSize: "0.8rem" }}>{s.error}</p>}
-                  </a>
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open ${href}`}
+                      style={{ display: "block", padding: "var(--space-5)", color: "inherit", textDecoration: "none" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Row between style={{ alignItems: "baseline" }}>
+                        <h3 className="ws-card__title">
+                          {s.name}{" "}
+                          <ExternalLink size={14} strokeWidth={1.8} aria-hidden style={{ color: "var(--muted)" }} />
+                        </h3>
+                        <StatusPill status={statusKind(s.status)}>{s.status}</StatusPill>
+                      </Row>
+                      <p className="ws-card__meta ws-mono">{href}</p>
+                      <p className="ws-card__meta">
+                        {s.http_status != null ? `HTTP ${s.http_status} · ` : ""}
+                        {s.latency_ms}ms
+                      </p>
+                      {s.error && (
+                        <p className="ws-card__meta" style={{ color: "var(--danger)" }}>
+                          {s.error}
+                        </p>
+                      )}
+                    </a>
+                  </Card>
                 </li>
               );
             })}
-          </ul>
+          </CardGrid>
         </section>
       ))}
     </div>

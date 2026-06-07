@@ -24,6 +24,8 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
+from services import gpubroker_client
+
 
 router = APIRouter(tags=["autonomy"])
 
@@ -212,3 +214,56 @@ async def ollama_unload():
         "unloaded": results,
         "gpu": _nvidia_smi_snapshot(),
     }
+
+
+# ============================================================
+# gpubrokerd proxy + Workshop-specific broker actions
+# Workshop's local off-switch (above) remains the authoritative control plane.
+# The broker is additive: if up, Workshop participates as `workshop-overseer`.
+# If down, the UI shows that and these endpoints return gracefully.
+# ============================================================
+
+
+@router.get("/gpu/broker/status")
+async def broker_status():
+    s = await gpubroker_client.status()
+    if not s.get("available"):
+        return {"available": False}
+    mine = await gpubroker_client.my_leases()
+    return {**s, "my_leases": mine}
+
+
+@router.post("/gpu/broker/register")
+async def broker_register():
+    """Idempotent app registration. Called on backend startup; exposed here
+    so the operator can re-register from the UI if the broker was restarted."""
+    ok = await gpubroker_client.ensure_registered()
+    return {"registered": ok}
+
+
+@router.post("/gpu/broker/reserve")
+async def broker_reserve(body: dict):
+    """Operator hold: acquire a high-priority short-TTL lease so other apps
+    yield. Body: {duration_s: int, reason: str}."""
+    duration_s = int(body.get("duration_s", 1800))
+    reason = body.get("reason", "operator hold")
+    res = await gpubroker_client.reserve_exclusive(duration_s, reason)
+    if res is None:
+        raise HTTPException(status_code=503, detail="gpubrokerd unavailable")
+    return res
+
+
+@router.post("/gpu/broker/release-mine")
+async def broker_release_mine():
+    n = await gpubroker_client.release_all_mine()
+    return {"released_count": n}
+
+
+@router.post("/gpu/broker/boost")
+async def broker_boost(body: dict):
+    pri = int(body.get("priority", 80))
+    ttl = int(body.get("ttl_s", 1800))
+    res = await gpubroker_client.boost(pri, ttl)
+    if res is None:
+        raise HTTPException(status_code=503, detail="gpubrokerd unavailable")
+    return res

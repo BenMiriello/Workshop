@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { Plus } from "lucide-react";
 import type { Agent } from "@shared/types";
+import {
+  Button,
+  Card,
+  CardGrid,
+  ConfirmDialog,
+  PageHeader,
+  Row,
+  StateBlock,
+  StatusPill,
+  Tag,
+  catFor,
+} from "../ui";
 
 type SupervisorStatus = {
   supervisor: { paused: boolean; agent_count: number; paused_at: string | null };
@@ -12,6 +25,7 @@ export default function Agents() {
   const [err, setErr] = useState<string | null>(null);
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmPause, setConfirmPause] = useState(false);
 
   const loadAgents = useCallback(() => {
     fetch("/api/agents/")
@@ -25,7 +39,7 @@ export default function Agents() {
 
   const loadSup = useCallback(() => {
     fetch("/api/agents/autonomy/status")
-      .then((r) => r.ok ? r.json() : null)
+      .then((r) => (r.ok ? r.json() : null))
       .then(setSup)
       .catch(() => setSup(null));
   }, []);
@@ -37,69 +51,104 @@ export default function Agents() {
     return () => clearInterval(t);
   }, [loadAgents, loadSup]);
 
-  const onToggle = async () => {
-    if (!sup) return;
-    const paused = sup.supervisor.paused;
+  const setPaused = async (pause: boolean) => {
     setBusy(true);
     try {
-      await fetch(paused ? "/api/agents/supervisor/resume" : "/api/agents/supervisor/pause", { method: "POST" });
+      await fetch(pause ? "/api/agents/supervisor/pause" : "/api/agents/supervisor/resume", { method: "POST" });
       loadSup();
     } finally {
       setBusy(false);
+      setConfirmPause(false);
     }
   };
 
-  if (err) return <p className="err">Backend error: {err}</p>;
-  if (!agents) return <p>Loading agents…</p>;
+  if (err) {
+    return (
+      <div>
+        <PageHeader title="Agents" />
+        <StateBlock variant="error" title="Couldn't load agents" hint={<code>/api/agents/</code>} />
+      </div>
+    );
+  }
+  if (!agents) {
+    return (
+      <div>
+        <PageHeader title="Agents" sub="Loading…" />
+      </div>
+    );
+  }
 
   const paused = !!sup?.supervisor.paused;
 
   return (
     <div>
+      <PageHeader
+        title="Agents"
+        sub={`${agents.length} agent${agents.length === 1 ? "" : "s"}`}
+        actions={
+          <Link to="/agents/new">
+            <Button variant="primary" size="sm">
+              <Plus aria-hidden /> New agent
+            </Button>
+          </Link>
+        }
+      />
+
       {sup && (
-        <div style={{
-          marginBottom: "1rem",
-          padding: "0.55rem 0.75rem",
-          border: "1px solid var(--border)",
-          borderLeft: `3px solid ${paused ? "var(--err)" : "#16a34a"}`,
-          background: "var(--card)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          fontSize: "0.88rem",
-        }}>
-          <span>
-            Supervisor: <strong style={{ color: paused ? "var(--err)" : "#16a34a" }}>{paused ? "paused" : `ticking ${sup.supervisor.agent_count} agent${sup.supervisor.agent_count === 1 ? "" : "s"}`}</strong>
-            {sup.cron_autonomy.disabled && <span className="muted" style={{ marginLeft: "0.6rem" }}>· cron loop disabled</span>}
-          </span>
-          <button
-            onClick={onToggle}
-            disabled={busy}
-            style={{ padding: "0.2rem 0.7rem", fontSize: "0.8rem", color: paused ? undefined : "var(--err)" }}
-          >
-            {busy ? "…" : (paused ? "resume" : "pause")}
-          </button>
-        </div>
+        <Card style={{ marginBottom: "var(--space-5)", padding: "var(--space-3) var(--space-4)" }}>
+          <Row between wrap>
+            <Row>
+              <StatusPill status={paused ? "danger" : "running"}>
+                {paused ? "paused" : `ticking ${sup.supervisor.agent_count} agent${sup.supervisor.agent_count === 1 ? "" : "s"}`}
+              </StatusPill>
+              {sup.cron_autonomy.disabled && <span className="ws-muted">· cron loop disabled</span>}
+            </Row>
+            {paused ? (
+              <Button size="sm" variant="primary" loading={busy} onClick={() => setPaused(false)}>
+                Resume
+              </Button>
+            ) : (
+              <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => setConfirmPause(true)}>
+                Pause
+              </Button>
+            )}
+          </Row>
+        </Card>
       )}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <p className="muted">{agents.length} agent{agents.length === 1 ? "" : "s"}</p>
-        <Link to="/agents/new"><button>+ New agent</button></Link>
-      </div>
+
       {agents.length === 0 ? (
-        <p>No agents yet. Run the memory migration to seed masini, or create one above.</p>
+        <StateBlock
+          title="No agents yet"
+          hint="Run the memory migration to seed masini, or create one above."
+        />
       ) : (
-        <ul className="cards">
+        <CardGrid>
           {agents.map((a) => (
-            <li key={a.id} className="card">
+            <li key={a.id}>
               <Link to={`/agents/${a.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <h2>{a.name}</h2>
-                <p className="muted">{a.id}</p>
-                <p className="muted">memory: {a.memory_blocks.join(", ") || "—"}</p>
+                <Card interactive>
+                  <Row between>
+                    <h2 className="ws-card__title">{a.name}</h2>
+                    <Tag hue={catFor(a.id)}>agent</Tag>
+                  </Row>
+                  <p className="ws-card__meta ws-mono">{a.id}</p>
+                  <p className="ws-card__meta">memory: {a.memory_blocks.join(", ") || "—"}</p>
+                </Card>
               </Link>
             </li>
           ))}
-        </ul>
+        </CardGrid>
       )}
+
+      <ConfirmDialog
+        open={confirmPause}
+        onCancel={() => setConfirmPause(false)}
+        onConfirm={() => setPaused(true)}
+        title="Pause the supervisor?"
+        body="All autonomous agent ticks stop until you resume. In-flight work finishes; nothing new is picked up."
+        confirmLabel="Pause supervisor"
+        busy={busy}
+      />
     </div>
   );
 }

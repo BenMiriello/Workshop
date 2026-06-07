@@ -7,11 +7,9 @@ Hybrid model per operator:
       brief and decide whether the operator should be interrupted.
 
 Routing:
-    - Use the privacy relay `/relay/auto` so the local Ollama (qwen2.5:32b)
-      handles the everyday "looks normal, no alert" decision (boilerplate /
-      pattern-matching against the brief). Architecture-ish questions
-      (e.g. multi-stage incident reasoning, ambiguous service alerts) get
-      routed to cloud Claude.
+    - Forced to `/relay/local` (Ollama qwen2.5:32b). The "should I alert about
+      this commute?" decision class is boilerplate — qwen handles it fine and
+      avoids the cloud-deferred silent-fallback degradation.
     - This module only WRITES the decision + suggested text. The alerter
       module owns delivery + cooldown.
 
@@ -88,14 +86,10 @@ async def decide_interject(brief: dict[str, Any], checkpoint: str = "during") ->
     started = datetime.now(timezone.utc)
     decision: dict[str, Any] = {}
     route = "unknown"
-    # Always execute via local Ollama (qwen2.5:32b is plenty for the
-    # "should I alert about this commute?" decision class). Avoids the
-    # earlier silent degradation where cloud-route classifications fell
-    # back to a programmatic fallback. Predictable cost + autonomous.
     try:
         async with httpx.AsyncClient(timeout=RELAY_HTTP_TIMEOUT) as c:
             r = await c.post(
-                RELAY_URL.replace("/relay/auto", "/relay/local"),
+                RELAY_LOCAL_URL,
                 json={"task": prompt, "max_tokens": 1024},
             )
             if r.status_code != 200:

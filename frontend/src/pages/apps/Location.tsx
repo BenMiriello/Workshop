@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import ChatDock from "../../components/ChatDock";
+import { AppGroupNav } from "../../components/appNav";
+import { PageHeader } from "../../ui";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
@@ -107,7 +110,7 @@ export default function Location() {
 
   return (
     <div>
-      <h2 style={{ margin: "0 0 1rem" }}>Location</h2>
+      <PageHeader title="Location" actions={<AppGroupNav />} />
       {err && <div className="err">{err}</div>}
 
       <div className="card">
@@ -183,6 +186,9 @@ export default function Location() {
           </>
         )}
       </div>
+      {/* In-app assistant — defaults to location scope (knows last ping + age);
+          operator can swap providers from the picker inside the dock. */}
+      <ChatDock contextKey="location" title="Location assistant" placeholder="Ask about latest position…" />
     </div>
   );
 }

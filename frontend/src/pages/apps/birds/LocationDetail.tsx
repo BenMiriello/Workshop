@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Bird, MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
+  MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
 } from "lucide-react";
-import Breadcrumbs from "../../../components/Breadcrumbs";
+import { useCrumbLabel } from "../../../components/appNav";
 import { useRecorder } from "./recorder";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./ui";
@@ -39,6 +39,7 @@ export default function LocationDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [showNonBird] = useShowNonBird();
+  useCrumbLabel(summary?.name); // toolbar breadcrumb leaf = this place's name
   const nb = nonBirdQuery(showNonBird);
   const { recording, location: liveLoc } = useRecorder();
 
@@ -245,11 +246,6 @@ function Wrap({ children, name, isHome, onHome, onEdit }: {
 }) {
   return (
     <div>
-      <Breadcrumbs items={[
-        { label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> },
-        { label: "Locations", to: "/apps/birds/locations" },
-        { label: name || "Location" },
-      ]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem", flexWrap: "wrap", marginBottom: ".25rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
           <MapPin size={22} strokeWidth={1.8} /> {name || "Location"}

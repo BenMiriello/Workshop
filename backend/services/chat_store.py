@@ -1,0 +1,125 @@
+"""Chat thread + message persistence — the generalized history layer.
+
+App-agnostic: a thread carries a `context_key` (e.g. "budget", "general") that
+tells the chat route which context provider to wire in, but the store itself
+knows nothing about any app. One JSON file per thread under
+`~/workshop/.runtime/chat/`. Single-user box, low concurrency — atomic
+write-temp-then-rename is all the safety this needs.
+"""
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+CHAT_DIR = Path(os.environ.get(
+    "WORKSHOP_CHAT_DIR",
+    "/home/clawd-a/workshop/.runtime/chat",
+))
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _path(thread_id: str) -> Path:
+    # Thread ids are uu4 hex; reject anything that isn't to keep this off the
+    # filesystem's path-traversal surface.
+    if not thread_id or not all(c in "0123456789abcdef-" for c in thread_id):
+        raise ValueError(f"bad thread id: {thread_id!r}")
+    return CHAT_DIR / f"{thread_id}.json"
+
+
+def _write(thread: dict) -> dict:
+    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    p = _path(thread["id"])
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(thread, indent=2) + "\n")
+    tmp.replace(p)
+    return thread
+
+
+def create_thread(context_key: str = "general", title: str = "", agent_id: str | None = None) -> dict:
+    tid = uuid.uuid4().hex
+    thread = {
+        "id": tid,
+        "context_key": context_key or "general",
+        "agent_id": agent_id,
+        "title": title or "New chat",
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "messages": [],
+    }
+    return _write(thread)
+
+
+def get_thread(thread_id: str) -> dict | None:
+    p = _path(thread_id)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def list_threads(context_key: str | None = None) -> list[dict]:
+    """Summaries (no message bodies), newest first."""
+    if not CHAT_DIR.exists():
+        return []
+    out: list[dict] = []
+    for p in CHAT_DIR.glob("*.json"):
+        try:
+            t = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if context_key and t.get("context_key") != context_key:
+            continue
+        msgs = t.get("messages", [])
+        out.append({
+            "id": t["id"],
+            "context_key": t.get("context_key", "general"),
+            "agent_id": t.get("agent_id"),
+            "title": t.get("title", "New chat"),
+            "created_at": t.get("created_at"),
+            "updated_at": t.get("updated_at"),
+            "message_count": len(msgs),
+            "last_message": (msgs[-1]["content"][:120] if msgs else ""),
+        })
+    out.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
+    return out
+
+
+def append_message(thread_id: str, role: str, content: str, meta: dict | None = None) -> dict:
+    thread = get_thread(thread_id)
+    if thread is None:
+        raise KeyError(thread_id)
+    msg = {"role": role, "content": content, "ts": _now_iso()}
+    if meta:
+        msg["meta"] = meta
+    thread["messages"].append(msg)
+    thread["updated_at"] = _now_iso()
+    # Auto-title from the first user message so the thread list is legible.
+    if role == "user" and thread.get("title") in (None, "", "New chat"):
+        thread["title"] = content.strip().split("\n")[0][:60] or "New chat"
+    _write(thread)
+    return msg
+
+
+def rename_thread(thread_id: str, title: str) -> dict | None:
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread["title"] = title.strip()[:80] or "New chat"
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
+def delete_thread(thread_id: str) -> bool:
+    p = _path(thread_id)
+    if p.exists():
+        p.unlink()
+        return True
+    return False

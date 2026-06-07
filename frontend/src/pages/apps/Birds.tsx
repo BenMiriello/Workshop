@@ -4,7 +4,6 @@ import {
   Bird, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
   SlidersHorizontal, Smartphone, AlertTriangle, X,
 } from "lucide-react";
-import Breadcrumbs from "../../components/Breadcrumbs";
 import { useRecorder } from "./birds/recorder";
 import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
@@ -56,7 +55,6 @@ export default function Birds() {
 
   return (
     <div>
-      <Breadcrumbs items={[{ label: "Apps", to: "/apps" }, { label: "Yard Birds", icon: <Bird size={14} /> }]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
           <Bird size={24} strokeWidth={1.8} /> Yard Birds
@@ -111,34 +109,59 @@ export default function Birds() {
   );
 }
 
-// --- Listen button (handles first-run device naming) ---------------------
+// --- Listen button + optional "adopt existing device" picker -------------
+type KnownDevice = { token: string; name: string };
+
 function ListenButton() {
   const rec = useRecorder();
-  const [naming, setNaming] = useState(false);
-  const [name, setName] = useState("");
+  const [adopting, setAdopting] = useState(false);
+  const [devices, setDevices] = useState<KnownDevice[] | null>(null);
 
   if (rec.recording) {
     return <button className="btn" onClick={rec.stop}><Square size={15} /> Stop listening</button>;
   }
   if (rec.wasListening) {
-    // After a reload mid-session: one tap resumes (mic permission already granted).
     return <button className="btn" onClick={rec.start}><Mic size={16} /> Resume listening</button>;
   }
-  if (naming) {
-    const go = () => { const n = name.trim(); if (!n) return; rec.setDeviceName(n); setNaming(false); rec.start(); };
+
+  const openAdopt = () => {
+    setAdopting(true);
+    if (!devices) {
+      jget<{ devices: KnownDevice[] }>("/devices")
+        .then((r) => setDevices(r.devices.filter((d) => d.token !== rec.device.token)))
+        .catch(() => setDevices([]));
+    }
+  };
+
+  if (adopting) {
     return (
       <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center", flexWrap: "wrap" }}>
-        <input className="num-in" autoFocus placeholder="Name this device (e.g. My phone)" value={name}
-          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} style={{ minWidth: 200, width: "auto" }} />
-        <button className="btn primary" onClick={go}>Start</button>
+        {devices === null
+          ? <Loader2 size={14} className="muted" style={{ animation: "spin 1s linear infinite" }} />
+          : devices.length === 0
+            ? <span className="muted" style={{ fontSize: ".85rem" }}>No other registered devices.</span>
+            : devices.map((d) => (
+                <button key={d.token} className="btn" onClick={() => { rec.adoptDevice(d.token, d.name); setAdopting(false); rec.start(); }}>
+                  <Smartphone size={14} /> {d.name}
+                </button>
+              ))
+        }
+        <button className="btn" onClick={() => setAdopting(false)}><X size={14} /></button>
       </span>
     );
   }
-  const onClick = () => { if (!rec.device.name) setNaming(true); else rec.start(); };
+
   return (
-    <button className="btn" onClick={onClick} disabled={rec.analyzerUp === false}>
-      <Mic size={16} /> Listen on this device
-    </button>
+    <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center" }}>
+      <button className="btn" onClick={rec.start} disabled={rec.analyzerUp === false}>
+        <Mic size={16} /> Listen on this device
+      </button>
+      {!rec.device.name && (
+        <button className="btn" title="This is a new browser — adopt an existing device?" onClick={openAdopt}>
+          <Smartphone size={14} />
+        </button>
+      )}
+    </span>
   );
 }
 

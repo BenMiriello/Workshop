@@ -1,0 +1,250 @@
+#!/bin/bash
+# ralph.sh — completion-sentinel re-fire loop.
+#
+# The Ralph Wiggum technique adapted to this codebase. Wraps `claude -p` such
+# that the model keeps iterating against a task until either:
+#   (a) it emits the sentinel `<promise>COMPLETE</promise>` AND reviewer.sh
+#       approves the diff;
+#   (b) the iteration cap (default 10) is hit;
+#   (c) the wall-time cap (default 25min) is hit;
+#   (d) a classifier block is detected.
+#
+# Each iteration sees the PREVIOUS iteration's diff via `git status` and the
+# reviewer's verdict, so it can self-correct. Continuity across iterations is
+# preserved with `claude --continue` after the first turn. Cap on cost: each
+# iteration runs with `--max-turns 6` so a single claude tick can't burn
+# unbounded budget.
+#
+# Usage:
+#   ralph.sh "<task description>" [--baseline-rev <rev>] [--max-iter N] [--max-wall S]
+#
+# Exit codes:
+#   0  — reviewer approved (COMPLETE)
+#   1  — iteration cap hit without approval
+#   2  — wall-time cap hit
+#   3  — classifier block hit
+#   4  — startup failure
+
+set -u
+
+WORKSHOP=/home/clawd-a/workshop
+CLAUDE=/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude
+AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
+LOG=$WORKSHOP/.runtime/ralph.log
+REVIEWER=$WORKSHOP/scripts/reviewer.sh
+
+mkdir -p "$(dirname "$LOG")"
+
+ts() { date -Iseconds; }
+log() { echo "[$(ts)] [ralph] $*" >> "$LOG"; echo "[ralph] $*"; }
+
+# Parse args.
+TASK=""
+BASELINE=""
+MAX_ITER=10
+MAX_WALL=1500   # 25 minutes
+MAX_TURNS_PER_ITER=6
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --baseline-rev) BASELINE="$2"; shift 2 ;;
+    --max-iter)     MAX_ITER="$2"; shift 2 ;;
+    --max-wall)     MAX_WALL="$2"; shift 2 ;;
+    *)              TASK="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$TASK" ]]; then
+  echo "usage: ralph.sh \"<task description>\" [--baseline-rev rev] [--max-iter N] [--max-wall sec]" >&2
+  exit 4
+fi
+
+# Subscription auth + defense against accidental API-key auth.
+if [[ -r "$AUTH_ENV" ]]; then
+  set -a; . "$AUTH_ENV"; set +a
+fi
+unset ANTHROPIC_API_KEY
+
+cd "$WORKSHOP" || { log "cannot cd to $WORKSHOP"; exit 4; }
+
+# Lock with same key as cron_agent so they don't race.
+LOCK=/tmp/workshop-ralph.lock
+exec 9>"$LOCK"
+if ! flock -n 9; then
+  log "another ralph is running; aborting"
+  exit 4
+fi
+
+# Baseline rev: caller-supplied, else current HEAD.
+if [[ -z "$BASELINE" ]]; then
+  BASELINE=$(git rev-parse HEAD 2>/dev/null || echo "")
+fi
+
+START_EPOCH=$(date +%s)
+SENTINEL='<promise>COMPLETE</promise>'
+
+log "starting task: $(echo "$TASK" | head -c 200)"
+log "baseline=$BASELINE max_iter=$MAX_ITER max_wall=${MAX_WALL}s"
+
+# Build the prompt template. Iteration 1 = full task. Iteration N>1 = "continue,
+# reviewer said incomplete because <reasons>".
+RALPH_INSTRUCTIONS=$(cat <<'PROMPT'
+You are running inside Ralph — a completion-driven re-fire loop. Your job is
+to DRIVE THIS TASK TO DONE.
+
+Rules of the loop:
+
+1. Read the task carefully and execute it FULLY. Not a partial step. Full.
+2. Before considering yourself done, run `~/workshop/scripts/reviewer.sh` via
+   Bash. Parse its JSON. If `complete: false`, READ the `reasons` field —
+   that is precisely what you must fix. Then iterate.
+3. STUBS ARE FORBIDDEN. Do NOT write `# TODO: implement this`,
+   `pass  # stub`, `raise NotImplementedError`, `...`, "Here you would do X",
+   `throw new Error('not implemented')`, or any equivalent. If a step is too
+   big for one iteration, split it: mark the task `[~] BLOCKED:
+   too-complex-for-single-tick` in TODO.md and propose smaller sub-tasks
+   under `## Proposed`. Then exit (this is a legitimate completion).
+4. VERIFY before claiming done. If you added an endpoint, curl it. If you
+   added a route, grep the wiring. If you added a script, dry-run it.
+5. When (and ONLY when) reviewer.sh returns `complete: true`, emit the
+   literal sentinel on its own line as the LAST line of your text output:
+
+       <promise>COMPLETE</promise>
+
+   The Ralph loop greps for this exact string to decide whether to re-fire.
+   No sentinel = re-fire.
+6. If a step is genuinely impossible (missing operator-side credential,
+   classifier block, etc.), mark the task `[~] BLOCKED: <specific reason>`
+   in TODO.md and emit the sentinel — that's a valid completion.
+7. Be terse in narrative output. The Ralph log is for the operator to skim.
+
+The task follows below.
+PROMPT
+)
+
+iter=0
+exit_code=1
+last_reviewer_json='{"reasons":["initial-iteration-not-yet-run"]}'
+
+while (( iter < MAX_ITER )); do
+  iter=$((iter + 1))
+
+  # Wall-time check.
+  ELAPSED=$(( $(date +%s) - START_EPOCH ))
+  if (( ELAPSED >= MAX_WALL )); then
+    log "wall-time cap (${MAX_WALL}s) hit at iter=$iter"
+    exit_code=2
+    break
+  fi
+  REMAINING=$(( MAX_WALL - ELAPSED ))
+  PER_ITER_TIMEOUT=$(( REMAINING < 1500 ? REMAINING : 1500 ))
+
+  log "=== iter $iter/$MAX_ITER (elapsed=${ELAPSED}s, per-iter-timeout=${PER_ITER_TIMEOUT}s) ==="
+
+  # Build the iteration prompt. First iteration: full task. Subsequent: "continue,
+  # reviewer said X". The reviewer JSON gives concrete failure reasons the model
+  # can address.
+  if (( iter == 1 )); then
+    ITER_PROMPT="$RALPH_INSTRUCTIONS
+
+## Task
+
+$TASK"
+    CONTINUE_FLAG=""
+  else
+    REASONS=$(echo "$last_reviewer_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin).get('reasons',[])))" 2>/dev/null || echo "unknown")
+    STUBS=$(echo "$last_reviewer_json" | python3 -c "
+import json,sys
+hits = json.load(sys.stdin).get('stub_hits',[])
+print('\n'.join(f'  - {h[\"file\"]}:{h[\"line\"]} ({h[\"marker\"]})' for h in hits[:20]))
+" 2>/dev/null || echo "")
+    ITER_PROMPT="The reviewer rejected the previous iteration. Address each failure reason BELOW before re-running the reviewer.
+
+Reasons: $REASONS
+
+Stub hits (must be removed or replaced with real impl):
+$STUBS
+
+Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured detail. Then DO THE WORK. When done, emit the sentinel.
+
+(Original task: $(echo "$TASK" | head -c 400))"
+    CONTINUE_FLAG="--continue"
+  fi
+
+  # Capture stdout for sentinel + classifier-block detection.
+  ITER_OUT=$WORKSHOP/.runtime/ralph-iter-${iter}.out
+  # We run claude with --output-format text so the sentinel is matchable as a
+  # plain string. --max-turns bounds within-iter cost.
+  set +e
+  timeout "$PER_ITER_TIMEOUT" "$CLAUDE" $CONTINUE_FLAG -p "$ITER_PROMPT" \
+    --output-format text \
+    --max-turns "$MAX_TURNS_PER_ITER" \
+    >"$ITER_OUT" 2>&1
+  CLAUDE_EXIT=$?
+  set -e
+
+  log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0)"
+
+  # Detect classifier block in output — the operator's hard rule says these
+  # are real blocks, not workarounds. Treat as terminal for this Ralph run.
+  if grep -qiE 'classifier|safety-check|3 consecutive actions were blocked' "$ITER_OUT"; then
+    log "classifier block detected in iter $iter output; stopping"
+    exit_code=3
+    break
+  fi
+
+  # Check sentinel.
+  SAW_SENTINEL=0
+  if grep -qF "$SENTINEL" "$ITER_OUT"; then
+    SAW_SENTINEL=1
+    log "sentinel observed in iter $iter output"
+  fi
+
+  # Run reviewer regardless of sentinel — sentinel is necessary but not sufficient.
+  set +e
+  REVIEWER_JSON=$("$REVIEWER" "$BASELINE" 2>>"$LOG")
+  REVIEWER_EXIT=$?
+  set -e
+  last_reviewer_json="$REVIEWER_JSON"
+  if (( REVIEWER_EXIT != 0 )); then
+    log "reviewer.sh failed with exit $REVIEWER_EXIT — treating as incomplete"
+    continue
+  fi
+  COMPLETE=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('complete', False)))" 2>/dev/null || echo 0)
+  log "iter $iter reviewer.complete=$COMPLETE"
+
+  if (( SAW_SENTINEL == 1 && COMPLETE == 1 )); then
+    log "PASS — sentinel + reviewer approval"
+    exit_code=0
+    break
+  fi
+
+  # If reviewer said complete but no sentinel, the worker forgot the contract — log learning.
+  if (( COMPLETE == 1 && SAW_SENTINEL == 0 )); then
+    "$WORKSHOP/scripts/log_learning.sh" \
+      "Ralph: worker finished cleanly but forgot to emit <promise>COMPLETE</promise> sentinel — always end the final iteration with that exact string on its own line" \
+      "ralph" 2>/dev/null || true
+    log "PASS (reviewer ok, sentinel missed — treating as PASS)"
+    exit_code=0
+    break
+  fi
+
+  # Reviewer rejected. Append learnings from the rejection.
+  if [[ -n "$REVIEWER_JSON" ]]; then
+    echo "$REVIEWER_JSON" | python3 -c "
+import json, sys, subprocess
+data = json.load(sys.stdin)
+for reason in data.get('reasons', []):
+    subprocess.run(['/home/clawd-a/workshop/scripts/log_learning.sh',
+                    f'Ralph rejected: {reason}', 'ralph'],
+                   check=False)
+" 2>/dev/null || true
+  fi
+done
+
+if (( iter >= MAX_ITER && exit_code == 1 )); then
+  log "iteration cap ($MAX_ITER) hit; final reviewer JSON: $last_reviewer_json"
+fi
+
+log "=== done iter=$iter exit_code=$exit_code ==="
+exit "$exit_code"

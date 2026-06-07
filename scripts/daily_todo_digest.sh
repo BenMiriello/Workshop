@@ -15,6 +15,11 @@ TS=$(date -Iseconds)
 
 mkdir -p "$WORKSHOP/.runtime"
 
+# Pause-until guard: skip silently if autonomy is paused until a future PT
+# date (self-clearing). See scripts/pause_guard.sh.
+source /home/clawd-a/workshop/scripts/pause_guard.sh
+workshop_pause_guard "$WORKSHOP/.runtime/pause.log" "daily_todo_digest"
+
 # Counts
 UNBLOCKED=$(grep -c '^\[ \]' "$TODO" 2>/dev/null || echo 0)
 INPROG=$(grep -c '^\[~\]' "$TODO" 2>/dev/null || echo 0)

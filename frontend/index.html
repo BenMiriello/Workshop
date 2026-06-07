@@ -3,7 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- Dark by default: paint the dark page bg immediately (before fonts/CSS
+         load) so first paint is never a white flash. The bootstrap script below
+         may switch to light/system per the persisted choice. -->
+    <style>
+      html { background: #0f0e17; }
+    </style>
     <!-- iOS Safari requires an explicit Permissions-Policy grant before it will
          honor navigator.geolocation.getCurrentPosition / watchPosition, even on
          HTTPS. Without this, WebKit returns PositionError code 1 with message
@@ -12,6 +18,25 @@
          this meta tag is the fallback for environments where the header is stripped. -->
     <meta http-equiv="Permissions-Policy" content="geolocation=(self)" />
     <title>Workshop</title>
+    <!-- Workshop Design System fonts: Hanken Grotesk (UI) + JetBrains Mono (ids/endpoints/numbers). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <!-- Pre-React theme bootstrap. Applies the persisted theme to <html> before
+         any paint so there's no light/dark flash. Mirrors kitchen.js applyTheme:
+         localStorage["ws-theme"] is "light" | "dark" | "system". Default is
+         "dark" — the app paints dark on first visit; the Settings switch can
+         move it to light or system (follow OS). -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("ws-theme") || "dark";
+          document.documentElement.setAttribute("data-theme", t);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
     <!-- BLOCKING service-worker killer. Runs before any module loads so a
          stale cached SW from an earlier deploy can't intercept fetches.
          Triggers a single reload after cleanup so the page is served from

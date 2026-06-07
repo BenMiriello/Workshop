@@ -1,6 +1,36 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, TrainFront, Bot, Banknote, Server, Heart, Eye, EyeOff, Copy, Check, Power, Cpu } from "lucide-react";
+import {
+  MapPin,
+  TrainFront,
+  Bot,
+  Banknote,
+  Server,
+  Heart,
+  Eye,
+  EyeOff,
+  Copy,
+  Check,
+  Power,
+  Cpu,
+  Palette,
+  Sun,
+  Moon,
+  Monitor,
+  Trash2,
+} from "lucide-react";
+import {
+  Button,
+  Card,
+  ConfirmDialog,
+  PageHeader,
+  SectionLabel,
+  Segmented,
+  StatusDot,
+  useTheme,
+  type SegmentedOption,
+  type ThemeMode,
+} from "../ui";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -40,7 +70,8 @@ const fmtAge = (iso: string) => {
 export default function Settings() {
   return (
     <div style={{ maxWidth: 760 }}>
-      <h2 style={{ margin: "0 0 1.25rem" }}>Settings</h2>
+      <PageHeader title="Settings" />
+      <AppearanceSection />
       <LocationSection />
       <HealthSection />
       <CommuteSection />
@@ -53,7 +84,7 @@ export default function Settings() {
 }
 
 // ----------------------------------------------------------------------------
-// Reusable section shell
+// Reusable section shell — design-system SectionLabel + Card.
 // ----------------------------------------------------------------------------
 function Section({
   icon: Icon,
@@ -65,39 +96,44 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section style={{ marginBottom: "1.5rem" }}>
-      <h3 style={{
-        margin: "0 0 0.6rem",
-        fontSize: "0.85rem",
-        letterSpacing: "0.05em",
-        textTransform: "uppercase",
-        color: "var(--muted)",
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "0.4rem",
-      }}>
-        <Icon size={14} strokeWidth={1.8} aria-hidden />
-        {title}
-      </h3>
-      <div className="card">{children}</div>
+    <section style={{ marginBottom: "var(--space-6)" }}>
+      <SectionLabel icon={<Icon aria-hidden />}>{title}</SectionLabel>
+      <Card>{children}</Card>
     </section>
   );
 }
 
+// Label-beside-value row. Uses the inline-field grid; a hairline separates rows.
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{
-      display: "grid",
-      gridTemplateColumns: "minmax(120px, 0.4fr) 1fr",
-      gap: "0.4rem 1rem",
-      alignItems: "baseline",
-      padding: "0.45rem 0",
-      borderBottom: "1px solid var(--border)",
-      fontSize: "0.92rem",
-    }}>
-      <span className="muted" style={{ fontSize: "0.85rem" }}>{label}</span>
+    <div
+      className="ws-field ws-field--inline"
+      style={{ alignItems: "baseline", padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}
+    >
+      <span className="ws-field__label ws-muted">{label}</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Appearance — theme switch (the only writer of localStorage["ws-theme"]).
+// Commits ON CHANGE (a view preference): light / dark / system. Default dark.
+// ----------------------------------------------------------------------------
+const THEME_OPTIONS: SegmentedOption<ThemeMode>[] = [
+  { value: "light", label: <><Sun size={15} strokeWidth={1.8} aria-hidden /> Light</> },
+  { value: "dark", label: <><Moon size={15} strokeWidth={1.8} aria-hidden /> Dark</> },
+  { value: "system", label: <><Monitor size={15} strokeWidth={1.8} aria-hidden /> System</> },
+];
+
+function AppearanceSection() {
+  const [theme, setTheme] = useTheme();
+  return (
+    <Section icon={Palette} title="Appearance">
+      <Row label="theme">
+        <Segmented options={THEME_OPTIONS} value={theme} onChange={setTheme} ariaLabel="Theme" />
+      </Row>
+    </Section>
   );
 }
 
@@ -107,6 +143,8 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 function LocationSection() {
   const [latest, setLatest] = useState<LocationLatest>(null);
   const [, setTick] = useState(0);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -130,12 +168,13 @@ function LocationSection() {
   const noData = !latest?.ts;
 
   const onClearHistory = async () => {
-    if (!confirm("Erase ALL stored location history? This deletes the backend file.")) return;
+    setClearing(true);
     try {
       await fetch("/api/location/history", { method: "DELETE" });
       await load();
-    } catch (e) {
-      alert(String(e));
+    } finally {
+      setClearing(false);
+      setConfirmClear(false);
     }
   };
 
@@ -143,17 +182,17 @@ function LocationSection() {
     <Section icon={MapPin} title="Location">
       <Row label="status">
         {noData ? (
-          <span style={{ color: "var(--err)" }}>no data — Owntracks not publishing yet</span>
+          <StatusDot status="danger">no data — Owntracks not publishing yet</StatusDot>
         ) : stale ? (
-          <span style={{ color: "var(--err)" }}>stale ({fmtAge(latest!.ts!)}) — check Owntracks app</span>
+          <StatusDot status="warn">stale ({fmtAge(latest!.ts!)}) — check Owntracks app</StatusDot>
         ) : (
-          <span style={{ color: "#16a34a" }}>live · last ping {fmtAge(latest!.ts!)}</span>
+          <StatusDot status="ok">live · last ping {fmtAge(latest!.ts!)}</StatusDot>
         )}
       </Row>
       <Row label="source">{latest?.source || "—"}</Row>
       {latest?.lat != null && (
         <Row label="position">
-          <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
+          <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
             {latest.lat.toFixed(5)}, {latest.lng?.toFixed(5)}
             {latest.accuracy_m != null && ` · ±${Math.round(latest.accuracy_m)}m`}
           </span>
@@ -163,16 +202,25 @@ function LocationSection() {
         <a href="https://owntracks.org/booklet/features/ios/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
           Owntracks
         </a>{" · "}
-        config walkthrough: <code style={{ fontSize: "0.8rem" }}>docs/owntracks-ios.md</code>
+        config walkthrough: <code style={{ fontSize: "var(--fs-xs)" }}>docs/owntracks-ios.md</code>
       </Row>
       <OwntracksCredentials />
       <Row label="history">
         <Link to="/apps/location" style={{ color: "var(--accent)" }}>full history viewer ↗</Link>
         {" · "}
-        <button onClick={onClearHistory} style={{ marginLeft: "0.4rem", padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
-          clear all
-        </button>
+        <Button size="sm" variant="danger-ghost" onClick={() => setConfirmClear(true)}>
+          <Trash2 aria-hidden /> Clear all
+        </Button>
       </Row>
+      <ConfirmDialog
+        open={confirmClear}
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={onClearHistory}
+        title="Clear all location history?"
+        body="This deletes the stored history file on the backend. This can't be undone."
+        confirmLabel="Clear history"
+        busy={clearing}
+      />
     </Section>
   );
 }
@@ -259,11 +307,11 @@ function HealthSection() {
     <Section icon={Heart} title="Health (Apple Health)">
       <Row label="status">
         {!latestTs ? (
-          <span style={{ color: "var(--err)" }}>no data — install Health Auto Export</span>
+          <StatusDot status="danger">no data — install Health Auto Export</StatusDot>
         ) : stale ? (
-          <span style={{ color: "var(--err)" }}>stale ({fmtAge(latestTs)}) — check Health Auto Export</span>
+          <StatusDot status="warn">stale ({fmtAge(latestTs)}) — check Health Auto Export</StatusDot>
         ) : (
-          <span style={{ color: "#16a34a" }}>{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {fmtAge(latestTs)}</span>
+          <StatusDot status="ok">{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {fmtAge(latestTs)}</StatusDot>
         )}
       </Row>
       <Row label="iOS app">
@@ -358,9 +406,9 @@ function CommuteSection() {
       </Row>
       <Row label="511 API key">
         {realtime?.status === "ok" ? (
-          <span style={{ color: "#16a34a" }}>configured · transit realtime active</span>
+          <StatusDot status="ok">configured · transit realtime active</StatusDot>
         ) : (
-          <span style={{ color: "var(--err)" }}>
+          <span style={{ color: "var(--danger)" }}>
             missing · register at <a href="https://511.org/open-data/token" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>511.org</a>,
             paste to <code style={{ fontSize: "0.8rem" }}>~/.config/clawdbot/auth.env</code> as <code>WORKSHOP_511_API_KEY</code>
           </span>
@@ -545,11 +593,10 @@ function FinanceSection() {
 // ----------------------------------------------------------------------------
 // Autonomy & GPU section
 // Three independent off-switches:
-//   - Supervisor heartbeats (in-process)
-//   - Cron autonomy (AUTONOMY_DISABLED flag file)
-//   - Ollama GPU residency (unload resident models)
-// "Stop all" pauses both AND frees the GPU in one click (ordered so models
-// can't be reloaded between pause and unload).
+//   - Supervisor heartbeats (Wave-2 Letta loop, in-process)
+//   - Cron autonomy (Wave-1 Ralph loop, via AUTONOMY_DISABLED flag file)
+//   - Ollama GPU residency (unload resident models to free VRAM)
+// Plus a single "Stop everything" that toggles supervisor + cron together.
 // ----------------------------------------------------------------------------
 type AutonomyStatus = {
   supervisor: {
@@ -594,19 +641,46 @@ const fmtBytes = (b: number | null) => {
   return `${b} B`;
 };
 
+type BrokerLease = {
+  id: string;
+  app: string;
+  vram_budget_mib: number;
+  vram_actual_mib: number;
+  priority: number;
+  state: string;
+  reason: string;
+  implicit: boolean;
+};
+
+type BrokerStatus = {
+  available: boolean;
+  mode?: string;
+  total_vram_mib?: number;
+  committed_mib?: number;
+  free_budget_mib?: number;
+  active_lease_count?: number;
+  queue_depth?: number;
+  my_leases?: BrokerLease[];
+};
+
 function AutonomySection() {
   const [auto, setAuto] = useState<AutonomyStatus | null>(null);
   const [oll, setOll] = useState<OllamaStatus | null>(null);
+  const [bro, setBro] = useState<BrokerStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [confirmStopAll, setConfirmStopAll] = useState(false);
+  const [confirmUnload, setConfirmUnload] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [a, o] = await Promise.all([
+      const [a, o, b] = await Promise.all([
         fetch("/api/agents/autonomy/status").then((r) => r.ok ? r.json() : null),
         fetch("/api/ollama/status").then((r) => r.ok ? r.json() : null),
+        fetch("/api/gpu/broker/status").then((r) => r.ok ? r.json() : { available: false }),
       ]);
       setAuto(a);
       setOll(o);
+      setBro(b);
     } catch {
       // keep prior state
     }
@@ -633,7 +707,6 @@ function AutonomySection() {
   const allStopped = supPaused && cronDisabled;
 
   const onStopAll = async () => {
-    if (!confirm("Stop all autonomy AND free GPU?\n\n• Pause supervisor heartbeats\n• Disable the cron autonomy loop\n• Unload all resident Ollama models")) return;
     setBusy("stop-all");
     try {
       // Order matters: pause supervisor and disable cron FIRST so nothing
@@ -646,6 +719,7 @@ function AutonomySection() {
       await load();
     } finally {
       setBusy(null);
+      setConfirmStopAll(false);
     }
   };
 
@@ -663,13 +737,13 @@ function AutonomySection() {
   };
 
   const onUnload = async () => {
-    if (!confirm("Unload all resident Ollama models to free GPU memory? Next agent tick will reload qwen2.5:32b (~20s warm-up).")) return;
     setBusy("unload");
     try {
       await fetch("/api/ollama/unload", { method: "POST" });
       await load();
     } finally {
       setBusy(null);
+      setConfirmUnload(false);
     }
   };
 
@@ -677,81 +751,189 @@ function AutonomySection() {
     <Section icon={Power} title="Autonomy & GPU">
       <Row label="all autonomy">
         {auto == null ? "loading…" : (
-          <>
-            <span style={{ color: allStopped ? "var(--err)" : "#16a34a", marginRight: "0.6rem" }}>
-              {allStopped ? "stopped" : (supPaused || cronDisabled ? "partial" : "running")}
-            </span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <StatusDot status={allStopped ? "stopped" : supPaused || cronDisabled ? "warn" : "running"}>
+              {allStopped ? "stopped" : supPaused || cronDisabled ? "partial" : "running"}
+            </StatusDot>
             {allStopped ? (
-              <button onClick={onStartAll} disabled={busy != null} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem" }}>
-                {busy === "start-all" ? "starting…" : "start all"}
-              </button>
+              <Button size="sm" variant="primary" loading={busy === "start-all"} disabled={busy != null} onClick={onStartAll}>
+                Start all
+              </Button>
             ) : (
-              <button onClick={onStopAll} disabled={busy != null} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
-                {busy === "stop-all" ? "stopping…" : "stop all"}
-              </button>
+              <Button size="sm" variant="danger-ghost" disabled={busy != null} onClick={() => setConfirmStopAll(true)}>
+                <Power aria-hidden /> Stop all
+              </Button>
             )}
-          </>
+          </span>
         )}
       </Row>
 
       <Row label="supervisor">
         {auto == null ? "—" : (
-          <>
-            <span style={{ color: supPaused ? "var(--err)" : "#16a34a", marginRight: "0.6rem" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <StatusDot status={supPaused ? "warn" : "running"}>
               {supPaused ? "paused" : `ticking ${auto.supervisor.agent_count} agent${auto.supervisor.agent_count === 1 ? "" : "s"}`}
-            </span>
-            <button
-              onClick={() => post(supPaused ? "resume" : "pause", supPaused ? "/api/agents/supervisor/resume" : "/api/agents/supervisor/pause")}
+            </StatusDot>
+            <Button
+              size="sm"
+              variant={supPaused ? "default" : "danger-ghost"}
               disabled={busy != null}
-              style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: supPaused ? undefined : "var(--err)" }}
+              onClick={() => post(supPaused ? "resume" : "pause", supPaused ? "/api/agents/supervisor/resume" : "/api/agents/supervisor/pause")}
             >
-              {busy === "pause" ? "pausing…" : busy === "resume" ? "resuming…" : (supPaused ? "resume" : "pause")}
-            </button>
+              {busy === "pause" ? "pausing…" : busy === "resume" ? "resuming…" : supPaused ? "Resume" : "Pause"}
+            </Button>
             {supPaused && auto.supervisor.paused_at && (
-              <span className="muted" style={{ marginLeft: "0.6rem", fontSize: "0.8rem" }}>
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                 since {fmtAge(auto.supervisor.paused_at)}
               </span>
             )}
-          </>
+          </span>
         )}
       </Row>
 
       <Row label="cron loop">
         {auto == null ? "—" : (
-          <>
-            <span style={{ color: cronDisabled ? "var(--err)" : "#16a34a", marginRight: "0.6rem" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <StatusDot status={cronDisabled ? "stopped" : "running"}>
               {cronDisabled ? "disabled" : "enabled (Ralph fires every 20m)"}
-            </span>
-            <button
-              onClick={() => post(cronDisabled ? "enable" : "disable", cronDisabled ? "/api/agents/autonomy/enable" : "/api/agents/autonomy/disable")}
+            </StatusDot>
+            <Button
+              size="sm"
+              variant={cronDisabled ? "default" : "danger-ghost"}
               disabled={busy != null}
-              style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: cronDisabled ? undefined : "var(--err)" }}
+              onClick={() => post(cronDisabled ? "enable" : "disable", cronDisabled ? "/api/agents/autonomy/enable" : "/api/agents/autonomy/disable")}
             >
-              {busy === "enable" ? "enabling…" : busy === "disable" ? "disabling…" : (cronDisabled ? "enable" : "disable")}
-            </button>
-          </>
+              {busy === "enable" ? "enabling…" : busy === "disable" ? "disabling…" : cronDisabled ? "Enable" : "Disable"}
+            </Button>
+          </span>
         )}
       </Row>
 
       <Row label="gpu memory">
         {oll == null || !oll.gpu.available ? (
-          oll?.gpu.error ? <span className="muted">no nvidia-smi</span> : "loading…"
+          oll?.gpu.error ? <span className="ws-muted">no nvidia-smi</span> : "loading…"
         ) : (
-          <>
-            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
               {fmtMiB(oll.gpu.memory_used_mib)} / {fmtMiB(oll.gpu.memory_total_mib)}
               {" · "}{oll.gpu.utilization_pct}% util
             </span>
-            <button
-              onClick={onUnload}
+            <Button
+              size="sm"
+              variant="danger-ghost"
               disabled={busy != null || !oll.ollama_up || oll.loaded_models.length === 0}
-              style={{ marginLeft: "0.6rem", padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}
+              onClick={() => setConfirmUnload(true)}
             >
-              {busy === "unload" ? "unloading…" : "free GPU"}
-            </button>
-          </>
+              {busy === "unload" ? "unloading…" : "Free GPU"}
+            </Button>
+          </span>
         )}
       </Row>
+
+      <Row label="broker">
+        {bro == null ? "—" : !bro.available ? (
+          <span className="ws-muted">gpubrokerd offline · Workshop running standalone</span>
+        ) : (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <StatusDot status="ok">up</StatusDot>
+            <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
+              mode={bro.mode} · committed {fmtMiB(bro.committed_mib)}/{fmtMiB(bro.total_vram_mib)}
+              {" · "}q={bro.queue_depth} · {bro.active_lease_count} lease{bro.active_lease_count === 1 ? "" : "s"}
+            </span>
+          </span>
+        )}
+      </Row>
+
+      <ConfirmDialog
+        open={confirmStopAll}
+        onCancel={() => setConfirmStopAll(false)}
+        onConfirm={onStopAll}
+        title="Stop all autonomy and free GPU?"
+        body="Pauses supervisor heartbeats, disables the cron autonomy loop, and unloads all resident Ollama models. The next manual start reloads them (~20s warm-up)."
+        confirmLabel="Stop all"
+        busy={busy === "stop-all"}
+      />
+      <ConfirmDialog
+        open={confirmUnload}
+        onCancel={() => setConfirmUnload(false)}
+        onConfirm={onUnload}
+        title="Free GPU memory?"
+        body="Unloads all resident Ollama models. The next agent tick reloads qwen2.5:32b (~20s warm-up)."
+        confirmLabel="Free GPU"
+        busy={busy === "unload"}
+      />
+
+      {bro?.available && (
+        <Row label="my leases">
+          {bro.my_leases && bro.my_leases.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+              {bro.my_leases.map((l) => (
+                <span key={l.id} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem" }}>
+                  {l.app} · {fmtMiB(l.vram_budget_mib)} budget · {fmtMiB(l.vram_actual_mib)} actual · pri {l.priority}
+                  {l.implicit ? " · implicit" : ""}
+                </span>
+              ))}
+              <span>
+                <button
+                  onClick={async () => {
+                    setBusy("release-mine");
+                    try {
+                      await fetch("/api/gpu/broker/release-mine", { method: "POST" });
+                      await load();
+                    } finally { setBusy(null); }
+                  }}
+                  disabled={busy != null}
+                  style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem", color: "var(--err)" }}
+                >
+                  {busy === "release-mine" ? "releasing…" : "release all mine"}
+                </button>
+              </span>
+            </div>
+          ) : (
+            <span className="muted">none</span>
+          )}
+        </Row>
+      )}
+
+      {bro?.available && (
+        <Row label="operator hold">
+          <button
+            onClick={async () => {
+              if (!confirm("Reserve GPU for you exclusively for 30 minutes? Workshop and other apps will be preempted.")) return;
+              setBusy("reserve");
+              try {
+                await fetch("/api/gpu/broker/reserve", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ duration_s: 1800, reason: "operator hold via UI" }),
+                });
+                await load();
+              } finally { setBusy(null); }
+            }}
+            disabled={busy != null}
+            style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
+          >
+            {busy === "reserve" ? "reserving…" : "reserve for me (30m)"}
+          </button>
+          <button
+            onClick={async () => {
+              setBusy("boost");
+              try {
+                await fetch("/api/gpu/broker/boost", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ priority: 80, ttl_s: 1800 }),
+                });
+                await load();
+              } finally { setBusy(null); }
+            }}
+            disabled={busy != null}
+            style={{ marginLeft: "0.5rem", padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
+          >
+            {busy === "boost" ? "boosting…" : "boost workshop priority (30m)"}
+          </button>
+        </Row>
+      )}
 
       {oll && oll.loaded_models.length > 0 && (
         <Row label="loaded">
@@ -786,20 +968,18 @@ function SystemSection() {
 
   return (
     <Section icon={Server} title="System">
-      <Row label="backend">{health?.ok ? <span style={{ color: "#16a34a" }}>healthy</span> : <span style={{ color: "var(--err)" }}>down</span>}</Row>
+      <Row label="backend">{health?.ok ? <StatusDot status="ok">healthy</StatusDot> : <StatusDot status="danger">down</StatusDot>}</Row>
       <Row label="services">
         {services == null ? "probing…" : (
-          <>
-            <span style={{ color: "#16a34a" }}>{up} up</span>
-            {down > 0 && <span style={{ marginLeft: "0.6rem", color: "var(--err)" }}>{down} down</span>}
-            <span style={{ marginLeft: "0.6rem" }}>
-              <Link to="/activity#services" style={{ color: "var(--accent)" }}>details ↗</Link>
-            </span>
-          </>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+            <StatusDot status="ok">{up} up</StatusDot>
+            {down > 0 && <StatusDot status="danger">{down} down</StatusDot>}
+            <Link to="/activity#services" style={{ color: "var(--accent)" }}>details ↗</Link>
+          </span>
         )}
       </Row>
       <Row label="URLs">
-        <span className="muted" style={{ fontSize: "0.8rem", display: "block", fontFamily: "ui-monospace, monospace" }}>
+        <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", display: "block" }}>
           :8443 workshop · :8444 commute · :8445 wearables
         </span>
       </Row>

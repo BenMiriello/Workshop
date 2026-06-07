@@ -30,6 +30,10 @@ auth.env
 status.md
 .runtime/finance-cache.json
 
+# BirdNET: local-preview copy of the sanitized dataset + any local fixture DB
+birdnet/public-site/birds-public.json
+birdnet/**/*.db
+
 # Infra deploy state (containers, secrets dropped in by deploy scripts)
 infra/open-wearables/repo/
 
@@ -38,3 +42,7 @@ infra/open-wearables/repo/
 *.swp
 .idea/
 .vscode/
+
+# Build artifacts / tooling caches (not source)
+*.tsbuildinfo
+.playwright-mcp/

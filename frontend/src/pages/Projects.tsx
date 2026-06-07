@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Project } from "@shared/types";
+import { Card, CardGrid, PageHeader, StateBlock } from "../ui";
 
 export default function Projects() {
   const [projects, setProjects] = useState<Project[] | null>(null);
@@ -15,20 +16,31 @@ export default function Projects() {
       .catch((e) => setErr(String(e)));
   }, []);
 
-  if (err) return <p className="err">Backend error: {err}</p>;
-  if (!projects) return <p>Loading projects…</p>;
-  if (projects.length === 0) return <p>No git repos found under projects root.</p>;
-
   return (
-    <ul className="cards">
-      {projects.map((p) => (
-        <li key={p.path} className="card">
-          <h2>{p.name}</h2>
-          <p className="muted">{p.branch} · {p.commit?.slice(0, 8)}</p>
-          <p>{p.subject}</p>
-          <p className="muted">{p.ts}</p>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <PageHeader title="Projects" sub={projects ? `${projects.length} repos` : undefined} />
+      {err ? (
+        <StateBlock variant="error" title="Couldn't load projects" hint={<code>/api/projects/</code>} />
+      ) : !projects ? (
+        <p className="ws-muted">Loading…</p>
+      ) : projects.length === 0 ? (
+        <StateBlock title="No repos found" hint="No git repositories under the projects root yet." />
+      ) : (
+        <CardGrid>
+          {projects.map((p) => (
+            <li key={p.path}>
+              <Card>
+                <h2 className="ws-card__title">{p.name}</h2>
+                <p className="ws-card__meta ws-mono">
+                  {p.branch} · {p.commit?.slice(0, 8)}
+                </p>
+                <p style={{ marginTop: "var(--space-2)" }}>{p.subject}</p>
+                <p className="ws-card__meta">{p.ts}</p>
+              </Card>
+            </li>
+          ))}
+        </CardGrid>
+      )}
+    </div>
   );
 }

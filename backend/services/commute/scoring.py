@@ -31,6 +31,15 @@ AT_DESTINATION_RADIUS_M = 200.0
 # checks. Older than this and we fall back to time-only logic.
 LOCATION_STALE_AFTER_S = 30 * 60
 
+# A single transit leg cannot realistically run more than ~2 hours late and
+# still be the leg you're "on". GTFS-RT feeds routinely carry stale or
+# rolled-over StopTimeUpdates whose `delay` field is computed against a trip
+# from a PRIOR service day — these show up as exactly 86400s (24h) or other
+# absurd values. Anything past this ceiling is a feed artifact, not a real
+# delay, and is discarded. (2026-05-25 bug: a 86400s SFMTA delay on a trip
+# dated 20260524 produced a phantom "1440 min late / 1434m behind target".)
+MAX_PLAUSIBLE_DELAY_MIN = 120.0
+
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Distance in meters between two lat/lng points."""
@@ -86,6 +95,59 @@ def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _legs_total_minutes(legs: list[dict[str, Any]]) -> int:
+    return sum(int(l.get("default_minutes", 0)) for l in (legs or []))
+
+
+def resolve_times(sch: dict[str, Any], legs: list[dict[str, Any]],
+                  now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Resolve a schedule entry to concrete (depart, target_arrive) datetimes.
+
+    Anchor model — each schedule sets exactly ONE end it actually cares about,
+    and the other is DERIVED from the leg durations so the two can never
+    contradict each other:
+        anchor="arrive":  you set arrive-by; depart = arrive − Σlegs − buffer
+        anchor="depart":  you set depart-at; arrive = depart + Σlegs
+    `buffer_minutes` (arrive-anchored only) is padding so the plan aims to land
+    a few minutes early rather than exactly on the deadline.
+
+    Legacy fallback: pre-anchor schedules carried BOTH target_depart_* and
+    target_arrive_* as independent hand-set fields. Those are read as-is so
+    schedules saved before this change keep working until re-saved through the
+    new editor. New code/UI always writes anchor + anchor_time.
+    """
+    now = now or _now_utc()
+    total = _legs_total_minutes(legs)
+    anchor = sch.get("anchor")
+    anchor_time = sch.get("anchor_time")
+    if anchor in ("arrive", "depart") and anchor_time:
+        at = timefmt.parse_hhmm_to_local_today(anchor_time, now)
+        if anchor == "arrive":
+            buffer = max(0, int(sch.get("buffer_minutes", 0) or 0))
+            return at - timedelta(minutes=total + buffer), at
+        return at, at + timedelta(minutes=total)
+    # ---- legacy two-field fallback ----
+    if sch.get("direction") == "to-work":
+        depart_hhmm = sch.get("target_depart_home")
+        arrive_hhmm = sch.get("target_arrive_work")
+    else:
+        depart_hhmm = sch.get("target_depart_work")
+        arrive_hhmm = sch.get("target_arrive_home")
+    depart = timefmt.parse_hhmm_to_local_today(depart_hhmm, now) if depart_hhmm else now
+    target_arrive = (timefmt.parse_hhmm_to_local_today(arrive_hhmm, now)
+                     if arrive_hhmm else depart + timedelta(minutes=total))
+    return depart, target_arrive
+
+
+def _window_legs(sch: dict[str, Any]) -> list[dict[str, Any]]:
+    """Legs needed to resolve an anchor-mode schedule's window. Only loaded for
+    anchor-mode entries — legacy entries resolve from their own fields, so we
+    skip the config read (keeps active_schedule() free of disk I/O in tests)."""
+    if sch.get("anchor"):
+        return config.get_legs_by_id(sch.get("legs_id")) or []
+    return []
+
+
 def active_schedule(now: datetime | None = None) -> dict[str, Any] | None:
     """Return the schedule entry that's "in play" right now.
 
@@ -102,14 +164,46 @@ def active_schedule(now: datetime | None = None) -> dict[str, Any] | None:
         sch = config.get_schedule_for_day(direction, day)
         if not sch:
             continue
-        if direction == "to-work":
-            start = timefmt.parse_hhmm_to_local_today(sch["target_depart_home"], now) - timedelta(hours=1)
-            end = timefmt.parse_hhmm_to_local_today(sch["target_arrive_work"], now) + timedelta(minutes=60)
-        else:
-            start = timefmt.parse_hhmm_to_local_today(sch["target_depart_work"], now) - timedelta(minutes=30)
-            end = timefmt.parse_hhmm_to_local_today(sch["target_arrive_home"], now) + timedelta(minutes=60)
+        depart, target_arrive = resolve_times(sch, _window_legs(sch), now)
+        # Window opens 1h before leave-by (covers the pre-commute briefs) and
+        # closes 1h past the target arrival (covers a late-running trip).
+        start = depart - timedelta(hours=1)
+        end = target_arrive + timedelta(minutes=60)
         if start <= now <= end:
             return sch
+    return None
+
+
+def next_scheduled(now: datetime | None = None, horizon_days: int = 8) -> dict[str, Any] | None:
+    """The soonest upcoming schedule occurrence whose leave-by is still in the
+    future. Scans today → +horizon_days, both directions, and returns a compact
+    descriptor the UI shows when nothing is active right now ("next commute:
+    Mon, leave by 7:11 AM"). Returns None if nothing is scheduled in range."""
+    now = now or _now_utc()
+    for offset in range(horizon_days):
+        day_dt = now + timedelta(days=offset)
+        day = timefmt.day_key(day_dt)
+        candidates: list[tuple[datetime, datetime, dict[str, Any]]] = []
+        for direction in ("to-work", "to-home"):
+            sch = config.get_schedule_for_day(direction, day)
+            if not sch:
+                continue
+            legs = config.get_legs_by_id(sch.get("legs_id")) or []
+            # Anchor resolution to THAT calendar day by resolving as-of day_dt.
+            depart, arrive = resolve_times(sch, legs, day_dt)
+            candidates.append((depart, arrive, sch))
+        for depart, arrive, sch in sorted(candidates, key=lambda c: c[0]):
+            if depart > now:
+                return {
+                    "schedule_id": sch.get("id"),
+                    "direction": sch.get("direction"),
+                    "day": day,
+                    "date_local": timefmt.local(depart).strftime("%a %b %-d"),
+                    "leave_by": depart.isoformat(),
+                    "leave_by_local": timefmt.local_clock(depart),
+                    "target_arrive": arrive.isoformat(),
+                    "target_arrive_local": timefmt.local_clock(arrive),
+                }
     return None
 
 
@@ -117,10 +211,7 @@ def expected_leg_index(sch: dict[str, Any], legs: list[dict[str, Any]], now: dat
     """Best guess (0-indexed) of which leg the operator should be on right now,
     based on cumulative default_minutes from target_depart."""
     now = now or _now_utc()
-    if sch["direction"] == "to-work":
-        depart = timefmt.parse_hhmm_to_local_today(sch["target_depart_home"], now)
-    else:
-        depart = timefmt.parse_hhmm_to_local_today(sch["target_depart_work"], now)
+    depart, _ = resolve_times(sch, legs, now)
     elapsed_min = (now - depart).total_seconds() / 60
     if elapsed_min < 0:
         return -1  # before departure
@@ -139,11 +230,8 @@ def projected_arrival(sch: dict[str, Any], legs: list[dict[str, Any]], rt_delay_
     operator's route, in minutes. If positive, adds to ETA.
     """
     now = now or _now_utc()
-    if sch["direction"] == "to-work":
-        depart = timefmt.parse_hhmm_to_local_today(sch["target_depart_home"], now)
-    else:
-        depart = timefmt.parse_hhmm_to_local_today(sch["target_depart_work"], now)
-    total_min = sum(int(l.get("default_minutes", 0)) for l in legs) + max(0.0, rt_delay_min)
+    depart, _ = resolve_times(sch, legs, now)
+    total_min = _legs_total_minutes(legs) + max(0.0, rt_delay_min)
     return depart + timedelta(minutes=total_min)
 
 
@@ -187,11 +275,79 @@ def realtime_status_summary() -> dict[str, Any]:
     return {"available": True, "ages_s": {k: int(v) for k, v in ages.items()}}
 
 
+def _service_day_str(now: datetime | None = None) -> str:
+    """Today's GTFS service date in operator-local tz as 'YYYYMMDD'.
+
+    GTFS-RT `trip.start_date` is the service date the trip belongs to. We only
+    trust StopTimeUpdates whose start_date matches the current local service
+    day; yesterday's rolled-over entries are stale and carry bogus delays.
+    """
+    local_now = timefmt.local(now or _now_utc())
+    return local_now.strftime("%Y%m%d")
+
+
+def _worst_positive_delay_from_feed(
+    tu: dict[str, Any],
+    service_day: str,
+    route_ids: list[str] | None = None,
+) -> tuple[float, bool]:
+    """Scan one agency's trip_updates for the worst PLAUSIBLE positive delay
+    on the operator's actual route(s).
+
+    Three filters, in order:
+      1. Service-day: trip.start_date must equal today's local service date.
+         Skips rolled-over / cross-midnight entries with full-day phantom
+         delays (the 86400s / 1440min bug, 2026-05-25).
+      2. Route: if `route_ids` is given, only trips on those routes count. The
+         feed carries every route the agency runs (642 SFMTA trips); without
+         this filter an unrelated route's 60-min delay leaks into a 12-min
+         leg's ETA. route_id matching is prefix-tolerant so "T" also matches a
+         "TBUS" rail-replacement-bus substitution.
+      3. Sanity ceiling: discard any per-stop delay > MAX_PLAUSIBLE_DELAY_MIN
+         as a feed artifact regardless of the above.
+
+    Returns (worst_delay_min, matched_any). `matched_any` distinguishes "no
+    relevant same-day route data" from "route is on-time".
+    """
+    norm_routes = [r.upper() for r in (route_ids or [])]
+
+    def _route_matches(rid: str) -> bool:
+        if not norm_routes:
+            return True  # no filter requested
+        rid_u = (rid or "").upper()
+        # exact, or feed route is a substitution variant of ours (T -> TBUS)
+        return any(rid_u == r or rid_u.startswith(r) or r.startswith(rid_u)
+                   for r in norm_routes if rid_u)
+
+    worst = 0.0
+    matched = False
+    for trip in tu.get("trips") or []:
+        start_date = str(trip.get("start_date") or "")
+        if start_date and start_date != service_day:
+            continue
+        if not _route_matches(str(trip.get("route_id") or "")):
+            continue
+        for stop in trip.get("stops", []):
+            raw = stop.get("arrival_delay")
+            if raw is None:
+                raw = stop.get("departure_delay")
+            if not raw:
+                continue
+            delay_min = raw / 60.0
+            if abs(delay_min) > MAX_PLAUSIBLE_DELAY_MIN:
+                continue
+            matched = True
+            if delay_min > 0:
+                worst = max(worst, delay_min)
+    return worst, matched
+
+
 def leg_realtime(leg: dict[str, Any]) -> dict[str, Any]:
     """Return realtime delay info for a single leg, or a 'no data' marker.
 
-    Reads the poller's per-agency trip_updates and picks the worst positive
-    delay for stops matching the leg's source_keys. Returns:
+    Reads the poller's per-agency trip_updates and picks the worst PLAUSIBLE
+    positive delay for the current service day on the leg's source_keys.
+    Returns:
         {"available": False, "reason": "no_source_keys"|"needs_key"|"no_match"|...}
         {"available": True, "delay_min": 3.2, "agency": "caltrain"}
     """
@@ -202,31 +358,25 @@ def leg_realtime(leg: dict[str, Any]) -> dict[str, Any]:
     if not summary.get("available"):
         return {"available": False, "reason": summary.get("reason", "unknown")}
     state = poller.read_state()
+    service_day = _service_day_str()
     worst = 0.0
     matched = False
     agency_for_leg = None
+    route_ids = leg.get("route_ids") or []
     if "caltrain.gtfs_rt" in src_keys:
         agency_for_leg = "caltrain"
         feeds = (state.get("caltrain") or {}).get("feeds") or {}
         tu = feeds.get("trip_updates") or {}
-        for trip in tu.get("trips") or []:
-            for stop in trip.get("stops", []):
-                d = stop.get("arrival_delay") or stop.get("departure_delay") or 0
-                if d:
-                    matched = True
-                    if d > 0:
-                        worst = max(worst, d / 60.0)
+        w, m = _worst_positive_delay_from_feed(tu, service_day, route_ids)
+        worst = max(worst, w)
+        matched = matched or m
     if "sfmta.gtfs_rt" in src_keys:
         agency_for_leg = agency_for_leg or "sfmta"
         feeds = (state.get("sfmta") or {}).get("feeds") or {}
         tu = feeds.get("trip_updates") or {}
-        for trip in tu.get("trips") or []:
-            for stop in trip.get("stops", []):
-                d = stop.get("arrival_delay") or stop.get("departure_delay") or 0
-                if d:
-                    matched = True
-                    if d > 0:
-                        worst = max(worst, d / 60.0)
+        w, m = _worst_positive_delay_from_feed(tu, service_day, route_ids)
+        worst = max(worst, w)
+        matched = matched or m
     if not matched:
         return {"available": False, "reason": "no_match", "agency": agency_for_leg}
     return {"available": True, "delay_min": round(worst, 1), "agency": agency_for_leg}
@@ -253,10 +403,7 @@ def build_leg_timeline(sch: dict[str, Any], legs: list[dict[str, Any]],
     arrive_at and ripples forward to subsequent legs.
     """
     now = now or _now_utc()
-    if sch["direction"] == "to-work":
-        cursor = timefmt.parse_hhmm_to_local_today(sch["target_depart_home"], now)
-    else:
-        cursor = timefmt.parse_hhmm_to_local_today(sch["target_depart_work"], now)
+    cursor, _ = resolve_times(sch, legs, now)
     timeline: list[dict[str, Any]] = []
     prev_arrive: datetime | None = None
     for leg in legs:
@@ -305,30 +452,45 @@ def build_leg_timeline(sch: dict[str, Any], legs: list[dict[str, Any]],
     return timeline
 
 
-def worst_rt_delay_min() -> float:
-    """Scan the latest Caltrain trip_updates for the largest positive
-    arrival_delay on stops the operator cares about. SFMTA additions go here
-    once 511 key is wired.
+def worst_rt_delay_min(legs: list[dict[str, Any]] | None = None) -> float:
+    """Scan the latest Caltrain + SFMTA trip_updates for the largest PLAUSIBLE
+    positive delay on the operator's actual routes for the current service day.
+
+    Applies the same service-day filter, route filter, and sanity ceiling as
+    `leg_realtime` (see `_worst_positive_delay_from_feed`) so neither stale
+    cross-midnight entries nor unrelated routes inject a phantom delay into the
+    ETA. When `legs` is given, only those legs' `route_ids` are considered per
+    agency; otherwise all routes on the agency feed are eligible (legacy).
 
     Returns delay in minutes (>=0). Returns 0 when no realtime data.
     """
+    # Gate on availability so we never report a live delay while the brief is
+    # simultaneously labelling times "static schedule" (stale/no-key). Keeps
+    # rt_delay_min consistent with the per-leg realtime markers.
+    if not realtime_status_summary().get("available"):
+        return 0.0
+
     state = poller.read_state()
+    service_day = _service_day_str()
+
+    def _routes_for(source_key: str) -> list[str] | None:
+        if legs is None:
+            return None
+        ids: list[str] = []
+        for leg in legs:
+            if source_key in (leg.get("source_keys") or []):
+                ids.extend(leg.get("route_ids") or [])
+        # If the leg(s) for this source declared no route_ids, fall back to
+        # "no filter" so we don't silently drop a leg that lacks route metadata.
+        return ids or None
+
     worst = 0.0
-    feeds = (state.get("caltrain") or {}).get("feeds") or {}
-    tu = feeds.get("trip_updates") or {}
-    for trip in tu.get("trips") or []:
-        for stop in trip.get("stops", []):
-            d = stop.get("arrival_delay") or stop.get("departure_delay") or 0
-            if d and d > 0:
-                worst = max(worst, d / 60.0)
-    # SFMTA delay would feed in here when 511 key is set
-    sfmta_feeds = (state.get("sfmta") or {}).get("feeds") or {}
-    sfmta_tu = sfmta_feeds.get("trip_updates") or {}
-    for trip in sfmta_tu.get("trips") or []:
-        for stop in trip.get("stops", []):
-            d = stop.get("arrival_delay") or stop.get("departure_delay") or 0
-            if d and d > 0:
-                worst = max(worst, d / 60.0)
+    ct_tu = ((state.get("caltrain") or {}).get("feeds") or {}).get("trip_updates") or {}
+    w, _ = _worst_positive_delay_from_feed(ct_tu, service_day, _routes_for("caltrain.gtfs_rt"))
+    worst = max(worst, w)
+    sf_tu = ((state.get("sfmta") or {}).get("feeds") or {}).get("trip_updates") or {}
+    w, _ = _worst_positive_delay_from_feed(sf_tu, service_day, _routes_for("sfmta.gtfs_rt"))
+    worst = max(worst, w)
     return worst
 
 
@@ -346,6 +508,7 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
             "ts_local": timefmt.local_iso(now),
             "active": False,
             "reason": "no schedule active right now",
+            "next_schedule": next_scheduled(now),
             "alerts": poller.read_alerts(),
             "location": {"available": False, "reason": "no schedule active"},
         }
@@ -368,7 +531,7 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
         }
     legs = config.get_legs_by_id(sch["legs_id"]) or []
     leg_i = expected_leg_index(sch, legs, now)
-    rt_delay = worst_rt_delay_min()
+    rt_delay = worst_rt_delay_min(legs)
     rt_summary = realtime_status_summary()
     timeline = build_leg_timeline(sch, legs, now)
     # Projected arrive = last leg's arrive_at (already includes per-leg delay).
@@ -379,8 +542,7 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
             arr = projected_arrival(sch, legs, rt_delay, now)
     else:
         arr = projected_arrival(sch, legs, rt_delay, now)
-    target_arr_hhmm = sch.get("target_arrive_work") or sch.get("target_arrive_home")
-    target_arr = timefmt.parse_hhmm_to_local_today(target_arr_hhmm, now)
+    _, target_arr = resolve_times(sch, legs, now)
     flex_min = int(sch.get("flex_minutes_late", 15))
     flex_deadline = target_arr + timedelta(minutes=flex_min)
     late_risk = arr > flex_deadline

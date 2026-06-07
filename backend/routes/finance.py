@@ -9,9 +9,11 @@ router = APIRouter()
 @router.get("/balances")
 async def get_balances(refresh: bool = Query(False)):
     try:
+        # Explicit refresh wants truly-live numbers, so use the slower per-bank
+        # real-time call; normal loads use Plaid's fast cached balances.
         data, meta = await finance_cache.get_or_fetch(
             "balances",
-            plaid_bridge.balances,
+            lambda: plaid_bridge.balances(realtime=refresh),
             force_refresh=refresh,
         )
         return {**data, "_cache": meta}

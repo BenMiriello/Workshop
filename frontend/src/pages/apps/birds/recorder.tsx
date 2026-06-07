@@ -37,6 +37,7 @@ export type SpeciesRow = {
 type Ctx = {
   device: Device;
   setDeviceName: (n: string) => void;
+  adoptDevice: (token: string, name: string) => void;
   setMode: (m: DeviceMode) => void;
   setFixedLocation: (id: string) => void;
   recording: boolean;
@@ -214,6 +215,11 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(NAME_KEY, name);
     setDevice((d) => { const nd = { ...d, name }; postDevice(nd); return nd; });
   }, []);
+  const adoptDevice = useCallback((token: string, name: string) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(NAME_KEY, name);
+    setDevice((d) => { const nd = { ...d, token, name }; postDevice(nd); return nd; });
+  }, []);
   const setMode = useCallback((mode: DeviceMode) => {
     localStorage.setItem(MODE_KEY, mode);
     setDevice((d) => { const nd = { ...d, mode }; postDevice(nd); return nd; });
@@ -379,11 +385,11 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   }, [recording, acquireWake]);
 
   const value = useMemo<Ctx>(() => ({
-    device, setDeviceName, setMode, setFixedLocation,
+    device, setDeviceName, adoptDevice, setMode, setFixedLocation,
     recording, status, elapsed, location, needsLocation, wasListening,
     nowHearing, liveLog, sessionSpecies,
     analyzerUp, err, analyserRef, specCanvasRef, start, stop,
-  }), [device, setDeviceName, setMode, setFixedLocation, recording, status, elapsed,
+  }), [device, setDeviceName, adoptDevice, setMode, setFixedLocation, recording, status, elapsed,
     location, needsLocation, wasListening, nowHearing, liveLog, sessionSpecies, analyzerUp, err, start, stop]);
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;

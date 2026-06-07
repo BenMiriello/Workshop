@@ -1,0 +1,56 @@
+{
+  "sources": [
+    {
+      "key": "caltrain.gtfs_rt",
+      "name": "Caltrain GTFS-Realtime (via 511.org)",
+      "kind": "gtfs_rt",
+      "agency_code": "CT",
+      "official_url": "https://www.caltrain.com/developer-resources",
+      "feed_urls": {
+        "trip_updates": "https://api.511.org/transit/tripupdates?agency=CT&api_key=__SET_511_KEY__",
+        "service_alerts": "https://api.511.org/transit/servicealerts?agency=CT&api_key=__SET_511_KEY__",
+        "vehicle_positions": "https://api.511.org/transit/vehiclepositions?agency=CT&api_key=__SET_511_KEY__"
+      },
+      "auth": "511.org developer key, free, register at https://511.org/open-data/token",
+      "rate_limit": "60 requests / hour per token",
+      "poll_seconds": 60,
+      "fallback": "caltrain.com static schedule + research if endpoints move",
+      "status": "needs_511_key",
+      "notes": "As of 2025+, Caltrain's own /files/rt/gtfsrt/*.pb endpoints return HTML; all live data is now via 511.org. Same protobuf shape."
+    },
+    {
+      "key": "sfmta.gtfs_rt",
+      "name": "SFMTA Muni GTFS-Realtime (via 511.org)",
+      "kind": "gtfs_rt",
+      "agency_code": "SF",
+      "official_url": "https://www.sfmta.com/about-us/contracts/transportation-data-feeds",
+      "feed_urls": {
+        "trip_updates": "https://api.511.org/transit/tripupdates?agency=SF&api_key=__SET_511_KEY__",
+        "service_alerts": "https://api.511.org/transit/servicealerts?agency=SF&api_key=__SET_511_KEY__",
+        "vehicle_positions": "https://api.511.org/transit/vehiclepositions?agency=SF&api_key=__SET_511_KEY__"
+      },
+      "auth": "511.org developer key, free, register at https://511.org/open-data/token",
+      "rate_limit": "60 requests / hour per token (shared with Caltrain)",
+      "poll_seconds": 60,
+      "fallback": "scrape NextBus / Muni site if 511 key unavailable",
+      "status": "needs_511_key"
+    },
+    {
+      "key": "traffic.google",
+      "name": "Google Maps traffic ETA for short drive legs",
+      "kind": "api",
+      "official_url": "https://developers.google.com/maps/documentation/distance-matrix/overview",
+      "auth": "Google Maps Platform key required",
+      "poll_seconds": 300,
+      "fallback": "static default_minutes from legs.json if no key",
+      "status": "needs_key_or_skip"
+    }
+  ],
+  "shared_rate_limit_pool": {
+    "511_org": {
+      "limit_per_hour": 60,
+      "members": ["caltrain.gtfs_rt", "sfmta.gtfs_rt"],
+      "note": "60 req/hour ⇒ at 60s poll across both agencies = 120 req/hr ⇒ exceeds limit. Real deployment: poll every 60s ONLY during active windows (AM 06:30-09:30, PM 17:00-20:30); poll every 5min outside. Per-agency: 60/2 = ~30 req/hr each at 2min cadence inside windows, well under limit."
+    }
+  }
+}

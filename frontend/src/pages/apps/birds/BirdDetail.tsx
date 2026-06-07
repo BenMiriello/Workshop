@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Bird, MapPin, Smartphone, ExternalLink } from "lucide-react";
-import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs";
+import { MapPin, Smartphone, ExternalLink } from "lucide-react";
+import { useCrumbTrail, type Crumb } from "../../../components/appNav";
 import { useBirdInfo } from "./birdinfo";
 import { pct, hh, jget, Stat, StatGrid, Chart, HourSpark } from "./ui";
 
@@ -56,20 +56,22 @@ export default function BirdDetail() {
   const peak = d?.hourly?.length ? d.hourly.reduce((a, b) => (b.count > a.count ? b : a), d.hourly[0]) : null;
   const place = locId ? d?.locations.find((l) => String(l.id) === locId)?.name : null;
 
-  const trail: Crumb[] = [{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }];
+  const trail: Crumb[] = [
+    { label: "Apps", to: "/apps" },
+    { label: "Yard Birds", to: "/apps/birds" },
+  ];
   if (locId) {
     trail.push({ label: "Locations", to: "/apps/birds/locations" });
     if (place) trail.push({ label: place, to: `/apps/birds/location?id=${locId}` });
   }
   trail.push({ label: common });
+  useCrumbTrail(trail); // structurally dynamic → feed the toolbar directly
 
   const showLoc = (d?.locations.length || 0) > 1 || !!locId;
   const showDev = (d?.devices.length || 0) > 1 || !!device;
 
   return (
     <div>
-      <Breadcrumbs items={trail} />
-
       {/* Header card: photo + identity + description */}
       <section className="card" style={{ padding: 0, marginBottom: "1rem", overflow: "hidden" }}>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>

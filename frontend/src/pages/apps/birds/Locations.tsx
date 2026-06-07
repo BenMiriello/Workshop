@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bird, MapPin, Star, Radio, Smartphone } from "lucide-react";
-import Breadcrumbs from "../../../components/Breadcrumbs";
+import { MapPin, Star, Radio, Smartphone } from "lucide-react";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, jget } from "./ui";
 
@@ -39,7 +38,6 @@ export default function Locations() {
 
   return (
     <div>
-      <Breadcrumbs items={[{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }, { label: "Locations" }]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
           <MapPin size={22} strokeWidth={1.8} /> Locations

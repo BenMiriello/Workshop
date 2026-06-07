@@ -1,0 +1,226 @@
+/* =============================================================================
+   Workshop Design System — TOKENS  (refined violet + categorical suite)
+   -----------------------------------------------------------------------------
+   Theming: [data-theme="light"|"dark"|"system"] on <html>.
+   Legacy vars (--bg --fg --muted --card --border --accent --err) preserved.
+
+   Color philosophy:
+     • Hierarchy from tonal surfaces + soft shadow + space — not borders.
+     • ONE brand accent — a refined violet (between indigo & orchid). It is not
+       a user choice.
+     • Status = meaning only: ok (green) · running (violet, pulses) ·
+       stopped (slate) · warn (gold) · danger (clay-rose).
+     • A separate CATEGORICAL / accent suite (--cat-*) differentiates tags /
+       sources / agents / chart series — violet, turquoise, blue, indigo,
+       orchid, slate. Cool tones that can't be read as status.
+
+   Font: Hanken Grotesk (UI) + JetBrains Mono (ids/endpoints/numbers-as-code).
+   ========================================================================== */
+
+/* ---- LIGHT (default) — cool porcelain --------------------------------------- */
+:root,
+[data-theme="light"] {
+  --bg:            #f5f5fa;
+  --bg-inset:      #ececf3;
+  --fg:            #1a1923;
+  --muted:         #6a6879;
+  --faint:         #9b99ab;
+  --card:          #ffffff;
+  --card-hover:    #fbfbff;
+  --card-ring:     transparent;
+  --border:        #e7e7f0;
+  --border-strong: #d6d6e3;
+  --field-bg:      #efeff6;
+
+  /* accent — refined VIOLET (between indigo & orchid) */
+  --accent:        #7a57e0;
+  --accent-hover:  #6845cd;
+  --accent-active: #593bb0;
+  --accent-fg:     #ffffff;
+  --accent-soft:   #efeafc;
+
+  /* status — text / solid / soft */
+  --ok:        #1d7a51;  --ok-solid:      #2f9f6d;  --ok-soft:      #daf1e4;
+  --running:   #5d42c6;  --running-solid: #7a57e0;  --running-soft: #efeafc;
+  --stopped:   #585868;  --stopped-solid: #9594a6;  --stopped-soft: #ededf2;
+  --warn:      #8a5e0f;  --warn-solid:    #d6921f;  --warn-soft:    #f7eccf;
+  --danger:    #a8404f;  --danger-solid:  #cb5a6a;  --danger-soft:  #f6e2e5;
+  --danger-hover: #b34a59;
+  --err: var(--danger);
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(122, 87, 224, 0.5);
+
+  --shadow-sm:   0 1px 2px rgba(26, 25, 45, 0.05);
+  --shadow-card: 0 1px 2px rgba(26, 25, 45, 0.04), 0 4px 16px rgba(26, 25, 50, 0.05);
+  --shadow-md:   0 8px 28px rgba(26, 25, 50, 0.10);
+  --shadow-lg:   0 24px 60px rgba(26, 25, 50, 0.16);
+
+  color-scheme: light;
+}
+
+/* ---- DARK — inky violet-navy ------------------------------------------------ */
+[data-theme="dark"] {
+  --bg:            #0f0e17;
+  --bg-inset:      #16151f;
+  --fg:            #ecebf3;
+  --muted:         #9a98ac;
+  --faint:         #66647a;
+  --card:          #191824;
+  --card-hover:    #201f2d;
+  --card-ring:     #272636;
+  --border:        #262534;
+  --border-strong: #36344a;
+  --field-bg:      #14131d;
+
+  --accent:        #9d86f5;
+  --accent-hover:  #b3a3f8;
+  --accent-active: #c8bcfb;
+  --accent-fg:     #100b1c;
+  --accent-soft:   rgba(157, 134, 245, 0.16);
+
+  --ok:        #62d29d;  --ok-solid:      #45c089;  --ok-soft:      rgba(69, 192, 137, 0.16);
+  --running:   #b4a4f7;  --running-solid: #9d86f5;  --running-soft: rgba(157, 134, 245, 0.18);
+  --stopped:   #9594a6;  --stopped-solid: #6f6e80;  --stopped-soft: rgba(149, 148, 166, 0.15);
+  --warn:      #e6b24a;  --warn-solid:    #d6921f;  --warn-soft:    rgba(214, 146, 31, 0.16);
+  --danger:    #e9889a;  --danger-solid:  #d96576;  --danger-soft:  rgba(217, 101, 118, 0.16);
+  --danger-hover: #ec97a6;
+  --err: var(--danger);
+
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(157, 134, 245, 0.55);
+
+  --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: none;
+  --shadow-md:   0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg:   0 24px 60px rgba(0, 0, 0, 0.62);
+
+  color-scheme: dark;
+}
+
+/* ---- SYSTEM (no forced theme → follow OS) ----------------------------------- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]),
+  [data-theme="system"] {
+    --bg:            #0f0e17;
+    --bg-inset:      #16151f;
+    --fg:            #ecebf3;
+    --muted:         #9a98ac;
+    --faint:         #66647a;
+    --card:          #191824;
+    --card-hover:    #201f2d;
+    --card-ring:     #272636;
+    --border:        #262534;
+    --border-strong: #36344a;
+    --field-bg:      #14131d;
+
+    --accent:        #9d86f5;
+    --accent-hover:  #b3a3f8;
+    --accent-active: #c8bcfb;
+    --accent-fg:     #100b1c;
+    --accent-soft:   rgba(157, 134, 245, 0.16);
+
+    --ok:        #62d29d;  --ok-solid:      #45c089;  --ok-soft:      rgba(69, 192, 137, 0.16);
+    --running:   #b4a4f7;  --running-solid: #9d86f5;  --running-soft: rgba(157, 134, 245, 0.18);
+    --stopped:   #9594a6;  --stopped-solid: #6f6e80;  --stopped-soft: rgba(149, 148, 166, 0.15);
+    --warn:      #e6b24a;  --warn-solid:    #d6921f;  --warn-soft:    rgba(214, 146, 31, 0.16);
+    --danger:    #e9889a;  --danger-solid:  #d96576;  --danger-soft:  rgba(217, 101, 118, 0.16);
+    --danger-hover: #ec97a6;
+    --err: var(--danger);
+
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(157, 134, 245, 0.55);
+    --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-card: none;
+    --shadow-md:   0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg:   0 24px 60px rgba(0, 0, 0, 0.62);
+    color-scheme: dark;
+  }
+}
+
+/* ---- THEME-INDEPENDENT SCALES ----------------------------------------------- */
+:root {
+  /* Spacing — 4px grid */
+  --space-0: 0;
+  --space-1: 0.25rem;   /*  4px */
+  --space-2: 0.5rem;    /*  8px */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.5rem;    /* 24px */
+  --space-6: 2rem;      /* 32px */
+  --space-7: 3rem;      /* 48px */
+  --space-8: 4rem;      /* 64px */
+
+  /* Categorical / accent suite — tags · sources · agents · chart series.
+     A curated handful built around the brand violet + turquoise, plus cool
+     complements. Deliberately NOT green/gold/red so they never read as
+     ok/warn/danger. Theme-independent; tint with color-mix() for chip fills. */
+  --cat-violet:    #7a57e0;
+  --cat-turquoise: #10b4bf;
+  --cat-blue:      #3f7df0;
+  --cat-indigo:    #5160ee;
+  --cat-orchid:    #b35fd6;
+  --cat-slate:     #7c8aa0;
+
+  /* Typography */
+  --font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-xs:   0.75rem;    /* 12px */
+  --fs-sm:   0.8125rem;  /* 13px */
+  --fs-base: 0.875rem;   /* 14px */
+  --fs-md:   0.9375rem;  /* 15px */
+  --fs-lg:   1.0625rem;  /* 17px */
+  --fs-xl:   1.5rem;     /* 24px */
+  --fs-2xl:  2rem;       /* 32px */
+
+  --lh-tight: 1.2;
+  --lh-snug:  1.4;
+  --lh-base:  1.55;
+
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semi:   600;
+  --fw-bold:   700;
+
+  --label-spacing: 0.08em;
+
+  /* Radii */
+  --radius-sm:   6px;
+  --radius-md:   9px;
+  --radius-lg:   14px;
+  --radius-xl:   20px;
+  --radius-pill: 999px;
+
+  /* ---- Control sizing — comfortable breathing room, never chunky ----------
+     Heights land at 36/30/40px; horizontal padding is a touch more than the
+     vertical rhythm so labels aren't cramped against the edges. Tune these two
+     scales and every control re-sizes coherently. */
+  --control-h:     2rem;      /* 32px — compact-leaning, still breathes */
+  --control-h-sm:  1.75rem;   /* 28px                                  */
+  --control-h-lg:  2.375rem;  /* 38px                                  */
+  --pad-x:         0.875rem;  /* 14px — default control inline padding */
+  --pad-x-sm:      0.625rem;  /* 10px                                 */
+  --pad-x-lg:      1.125rem;  /* 18px                                 */
+  --field-pad-x:   0.75rem;   /* 12px — inputs sit slightly tighter   */
+
+  /* Z-index layers */
+  --z-base:     0;
+  --z-sticky:   10;
+  --z-dropdown: 100;
+  --z-dock:     200;
+  --z-overlay:  1000;
+  --z-modal:    1010;
+  --z-toast:    1100;
+
+  /* Motion */
+  --ease-out:    cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+
+  /* Row density — single, compact-leaning (operator tool) */
+  --row-pad-y: 0.4rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; }
+}

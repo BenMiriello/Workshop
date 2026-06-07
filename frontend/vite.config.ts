@@ -145,12 +145,21 @@ export default defineConfig({
   resolve: {
     alias: {
       "@shared": path.resolve(__dirname, "../shared"),
+      // Commute mounts in-workshop at /apps/commute by rendering the SAME
+      // component the standalone app (:8444) uses — one source of truth.
+      "@commute": path.resolve(__dirname, "../apps/commute/src"),
     },
   },
   server: {
-    host: "0.0.0.0",
+    // Bound to loopback, NOT 0.0.0.0: this dev server proxies /api to the
+    // finance/agent backend, so a LAN-reachable bind exposed bank data to the
+    // whole subnet. Remote access is via Tailscale Serve (:8443 -> 127.0.0.1:5173),
+    // which connects from loopback, so tailnet access is unaffected.
+    host: "127.0.0.1",
     port: 5173,
     allowedHosts: ["debian.tail38e62e.ts.net"],
+    // Allow serving the sibling app sources we alias above (@shared, @commute).
+    fs: { allow: [path.resolve(__dirname, "..")] },
     proxy: {
       "/api": {
         target: "http://127.0.0.1:8000",
