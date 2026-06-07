@@ -637,6 +637,30 @@ def update_location(location_id: int, name: str | None = None, lat: float | None
     return get_location(location_id)
 
 
+def merge_locations(src_id: int, dst_id: int) -> dict | None:
+    """Fold one location into another: move its detections and any devices pinned
+    to it, repoint the home setting if needed, then delete it. Used to reconcile
+    places that cannot auto-merge by distance - e.g. the coordinate-less
+    'Untitled' locations left by the pre-GPS migration. Detections keep their
+    device_token/device_name, so provenance is preserved."""
+    if src_id == dst_id:
+        return None
+    with _conn() as c:
+        dst = c.execute("SELECT id,name FROM locations WHERE id=?", (dst_id,)).fetchone()
+        if not dst:
+            return None
+        if not c.execute("SELECT 1 FROM locations WHERE id=?", (src_id,)).fetchone():
+            return None
+        c.execute("UPDATE browser_detections SET location_id=?, station=? WHERE location_id=?",
+                  (dst_id, dst["name"], src_id))
+        c.execute("UPDATE devices SET fixed_location_id=? WHERE fixed_location_id=?", (dst_id, src_id))
+        c.execute("DELETE FROM locations WHERE id=?", (src_id,))
+        hs = c.execute("SELECT value FROM app_settings WHERE key='home_source'").fetchone()
+        if hs and hs["value"] == f"loc:{src_id}":
+            c.execute("UPDATE app_settings SET value=? WHERE key='home_source'", (f"loc:{dst_id}",))
+    return get_location(dst_id)
+
+
 def get_location(location_id: int) -> dict | None:
     with _conn() as c:
         L = c.execute("SELECT id,name,lat,lon,address,radius_m,created_at FROM locations "

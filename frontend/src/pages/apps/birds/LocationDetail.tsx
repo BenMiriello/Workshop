@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Bird, MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
 } from "lucide-react";
@@ -162,11 +162,31 @@ export default function LocationDetail() {
 }
 
 function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => void }) {
+  const nav = useNavigate();
   const hasPlace = summary.lat != null && summary.lon != null;
   const [name, setName] = useState(summary.name && summary.name !== "Untitled location" ? summary.name : "");
   const [place, setPlace] = useState<Place | null>(
     hasPlace ? { short: summary.name, label: summary.address || "", lat: summary.lat!, lon: summary.lon! } : null);
   const [busy, setBusy] = useState(false);
+  const [others, setOthers] = useState<{ id: number; name: string }[]>([]);
+  const [target, setTarget] = useState("");
+
+  useEffect(() => {
+    jget<{ locations: { id: number; name: string }[] }>(`/locations`)
+      .then((d) => setOthers(d.locations.filter((l) => l.id !== summary.id)))
+      .catch(() => {});
+  }, [summary.id]);
+
+  const merge = () => {
+    if (!target) return;
+    setBusy(true);
+    const fd = new FormData();
+    fd.append("src", String(summary.id));
+    fd.append("dst", target);
+    fetch(`${API}/location/merge`, { method: "POST", body: fd })
+      .then(() => nav(`/apps/birds/location?id=${target}`))
+      .catch(() => setBusy(false));
+  };
 
   const save = () => {
     if (!place) return;
@@ -199,6 +219,22 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
           <button className="btn primary" onClick={save} disabled={busy || !place}><Check size={14} /> Save</button>
           {hasPlace && <button className="btn" onClick={onDone}><X size={14} /> Cancel</button>}
         </div>
+
+        {others.length > 0 && (
+          <div style={{ marginTop: ".6rem", paddingTop: ".7rem", borderTop: "1px solid var(--border)" }}>
+            <div className="muted" style={lbl}>Or merge this location into another</div>
+            <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", marginTop: ".25rem" }}>
+              <select className="num-in" value={target} onChange={(e) => setTarget(e.target.value)} style={{ width: "auto" }}>
+                <option value="">Choose a location…</option>
+                {others.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+              <button className="btn" onClick={merge} disabled={!target || busy}>Merge into it</button>
+            </div>
+            <p className="muted" style={{ fontSize: ".72rem", margin: ".3rem 0 0" }}>
+              Moves all detections and devices here into the chosen location (provenance kept), then removes this one.
+            </p>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -251,6 +251,14 @@ async def location_create_or_update(location_id: str = Form(None), name: str = F
         (name or "New location"), lat=flat, lon=flon, address=(address or ""))}
 
 
+@router.post("/location/merge")
+async def location_merge(src: int = Form(...), dst: int = Form(...)):
+    loc = birds_analyze.merge_locations(src, dst)
+    if not loc:
+        raise HTTPException(status_code=400, detail="merge failed (bad ids)")
+    return {"ok": True, "location": loc}
+
+
 @router.get("/location/summary")
 async def location_summary_ep(location_id: int, include_nonbird: bool = False):
     return birds_analyze.location_summary(location_id, include_nonbird)
