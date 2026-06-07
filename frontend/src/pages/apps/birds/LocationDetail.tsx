@@ -96,9 +96,14 @@ export default function LocationDetail() {
       )}
 
       {summary.devices.length > 0 && (
-        <p className="muted" style={{ margin: "0 0 .8rem", fontSize: ".85rem" }}>
-          <Radio size={13} style={{ verticalAlign: "-2px" }} /> Devices here: {summary.devices.join(", ")}
-          {liveHere && <span style={{ color: "#16a34a", marginLeft: ".4rem" }}>· listening now</span>}
+        <p className="muted" style={{ margin: "0 0 .8rem", fontSize: ".85rem", display: "flex", alignItems: "center", gap: ".3rem", flexWrap: "wrap" }}>
+          <Radio size={13} style={{ verticalAlign: "-2px" }} /> Devices here:
+          {summary.devices.map((dv, i) => (
+            <Link key={dv} to="/apps/birds/devices" className="muted" style={{ textDecoration: "underline" }}>
+              {dv}{i < summary.devices.length - 1 ? "," : ""}
+            </Link>
+          ))}
+          {liveHere && <span style={{ color: "#16a34a" }}>· listening now</span>}
         </p>
       )}
 

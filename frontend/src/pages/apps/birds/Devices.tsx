@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Smartphone, Radio } from "lucide-react";
+import { ChevronLeft, Smartphone, Radio, MapPin } from "lucide-react";
 import { useRecorder, type DeviceMode } from "./recorder";
 import { API, jget } from "./ui";
 
@@ -11,7 +11,8 @@ import { API, jget } from "./ui";
 
 type Dev = {
   token: string; name: string; mode: DeviceMode;
-  fixed_location_id: number | null; fixed_location: string | null; last_seen: string | null;
+  fixed_location_id: number | null; fixed_location: string | null;
+  location_id: number | null; location: string | null; last_seen: string | null;
 };
 type Loc = { id: number; name: string };
 
@@ -44,9 +45,12 @@ export default function Devices() {
 
   return (
     <div>
-      <div style={{ marginBottom: ".75rem" }}>
-        <Link to="/apps/birds/locations" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
-          <ChevronLeft size={18} /> Locations
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
+        <Link to="/apps/birds" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
+          <ChevronLeft size={18} /> Yard Birds
+        </Link>
+        <Link to="/apps/birds/locations" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".3rem", fontSize: ".85rem" }}>
+          <MapPin size={15} /> Locations
         </Link>
       </div>
       <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
@@ -75,6 +79,13 @@ export default function Devices() {
                   </button>
                 ))}
               </div>
+
+              {dev.location && (
+                <div className="muted" style={{ fontSize: ".82rem", marginBottom: ".5rem", display: "flex", alignItems: "center", gap: ".3rem" }}>
+                  <MapPin size={12} /> {dev.mode === "fixed" ? "Pinned to" : "Currently at"}{" "}
+                  <Link to={`/apps/birds/location?id=${dev.location_id}`} className="muted" style={{ textDecoration: "underline" }}>{dev.location}</Link>
+                </div>
+              )}
 
               {dev.mode === "fixed" && (
                 <label className="muted" style={{ fontSize: ".8rem", display: "flex", flexDirection: "column", gap: ".2rem" }}>

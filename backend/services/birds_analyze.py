@@ -531,14 +531,22 @@ def list_devices() -> list[dict]:
             "SELECT token,name,mode,fixed_location_id,created_at,last_seen FROM devices "
             "ORDER BY last_seen DESC").fetchall()
         locs = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
-    out = []
-    for d in devs:
-        out.append({
-            "token": d["token"], "name": d["name"], "mode": d["mode"] or "adaptive",
-            "fixed_location_id": d["fixed_location_id"],
-            "fixed_location": locs.get(d["fixed_location_id"]),
-            "last_seen": d["last_seen"],
-        })
+        out = []
+        for d in devs:
+            last = c.execute(
+                "SELECT location_id FROM browser_detections WHERE device_token=? "
+                "AND location_id IS NOT NULL ORDER BY id DESC LIMIT 1", (d["token"],)).fetchone()
+            last_lid = last["location_id"] if last else None
+            # The place this device is associated with: its pinned location if
+            # fixed, otherwise where it was last heard.
+            cur_lid = d["fixed_location_id"] if (d["mode"] == "fixed" and d["fixed_location_id"]) else last_lid
+            out.append({
+                "token": d["token"], "name": d["name"], "mode": d["mode"] or "adaptive",
+                "fixed_location_id": d["fixed_location_id"],
+                "fixed_location": locs.get(d["fixed_location_id"]),
+                "location_id": cur_lid, "location": locs.get(cur_lid),
+                "last_seen": d["last_seen"],
+            })
     return out
 
 
@@ -774,10 +782,16 @@ def bird_detail(sci: str, location_id: int | None = None) -> dict:
     with _conn() as c:
         rows = c.execute(q + " ORDER BY ts", params).fetchall()
         loc_names = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
+        # The cross-location breakdown is always over ALL detections of the
+        # species (so the location filter always shows every place to switch to),
+        # while everything else respects the location scope.
+        all_locs = c.execute(
+            "SELECT location_id, COUNT(*) n FROM browser_detections "
+            "WHERE scientific_name=? AND location_id IS NOT NULL GROUP BY location_id "
+            "ORDER BY n DESC", (sci,)).fetchall()
 
     by_day: dict[str, dict] = {}
     hourly_overall = [0] * 24
-    loc_counts: dict[int, int] = {}
     for r in rows:
         lt = _local(r["ts"])
         d = lt.strftime("%Y-%m-%d")
@@ -785,8 +799,6 @@ def bird_detail(sci: str, location_id: int | None = None) -> dict:
         day["count"] += 1
         day["hourly"][lt.hour] += 1
         hourly_overall[lt.hour] += 1
-        if r["location_id"]:
-            loc_counts[r["location_id"]] = loc_counts.get(r["location_id"], 0) + 1
 
     confs = [r["confidence"] for r in rows]
     common = rows[-1]["common_name"] if rows else sci
@@ -799,10 +811,12 @@ def bird_detail(sci: str, location_id: int | None = None) -> dict:
         "avg_conf": round(sum(confs) / len(confs), 4) if confs else 0,
         "hourly": [{"hour": h, "count": hourly_overall[h]} for h in range(24)],
         "by_day": sorted(by_day.values(), key=lambda x: x["date"], reverse=True),
-        "locations": [{"id": lid, "name": loc_names.get(lid), "count": n}
-                      for lid, n in sorted(loc_counts.items(), key=lambda x: -x[1])],
+        "total_all_locations": sum(L["n"] for L in all_locs),
+        "locations": [{"id": L["location_id"], "name": loc_names.get(L["location_id"]), "count": L["n"]}
+                      for L in all_locs],
         "recent": [{"at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
                     "confidence": round(r["confidence"], 4),
+                    "location_id": r["location_id"],
                     "location": loc_names.get(r["location_id"]),
                     "device": r["device_name"]} for r in rows[-50:][::-1]],
     }

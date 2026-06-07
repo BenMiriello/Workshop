@@ -1,3 +1,4 @@
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -36,45 +37,51 @@ export function StatGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-// Reusable dark, compact hover card that floats near the cursor - replaces
-// recharts' default white box. Used by every Chart so the hover styling is
-// consistent across the app.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function ChartTip({ active, payload, label, labelFmt }: any) {
-  if (!active || !payload?.length) return null;
-  const v = payload[0].value;
-  return (
-    <div style={{
-      background: "#0d1424", border: "1px solid #2a3650", borderRadius: 8,
-      padding: ".3rem .55rem", fontSize: ".78rem", lineHeight: 1.3,
-      boxShadow: "0 6px 18px rgba(0,0,0,.45)", color: "var(--fg,#e7ecf3)", pointerEvents: "none",
-    }}>
-      <div className="muted" style={{ fontSize: ".7rem" }}>{labelFmt ? labelFmt(label) : label}</div>
-      <div><strong>{v}</strong> detection{v === 1 ? "" : "s"}</div>
-    </div>
-  );
-}
-
 export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }: {
   data: Record<string, unknown>[]; x: string; fill: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   xfmt?: (v: any) => string; interval?: number; labelFmt?: (v: any) => string; height?: number;
 }) {
+  // The hover card is rendered by us AT THE CURSOR, using the chart's own
+  // chartX/chartY, instead of recharts' default (which floats it off to the
+  // side of the bar). recharts' Tooltip stays only to paint the column cursor.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [tip, setTip] = useState<{ x: number; y: number; label: any; value: any } | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   return (
-    <div style={{ height }}>
+    <div ref={wrapRef} style={{ position: "relative", height }}>
       <ResponsiveContainer>
-        <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+        <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onMouseMove={(s: any, e: any) => {
+            if (s && s.isTooltipActive && s.activeTooltipIndex != null) {
+              const rect = wrapRef.current?.getBoundingClientRect();
+              const x = e && rect ? e.clientX - rect.left : s.activeCoordinate?.x ?? 0;
+              const y = e && rect ? e.clientY - rect.top : s.activeCoordinate?.y ?? 0;
+              const value = (data[s.activeTooltipIndex] as { count?: number })?.count;
+              setTip({ x, y, label: s.activeLabel, value });
+            } else setTip(null);
+          }}
+          onMouseLeave={() => setTip(null)}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border,#222b3a)" />
           <XAxis dataKey={x} tick={{ fontSize: 10 }} tickFormatter={xfmt} interval={interval} minTickGap={16} />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
-          <Tooltip
-            cursor={{ fill: "rgba(120,160,255,0.08)" }}
-            wrapperStyle={{ outline: "none", zIndex: 20 }}
-            content={(props) => <ChartTip {...props} labelFmt={labelFmt} />}
-          />
+          <Tooltip cursor={{ fill: "rgba(120,160,255,0.08)" }} content={() => null} />
           <Bar dataKey="count" fill={fill} radius={[2, 2, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
+      {tip && (
+        <div style={{
+          position: "absolute", left: tip.x, top: tip.y, transform: "translate(-50%, calc(-100% - 10px))",
+          pointerEvents: "none", whiteSpace: "nowrap", zIndex: 20,
+          background: "#0d1424", border: "1px solid #2a3650", borderRadius: 8,
+          padding: ".3rem .55rem", fontSize: ".78rem", lineHeight: 1.3,
+          boxShadow: "0 6px 18px rgba(0,0,0,.45)", color: "var(--fg,#e7ecf3)",
+        }}>
+          <div className="muted" style={{ fontSize: ".7rem" }}>{labelFmt ? labelFmt(tip.label) : tip.label}</div>
+          <div><strong>{tip.value}</strong> detection{tip.value === 1 ? "" : "s"}</div>
+        </div>
+      )}
     </div>
   );
 }
