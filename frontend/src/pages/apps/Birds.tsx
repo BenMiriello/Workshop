@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Bird, ChevronLeft, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
-  SlidersHorizontal, Smartphone, AlertTriangle,
+  SlidersHorizontal, Smartphone, AlertTriangle, X,
 } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
 import Spectrogram from "./birds/Spectrogram";
@@ -84,7 +84,7 @@ export default function Birds() {
         </div>
       )}
 
-      {!PUBLIC && rec.recording && <LivePanel />}
+      {!PUBLIC && (rec.recording || rec.wasListening) && <LivePanel />}
 
       {/* Source selector (only when there's a choice) */}
       {sources.length > 1 && (
@@ -127,20 +127,23 @@ function ListenButton() {
   if (rec.recording) {
     return <button className="pill" onClick={rec.stop} style={btn}><Square size={15} /> Stop listening</button>;
   }
+  if (rec.wasListening) {
+    // After a reload mid-session: one tap resumes (mic permission already granted).
+    return <button className="pill" onClick={rec.start} style={btn}><Mic size={16} /> Resume listening</button>;
+  }
   if (naming) {
     const go = () => { const n = name.trim(); if (!n) return; rec.setDeviceName(n); setNaming(false); rec.start(); };
     return (
       <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center", flexWrap: "wrap" }}>
         <input className="num-in" autoFocus placeholder="Name this device (e.g. My phone)" value={name}
           onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} style={{ minWidth: 200 }} />
-        <button className="pill" onClick={go} style={{ ...btn, background: "#1f6feb", color: "#fff", borderColor: "#1f6feb" }}>Start</button>
+        <button className="pill" onClick={go} style={btn}>Start</button>
       </span>
     );
   }
   const onClick = () => { if (!rec.device.name) setNaming(true); else rec.start(); };
   return (
-    <button className="pill" onClick={onClick} disabled={rec.analyzerUp === false}
-      style={{ ...btn, background: "#1f6feb", color: "#fff", borderColor: "#1f6feb" }}>
+    <button className="pill" onClick={onClick} disabled={rec.analyzerUp === false} style={btn}>
       <Mic size={16} /> Listen on this device
     </button>
   );
@@ -150,6 +153,7 @@ function ListenButton() {
 function LivePanel() {
   const rec = useRecorder();
   const [showNonBird] = useShowNonBird();
+  const paused = !rec.recording; // wasListening but not capturing (after a reload)
   const species = showNonBird ? rec.sessionSpecies : rec.sessionSpecies.filter((s) => s.is_bird);
   const hearing = (showNonBird ? rec.nowHearing : rec.nowHearing.filter((d) => d.is_bird))
     .sort((a, b) => b.confidence - a.confidence);
@@ -157,10 +161,19 @@ function LivePanel() {
   return (
     <section className="card" style={{ padding: "1rem", marginBottom: "1rem", border: "1px solid #1f6feb55" }}>
       <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".6rem", flexWrap: "wrap" }}>
-        {rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "#16a34a" }} />}
+        {paused
+          ? <Radio size={16} className="muted" />
+          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "#16a34a" }} />}
         <strong>{rec.device.name || "This device"}</strong>
-        <span className="muted" style={{ fontSize: ".85rem" }}>{rec.location ? `· ${rec.location}` : "· locating…"}</span>
-        <button className="pill" onClick={rec.stop} style={{ ...btn, marginLeft: "auto" }}><Square size={14} /> Stop</button>
+        <span className="muted" style={{ fontSize: ".85rem" }}>
+          {paused ? "· paused" : rec.location ? `· ${rec.location}` : "· locating…"}
+        </span>
+        {paused ? (
+          <span style={{ marginLeft: "auto", display: "inline-flex", gap: ".4rem" }}>
+            <button className="pill" onClick={rec.start} style={btn}><Mic size={14} /> Resume</button>
+            <button className="pill muted" onClick={rec.stop} style={btn} title="Dismiss"><X size={14} /></button>
+          </span>
+        ) : <button className="pill" onClick={rec.stop} style={{ ...btn, marginLeft: "auto" }}><Square size={14} /> Stop</button>}
       </div>
 
       <Spectrogram height={150} />
@@ -168,7 +181,9 @@ function LivePanel() {
       {rec.needsLocation && <SetLocationInline />}
 
       <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
-        {hearing.length > 0 ? (
+        {paused ? (
+          <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
+        ) : hearing.length > 0 ? (
           <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
             <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
             {hearing.slice(0, 4).map((d, i) => (
@@ -177,7 +192,7 @@ function LivePanel() {
               </span>
             ))}
           </div>
-        ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening… make a bird sound or wait for one.</span>}
+        ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
       </div>
 
       {species.length > 0 && (

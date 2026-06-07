@@ -44,12 +44,14 @@ type Ctx = {
   elapsed: number;
   location: string | null;
   needsLocation: boolean;
+  wasListening: boolean;
   nowHearing: Det[];
   liveLog: LogEntry[];
   sessionSpecies: SpeciesRow[];
   analyzerUp: boolean | null;
   err: string | null;
   analyserRef: React.MutableRefObject<AnalyserNode | null>;
+  specCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
   start: () => Promise<void>;
   stop: () => void;
 };
@@ -89,6 +91,27 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([buf], { type: "audio/wav" });
 }
 
+// Offscreen spectrogram, drawn by the always-mounted provider so it keeps
+// scrolling and its history survives navigating between pages. The visible
+// <Spectrogram> just blits this canvas.
+const SPEC_W = 600, SPEC_H = 160, SPEC_MAX_HZ = 12000;
+function specColor(v: number): string {
+  const t = v / 255;
+  if (t < 0.25) { const k = t / 0.25; return `rgb(${10 + k * 10},${20 + k * 60},${40 + k * 60})`; }
+  if (t < 0.55) { const k = (t - 0.25) / 0.3; return `rgb(20,${80 + k * 90},${100 + k * 60})`; }
+  if (t < 0.8) { const k = (t - 0.55) / 0.25; return `rgb(${20 + k * 200},${170 + k * 60},${160 - k * 100})`; }
+  const k = (t - 0.8) / 0.2; return `rgb(${220 + k * 35},${230 + k * 25},${60 + k * 195})`;
+}
+
+// Session view (live log + species + "was listening") is mirrored to localStorage
+// so it survives a full page reload, not just navigation.
+const SESS_SPECIES_KEY = "birdSessionSpecies";
+const SESS_LOG_KEY = "birdSessionLog";
+const WAS_KEY = "birdWasListening";
+function loadJSON<T>(k: string, fallback: T): T {
+  try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : fallback; } catch { return fallback; }
+}
+
 function getPosition(): Promise<{ lat: number; lon: number } | null> {
   return new Promise((res) => {
     if (!navigator.geolocation) return res(null);
@@ -116,9 +139,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [elapsed, setElapsed] = useState(0);
   const [location, setLocation] = useState<string | null>(null);
   const [needsLocation, setNeedsLocation] = useState(false);
+  const [wasListening, setWasListening] = useState<boolean>(() => localStorage.getItem(WAS_KEY) === "1");
   const [nowHearing, setNowHearing] = useState<Det[]>([]);
-  const [liveLog, setLiveLog] = useState<LogEntry[]>([]);
-  const [sessionSpecies, setSessionSpecies] = useState<SpeciesRow[]>([]);
+  const [liveLog, setLiveLog] = useState<LogEntry[]>(() => loadJSON<LogEntry[]>(SESS_LOG_KEY, []));
+  const [sessionSpecies, setSessionSpecies] = useState<SpeciesRow[]>(() => loadJSON<SpeciesRow[]>(SESS_SPECIES_KEY, []));
   const [analyzerUp, setAnalyzerUp] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -127,6 +151,15 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const srcRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const specCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  if (!specCanvasRef.current && typeof document !== "undefined") {
+    const cv = document.createElement("canvas");
+    cv.width = SPEC_W; cv.height = SPEC_H;
+    const cx = cv.getContext("2d");
+    if (cx) { cx.fillStyle = "#0b1020"; cx.fillRect(0, 0, SPEC_W, SPEC_H); }
+    specCanvasRef.current = cv;
+  }
+  const specRafRef = useRef<number | null>(null);
   const bufRef = useRef<Float32Array[]>([]);
   const bufLenRef = useRef(0);
   const sinceStepRef = useRef(0);
@@ -141,6 +174,41 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     fetch(`${API}/analyze/health`).then((r) => r.json())
       .then((h) => setAnalyzerUp(!!h.up)).catch(() => setAnalyzerUp(false));
   }, []);
+
+  // Spectrogram draw loop lives HERE (provider is always mounted) so the image
+  // keeps scrolling and its history persists while you move between pages.
+  useEffect(() => {
+    const cv = specCanvasRef.current;
+    if (!cv) return;
+    const cx = cv.getContext("2d");
+    if (!cx) return;
+    if (!recording) {
+      cx.fillStyle = "#0b1020"; cx.fillRect(0, 0, cv.width, cv.height);
+      return;
+    }
+    const loop = () => {
+      specRafRef.current = requestAnimationFrame(loop);
+      const an = analyserRef.current;
+      if (!an) return;
+      const bins = an.frequencyBinCount;
+      const data = new Uint8Array(bins);
+      an.getByteFrequencyData(data);
+      cx.drawImage(cv, -1, 0);
+      const nyq = (an.context.sampleRate || 48000) / 2;
+      const topBin = Math.min(bins, Math.ceil((SPEC_MAX_HZ / nyq) * bins));
+      for (let y = 0; y < cv.height; y++) {
+        const bin = Math.floor((1 - y / cv.height) * topBin);
+        cx.fillStyle = specColor(data[Math.max(0, Math.min(topBin - 1, bin))] || 0);
+        cx.fillRect(cv.width - 1, y, 1, 1);
+      }
+    };
+    loop();
+    return () => { if (specRafRef.current) cancelAnimationFrame(specRafRef.current); };
+  }, [recording]);
+
+  // Mirror the live session view to localStorage so a reload restores it.
+  useEffect(() => { try { localStorage.setItem(SESS_LOG_KEY, JSON.stringify(liveLog.slice(0, 200))); } catch { /* quota */ } }, [liveLog]);
+  useEffect(() => { try { localStorage.setItem(SESS_SPECIES_KEY, JSON.stringify(sessionSpecies)); } catch { /* quota */ } }, [sessionSpecies]);
 
   const setDeviceName = useCallback((n: string) => {
     const name = n.trim();
@@ -221,11 +289,13 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     analyserRef.current = null; ctxRef.current = null; wakeRef.current = null;
     bufRef.current = []; bufLenRef.current = 0; sinceStepRef.current = 0; inFlightRef.current = 0;
     setRecording(false); setStatus("idle"); setNowHearing([]); setNeedsLocation(false);
+    setWasListening(false); localStorage.setItem(WAS_KEY, "0");
   }, []);
 
   const start = useCallback(async () => {
     setErr(null); setLiveLog([]); setSessionSpecies([]); setNowHearing([]);
     setElapsed(0); setLocation(null); setNeedsLocation(false);
+    setWasListening(true); localStorage.setItem(WAS_KEY, "1");
     posRef.current = null;
     const dev = deviceRef.current;
     postDevice(dev);
@@ -297,10 +367,11 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<Ctx>(() => ({
     device, setDeviceName, setMode, setFixedLocation,
-    recording, status, elapsed, location, needsLocation, nowHearing, liveLog, sessionSpecies,
-    analyzerUp, err, analyserRef, start, stop,
+    recording, status, elapsed, location, needsLocation, wasListening,
+    nowHearing, liveLog, sessionSpecies,
+    analyzerUp, err, analyserRef, specCanvasRef, start, stop,
   }), [device, setDeviceName, setMode, setFixedLocation, recording, status, elapsed,
-    location, needsLocation, nowHearing, liveLog, sessionSpecies, analyzerUp, err, start, stop]);
+    location, needsLocation, wasListening, nowHearing, liveLog, sessionSpecies, analyzerUp, err, start, stop]);
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
 }
