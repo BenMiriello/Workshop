@@ -39,4 +39,5 @@ ensure() {
 }
 
 ensure workshop 5173 /home/clawd-a/workshop/frontend
-ensure commute  5174 /home/clawd-a/workshop/apps/commute
+# Commute was retired as a standalone app (:8444 PWA) — it's now a native page
+# inside the Workshop frontend at /apps/commute. No separate dev server.

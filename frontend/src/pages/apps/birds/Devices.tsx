@@ -56,7 +56,7 @@ export default function Devices() {
         {devices.map((dev) => {
           const current = dev.token === rec.device.token;
           return (
-            <section key={dev.token} className="card" style={{ padding: "1rem", border: current ? "1px solid #1f6feb55" : undefined }}>
+            <section key={dev.token} className="card" style={{ padding: "1rem", border: current ? "1px solid color-mix(in srgb, var(--accent) 33%, transparent)" : undefined }}>
               <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".5rem" }}>
                 <input className="num-in" defaultValue={dev.name} placeholder="Device name"
                   onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== dev.name) patch(dev, { name: v }); }}

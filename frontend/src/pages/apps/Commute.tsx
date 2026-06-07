@@ -1,10 +1,17 @@
-// In-workshop Commute mount. Renders the SAME component as the standalone
-// Commute app (apps/commute, served at :8444) via the @commute alias — no fork,
-// so the schedule/anchor/scoring logic lives in exactly one place. The imported
-// default export is the tab shell (Status / Schedule / Sources / Alerts) without
-// the standalone "← Workshop" chrome, which is what we want inside the shell.
-import CommutePages from "@commute/CommutePages";
+import { AppGroupNav } from "../../components/appNav";
+import { PageHeader } from "../../ui";
+import CommutePages from "./commute/CommutePages";
 
+// Commute is a first-class Workshop app (like Finance / Budget / Location /
+// Birds) — its source lives here under pages/apps/commute. The page header +
+// linked-app switcher match the other apps; CommutePages owns the tabbed body
+// (Status / Schedule / Sources / Alerts).
 export default function Commute() {
-  return <CommutePages />;
+  return (
+    <div>
+      <AppGroupNav />
+      <PageHeader title="Commute" />
+      <CommutePages />
+    </div>
+  );
 }

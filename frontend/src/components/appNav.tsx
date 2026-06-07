@@ -32,7 +32,7 @@ const NODES: Record<string, RouteNode> = {
   "/apps/finance": { label: "Finance", parent: "/apps" },
   "/apps/budget": { label: "Budget", parent: "/apps" },
   "/apps/location": { label: "Location", parent: "/apps" },
-  "/apps/birds": { label: "Yard Birds", parent: "/apps" },
+  "/apps/birds": { label: "Birds", parent: "/apps" },
   "/apps/birds/locations": { label: "Locations", parent: "/apps/birds" },
   "/apps/birds/devices": { label: "Devices", parent: "/apps/birds" },
   "/apps/birds/settings": { label: "Settings", parent: "/apps/birds" },
@@ -147,6 +147,7 @@ export function BreadcrumbBar() {
         return;
       }
       const avail = bar.clientWidth - 1; // sub-pixel safety
+      if (avail <= 0) return; // not laid out yet; a later observer fire recomputes
       const brandFull = widthOf("brandFull");
       const brandShort = widthOf("brandShort");
       const ell = widthOf("ellipsis");
@@ -177,8 +178,20 @@ export function BreadcrumbBar() {
     };
     compute();
     const ro = new ResizeObserver(compute);
-    ro.observe(bar);
-    return () => ro.disconnect();
+    ro.observe(bar); // available width changes (viewport, topnav wrap)
+    ro.observe(m); // content width changes (web-font swap, dynamic leaf labels)
+    // Fonts load with display=swap; the post-swap metrics widen crumbs after
+    // first paint. The measurer observer above catches the resize, but trigger
+    // an explicit recompute on fonts.ready too as a belt-and-suspenders.
+    const fonts = (document as unknown as { fonts?: { ready?: Promise<unknown> } }).fonts;
+    let cancelled = false;
+    fonts?.ready?.then(() => {
+      if (!cancelled) compute();
+    });
+    return () => {
+      cancelled = true;
+      ro.disconnect();
+    };
   }, [crumbs]);
 
   const n = crumbs.length;
@@ -232,13 +245,18 @@ export function BreadcrumbBar() {
         <span data-m="brandShort" className="ws-brand__home">
           W
         </span>
+        {/* Labels MUST carry the same classes as the rendered crumbs so they
+            measure in the real font (JetBrains Mono, 0.92em) — bare text would
+            be measured in the proportional UI font and under-report the width,
+            making a too-long trail read as "fits" and never collapse. */}
         <span data-m="ellipsis" className="ws-bc__item">
-          <span className="ws-bc__sep">/</span>…
+          <span className="ws-bc__sep">/</span>
+          <span className="ws-bc__ellipsis">…</span>
         </span>
         {crumbs.map((c, i) => (
           <span data-m={"c" + i} className="ws-bc__item" key={i}>
             <span className="ws-bc__sep">/</span>
-            {c.label}
+            <span className="ws-bc__cur">{c.label}</span>
           </span>
         ))}
       </div>

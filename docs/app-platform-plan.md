@@ -40,8 +40,7 @@ except where noted — it's the research + plan to review before we commit.
 
 | App | Code | How it's served | Origin |
 |---|---|---|---|
-| Finance, Budget, Birds, Location | `frontend/src/pages/apps/*` | main Vite (`:5173` → TS Serve `:8443`) | **shared origin** |
-| Commute | `apps/commute/` (own Vite) | `:5174` → TS Serve `:8444` | own origin |
+| Finance, Budget, Birds, Location, **Commute** | `frontend/src/pages/apps/*` | main Vite (`:5173` → TS Serve `:8443`) | **shared origin** |
 | Wearables | external | `:8445` | own origin |
 
 Backend: one FastAPI (`:8000` → `:8446`). Secure routers gate off-host callers via
@@ -222,11 +221,13 @@ Each phase is independently shippable and leaves the system working.
 
 ## Status log
 
-- **2026-06-06:** Phase 0 done. Phase 1 partially done — Commute is in-workshop
-  (`/apps/commute`, `@commute` alias, no fork) and the `@workshop/ui` design system
-  is now shared into `apps/commute` (Stepper extracted as a primitive; commute uses
-  it; status hexes → tokens). Remaining Phase-1 cleanup: full token migration of the
-  rest of the commute component; optional `:8444` retirement.
+- **2026-06-06:** Phase 0 done. Phase 1 **complete** — Commute is fully integrated as a
+  native Workshop page: its source moved to `frontend/src/pages/apps/commute/`, it uses
+  the `@workshop/ui` primitives (PageHeader, Tabs, Stepper, AppGroupNav), and the
+  standalone `:8444` PWA project (`apps/commute/`) + its `frontends_watchdog` entry +
+  the `@commute` alias were **retired**. One codebase, one origin, like every other app.
+  (If a phone-installable Commute PWA is wanted again, add it as a standalone mount of
+  the same `frontend` tree rather than a forked project.)
 
 ### Phase 2 — PMTiles map: BLOCKED on operator-run setup (egress)
 

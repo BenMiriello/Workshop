@@ -29,6 +29,7 @@ type Variable = { id: string; name: string; target: number; actual: number; over
 type Necessity = { id: string; name: string; monthly: number; note?: string };
 type Summary = {
   income: number; necessities_planned: number; debt_planned: number; savings_planned: number;
+  savings_required: number; savings_gap: number; available_after_fixed: number; goals_affordable: boolean;
   variable_target: number; committed: number; discretionary: number; leftover: number;
   shortfall: boolean; per_paycheck: number; paychecks_per_month: number;
 };
@@ -412,7 +413,7 @@ export default function Budget() {
           <WaterfallHero data={data} scale={scale} periodLabel={periodLabel} onSaved={load} />
           <NecessitiesSection necessities={data.necessities} scale={scale} onSaved={load} />
           <DebtsSection debts={data.debts} scale={scale} onSaved={load} />
-          <SavingsSection savings={data.savings} scale={scale} onSaved={load} />
+          <SavingsSection savings={data.savings} summary={data.summary} scale={scale} onSaved={load} />
           <SpendingSection variable={data.variable} necessitiesActual={data.actuals.necessities} windowDays={data.actuals.window_days} unclassified={data.actuals.unclassified} scale={scale} onSaved={load} />
 
           {editing && <EditForm onSaved={() => { setEditing(false); load(); }} onCancel={() => setEditing(false)} />}
@@ -650,7 +651,7 @@ function DebtsSection({ debts, scale, onSaved }: { debts: Debt[]; scale: number;
 }
 
 // ---- Savings buckets: emergency (contingency) first ----
-function SavingsSection({ savings, scale, onSaved }: { savings: Saving[]; scale: number; onSaved: () => void }) {
+function SavingsSection({ savings, summary, scale, onSaved }: { savings: Saving[]; summary: Summary; scale: number; onSaved: () => void }) {
   if (!savings.length) return null;
   const paychecks = scale === 1 ? 2 : Math.round(1 / scale);
   return (
@@ -740,6 +741,29 @@ function SavingsSection({ savings, scale, onSaved }: { savings: Saving[]; scale:
           </div>
         ))}
       </div>
+
+      {/* Aggregate goal-funding rollup: total monthly needed across every dated
+          goal vs what's planned, and whether income can actually cover it. */}
+      {(summary.savings_required > 0 || summary.savings_planned > 0) && (
+        <div className="card" style={{ marginTop: "0.75rem" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>All goals combined</span>
+            <span style={{ fontSize: "0.95rem" }}>
+              Saving {usd(summary.savings_planned * scale)} of {usd(summary.savings_required * scale)} needed
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.45rem", gap: "0.5rem", flexWrap: "wrap" }}>
+            <span className="muted" style={{ fontSize: "0.8rem" }}>
+              {usd(summary.available_after_fixed * scale)} free after necessities + debt — {summary.goals_affordable
+                ? "enough to cover required savings + your spending targets"
+                : "NOT enough to fund all goals on time AND hit spending targets; stretch a date or trim a target"}
+            </span>
+            {summary.savings_gap > 0
+              ? <Pace ok={false} behindLabel={`+${usd(summary.savings_gap * scale)}/mo to fully fund`} />
+              : <Pace ok={true} behindLabel="" />}
+          </div>
+        </div>
+      )}
     </section>
   );
 }

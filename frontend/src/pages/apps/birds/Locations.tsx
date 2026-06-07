@@ -78,13 +78,13 @@ function SourceCard({ to, name, sub, isHome, onHome, icon, needsAddress }: {
       <Link to={to} style={{ flex: 1, minWidth: 0, textDecoration: "none", color: "inherit" }}>
         <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: ".4rem" }}>
           {name}
-          {needsAddress && <span className="pill" style={{ fontSize: ".68rem", color: "#f5a623", borderColor: "#f5a62355" }}>set address</span>}
+          {needsAddress && <span className="pill" style={{ fontSize: ".68rem", color: "var(--warn)", borderColor: "color-mix(in srgb, var(--warn) 33%, transparent)" }}>set address</span>}
         </div>
         <div className="muted" style={{ fontSize: ".8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>
       </Link>
       <button onClick={onHome} title={isHome ? "Home" : "Set as home"}
-        style={{ background: "none", border: "none", cursor: "pointer", color: isHome ? "#f5c518" : "var(--muted,#8a93a6)", flexShrink: 0 }}>
-        <Star size={18} fill={isHome ? "#f5c518" : "none"} />
+        style={{ background: "none", border: "none", cursor: "pointer", color: isHome ? "var(--warn-solid)" : "var(--muted)", flexShrink: 0 }}>
+        <Star size={18} fill={isHome ? "var(--warn-solid)" : "none"} />
       </button>
     </div>
   );

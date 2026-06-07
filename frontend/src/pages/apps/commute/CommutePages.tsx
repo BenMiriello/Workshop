@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot } from "lucide-react";
-import { Stepper } from "@workshop/ui/Stepper";
+import { Stepper, Tabs } from "../../../ui";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -859,29 +859,8 @@ export default function Commute() {
         <p className="err" style={{ marginBottom: "0.75rem" }}>Status error: {briefErr}</p>
       )}
 
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: "0.25rem", marginBottom: "1rem", borderBottom: "1px solid var(--border)" }}>
-        {TABS.map((t) => {
-          const active = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              onClick={() => select(t.key)}
-              style={{
-                background: active ? "var(--card)" : "transparent",
-                color: active ? "var(--accent)" : "var(--muted)",
-                fontWeight: active ? 600 : 400,
-                border: "none",
-                padding: "0.5rem 0.85rem",
-                borderRadius: "6px 6px 0 0",
-                cursor: "pointer",
-                fontSize: "0.95rem",
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
+      <div style={{ marginBottom: "var(--space-5)" }}>
+        <Tabs items={TABS.map((t) => ({ value: t.key, label: t.label }))} value={tab} onChange={select} />
       </div>
 
       {tab === "status" && <StatusTab brief={brief} onPollNow={pollNow} polling={polling} />}

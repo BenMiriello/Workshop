@@ -6,7 +6,7 @@ import {
 import { useCrumbLabel } from "../../../components/appNav";
 import { useRecorder } from "./recorder";
 import { useShowNonBird, nonBirdQuery } from "./settings";
-import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./ui";
+import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink, CHART_SERIES } from "./ui";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
 
@@ -89,9 +89,9 @@ export default function LocationDetail() {
       {editing && <EditLocation summary={summary} onDone={() => { setEditing(false); refresh(); }} />}
 
       {!editing && summary.lat == null && (
-        <div className="card" style={{ padding: ".7rem .9rem", marginBottom: "1rem", border: "1px solid #f5a62355",
+        <div className="card" style={{ padding: ".7rem .9rem", marginBottom: "1rem", border: "1px solid color-mix(in srgb, var(--warn) 33%, transparent)",
           display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
-          <AlertTriangle size={16} style={{ color: "#f5a623" }} />
+          <AlertTriangle size={16} style={{ color: "var(--warn)" }} />
           <span style={{ flex: 1, fontSize: ".88rem" }}>This location has no real place yet.</span>
           <button className="btn sm" onClick={() => setEditing(true)}>Set address</button>
         </div>
@@ -105,7 +105,7 @@ export default function LocationDetail() {
               {dv}{i < summary.devices.length - 1 ? "," : ""}
             </Link>
           ))}
-          {liveHere && <span style={{ color: "#16a34a" }}>· listening now</span>}
+          {liveHere && <span style={{ color: "var(--ok)" }}>· listening now</span>}
         </p>
       )}
 
@@ -125,7 +125,7 @@ export default function LocationDetail() {
       {activity && activity.daily.length > 0 && (
         <section className="card" style={card}>
           <h3 style={h3}><TrendingUp size={17} /> Detections per day</h3>
-          <Chart data={activity.daily} x="date" fill="#34d399" xfmt={(dd: string) => dd.slice(5)} />
+          <Chart data={activity.daily} x="date" fill={CHART_SERIES[1]} xfmt={(dd: string) => dd.slice(5)} />
         </section>
       )}
 
@@ -134,7 +134,7 @@ export default function LocationDetail() {
           <h3 style={h3}><Sunrise size={17} /> Activity by hour
             {peak && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}
           </h3>
-          <Chart data={activity.hourly} x="hour" fill="#4ea1ff" xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
+          <Chart data={activity.hourly} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
         </section>
       )}
 
@@ -144,7 +144,7 @@ export default function LocationDetail() {
         <div style={{ display: "flex", flexDirection: "column" }}>
           {species.map((s) => (
             <SpeciesLink key={s.scientific_name} sci={s.scientific_name} locationId={id}>
-              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
                 <BirdThumb sci={s.scientific_name} common={s.common_name} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block" }}>{s.common_name}</span>
@@ -202,7 +202,7 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
   };
 
   return (
-    <section className="card" style={{ ...card, border: "1px solid #1f6feb55" }}>
+    <section className="card" style={{ ...card, border: "1px solid color-mix(in srgb, var(--accent) 33%, transparent)" }}>
       <h3 style={h3}>{hasPlace ? "Edit location" : "Set a real location"}</h3>
       <div style={{ display: "grid", gap: ".6rem", maxWidth: 460 }}>
         <div>
@@ -253,7 +253,7 @@ function Wrap({ children, name, isHome, onHome, onEdit }: {
         {name && (
           <div style={{ display: "flex", gap: ".5rem" }}>
             <button className="btn sm" onClick={onHome} title={isHome ? "Home" : "Set as home"}>
-              <Star size={14} fill={isHome ? "#f5c518" : "none"} color={isHome ? "#f5c518" : "currentColor"} /> {isHome ? "Home" : "Set home"}
+              <Star size={14} fill={isHome ? "var(--warn-solid)" : "none"} color={isHome ? "var(--warn-solid)" : "currentColor"} /> {isHome ? "Home" : "Set home"}
             </button>
             <button className="btn sm" onClick={onEdit}><Pencil size={14} /> Edit</button>
           </div>

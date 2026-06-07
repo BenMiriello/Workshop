@@ -3,7 +3,11 @@ import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Bird } from "lucide-react";
-import { ChartTooltip } from "../../../ui";
+import { CHART_SERIES, ChartTooltip } from "../../../ui";
+
+// Re-exported so the bird pages get their chart colors from the design-system
+// categorical suite (brand violet first) via the shared birds ui module.
+export { CHART_SERIES };
 import { useBirdInfo } from "./birdinfo";
 
 // Small shared pieces for the bird pages: formatters, a fetch helper, the stat
@@ -46,7 +50,7 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }:
     <div style={{ height }}>
       <ResponsiveContainer>
         <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border,#222b3a)" />
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey={x} tick={{ fontSize: 10 }} tickFormatter={xfmt} interval={interval} minTickGap={16} />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
           <Tooltip
@@ -60,7 +64,9 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }:
               />
             )}
           />
-          <Bar dataKey="count" fill={fill} radius={[2, 2, 0, 0]} />
+          {/* Cap bar width so a chart with one or two days doesn't render a
+              single absurdly-wide bar across the whole panel. */}
+          <Bar dataKey="count" fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -69,7 +75,7 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }:
 
 // 24-bucket hour-of-day histogram drawn with plain divs - cheap enough to render
 // once per day row in a long list. Highlights the peak hour.
-export function HourSpark({ hourly, fill = "#4ea1ff" }: { hourly: number[]; fill?: string }) {
+export function HourSpark({ hourly, fill = CHART_SERIES[3] }: { hourly: number[]; fill?: string }) {
   const max = Math.max(1, ...hourly);
   return (
     <div style={{ display: "flex", alignItems: "flex-end", gap: 1, height: 34 }} title="Detections by hour of day (0-23)">
@@ -77,7 +83,7 @@ export function HourSpark({ hourly, fill = "#4ea1ff" }: { hourly: number[]; fill
         <div key={h} title={`${hh(h)} · ${c}`}
           style={{
             flex: 1, height: `${Math.max(c > 0 ? 12 : 2, (c / max) * 100)}%`,
-            background: c > 0 ? fill : "var(--border,#1e2636)", borderRadius: 1,
+            background: c > 0 ? fill : "var(--border)", borderRadius: 1,
             opacity: c > 0 ? 1 : 0.5,
           }} />
       ))}
@@ -93,7 +99,7 @@ export function BirdThumb({ sci, common, size = 44 }: { sci: string; common: str
   return (
     <div style={{
       width: size, height: size, borderRadius: 8, flexShrink: 0, overflow: "hidden",
-      background: "#10182a", display: "flex", alignItems: "center", justifyContent: "center",
+      background: "var(--bg-inset)", display: "flex", alignItems: "center", justifyContent: "center",
     }}>
       {src
         ? <img src={src} alt={common} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover" }} />

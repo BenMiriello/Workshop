@@ -188,7 +188,7 @@ export default function Apps() {
     {
       key: "birds",
       Icon: Bird,
-      title: "Yard Birds",
+      title: "Birds",
       tagline: "Backyard bird-song detections, live",
       to: "/apps/birds",
       status:

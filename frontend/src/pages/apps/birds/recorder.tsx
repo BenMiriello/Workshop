@@ -237,7 +237,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     fd.append("token", dev.token);
     fd.append("device_name", dev.name || "Untitled device");
     fd.append("mode", dev.mode);
-    fd.append("min_conf", "0.25");
+    fd.append("min_conf", "0.5");  // backend enforces its own floor too (smart_settings)
     if (dev.mode === "fixed" && dev.fixedLocationId) fd.append("location_id", dev.fixedLocationId);
     if (dev.mode !== "fixed" && posRef.current) {
       fd.append("lat", String(posRef.current.lat));

@@ -9,7 +9,7 @@ import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
 import { useShowNonBird, nonBirdQuery } from "./birds/settings";
-import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./birds/ui";
+import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink, CHART_SERIES } from "./birds/ui";
 
 // Yard Birds home. Dynamic across sources: the always-on yard (Pi) plus every
 // device-created location. Whichever source you mark home is shown by default.
@@ -57,7 +57,7 @@ export default function Birds() {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-          <Bird size={24} strokeWidth={1.8} /> Yard Birds
+          <Bird size={24} strokeWidth={1.8} /> Birds
         </h2>
         {!PUBLIC && (
           <Link to="/apps/birds/settings" className="btn sm">
@@ -175,11 +175,11 @@ function LivePanel() {
     .sort((a, b) => b.confidence - a.confidence);
 
   return (
-    <section className="card" style={{ padding: "1rem", marginBottom: "1rem", border: "1px solid #1f6feb55" }}>
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem", border: "1px solid color-mix(in srgb, var(--accent) 33%, transparent)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".6rem", flexWrap: "wrap" }}>
         {paused
           ? <Radio size={16} className="muted" />
-          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "#16a34a" }} />}
+          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "var(--ok)" }} />}
         <strong>{rec.device.name || "This device"}</strong>
         <span className="muted" style={{ fontSize: ".85rem" }}>
           {paused ? "· paused" : rec.location ? `· ${rec.location}` : "· locating…"}
@@ -252,9 +252,9 @@ function SetLocationInline() {
       .finally(() => setBusy(false));
   };
   return (
-    <div className="card" style={{ padding: ".7rem .9rem", margin: ".6rem 0", border: "1px solid #f5a62355" }}>
+    <div className="card" style={{ padding: ".7rem .9rem", margin: ".6rem 0", border: "1px solid color-mix(in srgb, var(--warn) 33%, transparent)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".5rem" }}>
-        <AlertTriangle size={16} style={{ color: "#f5a623" }} />
+        <AlertTriangle size={16} style={{ color: "var(--warn)" }} />
         <span style={{ fontSize: ".88rem" }}>
           {busy ? "Saving location…" : "No location for this device yet — pick where you are so detections save."}
         </span>
@@ -332,14 +332,14 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
       {d.daily.length > 0 && (
         <section className="card" style={card}>
           <h3 style={h3}><TrendingUp size={17} /> Detections per day</h3>
-          <Chart data={d.daily} x="date" fill="#34d399" xfmt={(x: string) => x.slice(5)} />
+          <Chart data={d.daily} x="date" fill={CHART_SERIES[1]} xfmt={(x: string) => x.slice(5)} />
         </section>
       )}
       <section className="card" style={card}>
         <h3 style={h3}><Sunrise size={17} /> Activity by hour
           {peak && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}
         </h3>
-        <Chart data={d.hourly} x="hour" fill="#4ea1ff" xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
+        <Chart data={d.hourly} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
       </section>
 
       <section className="card" style={card}>
@@ -348,7 +348,7 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
         <div style={{ display: "flex", flexDirection: "column" }}>
           {d.speciesList.map((s) => (
             <SpeciesLink key={s.scientific_name} sci={s.scientific_name} locationId={locId}>
-              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
                 <BirdThumb sci={s.scientific_name} common={s.common_name} />
                 <span style={{ flex: 1, minWidth: 0 }}>
                   <span style={{ display: "block" }}>{s.common_name}</span>

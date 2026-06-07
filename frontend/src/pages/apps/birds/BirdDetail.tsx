@@ -3,7 +3,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { MapPin, Smartphone, ExternalLink } from "lucide-react";
 import { useCrumbTrail, type Crumb } from "../../../components/appNav";
 import { useBirdInfo } from "./birdinfo";
-import { pct, hh, jget, Stat, StatGrid, Chart, HourSpark } from "./ui";
+import { pct, hh, jget, Stat, StatGrid, Chart, HourSpark, CHART_SERIES } from "./ui";
 
 // One species' page: photo + description (client-side reference lookup), stats,
 // every day it was heard with that day's hour-of-day mini-graph, and a recent
@@ -18,10 +18,11 @@ type Detail = {
   scientific_name: string; common_name: string; count: number;
   first_date: string | null; last_date: string | null; days_seen: number;
   max_conf: number; avg_conf: number; total_all: number;
+  occurrence: number | null;
   hourly: { hour: number; count: number }[];
   by_day: { date: string; count: number; hourly: number[] }[];
   locations: LocOpt[]; devices: DevOpt[];
-  recent: { at: string; confidence: number; location_id: number | null; location: string | null; device: string | null }[];
+  recent: { at: string; confidence: number; occurrence: number | null; location_id: number | null; location: string | null; device: string | null }[];
 };
 
 export default function BirdDetail() {
@@ -58,7 +59,7 @@ export default function BirdDetail() {
 
   const trail: Crumb[] = [
     { label: "Apps", to: "/apps" },
-    { label: "Yard Birds", to: "/apps/birds" },
+    { label: "Birds", to: "/apps/birds" },
   ];
   if (locId) {
     trail.push({ label: "Locations", to: "/apps/birds/locations" });
@@ -131,6 +132,9 @@ export default function BirdDetail() {
             <Stat label="Days heard" value={d.days_seen} />
             <Stat label="Best" value={pct(d.max_conf)} />
             <Stat label="Avg" value={pct(d.avg_conf)} />
+            {d.occurrence != null && (
+              <Stat label="Local likelihood" value={pct(d.occurrence)} />
+            )}
           </StatGrid>
 
           {d.count === 0 && <p className="muted">No detections for this filter.</p>}
@@ -139,19 +143,19 @@ export default function BirdDetail() {
             <>
               <section className="card" style={card}>
                 <h3 style={h3}>Time of day{peak && peak.count > 0 && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}</h3>
-                <Chart data={d.hourly} x="hour" fill="#a78bfa" xfmt={(h: number) => String(h)} interval={2} labelFmt={hh} height={130} />
+                <Chart data={d.hourly} x="hour" fill={CHART_SERIES[0]} xfmt={(h: number) => String(h)} interval={2} labelFmt={hh} height={130} />
               </section>
 
               <section className="card" style={card}>
                 <h3 style={h3}>Each day heard ({d.by_day.length})</h3>
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {d.by_day.map((day) => (
-                    <div key={day.date} style={{ display: "flex", alignItems: "center", gap: ".8rem", padding: ".55rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
+                    <div key={day.date} style={{ display: "flex", alignItems: "center", gap: ".8rem", padding: ".55rem 0", borderTop: "1px solid var(--border)" }}>
                       <div style={{ minWidth: 86 }}>
                         <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{day.date.slice(5)}</div>
                         <div className="muted" style={{ fontSize: ".75rem" }}>{day.count}×</div>
                       </div>
-                      <div style={{ flex: 1 }}><HourSpark hourly={day.hourly} fill="#34d399" /></div>
+                      <div style={{ flex: 1 }}><HourSpark hourly={day.hourly} fill={CHART_SERIES[1]} /></div>
                     </div>
                   ))}
                 </div>
@@ -163,7 +167,7 @@ export default function BirdDetail() {
                   {d.recent.map((r, i) => {
                     const title = [r.location, r.device].filter(Boolean).join(" · ");
                     const row = (
-                      <div title={title} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".4rem 0", borderTop: "1px solid var(--border,#1e2636)", fontSize: ".84rem" }}>
+                      <div title={title} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".4rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
                         <span className="mono muted" style={{ minWidth: 104, flexShrink: 0 }}>{r.at}</span>
                         <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                           {!locId && r.location && <span style={{ display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={11} className="muted" /> {r.location}</span>}

@@ -18,7 +18,6 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["../shared/*"],
-      "@commute/*": ["../apps/commute/src/*"],
       "@workshop/ui/*": ["src/ui/*"],
       "@workshop/styles/*": ["src/styles/*"]
     }

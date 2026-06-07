@@ -145,11 +145,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@shared": path.resolve(__dirname, "../shared"),
-      // Commute mounts in-workshop at /apps/commute by rendering the SAME
-      // component the standalone app (:8444) uses — one source of truth.
-      "@commute": path.resolve(__dirname, "../apps/commute/src"),
-      // The design system addressed by its package name. Here it's our own
-      // src/ui; the standalone commute app aliases the same name to this dir.
+      // Commute is a native Workshop page (src/pages/apps/commute) — no separate
+      // project. The @workshop/* aliases remain for any package-name imports.
       "@workshop/ui": path.resolve(__dirname, "src/ui"),
       "@workshop/styles": path.resolve(__dirname, "src/styles"),
     },
@@ -162,7 +159,7 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     allowedHosts: ["debian.tail38e62e.ts.net"],
-    // Allow serving the sibling app sources we alias above (@shared, @commute).
+    // Allow serving the sibling sources we alias above (@shared).
     fs: { allow: [path.resolve(__dirname, "..")] },
     proxy: {
       "/api": {

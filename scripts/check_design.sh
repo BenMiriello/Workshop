@@ -16,8 +16,12 @@
 #   • cursor:"not-allowed"  — disabled controls dim, never not-allowed
 #
 # Exempt paths (concrete colors legitimately live here):
-#   src/styles/**            (tokens.css / components.css / tokens.js)
-#   src/ui/chart.tsx         (CHART_SERIES — recharts needs literal colors)
+#   src/styles/**                       (tokens.css / components.css / tokens.js)
+#   src/ui/chart.tsx                    (CHART_SERIES — recharts needs literal colors)
+#   src/ui/Map.tsx                      (maplibre StyleSpecification; token() reads CSS vars w/ hex fallback)
+#   birds/recorder.tsx, birds/Spectrogram.tsx
+#       (the spectrogram is a deliberate theme-independent near-black; a canvas
+#        2D fillStyle cannot read CSS custom properties, and the wrapper matches it)
 #
 # Exit 0 = clean, 1 = violations, 2 = foundation broken.
 
@@ -49,7 +53,13 @@ import os, re, subprocess, sys
 mode, rev = sys.argv[1], sys.argv[2]
 FE = "/home/clawd-a/workshop/frontend"
 
-EXEMPT = ("frontend/src/styles/", "frontend/src/ui/chart.tsx")
+EXEMPT = (
+    "frontend/src/styles/",
+    "frontend/src/ui/chart.tsx",
+    "frontend/src/ui/Map.tsx",  # maplibre StyleSpecification needs literal colors; token() reads CSS vars w/ hex fallback
+    "frontend/src/pages/apps/birds/recorder.tsx",
+    "frontend/src/pages/apps/birds/Spectrogram.tsx",
+)
 HEX = re.compile(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b")
 NOT_ALLOWED = re.compile(r"not-allowed")
 # Emoji = decorative pictographs (📝 🛠 🔍 …), all in the astral planes + flags.

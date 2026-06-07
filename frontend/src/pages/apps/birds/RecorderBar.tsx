@@ -19,12 +19,12 @@ export default function RecorderBar() {
       onClick={() => nav("/apps/birds")}
       style={{
         position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 50, cursor: "pointer",
-        background: "#0d1424", borderTop: "1px solid #1f6feb55",
+        background: "var(--card)", borderTop: "1px solid color-mix(in srgb, var(--accent) 33%, transparent)",
         display: "flex", alignItems: "center", gap: ".6rem", padding: ".5rem .9rem",
         boxShadow: "0 -4px 16px rgba(0,0,0,.35)",
       }}
     >
-      <Radio size={16} className="spin-pulse" style={{ color: "#16a34a", flexShrink: 0 }} />
+      <Radio size={16} className="spin-pulse" style={{ color: "var(--ok)", flexShrink: 0 }} />
       <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
         <div style={{ fontWeight: 600, fontSize: ".88rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           Listening{location ? ` · ${location}` : ""}
