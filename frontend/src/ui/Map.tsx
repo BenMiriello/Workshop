@@ -103,9 +103,21 @@ export function Map({
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
-    const apply = () => {
-      const accent = token("--accent", "#7a57e0");
-      // Breadcrumb line.
+    const accent = token("--accent", "#7a57e0");
+
+    // Marker is a DOM overlay — add it IMMEDIATELY, independent of the style.
+    // (Parsing a large basemap takes seconds; the pin shouldn't wait on it.)
+    if (marker) {
+      if (markerRef.current) markerRef.current.setLngLat(marker);
+      else markerRef.current = new maplibregl.Marker({ color: accent }).setLngLat(marker).addTo(map);
+    } else if (markerRef.current) {
+      markerRef.current.remove();
+      markerRef.current = null;
+    }
+
+    // The breadcrumb line + camera fit touch the style (sources/layers), so they
+    // do need to wait for it.
+    const applyStyleBits = () => {
       const line: GeoJSON.Feature = {
         type: "Feature", properties: {},
         geometry: { type: "LineString", coordinates: track ?? [] },
@@ -118,15 +130,6 @@ export function Map({
         map.addLayer({ id: "track", type: "line", source: "track",
           paint: { "line-color": accent, "line-width": 3, "line-opacity": 0.85 } });
       }
-      // Current-position marker.
-      if (marker) {
-        if (markerRef.current) markerRef.current.setLngLat(marker);
-        else markerRef.current = new maplibregl.Marker({ color: accent }).setLngLat(marker).addTo(map);
-      } else if (markerRef.current) {
-        markerRef.current.remove();
-        markerRef.current = null;
-      }
-      // Fit to everything we plotted.
       const pts = [...(track ?? [])];
       if (marker) pts.push(marker);
       if (pts.length === 1) {
@@ -136,8 +139,8 @@ export function Map({
         map.fitBounds(b, { padding: 48, maxZoom: 15, duration: 0 });
       }
     };
-    if (map.isStyleLoaded()) apply();
-    else map.once("load", apply);
+    if (map.isStyleLoaded()) applyStyleBits();
+    else map.once("load", applyStyleBits);
   }, [track, marker]);
 
   return (

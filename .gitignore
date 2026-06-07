@@ -46,3 +46,8 @@ infra/open-wearables/repo/
 # Build artifacts / tooling caches (not source)
 *.tsbuildinfo
 .playwright-mcp/
+
+# Map basemap — large regenerable data file (go-pmtiles extract), not source.
+# Regenerate with `pmtiles extract` (see docs/app-platform-plan.md).
+*.pmtiles
+frontend/public/basemap/
