@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Smartphone, Radio, MapPin } from "lucide-react";
+import { Bird, Smartphone, Radio, MapPin } from "lucide-react";
+import Breadcrumbs from "../../../components/Breadcrumbs";
 import { useRecorder, type DeviceMode } from "./recorder";
 import { API, jget } from "./ui";
 
@@ -45,17 +46,13 @@ export default function Devices() {
 
   return (
     <div>
+      <Breadcrumbs items={[{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }, { label: "Devices" }]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
-        <Link to="/apps/birds" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
-          <ChevronLeft size={18} /> Yard Birds
-        </Link>
-        <Link to="/apps/birds/locations" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".3rem", fontSize: ".85rem" }}>
-          <MapPin size={15} /> Locations
-        </Link>
+        <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
+          <Smartphone size={22} strokeWidth={1.8} /> Devices
+        </h2>
+        <Link to="/apps/birds/locations" className="btn sm"><MapPin size={14} /> Locations</Link>
       </div>
-      <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-        <Smartphone size={22} strokeWidth={1.8} /> Devices
-      </h2>
 
       <div style={{ display: "grid", gap: ".7rem" }}>
         {devices.map((dev) => {
@@ -66,15 +63,12 @@ export default function Devices() {
                 <input className="num-in" defaultValue={dev.name} placeholder="Device name"
                   onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== dev.name) patch(dev, { name: v }); }}
                   style={{ flex: 1, minWidth: 0, fontWeight: 600 }} />
-                {current && <span className="pill" style={{ flexShrink: 0 }}><Radio size={12} style={{ verticalAlign: "-2px" }} /> this device</span>}
+                {current && <span className="pill neutral" style={{ flexShrink: 0 }}><Radio size={12} style={{ verticalAlign: "-2px" }} /> this device</span>}
               </div>
 
-              <div style={{ display: "flex", gap: ".4rem", marginBottom: ".5rem" }}>
+              <div className="choice" style={{ marginBottom: ".5rem" }}>
                 {(["adaptive", "fixed"] as DeviceMode[]).map((m) => (
-                  <button key={m} className="pill" onClick={() => patch(dev, { mode: m })}
-                    style={{ cursor: "pointer", opacity: dev.mode === m ? 1 : 0.5,
-                      background: dev.mode === m ? "#1f6feb" : undefined, color: dev.mode === m ? "#fff" : undefined,
-                      borderColor: dev.mode === m ? "#1f6feb" : undefined }}>
+                  <button key={m} className={dev.mode === m ? "active" : ""} onClick={() => patch(dev, { mode: m })}>
                     {m === "adaptive" ? "Adaptive (follows GPS)" : "Fixed location"}
                   </button>
                 ))}

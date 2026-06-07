@@ -17,7 +17,7 @@ import sqlite3
 import subprocess
 import tempfile
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -769,30 +769,54 @@ def _aggregate_activity(rows: list[sqlite3.Row]) -> dict:
     }
 
 
-def bird_detail(sci: str, location_id: int | None = None) -> dict:
+def bird_detail(sci: str, location_id: int | None = None,
+                device: str | None = None, days: int = 0) -> dict:
     """Everything for one species' page: stats, per-day breakdown (each day with
-    its own 24h histogram for the mini-graph), where it was heard, and a recent
-    list. Optionally scoped to one location."""
-    q = ("SELECT ts, common_name, confidence, location_id, device_name "
+    its own 24h histogram for the mini-graph), where + on what it was heard, and
+    a recent list. Filterable by location, device, and date range; the location
+    and device option lists are always the full set for the species."""
+    q = ("SELECT ts, common_name, confidence, location_id, device_token, device_name "
          "FROM browser_detections WHERE scientific_name=?")
     params: list = [sci]
     if location_id:
         q += " AND location_id=?"
         params.append(location_id)
+    if device:
+        q += " AND device_token=?"
+        params.append(device)
     with _conn() as c:
         rows = c.execute(q + " ORDER BY ts", params).fetchall()
         loc_names = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
-        # The cross-location breakdown is always over ALL detections of the
-        # species (so the location filter always shows every place to switch to),
-        # while everything else respects the location scope.
+        # The location/device option lists are always over ALL detections of the
+        # species (so the filters always offer every place/device to switch to),
+        # while the stats below respect the active filters.
         all_locs = c.execute(
             "SELECT location_id, COUNT(*) n FROM browser_detections "
             "WHERE scientific_name=? AND location_id IS NOT NULL GROUP BY location_id "
             "ORDER BY n DESC", (sci,)).fetchall()
+        all_devs = c.execute(
+            "SELECT device_token, MAX(device_name) name, COUNT(*) n FROM browser_detections "
+            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>'' "
+            "GROUP BY device_token ORDER BY n DESC", (sci,)).fetchall()
+
+    # Date range: days<=0 is all-time; days=1 is today (local calendar day);
+    # days=N is the last N local days.
+    cutoff = None
+    if days and days > 0:
+        start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
+        cutoff = start.astimezone(timezone.utc)
 
     by_day: dict[str, dict] = {}
     hourly_overall = [0] * 24
+    kept = []
     for r in rows:
+        if cutoff is not None:
+            dt = datetime.fromisoformat(r["ts"])
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt < cutoff:
+                continue
+        kept.append(r)
         lt = _local(r["ts"])
         d = lt.strftime("%Y-%m-%d")
         day = by_day.setdefault(d, {"date": d, "count": 0, "hourly": [0] * 24})
@@ -800,10 +824,10 @@ def bird_detail(sci: str, location_id: int | None = None) -> dict:
         day["hourly"][lt.hour] += 1
         hourly_overall[lt.hour] += 1
 
-    confs = [r["confidence"] for r in rows]
-    common = rows[-1]["common_name"] if rows else sci
+    confs = [r["confidence"] for r in kept]
+    common = (kept[-1]["common_name"] if kept else (rows[-1]["common_name"] if rows else sci))
     return {
-        "scientific_name": sci, "common_name": common, "count": len(rows),
+        "scientific_name": sci, "common_name": common, "count": len(kept),
         "first_date": min(by_day) if by_day else None,
         "last_date": max(by_day) if by_day else None,
         "days_seen": len(by_day),
@@ -811,12 +835,14 @@ def bird_detail(sci: str, location_id: int | None = None) -> dict:
         "avg_conf": round(sum(confs) / len(confs), 4) if confs else 0,
         "hourly": [{"hour": h, "count": hourly_overall[h]} for h in range(24)],
         "by_day": sorted(by_day.values(), key=lambda x: x["date"], reverse=True),
-        "total_all_locations": sum(L["n"] for L in all_locs),
+        "total_all": sum(L["n"] for L in all_locs),
         "locations": [{"id": L["location_id"], "name": loc_names.get(L["location_id"]), "count": L["n"]}
                       for L in all_locs],
+        "devices": [{"token": D["device_token"], "name": D["name"], "count": D["n"]}
+                    for D in all_devs],
         "recent": [{"at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
                     "confidence": round(r["confidence"], 4),
                     "location_id": r["location_id"],
                     "location": loc_names.get(r["location_id"]),
-                    "device": r["device_name"]} for r in rows[-50:][::-1]],
+                    "device": r["device_name"]} for r in kept[-50:][::-1]],
     }

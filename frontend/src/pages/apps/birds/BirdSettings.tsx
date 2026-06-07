@@ -1,5 +1,5 @@
-import { Link } from "react-router-dom";
-import { ChevronLeft, SlidersHorizontal, Bird, Filter } from "lucide-react";
+import { SlidersHorizontal, Bird, Filter } from "lucide-react";
+import Breadcrumbs from "../../../components/Breadcrumbs";
 import { useShowNonBird } from "./settings";
 
 // Settings for the Birds app. The non-bird filter is display-only: BirdNET keeps
@@ -18,11 +18,7 @@ export default function BirdSettings() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".75rem" }}>
-        <Link to="/apps/birds" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
-          <ChevronLeft size={18} /> Yard Birds
-        </Link>
-      </div>
+      <Breadcrumbs items={[{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }, { label: "Settings" }]} />
       <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
         <SlidersHorizontal size={22} strokeWidth={1.8} /> Bird settings
       </h2>

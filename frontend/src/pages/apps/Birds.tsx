@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  Bird, ChevronLeft, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
+  Bird, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
   SlidersHorizontal, Smartphone, AlertTriangle, X,
 } from "lucide-react";
+import Breadcrumbs from "../../components/Breadcrumbs";
 import { useRecorder } from "./birds/recorder";
 import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
@@ -55,17 +56,13 @@ export default function Birds() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".75rem" }}>
-        <Link to="/apps" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
-          <ChevronLeft size={18} /> Apps
-        </Link>
-      </div>
+      <Breadcrumbs items={[{ label: "Apps", to: "/apps" }, { label: "Yard Birds", icon: <Bird size={14} /> }]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
           <Bird size={24} strokeWidth={1.8} /> Yard Birds
         </h2>
         {!PUBLIC && (
-          <Link to="/apps/birds/settings" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".3rem", fontSize: ".85rem" }}>
+          <Link to="/apps/birds/settings" className="btn sm">
             <SlidersHorizontal size={15} /> Settings
           </Link>
         )}
@@ -75,33 +72,29 @@ export default function Birds() {
       {!PUBLIC && (
         <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", margin: ".25rem 0 1rem" }}>
           <ListenButton />
-          <Link to="/apps/birds/locations" className="pill" style={btn}>
-            <List size={16} /> Locations
-          </Link>
-          <Link to="/apps/birds/devices" className="pill" style={btn}>
-            <Smartphone size={16} /> Devices
-          </Link>
+          <Link to="/apps/birds/locations" className="btn"><List size={16} /> Locations</Link>
+          <Link to="/apps/birds/devices" className="btn"><Smartphone size={16} /> Devices</Link>
         </div>
       )}
 
       {!PUBLIC && (rec.recording || rec.wasListening) && <LivePanel />}
 
-      {/* Source selector (only when there's a choice) */}
+      {/* Source switch (segmented) + a clear "set as home" for the current view */}
       {sources.length > 1 && (
-        <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-          {sources.map((s) => {
-            const active = s.key === selected?.key;
-            const isHome = s.key === home;
-            return (
-              <span key={s.key} className="pill"
-                style={{ display: "inline-flex", alignItems: "center", gap: ".35rem", cursor: "pointer",
-                  opacity: active ? 1 : 0.6, borderColor: active ? "#1f6feb" : undefined }}>
-                <span onClick={() => setParams({ source: s.key })}>{s.kind === "yard" ? <Radio size={12} style={{ verticalAlign: "-2px" }} /> : null} {s.name}</span>
-                <Star size={13} fill={isHome ? "#f5c518" : "none"} color={isHome ? "#f5c518" : "currentColor"}
-                  onClick={() => setHomeSource(s.key)} style={{ cursor: "pointer" }} />
-              </span>
-            );
-          })}
+        <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+          <div className="choice">
+            {sources.map((s) => (
+              <button key={s.key} className={s.key === selected?.key ? "active" : ""} onClick={() => setParams({ source: s.key })}>
+                {s.kind === "yard" ? <Radio size={11} style={{ verticalAlign: "-1px", marginRight: ".2rem" }} /> : null}
+                {s.name}{s.key === home ? " ★" : ""}
+              </button>
+            ))}
+          </div>
+          {selected && selected.key !== home && (
+            <button className="btn sm" onClick={() => setHomeSource(selected.key)}>
+              <Star size={13} /> Set as home
+            </button>
+          )}
         </div>
       )}
 
@@ -125,25 +118,25 @@ function ListenButton() {
   const [name, setName] = useState("");
 
   if (rec.recording) {
-    return <button className="pill" onClick={rec.stop} style={btn}><Square size={15} /> Stop listening</button>;
+    return <button className="btn" onClick={rec.stop}><Square size={15} /> Stop listening</button>;
   }
   if (rec.wasListening) {
     // After a reload mid-session: one tap resumes (mic permission already granted).
-    return <button className="pill" onClick={rec.start} style={btn}><Mic size={16} /> Resume listening</button>;
+    return <button className="btn" onClick={rec.start}><Mic size={16} /> Resume listening</button>;
   }
   if (naming) {
     const go = () => { const n = name.trim(); if (!n) return; rec.setDeviceName(n); setNaming(false); rec.start(); };
     return (
       <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center", flexWrap: "wrap" }}>
         <input className="num-in" autoFocus placeholder="Name this device (e.g. My phone)" value={name}
-          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} style={{ minWidth: 200 }} />
-        <button className="pill" onClick={go} style={btn}>Start</button>
+          onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} style={{ minWidth: 200, width: "auto" }} />
+        <button className="btn primary" onClick={go}>Start</button>
       </span>
     );
   }
   const onClick = () => { if (!rec.device.name) setNaming(true); else rec.start(); };
   return (
-    <button className="pill" onClick={onClick} disabled={rec.analyzerUp === false} style={btn}>
+    <button className="btn" onClick={onClick} disabled={rec.analyzerUp === false}>
       <Mic size={16} /> Listen on this device
     </button>
   );
@@ -170,10 +163,10 @@ function LivePanel() {
         </span>
         {paused ? (
           <span style={{ marginLeft: "auto", display: "inline-flex", gap: ".4rem" }}>
-            <button className="pill" onClick={rec.start} style={btn}><Mic size={14} /> Resume</button>
-            <button className="pill muted" onClick={rec.stop} style={btn} title="Dismiss"><X size={14} /></button>
+            <button className="btn" onClick={rec.start}><Mic size={14} /> Resume</button>
+            <button className="btn" onClick={rec.stop} title="Dismiss"><X size={14} /></button>
           </span>
-        ) : <button className="pill" onClick={rec.stop} style={{ ...btn, marginLeft: "auto" }}><Square size={14} /> Stop</button>}
+        ) : <button className="btn" onClick={rec.stop} style={{ marginLeft: "auto" }}><Square size={14} /> Stop</button>}
       </div>
 
       <Spectrogram height={150} />
@@ -187,8 +180,8 @@ function LivePanel() {
           <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
             <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
             {hearing.slice(0, 4).map((d, i) => (
-              <span key={i} className="pill" style={{ background: "#16331f", borderColor: "#16a34a55" }}>
-                {d.common_name} <span className="muted">{pct(d.confidence)}</span>
+              <span key={i} className="pill ok">
+                {d.common_name} {pct(d.confidence)}
               </span>
             ))}
           </div>
@@ -201,7 +194,7 @@ function LivePanel() {
           <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
             {species.map((s) => (
               <SpeciesLink key={s.scientific_name} sci={s.scientific_name}>
-                <span className="pill" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.6, borderStyle: "dashed", cursor: "pointer" }}>
+                <span className="pill neutral" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.65, borderStyle: "dashed", cursor: "pointer" }}>
                   {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
                 </span>
               </SpeciesLink>
@@ -350,6 +343,5 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
   );
 }
 
-const btn: React.CSSProperties = { cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".4rem" };
 const card: React.CSSProperties = { padding: "1rem", marginBottom: "1rem" };
 const h3: React.CSSProperties = { margin: "0 0 .4rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" };

@@ -52,8 +52,7 @@ export default function AddressPicker({ onPick, value }: { onPick: (p: Place) =>
             onFocus={() => results.length && setOpen(true)}
             style={{ paddingLeft: 26 }} />
         </div>
-        <button className="pill" onClick={useCurrent}
-          style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".3rem", flexShrink: 0 }}>
+        <button className="btn" onClick={useCurrent} style={{ flexShrink: 0 }}>
           {busy ? <Loader2 size={14} className="spin" /> : <Crosshair size={14} />} Current
         </button>
       </div>

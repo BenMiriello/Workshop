@@ -267,8 +267,9 @@ async def location_activity_ep(location_id: int, include_nonbird: bool = False):
 
 
 @router.get("/bird")
-async def bird_detail_ep(sci: str, location_id: int | None = None):
-    return birds_analyze.bird_detail(sci, location_id)
+async def bird_detail_ep(sci: str, location_id: int | None = None,
+                         device: str | None = None, days: int = 0):
+    return birds_analyze.bird_detail(sci, location_id, device, days)
 
 
 @router.get("/home")

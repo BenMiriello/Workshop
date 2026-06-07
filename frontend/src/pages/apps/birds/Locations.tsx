@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, MapPin, Star, Radio, Smartphone } from "lucide-react";
+import { Bird, MapPin, Star, Radio, Smartphone } from "lucide-react";
+import Breadcrumbs from "../../../components/Breadcrumbs";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, jget } from "./ui";
 
@@ -38,17 +39,13 @@ export default function Locations() {
 
   return (
     <div>
+      <Breadcrumbs items={[{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }, { label: "Locations" }]} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
-        <Link to="/apps/birds" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
-          <ChevronLeft size={18} /> Yard Birds
-        </Link>
-        <Link to="/apps/birds/devices" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".3rem", fontSize: ".85rem" }}>
-          <Smartphone size={15} /> Devices
-        </Link>
+        <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
+          <MapPin size={22} strokeWidth={1.8} /> Locations
+        </h2>
+        <Link to="/apps/birds/devices" className="btn sm"><Smartphone size={14} /> Devices</Link>
       </div>
-      <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-        <MapPin size={22} strokeWidth={1.8} /> Locations
-      </h2>
 
       <div style={{ display: "grid", gap: ".6rem" }}>
         {yardAvailable && (

@@ -1,61 +1,74 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ChevronLeft, MapPin, Smartphone, ExternalLink } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Bird, MapPin, Smartphone, ExternalLink } from "lucide-react";
+import Breadcrumbs, { type Crumb } from "../../../components/Breadcrumbs";
 import { useBirdInfo } from "./birdinfo";
 import { pct, hh, jget, Stat, StatGrid, Chart, HourSpark } from "./ui";
 
-// One species' page: photo + description (client-side reference lookup), the
-// stats, every day it was heard with that day's hour-of-day mini-graph, and a
-// recent list. A location filter at the top scopes everything to one place or
-// shows all - bidirectional, switchable in place.
+// One species' page: photo + description (client-side reference lookup), stats,
+// every day it was heard with that day's hour-of-day mini-graph, and a recent
+// list. Filterable by location, device, and date range - all calm selects, with
+// location being just one dimension. Breadcrumbs give one-click navigation up.
 
 const REFRESH_MS = 8000;
 
+type LocOpt = { id: number; name: string; count: number };
+type DevOpt = { token: string; name: string; count: number };
 type Detail = {
   scientific_name: string; common_name: string; count: number;
   first_date: string | null; last_date: string | null; days_seen: number;
-  max_conf: number; avg_conf: number; total_all_locations: number;
+  max_conf: number; avg_conf: number; total_all: number;
   hourly: { hour: number; count: number }[];
   by_day: { date: string; count: number; hourly: number[] }[];
-  locations: { id: number; name: string; count: number }[];
+  locations: LocOpt[]; devices: DevOpt[];
   recent: { at: string; confidence: number; location_id: number | null; location: string | null; device: string | null }[];
 };
 
 export default function BirdDetail() {
   const [params, setParams] = useSearchParams();
-  const nav = useNavigate();
   const sci = params.get("sci") || "";
-  const locId = params.get("location_id");
+  const locId = params.get("location_id") || "";
+  const device = params.get("device") || "";
+  const days = params.get("days") || "0";
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const info = useBirdInfo(sci || null, null);
 
   useEffect(() => {
     if (!sci) return;
-    const load = () => jget<Detail>(`/bird?sci=${encodeURIComponent(sci)}${locId ? `&location_id=${locId}` : ""}`)
-      .then(setD).catch((e) => setErr(String(e)));
+    const qs = new URLSearchParams({ sci });
+    if (locId) qs.set("location_id", locId);
+    if (device) qs.set("device", device);
+    if (days !== "0") qs.set("days", days);
+    const load = () => jget<Detail>(`/bird?${qs.toString()}`).then(setD).catch((e) => setErr(String(e)));
     load();
     const t = setInterval(load, REFRESH_MS);
     return () => clearInterval(t);
-  }, [sci, locId]);
+  }, [sci, locId, device, days]);
 
-  const setLocFilter = (id?: number) => {
+  const setFilter = (key: string, val: string) => {
     const p = new URLSearchParams(params);
-    if (id) p.set("location_id", String(id)); else p.delete("location_id");
+    if (val && val !== "0") p.set(key, val); else p.delete(key);
     setParams(p);
   };
 
   const common = d?.common_name || info?.common_name || sci;
   const peak = d?.hourly?.length ? d.hourly.reduce((a, b) => (b.count > a.count ? b : a), d.hourly[0]) : null;
+  const place = locId ? d?.locations.find((l) => String(l.id) === locId)?.name : null;
+
+  const trail: Crumb[] = [{ label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> }];
+  if (locId) {
+    trail.push({ label: "Locations", to: "/apps/birds/locations" });
+    if (place) trail.push({ label: place, to: `/apps/birds/location?id=${locId}` });
+  }
+  trail.push({ label: common });
+
+  const showLoc = (d?.locations.length || 0) > 1 || !!locId;
+  const showDev = (d?.devices.length || 0) > 1 || !!device;
 
   return (
     <div>
-      <div style={{ marginBottom: ".75rem" }}>
-        <button onClick={() => nav(-1)} className="muted"
-          style={{ background: "none", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", padding: 0, font: "inherit" }}>
-          <ChevronLeft size={18} /> Back
-        </button>
-      </div>
+      <Breadcrumbs items={trail} />
 
       {/* Header card: photo + identity + description */}
       <section className="card" style={{ padding: 0, marginBottom: "1rem", overflow: "hidden" }}>
@@ -81,22 +94,34 @@ export default function BirdDetail() {
 
       {d && (
         <>
-          {/* Location filter - scopes everything below; bidirectional */}
-          {d.locations.length > 1 ? (
-            <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap", marginBottom: "1rem", alignItems: "center" }}>
-              <span className="muted" style={{ fontSize: ".78rem", marginRight: ".1rem" }}><MapPin size={12} style={{ verticalAlign: "-1px" }} /> Filter:</span>
-              <FilterChip active={!locId} onClick={() => setLocFilter()}>All <span className="muted">{d.total_all_locations}</span></FilterChip>
-              {d.locations.map((L) => (
-                <FilterChip key={L.id} active={locId === String(L.id)} onClick={() => setLocFilter(L.id)}>
-                  {L.name} <span className="muted">{L.count}</span>
-                </FilterChip>
-              ))}
+          {/* Filters: location is one dimension among device + date range */}
+          {(showLoc || showDev) && (
+            <div className="filters">
+              {showLoc && (
+                <label>Location
+                  <select className="num-in" value={locId} onChange={(e) => setFilter("location_id", e.target.value)}>
+                    <option value="">All locations ({d.total_all})</option>
+                    {d.locations.map((L) => <option key={L.id} value={L.id}>{L.name} ({L.count})</option>)}
+                  </select>
+                </label>
+              )}
+              {showDev && (
+                <label>Device
+                  <select className="num-in" value={device} onChange={(e) => setFilter("device", e.target.value)}>
+                    <option value="">All devices</option>
+                    {d.devices.map((D) => <option key={D.token} value={D.token}>{D.name} ({D.count})</option>)}
+                  </select>
+                </label>
+              )}
+              <label>When
+                <select className="num-in" value={days} onChange={(e) => setFilter("days", e.target.value)}>
+                  <option value="0">All time</option>
+                  <option value="1">Today</option>
+                  <option value="7">Last 7 days</option>
+                  <option value="30">Last 30 days</option>
+                </select>
+              </label>
             </div>
-          ) : d.locations.length === 1 && (
-            <p className="muted" style={{ margin: "0 0 1rem", fontSize: ".85rem" }}>
-              <MapPin size={13} style={{ verticalAlign: "-2px" }} /> Heard at{" "}
-              <Link to={`/apps/birds/location?id=${d.locations[0].id}`} className="muted" style={{ textDecoration: "underline" }}>{d.locations[0].name}</Link>
-            </p>
           )}
 
           <StatGrid>
@@ -106,61 +131,56 @@ export default function BirdDetail() {
             <Stat label="Avg" value={pct(d.avg_conf)} />
           </StatGrid>
 
-          <section className="card" style={card}>
-            <h3 style={h3}>Time of day{peak && peak.count > 0 && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}</h3>
-            <Chart data={d.hourly} x="hour" fill="#a78bfa" xfmt={(h: number) => String(h)} interval={2} labelFmt={hh} height={130} />
-          </section>
+          {d.count === 0 && <p className="muted">No detections for this filter.</p>}
 
-          <section className="card" style={card}>
-            <h3 style={h3}>Each day heard ({d.by_day.length})</h3>
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {d.by_day.map((day) => (
-                <div key={day.date} style={{ display: "flex", alignItems: "center", gap: ".8rem", padding: ".55rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
-                  <div style={{ minWidth: 86 }}>
-                    <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{day.date.slice(5)}</div>
-                    <div className="muted" style={{ fontSize: ".75rem" }}>{day.count}×</div>
-                  </div>
-                  <div style={{ flex: 1 }}><HourSpark hourly={day.hourly} fill="#34d399" /></div>
+          {d.count > 0 && (
+            <>
+              <section className="card" style={card}>
+                <h3 style={h3}>Time of day{peak && peak.count > 0 && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}</h3>
+                <Chart data={d.hourly} x="hour" fill="#a78bfa" xfmt={(h: number) => String(h)} interval={2} labelFmt={hh} height={130} />
+              </section>
+
+              <section className="card" style={card}>
+                <h3 style={h3}>Each day heard ({d.by_day.length})</h3>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {d.by_day.map((day) => (
+                    <div key={day.date} style={{ display: "flex", alignItems: "center", gap: ".8rem", padding: ".55rem 0", borderTop: "1px solid var(--border,#1e2636)" }}>
+                      <div style={{ minWidth: 86 }}>
+                        <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{day.date.slice(5)}</div>
+                        <div className="muted" style={{ fontSize: ".75rem" }}>{day.count}×</div>
+                      </div>
+                      <div style={{ flex: 1 }}><HourSpark hourly={day.hourly} fill="#34d399" /></div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-          </section>
+              </section>
 
-          <section className="card" style={card}>
-            <h3 style={h3}>Recent</h3>
-            <ul style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: 360, overflowY: "auto" }}>
-              {d.recent.map((r, i) => {
-                const title = [r.location, r.device].filter(Boolean).join(" · ");
-                const row = (
-                  <div title={title} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".4rem 0", borderTop: "1px solid var(--border,#1e2636)", fontSize: ".84rem" }}>
-                    <span className="mono muted" style={{ minWidth: 104, flexShrink: 0 }}>{r.at}</span>
-                    <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                      {!locId && r.location && <span style={{ display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={11} className="muted" /> {r.location}</span>}
-                      {r.device && <span className="muted" style={{ marginLeft: r.location && !locId ? ".5rem" : 0, display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".78rem" }}><Smartphone size={10} /> {r.device}</span>}
-                    </span>
-                    <span className="pill" style={{ flexShrink: 0 }}>{pct(r.confidence)}</span>
-                  </div>
-                );
-                return r.location_id
-                  ? <li key={i}><Link to={`/apps/birds/location?id=${r.location_id}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>{row}</Link></li>
-                  : <li key={i}>{row}</li>;
-              })}
-            </ul>
-          </section>
+              <section className="card" style={card}>
+                <h3 style={h3}>Recent</h3>
+                <ul style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: 360, overflowY: "auto" }}>
+                  {d.recent.map((r, i) => {
+                    const title = [r.location, r.device].filter(Boolean).join(" · ");
+                    const row = (
+                      <div title={title} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".4rem 0", borderTop: "1px solid var(--border,#1e2636)", fontSize: ".84rem" }}>
+                        <span className="mono muted" style={{ minWidth: 104, flexShrink: 0 }}>{r.at}</span>
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                          {!locId && r.location && <span style={{ display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={11} className="muted" /> {r.location}</span>}
+                          {r.device && <span className="muted" style={{ marginLeft: r.location && !locId ? ".5rem" : 0, display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".78rem" }}><Smartphone size={10} /> {r.device}</span>}
+                        </span>
+                        <span className="pill neutral" style={{ flexShrink: 0 }}>{pct(r.confidence)}</span>
+                      </div>
+                    );
+                    return r.location_id
+                      ? <li key={i}><Link to={`/apps/birds/location?id=${r.location_id}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>{row}</Link></li>
+                      : <li key={i}>{row}</li>;
+                  })}
+                </ul>
+              </section>
+            </>
+          )}
         </>
       )}
     </div>
-  );
-}
-
-function FilterChip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
-  return (
-    <button className="pill" onClick={onClick}
-      style={{ cursor: "pointer", opacity: active ? 1 : 0.6,
-        background: active ? "#1f6feb" : undefined, color: active ? "#fff" : undefined,
-        borderColor: active ? "#1f6feb" : undefined }}>
-      {children}
-    </button>
   );
 }
 

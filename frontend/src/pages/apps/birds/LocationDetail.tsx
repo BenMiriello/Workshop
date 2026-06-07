@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  ChevronLeft, MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
+  Bird, MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
 } from "lucide-react";
+import Breadcrumbs from "../../../components/Breadcrumbs";
 import { useRecorder } from "./recorder";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink } from "./ui";
@@ -91,7 +92,7 @@ export default function LocationDetail() {
           display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
           <AlertTriangle size={16} style={{ color: "#f5a623" }} />
           <span style={{ flex: 1, fontSize: ".88rem" }}>This location has no real place yet.</span>
-          <button className="pill" onClick={() => setEditing(true)} style={{ cursor: "pointer" }}>Set address</button>
+          <button className="btn sm" onClick={() => setEditing(true)}>Set address</button>
         </div>
       )}
 
@@ -195,16 +196,8 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
           A location must be a verified address or GPS point. Adaptive devices within ~40 m merge into it automatically.
         </p>
         <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap" }}>
-          <button className="pill" onClick={save} disabled={busy || !place}
-            style={{ cursor: place ? "pointer" : "not-allowed", opacity: place ? 1 : 0.5,
-              background: "#1f6feb", color: "#fff", borderColor: "#1f6feb", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
-            <Check size={14} /> Save
-          </button>
-          {hasPlace && (
-            <button className="pill" onClick={onDone} style={{ cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".3rem" }}>
-              <X size={14} /> Cancel
-            </button>
-          )}
+          <button className="btn primary" onClick={save} disabled={busy || !place}><Check size={14} /> Save</button>
+          {hasPlace && <button className="btn" onClick={onDone}><X size={14} /> Cancel</button>}
         </div>
       </div>
     </section>
@@ -216,27 +209,24 @@ function Wrap({ children, name, isHome, onHome, onEdit }: {
 }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem", marginBottom: ".75rem" }}>
-        <Link to="/apps/birds/locations" className="muted" style={{ display: "inline-flex", alignItems: "center" }}>
-          <ChevronLeft size={18} /> Locations
-        </Link>
+      <Breadcrumbs items={[
+        { label: "Yard Birds", to: "/apps/birds", icon: <Bird size={14} /> },
+        { label: "Locations", to: "/apps/birds/locations" },
+        { label: name || "Location" },
+      ]} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem", flexWrap: "wrap", marginBottom: ".25rem" }}>
+        <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
+          <MapPin size={22} strokeWidth={1.8} /> {name || "Location"}
+        </h2>
         {name && (
-          <div style={{ display: "flex", gap: ".6rem" }}>
-            <button onClick={onHome} title={isHome ? "Home" : "Set as home"} className="muted"
-              style={{ background: "none", border: "none", cursor: "pointer", color: isHome ? "#f5c518" : undefined, display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".82rem" }}>
-              <Star size={15} fill={isHome ? "#f5c518" : "none"} /> {isHome ? "Home" : "Set home"}
+          <div style={{ display: "flex", gap: ".5rem" }}>
+            <button className="btn sm" onClick={onHome} title={isHome ? "Home" : "Set as home"}>
+              <Star size={14} fill={isHome ? "#f5c518" : "none"} color={isHome ? "#f5c518" : "currentColor"} /> {isHome ? "Home" : "Set home"}
             </button>
-            <button onClick={onEdit} className="muted" style={{ background: "none", border: "none", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".82rem" }}>
-              <Pencil size={14} /> Edit
-            </button>
+            <button className="btn sm" onClick={onEdit}><Pencil size={14} /> Edit</button>
           </div>
         )}
       </div>
-      {name && (
-        <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-          <MapPin size={22} strokeWidth={1.8} /> {name}
-        </h2>
-      )}
       {children}
     </div>
   );
