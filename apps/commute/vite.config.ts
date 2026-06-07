@@ -1,5 +1,6 @@
 import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
+import path from "node:path";
 
 // Commute app: sibling to workshop/frontend.
 // - Dev server: 5174 (workshop frontend owns 5173)
@@ -126,10 +127,21 @@ export default defineConfig({
     httpsRedirectMiddleware(),
     react(),
   ],
+  resolve: {
+    alias: {
+      // Share the Workshop Design System with the main frontend — one source
+      // of truth for primitives + tokens across the standalone and in-workshop
+      // mounts. (Mirrors the frontend's @commute alias in the other direction.)
+      "@workshop/ui": path.resolve(__dirname, "../../frontend/src/ui"),
+      "@workshop/styles": path.resolve(__dirname, "../../frontend/src/styles"),
+    },
+  },
   server: {
     host: "0.0.0.0",
     port: 5174,
     allowedHosts: ["debian.tail38e62e.ts.net"],
+    // Allow serving the shared frontend design-system sources aliased above.
+    fs: { allow: [path.resolve(__dirname, "../..")] },
     // HMR WebSocket upgrade through Tailscale Serve at non-443 ports flaky.
     // Disabling HMR keeps the console clean on mobile; localhost dev still
     // gets HMR if accessed via http://localhost:5174 directly.

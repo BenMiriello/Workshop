@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Circle, ChevronUp, ChevronDown, RefreshCw, CalendarClock, Check, Play, Dot } from "lucide-react";
+import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot } from "lucide-react";
+import { Stepper } from "@workshop/ui/Stepper";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -91,9 +92,9 @@ const fmtAge = (isoStr: string): string => {
 };
 
 const statusColor = (s: string): string => {
-  if (s === "ok") return "#16a34a";
-  if (s === "needs_key" || s === "missing_deps") return "#f59e0b";
-  return "#ef4444";
+  if (s === "ok") return "var(--ok)";
+  if (s === "needs_key" || s === "missing_deps") return "var(--warn)";
+  return "var(--danger)";
 };
 
 // Leg status → lucide icon (no emoji — operator rule).
@@ -102,87 +103,6 @@ const legStatusIcon = {
   current: Play,
   before: Dot,
 } as const;
-
-// Custom number stepper — replaces the browser's default number spinners with a
-// clean editable field + stacked up/down chevrons. Clamps to [min,max].
-const stepBtnStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  width: 26,
-  flex: 1,
-  border: "none",
-  background: "transparent",
-  color: "var(--muted)",
-  cursor: "pointer",
-  padding: 0,
-};
-
-function Stepper({
-  value,
-  onChange,
-  min = 0,
-  max = 999,
-  step = 1,
-  suffix,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  min?: number;
-  max?: number;
-  step?: number;
-  suffix?: string;
-}) {
-  const set = (v: number) => onChange(Math.max(min, Math.min(max, v)));
-  return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "stretch",
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-        background: "var(--card)",
-        overflow: "hidden",
-        height: 36,
-      }}
-    >
-      <input
-        type="text"
-        inputMode="numeric"
-        value={value}
-        onChange={(e) => {
-          const n = parseInt(e.target.value.replace(/[^0-9-]/g, ""), 10);
-          if (!Number.isNaN(n)) set(n);
-        }}
-        style={{
-          width: 44,
-          border: "none",
-          background: "transparent",
-          color: "var(--fg)",
-          textAlign: "center",
-          fontSize: "0.95rem",
-          fontVariantNumeric: "tabular-nums",
-          padding: 0,
-          outline: "none",
-        }}
-        aria-label="value"
-      />
-      {suffix && (
-        <span style={{ display: "inline-flex", alignItems: "center", color: "var(--muted)", fontSize: "0.72rem", paddingRight: "0.45rem" }}>
-          {suffix}
-        </span>
-      )}
-      <div style={{ display: "flex", flexDirection: "column", borderLeft: "1px solid var(--border)" }}>
-        <button type="button" tabIndex={-1} aria-label="increment" onClick={() => set(value + step)} disabled={value >= max} style={stepBtnStyle}>
-          <ChevronUp size={13} strokeWidth={2.2} aria-hidden />
-        </button>
-        <button type="button" tabIndex={-1} aria-label="decrement" onClick={() => set(value - step)} disabled={value <= min} style={{ ...stepBtnStyle, borderTop: "1px solid var(--border)" }}>
-          <ChevronDown size={13} strokeWidth={2.2} aria-hidden />
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // ── Tab components ────────────────────────────────────────────────────────────
 
@@ -264,7 +184,7 @@ function StatusTab({ brief, onPollNow, polling }: {
             {brief.schedule_id} · {brief.direction === "to-work" ? "→ work" : "← home"}
           </span>
           {lateRisk && (
-            <span style={{ marginLeft: "0.75rem", background: "#ef4444", color: "#fff", borderRadius: "4px", padding: "2px 8px", fontSize: "0.78rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+            <span style={{ marginLeft: "0.75rem", background: "var(--danger-soft)", color: "var(--danger)", borderRadius: "4px", padding: "2px 8px", fontSize: "0.78rem", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
               <AlertTriangle size={12} aria-hidden /> late risk +{Math.round(brief.late_by_min ?? 0)}m
             </span>
           )}
@@ -274,7 +194,7 @@ function StatusTab({ brief, onPollNow, polling }: {
 
       {/* Realtime data banner */}
       {!rtAvail && (
-        <p style={{ fontSize: "0.82rem", color: "#f59e0b", marginBottom: "0.75rem" }}>
+        <p style={{ fontSize: "0.82rem", color: "var(--warn)", marginBottom: "0.75rem" }}>
           {rtReason === "needs_511_key"
             ? "No realtime data — set WORKSHOP_511_API_KEY (free at 511.org/open-data/token). Times below are static schedule."
             : `Realtime unavailable (${rtReason ?? "unknown"}) — times below are static schedule.`}
@@ -301,9 +221,9 @@ function StatusTab({ brief, onPollNow, polling }: {
           </div>
         )}
         {brief.projected_arrive_local && (
-          <div className="card" style={{ padding: "0.65rem 0.85rem", borderColor: lateRisk ? "#ef4444" : undefined }}>
+          <div className="card" style={{ padding: "0.65rem 0.85rem", borderColor: lateRisk ? "var(--danger)" : undefined }}>
             <p className="muted" style={{ margin: 0, fontSize: "0.75rem" }}>projected arrive</p>
-            <p style={{ margin: 0, fontWeight: 600, fontSize: "1rem", color: lateRisk ? "#ef4444" : undefined }}>
+            <p style={{ margin: 0, fontWeight: 600, fontSize: "1rem", color: lateRisk ? "var(--danger)" : undefined }}>
               {brief.projected_arrive_local}
             </p>
             <p style={{ margin: 0, fontSize: "0.75rem", color: "var(--muted)" }}>
@@ -354,7 +274,7 @@ function StatusTab({ brief, onPollNow, polling }: {
                     {leg.mode}{route && route !== leg.mode ? ` (${route})` : ""}{" "}
                     <span style={{ color: "var(--muted)", fontWeight: 400 }}>{leg.from} → {leg.to}</span>
                   </span>
-                  <span style={{ marginLeft: "auto", color: rt?.available ? "#16a34a" : "var(--muted)", fontSize: "0.78rem", flexShrink: 0 }}>{rtTag}</span>
+                  <span style={{ marginLeft: "auto", color: rt?.available ? "var(--ok)" : "var(--muted)", fontSize: "0.78rem", flexShrink: 0 }}>{rtTag}</span>
                 </div>
               );
             })}
@@ -370,7 +290,7 @@ function StatusTab({ brief, onPollNow, polling }: {
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
             {brief.alerts.map((a, i) => (
-              <div key={i} className="card" style={{ padding: "0.5rem 0.75rem", borderLeft: "3px solid #f59e0b" }}>
+              <div key={i} className="card" style={{ padding: "0.5rem 0.75rem", borderLeft: "3px solid var(--warn)" }}>
                 <span style={{ fontSize: "0.75rem", color: "var(--muted)", marginRight: "0.5rem" }}>[{a.source}]</span>
                 <span style={{ fontSize: "0.88rem" }}>{a.header}</span>
               </div>
@@ -525,7 +445,7 @@ function ScheduleTab() {
         <h3 style={{ margin: 0, fontSize: "1rem", color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</h3>
         <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
           {saved && (
-            <span style={{ color: "#16a34a", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+            <span style={{ color: "var(--ok)", fontSize: "0.85rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
               <Check size={13} strokeWidth={2.4} aria-hidden /> saved
             </span>
           )}
@@ -785,7 +705,7 @@ function SourcesTab() {
                   {entityCount != null ? ` · ${entityCount} entities` : ""}
                 </p>
                 {(st?.note || (!st && src.note)) && (
-                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.78rem", color: "#f59e0b" }}>{st?.note ?? src.note}</p>
+                  <p style={{ margin: "0.25rem 0 0", fontSize: "0.78rem", color: "var(--warn)" }}>{st?.note ?? src.note}</p>
                 )}
               </li>
             );
@@ -849,7 +769,7 @@ function AlertsTab() {
             <tbody>
               {alerts.map((a, i) => {
                 const ok = a.delivery?.ok || a.delivery?.queued;
-                const deliveryColor = ok ? "#16a34a" : "#ef4444";
+                const deliveryColor = ok ? "var(--ok)" : "var(--danger)";
                 const deliveryLabel = a.delivery?.ok ? "sent"
                   : a.delivery?.queued ? `queued (${a.delivery.via ?? "file"})`
                   : a.delivery?.error ? `err: ${a.delivery.error.slice(0, 40)}`
@@ -863,7 +783,7 @@ function AlertsTab() {
                       {a.force ? " (forced)" : ""}
                     </td>
                     <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>{a.schedule_id ?? "—"}</td>
-                    <td style={{ fontSize: "0.85rem", color: a.late_by_min ? "#ef4444" : "var(--muted)" }}>
+                    <td style={{ fontSize: "0.85rem", color: a.late_by_min ? "var(--danger)" : "var(--muted)" }}>
                       {a.late_by_min != null ? `+${Math.round(a.late_by_min)}m` : "—"}
                     </td>
                     <td>

@@ -24,6 +24,7 @@ export {
   type TabItem,
 } from "./controls";
 export { Segmented, type SegmentedOption } from "./Segmented";
+export { Stepper } from "./Stepper";
 export { Modal, ConfirmDialog } from "./Modal";
 export { StateBlock, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";

@@ -148,6 +148,10 @@ export default defineConfig({
       // Commute mounts in-workshop at /apps/commute by rendering the SAME
       // component the standalone app (:8444) uses — one source of truth.
       "@commute": path.resolve(__dirname, "../apps/commute/src"),
+      // The design system addressed by its package name. Here it's our own
+      // src/ui; the standalone commute app aliases the same name to this dir.
+      "@workshop/ui": path.resolve(__dirname, "src/ui"),
+      "@workshop/styles": path.resolve(__dirname, "src/styles"),
     },
   },
   server: {

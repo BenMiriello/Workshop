@@ -14,7 +14,12 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@workshop/ui/*": ["../../frontend/src/ui/*"],
+      "@workshop/styles/*": ["../../frontend/src/styles/*"]
+    }
   },
   "include": ["src"]
 }

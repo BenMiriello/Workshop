@@ -2,6 +2,11 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import ErrorBoundary from "./ErrorBoundary";
+// Shared Workshop Design System tokens + primitives, so @workshop/ui components
+// (e.g. Stepper) are styled in the standalone mount too. The in-workshop mount
+// gets these from the main frontend. Loaded before the app's own styles.
+import "@workshop/styles/tokens.css";
+import "@workshop/styles/components.css";
 import "./styles.css";
 
 // Defense-in-depth SW unregister. The dev server now serves a kill-switch sw.js

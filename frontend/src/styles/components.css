@@ -557,6 +557,58 @@ a.ws-btn { text-decoration: none; }
 .ws-bar:hover { opacity: 0.8; }
 .ws-donut-seg { transition: stroke-width var(--dur-base) var(--ease-out); }
 
+/* ---- STEPPER (number incrementer) --------------------------------------- */
+.ws-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--control-h);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  overflow: hidden;
+}
+.ws-stepper:focus-within { box-shadow: var(--focus-ring); }
+.ws-stepper__input {
+  width: 44px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  text-align: center;
+  font: inherit;
+  font-size: var(--fs-base);
+  font-variant-numeric: tabular-nums;
+  padding: 0;
+  outline: none;
+}
+.ws-stepper__suffix {
+  display: inline-flex;
+  align-items: center;
+  padding-right: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.ws-stepper__btns {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+}
+.ws-stepper__btns button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  width: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.ws-stepper__btns button:hover:not([disabled]) { color: var(--fg); background: var(--card-hover); }
+.ws-stepper__btns button[disabled] { opacity: 0.4; cursor: default; }
+.ws-stepper__btns button + button { border-top: 1px solid var(--border); }
+.ws-stepper__btns svg { width: 13px; height: 13px; stroke-width: 2.2; }
+
 /* ---- RESPONSIVE ---------------------------------------------------------- */
 @media (max-width: 640px) {
   .ws-card-grid { grid-template-columns: 1fr; }
