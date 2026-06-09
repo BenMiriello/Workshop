@@ -1,0 +1,7 @@
+# Audio binaries are fetched via fetch.sh, not committed (keeps the repo small).
+# manifest.json + fetch.sh + replay.py + README.md are the reproducible record.
+*.wav
+*.mp3
+*.m4a
+*.ogg
+*.flac

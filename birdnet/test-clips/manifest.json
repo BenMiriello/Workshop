@@ -1,0 +1,75 @@
+{
+  "_comment": "Diverse CC-licensed bird audio for testing detection + spectrogram marker localization. Sources are directly curl-able (iNaturalist static CDN, Wikimedia Commons, BirdNET-Analyzer repo) — NOT xeno-canto, which is now behind an Anubis anti-bot wall. Audio binaries are gitignored; this manifest + fetch.sh are the reproducible record. Run fetch.sh from a machine with outbound network (the workshop box blocks it).",
+  "clips": [
+    {
+      "file": "single_oak-titmouse.wav",
+      "scenario": "single bird, clear song",
+      "species": "Oak Titmouse (Baeolophus inornatus)",
+      "download_url": "https://static.inaturalist.org/sounds/850281.wav?1700857672",
+      "source_page": "https://www.inaturalist.org/observations/191980897",
+      "license": "CC BY-NC-SA",
+      "attribution": "(c) Rafael D., iNaturalist",
+      "notes": "Los Altos resident species; baseline single-bird precise-placement case."
+    },
+    {
+      "file": "single_nuttalls-woodpecker.wav",
+      "scenario": "single bird, sharp calls + drum",
+      "species": "Nuttall's Woodpecker (Dryobates nuttallii)",
+      "download_url": "https://static.inaturalist.org/sounds/341257.wav?1640749143",
+      "source_page": "https://www.inaturalist.org/observations/103864760",
+      "license": "CC BY",
+      "attribution": "(c) Jennifer Rycenga, iNaturalist (San Bruno Mountain, CA)",
+      "notes": "Transient, broadband calls — good frequency/vertical-position test."
+    },
+    {
+      "file": "repeated_california-towhee.m4a",
+      "scenario": "single bird, REPEATED chip notes",
+      "species": "California Towhee (Melozone crissalis)",
+      "download_url": "https://static.inaturalist.org/sounds/235159.m4a?1622086128",
+      "source_page": "https://www.inaturalist.org/observations/80443952",
+      "license": "CC BY-NC",
+      "attribution": "(c) Ben Karlik, iNaturalist (San Jose, CA)",
+      "notes": "Metallic repeated chips — the 'pin should hop to each chirp incl. the last' case."
+    },
+    {
+      "file": "repeated_dark-eyed-junco.m4a",
+      "scenario": "single bird, rapid trill (dense repeated notes)",
+      "species": "Dark-eyed Junco (Junco hyemalis)",
+      "download_url": "https://static.inaturalist.org/sounds/393288.m4a?1649964999",
+      "source_page": "https://www.inaturalist.org/observations/111447052",
+      "license": "CC BY-NC",
+      "attribution": "(c) Ray Snook, iNaturalist",
+      "notes": "Trill = notes too close to resolve individually — exercises the dense/approx path."
+    },
+    {
+      "file": "group_birdnet-sapsucker-woods.wav",
+      "scenario": "multi-species soundscape (the BirdNET reference clip)",
+      "species": "several (Sapsucker Woods, Ithaca NY)",
+      "download_url": "https://raw.githubusercontent.com/birdnet-team/BirdNET-Analyzer/main/birdnet_analyzer/example/soundscape.wav",
+      "source_page": "https://github.com/birdnet-team/BirdNET-Analyzer/tree/main/birdnet_analyzer/example",
+      "license": "CC BY-NC-SA 4.0 (BirdNET-Analyzer repo)",
+      "attribution": "BirdNET-Analyzer, K. Lisa Yang Center for Conservation Bioacoustics",
+      "notes": "Canonical BirdNET test soundscape (~120s, overlapping species) — the multi-bird disambiguation case, and ground-truthable against BirdNET's published output."
+    },
+    {
+      "file": "group_dawn-chorus-temperate.mp3",
+      "scenario": "dense dawn chorus (temperate garden)",
+      "species": "many (UK garden dawn chorus)",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/9/9a/Dawn_Chorus_2020-05-06_0500.mp3",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Dawn_Chorus_2020-05-06_0500.mp3",
+      "license": "CC BY-SA 4.0",
+      "attribution": "Robert EA Harvey, Wikimedia Commons",
+      "notes": "Many overlapping callers — stress test for simultaneous-bird differentiation + card crowding."
+    },
+    {
+      "file": "group_rainforest-dawn-chorus.ogg",
+      "scenario": "very dense exotic soundscape (out-of-range stress)",
+      "species": "many (Selaliparai rainforest, India)",
+      "download_url": "https://upload.wikimedia.org/wikipedia/commons/e/eb/RainforestDawnChorus_Selaliparai_DM.ogg",
+      "source_page": "https://commons.wikimedia.org/wiki/File:RainforestDawnChorus_Selaliparai_DM.ogg",
+      "license": "CC BY 4.0",
+      "attribution": "DivyaCM, Wikimedia Commons",
+      "notes": "Non-local species — tests the range filter / false-positive handling AND a very busy heatmap."
+    }
+  ]
+}
