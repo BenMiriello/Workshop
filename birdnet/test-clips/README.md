@@ -71,6 +71,15 @@ every clip and prints just the per-species summary. For a single-bird clip the
 summary should list ONLY that species; extras = a mis-ID to chase. This is the
 loop for fine-tuning the accuracy knobs against the whole set.
 
+**Per-call localization (Phase 2 engine)** — `locate.py <clip> "<scientific name>"
+[--start S]` finds WHERE in a 3s window a species' call is, by occlusion: mask a
+sliding sub-window, re-score, and the mask that most drops the species'
+confidence sits on the call. Works with the existing model (no gradients/
+downloads) via the live `/analyze`. Crisp for clear calls (Oak Titmouse: masking
+7.1–8.0s drops conf 0.46→0.00); noisier at low baseline confidence. This is the
+de-risked core for the planned service `/locate` endpoint + marker refinement of
+ambiguous ("position uncertain") detections.
+
 **Headless browser (the REAL pipeline, automated)** — `browser_replay.js` launches
 headless Chrome with a clip fed in as the *mic* (Chrome's fake-audio-capture),
 clicks Listen, and exercises the actual in-browser path (FFT heatmap →
