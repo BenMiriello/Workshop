@@ -186,12 +186,23 @@ def compute(plan: dict, balances: dict, txns_resp: dict, window_days: int = 30, 
     necessities_planned = sum(float(n.get("monthly", 0) or 0) for n in plan.get("necessities", []))
     debt_planned = sum(d["planned_monthly"] for d in debts)
     savings_planned = sum(s["planned_monthly"] for s in savings)
+    # Aggregate goal pacing: the total monthly contribution needed across every
+    # goal that has a deadline, to hit each on time. This is the "how much do I
+    # need to save" rollup — independent of what's currently planned.
+    savings_required = sum((s.get("required_monthly") or 0) for s in savings)
     variable_target = sum(float(v.get("target", 0) or 0) for v in plan.get("variable", []))
 
     committed = necessities_planned + debt_planned + savings_planned
     discretionary = income - committed          # safe-to-spend on variable+fun
     leftover = discretionary - variable_target  # truly unallocated / extra
     shortfall = committed + variable_target > income
+
+    # Goal-funding view: after the unavoidable stuff (necessities + debt), what's
+    # left, and does it cover the savings your goals REQUIRE plus your spending
+    # targets? This answers "can I actually hit all these goals on these timelines."
+    available_after_fixed = income - necessities_planned - debt_planned
+    savings_gap = savings_required - savings_planned          # extra/mo to fully fund goals
+    goals_affordable = (savings_required + variable_target) <= available_after_fixed
 
     variable = []
     for v in plan.get("variable", []):
@@ -228,6 +239,10 @@ def compute(plan: dict, balances: dict, txns_resp: dict, window_days: int = 30, 
             "necessities_planned": round(necessities_planned, 2),
             "debt_planned": round(debt_planned, 2),
             "savings_planned": round(savings_planned, 2),
+            "savings_required": round(savings_required, 2),
+            "savings_gap": round(savings_gap, 2),
+            "available_after_fixed": round(available_after_fixed, 2),
+            "goals_affordable": goals_affordable,
             "variable_target": round(variable_target, 2),
             "committed": round(committed, 2),
             "discretionary": round(discretionary, 2),

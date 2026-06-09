@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  MapPin, Sunrise, TrendingUp, Radio, Star, Pencil, Check, X, AlertTriangle,
+  MapPin, Radio, Star, Pencil, Check, X, AlertTriangle,
 } from "lucide-react";
 import { useCrumbLabel } from "../../../components/appNav";
 import { useRecorder } from "./recorder";
 import { useShowNonBird, nonBirdQuery } from "./settings";
-import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink, CHART_SERIES } from "./ui";
+import { API, pct, jget, Stat, StatGrid } from "./ui";
+import SpeciesRow, { type TrustStatus } from "./SpeciesRow";
+import ActivityCard from "./ActivityCard";
+import { StatusFilter } from "../Birds";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
 
@@ -26,6 +29,7 @@ type Summary = {
 type Species = {
   scientific_name: string; common_name: string; count: number; max_conf: number;
   avg_conf: number; days_seen: number; first_date: string; last_date: string;
+  is_new?: boolean; auto?: boolean;
 };
 type Activity = { daily: { date: string; count: number }[]; hourly: { hour: number; count: number }[] };
 
@@ -36,6 +40,8 @@ export default function LocationDetail() {
   const [species, setSpecies] = useState<Species[]>([]);
   const [activity, setActivity] = useState<Activity | null>(null);
   const [home, setHome] = useState<string | null>(null);
+  const [status, setStatus] = useState<TrustStatus>("confirmed");
+  const [newCount, setNewCount] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [showNonBird] = useShowNonBird();
@@ -45,14 +51,17 @@ export default function LocationDetail() {
 
   const refresh = useCallback(() => {
     if (!id) return;
+    // Stats + activity always reflect confirmed data; only the species list is
+    // re-filtered by the chosen status (same model as the home dashboard).
     Promise.all([
       jget<Summary>(`/location/summary?location_id=${id}${nb}`),
-      jget<{ species: Species[] }>(`/location/species?location_id=${id}${nb}`),
+      jget<{ species: Species[] }>(`/location/species?location_id=${id}${nb}&status=${status}`),
       jget<Activity>(`/location/activity?location_id=${id}${nb}`),
       jget<{ home: string | null }>(`/home`),
     ]).then(([s, sp, a, h]) => { setSummary(s); setSpecies(sp.species); setActivity(a); setHome(h.home); })
       .catch((e) => setErr(String(e)));
-  }, [id, nb]);
+    jget<{ new_count: number }>(`/new-count`).then((r) => setNewCount(r.new_count)).catch(() => {});
+  }, [id, nb, status]);
 
   useEffect(() => {
     refresh();
@@ -66,11 +75,6 @@ export default function LocationDetail() {
     if (summary && summary.lat == null && !autoOpened.current) { autoOpened.current = true; setEditing(true); }
   }, [summary]);
 
-  const peak = useMemo(() => {
-    if (!activity?.hourly?.length) return null;
-    const m = activity.hourly.reduce((a, b) => (b.count > a.count ? b : a), activity.hourly[0]);
-    return m.count > 0 ? m : null;
-  }, [activity]);
 
   const setAsHome = useCallback(() => {
     const fd = new FormData(); fd.append("source", `loc:${id}`);
@@ -122,39 +126,29 @@ export default function LocationDetail() {
         </p>
       )}
 
-      {activity && activity.daily.length > 0 && (
-        <section className="card" style={card}>
-          <h3 style={h3}><TrendingUp size={17} /> Detections per day</h3>
-          <Chart data={activity.daily} x="date" fill={CHART_SERIES[1]} xfmt={(dd: string) => dd.slice(5)} />
-        </section>
-      )}
-
-      {activity && (
-        <section className="card" style={card}>
-          <h3 style={h3}><Sunrise size={17} /> Activity by hour
-            {peak && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}
-          </h3>
-          <Chart data={activity.hourly} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
-        </section>
+      {activity && (activity.daily.length > 0 || activity.hourly.some((h) => h.count > 0)) && (
+        <ActivityCard daily={activity.daily} hourly={activity.hourly} />
       )}
 
       <section className="card" style={card}>
         <h3 style={h3}>Species ({species.length})</h3>
-        {species.length === 0 && <p className="muted">Nothing detected here yet.</p>}
+        <StatusFilter status={status} setStatus={setStatus} newCount={newCount} />
+        {status === "suggested" && (
+          <p className="muted" style={{ fontSize: ".8rem", margin: "0 0 .6rem" }}>
+            Birds heard here but not yet vouched for. Tap a row to inspect its
+            detections; confirm the real ones. No need to decide now.
+          </p>
+        )}
+        {species.length === 0 && (
+          <p className="muted">
+            {status === "confirmed" ? "Nothing confirmed here yet — check Suggested."
+              : status === "suggested" ? "No suggestions right now." : "Nothing rejected."}
+          </p>
+        )}
         <div style={{ display: "flex", flexDirection: "column" }}>
           {species.map((s) => (
-            <SpeciesLink key={s.scientific_name} sci={s.scientific_name} locationId={id}>
-              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
-                <BirdThumb sci={s.scientific_name} common={s.common_name} />
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "block" }}>{s.common_name}</span>
-                  <span className="muted" style={{ fontStyle: "italic", fontSize: ".78rem" }}>{s.scientific_name}</span>
-                </span>
-                <span className="muted" style={{ fontSize: ".8rem", textAlign: "right" }}>
-                  {s.count}× · {s.days_seen}d<br />best {pct(s.max_conf)}
-                </span>
-              </div>
-            </SpeciesLink>
+            <SpeciesRow key={s.scientific_name} s={s} locId={id} status={status}
+              lat={summary.lat} lon={summary.lon} onChanged={refresh} />
           ))}
         </div>
       </section>

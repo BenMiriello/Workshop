@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 import sqlite3
 import subprocess
 import tempfile
@@ -27,9 +28,92 @@ def _now() -> str:
 BROWSER_DB = Path(os.environ.get("BIRDNET_BROWSER_DB", "/home/clawd-a/birdnet/data/browser-stations.db"))
 ANALYZER_URL = os.environ.get("BIRDNET_ANALYZER_URL", "http://127.0.0.1:8012")
 
+# Saved-clip storage for the browser path (the always-on yard path keeps its own
+# clips under BirdNET-Go). App-managed, tailnet-private, NEVER published.
+CLIPS_DIR = Path(os.environ.get("BIRDNET_CLIPS_DIR", "/home/clawd-a/birdnet/data/clips"))
+_MB = 1024 * 1024
+# ~3s MP3 @ 64k mono. Used only for "is there room for one more?" banner checks.
+_AVG_CLIP_BYTES = 24 * 1024
+_REC_DEFAULTS = {"rec_storage_mb": 1024, "rec_when_full": "evict_old", "rec_warn_ratio": 0.9}
+# Global save behaviour: do we keep the clip of a (bird) detection by default?
+# The mic always analyzes; this is purely about KEEPING audio. Off by default -
+# storage is finite. Per-species 'keep'/'never' override this (see save_mode).
+_REC_SAVE_DEFAULT = False
+
 # Same species at the same location within this many seconds is treated as one
 # continuing detection (the live UI sends overlapping 3s windows every 1s).
 DEDUP_S = 2.5
+
+# --- Smart-detection defaults (overridable per-install via app_settings) ------
+# These are the knobs that stop BirdNET reporting birds it never heard. See
+# docs/birdnet-accuracy.md for the why and the sources.
+#   min_conf   acoustic confidence floor. BirdNET-Pi ships 0.7, BirdNET-Go 0.8;
+#              0.5 is a sane lower bound for a noisy phone mic. NOT calibrated to
+#              probability - it is a precision/recall knob.
+#   sf_thresh  range-filter cutoff: a species must clear this eBird occurrence
+#              frequency for its place+week or it is impossible-here and dropped.
+#              Kept LOW so genuinely-rare local visitors survive (the classic
+#              trap is setting it high and losing owls).
+#   new_species_hits  a never-before-confirmed species must be heard this many
+#              times within CONFIRM_WINDOW_S before it is trusted/stored. Defeats
+#              one-off spurious hits (BirdNET-Go "deep detection" idea, adapted
+#              to the 1s live cadence). Known residents store immediately.
+#   prior_floor  display-only: hide species whose occurrence is below this.
+_SMART_DEFAULTS = {
+    "min_conf": 0.5,
+    "sensitivity": 1.0,
+    "sf_thresh": 0.01,
+    "new_species_hits": 3,
+    "prior_floor": 0.0,
+    # Trust radius (km): a manual confirmation auto-confirms the same species
+    # within this distance (the "patch" size). Generous by default; it's a labor
+    # knob, not a correctness one (suggested-by-default handles correctness).
+    "trust_radius_km": 5.0,
+}
+CONFIRM_WINDOW_S = 15.0
+
+# Rolling in-process buffer for new-species consensus: (location_id, sci) ->
+# [recent detection ts]. The backend is a single uvicorn worker, so module state
+# persists across requests; it resets on restart (acceptable - confirmation just
+# re-warms). Pruned to CONFIRM_WINDOW_S on each touch.
+_recent_hits: dict = {}
+
+
+def smart_settings() -> dict:
+    """Effective detection settings: app_settings overrides over the defaults."""
+    s = dict(_SMART_DEFAULTS)
+    for k in s:
+        v = get_setting(f"smart_{k}")
+        if v is None:
+            continue
+        try:
+            s[k] = type(_SMART_DEFAULTS[k])(v)
+        except (TypeError, ValueError):
+            pass
+    return s
+
+
+_SMART_BOUNDS = {
+    "min_conf": (0.05, 0.99), "sensitivity": (0.75, 1.25),
+    "sf_thresh": (0.0001, 0.5), "new_species_hits": (1, 10),
+    "trust_radius_km": (0.1, 100.0),
+    "prior_floor": (0.0, 1.0),
+}
+
+
+def update_smart_settings(patch: dict) -> dict:
+    """Validate + persist detection-tuning overrides; returns the effective set."""
+    for k, raw in (patch or {}).items():
+        if k not in _SMART_DEFAULTS or raw is None:
+            continue
+        try:
+            v = type(_SMART_DEFAULTS[k])(raw)
+        except (TypeError, ValueError):
+            continue
+        lo, hi = _SMART_BOUNDS[k]
+        v = max(lo, min(hi, v))
+        set_setting(f"smart_{k}", str(v))
+    return smart_settings()
 
 # BirdNET GLOBAL_6K_V2.4 recognizes some non-avian classes. We always STORE them
 # (the model keeps detecting), but flag them so the UI can hide them by default.
@@ -54,8 +138,31 @@ def is_bird(scientific_name: str | None, common_name: str | None) -> bool:
 
 
 def _bird_clause(include_nonbird: bool) -> str:
-    """SQL fragment appended to a WHERE that already has a condition."""
-    return "" if include_nonbird else " AND is_bird=1"
+    """SQL fragment appended to a WHERE that already has a condition. Applies the
+    display filters every read shares:
+      - non-birds hidden unless include_nonbird (existing behavior);
+      - out-of-range birds hidden (in_range=0, set by a retroactive range
+        re-score; NULL = never scored against a place, left visible);
+      - birds below the live confidence floor hidden. The floor is a SETTING, so
+        it applies retroactively AND updates instantly when changed - a detection
+        stored earlier at a lower floor disappears as soon as you raise it, no
+        recompute needed. New detections are already gated at store time.
+    The confidence floor never touches non-birds (they keep their own toggle)."""
+    base = "" if include_nonbird else " AND is_bird=1"
+    floor = float(smart_settings().get("min_conf", 0.0))
+    return (base + " AND (in_range IS NULL OR in_range=1)"
+            + f" AND (is_bird=0 OR confidence >= {floor})")
+
+
+def _status_clause(status: str | None) -> str:
+    """Filter by trust status. Default (None) = confirmed only, the clean view.
+    'all' = no status filter; explicit suggested/rejected for those tabs."""
+    if status == "all":
+        return ""
+    s = status or "confirmed"
+    if s not in ("confirmed", "suggested", "rejected"):
+        s = "confirmed"
+    return f" AND status='{s}'"
 
 
 def nonbird_exclusion_sql(sci: str = "scientific_name", common: str = "common_name") -> str:
@@ -68,10 +175,17 @@ def nonbird_exclusion_sql(sci: str = "scientific_name", common: str = "common_na
             f"substr({sci},1,instr({sci}||' ',' ')-1) IN ({genera}))")
 
 
+_migrated = False  # schema migration runs once per process, not every connect
+
+
 def _conn() -> sqlite3.Connection:
+    global _migrated
     BROWSER_DB.parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(BROWSER_DB, timeout=5)
     c.row_factory = sqlite3.Row
+    c.execute("PRAGMA busy_timeout=5000")
+    if _migrated:
+        return c  # fast path: no per-connect DDL/writes (and no lock risk)
     c.execute("""CREATE TABLE IF NOT EXISTS browser_detections (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         station TEXT, ts TEXT,
@@ -94,6 +208,49 @@ def _conn() -> sqlite3.Connection:
         fixed_location_id INTEGER, created_at TEXT, last_seen TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY, value TEXT)""")
+    # Trust anchors for the suggested/confirmed model. One row per (species, point
+    # you acted at). trust: none = just tracked (a suggestion has appeared here);
+    # auto = auto-confirm within radius_m; mute = auto-reject within radius_m.
+    # reviewed: has the user acknowledged this species' first appearance here
+    # (tapped in or decided) - drives the "new arrival" badge + top-pin.
+    # auto_locked: user explicitly turned auto-confirm off, so a later manual
+    # confirm must NOT silently re-arm it (the "only the first time" rule).
+    c.execute("""CREATE TABLE IF NOT EXISTS species_area (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scientific_name TEXT, common_name TEXT,
+        lat REAL, lon REAL, radius_m REAL,
+        trust TEXT DEFAULT 'none', reviewed INTEGER DEFAULT 0,
+        auto_locked INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sa_sci ON species_area(scientific_name)")
+
+    # Saved audio clips. One row per recording, one file on disk under CLIPS_DIR.
+    # det_id links back to the detection it was captured from (informational).
+    # pinned = "save this recording": protected from auto-eviction.
+    c.execute("""CREATE TABLE IF NOT EXISTS recordings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        det_id INTEGER, scientific_name TEXT, common_name TEXT,
+        location_id INTEGER, device_token TEXT, ts TEXT,
+        path TEXT, bytes INTEGER, duration_s REAL, confidence REAL,
+        pinned INTEGER DEFAULT 0)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_rec_sci ON recordings(scientific_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_rec_ts ON recordings(ts)")
+    # Per-species save preference (keyed by scientific_name), as one tri-state:
+    #   default = follow the global "save recordings" setting
+    #   keep    = always save this bird's clips AND never auto-evict them
+    #   never   = never save this bird's clips, even when global save is on
+    # The mic always analyzes; this only controls whether the AUDIO is kept.
+    c.execute("""CREATE TABLE IF NOT EXISTS species_recording (
+        scientific_name TEXT PRIMARY KEY,
+        save_mode TEXT DEFAULT 'default')""")
+    # Migrate the earlier two-flag schema (record/keep_all) -> save_mode.
+    sr_cols = {r["name"] for r in c.execute("PRAGMA table_info(species_recording)")}
+    if "save_mode" not in sr_cols:
+        c.execute("ALTER TABLE species_recording ADD COLUMN save_mode TEXT DEFAULT 'default'")
+    if "keep_all" in sr_cols:  # collapse old flags into the tri-state, then drop them
+        c.execute("UPDATE species_recording SET save_mode="
+                  "CASE WHEN keep_all=1 THEN 'keep' WHEN record=1 THEN 'default' ELSE 'never' END "
+                  "WHERE save_mode IS NULL OR save_mode='default'")
+        # SQLite can't DROP COLUMN on old versions; leaving the dead columns is harmless.
 
     cols = {r["name"] for r in c.execute("PRAGMA table_info(browser_detections)")}
     # is_bird: no DEFAULT so existing rows become NULL and the backfill below
@@ -101,9 +258,23 @@ def _conn() -> sqlite3.Connection:
     if "is_bird" not in cols:
         c.execute("ALTER TABLE browser_detections ADD COLUMN is_bird INTEGER")
     for col, ddl in (("device_name", "TEXT"), ("location_id", "INTEGER"),
-                     ("lat", "REAL"), ("lon", "REAL")):
+                     ("lat", "REAL"), ("lon", "REAL"),
+                     # Range-model outputs + consensus state. occurrence = eBird
+                     # likelihood here/this-week (0..1, NULL if location unknown
+                     # at detection time); in_range = passed the range filter;
+                     # confirmed defaults 1 so pre-existing history still counts.
+                     ("occurrence", "REAL"), ("in_range", "INTEGER"),
+                     ("confirmed", "INTEGER DEFAULT 1"),
+                     # Trust model: status = suggested|confirmed|rejected (no
+                     # DEFAULT so existing rows backfill to 'suggested' below);
+                     # auto = was this status set automatically (anchor) vs by hand.
+                     ("status", "TEXT"), ("auto", "INTEGER DEFAULT 0")):
         if col not in cols:
             c.execute(f"ALTER TABLE browser_detections ADD COLUMN {col} {ddl}")
+    # Existing detections predate the trust model: surface them as suggestions so
+    # the operator curates from scratch (nothing is auto-trusted).
+    c.execute("UPDATE browser_detections SET status='suggested' WHERE status IS NULL")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_bd_status ON browser_detections(status)")
 
     c.execute("CREATE INDEX IF NOT EXISTS idx_bd_station_ts ON browser_detections(station, ts)")
     c.execute("CREATE INDEX IF NOT EXISTS idx_bd_loc ON browser_detections(location_id)")
@@ -140,7 +311,36 @@ def _conn() -> sqlite3.Connection:
             c.execute("UPDATE browser_detections SET location_id=?, "
                       "device_name=COALESCE(device_name,station) "
                       "WHERE station=? AND location_id IS NULL", (uid, row["station"]))
+
+    # One-time: seed a tracking anchor per existing suggested species so the
+    # pre-trust-model backlog surfaces as new arrivals to review (the operator
+    # curates from scratch). Read the radius from this same connection to avoid
+    # re-entering _conn() during migration. Only runs when species_area is empty.
+    if not c.execute("SELECT 1 FROM species_area LIMIT 1").fetchone():
+        rv = c.execute("SELECT value FROM app_settings WHERE key='smart_trust_radius_km'").fetchone()
+        try:
+            radius_m = float(rv["value"]) * 1000.0 if rv else 5000.0
+        except (TypeError, ValueError):
+            radius_m = 5000.0
+        now = _now()
+        seen: set = set()
+        for r in c.execute(
+                "SELECT bd.scientific_name, bd.common_name, "
+                "COALESCE(bd.lat, loc.lat) AS lat, COALESCE(bd.lon, loc.lon) AS lon "
+                "FROM browser_detections bd LEFT JOIN locations loc ON loc.id=bd.location_id "
+                "WHERE bd.is_bird=1 AND bd.status='suggested' "
+                "AND (bd.in_range IS NULL OR bd.in_range=1) "
+                "ORDER BY bd.id DESC").fetchall():
+            if r["scientific_name"] in seen or r["lat"] is None or r["lon"] is None:
+                continue
+            seen.add(r["scientific_name"])
+            c.execute(
+                "INSERT INTO species_area(scientific_name,common_name,lat,lon,radius_m,"
+                "trust,reviewed,auto_locked,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,'none',0,0,?,?)",
+                (r["scientific_name"], r["common_name"], r["lat"], r["lon"], radius_m, now, now))
     c.commit()
+    _migrated = True
     return c
 
 
@@ -201,12 +401,368 @@ def _transcode_to_wav(audio: bytes, content_type: str) -> str:
     return wav
 
 
-def _call_analyzer(wav_path: str, min_conf: float) -> list[dict]:
-    body = json.dumps({"path": wav_path, "min_conf": min_conf}).encode()
+def _week_48(dt: datetime) -> int:
+    """BirdNET range model wants week-of-year on a 48-week (4-per-month) scale."""
+    return max(1, min(48, (dt.month - 1) * 4 + min(3, (dt.day - 1) // 7) + 1))
+
+
+def _call_analyzer(wav_path: str, min_conf: float, lat: float | None = None,
+                   lon: float | None = None, sensitivity: float = 1.0,
+                   sf_thresh: float = 0.01) -> list[dict]:
+    payload = {"path": wav_path, "min_conf": min_conf,
+               "sensitivity": sensitivity, "sf_thresh": sf_thresh}
+    if lat is not None and lon is not None:
+        payload.update(lat=lat, lon=lon,
+                       week=_week_48(datetime.now().astimezone()))
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(f"{ANALYZER_URL}/analyze", data=body,
                                  headers={"content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read()).get("detections", [])
+
+
+def _effective_coords(c: sqlite3.Connection, token: str, mode: str,
+                      lat: float | None, lon: float | None,
+                      location_id: int | None) -> tuple[float | None, float | None]:
+    """Coordinates to feed the range filter, resolved BEFORE analysis and
+    WITHOUT creating anything. Client GPS wins; otherwise fall back to the
+    pinned/explicit location, then the device's last known location. Returns
+    (None, None) when we truly have no place - the range filter then stays off
+    and detections come back range-unknown (never wrongly dropped)."""
+    if lat is not None and lon is not None:
+        return lat, lon
+    lid = location_id
+    if lid is None and mode == "fixed" and token:
+        dev = c.execute("SELECT fixed_location_id FROM devices WHERE token=?",
+                        (token,)).fetchone()
+        lid = dev["fixed_location_id"] if dev else None
+    if lid is None and token:
+        last = c.execute(
+            "SELECT location_id FROM browser_detections WHERE device_token=? "
+            "AND location_id IS NOT NULL ORDER BY id DESC LIMIT 1", (token,)).fetchone()
+        lid = last["location_id"] if last else None
+    if lid is not None:
+        row = c.execute("SELECT lat, lon FROM locations WHERE id=?", (lid,)).fetchone()
+        if row and row["lat"] is not None and row["lon"] is not None:
+            return row["lat"], row["lon"]
+    return None, None
+
+
+def _occurrence_map_remote(lat: float, lon: float, week: int) -> dict:
+    """Fetch the eBird occurrence map for a place/week from the analyzer (which
+    owns the range model). Used to re-score already-stored detections."""
+    url = f"{ANALYZER_URL}/species?lat={lat}&lon={lon}&week={week}"
+    with urllib.request.urlopen(url, timeout=60) as r:
+        return json.loads(r.read()).get("occurrence", {})
+
+
+def recompute_history(sf_thresh: float | None = None) -> dict:
+    """Apply the range model to already-stored bird detections. We can't re-run
+    audio (clips aren't kept for the browser path), but each detection carries
+    its place + time, so we look up the species' eBird occurrence there/then and
+    set occurrence + in_range. Birds the model says can't be here get in_range=0,
+    which _bird_clause hides everywhere - so the over-detected impossible species
+    drop out of every stat/list/chart. Reversible: nothing is deleted, and a
+    later recompute (or a Lenient threshold) can bring a row back. Non-birds and
+    detections with no resolvable coordinates are left untouched."""
+    from collections import defaultdict
+    cfg = smart_settings()
+    sf = cfg["sf_thresh"] if sf_thresh is None else sf_thresh
+    updated = 0
+    flagged = 0
+    species_hidden: set = set()
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT bd.id, bd.scientific_name, bd.common_name, bd.ts, "
+            "COALESCE(bd.lat, loc.lat) AS lat, COALESCE(bd.lon, loc.lon) AS lon "
+            "FROM browser_detections bd LEFT JOIN locations loc ON loc.id = bd.location_id "
+            "WHERE bd.is_bird = 1").fetchall()
+        groups: dict = defaultdict(list)
+        skipped_no_coords = 0
+        for r in rows:
+            if r["lat"] is None or r["lon"] is None:
+                skipped_no_coords += 1
+                continue
+            wk = _week_48(_local(r["ts"]))
+            groups[(round(r["lat"], 2), round(r["lon"], 2), wk)].append(r)
+
+        for (lat, lon, wk), grp in groups.items():
+            occ = _occurrence_map_remote(lat, lon, wk)
+            for r in grp:
+                label = f'{r["scientific_name"]}_{r["common_name"]}'
+                o = float(occ.get(label, 0.0))
+                in_range = 1 if o >= sf else 0
+                c.execute("UPDATE browser_detections SET occurrence=?, in_range=? WHERE id=?",
+                          (round(o, 4), in_range, r["id"]))
+                updated += 1
+                if not in_range:
+                    flagged += 1
+                    species_hidden.add(r["common_name"])
+    return {"rescored": updated, "hidden": flagged,
+            "skipped_no_coords": skipped_no_coords,
+            "species_hidden": sorted(species_hidden)}
+
+
+# --- Trust model: suggested / confirmed / rejected --------------------------
+# A species you have never vouched for near a point is "suggested"; confirming it
+# once arms an auto-confirm anchor that trusts it within trust_radius. See
+# docs/birdnet-accuracy.md. Correctness comes from suggested-by-default (a never-
+# confirmed species never enters the Confirmed view); the radius only controls
+# how much re-approval real birds need.
+
+def trust_radius_m() -> float:
+    return float(smart_settings().get("trust_radius_km", 5.0)) * 1000.0
+
+
+def _radius_m(c: sqlite3.Connection) -> float:
+    """Trust radius read via the ACTIVE connection (no nested _conn -> no lock)."""
+    row = c.execute("SELECT value FROM app_settings WHERE key='smart_trust_radius_km'").fetchone()
+    try:
+        return float(row["value"]) * 1000.0 if row and row["value"] is not None else 5000.0
+    except (TypeError, ValueError):
+        return 5000.0
+
+
+def _covering(c: sqlite3.Connection, sci: str, lat: float, lon: float) -> list[sqlite3.Row]:
+    """species_area anchors for this species whose radius covers the point."""
+    if lat is None or lon is None:
+        return []
+    out = []
+    for r in c.execute("SELECT * FROM species_area WHERE scientific_name=?", (sci,)):
+        if r["lat"] is None or r["lon"] is None:
+            continue
+        if _haversine_m(lat, lon, r["lat"], r["lon"]) <= (r["radius_m"] or _radius_m(c)):
+            out.append(r)
+    return out
+
+
+def _ensure_area(c: sqlite3.Connection, sci: str, common: str, lat: float, lon: float,
+                 trust: str = "none") -> sqlite3.Row | None:
+    """Return the anchor covering this point (any trust), creating a tracking one
+    if none exists. Used so a first suggestion is tracked as a new arrival."""
+    cov = _covering(c, sci, lat, lon)
+    if cov:
+        return cov[0]
+    if lat is None or lon is None:
+        return None
+    now = _now()
+    cur = c.execute(
+        "INSERT INTO species_area(scientific_name,common_name,lat,lon,radius_m,trust,"
+        "reviewed,auto_locked,created_at,updated_at) VALUES(?,?,?,?,?,?,0,0,?,?)",
+        (sci, common, lat, lon, _radius_m(c), trust, now, now))
+    return c.execute("SELECT * FROM species_area WHERE id=?", (cur.lastrowid,)).fetchone()
+
+
+def _classify(c: sqlite3.Connection, sci: str, common: str,
+              lat: float | None, lon: float | None) -> tuple[str, int]:
+    """(status, auto) for a fresh detection, by its trust anchors."""
+    if lat is None or lon is None:
+        return "suggested", 0
+    cov = _covering(c, sci, lat, lon)
+    if any(r["trust"] == "mute" for r in cov):
+        return "rejected", 1
+    if any(r["trust"] == "auto" for r in cov):
+        return "confirmed", 1
+    if not cov:
+        _ensure_area(c, sci, common, lat, lon, trust="none")
+    return "suggested", 0
+
+
+def _det_point(c: sqlite3.Connection, det_id: int) -> sqlite3.Row | None:
+    return c.execute(
+        "SELECT bd.id, bd.scientific_name, bd.common_name, "
+        "COALESCE(bd.lat, loc.lat) AS lat, COALESCE(bd.lon, loc.lon) AS lon "
+        "FROM browser_detections bd LEFT JOIN locations loc ON loc.id=bd.location_id "
+        "WHERE bd.id=?", (det_id,)).fetchone()
+
+
+def _retro(c: sqlite3.Connection, sci: str, lat: float, lon: float,
+           from_status: str, to_status: str, auto: int) -> int:
+    """Move this species' nearby detections (within trust radius of the point)
+    from one status to another. Used so confirming/muting once sweeps the backlog."""
+    if lat is None or lon is None:
+        return 0
+    R = _radius_m(c)
+    n = 0
+    rows = c.execute(
+        "SELECT bd.id, COALESCE(bd.lat, loc.lat) AS lat, COALESCE(bd.lon, loc.lon) AS lon "
+        "FROM browser_detections bd LEFT JOIN locations loc ON loc.id=bd.location_id "
+        "WHERE bd.scientific_name=? AND bd.status=?", (sci, from_status)).fetchall()
+    for r in rows:
+        if r["lat"] is None or r["lon"] is None:
+            continue
+        if _haversine_m(lat, lon, r["lat"], r["lon"]) <= R:
+            c.execute("UPDATE browser_detections SET status=?, auto=? WHERE id=?",
+                      (to_status, auto, r["id"]))
+            n += 1
+    return n
+
+
+def _touch_area(c: sqlite3.Connection, sci: str, common: str, lat: float, lon: float,
+                **fields) -> None:
+    """Set fields on the anchor covering the point (creating one if needed)."""
+    row = _ensure_area(c, sci, common, lat, lon)
+    if not row:
+        return
+    if fields:
+        sets = ", ".join(f"{k}=?" for k in fields) + ", updated_at=?"
+        c.execute(f"UPDATE species_area SET {sets} WHERE id=?",
+                  (*fields.values(), _now(), row["id"]))
+
+
+def confirm_detections(ids: list[int]) -> dict:
+    """Confirm events. The first confirm of a species in an area arms auto-confirm
+    (unless the user previously locked it off) and sweeps that species' nearby
+    suggestions to confirmed."""
+    confirmed = 0
+    swept = 0
+    with _conn() as c:
+        for det_id in ids:
+            p = _det_point(c, det_id)
+            if not p:
+                continue
+            c.execute("UPDATE browser_detections SET status='confirmed', auto=0 WHERE id=?", (det_id,))
+            confirmed += 1
+            sci, common, lat, lon = p["scientific_name"], p["common_name"], p["lat"], p["lon"]
+            cov = _covering(c, sci, lat, lon)
+            locked = any(r["auto_locked"] for r in cov)
+            armed = any(r["trust"] == "auto" for r in cov)
+            # Mark reviewed regardless (a decision is an acknowledgement).
+            _touch_area(c, sci, common, lat, lon, reviewed=1)
+            if not armed and not locked:
+                _touch_area(c, sci, common, lat, lon, trust="auto", reviewed=1)
+                swept += _retro(c, sci, lat, lon, "suggested", "confirmed", 1)
+    return {"confirmed": confirmed, "also_confirmed_nearby": swept}
+
+
+def reject_detections(ids: list[int]) -> dict:
+    """Reject specific events. Does not change the species' trust."""
+    with _conn() as c:
+        n = 0
+        for det_id in ids:
+            p = _det_point(c, det_id)
+            c.execute("UPDATE browser_detections SET status='rejected', auto=0 WHERE id=?", (det_id,))
+            if p:
+                _touch_area(c, p["scientific_name"], p["common_name"], p["lat"], p["lon"], reviewed=1)
+            n += 1
+    return {"rejected": n}
+
+
+def set_detection_status(det_id: int, status: str) -> dict:
+    if status not in ("suggested", "confirmed", "rejected"):
+        return {"error": "bad status"}
+    if status == "confirmed":
+        return confirm_detections([det_id])
+    with _conn() as c:
+        c.execute("UPDATE browser_detections SET status=?, auto=0 WHERE id=?", (status, det_id))
+    return {"status": status}
+
+
+def mute_species(sci: str, lat: float, lon: float, common: str = "") -> dict:
+    """Stop suggesting this species near here, and reject its nearby suggestions."""
+    with _conn() as c:
+        _touch_area(c, sci, common, lat, lon, trust="mute", reviewed=1, auto_locked=1)
+        swept = _retro(c, sci, lat, lon, "suggested", "rejected", 1)
+    return {"muted": sci, "rejected_nearby": swept}
+
+
+def unmute_species(sci: str, lat: float, lon: float, common: str = "") -> dict:
+    """Reverse a mute: clear the mute anchor near here and move its auto-rejected
+    detections back to suggested so the species can be reconsidered."""
+    with _conn() as c:
+        for r in _covering(c, sci, lat, lon):
+            if r["trust"] == "mute":
+                c.execute("UPDATE species_area SET trust='none', auto_locked=0, updated_at=? WHERE id=?",
+                          (_now(), r["id"]))
+        restored = _retro(c, sci, lat, lon, "rejected", "suggested", 0)
+    return {"unmuted": sci, "restored": restored}
+
+
+def set_species_auto(sci: str, lat: float, lon: float, on: bool, common: str = "") -> dict:
+    """Toggle auto-confirm for a species near here. Off locks it from re-arming on
+    a later manual confirm; on sweeps nearby suggestions to confirmed."""
+    with _conn() as c:
+        if on:
+            _touch_area(c, sci, common, lat, lon, trust="auto", reviewed=1, auto_locked=0)
+            swept = _retro(c, sci, lat, lon, "suggested", "confirmed", 1)
+            return {"auto": True, "also_confirmed_nearby": swept}
+        _touch_area(c, sci, common, lat, lon, trust="none", auto_locked=1, reviewed=1)
+        return {"auto": False}
+
+
+def mark_species_reviewed(sci: str, lat: float | None, lon: float | None,
+                          common: str = "") -> dict:
+    """Acknowledge a species' first appearance (tapped in) so it un-pins / leaves
+    the new-arrival badge, without changing its status."""
+    with _conn() as c:
+        if lat is None or lon is None:
+            c.execute("UPDATE species_area SET reviewed=1, updated_at=? "
+                      "WHERE scientific_name=? AND reviewed=0", (_now(), sci))
+        else:
+            _touch_area(c, sci, common, lat, lon, reviewed=1)
+    return {"reviewed": sci}
+
+
+def _new_arrival_scinames(c: sqlite3.Connection, include_nonbird: bool = False) -> set:
+    """Unreviewed first-appearance species that actually have a VISIBLE suggested
+    detection right now (respects the live floor/range), so the badge and the
+    top-pin always match what the feed shows."""
+    rows = c.execute(
+        "SELECT DISTINCT sa.scientific_name FROM species_area sa WHERE sa.trust='none' "
+        "AND sa.reviewed=0 AND EXISTS (SELECT 1 FROM browser_detections bd "
+        "WHERE bd.scientific_name=sa.scientific_name AND bd.status='suggested'"
+        + _bird_clause(include_nonbird) + ")").fetchall()
+    return {r["scientific_name"] for r in rows}
+
+
+def species_events(sci: str, location_id: int | None = None,
+                   status: str | None = None, limit: int = 50) -> list[dict]:
+    """Individual detections for one species (for the inline row expansion).
+    Respects the same visibility filters as the lists, plus the tab's status."""
+    with _conn() as c:
+        q = ("SELECT id, ts, round(confidence,4) AS confidence, device_name, status, location_id "
+             "FROM browser_detections WHERE scientific_name=?" + _bird_clause(False)
+             + _status_clause(status))
+        params: list = [sci]
+        if location_id:
+            q += " AND location_id=?"
+            params.append(location_id)
+        params.append(max(1, min(limit, 200)))
+        rows = c.execute(q + " ORDER BY id DESC LIMIT ?", params).fetchall()
+        loc_names = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
+        rec_map = {r["det_id"]: r["id"] for r in c.execute(
+            "SELECT id, det_id FROM recordings WHERE scientific_name=?", (sci,)).fetchall()}
+    return [{"id": r["id"], "at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
+             "confidence": r["confidence"], "device": r["device_name"],
+             "status": r["status"], "location": loc_names.get(r["location_id"]),
+             "recording_id": rec_map.get(r["id"])}
+            for r in rows]
+
+
+def new_arrival_count() -> int:
+    """Species whose first local appearance is still unreviewed (the badge)."""
+    with _conn() as c:
+        return len(_new_arrival_scinames(c))
+
+
+def suggestions(limit: int = 50, offset: int = 0, include_nonbird: bool = False) -> dict:
+    """Suggested detections, newest first, but with unreviewed first-time arrivals
+    PINNED to the top (regardless of age) until acknowledged. Returns the page +
+    the new-arrival badge count."""
+    with _conn() as c:
+        # Species that are still unreviewed new arrivals -> their rows pin first.
+        pinned = _new_arrival_scinames(c, include_nonbird)
+        rows = c.execute(
+            "SELECT id, ts, scientific_name, common_name, round(confidence,4) AS confidence, "
+            "occurrence, location_id, device_name FROM browser_detections "
+            "WHERE status='suggested'" + _bird_clause(include_nonbird) +
+            " ORDER BY id DESC").fetchall()
+        items = [dict(r) for r in rows]
+        for it in items:
+            it["is_new"] = it["scientific_name"] in pinned
+        items.sort(key=lambda x: (0 if x["is_new"] else 1))  # stable: pinned first
+        page = items[offset:offset + max(1, min(limit, 200))]
+        return {"items": page, "total": len(items), "new_count": len(pinned)}
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -278,27 +834,32 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                   mode: str = "adaptive", lat: float | None = None,
                   lon: float | None = None, address: str = "",
                   location_id: int | None = None) -> dict:
-    """Transcode -> analyze -> attribute to a (device, location) -> store.
+    """Transcode -> smart-detect -> attribute to a (device, location) -> store.
+
+    Hard pre-filters (see docs/birdnet-accuracy.md) decide what is even eligible:
+      1. range filter - resolved coords + week, so only locally-plausible species
+         are considered; impossible ones are dropped, never stored.
+      2. confidence floor - smart_settings()["min_conf"].
+    What survives is stored with a TRUST STATUS (see the trust model section):
+      - covered by a mute anchor   -> rejected (auto), not stored;
+      - covered by an auto anchor   -> confirmed (auto);
+      - otherwise                   -> suggested (and a 'new arrival' anchor is
+        tracked so the UI can pin/badge its first appearance).
+    Detections still RIDE BACK in the response flagged so the UI can show what was
+    heard and why. Deduped on the 1s cadence so a continuing song is one row.
     Returns this chunk's detections plus the resolved location."""
-    wav = _transcode_to_wav(audio, content_type)
-    try:
-        detections = _call_analyzer(wav, min_conf)
-    finally:
-        try:
-            os.unlink(wav)
-        except OSError:
-            pass
-
-    # Tag every detection bird/non-bird so the client can filter live without a
-    # round-trip; the same flag is persisted so server-side aggregates can too.
-    for d in detections:
-        d["is_bird"] = is_bird(d.get("scientific_name"), d.get("common_name"))
-
-    ts = _now()
+    cfg = smart_settings()
+    min_conf = max(min_conf, cfg["min_conf"])
     dev_name = (device_name or station or "").strip()
+    ts = _now()
+    now_epoch = datetime.fromisoformat(ts).timestamp()
     loc_id: int | None = None
     loc_name = station
-    with _conn() as c:
+
+    wav = _transcode_to_wav(audio, content_type)
+    src_mp3: str | None = None
+    try:
+      with _conn() as c:
         # Keep the device row fresh (so a just-started device appears even before
         # its first detection).
         if token:
@@ -308,51 +869,104 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                 "name=COALESCE(NULLIF(excluded.name,''),devices.name), "
                 "mode=excluded.mode, last_seen=excluded.last_seen",
                 (token, dev_name, mode, ts, ts))
-        # Only resolve a location when there is something to attribute (a
-        # detection or a real GPS fix). A location is always a real place, so
-        # this can come back empty; we then ask the UI to pin one.
+        # Resolve coordinates for the range filter BEFORE analysis (read-only;
+        # creates nothing). No place -> filter stays off, range comes back unknown.
+        eff_lat, eff_lon = _effective_coords(c, token, mode, lat, lon, location_id)
+        detections = _call_analyzer(wav, min_conf, lat=eff_lat, lon=eff_lon,
+                                    sensitivity=cfg["sensitivity"],
+                                    sf_thresh=cfg["sf_thresh"])
+
+        for d in detections:
+            d["is_bird"] = is_bird(d.get("scientific_name"), d.get("common_name"))
+            d["stored"] = False
+
+        # Attribute to a real place (may create one at a GPS point). Empty when an
+        # adaptive device has no GPS and no prior place -> needs_location.
         if detections or lat is not None:
             loc_id, loc_name = resolve_location(c, token, dev_name, mode, lat, lon, address, location_id)
         if loc_id is None:
             loc_name = None
+
         if detections and loc_id is not None:
-            # The UI sends overlapping 3s windows every 1s for a live feel, so the
-            # same continuous song lands in several consecutive chunks. Dedup on
-            # store: skip a detection if the same species was just recorded at
-            # this location within DEDUP_S. It still rides back in the live
-            # response (flagged stored=False) so the UI shows it without
-            # inflating stored counts.
             to_store = []
             for d in detections:
+                sci = d["scientific_name"]
+                if d["is_bird"]:
+                    # Hard range gate: drop species the model says can't be here.
+                    # in_range is None when the filter was off (no coords).
+                    if d.get("in_range") is False:
+                        d["filtered"] = "out_of_range"
+                        continue
+                    # Trust status from anchors near this point.
+                    status, auto = _classify(c, sci, d.get("common_name"), eff_lat, eff_lon)
+                else:
+                    status, auto = "suggested", 0  # noise classes aren't trusted/curated
+                if status == "rejected":
+                    # Muted species here: don't store, just report it was muted.
+                    d["status"] = "rejected"
+                    d["filtered"] = "muted"
+                    continue
+                # Dedup the 1s overlapping cadence so a continuing song is one row.
                 prev = c.execute(
                     "SELECT ts FROM browser_detections WHERE location_id=? AND scientific_name=? "
-                    "ORDER BY id DESC LIMIT 1", (loc_id, d["scientific_name"])).fetchone()
-                dup = False
+                    "ORDER BY id DESC LIMIT 1", (loc_id, sci)).fetchone()
                 if prev:
                     try:
-                        dup = (datetime.fromisoformat(ts) -
-                               datetime.fromisoformat(prev["ts"])).total_seconds() < DEDUP_S
+                        if (datetime.fromisoformat(ts) -
+                                datetime.fromisoformat(prev["ts"])).total_seconds() < DEDUP_S:
+                            d["filtered"] = "dedup"
+                            continue
                     except ValueError:
-                        dup = False
-                d["stored"] = not dup
-                if not dup:
-                    to_store.append(d)
+                        pass
+                d["status"] = status
+                d["auto"] = auto
+                d["stored"] = True
+                to_store.append(d)
             if to_store:
-                c.executemany(
-                    "INSERT INTO browser_detections(station,ts,scientific_name,common_name,"
-                    "confidence,start_s,end_s,device_token,is_bird,device_name,location_id,lat,lon) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    [(loc_name, ts, d["scientific_name"], d["common_name"], d["confidence"],
-                      d.get("start_s", 0.0), d.get("end_s", 0.0), token, 1 if d["is_bird"] else 0,
-                      dev_name, loc_id, lat, lon)
-                     for d in to_store],
-                )
+                # Insert each stored row individually so we can capture its id and
+                # attach a recording. Saving a clip is gated on the SAME store
+                # decision, plus is_bird (the non-bird filter applies to saving
+                # too), plus the per-species save mode resolved against the global
+                # "save recordings" setting. Encode the analyzed WAV to MP3 once
+                # per chunk, then copy a clip per savable detection.
+                rec_cfg = rec_settings()
+                modes = _save_modes(c)
+                want = lambda d: d["is_bird"] and _should_save(d["scientific_name"], modes, rec_cfg["rec_save"])
+                want_clip = any(want(d) for d in to_store)
+                src_size = 0
+                if want_clip:
+                    src_mp3 = wav + ".rec.mp3"
+                    src_size = _encode_clip(wav, src_mp3)
+                    if src_size == 0:
+                        want_clip = False
+                for d in to_store:
+                    cur = c.execute(
+                        "INSERT INTO browser_detections(station,ts,scientific_name,common_name,"
+                        "confidence,start_s,end_s,device_token,is_bird,device_name,location_id,lat,lon,"
+                        "occurrence,in_range,confirmed,status,auto) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (loc_name, ts, d["scientific_name"], d["common_name"], d["confidence"],
+                         d.get("start_s", 0.0), d.get("end_s", 0.0), token, 1 if d["is_bird"] else 0,
+                         dev_name, loc_id, eff_lat, eff_lon,
+                         d.get("occurrence"), None if d.get("in_range") is None else int(d["in_range"]),
+                         1, d["status"], d["auto"]))
+                    if want_clip and src_mp3 and want(d):
+                        if _capture_clip(c, d, cur.lastrowid, src_mp3, src_size,
+                                         loc_id, token, ts, rec_cfg):
+                            d["recorded"] = True
         # Mirror into the legacy stations table so old /station/* keeps resolving.
         if token and dev_name:
             c.execute(
                 "INSERT INTO stations(token,label,created_at,last_seen) VALUES(?,?,?,?) "
                 "ON CONFLICT(token) DO UPDATE SET label=excluded.label, last_seen=excluded.last_seen",
                 (token, dev_name, ts, ts))
+    finally:
+        for f in (src_mp3, wav):
+            if f:
+                try:
+                    os.unlink(f)
+                except OSError:
+                    pass
     # "needs_location" = we heard something but have nowhere real to file it
     # (adaptive device with no GPS and no prior place). The UI prompts the user
     # to pin an address; the live detections still ride back so they see them.
@@ -364,8 +978,9 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
 def recent(station: str, limit: int = 100, include_nonbird: bool = False) -> list[dict]:
     with _conn() as c:
         rows = c.execute(
-            "SELECT ts, scientific_name, common_name, round(confidence,4) AS confidence, is_bird "
-            "FROM browser_detections WHERE station=?" + _bird_clause(include_nonbird) +
+            "SELECT ts, scientific_name, common_name, round(confidence,4) AS confidence, "
+            "is_bird, occurrence, in_range FROM browser_detections WHERE station=?"
+            + _bird_clause(include_nonbird) +
             " ORDER BY id DESC LIMIT ?",
             (station, max(1, min(limit, 500))),
         ).fetchall()
@@ -523,6 +1138,301 @@ def set_setting(key: str, value: str) -> None:
     with _conn() as c:
         c.execute("INSERT INTO app_settings(key,value) VALUES(?,?) "
                   "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+
+# --------------------------------------------------------------------------
+# Recordings: save the audio clip of a detection, under per-bird rules and a
+# hard storage budget. See docs/birds-recordings-plan.md.
+# --------------------------------------------------------------------------
+
+def rec_settings() -> dict:
+    """Effective recording settings: app_settings overrides over the defaults."""
+    s = dict(_REC_DEFAULTS)
+    mb = get_setting("rec_storage_mb")
+    if mb:
+        try:
+            s["rec_storage_mb"] = max(10, min(100000, int(float(mb))))
+        except (TypeError, ValueError):
+            pass
+    wf = get_setting("rec_when_full")
+    if wf in ("evict_old", "stop"):
+        s["rec_when_full"] = wf
+    wr = get_setting("rec_warn_ratio")
+    if wr:
+        try:
+            s["rec_warn_ratio"] = max(0.5, min(0.99, float(wr)))
+        except (TypeError, ValueError):
+            pass
+    s["rec_save"] = (get_setting("rec_save") or ("1" if _REC_SAVE_DEFAULT else "0")) == "1"
+    return s
+
+
+def update_rec_settings(patch: dict) -> dict:
+    """Validate + persist recording-budget overrides; returns the effective set."""
+    if patch.get("rec_storage_mb") is not None:
+        try:
+            set_setting("rec_storage_mb", str(max(10, min(100000, int(float(patch["rec_storage_mb"]))))))
+        except (TypeError, ValueError):
+            pass
+    if patch.get("rec_when_full") in ("evict_old", "stop"):
+        set_setting("rec_when_full", patch["rec_when_full"])
+    if patch.get("rec_save") is not None:
+        set_setting("rec_save", "1" if patch["rec_save"] else "0")
+    return rec_settings()
+
+
+_SAVE_MODES = ("default", "keep", "never")
+
+
+def get_species_save_mode(sci: str) -> str:
+    with _conn() as c:
+        r = c.execute("SELECT save_mode FROM species_recording WHERE scientific_name=?",
+                      (sci,)).fetchone()
+    return r["save_mode"] if r and r["save_mode"] in _SAVE_MODES else "default"
+
+
+def set_species_save_mode(sci: str, mode: str) -> dict:
+    """Set a bird's save preference: 'default' (follow global), 'keep' (always
+    save + never auto-evict), or 'never'. A 'default' row is dropped so the
+    species simply follows the global setting with no per-bird override."""
+    if mode not in _SAVE_MODES:
+        mode = "default"
+    with _conn() as c:
+        if mode == "default":
+            c.execute("DELETE FROM species_recording WHERE scientific_name=?", (sci,))
+        else:
+            c.execute("INSERT INTO species_recording(scientific_name,save_mode) VALUES(?,?) "
+                      "ON CONFLICT(scientific_name) DO UPDATE SET save_mode=excluded.save_mode",
+                      (sci, mode))
+    return {"save_mode": mode}
+
+
+def _save_modes(c: sqlite3.Connection) -> dict:
+    return {r["scientific_name"]: r["save_mode"] for r in c.execute(
+        "SELECT scientific_name, save_mode FROM species_recording")
+        if r["save_mode"] in _SAVE_MODES}
+
+
+def _should_save(sci: str, modes: dict, global_save: bool) -> bool:
+    m = modes.get(sci, "default")
+    if m == "keep":
+        return True
+    if m == "never":
+        return False
+    return global_save
+
+
+def _keepall_species(c: sqlite3.Connection) -> set:
+    return {s for s, m in _save_modes(c).items() if m == "keep"}
+
+
+def _slug(s: str) -> str:
+    out = "".join(ch if ch.isalnum() else "-" for ch in (s or "")).strip("-").lower()
+    return out[:48] or "x"
+
+
+def _encode_clip(wav_path: str, dest: str) -> int:
+    """Encode the analyzed WAV to MP3 64k mono at dest; return bytes (0 on fail)."""
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-i", wav_path, "-ac", "1", "-c:a", "libmp3lame", "-b:a", "64k", dest],
+        capture_output=True)
+    p = Path(dest)
+    if proc.returncode != 0 or not p.exists():
+        return 0
+    return p.stat().st_size
+
+
+def _delete_clip_file(rel_path: str) -> None:
+    try:
+        (CLIPS_DIR / rel_path).unlink()
+    except OSError:
+        pass
+
+
+def _used_bytes(c: sqlite3.Connection) -> int:
+    return int(c.execute("SELECT COALESCE(SUM(bytes),0) b FROM recordings").fetchone()["b"])
+
+
+def _protected_bytes(c: sqlite3.Connection) -> int:
+    keep = _keepall_species(c)
+    total = 0
+    for r in c.execute("SELECT scientific_name, bytes, pinned FROM recordings"):
+        if r["pinned"] or r["scientific_name"] in keep:
+            total += r["bytes"] or 0
+    return total
+
+
+def _evict_for(c: sqlite3.Connection, need: int, cap: int) -> bool:
+    """Free space so used+need <= cap by deleting oldest evictable clips (not
+    pinned, species not keep_all). Returns True if there is now room, False if
+    protected clips alone fill the budget."""
+    keep = _keepall_species(c)
+    used = _used_bytes(c)
+    if used + need <= cap:
+        return True
+    for r in c.execute("SELECT id, path, bytes, scientific_name, pinned "
+                       "FROM recordings ORDER BY ts ASC, id ASC"):
+        if used + need <= cap:
+            break
+        if r["pinned"] or r["scientific_name"] in keep:
+            continue
+        _delete_clip_file(r["path"])
+        c.execute("DELETE FROM recordings WHERE id=?", (r["id"],))
+        used -= r["bytes"] or 0
+    return used + need <= cap
+
+
+def _capture_clip(c: sqlite3.Connection, d: dict, det_id: int, src_mp3: str,
+                  size: int, loc_id: int, token: str, ts: str, cfg: dict) -> bool:
+    """Admit one clip under the budget, copy it into place, insert its row.
+    Returns False (and marks a skip) if storage couldn't admit it."""
+    cap = cfg["rec_storage_mb"] * _MB
+    if _used_bytes(c) + size > cap:
+        if cfg["rec_when_full"] == "stop" or not _evict_for(c, size, cap):
+            set_setting("rec_last_skip_ts", ts)
+            return False
+    sci = d["scientific_name"]
+    rel = f"{loc_id}/{_slug(ts)}_{_slug(sci)}_{det_id}.mp3"
+    dest = CLIPS_DIR / rel
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src_mp3, dest)
+    except OSError:
+        return False
+    b = dest.stat().st_size
+    c.execute("INSERT INTO recordings(det_id,scientific_name,common_name,location_id,"
+              "device_token,ts,path,bytes,duration_s,confidence,pinned) "
+              "VALUES(?,?,?,?,?,?,?,?,?,?,0)",
+              (det_id, sci, d.get("common_name"), loc_id, token, ts, rel, b, 3.0, d["confidence"]))
+    return True
+
+
+def recordings_status() -> dict:
+    """Usage + the homepage banner state. 'ok' renders nothing; 'warn' is near
+    full; 'error' means saving is failing (stop-mode full, or evict-mode where
+    pinned + 'keep' clips alone fill the budget so nothing can be freed)."""
+    cfg = rec_settings()
+    cap = cfg["rec_storage_mb"] * _MB
+    with _conn() as c:
+        used = _used_bytes(c)
+        protected = _protected_bytes(c)
+        count = c.execute("SELECT COUNT(*) n FROM recordings").fetchone()["n"]
+        # Saving is active if the global default is on, or any species is 'keep'.
+        any_record = cfg["rec_save"] or c.execute(
+            "SELECT 1 FROM species_recording WHERE save_mode='keep' LIMIT 1").fetchone() is not None
+    last_skip = get_setting("rec_last_skip_ts")
+    recent_skip = False
+    if last_skip:
+        try:
+            recent_skip = (datetime.now(timezone.utc)
+                           - datetime.fromisoformat(last_skip)).total_seconds() < 600
+        except ValueError:
+            pass
+    avg = _AVG_CLIP_BYTES
+    no_room = used + avg > cap
+    evict_stuck = (cap - protected) < avg
+    warn = used >= cfg["rec_warn_ratio"] * cap or protected >= cfg["rec_warn_ratio"] * cap
+    state, message = "ok", ""
+    is_error = any_record and (
+        (cfg["rec_when_full"] == "stop" and no_room)
+        or (cfg["rec_when_full"] == "evict_old" and evict_stuck and no_room)
+        or recent_skip)
+    if is_error:
+        state = "error"
+        message = ("Recording paused — storage is full. Raise the limit or remove some recordings."
+                   if cfg["rec_when_full"] == "stop"
+                   else "Can't free space — saved recordings fill the budget. Unpin some or raise the limit.")
+    elif warn and (any_record or used > 0):
+        state = "warn"
+        message = "Recording storage is almost full."
+    return {"state": state, "message": message, "used_bytes": used, "cap_bytes": cap,
+            "protected_bytes": protected, "count": count,
+            "when_full": cfg["rec_when_full"], "storage_mb": cfg["rec_storage_mb"]}
+
+
+def list_recordings(sci: str | None = None, location_id: int | None = None,
+                    pinned: bool | None = None, limit: int = 200, offset: int = 0) -> dict:
+    with _conn() as c:
+        keepset = _keepall_species(c)
+        where = " WHERE 1=1"
+        p: list = []
+        if sci:
+            where += " AND r.scientific_name=?"; p.append(sci)
+        if location_id:
+            where += " AND r.location_id=?"; p.append(location_id)
+        if pinned is not None:
+            where += " AND r.pinned=?"; p.append(1 if pinned else 0)
+        total = c.execute("SELECT COUNT(*) n FROM recordings r" + where, p).fetchone()["n"]
+        rows = c.execute(
+            "SELECT r.*, l.name AS location_name FROM recordings r "
+            "LEFT JOIN locations l ON l.id=r.location_id" + where
+            + " ORDER BY r.ts DESC LIMIT ? OFFSET ?", p + [limit, offset]).fetchall()
+    items = [{"id": r["id"], "det_id": r["det_id"],
+              "scientific_name": r["scientific_name"], "common_name": r["common_name"],
+              "location_id": r["location_id"], "location": r["location_name"],
+              "ts": r["ts"], "at": _local(r["ts"]).strftime("%Y-%m-%d %H:%M:%S"),
+              "bytes": r["bytes"], "duration_s": r["duration_s"], "confidence": r["confidence"],
+              "pinned": bool(r["pinned"]),
+              "protected": bool(r["pinned"]) or r["scientific_name"] in keepset} for r in rows]
+    return {"items": items, "total": total}
+
+
+def recording_path(rec_id: int) -> Path | None:
+    with _conn() as c:
+        r = c.execute("SELECT path FROM recordings WHERE id=?", (rec_id,)).fetchone()
+    if not r:
+        return None
+    p = CLIPS_DIR / r["path"]
+    return p if p.exists() else None
+
+
+def pin_recording(rec_id: int, pinned: bool) -> dict:
+    with _conn() as c:
+        c.execute("UPDATE recordings SET pinned=? WHERE id=?", (1 if pinned else 0, rec_id))
+    return {"ok": True, "id": rec_id, "pinned": bool(pinned)}
+
+
+def delete_recording(rec_id: int) -> dict:
+    with _conn() as c:
+        r = c.execute("SELECT path FROM recordings WHERE id=?", (rec_id,)).fetchone()
+        if r:
+            _delete_clip_file(r["path"])
+            c.execute("DELETE FROM recordings WHERE id=?", (rec_id,))
+    return {"ok": True}
+
+
+def clear_recordings(sci: str) -> dict:
+    n = 0
+    with _conn() as c:
+        for r in c.execute("SELECT id, path FROM recordings WHERE scientific_name=?", (sci,)).fetchall():
+            _delete_clip_file(r["path"]); n += 1
+        c.execute("DELETE FROM recordings WHERE scientific_name=?", (sci,))
+    return {"ok": True, "deleted": n}
+
+
+def reconcile_recordings() -> dict:
+    """Re-sync the DB to disk: drop rows whose file is gone, fix size drift, and
+    remove orphan files with no row. Keeps the usage meter honest."""
+    fixed = orphans = 0
+    with _conn() as c:
+        known: set = set()
+        for r in c.execute("SELECT id, path, bytes FROM recordings").fetchall():
+            p = CLIPS_DIR / r["path"]
+            if not p.exists():
+                c.execute("DELETE FROM recordings WHERE id=?", (r["id"],)); fixed += 1; continue
+            known.add(p.resolve())
+            sz = p.stat().st_size
+            if sz != (r["bytes"] or 0):
+                c.execute("UPDATE recordings SET bytes=? WHERE id=?", (sz, r["id"])); fixed += 1
+        if CLIPS_DIR.exists():
+            for f in CLIPS_DIR.rglob("*.mp3"):
+                if f.resolve() not in known:
+                    try:
+                        f.unlink(); orphans += 1
+                    except OSError:
+                        pass
+    return {"ok": True, "rows_fixed": fixed, "orphans_removed": orphans}
 
 
 def list_devices() -> list[dict]:
@@ -706,17 +1616,20 @@ def list_locations(include_nonbird: bool = False) -> dict:
     return {"locations": out, "home": get_setting("home_source")}
 
 
-def _loc_rows(location_id: int, include_nonbird: bool = False) -> list[sqlite3.Row]:
+def _loc_rows(location_id: int, include_nonbird: bool = False,
+              status: str | None = None) -> list[sqlite3.Row]:
     with _conn() as c:
         return c.execute(
             "SELECT ts, scientific_name, common_name, confidence "
-            "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird) +
+            "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird)
+            + _status_clause(status) +
             " ORDER BY ts", (location_id,)).fetchall()
 
 
-def location_summary(location_id: int, include_nonbird: bool = False) -> dict:
+def location_summary(location_id: int, include_nonbird: bool = False,
+                     status: str | None = None) -> dict:
     loc = get_location(location_id)
-    rows = _loc_rows(location_id, include_nonbird)
+    rows = _loc_rows(location_id, include_nonbird, status)
     base = {"id": location_id, "name": loc["name"] if loc else None,
             "lat": loc["lat"] if loc else None, "lon": loc["lon"] if loc else None,
             "address": loc["address"] if loc else None,
@@ -741,13 +1654,31 @@ def location_summary(location_id: int, include_nonbird: bool = False) -> dict:
     }
 
 
-def location_species(location_id: int, include_nonbird: bool = False) -> list[dict]:
-    rows = _loc_rows(location_id, include_nonbird)
-    return _aggregate_species(rows)
+def location_species(location_id: int, include_nonbird: bool = False,
+                     status: str | None = None) -> list[dict]:
+    rows = _loc_rows(location_id, include_nonbird, status)
+    species = _aggregate_species(rows)
+    if not species:
+        return species
+    # Tag each species with its trust state so the list can say WHAT a row is, not
+    # just its name: is_new = an unacknowledged first appearance (the "New" badge);
+    # auto = auto-confirm is armed for it (new detections accepted automatically).
+    with _conn() as c:
+        new_set = _new_arrival_scinames(c, include_nonbird)
+        auto_set = {r["scientific_name"] for r in c.execute(
+            "SELECT DISTINCT scientific_name FROM species_area WHERE trust='auto'").fetchall()}
+    for s in species:
+        s["is_new"] = s["scientific_name"] in new_set
+        s["auto"] = s["scientific_name"] in auto_set
+    # Pin unacknowledged first-time arrivals to the top (same rule as the feed) so
+    # a brand-new yard bird is never buried below familiar high-count species.
+    species.sort(key=lambda s: (0 if s["is_new"] else 1, -s["count"]))
+    return species
 
 
-def location_activity(location_id: int, include_nonbird: bool = False) -> dict:
-    rows = _loc_rows(location_id, include_nonbird)
+def location_activity(location_id: int, include_nonbird: bool = False,
+                      status: str | None = None) -> dict:
+    rows = _loc_rows(location_id, include_nonbird, status)
     return _aggregate_activity(rows)
 
 
@@ -782,25 +1713,33 @@ def _aggregate_activity(rows: list[sqlite3.Row]) -> dict:
     for r in rows:
         lt = _local(r["ts"])
         d = lt.strftime("%Y-%m-%d")
-        day = daily.setdefault(d, {"date": d, "count": 0, "_species": set()})
+        day = daily.setdefault(d, {"date": d, "count": 0, "_species": set(), "hourly": [0] * 24})
         day["count"] += 1
         day["_species"].add(r["scientific_name"])
+        day["hourly"][lt.hour] += 1
         hourly[lt.hour] += 1
     return {
-        "daily": [{"date": d["date"], "count": d["count"], "species": len(d["_species"])}
+        # Each day carries its own 24h histogram so the "Times of day" view can
+        # show a specific day; the top-level hourly is the all-days aggregate.
+        "daily": [{"date": d["date"], "count": d["count"], "species": len(d["_species"]),
+                   "hourly": d["hourly"]}
                   for d in sorted(daily.values(), key=lambda x: x["date"])],
         "hourly": [{"hour": h, "count": hourly[h]} for h in range(24)],
     }
 
 
 def bird_detail(sci: str, location_id: int | None = None,
-                device: str | None = None, days: int = 0) -> dict:
+                device: str | None = None, days: int = 0,
+                status: str | None = None) -> dict:
     """Everything for one species' page: stats, per-day breakdown (each day with
     its own 24h histogram for the mini-graph), where + on what it was heard, and
-    a recent list. Filterable by location, device, and date range; the location
-    and device option lists are always the full set for the species."""
-    q = ("SELECT ts, common_name, confidence, location_id, device_token, device_name "
-         "FROM browser_detections WHERE scientific_name=?")
+    a recent list. Filterable by location, device, date range, and trust status;
+    the location and device option lists are always the full set for the species."""
+    # Same display filters as every list (range + live confidence floor + status),
+    # so the species page agrees with the counts that linked to it.
+    flt = _bird_clause(False) + _status_clause(status)
+    q = ("SELECT id, ts, common_name, confidence, location_id, device_token, device_name, "
+         "occurrence, in_range, status FROM browser_detections WHERE scientific_name=?" + flt)
     params: list = [sci]
     if location_id:
         q += " AND location_id=?"
@@ -811,17 +1750,22 @@ def bird_detail(sci: str, location_id: int | None = None,
     with _conn() as c:
         rows = c.execute(q + " ORDER BY ts", params).fetchall()
         loc_names = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
-        # The location/device option lists are always over ALL detections of the
-        # species (so the filters always offer every place/device to switch to),
-        # while the stats below respect the active filters.
+        # The location/device option lists are always over ALL (shown) detections
+        # of the species (so the filters always offer every place/device to switch
+        # to), while the stats below respect the active filters.
         all_locs = c.execute(
             "SELECT location_id, COUNT(*) n FROM browser_detections "
-            "WHERE scientific_name=? AND location_id IS NOT NULL GROUP BY location_id "
-            "ORDER BY n DESC", (sci,)).fetchall()
+            "WHERE scientific_name=? AND location_id IS NOT NULL" + flt +
+            " GROUP BY location_id ORDER BY n DESC", (sci,)).fetchall()
         all_devs = c.execute(
             "SELECT device_token, MAX(device_name) name, COUNT(*) n FROM browser_detections "
-            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>'' "
-            "GROUP BY device_token ORDER BY n DESC", (sci,)).fetchall()
+            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>''" + flt +
+            " GROUP BY device_token ORDER BY n DESC", (sci,)).fetchall()
+        # Save preference + which recent detections have a saved clip (det_id map).
+        rec_map = {r["det_id"]: r["id"] for r in c.execute(
+            "SELECT id, det_id FROM recordings WHERE scientific_name=?", (sci,)).fetchall()}
+        sr = c.execute("SELECT save_mode FROM species_recording WHERE scientific_name=?",
+                       (sci,)).fetchone()
 
     # Date range: days<=0 is all-time; days=1 is today (local calendar day);
     # days=N is the last N local days.
@@ -849,6 +1793,7 @@ def bird_detail(sci: str, location_id: int | None = None,
         hourly_overall[lt.hour] += 1
 
     confs = [r["confidence"] for r in kept]
+    occs = [r["occurrence"] for r in kept if r["occurrence"] is not None]
     common = (kept[-1]["common_name"] if kept else (rows[-1]["common_name"] if rows else sci))
     return {
         "scientific_name": sci, "common_name": common, "count": len(kept),
@@ -857,6 +1802,9 @@ def bird_detail(sci: str, location_id: int | None = None,
         "days_seen": len(by_day),
         "max_conf": round(max(confs), 4) if confs else 0,
         "avg_conf": round(sum(confs) / len(confs), 4) if confs else 0,
+        # eBird occurrence prior (likelihood here/this-week); null if every kept
+        # detection predates location-aware analysis.
+        "occurrence": round(max(occs), 4) if occs else None,
         "hourly": [{"hour": h, "count": hourly_overall[h]} for h in range(24)],
         "by_day": sorted(by_day.values(), key=lambda x: x["date"], reverse=True),
         "total_all": sum(L["n"] for L in all_locs),
@@ -864,9 +1812,13 @@ def bird_detail(sci: str, location_id: int | None = None,
                       for L in all_locs],
         "devices": [{"token": D["device_token"], "name": D["name"], "count": D["n"]}
                     for D in all_devs],
-        "recent": [{"at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
+        "save_mode": sr["save_mode"] if (sr and sr["save_mode"] in _SAVE_MODES) else "default",
+        "clip_count": len(rec_map),
+        "recent": [{"id": r["id"], "at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
                     "confidence": round(r["confidence"], 4),
+                    "occurrence": r["occurrence"], "status": r["status"],
                     "location_id": r["location_id"],
                     "location": loc_names.get(r["location_id"]),
+                    "recording_id": rec_map.get(r["id"]),
                     "device": r["device_name"]} for r in kept[-50:][::-1]],
     }

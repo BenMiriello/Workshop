@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { Menu, Bot, FolderGit2, LayoutGrid, Activity as ActivityIcon, Settings as SettingsIcon } from "lucide-react";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
@@ -300,5 +301,88 @@ export function AppGroupNav() {
         );
       })}
     </nav>
+  );
+}
+
+// ---- Section nav (top-level sections) --------------------------------------
+// Desktop: the inline link row on the right of the toolbar. Mobile (≤640px):
+// the links collapse to a single overflow-menu button so the toolbar stays one
+// row — the current section is already named in the breadcrumb, so nothing is
+// lost. CSS toggles which of the two renders at the breakpoint.
+const SECTIONS = [
+  { to: "/agents", label: "Agents", icon: Bot },
+  { to: "/projects", label: "Projects", icon: FolderGit2 },
+  { to: "/apps", label: "Apps", icon: LayoutGrid },
+  { to: "/activity", label: "Activity", icon: ActivityIcon },
+  { to: "/settings", label: "Settings", icon: SettingsIcon },
+];
+const linkClass = ({ isActive }: { isActive: boolean }) => (isActive ? "is-active" : undefined);
+
+export function SectionNav() {
+  const { pathname } = useLocation();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Close the menu whenever the route changes (a link was followed).
+  useEffect(() => setOpen(false), [pathname]);
+
+  // Dismiss on outside click / Escape while open.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <nav className="ws-nav ws-sectionnav-inline" aria-label="Sections">
+        {SECTIONS.map((s) => (
+          <NavLink key={s.to} to={s.to} className={linkClass}>
+            {s.label}
+          </NavLink>
+        ))}
+      </nav>
+
+      <div className="ws-sectionnav-menu" ref={ref}>
+        <button
+          type="button"
+          className="ws-iconbtn"
+          aria-label="Sections menu"
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          <Menu size={20} aria-hidden />
+        </button>
+        {open && (
+          <div className="ws-menu" role="menu">
+            {SECTIONS.map((s) => {
+              const Icon = s.icon;
+              return (
+                <NavLink
+                  key={s.to}
+                  to={s.to}
+                  role="menuitem"
+                  className={({ isActive }) => (isActive ? "ws-menu__item is-active" : "ws-menu__item")}
+                >
+                  <Icon size={16} aria-hidden />
+                  {s.label}
+                </NavLink>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

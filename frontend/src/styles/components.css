@@ -533,13 +533,25 @@ a.ws-btn { text-decoration: none; }
 .ws-chart .recharts-reference-line line { stroke: var(--chart-target); stroke-dasharray: 4 4; }
 .ws-chart .recharts-active-dot circle { stroke: var(--bg); stroke-width: 2; }
 
+/* Kill recharts' default 400ms position transition on the tooltip wrapper —
+   otherwise the card visibly slides in from the chart's top-left corner on the
+   first hover. Unscoped (not under .ws-chart) so it also catches charts that
+   render bare without ChartFrame. The component-level isAnimationActive={false}
+   is the primary fix; this is the belt-and-suspenders for future charts. */
+.recharts-tooltip-wrapper { transition: none !important; }
+
 /* Tooltip — reuse the card/elevation language, never a raw white box. */
 .ws-chart-tooltip {
   background: var(--card); border: 1px solid var(--card-ring); border-radius: var(--radius-md);
   box-shadow: var(--shadow-md); padding: var(--space-2) var(--space-3); font-size: var(--fs-sm);
 }
 .ws-chart-tooltip__label { color: var(--muted); font-size: var(--fs-xs); margin-bottom: 2px; }
-.ws-chart-tooltip__val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--fw-semi); }
+.ws-chart-tooltip__val {
+  display: flex; align-items: baseline; gap: var(--space-3); justify-content: space-between;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--fw-semi);
+}
+.ws-chart-tooltip__val + .ws-chart-tooltip__val { margin-top: 1px; }
+.ws-chart-tooltip__name { color: var(--muted); font-family: var(--font-sans); font-weight: var(--fw-reg); }
 
 /* Legend chips */
 .ws-chart-legend { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-top: var(--space-3); }

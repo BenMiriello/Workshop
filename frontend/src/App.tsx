@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 import Agents from "./pages/Agents";
 import AgentConfig from "./pages/AgentConfig";
 import Projects from "./pages/Projects";
@@ -12,34 +12,26 @@ import LocationDetail from "./pages/apps/birds/LocationDetail";
 import Devices from "./pages/apps/birds/Devices";
 import BirdDetail from "./pages/apps/birds/BirdDetail";
 import BirdSettings from "./pages/apps/birds/BirdSettings";
+import Recordings from "./pages/apps/birds/RecordingsPage";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
 import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
-import { BreadcrumbBar, BreadcrumbProvider } from "./components/appNav";
+import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
 
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
 // INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
 // Apps tab is the discovery surface.
 
 export default function App() {
-  // Active-link class for the ws-nav (react-router v6 gives us isActive).
-  const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? "is-active" : undefined);
-
   return (
     <RecorderProvider>
     <BreadcrumbProvider>
     <div className="ws-root ws-app">
       <header className="ws-topnav">
         <BreadcrumbBar />
-        <nav className="ws-nav">
-          <NavLink to="/agents" className={navClass}>Agents</NavLink>
-          <NavLink to="/projects" className={navClass}>Projects</NavLink>
-          <NavLink to="/apps" className={navClass}>Apps</NavLink>
-          <NavLink to="/activity" className={navClass}>Activity</NavLink>
-          <NavLink to="/settings" className={navClass}>Settings</NavLink>
-        </nav>
+        <SectionNav />
       </header>
       <main>
         <Routes>
@@ -59,6 +51,7 @@ export default function App() {
           {/* Old per-station route now resolves to the location page by name is gone;
               StationDetail is superseded by LocationDetail (by id). */}
           <Route path="/apps/birds/settings" element={<BirdSettings />} />
+          <Route path="/apps/birds/recordings" element={<Recordings />} />
           <Route path="/apps/commute" element={<CommuteApp />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />

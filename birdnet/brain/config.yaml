@@ -21,18 +21,39 @@ birdnet:
   threads: 0               # 0 = auto (all cores). CPU is fine for vanilla detection.
   latitude: ${BIRDNET_LATITUDE}
   longitude: ${BIRDNET_LONGITUDE}
-  sensitivity: 1.0         # 0.5 - 1.5, higher = more sensitive
-  threshold: 0.3           # min confidence to record a detection (0.0 - 1.0)
-  overlap: 0.0             # analysis window overlap in seconds (0 - 2.9)
+  sensitivity: 1.0         # 0.5 - 1.5. Leave at 1.0; raising it trades false
+                           # negatives for false positives (see docs/birdnet-accuracy.md).
+  threshold: 0.65          # min confidence to record. BirdNET-Pi ships 0.7,
+                           # BirdNET-Go 0.8; 0.65 is a deliberate floor that kills
+                           # most junk without dropping quieter real birds. NOT a
+                           # probability - it is a precision/recall knob.
+  # overlap drives BirdNET-Go "deep detection": it re-runs the model on shifted
+  # windows so a real call is scored several times, then only keeps a detection
+  # that recurs. Required hits = max(1, 3 / max(0.1, 3.0 - overlap)).
+  #   overlap 2.0 -> 3 hits needed (~3x CPU, one stream - fine on this box).
+  # This is the single strongest defense against one-off spurious hits.
+  overlap: 2.0
   # rangefilter uses lat/long + week-of-year to suppress species not plausible
-  # here. Keep it on so the species list stays local and believable.
+  # here - the biggest false-positive control. threshold is the eBird occurrence
+  # cutoff: keep it LOW so genuinely-rare local visitors (owls, vagrants) survive
+  # (the classic trap is setting it high and silently losing them).
   rangefilter:
     model: latest
-    threshold: 0.03
+    threshold: 0.01
 
 realtime:
   interval: 15             # seconds between detections of the SAME species (dedup)
   processingtime: false
+
+  # Per-species, recent-history-aware thresholds: once a species is being heard
+  # reliably its bar drops (catch more of a present bird), and it rises back over
+  # validhours of quiet. Complements the static birdnet.threshold floor.
+  dynamicthreshold:
+    enabled: true
+    debug: false
+    trigger: 0.5           # a hit >= this arms the dynamic threshold for the species
+    min: 0.3               # floor the dynamic threshold can fall to
+    validhours: 24         # how long the lowered threshold persists after activity
 
   # Audio comes from the Pi over the tailnet as RTSP. No local sound card on
   # the Brain. The Pi publishes mono 48kHz PCM; see pi/mediamtx.yml.

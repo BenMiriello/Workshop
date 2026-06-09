@@ -24,6 +24,15 @@ export async function jget<T>(path: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
+// Form-encoded POST for the trust-model actions (confirm/reject/mute/auto/review).
+export async function apost<T = unknown>(path: string, body: Record<string, string | number | boolean>): Promise<T> {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(body)) fd.append(k, String(v));
+  const r = await fetch(`${API}${path}`, { method: "POST", body: fd });
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json() as Promise<T>;
+}
+
 export function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="card" style={{ padding: ".7rem 1rem" }}>
@@ -41,10 +50,12 @@ export function StatGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }: {
+export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick }: {
   data: Record<string, unknown>[]; x: string; fill: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   xfmt?: (v: any) => string; interval?: number; labelFmt?: (v: any) => string; height?: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  onBarClick?: (datum: any) => void;
 }) {
   return (
     <div style={{ height }}>
@@ -54,6 +65,7 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }:
           <XAxis dataKey={x} tick={{ fontSize: 10 }} tickFormatter={xfmt} interval={interval} minTickGap={16} />
           <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
           <Tooltip
+            isAnimationActive={false}
             cursor={{ fill: "rgba(120,160,255,0.08)" }}
             content={({ active, payload, label }: any) => (
               <ChartTooltip
@@ -66,7 +78,9 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150 }:
           />
           {/* Cap bar width so a chart with one or two days doesn't render a
               single absurdly-wide bar across the whole panel. */}
-          <Bar dataKey="count" fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48} />
+          <Bar dataKey="count" fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48}
+            onClick={onBarClick ? (e: any) => onBarClick(e?.payload ?? e) : undefined}
+            style={onBarClick ? { cursor: "pointer" } : undefined} />
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -110,10 +124,11 @@ export function BirdThumb({ sci, common, size = 44 }: { sci: string; common: str
 
 // A clickable species row used in species lists; links to the bird page,
 // carrying the location filter when present.
-export function SpeciesLink({ sci, locationId, children, style }: {
-  sci: string; locationId?: number | null; children: React.ReactNode; style?: React.CSSProperties;
+export function SpeciesLink({ sci, locationId, status, children, style }: {
+  sci: string; locationId?: number | null; status?: string; children: React.ReactNode; style?: React.CSSProperties;
 }) {
-  const q = `?sci=${encodeURIComponent(sci)}${locationId ? `&location_id=${locationId}` : ""}`;
+  const q = `?sci=${encodeURIComponent(sci)}${locationId ? `&location_id=${locationId}` : ""}`
+    + (status && status !== "confirmed" ? `&status=${status}` : "");
   return (
     <Link to={`/apps/birds/bird${q}`} style={{ textDecoration: "none", color: "inherit", ...style }}>
       {children}

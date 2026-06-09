@@ -49,6 +49,62 @@ body {
 .ws-bc__measure { position: absolute; left: -9999px; top: 0; visibility: hidden; pointer-events: none; white-space: nowrap; }
 @media (max-width: 640px) { .ws-bc__sep { margin: 0 0.3rem; } }
 
+/* Sticky toolbar — always visible at the top while the page scrolls. Bleeds
+   over the .ws-app horizontal padding so content scrolling underneath is
+   covered edge-to-edge (then re-pads so its own content stays aligned). */
+.ws-topnav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  /* Pull up over .ws-app's top + side padding so the bar is truly flush to the
+     viewport top — identical spacing whether resting or stuck (otherwise the
+     app's padding-top sits above it at rest, then vanishes when stuck). The
+     bar's own padding sets the vertical rhythm; margin-bottom is the only gap
+     to page content. */
+  padding: var(--space-3) var(--space-5);
+  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)) var(--space-3);
+}
+@media (max-width: 640px) {
+  .ws-topnav {
+    padding: var(--space-3) var(--space-4);
+    margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-3);
+    /* breadcrumb + overflow button fit one row; no wrap needed anymore */
+    flex-wrap: nowrap;
+  }
+}
+
+/* Section nav: inline links on desktop, overflow-menu button on mobile. */
+.ws-sectionnav-menu { display: none; position: relative; flex: 0 0 auto; }
+@media (max-width: 640px) {
+  .ws-sectionnav-inline { display: none; }
+  .ws-sectionnav-menu { display: block; }
+}
+.ws-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.25rem; height: var(--control-h); padding: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--fg); cursor: pointer;
+}
+.ws-iconbtn:hover { background: var(--card-hover); }
+.ws-menu {
+  position: absolute; right: 0; top: calc(100% + 0.4rem); min-width: 180px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+  padding: var(--space-1); z-index: var(--z-dropdown);
+}
+.ws-menu__item {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  color: var(--fg); text-decoration: none; font-size: var(--fs-sm); white-space: nowrap;
+}
+.ws-menu__item:hover { background: var(--card-hover); }
+.ws-menu__item.is-active { color: var(--accent); background: var(--accent-soft); }
+.ws-menu__item svg { color: var(--muted); }
+.ws-menu__item.is-active svg { color: var(--accent); }
+
 /* Linked-app switcher (Finance ⇄ Budget, Location ⇄ Commute). Lives inline in
    the PageHeader actions row, left of Refresh — compact pills, no own row. */
 .ws-appgroup { gap: var(--space-1); }
@@ -171,6 +227,30 @@ label {
 .pill.ok { background: color-mix(in srgb, #16a34a 18%, transparent); color: #16a34a; }
 .pill.behind { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
 .pill.neutral { background: var(--card); color: var(--muted); border: 1px solid var(--border); }
+/* Trust-state badges for the suggested/confirmed species lists. "new" = an
+   unacknowledged first appearance (brand-new yard bird); "auto" = auto-confirm
+   armed. Calm tints from the brand accent — never status hues, so they don't
+   read as good/bad. */
+.pill.new { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.pill.auto { background: var(--card); color: var(--muted); border: 1px dashed var(--border); }
+
+/* Birds trust model: new-arrival badge + per-species confirm/mute icon buttons. */
+.bird-badge { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.15rem; height: 1.15rem; padding: 0 0.3rem; border-radius: 999px;
+  background: var(--accent); color: var(--accent-fg); font-size: 0.7rem; font-weight: 700; }
+.bird-act { display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; border-radius: 0.5rem; border: 1px solid var(--border);
+  background: var(--card); cursor: pointer; flex: none; }
+.bird-act:disabled { opacity: 0.5; cursor: default; }
+.bird-act.ok { color: var(--ok); }
+.bird-act.ok:hover:not(:disabled) { background: var(--ok-soft); border-color: var(--ok); }
+.bird-act.danger { color: var(--danger); }
+.bird-act.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+/* Small removable chip (e.g. the selected-day filter on the activity chart). */
+.chip { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.78rem; font-weight: 500;
+  padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--fg); cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
 
 /* Tab strip (Plan | Projection). */
 .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
@@ -184,7 +264,16 @@ label {
 .sec-h { margin: 0 0 0.6rem; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* Compact numeric input used in the edit form and simulator controls. */
-.num-in { width: 100%; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.9rem; }
+.num-in { width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); font-size: 0.9rem; font-family: inherit; }
+.num-in:hover { border-color: var(--border-strong); }
+.num-in:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Real select styling: drop the native OS chrome for a custom caret. */
+select.num-in {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  padding-right: 1.9rem;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23999999' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat; background-position: right 0.55rem center; background-size: 1rem;
+}
 
 /* Range slider — themed, used by the simulator. */
 input[type="range"].slider { width: 100%; accent-color: var(--accent); }
@@ -359,6 +448,8 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.btn.danger { color: var(--danger); border-color: var(--danger); }
+.btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
 .btn.sm { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 

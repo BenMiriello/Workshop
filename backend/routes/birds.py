@@ -153,6 +153,37 @@ async def analyze(audio: UploadFile, station: str = Form(""),
     return {"ok": True, **result}
 
 
+@router.get("/analyze/settings")
+async def get_analyze_settings():
+    """Smart-detection tuning (confidence floor, range-filter strictness, new-
+    species consensus). Drives how aggressively false positives are suppressed."""
+    return {"settings": birds_analyze.smart_settings()}
+
+
+@router.post("/analyze/settings")
+async def set_analyze_settings(min_conf: float = Form(None),
+                               sensitivity: float = Form(None),
+                               sf_thresh: float = Form(None),
+                               new_species_hits: int = Form(None),
+                               prior_floor: float = Form(None),
+                               trust_radius_km: float = Form(None)):
+    patch = {"min_conf": min_conf, "sensitivity": sensitivity,
+             "sf_thresh": sf_thresh, "new_species_hits": new_species_hits,
+             "prior_floor": prior_floor, "trust_radius_km": trust_radius_km}
+    return {"settings": birds_analyze.update_smart_settings(
+        {k: v for k, v in patch.items() if v is not None})}
+
+
+@router.post("/analyze/recompute")
+async def recompute_analyze(sf_thresh: float = Form(None)):
+    """Re-apply the range filter to already-stored detections (re-score by each
+    detection's place + time). Hides impossible species retroactively. Reversible."""
+    try:
+        return birds_analyze.recompute_history(sf_thresh)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"recompute failed: {e}")
+
+
 @router.get("/analyze/recent")
 async def analyze_recent(station: str, limit: int = Query(100, ge=1, le=500),
                          since: str | None = None, include_nonbird: bool = False):
@@ -260,24 +291,160 @@ async def location_merge(src: int = Form(...), dst: int = Form(...)):
 
 
 @router.get("/location/summary")
-async def location_summary_ep(location_id: int, include_nonbird: bool = False):
-    return birds_analyze.location_summary(location_id, include_nonbird)
+async def location_summary_ep(location_id: int, include_nonbird: bool = False,
+                              status: str | None = None):
+    return birds_analyze.location_summary(location_id, include_nonbird, status)
 
 
 @router.get("/location/species")
-async def location_species_ep(location_id: int, include_nonbird: bool = False):
-    return {"location_id": location_id, "species": birds_analyze.location_species(location_id, include_nonbird)}
+async def location_species_ep(location_id: int, include_nonbird: bool = False,
+                              status: str | None = None):
+    return {"location_id": location_id,
+            "species": birds_analyze.location_species(location_id, include_nonbird, status)}
 
 
 @router.get("/location/activity")
-async def location_activity_ep(location_id: int, include_nonbird: bool = False):
-    return {"location_id": location_id, **birds_analyze.location_activity(location_id, include_nonbird)}
+async def location_activity_ep(location_id: int, include_nonbird: bool = False,
+                               status: str | None = None):
+    return {"location_id": location_id,
+            **birds_analyze.location_activity(location_id, include_nonbird, status)}
 
 
 @router.get("/bird")
 async def bird_detail_ep(sci: str, location_id: int | None = None,
-                         device: str | None = None, days: int = 0):
-    return birds_analyze.bird_detail(sci, location_id, device, days)
+                         device: str | None = None, days: int = 0,
+                         status: str | None = None):
+    return birds_analyze.bird_detail(sci, location_id, device, days, status)
+
+
+# --- Recordings: save the audio of detections, under per-bird rules + a budget --
+
+@router.get("/recordings/settings")
+async def recordings_settings_get():
+    return {"settings": birds_analyze.rec_settings()}
+
+
+@router.post("/recordings/settings")
+async def recordings_settings_set(rec_storage_mb: int = Form(None),
+                                  rec_when_full: str = Form(None),
+                                  rec_save: bool = Form(None)):
+    patch = {"rec_storage_mb": rec_storage_mb, "rec_when_full": rec_when_full,
+             "rec_save": rec_save}
+    return {"settings": birds_analyze.update_rec_settings(
+        {k: v for k, v in patch.items() if v is not None})}
+
+
+@router.get("/recordings/status")
+async def recordings_status_ep():
+    return birds_analyze.recordings_status()
+
+
+@router.get("/recordings")
+async def recordings_list_ep(sci: str | None = None, location_id: int | None = None,
+                             pinned: bool | None = None,
+                             limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    return birds_analyze.list_recordings(sci, location_id, pinned, limit, offset)
+
+
+@router.get("/recordings/{rec_id}/audio")
+async def recordings_audio_ep(rec_id: int):
+    """Stream a saved clip. PRIVATE only — clips never cross the publish boundary."""
+    path = birds_analyze.recording_path(rec_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="recording not found")
+    return FileResponse(str(path), media_type="audio/mpeg", filename=path.name)
+
+
+@router.post("/recordings/{rec_id}/pin")
+async def recordings_pin_ep(rec_id: int, pinned: bool = Form(...)):
+    return birds_analyze.pin_recording(rec_id, pinned)
+
+
+@router.delete("/recordings/{rec_id}")
+async def recordings_delete_ep(rec_id: int):
+    return birds_analyze.delete_recording(rec_id)
+
+
+@router.delete("/recordings")
+async def recordings_clear_ep(sci: str):
+    return birds_analyze.clear_recordings(sci)
+
+
+@router.post("/recordings/reconcile")
+async def recordings_reconcile_ep():
+    return birds_analyze.reconcile_recordings()
+
+
+@router.get("/species/recording")
+async def species_recording_get(sci: str):
+    return {"save_mode": birds_analyze.get_species_save_mode(sci)}
+
+
+@router.post("/species/recording")
+async def species_recording_set(sci: str = Form(...), save_mode: str = Form(...)):
+    return birds_analyze.set_species_save_mode(sci, save_mode)
+
+
+# --- Trust model (suggested / confirmed / rejected) -------------------------
+
+def _ids(raw: str) -> list[int]:
+    return [int(x) for x in (raw or "").split(",") if x.strip().isdigit()]
+
+
+@router.get("/suggestions")
+async def suggestions_ep(limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
+                         include_nonbird: bool = False):
+    return birds_analyze.suggestions(limit, offset, include_nonbird)
+
+
+@router.get("/new-count")
+async def new_count_ep():
+    return {"new_count": birds_analyze.new_arrival_count()}
+
+
+@router.get("/species-events")
+async def species_events_ep(sci: str, location_id: int | None = None,
+                            status: str | None = None, limit: int = Query(50, ge=1, le=200)):
+    return {"events": birds_analyze.species_events(sci, location_id, status, limit)}
+
+
+@router.post("/confirm")
+async def confirm_ep(ids: str = Form(...)):
+    return birds_analyze.confirm_detections(_ids(ids))
+
+
+@router.post("/reject")
+async def reject_ep(ids: str = Form(...)):
+    return birds_analyze.reject_detections(_ids(ids))
+
+
+@router.post("/detection/status")
+async def detection_status_ep(id: int = Form(...), status: str = Form(...)):
+    return birds_analyze.set_detection_status(id, status)
+
+
+@router.post("/species/review")
+async def species_review_ep(sci: str = Form(...), lat: str = Form(""), lon: str = Form(""),
+                            common: str = Form("")):
+    return birds_analyze.mark_species_reviewed(sci, _opt_float(lat), _opt_float(lon), common)
+
+
+@router.post("/species/auto")
+async def species_auto_ep(sci: str = Form(...), lat: float = Form(...), lon: float = Form(...),
+                          on: bool = Form(...), common: str = Form("")):
+    return birds_analyze.set_species_auto(sci, lat, lon, on, common)
+
+
+@router.post("/species/mute")
+async def species_mute_ep(sci: str = Form(...), lat: float = Form(...), lon: float = Form(...),
+                          common: str = Form("")):
+    return birds_analyze.mute_species(sci, lat, lon, common)
+
+
+@router.post("/species/unmute")
+async def species_unmute_ep(sci: str = Form(...), lat: float = Form(...), lon: float = Form(...),
+                            common: str = Form("")):
+    return birds_analyze.unmute_species(sci, lat, lon, common)
 
 
 @router.get("/home")

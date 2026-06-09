@@ -1,15 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
-  Bird, Mic, Square, List, Sunrise, TrendingUp, Star, Radio, Loader2,
+  Bird, Mic, Square, List, Star, Radio, Loader2,
   SlidersHorizontal, Smartphone, AlertTriangle, X,
 } from "lucide-react";
+import { Segmented } from "../../ui";
 import { useRecorder } from "./birds/recorder";
 import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
 import { useShowNonBird, nonBirdQuery } from "./birds/settings";
-import { API, pct, hh, jget, Stat, StatGrid, Chart, BirdThumb, SpeciesLink, CHART_SERIES } from "./birds/ui";
+import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
+import { RecordingsBanner } from "./birds/recordings";
+import SpeciesRow from "./birds/SpeciesRow";
+import ActivityCard from "./birds/ActivityCard";
 
 // Yard Birds home. Dynamic across sources: the always-on yard (Pi) plus every
 // device-created location. Whichever source you mark home is shown by default.
@@ -65,6 +69,9 @@ export default function Birds() {
           </Link>
         )}
       </div>
+
+      {/* Storage warning/error banner — present only when recording needs attention. */}
+      {!PUBLIC && <RecordingsBanner />}
 
       {/* Actions */}
       {!PUBLIC && (
@@ -271,22 +278,31 @@ type Norm = {
   daily: { date: string; count: number }[];
   hourly: { hour: number; count: number }[];
   speciesList: { scientific_name: string; common_name: string; count: number; max_conf: number; days_seen?: number; last_date?: string }[];
+  lat?: number | null; lon?: number | null;
 };
+
+type TrustStatus = "confirmed" | "suggested" | "rejected";
 
 function Dashboard({ source, nb }: { source: Source; nb: string }) {
   const [d, setD] = useState<Norm | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [status, setStatus] = useState<TrustStatus>("confirmed");
+  const [newCount, setNewCount] = useState(0);
+  const st = `&status=${status}`;
 
   const load = useCallback(() => {
     if (source.kind === "loc" && source.id) {
       const id = source.id;
       Promise.all([
+        // Stats + activity always reflect real (confirmed) data; only the
+        // species list below is re-filtered by the chosen status.
         jget<any>(`/location/summary?location_id=${id}${nb}`),
         jget<any>(`/location/activity?location_id=${id}${nb}`),
-        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}`),
+        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}${st}`),
       ]).then(([s, a, sp]) => setD({
         species: s.species, detections: s.detections, today: s.today, active_days: s.active_days,
         last: s.last_detection, daily: a.daily, hourly: a.hourly, speciesList: sp.species,
+        lat: s.lat, lon: s.lon,
       })).catch((e) => setErr(String(e)));
     } else {
       Promise.all([
@@ -298,22 +314,18 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
         species: s.species_count, detections: s.total_detections, today: s.today?.detections || 0,
         active_days: s.active_days || 0,
         last: s.last_detection ? { common_name: s.last_detection.common_name, confidence: s.last_detection.confidence, at: s.last_detection.time } : null,
-        daily: dd.daily, hourly: h.hourly, speciesList: sp.species,
+        daily: dd.daily, hourly: h.hourly, speciesList: sp.species, lat: null, lon: null,
       })).catch((e) => setErr(String(e)));
     }
-  }, [source.kind, source.id, nb]);
+    jget<{ new_count: number }>(`/new-count`).then((r) => setNewCount(r.new_count)).catch(() => {});
+  }, [source.kind, source.id, nb, st]);
 
   useEffect(() => { setD(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
 
-  const peak = useMemo(() => {
-    if (!d?.hourly?.length) return null;
-    const m = d.hourly.reduce((a, b) => (b.count > a.count ? b : a), d.hourly[0]);
-    return m.count > 0 ? m : null;
-  }, [d]);
-
   if (err && !d) return <p className="error">Could not load: {err}</p>;
   if (!d) return <p className="muted">Loading…</p>;
-  const locId = source.kind === "loc" ? source.id : undefined;
+  const isLoc = source.kind === "loc";
+  const locId = isLoc ? source.id : undefined;
 
   return (
     <>
@@ -329,40 +341,76 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
         </p>
       )}
 
-      {d.daily.length > 0 && (
-        <section className="card" style={card}>
-          <h3 style={h3}><TrendingUp size={17} /> Detections per day</h3>
-          <Chart data={d.daily} x="date" fill={CHART_SERIES[1]} xfmt={(x: string) => x.slice(5)} />
-        </section>
+      {(d.daily.length > 0 || d.hourly.some((h) => h.count > 0)) && (
+        <ActivityCard daily={d.daily} hourly={d.hourly} />
       )}
-      <section className="card" style={card}>
-        <h3 style={h3}><Sunrise size={17} /> Activity by hour
-          {peak && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}
-        </h3>
-        <Chart data={d.hourly} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />
-      </section>
 
       <section className="card" style={card}>
         <h3 style={h3}>Species ({d.speciesList.length})</h3>
-        {d.speciesList.length === 0 && <p className="muted">Nothing yet.</p>}
+        {isLoc ? (
+          <StatusFilter status={status} setStatus={setStatus} newCount={newCount} />
+        ) : null}
+        {isLoc && status === "suggested" && (
+          <p className="muted" style={{ fontSize: ".8rem", margin: "0 0 .6rem" }}>
+            Birds heard here but not yet vouched for. Tap a row to inspect its
+            detections; confirm the real ones (future detections auto-confirm).
+            No need to decide now — looking is enough.
+          </p>
+        )}
+        {d.speciesList.length === 0 && (
+          <p className="muted">
+            {!isLoc ? "Nothing yet."
+              : status === "confirmed" ? "Nothing confirmed yet — check Suggested to review what's been heard."
+              : status === "suggested" ? "No suggestions right now." : "Nothing rejected."}
+          </p>
+        )}
         <div style={{ display: "flex", flexDirection: "column" }}>
-          {d.speciesList.map((s) => (
-            <SpeciesLink key={s.scientific_name} sci={s.scientific_name} locationId={locId}>
-              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
-                <BirdThumb sci={s.scientific_name} common={s.common_name} />
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span style={{ display: "block" }}>{s.common_name}</span>
-                  <span className="muted" style={{ fontStyle: "italic", fontSize: ".78rem" }}>{s.scientific_name}</span>
-                </span>
-                <span className="muted" style={{ fontSize: ".8rem", textAlign: "right" }}>
-                  {s.count}×<br />best {pct(s.max_conf)}
-                </span>
-              </div>
-            </SpeciesLink>
-          ))}
+          {isLoc
+            ? d.speciesList.map((s) => (
+                <SpeciesRow key={s.scientific_name} s={s} locId={locId} status={status}
+                  lat={d.lat} lon={d.lon} onChanged={load} />
+              ))
+            : d.speciesList.map((s) => (
+                <SpeciesLink key={s.scientific_name} sci={s.scientific_name}>
+                  <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
+                    <BirdThumb sci={s.scientific_name} common={s.common_name} />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block" }}>{s.common_name}</span>
+                      <span className="muted" style={{ fontStyle: "italic", fontSize: ".78rem" }}>{s.scientific_name}</span>
+                    </span>
+                    <span className="muted" style={{ fontSize: ".8rem", textAlign: "right" }}>{s.count}×<br />best {pct(s.max_conf)}</span>
+                  </div>
+                </SpeciesLink>
+              ))}
         </div>
       </section>
     </>
+  );
+}
+
+// Shared trust-status switch (Confirmed / Suggested / Rejected) with the new-
+// arrival badge on Suggested. Used on the dashboard and the location page.
+export function StatusFilter({ status, setStatus, newCount }: {
+  status: TrustStatus; setStatus: (s: TrustStatus) => void; newCount: number;
+}) {
+  return (
+    <div style={{ marginBottom: ".7rem" }}>
+      <Segmented<TrustStatus>
+        ariaLabel="Detection status"
+        value={status}
+        onChange={setStatus}
+        options={[
+          { value: "confirmed", label: "Confirmed" },
+          { value: "suggested", label: (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
+              Suggested
+              {newCount > 0 && <span className="bird-badge">{newCount}</span>}
+            </span>
+          ) },
+          { value: "rejected", label: "Rejected" },
+        ]}
+      />
+    </div>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { SlidersHorizontal, Bird, Filter, Target, Check, History } from "lucide-react";
+import { Link } from "react-router-dom";
+import { SlidersHorizontal, Bird, Filter, Target, Check, History, Mic, HardDrive } from "lucide-react";
 import { useShowNonBird } from "./settings";
 import { Toggle, Button, Segmented } from "../../../ui";
 import { API, pct } from "./ui";
@@ -25,6 +26,8 @@ export default function BirdSettings() {
       </h2>
 
       <AccuracySettings />
+
+      <RecordingSettings />
 
       <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
         <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
@@ -94,6 +97,55 @@ function presetKey(v: number): RangeKey {
     Math.abs(p.value - v) < Math.abs(best.value - v) ? p : best, RANGE_PRESETS[1]).key;
 }
 const presetValue = (k: RangeKey) => RANGE_PRESETS.find((p) => p.key === k)!.value;
+
+// Recordings: the app-wide default for whether detection audio is SAVED. The mic
+// always analyzes; this only controls keeping the clip. Per-bird overrides
+// (Always / Never) live on each bird's page; storage + saved clips are managed on
+// the Recordings page. A single boolean → commit on change.
+function RecordingSettings() {
+  const [save, setSave] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/recordings/settings`).then((r) => r.json())
+      .then((d) => setSave(!!d.settings.rec_save)).catch(() => {});
+  }, []);
+
+  const toggle = useCallback((v: boolean) => {
+    setSave(v); // optimistic
+    const fd = new FormData(); fd.append("rec_save", String(v));
+    fetch(`${API}/recordings/settings`, { method: "POST", body: fd })
+      .then((r) => r.json())
+      .then((d) => setSave(!!d.settings.rec_save))
+      .then(() => window.dispatchEvent(new CustomEvent("bird-settings-change")))
+      .catch(() => {});
+  }, []);
+
+  if (save == null) return null;
+  return (
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
+        <Mic size={17} strokeWidth={1.8} /> Recordings
+      </h3>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: ".7rem", cursor: "pointer" }}>
+        <span style={{ paddingTop: ".15rem" }}><Toggle checked={save} onChange={toggle} /></span>
+        <span>
+          <span style={{ fontWeight: 500 }}>Save recordings of detections</span>
+          <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
+            {save
+              ? "Every bird detection's audio clip is saved by default. Set individual birds to Never on their page to skip them."
+              : "Audio clips are not saved by default. Turn this on to save them all, or set individual birds to Always on their page."}
+          </span>
+        </span>
+      </label>
+      <p className="muted" style={{ fontSize: ".82rem", margin: ".9rem 0 0", display: "flex", alignItems: "center", gap: ".4rem" }}>
+        <HardDrive size={14} />
+        <Link to="/apps/birds/recordings" style={{ color: "var(--accent)", textDecoration: "none" }}>
+          Manage storage &amp; saved clips
+        </Link>
+      </p>
+    </section>
+  );
+}
 
 // Detection accuracy: the knobs that stop BirdNET reporting birds it never heard.
 // These are config writes, so they commit on an explicit Save (design rule 7).

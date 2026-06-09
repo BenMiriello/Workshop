@@ -44,11 +44,15 @@ export function ChartTooltip({
   payload,
   label,
   format,
+  showName,
 }: {
   active?: boolean;
-  payload?: Array<{ value?: number | string; name?: string; color?: string }>;
+  payload?: Array<{ value?: number | string | number[]; name?: ReactNode; color?: string }>;
   label?: ReactNode;
-  format?: (value: number | string) => ReactNode;
+  format?: (value: number | string | number[]) => ReactNode;
+  // Show each series' name beside its value (multi-series charts). Single-series
+  // charts (e.g. a lone bar) leave this off — the value alone is unambiguous.
+  showName?: boolean;
 }) {
   if (!active || !payload || payload.length === 0) return null;
   return (
@@ -56,7 +60,10 @@ export function ChartTooltip({
       {label != null && <div className="ws-chart-tooltip__label">{label}</div>}
       {payload.map((p, i) => (
         <div key={i} className="ws-chart-tooltip__val" style={{ color: p.color }}>
-          {p.value != null ? (format ? format(p.value) : p.value) : "—"}
+          {showName && p.name != null && (
+            <span className="ws-chart-tooltip__name">{p.name}</span>
+          )}
+          <span>{p.value != null ? (format ? format(p.value) : String(p.value)) : "—"}</span>
         </div>
       ))}
     </div>

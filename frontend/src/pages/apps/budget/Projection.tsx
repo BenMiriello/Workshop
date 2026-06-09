@@ -4,7 +4,7 @@ import {
   ReferenceArea, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import type { Budget } from "../Budget";
-import { CHART_SERIES, ChartFrame } from "../../../ui";
+import { CHART_SERIES, ChartFrame, ChartTooltip } from "../../../ui";
 
 // Chart series colors — the categorical suite (brand violet first), never the
 // status hues, so a trending line is never misread as good/bad. See ui/chart.
@@ -313,11 +313,21 @@ export default function Projection({ budget }: { budget: Budget }) {
               <XAxis dataKey="date" ticks={yearTicks} tick={{ fontSize: 11, fill: "var(--muted)" }} interval="preserveStartEnd" />
               <YAxis tickFormatter={(v) => compact(v as number)} tick={{ fontSize: 11, fill: "var(--muted)" }} width={48} />
               <Tooltip
-                contentStyle={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-                formatter={(val: any, name: any) => {
-                  if (name === "range") return [`${usd0((val as number[])[0])} – ${usd0((val as number[])[1])}`, "Net worth range"];
-                  return [usd0(val as number), String(name)];
-                }}
+                isAnimationActive={false}
+                content={({ active, payload, label }: any) => (
+                  <ChartTooltip
+                    active={active}
+                    label={label}
+                    showName
+                    payload={(payload ?? []).map((p: any) => ({
+                      ...p,
+                      name: p.name === "range" ? "Net worth range" : p.name,
+                    }))}
+                    format={(v) =>
+                      Array.isArray(v) ? `${usd0(v[0])} – ${usd0(v[1])}` : usd0(v as number)
+                    }
+                  />
+                )}
               />
               {/* Employment-gap shaded region */}
               {params.gapStart >= 0 && params.gapLength > 0 && gapStartDate && gapEndDate && (
