@@ -252,6 +252,34 @@ label {
   background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--fg); cursor: pointer; }
 .chip:hover { border-color: var(--accent); }
 
+/* Activity day-scope calendar popover. Only days with recording activity are
+   selectable; the rest are greyed + disabled. Calm tokens, no status hues. */
+.bird-cal {
+  position: absolute; top: calc(100% + 0.4rem); left: 0; z-index: var(--z-dropdown);
+  width: 15rem; padding: 0.6rem;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
+}
+.bird-cal__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+.bird-cal__title { font-size: 0.82rem; font-weight: 600; }
+.bird-cal__nav {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--card); color: var(--fg); cursor: pointer;
+}
+.bird-cal__nav:hover:not(:disabled) { border-color: var(--accent); }
+.bird-cal__nav:disabled { opacity: 0.4; cursor: default; }
+.bird-cal__grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.bird-cal__dow { font-size: 0.62rem; color: var(--muted); text-align: center; padding: 0.15rem 0; }
+.bird-cal__day {
+  aspect-ratio: 1; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.74rem; border: none; border-radius: var(--radius-sm);
+  background: transparent; color: var(--fg); cursor: pointer;
+}
+.bird-cal__day:hover:not(:disabled) { background: var(--card-hover); }
+.bird-cal__day:disabled { color: var(--muted); opacity: 0.3; cursor: default; }
+.bird-cal__day.is-selected { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
 /* Tab strip (Plan | Projection). */
 .tabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--border); margin-bottom: 1.25rem; }
 .tabs button {

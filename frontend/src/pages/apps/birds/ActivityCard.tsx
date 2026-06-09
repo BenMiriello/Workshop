@@ -1,19 +1,26 @@
-import { useMemo, useState } from "react";
-import { Sunrise, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Sunrise, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
 import { Segmented } from "../../../ui";
 import { hh, Chart, CHART_SERIES } from "./ui";
 
 // One Activity card with two views you switch between (not two separate cards):
 //   Per day      — detections per calendar day; click a bar to drill into that
 //                  day's times-of-day.
-//   Times of day — the 24-hour histogram. Defaults to All days combined (where
-//                  the most active times show); drilling into a day from the Per
-//                  day chart scopes it to that day, with a chip to clear back.
+//   Times of day — the 24-hour histogram. Scoped by a second toggle: All days
+//                  (everything combined) or a single day picked from a calendar
+//                  where only days WITH activity are selectable. Drilling in from
+//                  a Per-day bar selects that day here.
 // Reused on the home dashboard, location pages, and the species page.
 
 type Day = { date: string; count: number; hourly?: number[] };
 type Hour = { hour: number; count: number };
 type View = "day" | "hour";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const pad = (n: number) => String(n).padStart(2, "0");
+// "YYYY-MM-DD" -> a comparable month index (year*12 + month), no Date/timezone.
+const monthIdx = (date: string) => { const [y, m] = date.split("-").map(Number); return y * 12 + (m - 1); };
+const fmtDay = (date: string) => { const [, m, d] = date.split("-").map(Number); return `${MONTHS[m - 1]} ${d}`; };
 
 export default function ActivityCard({ daily, hourly }: { daily: Day[]; hourly: Hour[] }) {
   const [view, setView] = useState<View>("day");
@@ -21,6 +28,10 @@ export default function ActivityCard({ daily, hourly }: { daily: Day[]; hourly: 
 
   const dailyAsc = useMemo(
     () => [...daily].sort((a, b) => (a.date < b.date ? -1 : 1)), [daily]);
+
+  // The days that actually have activity — the only ones selectable in the picker.
+  const activeDays = useMemo(
+    () => new Set(daily.filter((d) => d.count > 0).map((d) => d.date)), [daily]);
 
   const hourData: Hour[] = useMemo(() => {
     if (day) {
@@ -30,11 +41,6 @@ export default function ActivityCard({ daily, hourly }: { daily: Day[]; hourly: 
     return hourly;
   }, [day, daily, hourly]);
 
-  const peak = useMemo(() => {
-    const m = hourData.reduce((a, b) => (b.count > a.count ? b : a), hourData[0] || { hour: 0, count: 0 });
-    return m && m.count > 0 ? m : null;
-  }, [hourData]);
-
   const drillToDay = (datum: { date?: string; hourly?: number[] }) => {
     if (datum?.date && datum.hourly) { setDay(datum.date); setView("hour"); }
   };
@@ -42,16 +48,14 @@ export default function ActivityCard({ daily, hourly }: { daily: Day[]; hourly: 
   return (
     <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".6rem", flexWrap: "wrap", marginBottom: ".6rem" }}>
-        <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: ".5rem", fontSize: "1rem" }}>
-          <Sunrise size={17} /> Activity
+        <div style={{ display: "flex", alignItems: "center", gap: ".6rem", minWidth: 0 }}>
+          <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: ".5rem", fontSize: "1rem" }}>
+            <Sunrise size={17} /> Activity
+          </h3>
           {view === "hour" && (
-            day
-              ? <button type="button" className="chip" onClick={() => setDay(null)} title="Back to all days">
-                  {day.slice(5)} <X size={12} />
-                </button>
-              : peak ? <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}>· all days · peak {hh(peak.hour)}</span> : null
+            <DayScope day={day} activeDays={activeDays} onAll={() => setDay(null)} onPick={setDay} />
           )}
-        </h3>
+        </div>
         <Segmented<View>
           ariaLabel="Activity view"
           value={view}
@@ -63,10 +67,101 @@ export default function ActivityCard({ daily, hourly }: { daily: Day[]; hourly: 
       {view === "day"
         ? <Chart data={dailyAsc} x="date" fill={CHART_SERIES[1]} xfmt={(x: string) => x.slice(5)} onBarClick={drillToDay} />
         : <Chart data={hourData} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh} />}
-
-      {view === "day" && dailyAsc.length > 1 && (
-        <p className="muted" style={{ fontSize: ".74rem", margin: ".4rem 0 0" }}>Tap a day to see its times of day.</p>
-      )}
     </section>
   );
+}
+
+// All days | <day> toggle. The right side is a calendar trigger, not a plain
+// option: tapping it opens a month picker where only days WITH activity click.
+function DayScope({ day, activeDays, onAll, onPick }: {
+  day: string | null; activeDays: Set<string>; onAll: () => void; onPick: (date: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="bird-dayscope" style={{ position: "relative" }}>
+      <div className="ws-segmented" role="group" aria-label="Activity day scope">
+        <button type="button" aria-pressed={day === null} onClick={() => { setOpen(false); onAll(); }}>
+          All days
+        </button>
+        <button type="button" aria-pressed={day !== null} aria-haspopup="dialog" aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}>
+          {day ? fmtDay(day) : "Today"} <ChevronDown size={13} />
+        </button>
+      </div>
+      {open && (
+        <DayPicker activeDays={activeDays} selected={day}
+          onClose={() => setOpen(false)}
+          onPick={(d) => { onPick(d); setOpen(false); }} />
+      )}
+    </div>
+  );
+}
+
+function DayPicker({ activeDays, selected, onPick, onClose }: {
+  activeDays: Set<string>; selected: string | null; onPick: (date: string) => void; onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const months = useMemo(() => [...activeDays].map(monthIdx).sort((a, b) => a - b), [activeDays]);
+  const minM = months[0] ?? null;
+  const maxM = months[months.length - 1] ?? null;
+  // Open on the selected day's month, else the most recent month with activity.
+  const [cursor, setCursor] = useState(() => (selected ? monthIdx(selected) : maxM) ?? monthIdx(today()));
+
+  // Close on outside click or Escape.
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [onClose]);
+
+  const year = Math.floor(cursor / 12);
+  const month0 = cursor % 12;
+  const firstDow = new Date(year, month0, 1).getDay();
+  const daysInMonth = new Date(year, month0 + 1, 0).getDate();
+  const cells: (string | null)[] = [
+    ...Array(firstDow).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => `${year}-${pad(month0 + 1)}-${pad(i + 1)}`),
+  ];
+
+  return (
+    <div className="bird-cal" ref={ref} role="dialog" aria-label="Pick a day">
+      <div className="bird-cal__head">
+        <button type="button" className="bird-cal__nav" title="Previous month"
+          disabled={minM == null || cursor <= minM} onClick={() => setCursor((c) => c - 1)}>
+          <ChevronLeft size={15} />
+        </button>
+        <span className="bird-cal__title">{MONTHS[month0]} {year}</span>
+        <button type="button" className="bird-cal__nav" title="Next month"
+          disabled={maxM == null || cursor >= maxM} onClick={() => setCursor((c) => c + 1)}>
+          <ChevronRight size={15} />
+        </button>
+      </div>
+      <div className="bird-cal__grid">
+        {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+          <span key={`dow${i}`} className="bird-cal__dow">{d}</span>
+        ))}
+        {cells.map((date, i) => {
+          if (!date) return <span key={`b${i}`} />;
+          const has = activeDays.has(date);
+          const d = Number(date.slice(8));
+          return (
+            <button key={date} type="button" disabled={!has}
+              className={`bird-cal__day${date === selected ? " is-selected" : ""}`}
+              title={has ? fmtDay(date) : "No activity"}
+              onClick={() => onPick(date)}>
+              {d}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Local "today" as YYYY-MM-DD — only a fallback when there's no activity yet.
+function today(): string {
+  const n = new Date();
+  return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
 }
