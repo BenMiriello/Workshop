@@ -16,7 +16,14 @@ import { useBirdInfo } from "./birdinfo";
 
 export const API = "/api/birds";
 export const pct = (c: number) => `${Math.round(c * 100)}%`;
-export const hh = (h: number) => `${String(h).padStart(2, "0")}:00`;
+// "##% confidence" — the wording the species/detection rows use.
+export const conf = (c: number) => `${Math.round(c * 100)}% confidence`;
+// Hour-of-day label in 12-hour am/pm (the app uses 12-hour time everywhere).
+export const hh = (h: number) => {
+  const ap = h < 12 ? "AM" : "PM";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12} ${ap}`;
+};
 
 export async function jget<T>(path: string): Promise<T> {
   const r = await fetch(`${API}${path}`);
@@ -124,10 +131,13 @@ export function BirdThumb({ sci, common, size = 44 }: { sci: string; common: str
 
 // A clickable species row used in species lists; links to the bird page,
 // carrying the location filter when present.
-export function SpeciesLink({ sci, locationId, status, children, style }: {
-  sci: string; locationId?: number | null; status?: string; children: React.ReactNode; style?: React.CSSProperties;
+export function SpeciesLink({ sci, common, locationId, status, children, style }: {
+  sci: string; common?: string; locationId?: number | null; status?: string; children: React.ReactNode; style?: React.CSSProperties;
 }) {
-  const q = `?sci=${encodeURIComponent(sci)}${locationId ? `&location_id=${locationId}` : ""}`
+  // Carry the common name so the species page header shows it instantly, with no
+  // latin-name flash while /bird loads.
+  const q = `?sci=${encodeURIComponent(sci)}${common ? `&common=${encodeURIComponent(common)}` : ""}`
+    + (locationId ? `&location_id=${locationId}` : "")
     + (status && status !== "confirmed" ? `&status=${status}` : "");
   return (
     <Link to={`/apps/birds/bird${q}`} style={{ textDecoration: "none", color: "inherit", ...style }}>

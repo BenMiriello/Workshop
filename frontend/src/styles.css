@@ -246,6 +246,57 @@ label {
 .bird-act.ok:hover:not(:disabled) { background: var(--ok-soft); border-color: var(--ok); }
 .bird-act.danger { color: var(--danger); }
 .bird-act.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); }
+/* Currently-selected status in the per-detection confirmed/suggested/rejected trio. */
+.bird-act.on { background: color-mix(in srgb, var(--accent) 14%, transparent); border-color: var(--accent); color: var(--accent); }
+.bird-act.ok.on { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.bird-act.danger.on { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+
+/* Birds app toolbar: title + Listen + (page filters) + Settings on one row.
+   Button text labels collapse to icon-only when horizontal space runs out. */
+.birds-toolbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: nowrap; margin: 0 0 1rem; }
+.birds-toolbar__title { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 1.4rem;
+  min-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.birds-toolbar .btn { flex: 0 0 auto; }
+/* Inline, text-style filter: the current value reads as plain text behind an
+   icon; clicking opens the option list below it. Not a chunky select control. */
+.birds-inline { position: relative; display: inline-flex; min-width: 0; flex: 0 1 auto; }
+.birds-inline__trigger { display: inline-flex; align-items: center; gap: 0.3rem; min-width: 0;
+  background: none; border: none; cursor: pointer; color: var(--fg); font: inherit; font-size: 0.85rem;
+  padding: 0.25rem 0.1rem; }
+.birds-inline__trigger > svg:first-child { flex: 0 0 auto; color: var(--muted); }
+.birds-inline__trigger:hover { color: var(--accent); }
+.birds-inline__val { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 11rem; }
+.birds-inline__menu { position: absolute; top: 100%; left: 0; z-index: 30; margin: 0.25rem 0 0;
+  padding: 0.25rem; list-style: none; min-width: 11rem; max-width: 18rem; background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+  max-height: 60vh; overflow: auto; }
+.birds-inline__menu button { display: block; width: 100%; text-align: left; background: none; border: none;
+  cursor: pointer; color: var(--fg); font: inherit; font-size: 0.85rem; padding: 0.35rem 0.5rem;
+  border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.birds-inline__menu button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.birds-inline__menu button.is-selected { color: var(--accent); font-weight: 600; }
+.birds-toolbar__end { margin-left: auto; flex: 0 0 auto; }
+@media (max-width: 640px) { .birds-label { display: none; } .birds-inline__val { max-width: 6.5rem; } }
+
+/* Detection row: time + confidence + clickable device/location chips + the
+   re-classify trio. Chips sit inline when wide; on narrow screens the chevron
+   reveals them on their own line. */
+.bird-det-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem;
+  padding: 0.45rem 0; border-top: 1px solid var(--border); }
+.bird-det-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+.bird-det-ctl { display: inline-flex; align-items: center; gap: 0.25rem; margin-left: auto; }
+.bird-det-ctl .bird-act { width: 1.75rem; height: 1.75rem; }
+.bird-chip { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.72rem;
+  padding: 0.12rem 0.45rem; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--card); color: var(--muted); text-decoration: none; cursor: pointer;
+  max-width: 12rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.bird-chip:hover { border-color: var(--accent); color: var(--accent); }
+.bird-det-expand { display: none; }
+@media (max-width: 560px) {
+  .bird-det-row .bird-det-meta { display: none; flex-basis: 100%; }
+  .bird-det-row.is-open .bird-det-meta { display: flex; }
+  .bird-det-expand { display: inline-flex; }
+}
 /* Small removable chip (e.g. the selected-day filter on the activity chart). */
 .chip { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.78rem; font-weight: 500;
   padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid var(--border);
@@ -479,7 +530,7 @@ input[type="range"].grad::-moz-range-thumb {
 .btn.danger { color: var(--danger); border-color: var(--danger); }
 .btn.danger:hover { background: var(--danger-soft); border-color: var(--danger); }
 .btn.sm { font-size: 0.78rem; padding: 0.25rem 0.55rem; }
-.btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+.btn[disabled] { opacity: 0.5; cursor: default; }
 
 /* Segmented choice (adaptive | fixed, view switches). Subtle accent on the
    selected segment - the same restrained idiom as .tabs, never a bright fill. */

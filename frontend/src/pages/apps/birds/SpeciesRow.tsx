@@ -1,5 +1,9 @@
 import { useCallback, useState } from "react";
-import { ChevronDown, ChevronRight, Check, X, RotateCcw, Sparkles, CheckCheck } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, X, RotateCcw, Sparkles } from "lucide-react";
+
+// Auto-confirmed species are shown exactly like confirmed ones; only the hover
+// text distinguishes them, per the operator's request.
+const AUTO_HOVER = "Auto-confirmed due to a separate full confirmation, confidence threshold, and location settings";
 import { pct, jget, apost, BirdThumb, SpeciesLink } from "./ui";
 import { PlayButton } from "./recordings";
 
@@ -78,7 +82,7 @@ export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
     <div style={{ borderTop: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: ".4rem", padding: ".5rem 0" }}>
         {/* whole body navigates to the species page */}
-        <SpeciesLink sci={s.scientific_name} locationId={locId} status={status} style={{ flex: 1, minWidth: 0 }}>
+        <SpeciesLink sci={s.scientific_name} common={s.common_name} locationId={locId} status={status} style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: ".7rem" }}>
             <BirdThumb sci={s.scientific_name} common={s.common_name} />
             <span style={{ flex: 1, minWidth: 0 }}>
@@ -87,13 +91,13 @@ export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
                 {/* What this row IS, not just its name: a brand-new arrival in the
                     Suggested tab, or an auto-confirming species in Confirmed. */}
                 {status === "suggested" && s.is_new && (
-                  <span className="pill new" title="First time at your stations — not yet acknowledged">
+                  <span className="pill new" title="First time at your stations, not yet acknowledged">
                     <Sparkles size={11} /> New
                   </span>
                 )}
-                {status === "confirmed" && s.auto && (
-                  <span className="pill auto" title="Auto-confirmed — new detections here are accepted automatically">
-                    <CheckCheck size={11} /> Auto
+                {status === "confirmed" && (
+                  <span className="pill ok" title={s.auto ? AUTO_HOVER : "Confirmed"}>
+                    <Check size={11} />
                   </span>
                 )}
               </span>
@@ -104,7 +108,7 @@ export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
         </SpeciesLink>
         {/* one calm affirmative on suggested rows; confirmed/rejected stay clean */}
         {status === "suggested" && canAct && (
-          <button type="button" className="bird-act ok" disabled={busy} title="Confirm — a real bird here"
+          <button type="button" className="bird-act ok" disabled={busy} title="Confirm: a real bird here"
             onClick={() => speciesAct("confirm")}><Check size={16} /></button>
         )}
         {/* the ONLY expander */}

@@ -94,7 +94,7 @@ function CardBody({ card }: { card: AppCard }) {
 const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
 
 export default function Apps() {
-  const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null; stale: boolean } | null>(null);
+  const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null } | null>(null);
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
   const [birdStatus, setBirdStatus] = useState<{ species: number; today: number; available: boolean } | null>(null);
   const [locationStatus, setLocationStatus] = useState<{ ageS: number | null; available: boolean } | null>(null);
@@ -107,10 +107,9 @@ export default function Apps() {
       const accountCount = (bal.items || []).reduce((s, it) => s + (it.accounts?.length || 0), 0);
       const entry = status.entries?.["balances"];
       const ageS = entry ? Math.max(0, entry.age_s) : null;
-      const ttlS = entry?.ttl_s ?? 600;
-      setFinanceStatus({ accountCount, ageS, stale: ageS != null && ageS > ttlS });
+      setFinanceStatus({ accountCount, ageS });
     } catch {
-      setFinanceStatus({ accountCount: null, ageS: null, stale: false });
+      setFinanceStatus({ accountCount: null, ageS: null });
     }
   }, []);
 
@@ -174,7 +173,7 @@ export default function Apps() {
             ? { text: "unavailable", tone: "err" }
             : {
                 text: `${financeStatus.accountCount} account${financeStatus.accountCount === 1 ? "" : "s"} · ${financeStatus.ageS != null ? `updated ${fmtAge(financeStatus.ageS)}` : "no data yet"}`,
-                tone: financeStatus.stale ? "warn" : "muted",
+                tone: "muted",
               },
     },
     {
@@ -209,7 +208,13 @@ export default function Apps() {
           ? { text: "loading…", tone: "muted" }
           : !locationStatus.available
             ? { text: "no pings yet", tone: "muted" }
-            : { text: `last ping ${fmtAge(locationStatus.ageS ?? 0)}`, tone: "ok" },
+            : {
+                // A ping age is just info, not health — OwnTracks "significant"
+                // mode only pings on movement, so hours-old while stationary is
+                // normal. Green only when genuinely recent; otherwise neutral.
+                text: `last ping ${fmtAge(locationStatus.ageS ?? 0)}`,
+                tone: (locationStatus.ageS ?? Infinity) < 3600 ? "ok" : "muted",
+              },
     },
     {
       key: "commute",

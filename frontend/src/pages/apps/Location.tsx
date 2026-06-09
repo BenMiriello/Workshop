@@ -30,6 +30,9 @@ type HistoryResp = {
 };
 
 const PAGE_SIZE = 25;
+// The map draws the full recent breadcrumb, not just the first table page.
+// At OwnTracks "significant" density this spans many days; backend caps at 5000.
+const MAP_TRACK_LIMIT = 2000;
 
 const fmtAge = (iso: string) => {
   const ms = Date.now() - Date.parse(iso);
@@ -43,6 +46,7 @@ const fmtAge = (iso: string) => {
 export default function Location() {
   const [latest, setLatest] = useState<LocationRecord | null>(null);
   const [records, setRecords] = useState<LocationRecord[]>([]);
+  const [trackRecords, setTrackRecords] = useState<LocationRecord[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -76,6 +80,18 @@ export default function Location() {
     }
   }, []);
 
+  // The map shows the whole recent breadcrumb, independent of table paging.
+  const loadTrack = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/location/history?limit=${MAP_TRACK_LIMIT}&offset=0`);
+      if (!r.ok) return;
+      const j = (await r.json()) as HistoryResp;
+      setTrackRecords(j.history || []);
+    } catch {
+      /* map just falls back to the table page if this fails */
+    }
+  }, []);
+
   const loadMore = useCallback(async () => {
     setLoading(true);
     try {
@@ -95,24 +111,27 @@ export default function Location() {
   useEffect(() => {
     loadLatest();
     loadFirstPage();
+    loadTrack();
     const t = setInterval(loadLatest, 30_000);
     const tick = setInterval(() => setTick((x) => x + 1), 10_000);
     return () => { clearInterval(t); clearInterval(tick); };
-  }, [loadLatest, loadFirstPage]);
+  }, [loadLatest, loadFirstPage, loadTrack]);
 
   const onClear = async () => {
     if (!confirm("Erase ALL stored location history? This deletes the backend file.")) return;
     try {
       const r = await fetch("/api/location/history", { method: "DELETE" });
       if (!r.ok) throw new Error(await r.text());
-      await Promise.all([loadLatest(), loadFirstPage()]);
+      await Promise.all([loadLatest(), loadFirstPage(), loadTrack()]);
     } catch (e) {
       setErr(String(e));
     }
   };
 
   // Breadcrumb in chronological order (history is newest-first); marker = latest.
-  const track: LngLat[] = records.map((r) => [r.lng, r.lat] as LngLat).reverse();
+  // Use the dedicated larger track fetch; fall back to the table page if empty.
+  const trackSrc = trackRecords.length ? trackRecords : records;
+  const track: LngLat[] = trackSrc.map((r) => [r.lng, r.lat] as LngLat).reverse();
   const marker: LngLat | null = latest ? [latest.lng, latest.lat] : null;
 
   return (
@@ -151,6 +170,13 @@ export default function Location() {
         <div style={{ marginTop: "0.5rem" }}>
           <Map track={track} marker={marker} height={380} />
         </div>
+        <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>
+          {track.length} point{track.length === 1 ? "" : "s"}. The line is a breadcrumb of
+          recorded pings, not continuous tracking — OwnTracks "significant" mode only
+          pings on meaningful movement, so stationary stretches (home, work) leave gaps
+          and the line jumps straight between them. Switch the phone to "move" mode for
+          dense tracking (higher battery use). Nothing is deleted server-side.
+        </p>
       </div>
 
       <div className="card">

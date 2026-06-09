@@ -43,7 +43,7 @@ export default function BirdSettings() {
             <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
               {showNonBird
                 ? "Non-bird classes are shown alongside birds, tagged so you can tell them apart."
-                : "Only birds are shown. Non-bird classes are still detected and stored — turn this on to reveal them."}
+                : "Only birds are shown. Non-bird classes are still detected and stored. Turn this on to reveal them."}
             </span>
           </span>
         </label>
@@ -61,7 +61,7 @@ export default function BirdSettings() {
       </section>
 
       <p className="muted" style={{ fontSize: ".82rem" }}>
-        Detection always runs on everything the microphone hears — this setting only
+        Detection always runs on everything the microphone hears; this setting only
         changes what is displayed, and applies everywhere in the Birds app.
       </p>
     </div>
@@ -204,7 +204,8 @@ function AccuracySettings() {
       </h3>
       <p className="muted" style={{ fontSize: ".82rem", margin: "0 0 1rem" }}>
         How cautious detection is. Stricter settings report fewer birds but make the
-        ones it reports far more trustworthy.
+        ones it reports far more trustworthy. The confidence threshold and location
+        filter below are also what an auto-confirmed species is judged against.
       </p>
 
       <div style={{ display: "grid", gap: "1.1rem" }}>
@@ -226,7 +227,7 @@ function AccuracySettings() {
           <div style={{ fontWeight: 500, marginBottom: ".15rem" }}>Location filter</div>
           <div className="muted" style={{ fontSize: ".78rem", marginBottom: ".55rem" }}>
             Uses your location and the time of year to ignore species that don't
-            occur where you are — the strongest defense against impossible birds.
+            occur where you are. The strongest defense against impossible birds.
           </div>
           <Segmented<RangeKey>
             ariaLabel="Location filter strictness"
@@ -249,7 +250,7 @@ function AccuracySettings() {
             style={{ width: "100%" }} />
           <div className="muted" style={{ fontSize: ".78rem" }}>
             A species never heard here before must be detected this many times in a
-            row before it's recorded — so a single odd blip never becomes a sighting.
+            row before it's recorded, so a single odd blip never becomes a sighting.
             Birds already seen here are recorded immediately.
           </div>
         </div>
@@ -273,7 +274,7 @@ function AccuracySettings() {
         <div className="muted" style={{ fontSize: ".78rem", marginBottom: ".6rem" }}>
           Apply the location filter to everything already recorded, using where and
           when each detection happened. Impossible species are hidden from all stats
-          and lists. Nothing is deleted — running it again can bring them back.
+          and lists. Nothing is deleted; running it again can bring them back.
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
           <Button variant="ghost" onClick={recompute} disabled={recomputing}>
@@ -283,7 +284,7 @@ function AccuracySettings() {
             <span className="muted" style={{ fontSize: ".82rem" }}>
               {recomputed.hidden > 0
                 ? `Hid ${recomputed.hidden} detection${recomputed.hidden === 1 ? "" : "s"} across ${recomputed.species} impossible species.`
-                : "Nothing to hide — all past detections are plausible here."}
+                : "Nothing to hide. All past detections are plausible here."}
             </span>
           )}
         </div>

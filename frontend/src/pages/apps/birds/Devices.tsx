@@ -84,7 +84,7 @@ export default function Devices() {
                   Pinned location
                   <select className="num-in" value={dev.fixed_location_id ?? ""}
                     onChange={(e) => patch(dev, { fixed_location_id: e.target.value })}>
-                    <option value="">— choose a location —</option>
+                    <option value="">Choose a location…</option>
                     {locs.map((L) => <option key={L.id} value={L.id}>{L.name}</option>)}
                   </select>
                 </label>

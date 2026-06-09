@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import {
-  Bird, Mic, Square, List, Star, Radio, Loader2,
-  SlidersHorizontal, Smartphone, AlertTriangle, X,
-} from "lucide-react";
-import { Segmented } from "../../ui";
+import { Mic, Square, Pencil, MapPin, Smartphone, Radio, Loader2, AlertTriangle, X } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
+import BirdsHeader, { InlineSelect } from "./birds/BirdsHeader";
 import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
@@ -15,18 +12,20 @@ import { RecordingsBanner } from "./birds/recordings";
 import SpeciesRow from "./birds/SpeciesRow";
 import ActivityCard from "./birds/ActivityCard";
 
-// Yard Birds home. Dynamic across sources: the always-on yard (Pi) plus every
-// device-created location. Whichever source you mark home is shown by default.
-// Two actions: listen on this device, or browse locations. The live panel (with
-// a Merlin-style spectrogram) appears while this device is listening.
+// Birds home. One page, reshaped by two dropdown filters: which place (the
+// always-on yard, or any device-created location) and which device. The live
+// panel (this device's spectrogram + feed) appears while you're listening; the
+// always-on yard's live feed is viewable on its own.
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
 
 type Loc = { id: number; name: string; detections: number; species: number; devices: string[] };
+type KnownDevice = { token: string; name: string };
 type Source = { key: string; name: string; kind: "yard" | "loc"; id?: number };
 
 export default function Birds() {
   const [params, setParams] = useSearchParams();
   const [locs, setLocs] = useState<Loc[]>([]);
+  const [devices, setDevices] = useState<KnownDevice[]>([]);
   const [home, setHome] = useState<string | null>(null);
   const [yardAvailable, setYardAvailable] = useState(false);
   const [showNonBird] = useShowNonBird();
@@ -36,6 +35,7 @@ export default function Birds() {
   const load = useCallback(() => {
     jget<{ locations: Loc[]; home: string | null }>(`/locations?_=1${nb}`)
       .then((d) => { setLocs(d.locations); setHome(d.home); }).catch(() => {});
+    jget<{ devices: KnownDevice[] }>(`/devices`).then((d) => setDevices(d.devices)).catch(() => {});
     jget<{ available: boolean; total_detections: number }>(`/summary?_=1`)
       .then((s) => setYardAvailable(s.available && s.total_detections > 0)).catch(() => {});
   }, [nb]);
@@ -43,68 +43,59 @@ export default function Birds() {
 
   const sources = useMemo<Source[]>(() => {
     const out: Source[] = [];
-    if (yardAvailable) out.push({ key: "yard", name: "Yard", kind: "yard" });
+    if (yardAvailable) out.push({ key: "yard", name: "Yard (always-on)", kind: "yard" });
     for (const L of locs) out.push({ key: `loc:${L.id}`, name: L.name, kind: "loc", id: L.id });
     return out;
   }, [yardAvailable, locs]);
 
-  // Selected source: explicit ?source=, else home, else first available.
   const selKey = params.get("source") || home || sources[0]?.key || "";
   const selected = sources.find((s) => s.key === selKey) || sources[0] || null;
+  const deviceTok = params.get("device") || "";
 
-  const setHomeSource = useCallback((key: string) => {
-    const fd = new FormData(); fd.append("source", key);
-    fetch(`${API}/home`, { method: "POST", body: fd }).then(() => setHome(key)).catch(() => {});
-  }, []);
+  const setParam = (key: string, val: string) => {
+    const p = new URLSearchParams(params);
+    if (val) p.set(key, val); else p.delete(key);
+    if (key === "source") p.delete("device"); // device filter is per-location
+    setParams(p);
+  };
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem" }}>
-        <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-          <Bird size={24} strokeWidth={1.8} /> Birds
-        </h2>
-        {!PUBLIC && (
-          <Link to="/apps/birds/settings" className="btn sm">
-            <SlidersHorizontal size={15} /> Settings
-          </Link>
+      <BirdsHeader title="Birds">
+        {sources.length > 0 && (
+          <>
+            <InlineSelect
+              ariaLabel="Place"
+              icon={<MapPin size={15} />}
+              value={selected?.key || ""}
+              options={sources.map((s) => ({ value: s.key, label: s.name }))}
+              onChange={(v) => setParam("source", v)}
+            />
+            {selected?.kind === "loc" && (
+              <Link to={`/apps/birds/location?id=${selected.id}`} className="bird-act" title="Edit this place (name, coordinates, devices)">
+                <Pencil size={14} />
+              </Link>
+            )}
+            {selected?.kind === "loc" && devices.length > 1 && (
+              <InlineSelect
+                ariaLabel="Device"
+                icon={<Smartphone size={15} />}
+                value={deviceTok}
+                options={[{ value: "", label: "All devices" }, ...devices.map((dv) => ({ value: dv.token, label: dv.name || "Untitled device" }))]}
+                onChange={(v) => setParam("device", v)}
+              />
+            )}
+          </>
         )}
-      </div>
+      </BirdsHeader>
 
-      {/* Storage warning/error banner — present only when recording needs attention. */}
       {!PUBLIC && <RecordingsBanner />}
 
-      {/* Actions */}
-      {!PUBLIC && (
-        <div style={{ display: "flex", gap: ".5rem", flexWrap: "wrap", margin: ".25rem 0 1rem" }}>
-          <ListenButton />
-          <Link to="/apps/birds/locations" className="btn"><List size={16} /> Locations</Link>
-          <Link to="/apps/birds/devices" className="btn"><Smartphone size={16} /> Devices</Link>
-        </div>
-      )}
-
       {!PUBLIC && (rec.recording || rec.wasListening) && <LivePanel />}
-
-      {/* Source switch (segmented) + a clear "set as home" for the current view */}
-      {sources.length > 1 && (
-        <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-          <div className="choice">
-            {sources.map((s) => (
-              <button key={s.key} className={s.key === selected?.key ? "active" : ""} onClick={() => setParams({ source: s.key })}>
-                {s.kind === "yard" ? <Radio size={11} style={{ verticalAlign: "-1px", marginRight: ".2rem" }} /> : null}
-                {s.name}{s.key === home ? " ★" : ""}
-              </button>
-            ))}
-          </div>
-          {selected && selected.key !== home && (
-            <button className="btn sm" onClick={() => setHomeSource(selected.key)}>
-              <Star size={13} /> Set as home
-            </button>
-          )}
-        </div>
-      )}
+      {!PUBLIC && yardAvailable && <YardLiveFeed nb={nb} />}
 
       {selected
-        ? <Dashboard source={selected} nb={nb} />
+        ? <Dashboard source={selected} nb={nb} device={selected.kind === "loc" ? deviceTok : ""} />
         : !rec.recording && (
           <div className="card" style={{ padding: "1.5rem", textAlign: "center" }}>
             <p className="muted" style={{ margin: 0 }}>
@@ -116,63 +107,7 @@ export default function Birds() {
   );
 }
 
-// --- Listen button + optional "adopt existing device" picker -------------
-type KnownDevice = { token: string; name: string };
-
-function ListenButton() {
-  const rec = useRecorder();
-  const [adopting, setAdopting] = useState(false);
-  const [devices, setDevices] = useState<KnownDevice[] | null>(null);
-
-  if (rec.recording) {
-    return <button className="btn" onClick={rec.stop}><Square size={15} /> Stop listening</button>;
-  }
-  if (rec.wasListening) {
-    return <button className="btn" onClick={rec.start}><Mic size={16} /> Resume listening</button>;
-  }
-
-  const openAdopt = () => {
-    setAdopting(true);
-    if (!devices) {
-      jget<{ devices: KnownDevice[] }>("/devices")
-        .then((r) => setDevices(r.devices.filter((d) => d.token !== rec.device.token)))
-        .catch(() => setDevices([]));
-    }
-  };
-
-  if (adopting) {
-    return (
-      <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center", flexWrap: "wrap" }}>
-        {devices === null
-          ? <Loader2 size={14} className="muted" style={{ animation: "spin 1s linear infinite" }} />
-          : devices.length === 0
-            ? <span className="muted" style={{ fontSize: ".85rem" }}>No other registered devices.</span>
-            : devices.map((d) => (
-                <button key={d.token} className="btn" onClick={() => { rec.adoptDevice(d.token, d.name); setAdopting(false); rec.start(); }}>
-                  <Smartphone size={14} /> {d.name}
-                </button>
-              ))
-        }
-        <button className="btn" onClick={() => setAdopting(false)}><X size={14} /></button>
-      </span>
-    );
-  }
-
-  return (
-    <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center" }}>
-      <button className="btn" onClick={rec.start} disabled={rec.analyzerUp === false}>
-        <Mic size={16} /> Listen on this device
-      </button>
-      {!rec.device.name && (
-        <button className="btn" title="This is a new browser — adopt an existing device?" onClick={openAdopt}>
-          <Smartphone size={14} />
-        </button>
-      )}
-    </span>
-  );
-}
-
-// --- Live panel: spectrogram + now hearing + session species -------------
+// --- Live panel: this device's spectrogram + now hearing + session species ----
 function LivePanel() {
   const rec = useRecorder();
   const [showNonBird] = useShowNonBird();
@@ -210,9 +145,7 @@ function LivePanel() {
           <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
             <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
             {hearing.slice(0, 4).map((d, i) => (
-              <span key={i} className="pill ok">
-                {d.common_name} {pct(d.confidence)}
-              </span>
+              <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
             ))}
           </div>
         ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
@@ -223,7 +156,7 @@ function LivePanel() {
           <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
             {species.map((s) => (
-              <SpeciesLink key={s.scientific_name} sci={s.scientific_name}>
+              <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
                 <span className="pill neutral" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.65, borderStyle: "dashed", cursor: "pointer" }}>
                   {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
                 </span>
@@ -238,9 +171,55 @@ function LivePanel() {
   );
 }
 
-// Shown while listening when this device has no real location to file
-// detections under (adaptive device, GPS denied/unavailable). Picking a place
-// creates the location and pins this device to it so detections start saving.
+// The always-on yard's live feed: the latest detections it is logging right now.
+// No spectrogram (we don't have the yard's audio) — just the rolling list, so you
+// can watch what the house mic is hearing without listening on this device.
+type YardDet = { id: number; time: string; common_name: string; scientific_name: string; confidence: number };
+function t12(t: string): string {
+  const [h, m] = (t || "").split(":").map(Number);
+  if (Number.isNaN(h)) return t;
+  const ap = h < 12 ? "AM" : "PM";
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${ap}`;
+}
+function YardLiveFeed({ nb }: { nb: string }) {
+  const [open, setOpen] = useState(false);
+  const [dets, setDets] = useState<YardDet[]>([]);
+  useEffect(() => {
+    if (!open) return;
+    const load = () => jget<{ detections: YardDet[] }>(`/detections?limit=8${nb}`)
+      .then((d) => setDets(d.detections)).catch(() => {});
+    load();
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [open, nb]);
+
+  return (
+    <section className="card" style={{ padding: ".7rem 1rem", marginBottom: "1rem" }}>
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        style={{ display: "flex", alignItems: "center", gap: ".5rem", width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
+        <Radio size={15} style={{ color: "var(--ok)" }} />
+        <strong style={{ fontSize: ".92rem" }}>Yard live feed</strong>
+        <span className="muted" style={{ fontSize: ".8rem", marginLeft: "auto" }}>{open ? "Hide" : "Show what the always-on mic hears"}</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: ".5rem" }}>
+          {dets.length === 0
+            ? <p className="muted" style={{ fontSize: ".82rem", margin: 0 }}>Nothing in the last few minutes.</p>
+            : dets.map((r) => (
+              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".35rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
+                <span className="mono muted" style={{ minWidth: 78, flexShrink: 0 }}>{t12(r.time)}</span>
+                <SpeciesLink sci={r.scientific_name} common={r.common_name} style={{ flex: 1, minWidth: 0 }}>{r.common_name}</SpeciesLink>
+                <span className="muted" style={{ fontSize: ".78rem" }}>{pct(r.confidence)}</span>
+              </div>
+            ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Shown while listening when this device has no real location to file detections
+// under. Picking a place creates the location and pins this device to it.
 function SetLocationInline() {
   const rec = useRecorder();
   const [busy, setBusy] = useState(false);
@@ -263,7 +242,7 @@ function SetLocationInline() {
       <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".5rem" }}>
         <AlertTriangle size={16} style={{ color: "var(--warn)" }} />
         <span style={{ fontSize: ".88rem" }}>
-          {busy ? "Saving location…" : "No location for this device yet — pick where you are so detections save."}
+          {busy ? "Saving location…" : "No location for this device yet. Pick where you are so detections save."}
         </span>
       </div>
       <AddressPicker onPick={pick} />
@@ -274,35 +253,30 @@ function SetLocationInline() {
 // --- Dashboard: stats + activity + species for any source ----------------
 type Norm = {
   species: number; detections: number; today: number; active_days: number;
-  last: { common_name: string; confidence: number; at: string } | null;
   daily: { date: string; count: number }[];
   hourly: { hour: number; count: number }[];
-  speciesList: { scientific_name: string; common_name: string; count: number; max_conf: number; days_seen?: number; last_date?: string }[];
+  speciesList: { scientific_name: string; common_name: string; count: number; max_conf: number; status?: string; is_new?: boolean; auto?: boolean }[];
   lat?: number | null; lon?: number | null;
 };
+type ListStatus = "active" | "confirmed" | "suggested" | "rejected";
 
-type TrustStatus = "confirmed" | "suggested" | "rejected";
-
-function Dashboard({ source, nb }: { source: Source; nb: string }) {
+function Dashboard({ source, nb, device }: { source: Source; nb: string; device: string }) {
   const [d, setD] = useState<Norm | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [status, setStatus] = useState<TrustStatus>("confirmed");
+  const [status, setStatus] = useState<ListStatus>("active");
   const [newCount, setNewCount] = useState(0);
-  const st = `&status=${status}`;
+  const dev = device ? `&device=${encodeURIComponent(device)}` : "";
 
   const load = useCallback(() => {
     if (source.kind === "loc" && source.id) {
       const id = source.id;
       Promise.all([
-        // Stats + activity always reflect real (confirmed) data; only the
-        // species list below is re-filtered by the chosen status.
-        jget<any>(`/location/summary?location_id=${id}${nb}`),
-        jget<any>(`/location/activity?location_id=${id}${nb}`),
-        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}${st}`),
+        jget<any>(`/location/summary?location_id=${id}${nb}${dev}`),
+        jget<any>(`/location/activity?location_id=${id}${nb}${dev}`),
+        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}${dev}&status=${status}`),
       ]).then(([s, a, sp]) => setD({
         species: s.species, detections: s.detections, today: s.today, active_days: s.active_days,
-        last: s.last_detection, daily: a.daily, hourly: a.hourly, speciesList: sp.species,
-        lat: s.lat, lon: s.lon,
+        daily: a.daily, hourly: a.hourly, speciesList: sp.species, lat: s.lat, lon: s.lon,
       })).catch((e) => setErr(String(e)));
     } else {
       Promise.all([
@@ -313,12 +287,11 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
       ]).then(([s, h, dd, sp]) => setD({
         species: s.species_count, detections: s.total_detections, today: s.today?.detections || 0,
         active_days: s.active_days || 0,
-        last: s.last_detection ? { common_name: s.last_detection.common_name, confidence: s.last_detection.confidence, at: s.last_detection.time } : null,
         daily: dd.daily, hourly: h.hourly, speciesList: sp.species, lat: null, lon: null,
       })).catch((e) => setErr(String(e)));
     }
     jget<{ new_count: number }>(`/new-count`).then((r) => setNewCount(r.new_count)).catch(() => {});
-  }, [source.kind, source.id, nb, st]);
+  }, [source.kind, source.id, nb, dev, status]);
 
   useEffect(() => { setD(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
 
@@ -335,43 +308,43 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
         <Stat label="Today" value={d.today} />
         <Stat label="Active days" value={d.active_days} />
       </StatGrid>
-      {d.last && (
-        <p className="muted" style={{ margin: "0 0 1rem" }}>
-          Last: <strong>{d.last.common_name}</strong> at {d.last.at} ({pct(d.last.confidence)})
-        </p>
-      )}
 
       {(d.daily.length > 0 || d.hourly.some((h) => h.count > 0)) && (
         <ActivityCard daily={d.daily} hourly={d.hourly} />
       )}
 
       <section className="card" style={card}>
-        <h3 style={h3}>Species ({d.speciesList.length})</h3>
-        {isLoc ? (
-          <StatusFilter status={status} setStatus={setStatus} newCount={newCount} />
-        ) : null}
-        {isLoc && status === "suggested" && (
-          <p className="muted" style={{ fontSize: ".8rem", margin: "0 0 .6rem" }}>
-            Birds heard here but not yet vouched for. Tap a row to inspect its
-            detections; confirm the real ones (future detections auto-confirm).
-            No need to decide now — looking is enough.
-          </p>
-        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".6rem", flexWrap: "wrap", marginBottom: ".5rem" }}>
+          <h3 style={{ ...h3, margin: 0 }}>
+            Species ({d.speciesList.length})
+            {isLoc && newCount > 0 && <span className="bird-badge" style={{ marginLeft: ".4rem" }}>{newCount} new</span>}
+          </h3>
+          {isLoc && (
+            <select className="num-in" style={{ width: "auto" }} value={status} onChange={(e) => setStatus(e.target.value as ListStatus)}>
+              <option value="active">All active</option>
+              <option value="confirmed">Confirmed</option>
+              <option value="suggested">Suggested</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          )}
+        </div>
         {d.speciesList.length === 0 && (
           <p className="muted">
             {!isLoc ? "Nothing yet."
-              : status === "confirmed" ? "Nothing confirmed yet — check Suggested to review what's been heard."
-              : status === "suggested" ? "No suggestions right now." : "Nothing rejected."}
+              : status === "suggested" ? "No suggestions right now."
+              : status === "rejected" ? "Nothing rejected."
+              : "Nothing here yet."}
           </p>
         )}
         <div style={{ display: "flex", flexDirection: "column" }}>
           {isLoc
             ? d.speciesList.map((s) => (
-                <SpeciesRow key={s.scientific_name} s={s} locId={locId} status={status}
+                <SpeciesRow key={s.scientific_name} s={s} locId={locId}
+                  status={(s.status as any) || "suggested"}
                   lat={d.lat} lon={d.lon} onChanged={load} />
               ))
             : d.speciesList.map((s) => (
-                <SpeciesLink key={s.scientific_name} sci={s.scientific_name}>
+                <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
                   <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
                     <BirdThumb sci={s.scientific_name} common={s.common_name} />
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -385,32 +358,6 @@ function Dashboard({ source, nb }: { source: Source; nb: string }) {
         </div>
       </section>
     </>
-  );
-}
-
-// Shared trust-status switch (Confirmed / Suggested / Rejected) with the new-
-// arrival badge on Suggested. Used on the dashboard and the location page.
-export function StatusFilter({ status, setStatus, newCount }: {
-  status: TrustStatus; setStatus: (s: TrustStatus) => void; newCount: number;
-}) {
-  return (
-    <div style={{ marginBottom: ".7rem" }}>
-      <Segmented<TrustStatus>
-        ariaLabel="Detection status"
-        value={status}
-        onChange={setStatus}
-        options={[
-          { value: "confirmed", label: "Confirmed" },
-          { value: "suggested", label: (
-            <span style={{ display: "inline-flex", alignItems: "center", gap: ".35rem" }}>
-              Suggested
-              {newCount > 0 && <span className="bird-badge">{newCount}</span>}
-            </span>
-          ) },
-          { value: "rejected", label: "Rejected" },
-        ]}
-      />
-    </div>
   );
 }
 

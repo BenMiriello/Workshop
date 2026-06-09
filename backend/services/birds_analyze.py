@@ -159,6 +159,10 @@ def _status_clause(status: str | None) -> str:
     'all' = no status filter; explicit suggested/rejected for those tabs."""
     if status == "all":
         return ""
+    if status == "_visible":
+        # Everything actually heard (not a dismissed false positive). Used by the
+        # charts/stats, which are NOT subject to the confirmed/suggested tab filter.
+        return " AND status!='rejected'"
     s = status or "confirmed"
     if s not in ("confirmed", "suggested", "rejected"):
         s = "confirmed"
@@ -732,7 +736,7 @@ def species_events(sci: str, location_id: int | None = None,
         loc_names = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
         rec_map = {r["det_id"]: r["id"] for r in c.execute(
             "SELECT id, det_id FROM recordings WHERE scientific_name=?", (sci,)).fetchall()}
-    return [{"id": r["id"], "at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
+    return [{"id": r["id"], "at": _fmt_dt(r["ts"], with_secs=True),
              "confidence": r["confidence"], "device": r["device_name"],
              "status": r["status"], "location": loc_names.get(r["location_id"]),
              "recording_id": rec_map.get(r["id"])}
@@ -996,6 +1000,14 @@ def _local(ts: str) -> datetime:
     return dt.astimezone()
 
 
+def _fmt_dt(ts: str, with_secs: bool = False) -> str:
+    """Local 12-hour display string for the UI, e.g. 'Jun 8, 10:55 PM'. The app
+    shows 12-hour am/pm times everywhere; grouping keys keep using %Y-%m-%d."""
+    lt = _local(ts)
+    t = lt.strftime("%-I:%M:%S %p") if with_secs else lt.strftime("%-I:%M %p")
+    return f"{lt.strftime('%b')} {lt.day}, {t}"
+
+
 def _rows(station: str, include_nonbird: bool = False) -> list[sqlite3.Row]:
     with _conn() as c:
         return c.execute(
@@ -1039,7 +1051,7 @@ def station_summary(station: str, include_nonbird: bool = False) -> dict:
         "last_detection": {
             "common_name": last["common_name"], "scientific_name": last["scientific_name"],
             "confidence": round(last["confidence"], 4),
-            "at": _local(last["ts"]).strftime("%Y-%m-%d %H:%M"),
+            "at": _fmt_dt(last["ts"]),
         },
     }
 
@@ -1105,7 +1117,7 @@ def species_detail(station: str, sci: str) -> dict:
         "scientific_name": sci, "common_name": common, "count": len(rows),
         "hourly": [{"hour": h, "count": hourly[h]} for h in range(24)],
         "daily": [{"date": d, "count": n} for d, n in sorted(daily.items())],
-        "recent": [{"at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
+        "recent": [{"at": _fmt_dt(r["ts"], with_secs=True),
                     "confidence": round(r["confidence"], 4)} for r in rows[-30:][::-1]],
     }
 
@@ -1371,7 +1383,7 @@ def list_recordings(sci: str | None = None, location_id: int | None = None,
     items = [{"id": r["id"], "det_id": r["det_id"],
               "scientific_name": r["scientific_name"], "common_name": r["common_name"],
               "location_id": r["location_id"], "location": r["location_name"],
-              "ts": r["ts"], "at": _local(r["ts"]).strftime("%Y-%m-%d %H:%M:%S"),
+              "ts": r["ts"], "at": _fmt_dt(r["ts"], with_secs=True),
               "bytes": r["bytes"], "duration_s": r["duration_s"], "confidence": r["confidence"],
               "pinned": bool(r["pinned"]),
               "protected": bool(r["pinned"]) or r["scientific_name"] in keepset} for r in rows]
@@ -1617,19 +1629,24 @@ def list_locations(include_nonbird: bool = False) -> dict:
 
 
 def _loc_rows(location_id: int, include_nonbird: bool = False,
-              status: str | None = None) -> list[sqlite3.Row]:
+              status: str | None = None, device: str | None = None) -> list[sqlite3.Row]:
+    q = ("SELECT ts, scientific_name, common_name, confidence "
+         "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird)
+         + _status_clause(status))
+    p: list = [location_id]
+    if device:
+        q += " AND device_token=?"
+        p.append(device)
     with _conn() as c:
-        return c.execute(
-            "SELECT ts, scientific_name, common_name, confidence "
-            "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird)
-            + _status_clause(status) +
-            " ORDER BY ts", (location_id,)).fetchall()
+        return c.execute(q + " ORDER BY ts", p).fetchall()
 
 
 def location_summary(location_id: int, include_nonbird: bool = False,
-                     status: str | None = None) -> dict:
+                     status: str | None = None, device: str | None = None) -> dict:
+    # Stats reflect everything actually heard here (confirmed + suggested), never
+    # the list's status tab - dismissed false positives are the only exclusion.
     loc = get_location(location_id)
-    rows = _loc_rows(location_id, include_nonbird, status)
+    rows = _loc_rows(location_id, include_nonbird, "_visible", device)
     base = {"id": location_id, "name": loc["name"] if loc else None,
             "lat": loc["lat"] if loc else None, "lon": loc["lon"] if loc else None,
             "address": loc["address"] if loc else None,
@@ -1649,36 +1666,100 @@ def location_summary(location_id: int, include_nonbird: bool = False,
         "last_detection": {
             "common_name": last["common_name"], "scientific_name": last["scientific_name"],
             "confidence": round(last["confidence"], 4),
-            "at": _local(last["ts"]).strftime("%Y-%m-%d %H:%M"),
+            "at": _fmt_dt(last["ts"]),
         },
     }
 
 
+def _species_trust(c: sqlite3.Connection, location_id: int,
+                   include_nonbird: bool, device: str | None = None) -> dict[str, str]:
+    """Each species heard at this location mapped to ONE trust status, so a species
+    appears in exactly one bucket (never in both Confirmed and Suggested at once):
+      rejected  - a mute anchor covers the place, or every detection was rejected;
+      confirmed - auto-confirm is armed, or it has any confirmed detection here;
+      suggested - heard, but nothing vouched for it yet.
+    """
+    loc = get_location(location_id)
+    lat = loc["lat"] if loc else None
+    lon = loc["lon"] if loc else None
+    muted: set[str] = set()
+    auto: set[str] = set()
+    if lat is not None and lon is not None:
+        for r in c.execute("SELECT scientific_name, lat, lon, radius_m, trust FROM species_area"):
+            if r["lat"] is None or r["lon"] is None:
+                continue
+            if _haversine_m(lat, lon, r["lat"], r["lon"]) <= (r["radius_m"] or _radius_m(c)):
+                if r["trust"] == "mute":
+                    muted.add(r["scientific_name"])
+                elif r["trust"] == "auto":
+                    auto.add(r["scientific_name"])
+    seen_q = ("SELECT scientific_name, "
+              "SUM(status='confirmed') AS conf, SUM(status!='rejected') AS vis "
+              "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird))
+    seen_p: list = [location_id]
+    if device:
+        seen_q += " AND device_token=?"
+        seen_p.append(device)
+    seen = c.execute(seen_q + " GROUP BY scientific_name", seen_p).fetchall()
+    out: dict[str, str] = {}
+    for r in seen:
+        sci = r["scientific_name"]
+        if sci in muted:
+            out[sci] = "rejected"
+        elif sci in auto or (r["conf"] or 0) > 0:
+            out[sci] = "confirmed"
+        elif (r["vis"] or 0) == 0:
+            out[sci] = "rejected"   # heard, but every detection was dismissed
+        else:
+            out[sci] = "suggested"
+    return out
+
+
 def location_species(location_id: int, include_nonbird: bool = False,
-                     status: str | None = None) -> list[dict]:
-    rows = _loc_rows(location_id, include_nonbird, status)
-    species = _aggregate_species(rows)
-    if not species:
-        return species
-    # Tag each species with its trust state so the list can say WHAT a row is, not
-    # just its name: is_new = an unacknowledged first appearance (the "New" badge);
-    # auto = auto-confirm is armed for it (new detections accepted automatically).
+                     status: str | None = None, device: str | None = None) -> list[dict]:
+    """Species heard at a location, each in exactly one trust bucket. `status`:
+    None/'active' = confirmed + suggested (the default working view), or one of
+    confirmed/suggested/rejected, or 'all'."""
+    want = status if status in ("confirmed", "suggested", "rejected", "all") else "active"
     with _conn() as c:
+        trust = _species_trust(c, location_id, include_nonbird, device)
         new_set = _new_arrival_scinames(c, include_nonbird)
         auto_set = {r["scientific_name"] for r in c.execute(
             "SELECT DISTINCT scientific_name FROM species_area WHERE trust='auto'").fetchall()}
+        # Rejected species count every detection (so the rejected tab shows the
+        # full tally); confirmed/suggested species count only what's still standing.
+        rejected_scis = {s for s, st in trust.items() if st == "rejected"}
+        rows_q = ("SELECT ts, scientific_name, common_name, confidence, status "
+                  "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird))
+        rows_p: list = [location_id]
+        if device:
+            rows_q += " AND device_token=?"
+            rows_p.append(device)
+        rows = c.execute(rows_q + " ORDER BY ts", rows_p).fetchall()
+    keep = [r for r in rows
+            if r["scientific_name"] in rejected_scis or r["status"] != "rejected"]
+    species = _aggregate_species(keep)
     for s in species:
-        s["is_new"] = s["scientific_name"] in new_set
-        s["auto"] = s["scientific_name"] in auto_set
-    # Pin unacknowledged first-time arrivals to the top (same rule as the feed) so
-    # a brand-new yard bird is never buried below familiar high-count species.
-    species.sort(key=lambda s: (0 if s["is_new"] else 1, -s["count"]))
+        sci = s["scientific_name"]
+        s["status"] = trust.get(sci, "suggested")
+        s["is_new"] = sci in new_set and s["status"] == "suggested"
+        s["auto"] = sci in auto_set
+    if want != "all":
+        if want == "active":
+            species = [s for s in species if s["status"] != "rejected"]
+        else:
+            species = [s for s in species if s["status"] == want]
+    # New arrivals pin to the top; then suggested, then by count, so things needing
+    # a look surface above the familiar high-count regulars.
+    rank = {"suggested": 0, "confirmed": 1, "rejected": 2}
+    species.sort(key=lambda s: (0 if s["is_new"] else 1, rank.get(s["status"], 1), -s["count"]))
     return species
 
 
 def location_activity(location_id: int, include_nonbird: bool = False,
-                      status: str | None = None) -> dict:
-    rows = _loc_rows(location_id, include_nonbird, status)
+                      status: str | None = None, device: str | None = None) -> dict:
+    # Activity charts show everything heard, not the list's status tab.
+    rows = _loc_rows(location_id, include_nonbird, "_visible", device)
     return _aggregate_activity(rows)
 
 
@@ -1735,9 +1816,11 @@ def bird_detail(sci: str, location_id: int | None = None,
     its own 24h histogram for the mini-graph), where + on what it was heard, and
     a recent list. Filterable by location, device, date range, and trust status;
     the location and device option lists are always the full set for the species."""
-    # Same display filters as every list (range + live confidence floor + status),
-    # so the species page agrees with the counts that linked to it.
-    flt = _bird_clause(False) + _status_clause(status)
+    # Fetch every detection of the species (range + confidence floor only), then
+    # split in Python: the charts/stats use everything HEARD here (non-rejected,
+    # NOT subject to the status tab), while the detection list below is filtered by
+    # the page's own status control. `device`/`location_id` scope both.
+    flt = _bird_clause(False)
     q = ("SELECT id, ts, common_name, confidence, location_id, device_token, device_name, "
          "occurrence, in_range, status FROM browser_detections WHERE scientific_name=?" + flt)
     params: list = [sci]
@@ -1750,18 +1833,16 @@ def bird_detail(sci: str, location_id: int | None = None,
     with _conn() as c:
         rows = c.execute(q + " ORDER BY ts", params).fetchall()
         loc_names = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
-        # The location/device option lists are always over ALL (shown) detections
-        # of the species (so the filters always offer every place/device to switch
-        # to), while the stats below respect the active filters.
+        # Option lists span every place/device the species was HEARD (non-rejected),
+        # so switching filters always offers them all.
         all_locs = c.execute(
             "SELECT location_id, COUNT(*) n FROM browser_detections "
-            "WHERE scientific_name=? AND location_id IS NOT NULL" + flt +
+            "WHERE scientific_name=? AND location_id IS NOT NULL AND status!='rejected'" + flt +
             " GROUP BY location_id ORDER BY n DESC", (sci,)).fetchall()
         all_devs = c.execute(
             "SELECT device_token, MAX(device_name) name, COUNT(*) n FROM browser_detections "
-            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>''" + flt +
+            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>'' AND status!='rejected'" + flt +
             " GROUP BY device_token ORDER BY n DESC", (sci,)).fetchall()
-        # Save preference + which recent detections have a saved clip (det_id map).
         rec_map = {r["det_id"]: r["id"] for r in c.execute(
             "SELECT id, det_id FROM recordings WHERE scientific_name=?", (sci,)).fetchall()}
         sr = c.execute("SELECT save_mode FROM species_recording WHERE scientific_name=?",
@@ -1774,17 +1855,26 @@ def bird_detail(sci: str, location_id: int | None = None,
         start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days - 1)
         cutoff = start.astimezone(timezone.utc)
 
+    def _after_cutoff(r: sqlite3.Row) -> bool:
+        if cutoff is None:
+            return True
+        dt = datetime.fromisoformat(r["ts"])
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt >= cutoff
+
+    in_range = [r for r in rows if _after_cutoff(r)]
+    # Charts + stats: everything heard (drop dismissed false positives only).
+    heard = [r for r in in_range if r["status"] != "rejected"]
+    # Detection list: filtered by the page's status control (default = all).
+    if status in ("confirmed", "suggested", "rejected"):
+        listed = [r for r in in_range if r["status"] == status]
+    else:
+        listed = in_range
+
     by_day: dict[str, dict] = {}
     hourly_overall = [0] * 24
-    kept = []
-    for r in rows:
-        if cutoff is not None:
-            dt = datetime.fromisoformat(r["ts"])
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            if dt < cutoff:
-                continue
-        kept.append(r)
+    for r in heard:
         lt = _local(r["ts"])
         d = lt.strftime("%Y-%m-%d")
         day = by_day.setdefault(d, {"date": d, "count": 0, "hourly": [0] * 24})
@@ -1792,11 +1882,11 @@ def bird_detail(sci: str, location_id: int | None = None,
         day["hourly"][lt.hour] += 1
         hourly_overall[lt.hour] += 1
 
-    confs = [r["confidence"] for r in kept]
-    occs = [r["occurrence"] for r in kept if r["occurrence"] is not None]
-    common = (kept[-1]["common_name"] if kept else (rows[-1]["common_name"] if rows else sci))
+    confs = [r["confidence"] for r in heard]
+    occs = [r["occurrence"] for r in heard if r["occurrence"] is not None]
+    common = (heard[-1]["common_name"] if heard else (rows[-1]["common_name"] if rows else sci))
     return {
-        "scientific_name": sci, "common_name": common, "count": len(kept),
+        "scientific_name": sci, "common_name": common, "count": len(heard),
         "first_date": min(by_day) if by_day else None,
         "last_date": max(by_day) if by_day else None,
         "days_seen": len(by_day),
@@ -1814,11 +1904,13 @@ def bird_detail(sci: str, location_id: int | None = None,
                     for D in all_devs],
         "save_mode": sr["save_mode"] if (sr and sr["save_mode"] in _SAVE_MODES) else "default",
         "clip_count": len(rec_map),
-        "recent": [{"id": r["id"], "at": _local(r["ts"]).strftime("%m-%d %H:%M:%S"),
+        "list_count": len(listed),
+        "recent": [{"id": r["id"], "at": _fmt_dt(r["ts"], with_secs=True),
                     "confidence": round(r["confidence"], 4),
                     "occurrence": r["occurrence"], "status": r["status"],
                     "location_id": r["location_id"],
                     "location": loc_names.get(r["location_id"]),
+                    "device_token": r["device_token"],
                     "recording_id": rec_map.get(r["id"]),
-                    "device": r["device_name"]} for r in kept[-50:][::-1]],
+                    "device": r["device_name"]} for r in listed[-100:][::-1]],
     }

@@ -1,22 +1,34 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { MapPin, Smartphone, ExternalLink, Mic, Pin, PinOff, Trash2 } from "lucide-react";
+import {
+  MapPin, Smartphone, ExternalLink, Mic, Pin, PinOff, Trash2,
+  Check, Ban, CircleDashed, ChevronDown,
+} from "lucide-react";
 import { useCrumbTrail, type Crumb } from "../../../components/appNav";
 import { useBirdInfo } from "./birdinfo";
-import { Check, Ban } from "lucide-react";
 import { ConfirmDialog, Segmented } from "../../../ui";
-import { pct, hh, jget, apost, API, Stat, StatGrid, Chart, HourSpark, CHART_SERIES } from "./ui";
+import { pct, conf, jget, apost, API, Stat, StatGrid } from "./ui";
+import ActivityCard from "./ActivityCard";
+import BirdsHeader from "./BirdsHeader";
 import { PlayButton, fmtBytes } from "./recordings";
 
 // One species' page: photo + description (client-side reference lookup), stats,
-// every day it was heard with that day's hour-of-day mini-graph, and a recent
-// list. Filterable by location, device, and date range - all calm selects, with
-// location being just one dimension. Breadcrumbs give one-click navigation up.
+// the same activity charts as the rest of the app (NOT subject to the status
+// filter), and the individual detections. The detections list is where you
+// filter by confirmed/suggested/rejected and re-classify single events; each row
+// links into its device and location.
 
 const REFRESH_MS = 8000;
+type DetStatus = "all" | "confirmed" | "suggested" | "rejected";
 
 type LocOpt = { id: number; name: string; count: number };
 type DevOpt = { token: string; name: string; count: number };
+type DetRow = {
+  id: number; at: string; confidence: number; occurrence: number | null;
+  status: "confirmed" | "suggested" | "rejected";
+  location_id: number | null; location: string | null;
+  device: string | null; device_token: string | null; recording_id: number | null;
+};
 type Detail = {
   scientific_name: string; common_name: string; count: number;
   first_date: string | null; last_date: string | null; days_seen: number;
@@ -26,8 +38,8 @@ type Detail = {
   by_day: { date: string; count: number; hourly: number[] }[];
   locations: LocOpt[]; devices: DevOpt[];
   save_mode: "default" | "keep" | "never";
-  clip_count: number;
-  recent: { id: number; at: string; confidence: number; occurrence: number | null; status: string; location_id: number | null; location: string | null; device: string | null; recording_id: number | null }[];
+  clip_count: number; list_count: number;
+  recent: DetRow[];
 };
 
 export default function BirdDetail() {
@@ -36,81 +48,85 @@ export default function BirdDetail() {
   const locId = params.get("location_id") || "";
   const device = params.get("device") || "";
   const days = params.get("days") || "0";
-  const status = params.get("status") || "all"; // species drill-down defaults to all
+  // Detection-list filter. Falls back to the `status` a species link carried in
+  // (e.g. tapping a Suggested species lands on its suggested detections).
+  const status = (params.get("dstatus") || params.get("status") || "all") as DetStatus;
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const info = useBirdInfo(sci || null, null);
 
-  const reload = () => {
+  const reload = useCallback(() => {
     const qs = new URLSearchParams({ sci, status });
     if (locId) qs.set("location_id", locId);
     if (device) qs.set("device", device);
     if (days !== "0") qs.set("days", days);
     return jget<Detail>(`/bird?${qs.toString()}`).then(setD).catch((e) => setErr(String(e)));
-  };
+  }, [sci, locId, device, days, status]);
 
   useEffect(() => {
     if (!sci) return;
     reload();
     const t = setInterval(reload, REFRESH_MS);
     return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sci, locId, device, days, status]);
+  }, [sci, reload]);
 
   // Opening a species counts as reviewing its first appearance (clears the
-  // new-arrival badge), per the trust model - even if you don't decide anything.
+  // new-arrival badge), per the trust model.
   useEffect(() => {
     if (sci) apost("/species/review", { sci }).catch(() => {});
   }, [sci]);
 
-  const actEvent = (id: number, status: "confirmed" | "rejected") =>
-    apost("/detection/status", { id, status }).then(() => reload()).catch(() => {});
-
   const setFilter = (key: string, val: string) => {
     const p = new URLSearchParams(params);
-    if (val && val !== "0") p.set(key, val); else p.delete(key);
+    if (key === "dstatus") {
+      // The detection filter is one source of truth: always write it (including
+      // "all") and drop any legacy `status` a species link carried in, so picking
+      // "All" actually clears the inherited scope instead of falling back to it.
+      p.set("dstatus", val);
+      p.delete("status");
+    } else if (val && val !== "0") {
+      p.set(key, val);
+    } else {
+      p.delete(key);
+    }
     setParams(p);
   };
 
-  const common = d?.common_name || info?.common_name || sci;
-  const peak = d?.hourly?.length ? d.hourly.reduce((a, b) => (b.count > a.count ? b : a), d.hourly[0]) : null;
+  const common = d?.common_name || params.get("common") || info?.common_name || sci;
   const place = locId ? d?.locations.find((l) => String(l.id) === locId)?.name : null;
 
   const trail: Crumb[] = [
     { label: "Apps", to: "/apps" },
     { label: "Birds", to: "/apps/birds" },
   ];
-  if (locId) {
-    trail.push({ label: "Locations", to: "/apps/birds/locations" });
-    if (place) trail.push({ label: place, to: `/apps/birds/location?id=${locId}` });
-  }
+  if (locId && place) trail.push({ label: place, to: `/apps/birds?source=loc:${locId}` });
   trail.push({ label: common });
-  useCrumbTrail(trail); // structurally dynamic → feed the toolbar directly
+  useCrumbTrail(trail);
 
-  // Filter visibility is based on the species' FULL option set (which doesn't
-  // change with the current selection), not on what's currently selected - so
-  // switching to "All locations" never makes the Location control disappear or
-  // swap places with another filter.
   const showLoc = (d?.locations.length || 0) > 1;
   const showDev = (d?.devices.length || 0) > 1;
 
   return (
     <div>
-      {/* Header card: photo + identity + description */}
+      <BirdsHeader title={common} />
+
+      {/* Header card: photo + identity + description. The common name lives in the
+          toolbar title above, so it is not repeated here. */}
       <section className="card" style={{ padding: 0, marginBottom: "1rem", overflow: "hidden" }}>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
           {info?.photo && (
-            <img src={info.photo} alt={common} style={{ width: 200, maxWidth: "100%", height: 200, objectFit: "cover" }} />
+            <img src={info.photo} alt={common}
+              style={{ width: 200, maxWidth: "100%", height: 200, objectFit: "cover", alignSelf: "center" }} />
           )}
-          <div style={{ flex: 1, minWidth: 220, padding: "1rem" }}>
-            <h2 style={{ margin: "0 0 .15rem" }}>{common}</h2>
+          <div style={{ flex: 1, minWidth: 220, padding: "1rem", display: "flex", flexDirection: "column" }}>
             <div className="muted" style={{ fontStyle: "italic", marginBottom: ".5rem" }}>{sci}</div>
             {info?.summary && <p style={{ margin: ".2rem 0 .5rem", fontSize: ".9rem", lineHeight: 1.45 }}>{info.summary}</p>}
             {info && !info.found && <p className="muted" style={{ fontSize: ".82rem" }}>No reference entry for this label.</p>}
-            <div style={{ display: "flex", gap: ".8rem", flexWrap: "wrap", fontSize: ".72rem" }} className="muted">
-              {info?.attribution && <span>Photo: {info.attribution}</span>}
-              {info?.wikiUrl && <a href={info.wikiUrl} target="_blank" rel="noreferrer" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".2rem" }}>Wikipedia <ExternalLink size={11} /></a>}
-            </div>
+            {info?.wikiUrl && (
+              <div style={{ marginTop: "auto", display: "flex", justifyContent: "flex-end" }}>
+                <a href={info.wikiUrl} target="_blank" rel="noreferrer" className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".2rem", fontSize: ".75rem" }}>Wikipedia <ExternalLink size={11} /></a>
+              </div>
+            )}
           </div>
         </div>
       </section>
@@ -120,21 +136,7 @@ export default function BirdDetail() {
 
       {d && (
         <>
-          {/* Trust status: same switch as the lists, scoping this species' view. */}
-          <div style={{ marginBottom: ".7rem" }}>
-            <Segmented<string>
-              ariaLabel="Detection status"
-              value={status}
-              onChange={(v) => setFilter("status", v === "all" ? "" : v)}
-              options={[
-                { value: "all", label: "All" },
-                { value: "confirmed", label: "Confirmed" },
-                { value: "suggested", label: "Suggested" },
-                { value: "rejected", label: "Rejected" },
-              ]}
-            />
-          </div>
-          {/* Filters: location is one dimension among device + date range */}
+          {/* Filters: location, device, date range (NOT the trust status) */}
           {(showLoc || showDev) && (
             <div className="filters">
               {showLoc && (
@@ -169,73 +171,39 @@ export default function BirdDetail() {
             <Stat label="Days heard" value={d.days_seen} />
             <Stat label="Best" value={pct(d.max_conf)} />
             <Stat label="Avg" value={pct(d.avg_conf)} />
-            {d.occurrence != null && (
-              <Stat label="Local likelihood" value={pct(d.occurrence)} />
-            )}
+            {d.occurrence != null && <Stat label="Local likelihood" value={pct(d.occurrence)} />}
           </StatGrid>
 
           <BirdRecordings sci={sci} common={common} initialMode={d.save_mode} clipCount={d.clip_count} onChange={reload} />
 
-          {d.count === 0 && <p className="muted">No detections for this filter.</p>}
+          {d.count > 0 && <ActivityCard daily={d.by_day} hourly={d.hourly} />}
 
-          {d.count > 0 && (
-            <>
-              <section className="card" style={card}>
-                <h3 style={h3}>Time of day{peak && peak.count > 0 && <span className="muted" style={{ fontWeight: 400, fontSize: ".85rem" }}> · peak {hh(peak.hour)}</span>}</h3>
-                <Chart data={d.hourly} x="hour" fill={CHART_SERIES[0]} xfmt={(h: number) => String(h)} interval={2} labelFmt={hh} height={130} />
-              </section>
-
-              <section className="card" style={card}>
-                <h3 style={h3}>Each day heard ({d.by_day.length})</h3>
-                <div style={{ display: "flex", flexDirection: "column" }}>
-                  {d.by_day.map((day) => (
-                    <div key={day.date} style={{ display: "flex", alignItems: "center", gap: ".8rem", padding: ".55rem 0", borderTop: "1px solid var(--border)" }}>
-                      <div style={{ minWidth: 86 }}>
-                        <div style={{ fontWeight: 600, fontSize: ".9rem" }}>{day.date.slice(5)}</div>
-                        <div className="muted" style={{ fontSize: ".75rem" }}>{day.count}×</div>
-                      </div>
-                      <div style={{ flex: 1 }}><HourSpark hourly={day.hourly} fill={CHART_SERIES[1]} /></div>
-                    </div>
+          <section className="card" style={card}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".6rem", flexWrap: "wrap", marginBottom: ".5rem" }}>
+              <h3 style={{ ...h3, margin: 0 }}>Detections ({d.list_count ?? d.recent.length})</h3>
+              <Segmented<DetStatus>
+                ariaLabel="Filter detections by status"
+                value={status}
+                onChange={(v) => setFilter("dstatus", v)}
+                options={[
+                  { value: "all", label: "All" },
+                  { value: "confirmed", label: "Confirmed" },
+                  { value: "suggested", label: "Suggested" },
+                  { value: "rejected", label: "Rejected" },
+                ]}
+              />
+            </div>
+            {d.recent.length === 0
+              ? <p className="muted" style={{ margin: ".3rem 0 0" }}>No {status === "all" ? "" : status + " "}detections for this filter.</p>
+              : (
+                <div>
+                  {d.recent.map((r) => (
+                    <DetectionRow key={r.id} r={r} hideLoc={!!locId} onChanged={reload}
+                      onDevice={(t) => setFilter("device", t)} />
                   ))}
                 </div>
-              </section>
-
-              <section className="card" style={card}>
-                <h3 style={h3}>Recent</h3>
-                <ul style={{ listStyle: "none", padding: 0, margin: 0, maxHeight: 360, overflowY: "auto" }}>
-                  {d.recent.map((r) => {
-                    const title = [r.location, r.device].filter(Boolean).join(" · ");
-                    return (
-                      <li key={r.id}>
-                        <div title={title} style={{ display: "flex", alignItems: "center", gap: ".5rem", padding: ".4rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
-                          <span className="mono muted" style={{ minWidth: 104, flexShrink: 0 }}>{r.at}</span>
-                          <span style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                            {!locId && r.location && (
-                              <Link to={`/apps/birds/location?id=${r.location_id}`} className="muted" style={{ display: "inline-flex", alignItems: "center", gap: ".25rem", textDecoration: "none" }}>
-                                <MapPin size={11} /> {r.location}
-                              </Link>
-                            )}
-                            {r.device && <span className="muted" style={{ marginLeft: r.location && !locId ? ".5rem" : 0, display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".78rem" }}><Smartphone size={10} /> {r.device}</span>}
-                          </span>
-                          {r.status !== "confirmed" && <span className="pill neutral" style={{ flexShrink: 0, textTransform: "capitalize" }}>{r.status}</span>}
-                          {r.recording_id && <PlayButton recId={r.recording_id} size={24} />}
-                          <span className="pill neutral" style={{ flexShrink: 0 }}>{pct(r.confidence)}</span>
-                          {r.status !== "confirmed" && (
-                            <button type="button" className="bird-act ok" title="Confirm this detection"
-                              onClick={() => actEvent(r.id, "confirmed")}><Check size={14} /></button>
-                          )}
-                          {r.status !== "rejected" && (
-                            <button type="button" className="bird-act danger" title="Reject this detection"
-                              onClick={() => actEvent(r.id, "rejected")}><Ban size={14} /></button>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            </>
-          )}
+              )}
+          </section>
         </>
       )}
     </div>
@@ -245,9 +213,61 @@ export default function BirdDetail() {
 const card: React.CSSProperties = { padding: "1rem", marginBottom: "1rem" };
 const h3: React.CSSProperties = { margin: "0 0 .4rem", fontSize: "1rem" };
 
-// Per-bird save preference + this bird's saved clips. Deliberately separate from
-// the confirm/reject trust controls: changing the save mode or deleting clips
-// never changes a detection's status, and vice-versa.
+// One detection. The body shows time + confidence; the device and location are
+// clickable chips (inline when there's room, revealed by the chevron on narrow
+// screens). The trio of buttons re-classifies this single event between
+// confirmed / suggested / rejected.
+function DetectionRow({ r, hideLoc, onChanged, onDevice }: {
+  r: DetRow; hideLoc: boolean; onChanged: () => void; onDevice: (token: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const set = (status: "confirmed" | "suggested" | "rejected") => {
+    if (status === r.status || busy) return;
+    setBusy(true);
+    apost("/detection/status", { id: r.id, status }).then(() => onChanged()).finally(() => setBusy(false));
+  };
+  const chips = (
+    <span className="bird-det-meta">
+      {!hideLoc && r.location && r.location_id != null && (
+        <Link className="bird-chip" to={`/apps/birds?source=loc:${r.location_id}`}>
+          <MapPin size={12} /> {r.location}
+        </Link>
+      )}
+      {r.device && r.device_token && (
+        <button type="button" className="bird-chip" title="Show only this device" onClick={() => onDevice(r.device_token!)}>
+          <Smartphone size={12} /> {r.device}
+        </button>
+      )}
+    </span>
+  );
+  const hasChips = (!hideLoc && r.location) || r.device;
+  return (
+    <div className={`bird-det-row${open ? " is-open" : ""}`}>
+      <span className="mono muted" style={{ fontSize: ".8rem" }}>{r.at}</span>
+      <span className="muted" style={{ fontSize: ".8rem" }}>{conf(r.confidence)}</span>
+      {chips}
+      <span className="bird-det-ctl">
+        {r.recording_id && <PlayButton recId={r.recording_id} size={24} />}
+        <button type="button" className={`bird-act ok${r.status === "confirmed" ? " on" : ""}`} disabled={busy}
+          title="Confirmed" aria-pressed={r.status === "confirmed"} onClick={() => set("confirmed")}><Check size={14} /></button>
+        <button type="button" className={`bird-act${r.status === "suggested" ? " on" : ""}`} disabled={busy}
+          title="Suggested" aria-pressed={r.status === "suggested"} onClick={() => set("suggested")}><CircleDashed size={14} /></button>
+        <button type="button" className={`bird-act danger${r.status === "rejected" ? " on" : ""}`} disabled={busy}
+          title="Rejected" aria-pressed={r.status === "rejected"} onClick={() => set("rejected")}><Ban size={14} /></button>
+        {hasChips && (
+          <button type="button" className="bird-act bird-det-expand" aria-expanded={open}
+            title={open ? "Hide where" : "Show where"} onClick={() => setOpen((v) => !v)}><ChevronDown size={14} /></button>
+        )}
+      </span>
+    </div>
+  );
+}
+
+// Per-bird save preference + this bird's saved clips. Compact: the heading, the
+// inline Default/Always/Never toggle (detail on hover), then the clips below.
+// Deliberately separate from the confirm/reject controls: changing the save mode
+// never changes a detection's status.
 type Clip = { id: number; at: string; location: string | null; bytes: number; confidence: number; pinned: boolean; protected: boolean };
 type SaveMode = "default" | "keep" | "never";
 
@@ -257,23 +277,24 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
   const [mode, setMode] = useState<SaveMode>(initialMode);
   const [globalSave, setGlobalSave] = useState<boolean | null>(null);
   const [clips, setClips] = useState<Clip[] | null>(null);
-  const [open, setOpen] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
   const [confirmDel, setConfirmDel] = useState<Clip | null>(null);
 
-  // Reflect fresh server state on parent reload.
   useEffect(() => { setMode(initialMode); }, [initialMode]);
-  // The global default decides what "Default" means for this bird.
   useEffect(() => {
-    jget<{ settings: { rec_save: boolean } }>("/recordings/settings")
+    const fetchGlobal = () => jget<{ settings: { rec_save: boolean } }>("/recordings/settings")
       .then((d) => setGlobalSave(d.settings.rec_save)).catch(() => {});
-    const onCh = () => jget<{ settings: { rec_save: boolean } }>("/recordings/settings")
-      .then((d) => setGlobalSave(d.settings.rec_save)).catch(() => {});
-    window.addEventListener("bird-settings-change", onCh);
-    return () => window.removeEventListener("bird-settings-change", onCh);
+    fetchGlobal();
+    window.addEventListener("bird-settings-change", fetchGlobal);
+    return () => window.removeEventListener("bird-settings-change", fetchGlobal);
   }, []);
 
-  // Optimistic: set the control immediately, then persist (no first-click lag).
+  const loadClips = useCallback(() => {
+    jget<{ items: Clip[] }>(`/recordings?sci=${encodeURIComponent(sci)}&limit=200`)
+      .then((d) => setClips(d.items)).catch(() => setClips([]));
+  }, [sci]);
+  useEffect(() => { if (clipCount > 0) loadClips(); else setClips([]); }, [clipCount, loadClips]);
+
   const choose = useCallback((m: SaveMode) => {
     setMode(m);
     const fd = new FormData(); fd.append("sci", sci); fd.append("save_mode", m);
@@ -283,12 +304,6 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
       .then(() => { window.dispatchEvent(new CustomEvent("bird-settings-change")); onChange(); })
       .catch(() => {});
   }, [sci, onChange]);
-
-  const loadClips = useCallback(() => {
-    jget<{ items: Clip[] }>(`/recordings?sci=${encodeURIComponent(sci)}&limit=200`).then((d) => setClips(d.items)).catch(() => setClips([]));
-  }, [sci]);
-
-  const toggleOpen = () => { const n = !open; setOpen(n); if (n && !clips) loadClips(); };
 
   const pin = (c: Clip) => {
     const fd = new FormData(); fd.append("pinned", String(!c.pinned));
@@ -304,66 +319,59 @@ function BirdRecordings({ sci, common, initialMode, clipCount, onChange }: {
       .then(() => { setConfirmClear(false); setClips([]); onChange(); window.dispatchEvent(new CustomEvent("bird-settings-change")); });
   };
 
-  const defaultHint = globalSave == null ? "follow the app default"
-    : globalSave ? "saving (app default is on)" : "not saving (app default is off)";
-  const modeHint: Record<SaveMode, string> = {
-    default: `Follow the app-wide setting — currently ${defaultHint}.`,
-    keep: `Always save ${common}'s clips and never auto-delete them to free space.`,
-    never: `Never save ${common}'s clips, even when the app default is on.`,
-  };
+  const defaultState = globalSave == null ? "the app default" : globalSave ? "saving (app default on)" : "not saving (app default off)";
+  const hint = `Default: follow ${defaultState}. Always: keep every clip, never auto-delete. Never: skip this bird.`;
 
   return (
     <section className="card" style={card}>
-      <h3 style={{ ...h3, display: "flex", alignItems: "center", gap: ".4rem" }}>
-        <Mic size={17} strokeWidth={1.8} /> Recordings
-      </h3>
-
-      <div style={{ fontWeight: 500, marginBottom: ".4rem", fontSize: ".9rem" }}>Save clips of this bird</div>
-      <Segmented<SaveMode>
-        ariaLabel="Save recordings for this bird"
-        value={mode}
-        onChange={choose}
-        options={[
-          { value: "default", label: "Default" },
-          { value: "keep", label: "Always" },
-          { value: "never", label: "Never" },
-        ]}
-      />
-      <div className="muted" style={{ fontSize: ".8rem", marginTop: ".45rem" }}>{modeHint[mode]}</div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: ".6rem", marginTop: ".9rem", flexWrap: "wrap" }}>
-        <button className="btn sm" onClick={toggleOpen} disabled={clipCount === 0}>
-          {clipCount === 0 ? "No clips saved yet" : open ? "Hide clips" : `Show ${clipCount} saved clip${clipCount === 1 ? "" : "s"}`}
-        </button>
+      <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
+        <h3 style={{ ...h3, margin: 0, display: "flex", alignItems: "center", gap: ".4rem" }}>
+          <Mic size={17} strokeWidth={1.8} /> Recordings
+        </h3>
+        <span title={hint} style={{ display: "inline-flex" }}>
+          <Segmented<SaveMode>
+            ariaLabel="Save recordings for this bird"
+            value={mode}
+            onChange={choose}
+            options={[
+              { value: "default", label: "Default" },
+              { value: "keep", label: "Always" },
+              { value: "never", label: "Never" },
+            ]}
+          />
+        </span>
         {clipCount > 0 && (
-          <button className="bird-act danger" title="Delete all saved clips for this bird" onClick={() => setConfirmClear(true)}>
+          <button className="bird-act danger" title="Delete all saved clips for this bird"
+            style={{ marginLeft: "auto" }} onClick={() => setConfirmClear(true)}>
             <Trash2 size={15} />
           </button>
         )}
       </div>
 
-      {open && clips && clips.length > 0 && (
-        <div style={{ marginTop: ".6rem", display: "flex", flexDirection: "column" }}>
-          {clips.map((c) => (
-            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".45rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
-              <PlayButton recId={c.id} size={26} />
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span className="mono muted">{c.at}</span>
-                {c.location && <span className="muted" style={{ marginLeft: ".5rem", display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={10} /> {c.location}</span>}
-              </span>
-              <span className="muted" style={{ fontSize: ".74rem" }}>{fmtBytes(c.bytes)}</span>
-              <span className="pill neutral">{pct(c.confidence)}</span>
-              <button type="button" className={`bird-act${c.pinned ? " ok" : ""}`} onClick={() => pin(c)}
-                title={c.pinned ? "Pinned — protected. Click to unpin." : "Pin — keep this recording (deleted last)"}>
-                {c.pinned ? <Pin size={14} /> : <PinOff size={14} />}
-              </button>
-              <button type="button" className="bird-act danger" onClick={() => setConfirmDel(c)} title="Delete this recording">
-                <Trash2 size={14} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      {clipCount === 0
+        ? <p className="muted" style={{ fontSize: ".82rem", margin: ".5rem 0 0" }}>No clips saved yet.</p>
+        : clips && clips.length > 0 && (
+          <div style={{ marginTop: ".5rem", display: "flex", flexDirection: "column", maxHeight: 320, overflowY: "auto" }}>
+            {clips.map((c) => (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".45rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
+                <PlayButton recId={c.id} size={26} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span className="mono muted">{c.at}</span>
+                  {c.location && <span className="muted" style={{ marginLeft: ".5rem", display: "inline-flex", alignItems: "center", gap: ".25rem" }}><MapPin size={10} /> {c.location}</span>}
+                </span>
+                <span className="muted" style={{ fontSize: ".74rem" }}>{fmtBytes(c.bytes)}</span>
+                <span className="muted" style={{ fontSize: ".78rem" }}>{conf(c.confidence)}</span>
+                <button type="button" className={`bird-act${c.pinned ? " ok" : ""}`} onClick={() => pin(c)}
+                  title={c.pinned ? "Pinned. Click to unpin." : "Pin to keep this recording (deleted last)"}>
+                  {c.pinned ? <Pin size={14} /> : <PinOff size={14} />}
+                </button>
+                <button type="button" className="bird-act danger" onClick={() => setConfirmDel(c)} title="Delete this recording">
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
       <ConfirmDialog
         open={confirmClear}

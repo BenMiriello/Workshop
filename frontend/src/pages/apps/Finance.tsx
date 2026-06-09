@@ -141,7 +141,6 @@ export default function Finance() {
   }, [items]);
 
   const oldestCacheAge = Math.max(balCache?.age_s ?? 0, txnCache?.age_s ?? 0);
-  const cacheStale = oldestCacheAge > (balCache?.ttl_s ?? 600);
   const financeLoading = items === null || txns === null;
 
   return (
@@ -149,7 +148,7 @@ export default function Finance() {
       <PageHeader
         title="Finance"
         sub={
-          <span style={{ color: cacheStale ? "var(--warn)" : undefined }}>
+          <span>
             {financeLoading ? "loading…" : oldestCacheAge > 0 ? `updated ${fmtAge(oldestCacheAge)}` : "fresh"}
           </span>
         }

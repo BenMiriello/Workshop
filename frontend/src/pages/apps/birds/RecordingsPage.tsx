@@ -93,7 +93,7 @@ export default function Recordings() {
                 <span className="pill neutral" style={{ flexShrink: 0 }}>{pct(r.confidence)}</span>
                 <span className="muted" style={{ fontSize: ".75rem", minWidth: 56, textAlign: "right", flexShrink: 0 }}>{fmtBytes(r.bytes)}</span>
                 <button type="button" className={`bird-act${r.pinned ? " ok" : ""}`} onClick={() => pin(r)}
-                  title={r.pinned ? "Pinned — protected from auto-cleanup. Click to unpin." : "Pin — keep this recording (deleted last)"}>
+                  title={r.pinned ? "Pinned. Protected from auto-cleanup. Click to unpin." : "Pin to keep this recording (deleted last)"}>
                   {r.pinned ? <Pin size={15} /> : <PinOff size={15} />}
                 </button>
                 <button type="button" className="bird-act danger" onClick={() => setConfirm(r)} title="Delete this recording">
@@ -134,7 +134,7 @@ function UsageMeter({ status }: { status: ReturnType<typeof useRecStatus> }) {
       <div style={{ position: "relative", height: 10, borderRadius: 6, background: "var(--bg-inset)", overflow: "hidden" }}>
         <div style={{ position: "absolute", inset: 0, width: `${usedFrac * 100}%`, background: barColor, opacity: 0.85 }} />
         {protFrac > 0 && (
-          <div title="Protected (pinned or 'save all') — not auto-removed"
+          <div title="Protected (pinned or 'save all'). Not auto-removed"
             style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: `${protFrac * 100}%`, background: "var(--accent)", opacity: 0.55 }} />
         )}
       </div>

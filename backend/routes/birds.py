@@ -292,22 +292,22 @@ async def location_merge(src: int = Form(...), dst: int = Form(...)):
 
 @router.get("/location/summary")
 async def location_summary_ep(location_id: int, include_nonbird: bool = False,
-                              status: str | None = None):
-    return birds_analyze.location_summary(location_id, include_nonbird, status)
+                              status: str | None = None, device: str | None = None):
+    return birds_analyze.location_summary(location_id, include_nonbird, status, device)
 
 
 @router.get("/location/species")
 async def location_species_ep(location_id: int, include_nonbird: bool = False,
-                              status: str | None = None):
+                              status: str | None = None, device: str | None = None):
     return {"location_id": location_id,
-            "species": birds_analyze.location_species(location_id, include_nonbird, status)}
+            "species": birds_analyze.location_species(location_id, include_nonbird, status, device)}
 
 
 @router.get("/location/activity")
 async def location_activity_ep(location_id: int, include_nonbird: bool = False,
-                               status: str | None = None):
+                               status: str | None = None, device: str | None = None):
     return {"location_id": location_id,
-            **birds_analyze.location_activity(location_id, include_nonbird, status)}
+            **birds_analyze.location_activity(location_id, include_nonbird, status, device)}
 
 
 @router.get("/bird")

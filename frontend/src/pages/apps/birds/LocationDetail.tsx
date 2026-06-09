@@ -1,80 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import {
-  MapPin, Radio, Star, Pencil, Check, X, AlertTriangle,
-} from "lucide-react";
+import { MapPin, Radio, Star, Pencil, Check, X, AlertTriangle, ChevronRight } from "lucide-react";
 import { useCrumbLabel } from "../../../components/appNav";
-import { useRecorder } from "./recorder";
-import { useShowNonBird, nonBirdQuery } from "./settings";
-import { API, pct, jget, Stat, StatGrid } from "./ui";
-import SpeciesRow, { type TrustStatus } from "./SpeciesRow";
-import ActivityCard from "./ActivityCard";
-import { StatusFilter } from "../Birds";
+import { API, jget } from "./ui";
 import AddressPicker from "./AddressPicker";
 import type { Place } from "./geocode";
 
-// Everything heard at one place: the devices reporting here, summary, activity
-// over time and by hour, and the species list (each opens the bird page scoped
-// to this location). You can rename the place, pin its coordinates (so adaptive
-// devices merge into it), mark it home, or start listening here.
+// The editing surface for one place: rename it, pin its coordinates (so adaptive
+// devices merge into it), set it home, merge it into another, and see the devices
+// reporting here. Browsing the birds heard here is the Place dropdown on the
+// home page — this page links straight into that view.
 
-const REFRESH_MS = 8000;
+const REFRESH_MS = 12000;
 
 type Summary = {
   id: number; name: string; lat: number | null; lon: number | null; address: string | null;
-  devices: string[]; detections: number; species: number; first_date: string | null;
-  last_date: string | null; today: number; active_days: number;
-  last_detection: { common_name: string; scientific_name: string; confidence: number; at: string } | null;
+  devices: string[]; detections: number; species: number;
 };
-type Species = {
-  scientific_name: string; common_name: string; count: number; max_conf: number;
-  avg_conf: number; days_seen: number; first_date: string; last_date: string;
-  is_new?: boolean; auto?: boolean;
-};
-type Activity = { daily: { date: string; count: number }[]; hourly: { hour: number; count: number }[] };
 
 export default function LocationDetail() {
   const [params] = useSearchParams();
   const id = Number(params.get("id") || 0);
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [species, setSpecies] = useState<Species[]>([]);
-  const [activity, setActivity] = useState<Activity | null>(null);
   const [home, setHome] = useState<string | null>(null);
-  const [status, setStatus] = useState<TrustStatus>("confirmed");
-  const [newCount, setNewCount] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [showNonBird] = useShowNonBird();
-  useCrumbLabel(summary?.name); // toolbar breadcrumb leaf = this place's name
-  const nb = nonBirdQuery(showNonBird);
-  const { recording, location: liveLoc } = useRecorder();
+  useCrumbLabel(summary?.name);
 
   const refresh = useCallback(() => {
     if (!id) return;
-    // Stats + activity always reflect confirmed data; only the species list is
-    // re-filtered by the chosen status (same model as the home dashboard).
     Promise.all([
-      jget<Summary>(`/location/summary?location_id=${id}${nb}`),
-      jget<{ species: Species[] }>(`/location/species?location_id=${id}${nb}&status=${status}`),
-      jget<Activity>(`/location/activity?location_id=${id}${nb}`),
+      jget<Summary>(`/location/summary?location_id=${id}`),
       jget<{ home: string | null }>(`/home`),
-    ]).then(([s, sp, a, h]) => { setSummary(s); setSpecies(sp.species); setActivity(a); setHome(h.home); })
+    ]).then(([s, h]) => { setSummary(s); setHome(h.home); })
       .catch((e) => setErr(String(e)));
-    jget<{ new_count: number }>(`/new-count`).then((r) => setNewCount(r.new_count)).catch(() => {});
-  }, [id, nb, status]);
+  }, [id]);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, REFRESH_MS);
-    return () => clearInterval(t);
-  }, [refresh]);
+  useEffect(() => { refresh(); const t = setInterval(refresh, REFRESH_MS); return () => clearInterval(t); }, [refresh]);
 
-  // A location with no pinned place needs one - open the editor automatically.
+  // A location with no pinned place needs one — open the editor automatically.
   const autoOpened = useRef(false);
   useEffect(() => {
     if (summary && summary.lat == null && !autoOpened.current) { autoOpened.current = true; setEditing(true); }
   }, [summary]);
-
 
   const setAsHome = useCallback(() => {
     const fd = new FormData(); fd.append("source", `loc:${id}`);
@@ -86,7 +54,6 @@ export default function LocationDetail() {
   if (!summary) return <Wrap><p className="muted">Loading…</p></Wrap>;
 
   const isHome = home === `loc:${id}`;
-  const liveHere = recording && liveLoc === summary.name;
 
   return (
     <Wrap name={summary.name} isHome={isHome} onHome={setAsHome} onEdit={() => setEditing((v) => !v)}>
@@ -101,6 +68,15 @@ export default function LocationDetail() {
         </div>
       )}
 
+      <Link to={`/apps/birds?source=loc:${id}`} className="card"
+        style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".8rem 1rem", marginBottom: "1rem", textDecoration: "none", color: "inherit" }}>
+        <span style={{ flex: 1 }}>
+          <div style={{ fontWeight: 600 }}>View birds heard here</div>
+          <div className="muted" style={{ fontSize: ".82rem" }}>{summary.species} species · {summary.detections.toLocaleString()} detections</div>
+        </span>
+        <ChevronRight size={18} className="muted" />
+      </Link>
+
       {summary.devices.length > 0 && (
         <p className="muted" style={{ margin: "0 0 .8rem", fontSize: ".85rem", display: "flex", alignItems: "center", gap: ".3rem", flexWrap: "wrap" }}>
           <Radio size={13} style={{ verticalAlign: "-2px" }} /> Devices here:
@@ -109,49 +85,8 @@ export default function LocationDetail() {
               {dv}{i < summary.devices.length - 1 ? "," : ""}
             </Link>
           ))}
-          {liveHere && <span style={{ color: "var(--ok)" }}>· listening now</span>}
         </p>
       )}
-
-      <StatGrid>
-        <Stat label="Species" value={summary.species} />
-        <Stat label="Detections" value={summary.detections.toLocaleString()} />
-        <Stat label="Today" value={summary.today} />
-        <Stat label="Active days" value={summary.active_days} />
-      </StatGrid>
-
-      {summary.last_detection && (
-        <p className="muted" style={{ margin: "0 0 1rem" }}>
-          Last: <strong>{summary.last_detection.common_name}</strong> at {summary.last_detection.at} ({pct(summary.last_detection.confidence)})
-        </p>
-      )}
-
-      {activity && (activity.daily.length > 0 || activity.hourly.some((h) => h.count > 0)) && (
-        <ActivityCard daily={activity.daily} hourly={activity.hourly} />
-      )}
-
-      <section className="card" style={card}>
-        <h3 style={h3}>Species ({species.length})</h3>
-        <StatusFilter status={status} setStatus={setStatus} newCount={newCount} />
-        {status === "suggested" && (
-          <p className="muted" style={{ fontSize: ".8rem", margin: "0 0 .6rem" }}>
-            Birds heard here but not yet vouched for. Tap a row to inspect its
-            detections; confirm the real ones. No need to decide now.
-          </p>
-        )}
-        {species.length === 0 && (
-          <p className="muted">
-            {status === "confirmed" ? "Nothing confirmed here yet — check Suggested."
-              : status === "suggested" ? "No suggestions right now." : "Nothing rejected."}
-          </p>
-        )}
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {species.map((s) => (
-            <SpeciesRow key={s.scientific_name} s={s} locId={id} status={status}
-              lat={summary.lat} lon={summary.lon} onChanged={refresh} />
-          ))}
-        </div>
-      </section>
     </Wrap>
   );
 }
@@ -240,7 +175,7 @@ function Wrap({ children, name, isHome, onHome, onEdit }: {
 }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem", flexWrap: "wrap", marginBottom: ".25rem" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".5rem", flexWrap: "wrap", marginBottom: ".75rem" }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", margin: 0 }}>
           <MapPin size={22} strokeWidth={1.8} /> {name || "Location"}
         </h2>
