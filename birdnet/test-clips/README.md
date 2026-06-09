@@ -60,10 +60,21 @@ Needs `ffmpeg` and the analyzer on `127.0.0.1:8012`. This shows what the
 multi-species / repeated-chirp cases actually produce, and whether the range
 filter flags the rainforest clip's species as out-of-range.
 
-**In-browser (the real path)** — play a clip near the device mic while *Listen*
-is active on the Birds page to watch the live spectrogram markers place, hop, and
-disambiguate. (Browsers can't capture file audio as a mic input directly; route
-the file through a virtual audio device, or just play it on a speaker.)
+**Headless browser (the REAL pipeline, automated)** — `browser_replay.js` launches
+headless Chrome with a clip fed in as the *mic* (Chrome's fake-audio-capture),
+clicks Listen, and exercises the actual in-browser path (FFT heatmap →
+`localizeEvents` → DOM marker placement) — the only way to test marker placement
+on real audio without a live mic. Prints the rendered marker chips over time and
+saves a screenshot. No npm installs (uses Playwright's cached Chromium + Node's
+built-in WebSocket over raw CDP); needs ffmpeg, the dev server, and the analyzer.
+
+```sh
+node browser_replay.js group_birdnet-sapsucker-woods.wav 26000 /tmp/shot.png
+node browser_replay.js repeated_california-towhee.m4a            # repeated-chirp case
+```
+
+**Manual in-browser** — or just play a clip near the device mic while *Listen* is
+active on the Birds page and watch the markers place, hop, and disambiguate.
 
 ## Gaps to fill later
 
