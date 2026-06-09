@@ -37,6 +37,7 @@ def main():
     ap.add_argument("--week", type=int)
     ap.add_argument("--window", type=float, default=3.0)
     ap.add_argument("--step", type=float, default=1.0)
+    ap.add_argument("--max-seconds", type=float, help="only analyze the first N seconds")
     a = ap.parse_args()
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -44,6 +45,8 @@ def main():
         transcode(a.clip, wav)
         with wave.open(wav, "rb") as w:
             sr, n, total = w.getframerate(), w.getnframes(), 0
+            if a.max_seconds:
+                n = min(n, int(a.max_seconds * sr))
             frames = w.readframes(n)
         sampwidth, dur = 2, n / sr
         win, step = int(a.window * sr), int(a.step * sr)
