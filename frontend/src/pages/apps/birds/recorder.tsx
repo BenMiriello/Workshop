@@ -2,6 +2,7 @@ import {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
 import { reverseGeocode } from "./geocode";
+import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./specLocalize";
 
 // App-root recorder: captures THIS device's mic and streams live BirdNET
 // detections. Lives above the router so listening keeps running while you move
@@ -28,8 +29,29 @@ export type Device = { token: string; name: string; mode: DeviceMode; fixedLocat
 export type Det = {
   scientific_name: string; common_name: string; confidence: number;
   is_bird: boolean; stored?: boolean;
+  in_range?: boolean | null; filtered?: string; occurrence?: number | null;
 };
 export type LogEntry = Det & { at: string };
+// A detection pinned onto the live spectrogram. One marker per vocalization
+// EVENT (a burst of overlapping windows), not per window. Its horizontal pixel
+// position is derived from `tDetect` (a performance.now timestamp) via
+// specMarkerX(), so it shares the same clock + px/sec the image scrolls at and
+// can never drift. `tDetect` eases toward `tTarget` (the latest localized chirp
+// time) so the pin slides to its refined spot as the burst completes.
+//   mode "precise" → dot at the energy blob (time + frequency);
+//   mode "approx"  → faded dot at the model estimate (couldn't isolate a blob);
+//   mode "none"    → card only, no position (ambiguous / unresolvable).
+// `yFrac` is 0..1 from the top (high frequency = small).
+export type SpecMarker = {
+  id: number;
+  tDetect: number;
+  tTarget: number;
+  yFrac: number;
+  common: string;
+  sci: string;
+  conf: number;
+  mode: "precise" | "approx" | "none";
+};
 export type SpeciesRow = {
   scientific_name: string; common_name: string; hits: number; max_conf: number; is_bird: boolean;
 };
@@ -53,6 +75,8 @@ type Ctx = {
   err: string | null;
   analyserRef: React.MutableRefObject<AnalyserNode | null>;
   specCanvasRef: React.MutableRefObject<HTMLCanvasElement | null>;
+  specMarkersRef: React.MutableRefObject<SpecMarker[]>;
+  markerEpoch: number;
   start: () => Promise<void>;
   stop: () => void;
 };
@@ -95,7 +119,42 @@ function encodeWav(samples: Float32Array, sampleRate: number): Blob {
 // Offscreen spectrogram, drawn by the always-mounted provider so it keeps
 // scrolling and its history survives navigating between pages. The visible
 // <Spectrogram> just blits this canvas.
-const SPEC_W = 600, SPEC_H = 160, SPEC_MAX_HZ = 12000;
+export const SPEC_W = 600;
+const SPEC_H = 160, SPEC_MAX_HZ = 12000;
+// Spectrogram scroll speed. The image scrolls this many px/s AND every marker's
+// horizontal position is derived from this same constant + wall-clock time, so
+// the two share one time->pixel mapping and never drift apart. 600px / 80 ≈ 7.5s
+// of visible history.
+export const SPEC_PX_PER_SEC = 80;
+// A marker's current x in offscreen-canvas px, as a pure function of time.
+// Positive-to-negative as it scrolls left off the screen.
+export function specMarkerX(m: SpecMarker, now: number): number {
+  return SPEC_W - 1 - ((now - m.tDetect) * SPEC_PX_PER_SEC) / 1000;
+}
+
+// --- detection localization plumbing ---------------------------------------
+const SPEC_BANDS = 40;     // freq resolution of the retained energy heatmap
+const SPEC_HIST_MS = 5500; // how much energy history to keep for localization
+const SPEC_COL_MS = 30;    // min spacing between retained columns (~33/s)
+const EVENT_GAP_MS = 1600; // silence longer than this ends a vocalization event
+const TARGET_EASE = 0.18;  // how fast a pin slides to a refined position
+
+// Pool an FFT magnitude column (bins 0..topBin) into SPEC_BANDS energy bands,
+// band 0 = lowest frequency. Average within each band.
+function reduceColumn(data: Uint8Array, topBin: number): number[] {
+  const out = new Array(SPEC_BANDS).fill(0);
+  for (let b = 0; b < SPEC_BANDS; b++) {
+    const lo = Math.floor((b / SPEC_BANDS) * topBin);
+    const hi = Math.max(lo + 1, Math.floor(((b + 1) / SPEC_BANDS) * topBin));
+    let s = 0;
+    for (let i = lo; i < hi; i++) s += data[i] || 0;
+    out[b] = s / (hi - lo);
+  }
+  return out;
+}
+
+// Per-species rolling state used to group overlapping windows into one event.
+type SeriesEntry = { common: string; samples: Sample[]; lastSeen: number; markerId: number };
 function specColor(v: number): string {
   const t = v / 255;
   if (t < 0.25) { const k = t / 0.25; return `rgb(${10 + k * 10},${20 + k * 60},${40 + k * 60})`; }
@@ -144,6 +203,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [sessionSpecies, setSessionSpecies] = useState<SpeciesRow[]>(() => loadJSON<SpeciesRow[]>(SESS_SPECIES_KEY, []));
   const [analyzerUp, setAnalyzerUp] = useState<boolean | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Bumped only when the SET of spectrogram markers changes (one resolves to a
+  // bird, or one scrolls off) — NOT every frame. Per-frame x updates are done
+  // imperatively in <Spectrogram>, so this stays a handful of renders a second.
+  const [markerEpoch, setMarkerEpoch] = useState(0);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const nodeRef = useRef<ScriptProcessorNode | null>(null);
@@ -159,6 +222,13 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     specCanvasRef.current = cv;
   }
   const specRafRef = useRef<number | null>(null);
+  const specMarkersRef = useRef<SpecMarker[]>([]);
+  const markerSeqRef = useRef(0);
+  const specHistRef = useRef<SpecCol[]>([]);          // rolling energy heatmap for localization
+  const lastColRef = useRef(0);                       // performance.now of the last retained column
+  const seriesRef = useRef<Map<string, SeriesEntry>>(new Map()); // per-species event state
+  const lastDrawRef = useRef(0); // performance.now of the previous scroll frame
+  const carryRef = useRef(0);    // sub-pixel scroll remainder, so px/s is exact over time
   const bufRef = useRef<Float32Array[]>([]);
   const bufLenRef = useRef(0);
   const sinceStepRef = useRef(0);
@@ -186,6 +256,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       cx.fillStyle = "#0b1020"; cx.fillRect(0, 0, cv.width, cv.height);
       return;
     }
+    lastDrawRef.current = performance.now();
+    carryRef.current = 0;
     const loop = () => {
       specRafRef.current = requestAnimationFrame(loop);
       const an = analyserRef.current;
@@ -193,13 +265,51 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       const bins = an.frequencyBinCount;
       const data = new Uint8Array(bins);
       an.getByteFrequencyData(data);
-      cx.drawImage(cv, -1, 0);
       const nyq = (an.context.sampleRate || 48000) / 2;
       const topBin = Math.min(bins, Math.ceil((SPEC_MAX_HZ / nyq) * bins));
-      for (let y = 0; y < cv.height; y++) {
-        const bin = Math.floor((1 - y / cv.height) * topBin);
-        cx.fillStyle = specColor(data[Math.max(0, Math.min(topBin - 1, bin))] || 0);
-        cx.fillRect(cv.width - 1, y, 1, 1);
+
+      // Scroll by elapsed TIME, not one pixel per frame — so px/s is constant
+      // regardless of framerate. The carry preserves the sub-pixel remainder so
+      // the rate stays exact over time; the clamp avoids smearing a huge block
+      // after a stall (e.g. the tab was backgrounded).
+      const now = performance.now();
+      const dt = Math.min(0.25, (now - lastDrawRef.current) / 1000);
+      lastDrawRef.current = now;
+      carryRef.current += dt * SPEC_PX_PER_SEC;
+      const dx = Math.floor(carryRef.current);
+      carryRef.current -= dx;
+
+      if (dx > 0) {
+        cx.drawImage(cv, -dx, 0);
+        for (let y = 0; y < cv.height; y++) {
+          const bin = Math.floor((1 - y / cv.height) * topBin);
+          const v = data[Math.max(0, Math.min(topBin - 1, bin))] || 0;
+          cx.fillStyle = specColor(v);
+          cx.fillRect(cv.width - dx, y, dx, 1);
+        }
+      }
+
+      // Retain a reduced energy column (~33/s) so detections can be localized
+      // against the actual heatmap; trim to the last few seconds.
+      if (now - lastColRef.current >= SPEC_COL_MS) {
+        lastColRef.current = now;
+        const hist = specHistRef.current;
+        hist.push({ t: now, bands: reduceColumn(data, topBin) });
+        const cutoff = now - SPEC_HIST_MS;
+        while (hist.length && hist[0].t < cutoff) hist.shift();
+      }
+
+      // Ease each pin toward its latest localized target (so it slides to the
+      // refined spot as a burst completes), then drop ones scrolled off the
+      // left. Position derives from time, never accumulated, so it can't drift.
+      const ms = specMarkersRef.current;
+      for (const m of ms) {
+        const d = m.tTarget - m.tDetect;
+        m.tDetect = Math.abs(d) < 2 ? m.tTarget : m.tDetect + d * TARGET_EASE;
+      }
+      if (ms.length && ms.some((m) => specMarkerX(m, now) < -8)) {
+        specMarkersRef.current = ms.filter((m) => specMarkerX(m, now) >= -8);
+        setMarkerEpoch((e) => e + 1);
       }
     };
     loop();
@@ -229,6 +339,52 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     setDevice((d) => { const nd = { ...d, fixedLocationId: id }; postDevice(nd); return nd; });
   }, []);
 
+  // Group overlapping windows into per-species vocalization EVENTS, then jointly
+  // localize all active events against the energy heatmap and (re)place each
+  // event's pin. Called once per /analyze response with that window's post time.
+  const ingestForMarkers = useCallback((dets: Det[], tPost: number) => {
+    const now = performance.now();
+    const series = seriesRef.current;
+    // Plausible birds only: real taxa, not range-filtered, not muted. Deduped
+    // windows still ride back and are kept — they fill in the confidence curve.
+    const plausible = dets.filter(
+      (d) => d.is_bird && d.in_range !== false && d.filtered !== "muted");
+    for (const d of plausible) {
+      let e = series.get(d.scientific_name);
+      if (e && tPost - e.lastSeen > EVENT_GAP_MS) { series.delete(d.scientific_name); e = undefined; }
+      if (!e) {
+        const markerId = ++markerSeqRef.current;
+        specMarkersRef.current.push({
+          id: markerId, tDetect: tPost - 1500, tTarget: tPost - 1500, yFrac: 0.5,
+          common: d.common_name, sci: d.scientific_name, conf: d.confidence, mode: "none",
+        });
+        e = { common: d.common_name, samples: [], lastSeen: tPost, markerId };
+        series.set(d.scientific_name, e);
+      }
+      e.samples.push({ t: tPost, conf: d.confidence });
+      if (e.samples.length > 8) e.samples.shift();
+      e.lastSeen = tPost;
+    }
+    // Retire events gone silent (their pins stay put and scroll off naturally).
+    for (const [sci, e] of [...series]) {
+      if (now - e.lastSeen > EVENT_GAP_MS) series.delete(sci);
+    }
+    if (!series.size) return;
+    const events: SpeciesEvent[] = [...series.entries()].map(
+      ([sci, e]) => ({ sci, common: e.common, samples: e.samples }));
+    const placements = localizeEvents(events, specHistRef.current);
+    for (const p of placements) {
+      const e = series.get(p.sci);
+      if (!e) continue;
+      const mk = specMarkersRef.current.find((m) => m.id === e.markerId);
+      if (mk) {
+        mk.tTarget = p.t; mk.yFrac = p.yFrac; mk.mode = p.mode;
+        mk.conf = Math.max(...e.samples.map((s) => s.conf));
+      }
+    }
+    setMarkerEpoch((x) => x + 1);
+  }, []);
+
   const sendWindow = useCallback((samples: Float32Array, sampleRate: number) => {
     const dev = deviceRef.current;
     const wav = encodeWav(samples, sampleRate);
@@ -246,6 +402,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     }
     inFlightRef.current += 1;
     setStatus("analyzing");
+    // The window covers audio [tPost-3s, tPost]; tPost is the localization clock
+    // for this window's confidence sample (same performance.now the spectrogram
+    // and markers use).
+    const tPost = performance.now();
     fetch(`${API}/analyze`, { method: "POST", body: fd })
       .then((r) => r.json())
       .then((res) => {
@@ -253,6 +413,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         setNeedsLocation(!!res.needs_location);
         const dets: Det[] = res.detections || [];
         setNowHearing(dets);
+        ingestForMarkers(dets, tPost);
         const stored = dets.filter((d) => d.stored !== false);
         if (stored.length) {
           const now = new Date().toLocaleTimeString();
@@ -276,7 +437,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         inFlightRef.current -= 1;
         setStatus(inFlightRef.current > 0 ? "analyzing" : "listening");
       });
-  }, []);
+  }, [ingestForMarkers]);
 
   const acquireWake = useCallback(async () => {
     try { wakeRef.current = (await navigator.wakeLock?.request("screen")) || null; } catch { /* unsupported */ }
@@ -294,6 +455,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     nodeRef.current = null; srcRef.current = null; streamRef.current = null;
     analyserRef.current = null; ctxRef.current = null; wakeRef.current = null;
     bufRef.current = []; bufLenRef.current = 0; sinceStepRef.current = 0; inFlightRef.current = 0;
+    specMarkersRef.current = []; specHistRef.current = []; seriesRef.current.clear();
+    setMarkerEpoch((e) => e + 1);
     setRecording(false); setStatus("idle"); setNowHearing([]); setNeedsLocation(false);
     setWasListening(false); localStorage.setItem(WAS_KEY, "0");
   }, []);
@@ -388,9 +551,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     device, setDeviceName, adoptDevice, setMode, setFixedLocation,
     recording, status, elapsed, location, needsLocation, wasListening,
     nowHearing, liveLog, sessionSpecies,
-    analyzerUp, err, analyserRef, specCanvasRef, start, stop,
+    analyzerUp, err, analyserRef, specCanvasRef, specMarkersRef, markerEpoch, start, stop,
   }), [device, setDeviceName, adoptDevice, setMode, setFixedLocation, recording, status, elapsed,
-    location, needsLocation, wasListening, nowHearing, liveLog, sessionSpecies, analyzerUp, err, start, stop]);
+    location, needsLocation, wasListening, nowHearing, liveLog, sessionSpecies, analyzerUp, err,
+    markerEpoch, start, stop]);
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
 }
