@@ -236,8 +236,8 @@ async def station_species_detail(station: str, sci: str):
 # --------------------------------------------------------------------------
 
 @router.get("/devices")
-async def devices_list():
-    return {"devices": birds_analyze.list_devices()}
+async def devices_list(archived: bool = False):
+    return {"devices": birds_analyze.list_devices(archived=archived)}
 
 
 @router.get("/device")
@@ -247,16 +247,28 @@ async def device_get(token: str):
 
 @router.post("/device")
 async def device_upsert(token: str = Form(...), name: str = Form(None),
-                        mode: str = Form(None), fixed_location_id: str = Form(None)):
+                        mode: str = Form(None), fixed_location_id: str = Form(None),
+                        user_agent: str = Form(None), update_only: bool = Form(False)):
     fid = int(fixed_location_id) if (fixed_location_id or "").strip().isdigit() else (
         0 if (fixed_location_id or "").strip() == "0" else None)
-    dev = birds_analyze.upsert_device(token.strip(), name=name, mode=mode, fixed_location_id=fid)
+    dev = birds_analyze.upsert_device(token.strip(), name=name, mode=mode, fixed_location_id=fid,
+                                      user_agent=user_agent, update_only=update_only)
     return {"ok": True, "device": dev}
 
 
+@router.delete("/device")
+async def device_delete(token: str):
+    return birds_analyze.delete_device(token.strip())
+
+
+@router.post("/device/restore")
+async def device_restore(token: str = Form(...)):
+    return birds_analyze.restore_device(token.strip())
+
+
 @router.get("/locations")
-async def locations_list(include_nonbird: bool = False):
-    return birds_analyze.list_locations(include_nonbird)
+async def locations_list(include_nonbird: bool = False, archived: bool = False):
+    return birds_analyze.list_locations(include_nonbird, archived=archived)
 
 
 @router.get("/location")
@@ -288,6 +300,16 @@ async def location_merge(src: int = Form(...), dst: int = Form(...)):
     if not loc:
         raise HTTPException(status_code=400, detail="merge failed (bad ids)")
     return {"ok": True, "location": loc}
+
+
+@router.delete("/location")
+async def location_delete(location_id: int):
+    return birds_analyze.delete_location(location_id)
+
+
+@router.post("/location/restore")
+async def location_restore(location_id: int = Form(...)):
+    return birds_analyze.restore_location(location_id)
 
 
 @router.get("/location/summary")
@@ -383,6 +405,72 @@ async def species_recording_get(sci: str):
 @router.post("/species/recording")
 async def species_recording_set(sci: str = Form(...), save_mode: str = Form(...)):
     return birds_analyze.set_species_save_mode(sci, save_mode)
+
+
+# --- Soundscape Atlas (call-type clusters + labelling) ----------------------
+
+@router.get("/atlas/status")
+async def atlas_status_ep():
+    return birds_analyze.atlas_status()
+
+
+@router.get("/atlas/settings")
+async def atlas_settings_get():
+    return {"settings": birds_analyze.atlas_settings()}
+
+
+@router.post("/atlas/settings")
+async def atlas_settings_set(atlas_clip_save: bool = Form(None),
+                             atlas_clip_storage_mb: int = Form(None),
+                             atlas_exemplars_per_cluster: int = Form(None),
+                             atlas_unknown_dist: float = Form(None)):
+    patch = {"atlas_clip_save": atlas_clip_save,
+             "atlas_clip_storage_mb": atlas_clip_storage_mb,
+             "atlas_exemplars_per_cluster": atlas_exemplars_per_cluster,
+             "atlas_unknown_dist": atlas_unknown_dist}
+    return {"settings": birds_analyze.update_atlas_settings(
+        {k: v for k, v in patch.items() if v is not None})}
+
+
+@router.get("/atlas/species")
+async def atlas_species_ep():
+    return {"species": birds_analyze.atlas_species()}
+
+
+@router.get("/atlas")
+async def atlas_points_ep(scope: str = "global", species: str | None = None,
+                          location_id: int | None = None,
+                          limit: int = Query(8000, ge=1, le=20000)):
+    return birds_analyze.atlas_points(scope, species, location_id, limit)
+
+
+@router.get("/atlas/cluster/{cluster_id}/clips")
+async def atlas_cluster_clips_ep(cluster_id: int, limit: int = Query(16, ge=1, le=64)):
+    return birds_analyze.atlas_cluster_clips(cluster_id, limit)
+
+
+@router.post("/atlas/cluster/{cluster_id}/label")
+async def atlas_cluster_label_ep(cluster_id: int, label: str = Form(None)):
+    try:
+        return birds_analyze.set_cluster_label(cluster_id, label)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="cluster not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/atlas/clip/{clip_id}/audio")
+async def atlas_clip_audio_ep(clip_id: int):
+    """Stream an Atlas exemplar clip. PRIVATE only — never crosses publish."""
+    path = birds_analyze.atlas_clip_path(clip_id)
+    if not path:
+        raise HTTPException(status_code=404, detail="clip not found")
+    return FileResponse(str(path), media_type="audio/mpeg", filename=path.name)
+
+
+@router.post("/atlas/rebuild")
+async def atlas_rebuild_ep():
+    return birds_analyze.trigger_atlas_build()
 
 
 # --- Trust model (suggested / confirmed / rejected) -------------------------

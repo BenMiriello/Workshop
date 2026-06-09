@@ -96,3 +96,30 @@ export function PlayButton({ recId, size = 28 }: { recId: number; size?: number 
     </button>
   );
 }
+
+// Play any clip URL through the same one-at-a-time element (so an Atlas exemplar
+// and a saved recording never overlap). Used by the Soundscape Atlas labelling UI.
+export function ClipPlayButton({ src, title = "Play clip", size = 28 }: { src: string; title?: string; size?: number }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const f = () => force((n) => n + 1);
+    _listeners.add(f);
+    return () => { _listeners.delete(f); };
+  }, []);
+  const playing = !!_audio && _audio.src.endsWith(src) && !_audio.paused;
+  const toggle = (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation();
+    if (playing) { _audio?.pause(); notify(); return; }
+    if (_audio) _audio.pause();
+    _audio = new Audio(src.startsWith("http") ? src : `${API}${src}`);
+    _audio.onended = notify; _audio.onpause = notify; _audio.onplay = notify;
+    _audio.play().catch(() => {});
+    notify();
+  };
+  return (
+    <button type="button" className="bird-act" onClick={toggle}
+      title={playing ? "Pause" : title} style={{ width: size, height: size, flexShrink: 0 }}>
+      {playing ? <Pause size={15} /> : <Play size={15} />}
+    </button>
+  );
+}

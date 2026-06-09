@@ -187,6 +187,7 @@ async function postDevice(d: Device) {
   if (d.name) fd.append("name", d.name);
   fd.append("mode", d.mode);
   if (d.mode === "fixed" && d.fixedLocationId) fd.append("fixed_location_id", d.fixedLocationId);
+  if (typeof navigator !== "undefined" && navigator.userAgent) fd.append("user_agent", navigator.userAgent);
   try { await fetch(`${API}/device`, { method: "POST", body: fd }); } catch { /* offline ok */ }
 }
 
@@ -243,6 +244,17 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     fetch(`${API}/analyze/health`).then((r) => r.json())
       .then((h) => setAnalyzerUp(!!h.up)).catch(() => setAnalyzerUp(false));
+    // Refresh this device's user-agent on load so it can be identified ("Chrome
+    // on macOS") without having to start listening first. update_only: never
+    // creates a row, so merely opening the app can't register a phantom device.
+    const d = deviceRef.current;
+    if (d.token && typeof navigator !== "undefined" && navigator.userAgent) {
+      const fd = new FormData();
+      fd.append("token", d.token);
+      fd.append("user_agent", navigator.userAgent);
+      fd.append("update_only", "1");
+      fetch(`${API}/device`, { method: "POST", body: fd }).catch(() => {});
+    }
   }, []);
 
   // Spectrogram draw loop lives HERE (provider is always mounted) so the image

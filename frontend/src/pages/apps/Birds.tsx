@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
-import { Mic, Square, Pencil, MapPin, Smartphone, Radio, Loader2, AlertTriangle, X } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Mic, Square, MapPin, Smartphone, Radio, Loader2, AlertTriangle, X } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
 import BirdsHeader, { InlineSelect } from "./birds/BirdsHeader";
 import Spectrogram from "./birds/Spectrogram";
@@ -17,6 +17,9 @@ import ActivityCard from "./birds/ActivityCard";
 // panel (this device's spectrogram + feed) appears while you're listening; the
 // always-on yard's live feed is viewable on its own.
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
+// Sentinel option in the Place dropdown: not a real source, just a row whose
+// caret (and label) jump to the full Locations list.
+const ALL_LOCS = "__all_locations__";
 
 type Loc = { id: number; name: string; detections: number; species: number; devices: string[] };
 type KnownDevice = { token: string; name: string };
@@ -24,6 +27,7 @@ type Source = { key: string; name: string; kind: "yard" | "loc"; id?: number };
 
 export default function Birds() {
   const [params, setParams] = useSearchParams();
+  const nav = useNavigate();
   const [locs, setLocs] = useState<Loc[]>([]);
   const [devices, setDevices] = useState<KnownDevice[]>([]);
   const [home, setHome] = useState<string | null>(null);
@@ -61,28 +65,34 @@ export default function Birds() {
 
   return (
     <div>
-      <BirdsHeader title="Birds">
+      <BirdsHeader>
         {sources.length > 0 && (
           <>
             <InlineSelect
               ariaLabel="Place"
               icon={<MapPin size={15} />}
               value={selected?.key || ""}
-              options={sources.map((s) => ({ value: s.key, label: s.name }))}
-              onChange={(v) => setParam("source", v)}
+              options={[
+                { value: ALL_LOCS, label: "All locations", listAll: true },
+                ...sources.map((s) => ({ value: s.key, label: s.name, editable: s.kind === "loc" })),
+              ]}
+              onChange={(v) => { if (v === ALL_LOCS) nav("/apps/birds/locations"); else setParam("source", v); }}
+              onEdit={(v) => { const s = sources.find((x) => x.key === v); if (s?.id) nav(`/apps/birds/location?id=${s.id}`); }}
+              editTitle="Edit this place (name, coordinates, devices)"
+              onListAll={() => nav("/apps/birds/locations")}
+              listAllTitle="See all locations"
             />
-            {selected?.kind === "loc" && (
-              <Link to={`/apps/birds/location?id=${selected.id}`} className="bird-act" title="Edit this place (name, coordinates, devices)">
-                <Pencil size={14} />
-              </Link>
-            )}
-            {selected?.kind === "loc" && devices.length > 1 && (
+            {selected?.kind === "loc" && devices.length > 0 && (
               <InlineSelect
                 ariaLabel="Device"
                 icon={<Smartphone size={15} />}
                 value={deviceTok}
-                options={[{ value: "", label: "All devices" }, ...devices.map((dv) => ({ value: dv.token, label: dv.name || "Untitled device" }))]}
+                options={[{ value: "", label: "All devices", listAll: true }, ...devices.map((dv) => ({ value: dv.token, label: dv.name || "Untitled device", editable: true }))]}
                 onChange={(v) => setParam("device", v)}
+                onEdit={(v) => nav(`/apps/birds/devices?token=${encodeURIComponent(v)}`)}
+                editTitle="Edit this device"
+                onListAll={() => nav("/apps/birds/devices")}
+                listAllTitle="See all devices"
               />
             )}
           </>

@@ -38,6 +38,26 @@ from birdnetlib import Recording
 from birdnetlib.analyzer import Analyzer
 
 ANALYZER = Analyzer()
+
+# Rebuild the TFLite interpreter with experimental_preserve_all_tensors so the
+# penultimate feature layer survives invoke() and can be read back as the 1024-d
+# embedding. Out of the box BirdNET frees that tensor and embedding extraction
+# fails ("Tensor data is null"). Measured cost on the classification path is ~4ms
+# (24ms -> 28ms), so one shared interpreter serves both /analyze and /embed -
+# no second model load, no double memory. Embeddings are bit-identical whether or
+# not a classify ran first (verified), because _return_embeddings re-invokes.
+from tensorflow import lite as _tflite  # noqa: E402
+
+_interp = _tflite.Interpreter(
+    model_path=ANALYZER.model_path, num_threads=1,
+    experimental_preserve_all_tensors=True)
+_interp.allocate_tensors()
+ANALYZER.interpreter = _interp
+ANALYZER.input_details = _interp.get_input_details()
+ANALYZER.output_details = _interp.get_output_details()
+ANALYZER.input_layer_index = ANALYZER.input_details[0]["index"]
+ANALYZER.output_layer_index = ANALYZER.output_details[0]["index"]
+
 _LOCK = threading.Lock()
 
 # Occurrence-map cache: the eBird meta-model is cheap to invoke but rebuilding
@@ -94,6 +114,23 @@ def analyze(path: str, min_conf: float, lat=None, lon=None, week=None,
         return out
 
 
+def embed(path: str):
+    """1024-d BirdNET feature embedding(s) for the chunk(s) in this WAV. Our live
+    chunks are 3s so this is normally one vector; a longer file yields one per 3s
+    window. This is the penultimate layer - it encodes acoustic similarity, so
+    clustering these vectors separates call types WITHIN a species (the Soundscape
+    Atlas / call-type route), independent of the species label."""
+    with _LOCK:
+        rec = Recording(ANALYZER, path)
+        rec.extract_embeddings()
+        return [
+            {"start_s": float(e.get("start_time", 0.0)),
+             "end_s": float(e.get("end_time", 0.0)),
+             "vec": e["embeddings"]}
+            for e in rec.embeddings
+        ]
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code, obj):
         body = json.dumps(obj).encode()
@@ -123,6 +160,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        if self.path.startswith("/embed"):
+            try:
+                n = int(self.headers.get("content-length", 0))
+                req = json.loads(self.rfile.read(n) or b"{}")
+                vecs = embed(req["path"])
+                dim = len(vecs[0]["vec"]) if vecs else 0
+                self._send(200, {"embeddings": vecs, "dim": dim})
+            except Exception as e:  # noqa: BLE001
+                self._send(500, {"error": str(e)})
+            return
         if not self.path.startswith("/analyze"):
             self._send(404, {"error": "not found"})
             return

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { MapPin, Star, Radio, Smartphone } from "lucide-react";
+import { MapPin, Star, Radio, Smartphone, RotateCcw } from "lucide-react";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 import { API, jget } from "./ui";
 
@@ -17,6 +17,7 @@ type Loc = {
 
 export default function Locations() {
   const [locs, setLocs] = useState<Loc[]>([]);
+  const [removed, setRemoved] = useState<Loc[]>([]);
   const [home, setHome] = useState<string | null>(null);
   const [yardAvailable, setYardAvailable] = useState(false);
   const [showNonBird] = useShowNonBird();
@@ -25,6 +26,8 @@ export default function Locations() {
   const load = useCallback(() => {
     jget<{ locations: Loc[]; home: string | null }>(`/locations?_=1${nb}`)
       .then((d) => { setLocs(d.locations); setHome(d.home); }).catch(() => {});
+    jget<{ locations: Loc[] }>(`/locations?archived=1${nb}`)
+      .then((d) => setRemoved(d.locations)).catch(() => {});
     jget<{ available: boolean; total_detections: number }>(`/summary?_=1`)
       .then((s) => setYardAvailable(s.available && s.total_detections > 0)).catch(() => {});
   }, [nb]);
@@ -35,6 +38,11 @@ export default function Locations() {
     const fd = new FormData(); fd.append("source", source);
     fetch(`${API}/home`, { method: "POST", body: fd }).then(() => setHome(source)).catch(() => {});
   }, []);
+
+  const restore = useCallback((id: number) => {
+    const fd = new FormData(); fd.append("location_id", String(id));
+    fetch(`${API}/location/restore`, { method: "POST", body: fd }).then(() => setTimeout(load, 150)).catch(() => {});
+  }, [load]);
 
   return (
     <div>
@@ -64,6 +72,27 @@ export default function Locations() {
           <p className="muted">No locations yet. Start listening on a device to create one.</p>
         )}
       </div>
+
+      {removed.length > 0 && (
+        <section style={{ marginTop: "1.5rem" }}>
+          <div className="muted" style={{ fontSize: ".78rem", textTransform: "uppercase", letterSpacing: ".04em", marginBottom: ".4rem" }}>
+            Removed locations
+          </div>
+          <div style={{ display: "grid", gap: ".5rem" }}>
+            {removed.map((L) => (
+              <div key={L.id} className="card" style={{ padding: ".6rem .9rem", display: "flex", alignItems: "center", gap: ".6rem", opacity: 0.85 }}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ fontWeight: 600 }}>{L.name}</span>
+                  <span className="muted" style={{ fontSize: ".76rem", display: "block" }}>
+                    {L.species} species · {L.detections.toLocaleString()} detections kept
+                  </span>
+                </span>
+                <button className="btn sm" onClick={() => restore(L.id)}><RotateCcw size={14} /> Restore</button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

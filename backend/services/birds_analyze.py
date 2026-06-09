@@ -16,6 +16,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,23 @@ ANALYZER_URL = os.environ.get("BIRDNET_ANALYZER_URL", "http://127.0.0.1:8012")
 # clips under BirdNET-Go). App-managed, tailnet-private, NEVER published.
 CLIPS_DIR = Path(os.environ.get("BIRDNET_CLIPS_DIR", "/home/clawd-a/birdnet/data/clips"))
 _MB = 1024 * 1024
+
+# Soundscape Atlas: a 1024-d BirdNET feature embedding is captured for every
+# STORED detection (the penultimate layer; encodes acoustic similarity so its
+# clusters separate call types within a species). A SEPARATE, independent clip
+# pool keeps a few audio exemplars per cluster so each cluster can be hand-labelled
+# by ear - this runs on its own toggle, alongside or instead of the per-species
+# recordings above. See docs/birds-atlas.md.
+ATLAS_CLIPS_DIR = Path(os.environ.get("BIRDNET_ATLAS_CLIPS_DIR", "/home/clawd-a/birdnet/data/atlas-clips"))
+EMBED_MODEL = "birdnet-global-6k-v2.4"
+# The call-type vocabulary. 'unknown' is the explicit fuzzy-boundary bucket (a
+# detection too far from every labelled cluster centroid); 'other' is a labelled
+# catch-all the operator can assign to a cluster that is real but none of these.
+CALL_TYPES = ("song", "contact", "alarm", "flight", "begging", "other", "unknown")
+_ATLAS_DEFAULTS = {"atlas_clip_storage_mb": 256, "atlas_exemplars_per_cluster": 8}
+# A detection farther than this (cosine distance) from every labelled centroid is
+# tagged 'unknown' rather than forced into the nearest cluster. Tunable per-install.
+_ATLAS_UNKNOWN_DIST_DEFAULT = 0.18
 # ~3s MP3 @ 64k mono. Used only for "is there room for one more?" banner checks.
 _AVG_CLIP_BYTES = 24 * 1024
 _REC_DEFAULTS = {"rec_storage_mb": 1024, "rec_when_full": "evict_old", "rec_warn_ratio": 0.9}
@@ -256,6 +274,62 @@ def _conn() -> sqlite3.Connection:
                   "WHERE save_mode IS NULL OR save_mode='default'")
         # SQLite can't DROP COLUMN on old versions; leaving the dead columns is harmless.
 
+    # Soundscape Atlas tables ------------------------------------------------
+    # One 1024-d feature embedding per stored detection (the durable acoustic
+    # fingerprint - we keep this, not the audio). cluster_id/call_type/ct_dist are
+    # the call-type tag: set live by nearest-centroid, then made authoritative by
+    # the batch cluster build (services/../analyzer/atlas_build.py).
+    c.execute("""CREATE TABLE IF NOT EXISTS detection_embedding (
+        det_id INTEGER PRIMARY KEY,
+        vec BLOB, dim INTEGER, model TEXT,
+        cluster_id INTEGER, call_type TEXT, ct_dist REAL,
+        embedded_at TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_de_cluster ON detection_embedding(cluster_id)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_de_calltype ON detection_embedding(call_type)")
+    # A cluster of acoustically-similar detections. scope='species' clusters are
+    # the call-type groups (one HDBSCAN run per species); scope='global' are the
+    # overview-map blobs (mostly one per species). label is the hand-assigned
+    # call type; centroid (mean embedding) drives live nearest-centroid tagging
+    # and carrying a label forward across rebuilds.
+    c.execute("""CREATE TABLE IF NOT EXISTS atlas_cluster (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope TEXT, species TEXT, hdbscan_label INTEGER,
+        label TEXT, size INTEGER, centroid BLOB, color TEXT,
+        created_at TEXT, updated_at TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ac_scope ON atlas_cluster(scope, species)")
+    # 2D/3D projection coordinates for the viz, one row per (detection, scope).
+    # Written by the batch build only (live tagging can't project a single point).
+    c.execute("""CREATE TABLE IF NOT EXISTS atlas_point (
+        det_id INTEGER, scope TEXT,
+        x REAL, y REAL, z REAL, cluster_id INTEGER,
+        PRIMARY KEY (det_id, scope))""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_ap_scope ON atlas_point(scope, cluster_id)")
+    # Independent exemplar-clip pool: a few playable clips per cluster so each can
+    # be labelled by ear. Own toggle (atlas_clip_save) + own budget, separate from
+    # the recordings table. Collected FIFO live, pruned to per-cluster exemplars by
+    # the batch build (exemplar=1 protected, the rest evictable).
+    c.execute("""CREATE TABLE IF NOT EXISTS atlas_clip (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        det_id INTEGER, scientific_name TEXT, cluster_id INTEGER,
+        ts TEXT, path TEXT, bytes INTEGER, confidence REAL,
+        exemplar INTEGER DEFAULT 0)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_atc_sci ON atlas_clip(scientific_name)")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_atc_cluster ON atlas_clip(cluster_id)")
+
+    # Devices gained a user_agent so a device can be identified ("Chrome on
+    # macOS") beyond its name - answers "what/whose device is this".
+    dev_cols = {r["name"] for r in c.execute("PRAGMA table_info(devices)")}
+    if "user_agent" not in dev_cols:
+        c.execute("ALTER TABLE devices ADD COLUMN user_agent TEXT")
+    # Removal is a SOFT archive, never a hard delete: deleted_at flags a device or
+    # location as removed-from-lists while its row AND all its detections persist
+    # indefinitely (no time-based purge anywhere), so it can be restored later.
+    if "deleted_at" not in dev_cols:
+        c.execute("ALTER TABLE devices ADD COLUMN deleted_at TEXT")
+    loc_cols = {r["name"] for r in c.execute("PRAGMA table_info(locations)")}
+    if "deleted_at" not in loc_cols:
+        c.execute("ALTER TABLE locations ADD COLUMN deleted_at TEXT")
+
     cols = {r["name"] for r in c.execute("PRAGMA table_info(browser_detections)")}
     # is_bird: no DEFAULT so existing rows become NULL and the backfill below
     # reclassifies them (a plain DEFAULT 1 would mark old noise rows as birds).
@@ -423,6 +497,40 @@ def _call_analyzer(wav_path: str, min_conf: float, lat: float | None = None,
                                  headers={"content-type": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read()).get("detections", [])
+
+
+def _call_embed(wav_path: str) -> list[float] | None:
+    """Ask the analyzer for the 1024-d feature embedding of this chunk. Our chunks
+    are 3s so there is one vector; if several windows come back we take the first.
+    Returns None on any failure - embedding is an enrichment, never blocks storage."""
+    try:
+        body = json.dumps({"path": wav_path}).encode()
+        req = urllib.request.Request(f"{ANALYZER_URL}/embed", data=body,
+                                     headers={"content-type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            embs = json.loads(r.read()).get("embeddings", [])
+        return embs[0]["vec"] if embs else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _pack_vec(vec) -> bytes:
+    """Pack a float vector to raw little-endian float32 bytes (no numpy in the
+    lean backend venv). _unpack_vec is the inverse; the batch job reads these."""
+    import array
+    a = array.array("f", vec)
+    if sys.byteorder == "big":
+        a.byteswap()
+    return a.tobytes()
+
+
+def _unpack_vec(blob: bytes) -> list[float]:
+    import array
+    a = array.array("f")
+    a.frombytes(blob)
+    if sys.byteorder == "big":
+        a.byteswap()
+    return list(a)
 
 
 def _effective_coords(c: sqlite3.Connection, token: str, mode: str,
@@ -810,7 +918,7 @@ def resolve_location(c: sqlite3.Connection, token: str, device_name: str, mode: 
         best, best_d = None, None
         for loc in c.execute(
                 "SELECT id,name,lat,lon,radius_m FROM locations "
-                "WHERE lat IS NOT NULL AND lon IS NOT NULL").fetchall():
+                "WHERE lat IS NOT NULL AND lon IS NOT NULL AND deleted_at IS NULL").fetchall():
             d = _haversine_m(lat, lon, loc["lat"], loc["lon"])
             if d <= (loc["radius_m"] or 40) and (best_d is None or d < best_d):
                 best, best_d = loc, d
@@ -865,13 +973,18 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
     try:
       with _conn() as c:
         # Keep the device row fresh (so a just-started device appears even before
-        # its first detection).
+        # its first detection). NOTE: mode is a device SETTING owned by the
+        # Devices form (upsert_device) — it is set only on first insert here, and
+        # never overwritten by the audio stream. The recording tab posts whatever
+        # mode is in its own localStorage every 1s; if we wrote it on every chunk,
+        # a still-running device would stomp any mode change made from another
+        # screen within a second (the "fixed reverts to adaptive on reload" bug).
         if token:
             c.execute(
                 "INSERT INTO devices(token,name,mode,created_at,last_seen) VALUES(?,?,?,?,?) "
                 "ON CONFLICT(token) DO UPDATE SET "
                 "name=COALESCE(NULLIF(excluded.name,''),devices.name), "
-                "mode=excluded.mode, last_seen=excluded.last_seen",
+                "last_seen=excluded.last_seen",
                 (token, dev_name, mode, ts, ts))
         # Resolve coordinates for the range filter BEFORE analysis (read-only;
         # creates nothing). No place -> filter stays off, range comes back unknown.
@@ -934,15 +1047,23 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                 # "save recordings" setting. Encode the analyzed WAV to MP3 once
                 # per chunk, then copy a clip per savable detection.
                 rec_cfg = rec_settings()
+                atlas_cfg = atlas_settings()
                 modes = _save_modes(c)
                 want = lambda d: d["is_bird"] and _should_save(d["scientific_name"], modes, rec_cfg["rec_save"])
-                want_clip = any(want(d) for d in to_store)
+                # The Atlas exemplar pool keeps a clip of every stored bird while its
+                # own toggle is on - independent of the recordings save setting.
+                atlas_want = lambda d: atlas_cfg["atlas_clip_save"] and d["is_bird"]
+                # One MP3 per chunk, reused for both pools (recordings + Atlas).
                 src_size = 0
-                if want_clip:
+                if any(want(d) or atlas_want(d) for d in to_store):
                     src_mp3 = wav + ".rec.mp3"
                     src_size = _encode_clip(wav, src_mp3)
                     if src_size == 0:
-                        want_clip = False
+                        src_mp3 = None
+                # One 1024-d embedding per chunk (the acoustic fingerprint), attached
+                # to every stored row. None when the analyzer can't embed - storage
+                # is never blocked on it.
+                vec = _call_embed(wav)
                 for d in to_store:
                     cur = c.execute(
                         "INSERT INTO browser_detections(station,ts,scientific_name,common_name,"
@@ -954,10 +1075,17 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                          dev_name, loc_id, eff_lat, eff_lon,
                          d.get("occurrence"), None if d.get("in_range") is None else int(d["in_range"]),
                          1, d["status"], d["auto"]))
-                    if want_clip and src_mp3 and want(d):
-                        if _capture_clip(c, d, cur.lastrowid, src_mp3, src_size,
+                    det_id = cur.lastrowid
+                    if vec is not None:
+                        d["call_type"] = _store_embedding(
+                            c, det_id, d["scientific_name"], vec,
+                            atlas_cfg["atlas_unknown_dist"], ts)
+                    if src_mp3 and want(d):
+                        if _capture_clip(c, d, det_id, src_mp3, src_size,
                                          loc_id, token, ts, rec_cfg):
                             d["recorded"] = True
+                    if src_mp3 and atlas_want(d):
+                        _capture_atlas_clip(c, d, det_id, src_mp3, src_size, ts, atlas_cfg)
         # Mirror into the legacy stations table so old /station/* keeps resolving.
         if token and dev_name:
             c.execute(
@@ -1320,6 +1448,329 @@ def _capture_clip(c: sqlite3.Connection, d: dict, det_id: int, src_mp3: str,
     return True
 
 
+# --------------------------------------------------------------------------
+# Soundscape Atlas: embedding capture, live nearest-centroid call-type tagging,
+# and the independent exemplar-clip pool. The batch cluster build lives in
+# services/../birdnet/analyzer/atlas_build.py (heavy ML kept out of this venv).
+# --------------------------------------------------------------------------
+
+def atlas_settings() -> dict:
+    s = dict(_ATLAS_DEFAULTS)
+    mb = get_setting("atlas_clip_storage_mb")
+    if mb:
+        try:
+            s["atlas_clip_storage_mb"] = max(10, min(100000, int(float(mb))))
+        except (TypeError, ValueError):
+            pass
+    ex = get_setting("atlas_exemplars_per_cluster")
+    if ex:
+        try:
+            s["atlas_exemplars_per_cluster"] = max(1, min(64, int(float(ex))))
+        except (TypeError, ValueError):
+            pass
+    ud = get_setting("atlas_unknown_dist")
+    try:
+        s["atlas_unknown_dist"] = float(ud) if ud else _ATLAS_UNKNOWN_DIST_DEFAULT
+    except (TypeError, ValueError):
+        s["atlas_unknown_dist"] = _ATLAS_UNKNOWN_DIST_DEFAULT
+    s["atlas_clip_save"] = (get_setting("atlas_clip_save") or "0") == "1"
+    return s
+
+
+def update_atlas_settings(patch: dict) -> dict:
+    if patch.get("atlas_clip_storage_mb") is not None:
+        try:
+            set_setting("atlas_clip_storage_mb",
+                        str(max(10, min(100000, int(float(patch["atlas_clip_storage_mb"]))))))
+        except (TypeError, ValueError):
+            pass
+    if patch.get("atlas_exemplars_per_cluster") is not None:
+        try:
+            set_setting("atlas_exemplars_per_cluster",
+                        str(max(1, min(64, int(float(patch["atlas_exemplars_per_cluster"]))))))
+        except (TypeError, ValueError):
+            pass
+    if patch.get("atlas_unknown_dist") is not None:
+        try:
+            set_setting("atlas_unknown_dist", str(max(0.0, min(2.0, float(patch["atlas_unknown_dist"])))))
+        except (TypeError, ValueError):
+            pass
+    if patch.get("atlas_clip_save") is not None:
+        set_setting("atlas_clip_save", "1" if patch["atlas_clip_save"] else "0")
+    return atlas_settings()
+
+
+# Per-process centroid cache for live nearest-centroid tagging. Invalidated by the
+# atlas_version setting, which the batch build bumps after each rebuild. Each entry
+# is (cluster_id, label, unit_vec, inv_norm) grouped by species.
+_centroids_cache: dict = {}
+_centroids_version = -1
+
+
+def _cosine_dist(vec: list[float], unit: list[float], inv_norm_a: float) -> float:
+    """1 - cosine similarity, where `unit` is the already-unit-normalised centroid
+    and inv_norm_a normalises `vec`. Pure-python (no numpy in this venv); 1024-d
+    over a handful of clusters is negligible."""
+    dot = 0.0
+    for x, y in zip(vec, unit):
+        dot += x * y
+    return 1.0 - dot * inv_norm_a
+
+
+def _species_centroids(c: sqlite3.Connection) -> dict:
+    """{scientific_name: [(cluster_id, label, unit_centroid, 1.0)]} for live
+    tagging, cached and refreshed when the batch build bumps atlas_version."""
+    global _centroids_cache, _centroids_version
+    row = c.execute("SELECT value FROM app_settings WHERE key='atlas_version'").fetchone()
+    ver = int(row["value"]) if row and (row["value"] or "").isdigit() else 0
+    if ver == _centroids_version and _centroids_cache:
+        return _centroids_cache
+    out: dict = {}
+    for r in c.execute("SELECT id, species, label, centroid FROM atlas_cluster "
+                       "WHERE scope='species' AND centroid IS NOT NULL"):
+        vec = _unpack_vec(r["centroid"])
+        norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+        unit = [x / norm for x in vec]
+        out.setdefault(r["species"], []).append((r["id"], r["label"], unit))
+    _centroids_cache = out
+    _centroids_version = ver
+    return out
+
+
+def _live_tag(c: sqlite3.Connection, sci: str, vec: list[float],
+              unknown_dist: float) -> tuple[int | None, str | None, float | None]:
+    """Assign a freshly-embedded detection to its species' nearest call-type
+    cluster. Beyond unknown_dist from every centroid -> 'unknown' (the fuzzy-
+    boundary bucket). Nearest cluster still recorded so it groups; call_type is the
+    cluster's hand label (None while the cluster is unlabelled)."""
+    cents = _species_centroids(c).get(sci)
+    if not cents:
+        return None, None, None
+    norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+    inv = 1.0 / norm
+    best_id, best_label, best_dist = None, None, 9.9
+    for cid, label, unit in cents:
+        d = _cosine_dist(vec, unit, inv)
+        if d < best_dist:
+            best_id, best_label, best_dist = cid, label, d
+    if best_dist > unknown_dist:
+        return best_id, "unknown", round(best_dist, 4)
+    return best_id, best_label, round(best_dist, 4)
+
+
+def _store_embedding(c: sqlite3.Connection, det_id: int, sci: str,
+                     vec: list[float], unknown_dist: float, ts: str) -> str | None:
+    """Persist a detection's embedding + its live call-type tag; return the tag."""
+    cid, ctype, dist = _live_tag(c, sci, vec, unknown_dist)
+    c.execute("INSERT OR REPLACE INTO detection_embedding(det_id,vec,dim,model,"
+              "cluster_id,call_type,ct_dist,embedded_at) VALUES(?,?,?,?,?,?,?,?)",
+              (det_id, _pack_vec(vec), len(vec), EMBED_MODEL, cid, ctype, dist, ts))
+    return ctype
+
+
+def _atlas_used_bytes(c: sqlite3.Connection) -> int:
+    return int(c.execute("SELECT COALESCE(SUM(bytes),0) b FROM atlas_clip").fetchone()["b"])
+
+
+def _atlas_evict_fifo(c: sqlite3.Connection, need: int, cap: int) -> bool:
+    """Free space in the Atlas pool by deleting oldest NON-exemplar clips first.
+    Exemplars (chosen per-cluster by the last build) are protected. Returns True if
+    there is room afterwards."""
+    used = _atlas_used_bytes(c)
+    if used + need <= cap:
+        return True
+    for r in c.execute("SELECT id, path, bytes FROM atlas_clip WHERE exemplar=0 "
+                       "ORDER BY ts ASC, id ASC"):
+        if used + need <= cap:
+            break
+        _delete_atlas_clip_file(r["path"])
+        c.execute("DELETE FROM atlas_clip WHERE id=?", (r["id"],))
+        used -= r["bytes"] or 0
+    return used + need <= cap
+
+
+def _delete_atlas_clip_file(rel_path: str) -> None:
+    try:
+        (ATLAS_CLIPS_DIR / rel_path).unlink()
+    except OSError:
+        pass
+
+
+def _capture_atlas_clip(c: sqlite3.Connection, d: dict, det_id: int, src_mp3: str,
+                        size: int, ts: str, cfg: dict) -> bool:
+    """Admit one clip into the independent Atlas exemplar pool (FIFO under its own
+    budget). Collected broadly now; the batch build later keeps only the N nearest
+    each cluster centroid and evicts the rest."""
+    cap = cfg["atlas_clip_storage_mb"] * _MB
+    if _atlas_used_bytes(c) + size > cap and not _atlas_evict_fifo(c, size, cap):
+        return False
+    sci = d["scientific_name"]
+    rel = f"{_slug(sci)}/{_slug(ts)}_{det_id}.mp3"
+    dest = ATLAS_CLIPS_DIR / rel
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src_mp3, dest)
+    except OSError:
+        return False
+    b = dest.stat().st_size
+    c.execute("INSERT INTO atlas_clip(det_id,scientific_name,cluster_id,ts,path,bytes,"
+              "confidence,exemplar) VALUES(?,?,?,?,?,?,?,0)",
+              (det_id, sci, None, ts, rel, b, d["confidence"]))
+    return True
+
+
+def _bump_atlas_version(c: sqlite3.Connection) -> None:
+    row = c.execute("SELECT value FROM app_settings WHERE key='atlas_version'").fetchone()
+    nextv = (int(row["value"]) + 1) if row and (row["value"] or "").isdigit() else 1
+    c.execute("INSERT INTO app_settings(key,value) VALUES('atlas_version',?) "
+              "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(nextv),))
+
+
+# Resolve the analyzer-venv interpreter + the batch build script (heavy ML there,
+# not in this venv). __file__ = backend/services/birds_analyze.py.
+_WORKSHOP_ROOT = Path(__file__).resolve().parent.parent.parent
+ATLAS_BUILD_PY = _WORKSHOP_ROOT / "birdnet" / "analyzer" / "atlas_build.py"
+ATLAS_VENV_PY = _WORKSHOP_ROOT / "birdnet" / "analyzer" / ".venv" / "bin" / "python"
+
+
+def atlas_status() -> dict:
+    cfg = atlas_settings()
+    with _conn() as c:
+        n_emb = c.execute("SELECT COUNT(*) n FROM detection_embedding WHERE vec IS NOT NULL").fetchone()["n"]
+        n_clustered = c.execute("SELECT COUNT(*) n FROM atlas_point WHERE scope='species'").fetchone()["n"]
+        n_clusters = c.execute("SELECT COUNT(*) n FROM atlas_cluster WHERE scope='species'").fetchone()["n"]
+        n_labeled = c.execute("SELECT COUNT(*) n FROM atlas_cluster WHERE scope='species' "
+                              "AND label IS NOT NULL AND label<>''").fetchone()["n"]
+        clip_used = _atlas_used_bytes(c)
+        clip_count = c.execute("SELECT COUNT(*) n FROM atlas_clip").fetchone()["n"]
+    ver = get_setting("atlas_version")
+    last_summary = get_setting("atlas_last_summary")
+    return {"built": bool(ver and ver != "0"),
+            "version": int(ver) if ver and ver.isdigit() else 0,
+            "embedded": n_emb, "clustered": n_clustered,
+            "clusters": n_clusters, "labeled_clusters": n_labeled,
+            "last_build": get_setting("atlas_last_build"),
+            "build_started": get_setting("atlas_build_started"),
+            "last_summary": json.loads(last_summary) if last_summary else None,
+            "clip_save": cfg["atlas_clip_save"],
+            "clip_used_bytes": clip_used, "clip_cap_bytes": cfg["atlas_clip_storage_mb"] * _MB,
+            "clip_count": clip_count, "settings": cfg}
+
+
+def atlas_species() -> list[dict]:
+    """Species that have a per-species call-type map, most-detected first."""
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT ac.species AS scientific_name, "
+            "(SELECT common_name FROM browser_detections WHERE scientific_name=ac.species "
+            " AND common_name IS NOT NULL LIMIT 1) AS common_name, "
+            "SUM(ac.size) AS n, COUNT(*) AS clusters, "
+            "SUM(CASE WHEN ac.label IS NOT NULL AND ac.label<>'' THEN 1 ELSE 0 END) AS labeled "
+            "FROM atlas_cluster ac WHERE ac.scope='species' "
+            "GROUP BY ac.species ORDER BY n DESC")]
+
+
+def atlas_points(scope: str, species: str | None = None,
+                 location_id: int | None = None, limit: int = 8000) -> dict:
+    """Projection points + cluster list for the map. scope='global' is the
+    species-coloured overview; scope='species' is one bird's call-type map."""
+    scope = "species" if scope == "species" else "global"
+    where = "ap.scope=?"
+    params: list = [scope]
+    if scope == "species" and species:
+        where += " AND bd.scientific_name=?"
+        params.append(species)
+    if location_id:
+        where += " AND bd.location_id=?"
+        params.append(location_id)
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ap.det_id, round(ap.x,4) x, round(ap.y,4) y, ap.cluster_id, "
+            "bd.scientific_name sci, bd.common_name common, bd.ts, "
+            "round(bd.confidence,3) confidence, de.call_type, "
+            "EXISTS(SELECT 1 FROM atlas_clip ac WHERE ac.det_id=ap.det_id) has_clip, "
+            "EXISTS(SELECT 1 FROM recordings r WHERE r.det_id=ap.det_id) has_rec "
+            "FROM atlas_point ap JOIN browser_detections bd ON bd.id=ap.det_id "
+            "LEFT JOIN detection_embedding de ON de.det_id=ap.det_id "
+            f"WHERE {where} LIMIT ?", (*params, max(1, min(limit, 20000)))).fetchall()
+        cparams: list = [scope]
+        cwhere = "scope=?"
+        if scope == "species" and species:
+            cwhere += " AND species=?"
+            cparams.append(species)
+        clusters = [dict(r) for r in c.execute(
+            "SELECT id, species, label, size FROM atlas_cluster "
+            f"WHERE {cwhere} ORDER BY size DESC", tuple(cparams))]
+    return {"scope": scope, "species": species,
+            "points": [dict(r) for r in rows], "clusters": clusters,
+            "call_types": list(CALL_TYPES)}
+
+
+def atlas_cluster_clips(cluster_id: int, limit: int = 16) -> dict:
+    """Playable exemplars for labelling a cluster by ear: the dedicated Atlas pool
+    (exemplars first) plus any clips the recordings system already saved for this
+    cluster's members."""
+    with _conn() as c:
+        meta = c.execute("SELECT id, scope, species, label, size FROM atlas_cluster "
+                         "WHERE id=?", (cluster_id,)).fetchone()
+        atlas = c.execute(
+            "SELECT ac.id, ac.det_id, ac.ts, round(ac.confidence,3) confidence, "
+            "bd.common_name common FROM atlas_clip ac "
+            "LEFT JOIN browser_detections bd ON bd.id=ac.det_id "
+            "WHERE ac.cluster_id=? ORDER BY ac.exemplar DESC, ac.id LIMIT ?",
+            (cluster_id, limit)).fetchall()
+        recs = c.execute(
+            "SELECT r.id, r.det_id, r.ts, round(r.confidence,3) confidence, r.common_name common "
+            "FROM recordings r JOIN detection_embedding de ON de.det_id=r.det_id "
+            "WHERE de.cluster_id=? LIMIT ?", (cluster_id, limit)).fetchall()
+    return {"cluster": dict(meta) if meta else None,
+            "atlas_clips": [dict(r) for r in atlas],
+            "recordings": [dict(r) for r in recs]}
+
+
+def atlas_clip_path(clip_id: int) -> Path | None:
+    with _conn() as c:
+        r = c.execute("SELECT path FROM atlas_clip WHERE id=?", (clip_id,)).fetchone()
+    if not r:
+        return None
+    p = ATLAS_CLIPS_DIR / r["path"]
+    return p if p.exists() else None
+
+
+def set_cluster_label(cluster_id: int, label: str | None) -> dict:
+    """Hand-label a cluster's call type. Propagates to its member detections at
+    once (so over-time views update immediately) and bumps atlas_version so live
+    nearest-centroid tagging serves the new label without waiting for a rebuild."""
+    norm = (label or "").strip().lower() or None
+    if norm is not None and norm not in CALL_TYPES:
+        raise ValueError(f"unknown call type: {label}")
+    with _conn() as c:
+        row = c.execute("SELECT id FROM atlas_cluster WHERE id=?", (cluster_id,)).fetchone()
+        if not row:
+            raise KeyError("cluster not found")
+        c.execute("UPDATE atlas_cluster SET label=?, updated_at=? WHERE id=?",
+                  (norm, _now(), cluster_id))
+        c.execute("UPDATE detection_embedding SET call_type=? WHERE cluster_id=?",
+                  (norm, cluster_id))
+        _bump_atlas_version(c)
+    return {"id": cluster_id, "label": norm}
+
+
+def trigger_atlas_build() -> dict:
+    """Kick off the batch cluster build (analyzer venv, detached). Returns at once;
+    progress is observable via atlas_status (version/last_build bump on finish)."""
+    if not ATLAS_VENV_PY.exists() or not ATLAS_BUILD_PY.exists():
+        return {"started": False, "error": "atlas builder not installed"}
+    env = dict(os.environ, BIRDNET_BROWSER_DB=str(BROWSER_DB),
+               BIRDNET_ATLAS_CLIPS_DIR=str(ATLAS_CLIPS_DIR))
+    logf = open("/tmp/atlas-build.log", "ab")
+    subprocess.Popen([str(ATLAS_VENV_PY), str(ATLAS_BUILD_PY), "--db", str(BROWSER_DB)],
+                     stdout=logf, stderr=logf, env=env, cwd=str(ATLAS_BUILD_PY.parent),
+                     start_new_session=True)
+    set_setting("atlas_build_started", _now())
+    return {"started": True}
+
+
 def recordings_status() -> dict:
     """Usage + the homepage banner state. 'ok' renders nothing; 'warn' is near
     full; 'error' means saving is failing (stop-mode full, or evict-mode where
@@ -1447,12 +1898,18 @@ def reconcile_recordings() -> dict:
     return {"ok": True, "rows_fixed": fixed, "orphans_removed": orphans}
 
 
-def list_devices() -> list[dict]:
+def list_devices(archived: bool = False) -> list[dict]:
+    """Active devices by default; archived=True lists only soft-removed ones (for
+    the restore path). Detection counts/locations are computed either way."""
     with _conn() as c:
+        flt = "deleted_at IS NOT NULL" if archived else "deleted_at IS NULL"
         devs = c.execute(
-            "SELECT token,name,mode,fixed_location_id,created_at,last_seen FROM devices "
-            "ORDER BY last_seen DESC").fetchall()
+            "SELECT token,name,mode,fixed_location_id,created_at,last_seen,user_agent,deleted_at "
+            f"FROM devices WHERE {flt} ORDER BY last_seen DESC").fetchall()
         locs = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
+        counts = {r["device_token"]: r["n"] for r in c.execute(
+            "SELECT device_token, COUNT(*) n FROM browser_detections "
+            "WHERE device_token IS NOT NULL GROUP BY device_token")}
         out = []
         for d in devs:
             last = c.execute(
@@ -1467,7 +1924,9 @@ def list_devices() -> list[dict]:
                 "fixed_location_id": d["fixed_location_id"],
                 "fixed_location": locs.get(d["fixed_location_id"]),
                 "location_id": cur_lid, "location": locs.get(cur_lid),
-                "last_seen": d["last_seen"],
+                "created_at": d["created_at"], "last_seen": d["last_seen"],
+                "user_agent": d["user_agent"], "detections": counts.get(d["token"], 0),
+                "deleted_at": d["deleted_at"],
             })
     return out
 
@@ -1491,19 +1950,25 @@ def get_device(token: str) -> dict | None:
 
 
 def upsert_device(token: str, name: str | None = None, mode: str | None = None,
-                  fixed_location_id: int | None = None) -> dict | None:
+                  fixed_location_id: int | None = None, user_agent: str | None = None,
+                  update_only: bool = False) -> dict | None:
     """Create or update a device. Only non-None fields are written, so the
-    settings form can patch one field at a time."""
+    settings form can patch one field at a time. update_only=True never creates a
+    row (used by the on-load UA touch, so just viewing a page can't register a
+    phantom device) - it only refreshes an already-registered device."""
     if not token:
         return None
     now = _now()
+    ua = (user_agent or "").strip()
     with _conn() as c:
         exists = c.execute("SELECT 1 FROM devices WHERE token=?", (token,)).fetchone()
         if not exists:
-            c.execute("INSERT INTO devices(token,name,mode,fixed_location_id,created_at,last_seen) "
-                      "VALUES(?,?,?,?,?,?)",
+            if update_only:
+                return None
+            c.execute("INSERT INTO devices(token,name,mode,fixed_location_id,created_at,last_seen,user_agent) "
+                      "VALUES(?,?,?,?,?,?,?)",
                       (token, (name or "").strip() or "New device",
-                       mode or "adaptive", fixed_location_id, now, now))
+                       mode or "adaptive", fixed_location_id, now, now, ua or None))
         else:
             sets, args = [], []
             if name is not None:
@@ -1512,10 +1977,34 @@ def upsert_device(token: str, name: str | None = None, mode: str | None = None,
                 sets.append("mode=?"); args.append(mode)
             if fixed_location_id is not None:
                 sets.append("fixed_location_id=?"); args.append(fixed_location_id or None)
+            if ua:
+                sets.append("user_agent=?"); args.append(ua)
             sets.append("last_seen=?"); args.append(now)
             args.append(token)
             c.execute(f"UPDATE devices SET {','.join(sets)} WHERE token=?", args)
     return get_device(token)
+
+
+def delete_device(token: str) -> dict:
+    """SOFT-remove a device: flag it deleted so it drops out of the device lists
+    and filters, but keep the row AND all its detections (which stay attributed to
+    their location, provenance intact). Reversible via restore_device - nothing is
+    ever hard-deleted or purged by age."""
+    if not token:
+        return {"ok": False, "deleted": 0}
+    with _conn() as c:
+        n = c.execute("UPDATE devices SET deleted_at=? WHERE token=? AND deleted_at IS NULL",
+                      (_now(), token)).rowcount
+    return {"ok": True, "deleted": n}
+
+
+def restore_device(token: str) -> dict:
+    """Bring a soft-removed device back into the active lists with all its data."""
+    if not token:
+        return {"ok": False, "restored": 0}
+    with _conn() as c:
+        n = c.execute("UPDATE devices SET deleted_at=NULL WHERE token=?", (token,)).rowcount
+    return {"ok": True, "restored": n}
 
 
 def create_location(name: str, lat: float | None = None, lon: float | None = None,
@@ -1550,7 +2039,7 @@ def update_location(location_id: int, name: str | None = None, lat: float | None
         if me and me["lat"] is not None and me["lon"] is not None:
             for other in c.execute(
                     "SELECT id,lat,lon,radius_m FROM locations "
-                    "WHERE id<>? AND lat IS NOT NULL AND lon IS NOT NULL", (location_id,)).fetchall():
+                    "WHERE id<>? AND lat IS NOT NULL AND lon IS NOT NULL AND deleted_at IS NULL", (location_id,)).fetchall():
                 d = _haversine_m(me["lat"], me["lon"], other["lat"], other["lon"])
                 if d <= max(me["radius_m"] or 40, other["radius_m"] or 40):
                     c.execute("UPDATE browser_detections SET location_id=? WHERE location_id=?", (location_id, other["id"]))
@@ -1585,7 +2074,7 @@ def merge_locations(src_id: int, dst_id: int) -> dict | None:
 
 def get_location(location_id: int) -> dict | None:
     with _conn() as c:
-        L = c.execute("SELECT id,name,lat,lon,address,radius_m,created_at FROM locations "
+        L = c.execute("SELECT id,name,lat,lon,address,radius_m,created_at,deleted_at FROM locations "
                       "WHERE id=?", (location_id,)).fetchone()
         if not L:
             return None
@@ -1596,7 +2085,24 @@ def get_location(location_id: int) -> dict | None:
     return {"id": L["id"], "name": L["name"], "lat": L["lat"], "lon": L["lon"],
             "address": L["address"], "radius_m": L["radius_m"],
             "detections": agg["d"] or 0, "species": agg["s"] or 0, "last_ts": agg["last"],
-            "devices": devs}
+            "devices": devs, "deleted_at": L["deleted_at"]}
+
+
+def delete_location(location_id: int) -> dict:
+    """SOFT-remove a location: flag it deleted so it leaves the place lists, the
+    source selector, and the pin targets - but keep the row AND every detection
+    filed under it. Reversible via restore_location; never purged by age."""
+    with _conn() as c:
+        n = c.execute("UPDATE locations SET deleted_at=? WHERE id=? AND deleted_at IS NULL",
+                      (_now(), location_id)).rowcount
+    return {"ok": True, "deleted": n}
+
+
+def restore_location(location_id: int) -> dict:
+    """Bring a soft-removed location back with all its detections."""
+    with _conn() as c:
+        n = c.execute("UPDATE locations SET deleted_at=NULL WHERE id=?", (location_id,)).rowcount
+    return {"ok": True, "restored": n}
 
 
 def _location_devices(c: sqlite3.Connection, location_id: int) -> list[str]:
@@ -1609,9 +2115,10 @@ def _location_devices(c: sqlite3.Connection, location_id: int) -> list[str]:
     return sorted({*seen, *fixed})
 
 
-def list_locations(include_nonbird: bool = False) -> dict:
+def list_locations(include_nonbird: bool = False, archived: bool = False) -> dict:
     with _conn() as c:
-        locs = c.execute("SELECT id,name,lat,lon,address,radius_m FROM locations").fetchall()
+        flt = "deleted_at IS NOT NULL" if archived else "deleted_at IS NULL"
+        locs = c.execute(f"SELECT id,name,lat,lon,address,radius_m FROM locations WHERE {flt}").fetchall()
         out = []
         for L in locs:
             agg = c.execute(

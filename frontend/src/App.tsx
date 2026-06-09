@@ -13,6 +13,7 @@ import Devices from "./pages/apps/birds/Devices";
 import BirdDetail from "./pages/apps/birds/BirdDetail";
 import BirdSettings from "./pages/apps/birds/BirdSettings";
 import Recordings from "./pages/apps/birds/RecordingsPage";
+import Atlas from "./pages/apps/birds/Atlas";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
 import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
@@ -52,6 +53,7 @@ export default function App() {
               StationDetail is superseded by LocationDetail (by id). */}
           <Route path="/apps/birds/settings" element={<BirdSettings />} />
           <Route path="/apps/birds/recordings" element={<Recordings />} />
+          <Route path="/apps/birds/atlas" element={<Atlas />} />
           <Route path="/apps/commute" element={<CommuteApp />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { SlidersHorizontal, Bird, Filter, Target, Check, History, Mic, HardDrive } from "lucide-react";
+import { SlidersHorizontal, Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints } from "lucide-react";
 import { useShowNonBird } from "./settings";
 import { Toggle, Button, Segmented } from "../../../ui";
 import { API, pct } from "./ui";
@@ -28,6 +28,8 @@ export default function BirdSettings() {
       <AccuracySettings />
 
       <RecordingSettings />
+
+      <AtlasSettings />
 
       <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
         <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
@@ -141,6 +143,53 @@ function RecordingSettings() {
         <HardDrive size={14} />
         <Link to="/apps/birds/recordings" style={{ color: "var(--accent)", textDecoration: "none" }}>
           Manage storage &amp; saved clips
+        </Link>
+      </p>
+    </section>
+  );
+}
+
+// Independent of the recordings setting above: the Atlas keeps a few audio
+// exemplars per acoustic cluster so each can be labelled by ear. Own toggle, own
+// small budget — runs alongside or instead of the recordings save.
+function AtlasSettings() {
+  const [save, setSave] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/atlas/settings`).then((r) => r.json())
+      .then((d) => setSave(!!d.settings.atlas_clip_save)).catch(() => {});
+  }, []);
+
+  const toggle = useCallback((v: boolean) => {
+    setSave(v);
+    const fd = new FormData(); fd.append("atlas_clip_save", String(v));
+    fetch(`${API}/atlas/settings`, { method: "POST", body: fd })
+      .then((r) => r.json())
+      .then((d) => setSave(!!d.settings.atlas_clip_save))
+      .then(() => window.dispatchEvent(new CustomEvent("bird-settings-change")))
+      .catch(() => {});
+  }, []);
+
+  if (save == null) return null;
+  return (
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
+        <Waypoints size={17} strokeWidth={1.8} /> Soundscape Atlas
+      </h3>
+      <label style={{ display: "flex", alignItems: "flex-start", gap: ".7rem", cursor: "pointer" }}>
+        <span style={{ paddingTop: ".15rem" }}><Toggle checked={save} onChange={toggle} /></span>
+        <span>
+          <span style={{ fontWeight: 500 }}>Save call-type exemplar clips</span>
+          <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
+            Keeps a few audio clips per acoustic cluster (its own small budget) so you can label each
+            cluster's call type by ear in the Atlas. Independent of the recordings setting above.
+          </span>
+        </span>
+      </label>
+      <p className="muted" style={{ fontSize: ".82rem", margin: ".9rem 0 0", display: "flex", alignItems: "center", gap: ".4rem" }}>
+        <Waypoints size={14} />
+        <Link to="/apps/birds/atlas" style={{ color: "var(--accent)", textDecoration: "none" }}>
+          Open the Soundscape Atlas
         </Link>
       </p>
     </section>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown } from "lucide-react";
+import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints } from "lucide-react";
 import { useRecorder } from "./recorder";
 import { jget } from "./ui";
 
@@ -14,9 +14,19 @@ type KnownDevice = { token: string; name: string };
 export default function BirdsHeader({ title, children }: { title?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className="birds-toolbar">
-      <h2 className="birds-toolbar__title"><Bird size={22} strokeWidth={1.8} /> {title ?? "Birds"}</h2>
+      <h2 className="birds-toolbar__title">
+        <Link to="/apps/birds" className="birds-toolbar__home" title="Birds home" aria-label="Birds home">
+          <Bird size={22} strokeWidth={1.8} />
+        </Link>
+        {title && <span>{title}</span>}
+      </h2>
       {children}
       {!PUBLIC && <ListenButton />}
+      {!PUBLIC && (
+        <Link to="/apps/birds/atlas" className="btn sm" title="Soundscape Atlas" aria-label="Soundscape Atlas">
+          <Waypoints size={15} /> <span className="birds-label">Atlas</span>
+        </Link>
+      )}
       {!PUBLIC && (
         <Link to="/apps/birds/settings" className="btn sm birds-toolbar__end" title="Settings">
           <SlidersHorizontal size={15} /> <span className="birds-label">Settings</span>
@@ -28,10 +38,14 @@ export default function BirdsHeader({ title, children }: { title?: React.ReactNo
 
 // An inline, text-style selector: the current value reads as plain text behind an
 // icon (not a chunky control); clicking the icon or text opens the option list
-// below it. Used for the place and device filters.
-export function InlineSelect({ icon, value, options, onChange, ariaLabel }: {
+// below it. Used for the place and device filters. When `onEdit` is given, each
+// editable option carries a pencil flush to the far right of the menu that opens
+// that item's editor (the place editor, the device editor) without selecting it.
+export function InlineSelect({ icon, value, options, onChange, ariaLabel, onEdit, editTitle, onListAll, listAllTitle }: {
   icon: React.ReactNode; value: string; ariaLabel: string;
-  options: { value: string; label: string }[]; onChange: (v: string) => void;
+  options: { value: string; label: string; editable?: boolean; listAll?: boolean }[]; onChange: (v: string) => void;
+  onEdit?: (value: string) => void; editTitle?: string;
+  onListAll?: (value: string) => void; listAllTitle?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -55,10 +69,22 @@ export function InlineSelect({ icon, value, options, onChange, ariaLabel }: {
       {open && (
         <ul className="birds-inline__menu" role="listbox" aria-label={ariaLabel}>
           {options.map((o) => (
-            <li key={o.value}>
+            <li key={o.value} className="birds-inline__row">
               <button type="button" role="option" aria-selected={o.value === value}
                 className={o.value === value ? "is-selected" : ""}
                 onClick={() => { onChange(o.value); setOpen(false); }}>{o.label}</button>
+              {onEdit && o.editable && (
+                <button type="button" className="birds-inline__edit" title={editTitle ?? "Edit"} aria-label={`${editTitle ?? "Edit"}: ${o.label}`}
+                  onClick={(e) => { e.stopPropagation(); setOpen(false); onEdit(o.value); }}>
+                  <Pencil size={13} />
+                </button>
+              )}
+              {onListAll && o.listAll && (
+                <button type="button" className="birds-inline__edit" title={listAllTitle ?? "See all"} aria-label={`${listAllTitle ?? "See all"}: ${o.label}`}
+                  onClick={(e) => { e.stopPropagation(); setOpen(false); onListAll(o.value); }}>
+                  <ChevronRight size={15} />
+                </button>
+              )}
             </li>
           ))}
         </ul>

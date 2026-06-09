@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { MapPin, Radio, Star, Pencil, Check, X, AlertTriangle, ChevronRight } from "lucide-react";
+import { MapPin, Radio, Star, Pencil, Check, X, AlertTriangle, ChevronRight, Trash2 } from "lucide-react";
 import { useCrumbLabel } from "../../../components/appNav";
 import { API, jget } from "./ui";
 import AddressPicker from "./AddressPicker";
@@ -100,6 +100,7 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
   const [busy, setBusy] = useState(false);
   const [others, setOthers] = useState<{ id: number; name: string }[]>([]);
   const [target, setTarget] = useState("");
+  const [confirmDel, setConfirmDel] = useState(false);
 
   useEffect(() => {
     jget<{ locations: { id: number; name: string }[] }>(`/locations`)
@@ -115,6 +116,13 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
     fd.append("dst", target);
     fetch(`${API}/location/merge`, { method: "POST", body: fd })
       .then(() => nav(`/apps/birds/location?id=${target}`))
+      .catch(() => setBusy(false));
+  };
+
+  const remove = () => {
+    setBusy(true);
+    fetch(`${API}/location?location_id=${summary.id}`, { method: "DELETE" })
+      .then(() => nav("/apps/birds"))
       .catch(() => setBusy(false));
   };
 
@@ -165,6 +173,22 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
             </p>
           </div>
         )}
+
+        <div style={{ marginTop: ".6rem", paddingTop: ".7rem", borderTop: "1px solid var(--border)" }}>
+          {!confirmDel ? (
+            <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={busy}>
+              <Trash2 size={14} /> Remove this location
+            </button>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
+              <span style={{ fontSize: ".82rem", flex: 1, minWidth: "12rem" }}>
+                Remove this location? Its {summary.detections.toLocaleString()} detection{summary.detections === 1 ? "" : "s"} are kept and it can be restored from the Locations page.
+              </span>
+              <button className="btn" onClick={() => setConfirmDel(false)} disabled={busy}><X size={14} /> Cancel</button>
+              <button className="btn danger" onClick={remove} disabled={busy}><Check size={14} /> Remove</button>
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );

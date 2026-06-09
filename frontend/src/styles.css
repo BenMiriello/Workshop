@@ -256,6 +256,10 @@ label {
 .birds-toolbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: nowrap; margin: 0 0 1rem; }
 .birds-toolbar__title { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 1.4rem;
   min-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+/* The bird icon is a persistent home button in every Birds toolbar. */
+.birds-toolbar__home { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  color: var(--fg); border-radius: 0.5rem; padding: 0.15rem; }
+.birds-toolbar__home:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .birds-toolbar .btn { flex: 0 0 auto; }
 /* Inline, text-style filter: the current value reads as plain text behind an
    icon; clicking opens the option list below it. Not a chunky select control. */
@@ -275,6 +279,12 @@ label {
   border-radius: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .birds-inline__menu button:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .birds-inline__menu button.is-selected { color: var(--accent); font-weight: 600; }
+/* A menu option that also carries an edit affordance: label grows, pencil pins right. */
+.birds-inline__menu .birds-inline__row { display: flex; align-items: center; gap: 0.25rem; }
+.birds-inline__menu .birds-inline__row > button[role="option"] { flex: 1 1 auto; width: auto; }
+.birds-inline__menu .birds-inline__edit { flex: 0 0 auto; display: inline-flex; align-items: center;
+  justify-content: center; width: 1.9rem; height: 1.9rem; padding: 0; color: var(--muted); border-radius: 6px; }
+.birds-inline__menu .birds-inline__edit:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .birds-toolbar__end { margin-left: auto; flex: 0 0 auto; }
 @media (max-width: 640px) { .birds-label { display: none; } .birds-inline__val { max-width: 6.5rem; } }
 
@@ -546,3 +556,51 @@ input[type="range"].grad::-moz-range-thumb {
 .filters { display: flex; flex-wrap: wrap; gap: 0.6rem 0.9rem; align-items: flex-end; margin-bottom: 1rem; }
 .filters label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--muted); }
 .filters select.num-in { width: auto; min-width: 9rem; font-size: 0.85rem; }
+
+/* ---- Soundscape Atlas ---------------------------------------------------- */
+.spin { animation: bird-spin 1s linear infinite; }
+
+.atlas-layout { display: flex; gap: 1rem; align-items: stretch; }
+@media (max-width: 760px) { .atlas-layout { flex-direction: column; } }
+
+.atlas-canvas-wrap { position: relative; flex: 1; min-width: 0; min-height: 440px; }
+.atlas-canvas {
+  width: 100%; height: 100%; min-height: 440px; display: block;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 8px; cursor: grab;
+}
+.atlas-canvas:active { cursor: grabbing; }
+.atlas-fit { position: absolute; top: 0.5rem; right: 0.5rem; }
+
+.atlas-side { width: 320px; flex-shrink: 0; }
+@media (max-width: 760px) { .atlas-side { width: auto; } }
+.atlas-h3 { margin: 0 0 .4rem; display: flex; align-items: center; gap: .4rem; font-size: 1rem; }
+
+.atlas-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+
+.atlas-cluster { border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.atlas-cluster[data-active="1"] { border-color: var(--accent); }
+.atlas-cluster__head {
+  display: flex; align-items: center; gap: .5rem; width: 100%;
+  padding: .5rem .6rem; background: var(--card); border: 0; cursor: pointer;
+  color: var(--fg); text-align: left; font: inherit;
+}
+.atlas-cluster__head:hover { background: var(--card-hover); }
+.atlas-cluster__body { padding: .6rem; border-top: 1px solid var(--border); background: var(--bg); }
+
+.atlas-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.atlas-chip {
+  padding: .2rem .55rem; border-radius: 999px; font-size: .8rem;
+  border: 1px solid var(--border); background: var(--card); color: var(--muted); cursor: pointer;
+}
+.atlas-chip:hover { background: var(--card-hover); }
+.atlas-chip.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 500; }
+
+.atlas-legend-row {
+  display: flex; align-items: center; gap: .5rem; width: 100%;
+  padding: .3rem .4rem; border: 0; background: none; cursor: pointer;
+  color: var(--fg); text-align: left; font: inherit; border-radius: 5px;
+}
+.atlas-legend-row:hover { background: var(--card-hover); }
+
+.atlas-point-card { margin-top: .8rem; padding: .7rem .8rem; }
