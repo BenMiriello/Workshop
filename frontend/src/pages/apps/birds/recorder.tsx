@@ -16,7 +16,8 @@ import { localizeEvents, type SpecCol, type SpeciesEvent, type Sample } from "./
 
 const API = "/api/birds";
 const WINDOW_S = 3;
-const STEP_S = 1;
+const STEP_S = 0.5; // post every 0.5s (6 overlapping 3s windows) — tighter time
+                    // localization for the spectrogram markers; ~2x analyzer load.
 const MAX_SECONDS = 3600; // safety auto-stop at 1h
 
 const TOKEN_KEY = "birdDeviceToken";

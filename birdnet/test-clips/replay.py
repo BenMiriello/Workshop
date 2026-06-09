@@ -36,7 +36,7 @@ def main():
     ap.add_argument("--lat", type=float); ap.add_argument("--lon", type=float)
     ap.add_argument("--week", type=int)
     ap.add_argument("--window", type=float, default=3.0)
-    ap.add_argument("--step", type=float, default=1.0)
+    ap.add_argument("--step", type=float, default=0.5)  # matches the live recorder cadence
     ap.add_argument("--max-seconds", type=float, help="only analyze the first N seconds")
     a = ap.parse_args()
 
