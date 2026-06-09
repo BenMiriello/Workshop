@@ -29,20 +29,26 @@ Binaries are gitignored; `manifest.json` + `fetch.sh` are the reproducible
 record. Full provenance (license + attribution + source page) per clip is in
 `manifest.json`.
 
-## The set
+## The set (~19 clips)
 
-| file | scenario | species | license | source |
-|---|---|---|---|---|
-| `single_oak-titmouse.wav` | single bird, clear song | Oak Titmouse | CC BY-NC-SA | [iNat 191980897](https://www.inaturalist.org/observations/191980897) |
-| `single_nuttalls-woodpecker.wav` | single bird, sharp calls | Nuttall's Woodpecker | CC BY | [iNat 103864760](https://www.inaturalist.org/observations/103864760) |
-| `repeated_california-towhee.m4a` | repeated chip notes (last-chirp case) | California Towhee | CC BY-NC | [iNat 80443952](https://www.inaturalist.org/observations/80443952) |
-| `repeated_dark-eyed-junco.m4a` | rapid trill (dense notes) | Dark-eyed Junco | CC BY-NC | [iNat 111447052](https://www.inaturalist.org/observations/111447052) |
-| `group_birdnet-sapsucker-woods.wav` | multi-species reference soundscape | several | CC BY-NC-SA 4.0 | [BirdNET-Analyzer](https://github.com/birdnet-team/BirdNET-Analyzer/tree/main/birdnet_analyzer/example) |
-| `group_dawn-chorus-temperate.mp3` | dense dawn chorus | many (UK garden) | CC BY-SA 4.0 | [Commons](https://commons.wikimedia.org/wiki/File:Dawn_Chorus_2020-05-06_0500.mp3) |
-| `group_rainforest-dawn-chorus.ogg` | very dense, out-of-range stress | many (India) | CC BY 4.0 | [Commons](https://commons.wikimedia.org/wiki/File:RainforestDawnChorus_Selaliparai_DM.ogg) |
+`manifest.json` is the authoritative list (file, scenario, species, license,
+attribution, source page). By category:
 
-Attribution (required by the CC BY / BY-SA / BY-NC licenses) is recorded per clip
-in `manifest.json`.
+- **single bird, clear** — Oak Titmouse, Nuttall's Woodpecker, American Robin,
+  Song Sparrow, Spotted Towhee, White-crowned Sparrow, Bewick's Wren, Black
+  Phoebe, Lesser Goldfinch.
+- **frequency extremes** — Anna's Hummingbird + Bushtit (very high), Mourning
+  Dove (very low coo), American Crow (harsh broadband) — exercise the vertical
+  (frequency) placement across the band.
+- **repeated-call / dense** — California Towhee (chips), Dark-eyed Junco (trill)
+  — the last-chirp + dense-note cases.
+- **urban** — House Sparrow.
+- **multi-species soundscapes** — BirdNET Sapsucker Woods (reference,
+  ground-truthable), temperate dawn chorus (UK garden), rainforest dawn chorus
+  (out-of-range stress for the range filter).
+
+Licenses are a mix of CC0 / CC BY / CC BY-NC / CC BY-NC-SA / CC BY-SA;
+attribution (required by all but CC0) is per clip in `manifest.json`.
 
 ## Using them
 
@@ -60,6 +66,11 @@ Needs `ffmpeg` and the analyzer on `127.0.0.1:8012`. This shows what the
 multi-species / repeated-chirp cases actually produce, and whether the range
 filter flags the rainforest clip's species as out-of-range.
 
+**Batch correctness scan** — `./test_all.sh [--lat .. --lon .. --week ..]` runs
+every clip and prints just the per-species summary. For a single-bird clip the
+summary should list ONLY that species; extras = a mis-ID to chase. This is the
+loop for fine-tuning the accuracy knobs against the whole set.
+
 **Headless browser (the REAL pipeline, automated)** — `browser_replay.js` launches
 headless Chrome with a clip fed in as the *mic* (Chrome's fake-audio-capture),
 clicks Listen, and exercises the actual in-browser path (FFT heatmap →
@@ -76,9 +87,12 @@ node browser_replay.js repeated_california-towhee.m4a            # repeated-chir
 **Manual in-browser** — or just play a clip near the device mic while *Listen* is
 active on the Birds page and watch the markers place, hop, and disambiguate.
 
-## Gaps to fill later
+## Gaps still open
 
-- An **urban clip with traffic/machine noise + birds** (tests the non-bird
-  filter + false positives). Not yet sourced cleanly — add to `fetch.sh` when found.
-- True **two-species, well-separated** clips (current multi-bird coverage comes
-  from the soundscapes). iNat hybrid recordings exist but aren't ideal.
+- An **urban clip with real traffic/machine noise + birds** (tests the non-bird
+  "Engine/Noise" filter + false positives). Wikimedia Commons searches for this
+  returned no usable audio; House Sparrow is only an urban-*species* proxy, and
+  the BirdNET soundscape's "Engine" detection partly covers it. Add to `fetch.sh`
+  when a clean source turns up (Internet Archive / freesound are candidates).
+- A true **two-species, well-separated** clip (current multi-bird coverage is via
+  the soundscapes). iNat hybrid recordings exist but aren't ideal.
