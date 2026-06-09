@@ -259,7 +259,11 @@ label {
 /* The bird icon is a persistent home button in every Birds toolbar. */
 .birds-toolbar__home { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
   color: var(--fg); border-radius: 0.5rem; padding: 0.15rem; }
-.birds-toolbar__home:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* Hover only where a real pointer can hover, so a tap/click that navigates here
+   doesn't leave the icon stuck in its highlight (sticky :hover after SPA nav). */
+@media (hover: hover) {
+  .birds-toolbar__home:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+}
 .birds-toolbar .btn { flex: 0 0 auto; }
 /* Inline, text-style filter: the current value reads as plain text behind an
    icon; clicking opens the option list below it. Not a chunky select control. */
