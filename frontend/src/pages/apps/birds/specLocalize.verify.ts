@@ -105,5 +105,23 @@ console.log("S5 single window + murky energy → no position (card only)");
   check("mode none", p.mode === "none", `mode=${p.mode}`);
 }
 
+console.log("S6 repeated chirps → pin tracks the NEWEST chirp (not lagging behind)");
+{
+  // four chirps over the burst; the pin should land on the last (~7000), and a
+  // lone chirp must still resolve to itself (no spurious recency drift).
+  const hist = makeHistory(3000, 8000, 33, [
+    { t: 4000, band: 20, amp: 100 }, { t: 5000, band: 20, amp: 100 },
+    { t: 6000, band: 20, amp: 100 }, { t: 7000, band: 20, amp: 100 },
+  ]);
+  const events = [ev("A", [[4000, 0.6], [5000, 0.7], [6000, 0.8], [7000, 0.8]])];
+  const [p] = localizeEvents(events, hist);
+  check("precise", p.mode === "precise", `mode=${p.mode}`);
+  check("on the latest chirp (~7000, not an earlier one)", p.t >= 6500, `t=${p.t}`);
+
+  const lone = makeHistory(3000, 8000, 33, [{ t: 5000, band: 20, amp: 100 }]);
+  const [q] = localizeEvents([ev("A", [[5000, 0.5], [6000, 0.8], [7000, 0.7]])], lone);
+  check("lone chirp still resolves to itself (~5000)", q.mode === "precise" && Math.abs(q.t - 5000) < 250, `mode=${q.mode} t=${q.t}`);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : "\nALL PASS");
 if (failures) throw new Error(`${failures} verification failure(s)`);

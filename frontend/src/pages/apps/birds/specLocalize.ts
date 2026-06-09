@@ -64,7 +64,6 @@ const COLLIDE_S = 0.6;        // two placements closer than this in time may col
 const COLLIDE_BANDS = 4;      // ...and within this many bands → same blob / contested
 const PRECISE_SCORE = 0.45;   // blob score needed to draw a precise dot
 const APPROX_SCORE = 0.18;    // below this → no position at all (card only)
-const NONE_BOUND_S = 2.4;     // a time bound this wide with no decent blob → none
 
 const ms = (s: number) => s * 1000;
 
@@ -138,19 +137,22 @@ export function salientBlobs(history: SpecCol[], t0: number, t1: number): Blob[]
         }
       }
       if (!isMax) continue;
-      // isolation: how much this peak dominates a WIDER ring around it (a lone
-      // chirp dominates; one chirp amid a busy band does not).
-      let ringMax = 0;
-      for (let dj = -6; dj <= 6; dj++) {
+      // isolation: is there ANOTHER comparable peak in the SAME frequency band
+      // nearby in time (a competing call we couldn't cleanly attribute)? We look
+      // only at the same band and SKIP this blob's own temporal core/tail, and
+      // we don't penalise energy in OTHER bands — a second bird at a different
+      // frequency is still cleanly placeable. A lone chirp scores ~1.
+      let nearSame = 0;
+      for (let dj = -14; dj <= 14; dj++) {
+        if (Math.abs(dj) <= 6) continue; // skip the blob's own spread
         for (let db = -COLLIDE_BANDS; db <= COLLIDE_BANDS; db++) {
-          if (Math.abs(dj) <= 2 && Math.abs(db) <= 2) continue;
           const cj = ci + dj, bb = b + db;
           if (cj < 0 || cj >= cols.length || bb < 0 || bb >= NB) continue;
           const nv = sal(cj, bb);
-          if (nv > ringMax) ringMax = nv;
+          if (nv > nearSame) nearSame = nv;
         }
       }
-      const isolation = v / (v + ringMax + 1);
+      const isolation = v / (v + nearSame + 1);
       blobs.push({ t: cols[ci].t, band: b, strength: v, isolation });
     }
   }
@@ -161,32 +163,18 @@ function bandToYFrac(band: number, nb: number): number {
   return 1 - (band + 0.5) / nb; // band 0 (low freq) -> bottom; high band -> top
 }
 
-// Score a candidate blob for an event: strong + isolated + close to the model's
-// time estimate, and inside the geometric bound.
-function blobScore(blob: Blob, tEst: number, bound: [number, number]): number {
-  const within = blob.t >= bound[0] - ms(0.3) && blob.t <= bound[1] + ms(0.3);
-  if (!within) return 0;
-  // A blob inside the bound is already plausible, so proximity to the (often
-  // soft) centroid estimate is only a gentle tiebreaker — energy leads when the
-  // window-coverage bound is wide (few overlapping windows).
-  const prox = Math.exp(-Math.abs(blob.t - tEst) / ms(1.2));
-  const str = Math.min(1, blob.strength / 90);
-  return str * blob.isolation * (0.6 + 0.4 * prox);
+// How much we TRUST a blob as a position (0..1): loud + spectrally clean. The
+// precise/approx/none tier is judged on this alone — recency must not lower it.
+function blobQuality(blob: Blob): number {
+  return Math.min(1, blob.strength / 90) * blob.isolation;
 }
-
-// Mean band energy over the bound — used for the vertical position when we have
-// no single clean blob (approximate placement).
-function dominantBand(history: SpecCol[], t0: number, t1: number): number | null {
-  const cols = history.filter((c) => c.t >= t0 && c.t <= t1);
-  if (!cols.length) return null;
-  const NB = cols[0].bands.length;
-  let best = -1, bestV = -1;
-  for (let b = 0; b < NB; b++) {
-    let s = 0;
-    for (const c of cols) s += c.bands[b] ?? 0;
-    if (s > bestV) { bestV = s; best = b; }
-  }
-  return best >= 0 ? best : null;
+// SELECTION score: quality, then prefer the most RECENT blob in the range. This
+// is what makes a repeated-chirp event hop to the newest call (so the final
+// chirp gets tagged); a lone chirp is the only blob, so recency is moot.
+function blobSelect(blob: Blob, range: [number, number]): number {
+  const span = range[1] - range[0] || 1;
+  const recency = Math.min(1, Math.max(0, (blob.t - range[0]) / span));
+  return blobQuality(blob) * (0.65 + 0.35 * recency);
 }
 
 // Localize every active species event jointly so we can differentiate
@@ -194,17 +182,19 @@ function dominantBand(history: SpecCol[], t0: number, t1: number): number | null
 export function localizeEvents(events: SpeciesEvent[], history: SpecCol[]): Placement[] {
   const nb = history.find((c) => c.bands.length)?.bands.length ?? 40;
 
-  // Per-event: time bound, model time estimate, and candidate blobs ranked for it.
+  // Per-event: search the MOST RECENT window of audio (so the pin tracks the
+  // newest chirp and the final one is reached), and rank candidate blobs there.
   const ctx = events.map((ev) => {
-    const bound = coverageBound(ev.samples);
-    const tEstRaw = confCentroid(ev.samples);
-    const tEst = Math.min(bound[1], Math.max(bound[0], tEstRaw));
-    const blobs = salientBlobs(history, bound[0], bound[1])
-      .map((b) => ({ b, s: blobScore(b, tEst, bound) }))
-      .filter((x) => x.s > 0)
-      .sort((a, b) => b.s - a.s);
+    const maxPost = Math.max(...ev.samples.map((s) => s.t));
+    const range: [number, number] = [maxPost - ms(WIN_S), maxPost];
+    const inRange = (t: number) => t >= range[0] - ms(0.3) && t <= range[1] + ms(0.3);
+    const blobs = salientBlobs(history, range[0], range[1])
+      .filter((b) => inRange(b.t))
+      .map((b) => ({ b, s: blobSelect(b, range), q: blobQuality(b) }))
+      .sort((a, b) => b.s - a.s); // selection order: quality, recency-preferred
     const peakConf = Math.max(0, ...ev.samples.map((s) => s.conf));
-    return { ev, bound, tEst, blobs, peakConf };
+    const tFallback = maxPost - ms(1); // a plausible-recent time when no blob is usable
+    return { ev, range, blobs, peakConf, tFallback };
   });
 
   const claimed: Blob[] = [];
@@ -219,7 +209,7 @@ export function localizeEvents(events: SpeciesEvent[], history: SpecCol[]): Plac
 
   for (const c of order) {
     // First UNCLAIMED candidate blob for this event.
-    let chosen: { b: Blob; s: number } | null = null;
+    let chosen: { b: Blob; s: number; q: number } | null = null;
     for (const cand of c.blobs) {
       if (claimed.some((cl) => tooClose(cl, cand.b))) continue;
       chosen = cand;
@@ -233,7 +223,7 @@ export function localizeEvents(events: SpeciesEvent[], history: SpecCol[]): Plac
       const contestedTop = c.blobs[0] && claimed.some((cl) => tooClose(cl, c.blobs[0].b));
       if (contestedTop) {
         const rivals = order.filter((o) => o !== c);
-        let bestAlt: { b: Blob; s: number } | null = null, bestExcl = -Infinity;
+        let bestAlt: { b: Blob; s: number; q: number } | null = null, bestExcl = -Infinity;
         for (const cand of c.blobs) {
           if (claimed.some((cl) => tooClose(cl, cand.b))) continue;
           const mine = confAt(c.ev.samples, cand.b.t);
@@ -246,31 +236,26 @@ export function localizeEvents(events: SpeciesEvent[], history: SpecCol[]): Plac
       }
     }
 
-    if (chosen && chosen.s >= PRECISE_SCORE) {
+    // Tier on the chosen blob's QUALITY (loud + spectrally clean) — never on its
+    // recency-weighted selection score: a strong clean blob → precise dot; a
+    // borderline one → approximate (faded) dot; nothing usable → card only.
+    const q = chosen?.q ?? 0;
+    if (chosen && q >= PRECISE_SCORE) {
       claimed.push(chosen.b);
       out.push({
         sci: c.ev.sci, t: chosen.b.t, yFrac: bandToYFrac(chosen.b.band, nb),
-        tStart: c.bound[0], tEnd: c.bound[1], mode: "precise", score: chosen.s,
+        tStart: c.range[0], tEnd: c.range[1], mode: "precise", score: q,
       });
-      continue;
-    }
-
-    // No clean, uncontested blob → approximate (place at the model estimate with
-    // the dominant band for height) unless the bound is too wide / energy too
-    // weak, in which case forgo the position entirely.
-    const boundWide = c.bound[1] - c.bound[0] >= ms(NONE_BOUND_S);
-    const altScore = chosen?.s ?? 0;
-    const db = dominantBand(history, c.bound[0], c.bound[1]);
-    if (altScore >= APPROX_SCORE && !boundWide && db != null) {
-      if (chosen) claimed.push(chosen.b);
+    } else if (chosen && q >= APPROX_SCORE) {
+      claimed.push(chosen.b);
       out.push({
-        sci: c.ev.sci, t: c.tEst, yFrac: bandToYFrac(db, nb),
-        tStart: c.bound[0], tEnd: c.bound[1], mode: "approx", score: altScore,
+        sci: c.ev.sci, t: chosen.b.t, yFrac: bandToYFrac(chosen.b.band, nb),
+        tStart: c.range[0], tEnd: c.range[1], mode: "approx", score: q,
       });
     } else {
       out.push({
-        sci: c.ev.sci, t: c.tEst, yFrac: 0.5,
-        tStart: c.bound[0], tEnd: c.bound[1], mode: "none", score: altScore,
+        sci: c.ev.sci, t: c.tFallback, yFrac: 0.5,
+        tStart: c.range[0], tEnd: c.range[1], mode: "none", score: q,
       });
     }
   }
