@@ -1,6 +1,6 @@
 import {
   Sun, Cloud, CloudSun, CloudRain, CloudSnow, CloudFog, CloudDrizzle, Zap,
-  TrendingUp, TrendingDown, Minus,
+  TrendingUp, TrendingDown, Activity,
 } from "lucide-react";
 
 // Shared forecast display helpers, used by the "Right now" card and the week view.
@@ -26,7 +26,7 @@ export function wx(code: number | null | undefined): { label: string; Icon: type
 // Activity level -> icon + accent token (not status hues; this isn't ok/warn/danger).
 export const OUTLOOK: Record<Level, { label: string; Icon: typeof Sun; tone: string }> = {
   elevated: { label: "Elevated", Icon: TrendingUp, tone: "var(--accent)" },
-  normal: { label: "Normal", Icon: Minus, tone: "var(--text)" },
+  normal: { label: "Normal", Icon: Activity, tone: "var(--text)" },
   subdued: { label: "Subdued", Icon: TrendingDown, tone: "var(--muted)" },
   low: { label: "Low", Icon: TrendingDown, tone: "var(--muted)" },
 };

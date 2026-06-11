@@ -1,36 +1,56 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
-import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines } from "lucide-react";
 import { useRecorder } from "./recorder";
 import { jget } from "./ui";
 
-// The Birds app's top toolbar, shared across pages so the place/device filters,
-// Listen, and Settings sit in one row after the title. The title is "Birds", or
-// the species name on a species page. Order: title, filters, Listen, Settings.
+// The Birds app's top toolbar, shared across EVERY birds page. It draws the section
+// nav with the current section highlighted, so navigation is identical everywhere
+// and "you are here" is always clear.
+//
+// NAVIGATION CONTRACT (keep it hard to break):
+//   1. Every page under pages/apps/birds renders <BirdsHeader> as its top element.
+//      The home dashboard passes its place/device selectors as children.
+//   2. BIRDS_NAV is the SINGLE source of navigable sections. To add a page: add a
+//      <Route> in App.tsx AND one entry here. Don't hand-roll a birds header or
+//      scatter one-off section links in page bodies.
+//   3. The bird icon is always Home (the dashboard).
+export const BIRDS_NAV: { path: string; label: string; Icon: typeof Bird }[] = [
+  { path: "/apps/birds/forecast", label: "Forecast", Icon: CalendarDays },
+  { path: "/apps/birds/atlas", label: "Atlas", Icon: Waypoints },
+  { path: "/apps/birds/recordings", label: "Recordings", Icon: AudioLines },
+  { path: "/apps/birds/settings", label: "Settings", Icon: SlidersHorizontal },
+];
 
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
 type KnownDevice = { token: string; name: string };
 
 export default function BirdsHeader({ title, children }: { title?: React.ReactNode; children?: React.ReactNode }) {
+  const { pathname } = useLocation();
+  const onHome = pathname === "/apps/birds";
   return (
     <div className="birds-toolbar">
       <h2 className="birds-toolbar__title">
-        <Link to="/apps/birds" className="birds-toolbar__home" title="Birds home" aria-label="Birds home">
+        <Link to="/apps/birds" className={`birds-toolbar__home${onHome ? " is-active" : ""}`}
+          title="Birds home" aria-label="Birds home" aria-current={onHome ? "page" : undefined}>
           <Bird size={22} strokeWidth={1.8} />
         </Link>
         {title && <span>{title}</span>}
       </h2>
       {children}
-      {!PUBLIC && <ListenButton />}
       {!PUBLIC && (
-        <Link to="/apps/birds/atlas" className="btn sm" title="Soundscape Atlas" aria-label="Soundscape Atlas">
-          <Waypoints size={15} /> <span className="birds-label">Atlas</span>
-        </Link>
-      )}
-      {!PUBLIC && (
-        <Link to="/apps/birds/settings" className="btn sm birds-toolbar__end" title="Settings">
-          <SlidersHorizontal size={15} /> <span className="birds-label">Settings</span>
-        </Link>
+        <nav className="birds-toolbar__nav" aria-label="Birds sections">
+          <ListenButton />
+          {BIRDS_NAV.map((s) => {
+            const active = pathname === s.path;
+            return (
+              <Link key={s.path} to={s.path} className={`btn sm${active ? " is-active" : ""}`}
+                title={s.label} aria-current={active ? "page" : undefined}>
+                <s.Icon size={15} /> <span className="birds-label">{s.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
       )}
     </div>
   );
@@ -136,8 +156,13 @@ export function ListenButton() {
 
   return (
     <span style={{ display: "inline-flex", gap: ".4rem", alignItems: "center" }}>
-      <button className="btn sm" title="Listen on this device" aria-label="Listen on this device"
-        onClick={rec.start} disabled={rec.analyzerUp === false}>
+      {/* Never hard-disable the primary action on a health probe: a single failed
+          /analyze/health check used to leave this button permanently dead until a
+          manual reload. Always let the tap through; if the analyzer is genuinely
+          down, start() surfaces the error and the live panel shows a notice. */}
+      <button className="btn sm"
+        title={rec.analyzerUp === false ? "Listen (analyzer may be offline)" : "Listen on this device"}
+        aria-label="Listen on this device" onClick={rec.start}>
         <Mic size={16} />
       </button>
       {!rec.device.name && (

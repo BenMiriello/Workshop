@@ -20,7 +20,12 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
-from services.birds_analyze import _conn, _local
+from services.birds_analyze import _conn, _local, _shannon
+
+# How the qualitative activity outlook nudges expected VOLUME (not the species mix):
+# a falling-pressure "elevated" day runs busier, a wet "subdued" day quieter. Modest
+# on purpose; it's a tilt on the historical baseline, not a fitted multiplier.
+_LEVEL_MULT = {"elevated": 1.15, "normal": 1.0, "subdued": 0.8, "low": 0.5}
 
 # Shrinkage strength: a context needs ~this many observations before its own rates
 # outweigh the species' overall share. Keeps thin-data forecasts honest.
@@ -300,6 +305,33 @@ def accuracy(location_id: int) -> dict:
             "status": "measuring" if n < 20 else "established"}
 
 
+def bird_profiles(location_id: int) -> dict:
+    """The yard's typical bird day, learned from history: expected detections per
+    hour (activity) and Shannon diversity per hour, plus per-day means. These are
+    the bird-side of the forecast; weather only tilts the volume on top of them."""
+    from collections import Counter, defaultdict
+    per_day_hour: dict[str, Counter] = defaultdict(Counter)
+    hour_species: dict[int, Counter] = defaultdict(Counter)
+    day_species: dict[str, set] = defaultdict(set)
+    with _conn() as c:
+        for r in c.execute(
+            "SELECT scientific_name, ts FROM browser_detections WHERE location_id=? AND is_bird=1",
+            (location_id,)):
+            lt = _local(r["ts"])
+            d, h = lt.strftime("%Y-%m-%d"), lt.hour
+            per_day_hour[d][h] += 1
+            hour_species[h][r["scientific_name"]] += 1
+            day_species[d].add(r["scientific_name"])
+    ndays = len(per_day_hour) or 1
+    activity = [round(sum(per_day_hour[d][h] for d in per_day_hour) / ndays, 2) for h in range(24)]
+    diversity = [_shannon(hour_species[h]) for h in range(24)]
+    mean_species = round(sum(len(s) for s in day_species.values()) / ndays, 1) if day_species else 0.0
+    return {"activity": activity, "diversity": diversity,
+            "mean_species_per_day": mean_species, "mean_detections_per_day": round(sum(activity), 1),
+            "days": ndays, "peak_hours": [h for h in range(24)
+                                          if activity[h] >= 0.6 * (max(activity) or 1) and activity[h] > 0]}
+
+
 def _day_outlook(day_conds: list) -> dict:
     """A day-level activity outlook from that day's forecast weather. Dawn is always
     the day's peak, so this captures how the day as a whole tilts: rain or high wind
@@ -339,6 +371,8 @@ def forecast_week(location_id: int, days: int = 7) -> dict:
     now_local = datetime.now(timezone.utc).astimezone()
     today = now_local.date()
 
+    prof = bird_profiles(location_id)  # the yard's typical bird day (activity + diversity)
+
     # Group all available conditions by local date for quick per-day slicing.
     by_date: dict[str, list] = defaultdict(list)
     conds = e.get_conditions(location_id, (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
@@ -358,6 +392,7 @@ def forecast_week(location_id: int, days: int = 7) -> dict:
                    "temp_f": round(r["temp"] * 9 / 5 + 32) if r.get("temp") is not None else None,
                    "precip_prob": r.get("precip_prob"), "wx_code": r.get("wx_code")}
                   for r in dc]
+        ol = _day_outlook(dc)
         out_days.append({
             "date": ds,
             "weekday": d.strftime("%a"),
@@ -373,7 +408,12 @@ def forecast_week(location_id: int, days: int = 7) -> dict:
                 "wind_max": round(max((r.get("wind_speed") or 0) for r in dc) * 0.621371) if dc else None,
                 "precip_prob_max": max((r.get("precip_prob") or 0) for r in dc) if dc else None,
             },
-            "outlook": _day_outlook(dc),
+            "outlook": ol,
+            # Bird-side forecast for the day: the historical volume tilted by the
+            # outlook, the resident species count, and the day's peak window.
+            "expected_detections": round(prof["mean_detections_per_day"] * _LEVEL_MULT.get(ol["level"], 1.0)),
+            "expected_species": prof["mean_species_per_day"],
+            "peak_hours": prof["peak_hours"],
             "hourly": hourly,
             "has_weather": bool(dc),
         })
@@ -383,7 +423,9 @@ def forecast_week(location_id: int, days: int = 7) -> dict:
     reg = conditional_scores(location_id, "dawn", "unknown", k=5)
     return {"days": out_days, "regulars": reg["species"],
             "regulars_confidence": reg["confidence"],
-            "expected_shape": day_shape(location_id, today.isoformat())}
+            "profiles": {"activity": prof["activity"], "diversity": prof["diversity"]},
+            "mean_species_per_day": prof["mean_species_per_day"],
+            "history_days": prof["days"]}
 
 
 def forecast(location_id: int, light_phase: str, weather_bucket: str, hour: int,

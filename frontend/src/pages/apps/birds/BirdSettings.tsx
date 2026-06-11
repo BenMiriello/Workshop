@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { SlidersHorizontal, Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints, User, LogOut, RefreshCw } from "lucide-react";
+import { Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints, User, LogOut, RefreshCw } from "lucide-react";
 import { useShowNonBird } from "./settings";
+import BirdsHeader from "./BirdsHeader";
 import { Toggle, Button, Segmented } from "../../../ui";
 import { API, pct } from "./ui";
 
@@ -69,9 +70,7 @@ export default function BirdSettings() {
 
   return (
     <div>
-      <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-        <SlidersHorizontal size={22} strokeWidth={1.8} /> Bird settings
-      </h2>
+      <BirdsHeader title="Settings" />
 
       <AccountSection />
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Sunrise, Sunset, Moon, Sun, Bird, Gauge, AlertTriangle, CalendarDays, ChevronRight } from "lucide-react";
+import { Sunrise, Sunset, Moon, Sun, Bird, Gauge, AlertTriangle } from "lucide-react";
 import { API, hh } from "./ui";
 import { wx, OUTLOOK, cToF, localTime, dayLen, pressureSub, untilLabel, type Level } from "./forecastUtil";
 
@@ -104,9 +104,6 @@ export default function NowCard({ locationId }: { locationId: number }) {
             <ol.Icon size={16} /> Activity {ol.label.toLowerCase()}
           </span>
         )}
-        <Link to="/apps/birds/forecast" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".82rem", color: "var(--accent)", textDecoration: "none" }}>
-          <CalendarDays size={14} /> 7-day forecast <ChevronRight size={13} />
-        </Link>
       </div>
 
       {now.likely.length > 0 && (

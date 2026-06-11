@@ -253,9 +253,15 @@ label {
 
 /* Birds app toolbar: title + Listen + (page filters) + Settings on one row.
    Button text labels collapse to icon-only when horizontal space runs out. */
-.birds-toolbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: nowrap; margin: 0 0 1rem; }
+.birds-toolbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .birds-toolbar__title { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 1.4rem;
   min-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+/* The section nav sits right-aligned; on narrow screens it wraps to its own line
+   (the whole toolbar wraps) rather than overflowing. */
+.birds-toolbar__nav { margin-left: auto; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+/* Active section: clearly "you are here", consistent across every birds page. */
+.birds-toolbar .btn.is-active, .birds-toolbar__home.is-active {
+  background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 /* The bird icon is a persistent home button in every Birds toolbar. */
 .birds-toolbar__home { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
   color: var(--fg); border-radius: 0.5rem; padding: 0.15rem; }

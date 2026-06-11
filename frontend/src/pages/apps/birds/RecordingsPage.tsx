@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Mic, Pin, PinOff, Trash2, Save, MapPin } from "lucide-react";
+import { Pin, PinOff, Trash2, Save, MapPin } from "lucide-react";
 import { useCrumbTrail, type Crumb } from "../../../components/appNav";
 import { Segmented, Stepper, ConfirmDialog } from "../../../ui";
 import { API, jget, pct, SpeciesLink, BirdThumb } from "./ui";
 import { useRecStatus, fmtBytes, PlayButton } from "./recordings";
+import BirdsHeader from "./BirdsHeader";
 
 // Recordings management: the storage meter, the budget settings (cap + what to do
 // when full), and the full list of saved clips with per-clip pin / delete. This
@@ -48,9 +49,7 @@ export default function Recordings() {
 
   return (
     <div>
-      <h2 style={{ display: "flex", alignItems: "center", gap: ".5rem", marginTop: 0 }}>
-        <Mic size={22} strokeWidth={1.8} /> Recordings
-      </h2>
+      <BirdsHeader title="Recordings" />
 
       {status && (
         <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
