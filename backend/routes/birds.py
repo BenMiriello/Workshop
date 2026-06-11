@@ -143,7 +143,7 @@ async def analyze(audio: UploadFile, station: str = Form(""),
         lid = int(location_id.strip())
     try:
         result = birds_analyze.analyze_chunk(
-            data, audio.content_type or "", name or "Untitled device",
+            data, audio.content_type or "", name,
             token.strip(), max(0.05, min(min_conf, 0.99)),
             device_name=name, mode=(mode.strip() or "adaptive"),
             lat=_opt_float(lat), lon=_opt_float(lon), address=address.strip(),
@@ -236,8 +236,11 @@ async def station_species_detail(station: str, sci: str):
 # --------------------------------------------------------------------------
 
 @router.get("/devices")
-async def devices_list(archived: bool = False):
-    return {"devices": birds_analyze.list_devices(archived=archived)}
+async def devices_list(archived: bool = False, viewer_id: int | None = None):
+    # viewer_id is None for the private Workshop app (operator sees everything);
+    # the standalone app passes the session user's id to scope to their + friends'
+    # shared devices.
+    return {"devices": birds_analyze.list_devices(archived=archived, viewer_id=viewer_id)}
 
 
 @router.get("/device")
@@ -248,11 +251,12 @@ async def device_get(token: str):
 @router.post("/device")
 async def device_upsert(token: str = Form(...), name: str = Form(None),
                         mode: str = Form(None), fixed_location_id: str = Form(None),
-                        user_agent: str = Form(None), update_only: bool = Form(False)):
+                        user_agent: str = Form(None), update_only: bool = Form(False),
+                        shared: bool | None = Form(None)):
     fid = int(fixed_location_id) if (fixed_location_id or "").strip().isdigit() else (
         0 if (fixed_location_id or "").strip() == "0" else None)
     dev = birds_analyze.upsert_device(token.strip(), name=name, mode=mode, fixed_location_id=fid,
-                                      user_agent=user_agent, update_only=update_only)
+                                      user_agent=user_agent, update_only=update_only, shared=shared)
     return {"ok": True, "device": dev}
 
 
@@ -266,9 +270,46 @@ async def device_restore(token: str = Form(...)):
     return birds_analyze.restore_device(token.strip())
 
 
+# --- Accounts + friends (admin-managed; the standalone app auto-creates a member
+# row on first authenticated visit). These run behind the tailnet gate in the
+# private app and behind the session gate in the standalone app. ----------------
+
+@router.get("/users")
+async def users_list():
+    return {"users": birds_analyze.list_users()}
+
+
+@router.post("/user")
+async def user_upsert(email: str = Form(...), name: str = Form(None), role: str = Form(None)):
+    try:
+        return {"ok": True, "user": birds_analyze.upsert_user(email, name=name, role=role)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/friends")
+async def friends_list(user_id: int):
+    return {"user_id": user_id, "friends": birds_analyze.list_friends(user_id)}
+
+
+@router.post("/friend")
+async def friend_set(user_a: int = Form(...), user_b: int = Form(...),
+                     status: str = Form("accepted")):
+    try:
+        return {"ok": True, "friendship": birds_analyze.set_friendship(user_a, user_b, status)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/friend")
+async def friend_remove(user_a: int, user_b: int):
+    return birds_analyze.remove_friendship(user_a, user_b)
+
+
 @router.get("/locations")
-async def locations_list(include_nonbird: bool = False, archived: bool = False):
-    return birds_analyze.list_locations(include_nonbird, archived=archived)
+async def locations_list(include_nonbird: bool = False, archived: bool = False,
+                         viewer_id: int | None = None):
+    return birds_analyze.list_locations(include_nonbird, archived=archived, viewer_id=viewer_id)
 
 
 @router.get("/location")
@@ -330,6 +371,12 @@ async def location_activity_ep(location_id: int, include_nonbird: bool = False,
                                status: str | None = None, device: str | None = None):
     return {"location_id": location_id,
             **birds_analyze.location_activity(location_id, include_nonbird, status, device)}
+
+
+@router.get("/now")
+async def birds_now_ep(location_id: int):
+    """Light + weather + today's early bird + what's-likely-now for a location."""
+    return birds_analyze.birds_now(location_id)
 
 
 @router.get("/bird")
@@ -562,6 +609,15 @@ async def detection_webhook(request: Request):
 
     sci = (payload.get("scientific_name") or "").strip()
     date = (payload.get("date") or birds_store._today()).strip()
+
+    # Land the always-on detection in the SAME unified store the browser path
+    # writes to (attributed to the 'yard' device) so the app has one read path
+    # and the always-on station is just another device. Best-effort: a storage
+    # hiccup must not drop the event-bus fan-out below.
+    try:
+        birds_analyze.ingest_yard_detection(payload)
+    except Exception:  # noqa: BLE001
+        log.exception("yard ingest failed sci=%s", sci)
 
     # First-seen enrichment (best effort; DB may lag the webhook by a row).
     flags = {"first_ever": False, "first_today": False, "total_for_species": 0}

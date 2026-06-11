@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { SlidersHorizontal, Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints } from "lucide-react";
+import { SlidersHorizontal, Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints, User, LogOut, RefreshCw } from "lucide-react";
 import { useShowNonBird } from "./settings";
 import { Toggle, Button, Segmented } from "../../../ui";
 import { API, pct } from "./ui";
@@ -16,8 +16,56 @@ const NON_BIRD_EXAMPLES = [
   "Environmental / Noise",
 ];
 
+// Account card. Only renders in the standalone app (where /api/auth/me resolves a
+// session); on the tailnet Workshop app that endpoint 404s, so this stays hidden.
+function AccountSection() {
+  const [user, setUser] = useState<{ email: string; name?: string | null } | null | undefined>(undefined);
+  useEffect(() => {
+    fetch("/api/auth/me", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setUser(d ? d.user : null))
+      .catch(() => setUser(null));
+  }, []);
+  if (!user) return null; // loading (undefined) or no auth (null) -> nothing
+
+  const signOut = async () => {
+    try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch { /* ignore */ }
+    window.location.href = "/";
+  };
+
+  return (
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <h3 style={{ margin: "0 0 .6rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
+        <User size={17} strokeWidth={1.8} /> Account
+      </h3>
+      <div style={{ display: "flex", alignItems: "center", gap: ".7rem", flexWrap: "wrap" }}>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ fontWeight: 500 }}>{user.name || user.email}</span>
+          <span className="muted" style={{ display: "block", fontSize: ".84rem" }}>Signed in as {user.email}</span>
+        </span>
+        <Button onClick={signOut}><LogOut size={15} /> Sign out</Button>
+      </div>
+    </section>
+  );
+}
+
+// Admin vs member. On the tailnet Workshop app /api/auth/me 404s, so we treat
+// "no auth" as the operator (admin). In the standalone, a 'member' is not admin.
+// null while loading, so admin-only sections don't flash for a member.
+function useIsAdmin(): boolean | null {
+  const [admin, setAdmin] = useState<boolean | null>(null);
+  useEffect(() => {
+    fetch("/api/auth/me", { credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setAdmin(d?.user ? d.user.role === "admin" : true))
+      .catch(() => setAdmin(true));
+  }, []);
+  return admin;
+}
+
 export default function BirdSettings() {
   const [showNonBird, setShowNonBird] = useShowNonBird();
+  const isAdmin = useIsAdmin();
 
   return (
     <div>
@@ -25,47 +73,54 @@ export default function BirdSettings() {
         <SlidersHorizontal size={22} strokeWidth={1.8} /> Bird settings
       </h2>
 
+      <AccountSection />
+
       <AccuracySettings />
 
       <RecordingSettings />
 
       <AtlasSettings />
 
-      <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
-        <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
-          <Filter size={17} strokeWidth={1.8} /> Non-bird detections
-        </h3>
+      {/* Non-bird filter is an admin-only control; members never see it. */}
+      {isAdmin && (
+        <>
+          <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+            <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".4rem", fontSize: "1rem" }}>
+              <Filter size={17} strokeWidth={1.8} /> Non-bird detections
+            </h3>
 
-        <label style={{ display: "flex", alignItems: "flex-start", gap: ".7rem", cursor: "pointer" }}>
-          <span style={{ paddingTop: ".15rem" }}>
-            <Switch on={showNonBird} onChange={setShowNonBird} />
-          </span>
-          <span>
-            <span style={{ fontWeight: 500 }}>Show non-bird detections</span>
-            <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
-              {showNonBird
-                ? "Non-bird classes are shown alongside birds, tagged so you can tell them apart."
-                : "Only birds are shown. Non-bird classes are still detected and stored. Turn this on to reveal them."}
-            </span>
-          </span>
-        </label>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: ".7rem", cursor: "pointer" }}>
+              <span style={{ paddingTop: ".15rem" }}>
+                <Switch on={showNonBird} onChange={setShowNonBird} />
+              </span>
+              <span>
+                <span style={{ fontWeight: 500 }}>Show non-bird detections</span>
+                <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
+                  {showNonBird
+                    ? "Non-bird classes are shown alongside birds, tagged so you can tell them apart."
+                    : "Only birds are shown. Non-bird classes are still detected and stored. Turn this on to reveal them."}
+                </span>
+              </span>
+            </label>
 
-        <div style={{ marginTop: ".9rem" }}>
-          <div className="muted" style={{ fontSize: ".75rem", marginBottom: ".35rem", display: "flex", alignItems: "center", gap: ".3rem" }}>
-            <Bird size={13} /> Counted as non-bird
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: ".35rem" }}>
-            {NON_BIRD_EXAMPLES.map((n) => (
-              <span key={n} className="pill muted" style={{ fontSize: ".78rem" }}>{n}</span>
-            ))}
-          </div>
-        </div>
-      </section>
+            <div style={{ marginTop: ".9rem" }}>
+              <div className="muted" style={{ fontSize: ".75rem", marginBottom: ".35rem", display: "flex", alignItems: "center", gap: ".3rem" }}>
+                <Bird size={13} /> Counted as non-bird
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: ".35rem" }}>
+                {NON_BIRD_EXAMPLES.map((n) => (
+                  <span key={n} className="pill muted" style={{ fontSize: ".78rem" }}>{n}</span>
+                ))}
+              </div>
+            </div>
+          </section>
 
-      <p className="muted" style={{ fontSize: ".82rem" }}>
-        Detection always runs on everything the microphone hears; this setting only
-        changes what is displayed, and applies everywhere in the Birds app.
-      </p>
+          <p className="muted" style={{ fontSize: ".82rem" }}>
+            Detection always runs on everything the microphone hears; this setting only
+            changes what is displayed, and applies everywhere in the Birds app.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -152,13 +207,41 @@ function RecordingSettings() {
 // Independent of the recordings setting above: the Atlas keeps a few audio
 // exemplars per acoustic cluster so each can be labelled by ear. Own toggle, own
 // small budget — runs alongside or instead of the recordings save.
+type AtlasStat = { embedded: number; clusters: number; labeled_clusters: number; last_build: string | null; version: number };
+
 function AtlasSettings() {
   const [save, setSave] = useState<boolean | null>(null);
+  const [stat, setStat] = useState<AtlasStat | null>(null);
+  const [building, setBuilding] = useState(false);
 
+  const loadStat = useCallback(() => {
+    fetch(`${API}/atlas/status`).then((r) => r.json()).then(setStat).catch(() => {});
+  }, []);
   useEffect(() => {
     fetch(`${API}/atlas/settings`).then((r) => r.json())
       .then((d) => setSave(!!d.settings.atlas_clip_save)).catch(() => {});
-  }, []);
+    loadStat();
+  }, [loadStat]);
+
+  // Manual trigger lives here (not on the map). The Atlas also rebuilds itself
+  // nightly; this is for an on-demand refresh. Poll until the version bumps.
+  const rebuild = useCallback(() => {
+    setBuilding(true);
+    const before = stat?.version ?? 0;
+    fetch(`${API}/atlas/rebuild`, { method: "POST" }).catch(() => {});
+    const t = setInterval(() => {
+      fetch(`${API}/atlas/status`).then((r) => r.json()).then((s: AtlasStat) => {
+        setStat(s);
+        if (s.version !== before) { setBuilding(false); clearInterval(t); }
+      }).catch(() => {});
+    }, 2500);
+    setTimeout(() => { clearInterval(t); setBuilding(false); }, 120000);
+  }, [stat]);
+  const fmtBuilt = (iso: string | null) => {
+    if (!iso) return "never";
+    try { return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); }
+    catch { return iso; }
+  };
 
   const toggle = useCallback((v: boolean) => {
     setSave(v);
@@ -186,6 +269,21 @@ function AtlasSettings() {
           </span>
         </span>
       </label>
+      <div style={{ display: "flex", alignItems: "center", gap: ".7rem", flexWrap: "wrap", margin: "1rem 0 0", paddingTop: ".9rem", borderTop: "1px solid var(--border)" }}>
+        <div style={{ minWidth: 0 }}>
+          <span style={{ fontWeight: 500 }}>Rebuild the map</span>
+          <span className="muted" style={{ display: "block", fontSize: ".84rem", marginTop: ".15rem" }}>
+            {stat
+              ? `${stat.embedded.toLocaleString()} calls · ${stat.clusters} call type${stat.clusters === 1 ? "" : "s"} · updated ${fmtBuilt(stat.last_build)}`
+              : "Re-projects and re-clusters the acoustic map."} It rebuilds itself nightly; use this for an on-demand refresh.
+          </span>
+        </div>
+        <span style={{ marginLeft: "auto" }}>
+          <Button onClick={rebuild} disabled={building}>
+            <RefreshCw size={15} className={building ? "spin" : undefined} /> {building ? "Rebuilding…" : "Rebuild now"}
+          </Button>
+        </span>
+      </div>
       <p className="muted" style={{ fontSize: ".82rem", margin: ".9rem 0 0", display: "flex", alignItems: "center", gap: ".4rem" }}>
         <Waypoints size={14} />
         <Link to="/apps/birds/atlas" style={{ color: "var(--accent)", textDecoration: "none" }}>

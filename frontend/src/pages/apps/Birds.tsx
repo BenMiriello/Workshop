@@ -11,6 +11,7 @@ import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/
 import { RecordingsBanner } from "./birds/recordings";
 import SpeciesRow from "./birds/SpeciesRow";
 import ActivityCard from "./birds/ActivityCard";
+import NowCard from "./birds/NowCard";
 
 // Birds home. One page, reshaped by two dropdown filters: which place (the
 // always-on yard, or any device-created location) and which device. The live
@@ -20,6 +21,14 @@ const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
 // Sentinel option in the Place dropdown: not a real source, just a row whose
 // caret (and label) jump to the full Locations list.
 const ALL_LOCS = "__all_locations__";
+// The species-list filter is a view preference: it persists across navigation and
+// reloads (and every place), so it doesn't snap back to "All" each time you land
+// on a dashboard. Stored as one shared value, not per-location.
+const SPECIES_FILTER_KEY = "birdSpeciesFilter";
+function loadSpeciesFilter(): ListStatus {
+  const v = localStorage.getItem(SPECIES_FILTER_KEY);
+  return v === "confirmed" || v === "suggested" || v === "rejected" || v === "active" ? v : "active";
+}
 
 type Loc = { id: number; name: string; detections: number; species: number; devices: string[] };
 type KnownDevice = { token: string; name: string };
@@ -77,7 +86,7 @@ export default function Birds() {
                 ...sources.map((s) => ({ value: s.key, label: s.name, editable: s.kind === "loc" })),
               ]}
               onChange={(v) => { if (v === ALL_LOCS) nav("/apps/birds/locations"); else setParam("source", v); }}
-              onEdit={(v) => { const s = sources.find((x) => x.key === v); if (s?.id) nav(`/apps/birds/location?id=${s.id}`); }}
+              onEdit={(v) => { const s = sources.find((x) => x.key === v); if (s?.id) nav(`/apps/birds/locations?id=${s.id}`); }}
               editTitle="Edit this place (name, coordinates, devices)"
               onListAll={() => nav("/apps/birds/locations")}
               listAllTitle="See all locations"
@@ -101,6 +110,16 @@ export default function Birds() {
 
       {!PUBLIC && <RecordingsBanner />}
 
+      {/* If start() failed (mic blocked/denied, analyzer down), the live panel is
+          torn down — so surface the reason here instead of the button silently
+          doing nothing. */}
+      {!PUBLIC && rec.err && !(rec.recording || rec.wasListening) && (
+        <div className="card" style={{ padding: ".6rem .9rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: ".5rem" }}>
+          <AlertTriangle size={16} style={{ color: "var(--warn)" }} />
+          <span className="error" style={{ flex: 1, margin: 0 }}>{rec.err}</span>
+        </div>
+      )}
+
       {!PUBLIC && (rec.recording || rec.wasListening) && <LivePanel />}
       {!PUBLIC && yardAvailable && <YardLiveFeed nb={nb} />}
 
@@ -109,7 +128,7 @@ export default function Birds() {
         : !rec.recording && (
           <div className="card" style={{ padding: "1.5rem", textAlign: "center" }}>
             <p className="muted" style={{ margin: 0 }}>
-              No sources yet. Tap <strong>Listen</strong> to detect birds from this device, or set up the yard node.
+              No birds yet. Tap <strong>Listen</strong> to start detecting birds from this device.
             </p>
           </div>
         )}
@@ -273,7 +292,11 @@ type ListStatus = "active" | "confirmed" | "suggested" | "rejected";
 function Dashboard({ source, nb, device }: { source: Source; nb: string; device: string }) {
   const [d, setD] = useState<Norm | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [status, setStatus] = useState<ListStatus>("active");
+  const [status, setStatusState] = useState<ListStatus>(loadSpeciesFilter);
+  const setStatus = useCallback((v: ListStatus) => {
+    localStorage.setItem(SPECIES_FILTER_KEY, v);
+    setStatusState(v);
+  }, []);
   const [newCount, setNewCount] = useState(0);
   const dev = device ? `&device=${encodeURIComponent(device)}` : "";
 
@@ -284,10 +307,15 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
         jget<any>(`/location/summary?location_id=${id}${nb}${dev}`),
         jget<any>(`/location/activity?location_id=${id}${nb}${dev}`),
         jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}${dev}&status=${status}`),
-      ]).then(([s, a, sp]) => setD({
-        species: s.species, detections: s.detections, today: s.today, active_days: s.active_days,
-        daily: a.daily, hourly: a.hourly, speciesList: sp.species, lat: s.lat, lon: s.lon,
-      })).catch((e) => setErr(String(e)));
+      ]).then(([s, a, sp]) => {
+        setD({
+          species: s.species, detections: s.detections, today: s.today, active_days: s.active_days,
+          daily: a.daily, hourly: a.hourly, speciesList: sp.species, lat: s.lat, lon: s.lon,
+        });
+        // "New" badge = species first heard here in the last 24h, straight from
+        // the list, so the count and the per-row badges can never disagree.
+        setNewCount(sp.species.filter((x) => x.is_new).length);
+      }).catch((e) => setErr(String(e)));
     } else {
       Promise.all([
         jget<any>(`/summary?_=1${nb}`),
@@ -300,7 +328,6 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
         daily: dd.daily, hourly: h.hourly, speciesList: sp.species, lat: null, lon: null,
       })).catch((e) => setErr(String(e)));
     }
-    jget<{ new_count: number }>(`/new-count`).then((r) => setNewCount(r.new_count)).catch(() => {});
   }, [source.kind, source.id, nb, dev, status]);
 
   useEffect(() => { setD(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
@@ -319,8 +346,10 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
         <Stat label="Active days" value={d.active_days} />
       </StatGrid>
 
+      {locId != null && <NowCard locationId={locId} />}
+
       {(d.daily.length > 0 || d.hourly.some((h) => h.count > 0)) && (
-        <ActivityCard daily={d.daily} hourly={d.hourly} />
+        <ActivityCard daily={d.daily} hourly={d.hourly} locationId={locId} />
       )}
 
       <section className="card" style={card}>
@@ -331,7 +360,7 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
           </h3>
           {isLoc && (
             <select className="num-in" style={{ width: "auto" }} value={status} onChange={(e) => setStatus(e.target.value as ListStatus)}>
-              <option value="active">All active</option>
+              <option value="active">All</option>
               <option value="confirmed">Confirmed</option>
               <option value="suggested">Suggested</option>
               <option value="rejected">Rejected</option>

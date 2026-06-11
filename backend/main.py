@@ -5,9 +5,11 @@ from fastapi.responses import RedirectResponse
 
 from deps_auth import require_token
 
-from routes import agents, projects, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health, autonomy, chat, birds
+from routes import agents, projects, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health, autonomy, chat, birds, environment
 from services.supervisor import AgentSupervisor
 from services import global_memory, finance_cache, categorizer
+from services import environment as environment_svc
+from services import birds_analyze
 from letta_legacy_client import LettaClient
 import asyncio
 import logging
@@ -60,6 +62,47 @@ async def _categorize_loop():
             last_run_day = today
 
 
+async def _env_refresh_loop():
+    """Keep the Birds weather/astro spine fresh: stdlib sun/moon + Open-Meteo
+    (recent actuals + near-future forecast). Refreshes on startup then every
+    6h. Off-thread (sync sqlite/httpx) and best-effort — never blocks the loop
+    or startup, degrades to a no-op if egress is unavailable."""
+    while True:
+        try:
+            n = await asyncio.to_thread(environment_svc.refresh)
+            log.info("env refresh: %s", "egress blocked" if n == -1 else f"{n} rows")
+        except Exception as e:
+            log.warning("env refresh failed: %s", e)
+        # Score any forecast predictions whose hour has passed (the self-measuring
+        # loop). Best-effort; never blocks the refresh cadence.
+        try:
+            from services import birds_forecast
+            graded = await asyncio.to_thread(birds_forecast.score_due)
+            if graded:
+                log.info("forecast calibration: graded %s hours", graded)
+        except Exception as e:
+            log.warning("forecast scoring failed: %s", e)
+        await asyncio.sleep(6 * 60 * 60)
+
+
+async def _atlas_rebuild_loop():
+    """Keep the Soundscape Atlas current: embeddings are captured live as detections
+    are stored, but the UMAP/HDBSCAN projection only refreshes on a build. Run that
+    build nightly, gated on enough new embeddings to be worth the cost (the gate
+    lives in birds_analyze.maybe_auto_rebuild). Heavy ML runs detached in the
+    analyzer venv; this just triggers it. Best-effort, off-thread, never blocks."""
+    await asyncio.sleep(5 * 60)  # let startup settle before the first check
+    while True:
+        try:
+            res = await asyncio.to_thread(birds_analyze.maybe_auto_rebuild)
+            if res.get("triggered"):
+                log.info("atlas auto-rebuild: triggered (%s embedded, %s new)",
+                         res.get("embedded"), res.get("new"))
+        except Exception as e:
+            log.warning("atlas auto-rebuild check failed: %s", e)
+        await asyncio.sleep(24 * 60 * 60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.letta = LettaClient()
@@ -80,8 +123,10 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_prewarm_finance_cache())
     app.state._bg_prewarm = asyncio.create_task(_prewarm_loop())
     app.state._bg_categorize = asyncio.create_task(_categorize_loop())
+    app.state._bg_env = asyncio.create_task(_env_refresh_loop())
+    app.state._bg_atlas = asyncio.create_task(_atlas_rebuild_loop())
     yield
-    for t in (getattr(app.state, "_bg_prewarm", None), getattr(app.state, "_bg_categorize", None)):
+    for t in (getattr(app.state, "_bg_prewarm", None), getattr(app.state, "_bg_categorize", None), getattr(app.state, "_bg_env", None), getattr(app.state, "_bg_atlas", None)):
         if t:
             t.cancel()
     await app.state.supervisor.stop()
@@ -128,6 +173,7 @@ app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_SEC
 # /birds/webhook ingest inside it is loopback-only in practice (BirdNET-Go posts
 # from 127.0.0.1, which require_token already trusts).
 app.include_router(birds.router, dependencies=_SECURE)
+app.include_router(environment.router, dependencies=_SECURE)
 app.include_router(plaid_webhook.router, prefix="/plaid/webhook", tags=["plaid-webhook"])
 app.include_router(relay.router)
 app.include_router(services.router)

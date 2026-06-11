@@ -45,7 +45,7 @@ ATLAS_CLIPS_DIR = os.environ.get("BIRDNET_ATLAS_CLIPS_DIR",
 # A species needs at least this many embedded detections before we try to split
 # it into call types — fewer than this and clusters are noise, so it stays one
 # (unlabelled) group.
-MIN_SPECIES_N = 30
+MIN_SPECIES_N = 20
 # When matching a freshly-built cluster to a previous one to carry its hand-label
 # forward: accept if the centroids are within this cosine distance.
 LABEL_CARRY_DIST = 0.12
@@ -121,7 +121,9 @@ def _old_labels(c: sqlite3.Connection):
     out: dict = {}
     for r in c.execute("SELECT scope, species, label, centroid FROM atlas_cluster "
                        "WHERE centroid IS NOT NULL"):
-        if not r["label"]:
+        # 'unknown' was a legacy system bucket, never a real hand label — don't let
+        # it carry forward onto a real cluster. Only genuine labels propagate.
+        if not r["label"] or r["label"] == "unknown":
             continue
         out.setdefault((r["scope"], r["species"]), []).append(
             (r["label"], _unit(_unpack(r["centroid"]))))
@@ -199,9 +201,13 @@ def build(db: str, min_species_n: int = MIN_SPECIES_N, dry_run: bool = False) ->
             member_vecs = [Xs[j] for j in sub]
             xy = [Zs[j] for j in sub]
             if cl == -1:
-                # acoustic outliers within the species: keep points, tag 'unknown'
-                ci = add_cluster("species", sp, -1, member_ids, member_vecs, xy)
-                clusters[ci]["label"] = clusters[ci]["label"] or "unknown"
+                # Acoustic outliers within the species — NOT a call type. Keep the
+                # points on the map but UNGROUPED (cluster_id NULL, no atlas_cluster
+                # row), so the panel never shows a meaningless "unknown" bucket with
+                # every detection dumped under it. They render neutral; a real
+                # call-type cluster is the only thing that becomes labellable.
+                for j in sub:
+                    points.append((ids[idxs[j]], "species", float(Zs[j][0]), float(Zs[j][1]), None))
                 continue
             add_cluster("species", sp, cl, member_ids, member_vecs, xy)
 

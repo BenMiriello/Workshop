@@ -572,9 +572,28 @@ input[type="range"].grad::-moz-range-thumb {
   width: 100%; height: 100%; min-height: 440px; display: block;
   background: var(--bg-inset); border: 1px solid var(--border);
   border-radius: 8px; cursor: grab;
+  /* Own all touch gestures (pan/pinch) instead of the browser scrolling the page. */
+  touch-action: none; -webkit-user-select: none; user-select: none;
 }
 .atlas-canvas:active { cursor: grabbing; }
 .atlas-fit { position: absolute; top: 0.5rem; right: 0.5rem; }
+.atlas-zoom { position: absolute; top: 0.5rem; right: 0.5rem; display: flex; flex-direction: column; gap: .3rem; }
+.atlas-zoom .btn { width: 2rem; height: 2rem; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+
+/* Info card anchored to the selected dot (left/top/transform set imperatively in
+   the canvas draw loop so it tracks pan/zoom). */
+.atlas-popover {
+  position: absolute; z-index: 5; width: 220px; max-width: calc(100% - 1rem);
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: var(--shadow-2, 0 6px 20px rgba(0,0,0,.28)); padding: .5rem .6rem;
+  pointer-events: auto;
+}
+.atlas-popover__row { display: flex; align-items: center; gap: .4rem; }
+.atlas-popover__name { font-weight: 600; text-decoration: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.atlas-popover__close { margin-left: auto; background: none; border: 0; color: var(--muted); cursor: pointer; display: inline-flex; padding: 2px; border-radius: 4px; }
+.atlas-popover__close:hover { color: var(--text); background: var(--bg-inset); }
+.atlas-popover__meta { font-size: .8rem; margin-top: .25rem; }
+.atlas-popover__play { display: flex; align-items: center; gap: .4rem; margin-top: .45rem; }
 
 .atlas-side { width: 320px; flex-shrink: 0; }
 @media (max-width: 760px) { .atlas-side { width: auto; } }

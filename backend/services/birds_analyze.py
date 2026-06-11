@@ -10,6 +10,7 @@ this module only does ffmpeg transcode + a localhost HTTP call + storage.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import math
 import os
@@ -25,6 +26,12 @@ from pathlib import Path
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _now_minus(seconds: float) -> str:
+    """UTC ISO timestamp `seconds` in the past — comparable (lexicographically) to
+    stored `ts` values, which are also UTC ISO from _now()."""
+    return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
 
 BROWSER_DB = Path(os.environ.get("BIRDNET_BROWSER_DB", "/home/clawd-a/birdnet/data/browser-stations.db"))
 ANALYZER_URL = os.environ.get("BIRDNET_ANALYZER_URL", "http://127.0.0.1:8012")
@@ -42,10 +49,11 @@ _MB = 1024 * 1024
 # recordings above. See docs/birds-atlas.md.
 ATLAS_CLIPS_DIR = Path(os.environ.get("BIRDNET_ATLAS_CLIPS_DIR", "/home/clawd-a/birdnet/data/atlas-clips"))
 EMBED_MODEL = "birdnet-global-6k-v2.4"
-# The call-type vocabulary. 'unknown' is the explicit fuzzy-boundary bucket (a
-# detection too far from every labelled cluster centroid); 'other' is a labelled
-# catch-all the operator can assign to a cluster that is real but none of these.
-CALL_TYPES = ("song", "contact", "alarm", "flight", "begging", "other", "unknown")
+# The call-type vocabulary the operator can assign to a cluster. 'other' is the
+# catch-all for a real call type that's none of the named ones. There is no
+# 'unknown' label: an unlabelled cluster is simply unnamed, and an acoustic outlier
+# is left ungrouped (cluster_id NULL) rather than bucketed into a fake group.
+CALL_TYPES = ("song", "contact", "alarm", "flight", "begging", "other")
 _ATLAS_DEFAULTS = {"atlas_clip_storage_mb": 256, "atlas_exemplars_per_cluster": 8}
 # A detection farther than this (cosine distance) from every labelled centroid is
 # tagged 'unknown' rather than forced into the nearest cluster. Tunable per-install.
@@ -89,6 +97,9 @@ _SMART_DEFAULTS = {
     "trust_radius_km": 5.0,
 }
 CONFIRM_WINDOW_S = 15.0
+# How long a species stays flagged "New" at a location: 24h from its first
+# detection there. Shared (data-derived, not per-person) and self-expiring.
+NEW_WINDOW_S = 24 * 3600
 
 # Rolling in-process buffer for new-species consensus: (location_id, sci) ->
 # [recent detection ts]. The backend is a single uvicorn worker, so module state
@@ -230,6 +241,40 @@ def _conn() -> sqlite3.Connection:
         fixed_location_id INTEGER, created_at TEXT, last_seen TEXT)""")
     c.execute("""CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY, value TEXT)""")
+    # --- Accounts + friend model (Springer Birds sharing) -------------------
+    # A user is a person with an account. role: admin (the operator, issues
+    # invites out-of-app) | member. In the private Workshop app there is exactly
+    # one user (the operator, id 1, backfilled below) and everything is theirs;
+    # the standalone app adds the second person. Devices + detections carry an
+    # owner_user_id so "whose bird is this" is answerable, and a device's `shared`
+    # flag opts its detections into friend visibility.
+    c.execute("""CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE, name TEXT, role TEXT DEFAULT 'member', created_at TEXT,
+        password_hash TEXT)""")
+    # Standalone-app login sessions (the private Workshop app does not use these;
+    # it is tailnet-gated). token is a 256-bit secret; expires_at bounds it. The
+    # cookie is HttpOnly+Secure+SameSite=Strict. password_hash on users is a
+    # stdlib scrypt digest ("scrypt$n$r$p$salt_hex$hash_hex"); no external dep.
+    c.execute("""CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY, user_id INTEGER, created_at TEXT, expires_at TEXT,
+        user_agent TEXT)""")
+    c.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
+    # One-time invite tokens (admin-minted, out of app). Redeeming one creates the
+    # member's account (by email) and lets them set their own password — no admin
+    # ever handles their credential. used_at marks it consumed.
+    c.execute("""CREATE TABLE IF NOT EXISTS invites (
+        token TEXT PRIMARY KEY, email TEXT, name TEXT,
+        created_at TEXT, expires_at TEXT, used_at TEXT)""")
+    # Friendship is MUTUAL and symmetric. We store one row per pair with the
+    # smaller id as user_a (canonical), so a pair can't be duplicated. status:
+    # accepted = both see each other's SHARED detections; pending = requested,
+    # not yet visible. The operator can wire requests/accepts in the standalone
+    # app; admin can also just create accepted rows directly for the two trusted
+    # users. Visibility is symmetric: there is no "follower" direction.
+    c.execute("""CREATE TABLE IF NOT EXISTS friendships (
+        user_a INTEGER, user_b INTEGER, status TEXT DEFAULT 'accepted',
+        created_at TEXT, PRIMARY KEY (user_a, user_b))""")
     # Trust anchors for the suggested/confirmed model. One row per (species, point
     # you acted at). trust: none = just tracked (a suggestion has appeared here);
     # auto = auto-confirm within radius_m; mute = auto-reject within radius_m.
@@ -326,6 +371,20 @@ def _conn() -> sqlite3.Connection:
     # indefinitely (no time-based purge anywhere), so it can be restored later.
     if "deleted_at" not in dev_cols:
         c.execute("ALTER TABLE devices ADD COLUMN deleted_at TEXT")
+    # Ownership + sharing. owner_user_id: who this device belongs to (NULL until
+    # an account claims it; backfilled to the operator below). shared: 0 = private
+    # to its owner, 1 = its detections are visible to the owner's accepted friends.
+    # The always-on Pi is just a device with shared=1 - no special source.
+    if "owner_user_id" not in dev_cols:
+        c.execute("ALTER TABLE devices ADD COLUMN owner_user_id INTEGER")
+    if "shared" not in dev_cols:
+        c.execute("ALTER TABLE devices ADD COLUMN shared INTEGER DEFAULT 0")
+    # password_hash arrived after the users table (standalone login); add it to
+    # pre-existing users tables.
+    if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'").fetchone():
+        user_cols = {r["name"] for r in c.execute("PRAGMA table_info(users)")}
+        if "password_hash" not in user_cols:
+            c.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
     loc_cols = {r["name"] for r in c.execute("PRAGMA table_info(locations)")}
     if "deleted_at" not in loc_cols:
         c.execute("ALTER TABLE locations ADD COLUMN deleted_at TEXT")
@@ -346,7 +405,16 @@ def _conn() -> sqlite3.Connection:
                      # Trust model: status = suggested|confirmed|rejected (no
                      # DEFAULT so existing rows backfill to 'suggested' below);
                      # auto = was this status set automatically (anchor) vs by hand.
-                     ("status", "TEXT"), ("auto", "INTEGER DEFAULT 0")):
+                     ("status", "TEXT"), ("auto", "INTEGER DEFAULT 0"),
+                     # owner_user_id: denormalized from the device at insert time
+                     # so visibility filtering is a single join-free predicate.
+                     # NULL = legacy; backfilled to the operator below.
+                     ("owner_user_id", "INTEGER"),
+                     # clip_name: reference to the WAV on the always-on capture
+                     # node (BirdNET-Go writes the file; the webhook sends its
+                     # name). The browser path keeps audio in the recordings
+                     # table instead, so this is NULL for browser detections.
+                     ("clip_name", "TEXT")):
         if col not in cols:
             c.execute(f"ALTER TABLE browser_detections ADD COLUMN {col} {ddl}")
     # Existing detections predate the trust model: surface them as suggestions so
@@ -417,6 +485,18 @@ def _conn() -> sqlite3.Connection:
                 "trust,reviewed,auto_locked,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,'none',0,0,?,?)",
                 (r["scientific_name"], r["common_name"], r["lat"], r["lon"], radius_m, now, now))
+
+    # Seed the operator account (id 1, admin) and backfill ownership of all
+    # pre-account devices + detections to it - this history is the operator's.
+    # Idempotent: only runs while the users table is empty. The operator's email
+    # comes from the environment so it is not hardcoded in source.
+    if not c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+        op_email = os.environ.get("SPRINGER_ADMIN_EMAIL", "benmiriello@gmail.com")
+        op_name = os.environ.get("SPRINGER_ADMIN_NAME", "Ben")
+        c.execute("INSERT INTO users(id,email,name,role,created_at) VALUES(1,?,?,'admin',?)",
+                  (op_email, op_name, _now()))
+        c.execute("UPDATE devices SET owner_user_id=1 WHERE owner_user_id IS NULL")
+        c.execute("UPDATE browser_detections SET owner_user_id=1 WHERE owner_user_id IS NULL")
     c.commit()
     _migrated = True
     return c
@@ -816,14 +896,16 @@ def mark_species_reviewed(sci: str, lat: float | None, lon: float | None,
 
 
 def _new_arrival_scinames(c: sqlite3.Connection, include_nonbird: bool = False) -> set:
-    """Unreviewed first-appearance species that actually have a VISIBLE suggested
-    detection right now (respects the live floor/range), so the badge and the
-    top-pin always match what the feed shows."""
+    """Species first heard anywhere within the last 24h that still have a VISIBLE
+    suggested detection (respects the live floor/range). 'New' is a pure time
+    window — first detection < 24h ago — shared and self-expiring, not tied to
+    whether anyone has looked at it."""
+    cutoff = _now_minus(NEW_WINDOW_S)
+    vis_sql, vis_args = _visible_clause(None)
     rows = c.execute(
-        "SELECT DISTINCT sa.scientific_name FROM species_area sa WHERE sa.trust='none' "
-        "AND sa.reviewed=0 AND EXISTS (SELECT 1 FROM browser_detections bd "
-        "WHERE bd.scientific_name=sa.scientific_name AND bd.status='suggested'"
-        + _bird_clause(include_nonbird) + ")").fetchall()
+        "SELECT scientific_name FROM browser_detections"
+        " WHERE status='suggested'" + _bird_clause(include_nonbird) + vis_sql +
+        " GROUP BY scientific_name HAVING MIN(ts) >= ?", (*vis_args, cutoff)).fetchall()
     return {r["scientific_name"] for r in rows}
 
 
@@ -832,10 +914,11 @@ def species_events(sci: str, location_id: int | None = None,
     """Individual detections for one species (for the inline row expansion).
     Respects the same visibility filters as the lists, plus the tab's status."""
     with _conn() as c:
+        vis_sql, vis_args = _visible_clause(None)
         q = ("SELECT id, ts, round(confidence,4) AS confidence, device_name, status, location_id "
              "FROM browser_detections WHERE scientific_name=?" + _bird_clause(False)
-             + _status_clause(status))
-        params: list = [sci]
+             + _status_clause(status) + vis_sql)
+        params: list = [sci, *vis_args]
         if location_id:
             q += " AND location_id=?"
             params.append(location_id)
@@ -864,11 +947,12 @@ def suggestions(limit: int = 50, offset: int = 0, include_nonbird: bool = False)
     with _conn() as c:
         # Species that are still unreviewed new arrivals -> their rows pin first.
         pinned = _new_arrival_scinames(c, include_nonbird)
+        vis_sql, vis_args = _visible_clause(None)
         rows = c.execute(
             "SELECT id, ts, scientific_name, common_name, round(confidence,4) AS confidence, "
             "occurrence, location_id, device_name FROM browser_detections "
-            "WHERE status='suggested'" + _bird_clause(include_nonbird) +
-            " ORDER BY id DESC").fetchall()
+            "WHERE status='suggested'" + _bird_clause(include_nonbird) + vis_sql +
+            " ORDER BY id DESC", vis_args).fetchall()
         items = [dict(r) for r in rows]
         for it in items:
             it["is_new"] = it["scientific_name"] in pinned
@@ -979,13 +1063,40 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
         # mode is in its own localStorage every 1s; if we wrote it on every chunk,
         # a still-running device would stomp any mode change made from another
         # screen within a second (the "fixed reverts to adaptive on reload" bug).
+        owner_uid = None
         if token:
-            c.execute(
-                "INSERT INTO devices(token,name,mode,created_at,last_seen) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(token) DO UPDATE SET "
-                "name=COALESCE(NULLIF(excluded.name,''),devices.name), "
-                "last_seen=excluded.last_seen",
-                (token, dev_name, mode, ts, ts))
+            # viewer is set when running under a standalone session (springer_app);
+            # None on the tailnet Workshop app. In a session we CLAIM the device for
+            # the logged-in user so their detections attribute + scope to them, and
+            # refuse to write as a device someone else already owns (anti-spoof).
+            viewer = _resolve_viewer(None)
+            existing = c.execute("SELECT owner_user_id FROM devices WHERE token=?", (token,)).fetchone()
+            if viewer is not None and existing and existing["owner_user_id"] not in (None, viewer):
+                raise PermissionError("device belongs to another account")
+            # Only PERSIST a device that has a real, user-given name (a blank/placeholder
+            # name is an unnamed/ephemeral session: attribute by token, don't clutter
+            # the device list). EXCEPTION: under a session we always persist + own it,
+            # else the user could not see their own detections (visibility is device-based).
+            real_name = dev_name if dev_name and dev_name not in ("New device", "Untitled device") else ""
+            if viewer is not None:
+                c.execute(
+                    "INSERT INTO devices(token,name,mode,owner_user_id,created_at,last_seen) "
+                    "VALUES(?,?,?,?,?,?) ON CONFLICT(token) DO UPDATE SET "
+                    "name=COALESCE(NULLIF(excluded.name,''),devices.name), "
+                    "owner_user_id=COALESCE(devices.owner_user_id,excluded.owner_user_id), "
+                    "last_seen=excluded.last_seen",
+                    (token, real_name or "Phone", mode, viewer, ts, ts))
+            elif real_name:
+                c.execute(
+                    "INSERT INTO devices(token,name,mode,created_at,last_seen) VALUES(?,?,?,?,?) "
+                    "ON CONFLICT(token) DO UPDATE SET "
+                    "name=COALESCE(NULLIF(excluded.name,''),devices.name), "
+                    "last_seen=excluded.last_seen",
+                    (token, real_name, mode, ts, ts))
+            else:
+                c.execute("UPDATE devices SET last_seen=? WHERE token=?", (ts, token))
+            orow = c.execute("SELECT owner_user_id FROM devices WHERE token=?", (token,)).fetchone()
+            owner_uid = orow["owner_user_id"] if orow else viewer
         # Resolve coordinates for the range filter BEFORE analysis (read-only;
         # creates nothing). No place -> filter stays off, range comes back unknown.
         eff_lat, eff_lon = _effective_coords(c, token, mode, lat, lon, location_id)
@@ -1068,13 +1179,13 @@ def analyze_chunk(audio: bytes, content_type: str, station: str,
                     cur = c.execute(
                         "INSERT INTO browser_detections(station,ts,scientific_name,common_name,"
                         "confidence,start_s,end_s,device_token,is_bird,device_name,location_id,lat,lon,"
-                        "occurrence,in_range,confirmed,status,auto) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        "occurrence,in_range,confirmed,status,auto,owner_user_id) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (loc_name, ts, d["scientific_name"], d["common_name"], d["confidence"],
                          d.get("start_s", 0.0), d.get("end_s", 0.0), token, 1 if d["is_bird"] else 0,
                          dev_name, loc_id, eff_lat, eff_lon,
                          d.get("occurrence"), None if d.get("in_range") is None else int(d["in_range"]),
-                         1, d["status"], d["auto"]))
+                         1, d["status"], d["auto"], owner_uid))
                     det_id = cur.lastrowid
                     if vec is not None:
                         d["call_type"] = _store_embedding(
@@ -1117,6 +1228,17 @@ def recent(station: str, limit: int = 100, include_nonbird: bool = False) -> lis
             (station, max(1, min(limit, 500))),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _parse_ts(ts: str | None) -> datetime | None:
+    """Stored ISO ts -> tz-aware datetime (local), or None if missing/unparseable.
+    Used for the time-windowed 'New' badge."""
+    if not ts:
+        return None
+    try:
+        return _local(ts)
+    except (TypeError, ValueError):
+        return None
 
 
 def _local(ts: str) -> datetime:
@@ -1204,6 +1326,7 @@ def station_species(station: str, include_nonbird: bool = False) -> list[dict]:
             "count": a["count"], "max_conf": round(a["max_conf"], 4),
             "avg_conf": round(a["_sum"] / a["count"], 4), "days_seen": len(a["_days"]),
             "first_date": _local(a["first_ts"]).strftime("%Y-%m-%d"),
+            "first_ts": a["first_ts"],
             "last_date": _local(a["last_ts"]).strftime("%Y-%m-%d"),
         })
     out.sort(key=lambda x: x["count"], reverse=True)
@@ -1540,9 +1663,11 @@ def _species_centroids(c: sqlite3.Connection) -> dict:
 def _live_tag(c: sqlite3.Connection, sci: str, vec: list[float],
               unknown_dist: float) -> tuple[int | None, str | None, float | None]:
     """Assign a freshly-embedded detection to its species' nearest call-type
-    cluster. Beyond unknown_dist from every centroid -> 'unknown' (the fuzzy-
-    boundary bucket). Nearest cluster still recorded so it groups; call_type is the
-    cluster's hand label (None while the cluster is unlabelled)."""
+    cluster. Beyond unknown_dist from every centroid the detection is an acoustic
+    outlier -> left ungrouped (cluster_id NULL, no call_type), the same way the
+    batch build treats outliers; the next rebuild re-projects and may place it.
+    Within range it adopts the nearest cluster (call_type = that cluster's hand
+    label, None while unlabelled)."""
     cents = _species_centroids(c).get(sci)
     if not cents:
         return None, None, None
@@ -1554,7 +1679,7 @@ def _live_tag(c: sqlite3.Connection, sci: str, vec: list[float],
         if d < best_dist:
             best_id, best_label, best_dist = cid, label, d
     if best_dist > unknown_dist:
-        return best_id, "unknown", round(best_dist, 4)
+        return None, None, round(best_dist, 4)
     return best_id, best_label, round(best_dist, 4)
 
 
@@ -1658,36 +1783,62 @@ def atlas_status() -> dict:
 
 
 def atlas_species() -> list[dict]:
-    """Species that have a per-species call-type map, most-detected first."""
+    """Every bird species we have embeddings for, most-detected first. Species past
+    the call-type threshold carry real clusters (clusters>0); the rest are still
+    selectable and render their points from the global projection, so the By-species
+    view is never blank. `n` is embedded detections; `clusters`/`labeled` count
+    per-species call-type clusters (0 until the species has enough data to split)."""
     with _conn() as c:
         return [dict(r) for r in c.execute(
-            "SELECT ac.species AS scientific_name, "
-            "(SELECT common_name FROM browser_detections WHERE scientific_name=ac.species "
+            "SELECT bd.scientific_name AS scientific_name, "
+            "(SELECT common_name FROM browser_detections WHERE scientific_name=bd.scientific_name "
             " AND common_name IS NOT NULL LIMIT 1) AS common_name, "
-            "SUM(ac.size) AS n, COUNT(*) AS clusters, "
-            "SUM(CASE WHEN ac.label IS NOT NULL AND ac.label<>'' THEN 1 ELSE 0 END) AS labeled "
-            "FROM atlas_cluster ac WHERE ac.scope='species' "
-            "GROUP BY ac.species ORDER BY n DESC")]
+            "COUNT(*) AS n, "
+            "(SELECT COUNT(*) FROM atlas_cluster ac WHERE ac.scope='species' "
+            " AND ac.species=bd.scientific_name) AS clusters, "
+            "(SELECT COUNT(*) FROM atlas_cluster ac WHERE ac.scope='species' "
+            " AND ac.species=bd.scientific_name AND ac.label IS NOT NULL AND ac.label<>'') AS labeled "
+            "FROM detection_embedding de JOIN browser_detections bd ON bd.id=de.det_id "
+            "WHERE de.vec IS NOT NULL AND bd.is_bird=1 "
+            "GROUP BY bd.scientific_name ORDER BY n DESC")]
 
 
 def atlas_points(scope: str, species: str | None = None,
                  location_id: int | None = None, limit: int = 8000) -> dict:
     """Projection points + cluster list for the map. scope='global' is the
-    species-coloured overview; scope='species' is one bird's call-type map."""
+    species-coloured overview; scope='species' is one bird's call-type map.
+
+    Fallback: a species below the call-type threshold has no scope='species'
+    projection. Rather than show an empty map, we render that species' points from
+    the GLOBAL projection (its sub-region of the shared acoustic space) and return
+    `has_species_map: False` so the UI can say call-types are still collecting."""
     scope = "species" if scope == "species" else "global"
-    where = "ap.scope=?"
-    params: list = [scope]
-    if scope == "species" and species:
-        where += " AND bd.scientific_name=?"
-        params.append(species)
-    if location_id:
-        where += " AND bd.location_id=?"
-        params.append(location_id)
+    has_species_map = True
     with _conn() as c:
+        point_scope = scope
+        if scope == "species" and species:
+            built = c.execute(
+                "SELECT 1 FROM atlas_point ap JOIN browser_detections bd ON bd.id=ap.det_id "
+                "WHERE ap.scope='species' AND bd.scientific_name=? LIMIT 1", (species,)).fetchone()
+            has_species_map = built is not None
+            point_scope = "species" if has_species_map else "global"
+
+        where = "ap.scope=?"
+        params: list = [point_scope]
+        if scope == "species" and species:
+            where += " AND bd.scientific_name=?"
+            params.append(species)
+        if location_id:
+            where += " AND bd.location_id=?"
+            params.append(location_id)
         rows = c.execute(
-            "SELECT ap.det_id, round(ap.x,4) x, round(ap.y,4) y, ap.cluster_id, "
+            "SELECT ap.det_id, round(ap.x,4) x, round(ap.y,4) y, "
+            # In fallback we borrow global coords, so don't surface a global cluster_id
+            # as if it were a call-type cluster — null it out for species scope.
+            f"{'NULL' if not has_species_map else 'ap.cluster_id'} cluster_id, "
             "bd.scientific_name sci, bd.common_name common, bd.ts, "
             "round(bd.confidence,3) confidence, de.call_type, "
+            "(SELECT r.id FROM recordings r WHERE r.det_id=ap.det_id ORDER BY r.id LIMIT 1) rec_id, "
             "EXISTS(SELECT 1 FROM atlas_clip ac WHERE ac.det_id=ap.det_id) has_clip, "
             "EXISTS(SELECT 1 FROM recordings r WHERE r.det_id=ap.det_id) has_rec "
             "FROM atlas_point ap JOIN browser_detections bd ON bd.id=ap.det_id "
@@ -1701,7 +1852,7 @@ def atlas_points(scope: str, species: str | None = None,
         clusters = [dict(r) for r in c.execute(
             "SELECT id, species, label, size FROM atlas_cluster "
             f"WHERE {cwhere} ORDER BY size DESC", tuple(cparams))]
-    return {"scope": scope, "species": species,
+    return {"scope": scope, "species": species, "has_species_map": has_species_map,
             "points": [dict(r) for r in rows], "clusters": clusters,
             "call_types": list(CALL_TYPES)}
 
@@ -1771,6 +1922,32 @@ def trigger_atlas_build() -> dict:
     return {"started": True}
 
 
+# Below this many embedded detections the build refuses (mirrors atlas_build.py's
+# MIN_SPECIES_N) — no point triggering it. Once built, only rebuild when at least
+# this many NEW embeddings have landed, so the heavy UMAP job runs on real change.
+_ATLAS_MIN_BUILD = 20
+_ATLAS_REBUILD_DELTA = 20
+
+
+def maybe_auto_rebuild(min_new: int = _ATLAS_REBUILD_DELTA) -> dict:
+    """Self-maintenance: trigger a rebuild when there's enough new acoustic data
+    to be worth the cost. Called nightly from the backend lifespan loop. Embeddings
+    are captured live as detections are stored; this is what keeps the projected map
+    (and any per-species call-type clusters) current without a manual Rebuild."""
+    st = atlas_status()
+    embedded = st["embedded"]
+    if embedded < _ATLAS_MIN_BUILD:
+        return {"triggered": False, "reason": f"only {embedded} embedded; need >= {_ATLAS_MIN_BUILD}"}
+    base = get_setting("atlas_autobuild_embedded")
+    base = int(base) if base and base.isdigit() else 0
+    if st["built"] and embedded - base < min_new:
+        return {"triggered": False, "reason": f"only {embedded - base} new since last auto-build (< {min_new})"}
+    res = trigger_atlas_build()
+    if res.get("started"):
+        set_setting("atlas_autobuild_embedded", str(embedded))
+    return {"triggered": bool(res.get("started")), "embedded": embedded, "new": embedded - base}
+
+
 def recordings_status() -> dict:
     """Usage + the homepage banner state. 'ok' renders nothing; 'warn' is near
     full; 'error' means saving is failing (stop-mode full, or evict-mode where
@@ -1820,6 +1997,8 @@ def list_recordings(sci: str | None = None, location_id: int | None = None,
         keepset = _keepall_species(c)
         where = " WHERE 1=1"
         p: list = []
+        vis_sql, vis_args = _visible_clause(None, col="r.device_token")
+        where += vis_sql; p += vis_args
         if sci:
             where += " AND r.scientific_name=?"; p.append(sci)
         if location_id:
@@ -1842,10 +2021,13 @@ def list_recordings(sci: str | None = None, location_id: int | None = None,
 
 
 def recording_path(rec_id: int) -> Path | None:
+    toks = visible_tokens(_resolve_viewer(None))  # request-scoped viewer
     with _conn() as c:
-        r = c.execute("SELECT path FROM recordings WHERE id=?", (rec_id,)).fetchone()
+        r = c.execute("SELECT path, device_token FROM recordings WHERE id=?", (rec_id,)).fetchone()
     if not r:
         return None
+    if toks is not None and r["device_token"] not in toks:
+        return None  # not the viewer's clip to play
     p = CLIPS_DIR / r["path"]
     return p if p.exists() else None
 
@@ -1898,14 +2080,199 @@ def reconcile_recordings() -> dict:
     return {"ok": True, "rows_fixed": fixed, "orphans_removed": orphans}
 
 
-def list_devices(archived: bool = False) -> list[dict]:
+# --------------------------------------------------------------------------
+# Accounts + friend model. In the private Workshop app there is one user (the
+# operator, id 1) and viewer_id is always None -> "see everything". The
+# standalone Springer Birds app passes the session user's id as viewer_id, which
+# narrows reads to that person's own devices plus their accepted friends' SHARED
+# devices. Visibility is a per-device token set, so it honors the CURRENT `shared`
+# flag (not the value at insert time) and per-device sharing within one owner.
+# --------------------------------------------------------------------------
+OPERATOR_USER_ID = 1
+
+
+def list_users() -> list[dict]:
+    with _conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT id,email,name,role,created_at FROM users ORDER BY id")]
+
+
+def get_user(user_id: int) -> dict | None:
+    with _conn() as c:
+        r = c.execute("SELECT id,email,name,role,created_at FROM users WHERE id=?",
+                      (user_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def upsert_user(email: str, name: str | None = None, role: str | None = None) -> dict:
+    """Create a user by email, or update an existing one's name/role. The
+    standalone app calls this to auto-create a member row on first authenticated
+    visit; the admin uses it to set names/roles."""
+    email = (email or "").strip().lower()
+    if not email:
+        raise ValueError("email required")
+    with _conn() as c:
+        row = c.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
+        if row:
+            sets, args = [], []
+            if name is not None:
+                sets.append("name=?"); args.append(name.strip())
+            if role in ("admin", "member"):
+                sets.append("role=?"); args.append(role)
+            if sets:
+                args.append(row["id"])
+                c.execute(f"UPDATE users SET {','.join(sets)} WHERE id=?", args)
+            uid = row["id"]
+        else:
+            cur = c.execute(
+                "INSERT INTO users(email,name,role,created_at) VALUES(?,?,?,?)",
+                (email, (name or "").strip() or None,
+                 role if role in ("admin", "member") else "member", _now()))
+            uid = cur.lastrowid
+        c.commit()
+    return get_user(uid)
+
+
+def _friend_ids(c: sqlite3.Connection, user_id: int) -> set[int]:
+    """Accepted, mutual friends of user_id (symmetric - direction does not matter)."""
+    out: set[int] = set()
+    for r in c.execute(
+            "SELECT user_a,user_b FROM friendships WHERE status='accepted' "
+            "AND (user_a=? OR user_b=?)", (user_id, user_id)):
+        out.add(r["user_b"] if r["user_a"] == user_id else r["user_a"])
+    return out
+
+
+def list_friends(user_id: int) -> list[dict]:
+    with _conn() as c:
+        ids = _friend_ids(c, user_id)
+        pending = {}
+        for r in c.execute(
+                "SELECT user_a,user_b,status FROM friendships WHERE user_a=? OR user_b=?",
+                (user_id, user_id)):
+            other = r["user_b"] if r["user_a"] == user_id else r["user_a"]
+            pending[other] = r["status"]
+        users = {u["id"]: u for u in list_users()}
+    return [{**users.get(i, {"id": i}), "friend_status": pending.get(i, "accepted")}
+            for i in pending]
+
+
+def set_friendship(user_a: int, user_b: int, status: str = "accepted") -> dict:
+    """Create/update a mutual friendship. Stored once per pair (smaller id first)."""
+    if int(user_a) == int(user_b):
+        raise ValueError("cannot friend yourself")
+    lo, hi = sorted((int(user_a), int(user_b)))
+    status = status if status in ("accepted", "pending") else "accepted"
+    with _conn() as c:
+        c.execute("INSERT INTO friendships(user_a,user_b,status,created_at) VALUES(?,?,?,?) "
+                  "ON CONFLICT(user_a,user_b) DO UPDATE SET status=excluded.status",
+                  (lo, hi, status, _now()))
+        c.commit()
+    return {"user_a": lo, "user_b": hi, "status": status}
+
+
+def remove_friendship(user_a: int, user_b: int) -> dict:
+    lo, hi = sorted((int(user_a), int(user_b)))
+    with _conn() as c:
+        n = c.execute("DELETE FROM friendships WHERE user_a=? AND user_b=?", (lo, hi)).rowcount
+        c.commit()
+    return {"removed": n}
+
+
+def visible_tokens(viewer_id: int | None) -> list[str] | None:
+    """Device tokens whose detections `viewer_id` may see: every device they own
+    (shared or not) plus accepted friends' devices flagged shared=1. Returns None
+    when viewer_id is None (private app/operator) meaning 'no restriction'."""
+    if viewer_id is None:
+        return None
+    with _conn() as c:
+        mine = {r["token"] for r in c.execute(
+            "SELECT token FROM devices WHERE owner_user_id=?", (viewer_id,))}
+        friends = _friend_ids(c, viewer_id)
+        if friends:
+            qs = ",".join("?" * len(friends))
+            mine |= {r["token"] for r in c.execute(
+                f"SELECT token FROM devices WHERE shared=1 AND owner_user_id IN ({qs})",
+                tuple(friends))}
+    return list(mine)
+
+
+# Request-scoped viewer. The standalone app (springer_app) sets this per request
+# from the authenticated session; it is AUTHORITATIVE and a client cannot widen it
+# by passing a viewer_id query arg. The private tailnet app never sets it, so the
+# operator keeps seeing everything. Lives in a contextvar so it is correct under
+# concurrent requests without threading a param through every call site.
+_viewer_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "springer_viewer_id", default=None)
+
+
+def set_request_viewer(user_id: int | None) -> None:
+    """Pin the visibility viewer for the current request (springer_app calls this
+    from its auth dependency). None clears it (= operator/tailnet, see all)."""
+    _viewer_ctx.set(user_id)
+
+
+def _resolve_viewer(explicit: int | None) -> int | None:
+    """The effective viewer: the request-scoped one wins (so a logged-in friend
+    cannot pass ?viewer_id=1 to widen access); else the explicit arg; else None."""
+    cv = _viewer_ctx.get()
+    return cv if cv is not None else explicit
+
+
+def _is_admin(viewer_id: int | None = None) -> bool:
+    """True for the operator / private tailnet app (no request-scoped viewer) or a
+    logged-in user whose role is 'admin'. Members are never admins. Gates the
+    removed-items lists + restore: only an admin may see or undo a soft-delete.
+    Resolves the request-scoped viewer first, so a member cannot pass ?viewer_id
+    to elevate."""
+    vid = _resolve_viewer(viewer_id)
+    if vid is None:
+        return True
+    u = get_user(vid)
+    return bool(u and u.get("role") == "admin")
+
+
+def _assert_device_owner(c: sqlite3.Connection, token: str) -> None:
+    """In a member session, refuse to mutate a device owned by someone else.
+    No-op on the tailnet app (no viewer) and for admins."""
+    viewer = _resolve_viewer(None)
+    if viewer is None or _is_admin(viewer):
+        return
+    row = c.execute("SELECT owner_user_id FROM devices WHERE token=?", (token,)).fetchone()
+    if row and row["owner_user_id"] not in (None, viewer):
+        raise PermissionError("device belongs to another account")
+
+
+def _visible_clause(viewer_id: int | None, col: str = "device_token") -> tuple[str, list]:
+    """SQL fragment (' AND <col> IN (...)') + args restricting rows to the
+    viewer's visible device tokens. Empty when unrestricted; a never-true clause
+    when the viewer can see nothing. Resolves the request-scoped viewer first."""
+    toks = visible_tokens(_resolve_viewer(viewer_id))
+    if toks is None:
+        return "", []
+    if not toks:
+        return " AND 1=0", []
+    qs = ",".join("?" * len(toks))
+    return f" AND {col} IN ({qs})", list(toks)
+
+
+def list_devices(archived: bool = False, viewer_id: int | None = None) -> list[dict]:
     """Active devices by default; archived=True lists only soft-removed ones (for
     the restore path). Detection counts/locations are computed either way."""
+    # Removed devices are an admin-only concern: a non-admin viewer never sees the
+    # "removed" list (and so can't restore from it). Active list is unchanged.
+    if archived and not _is_admin(viewer_id):
+        return []
+    vis = visible_tokens(_resolve_viewer(viewer_id))  # None = unrestricted (operator/private app)
     with _conn() as c:
         flt = "deleted_at IS NOT NULL" if archived else "deleted_at IS NULL"
         devs = c.execute(
-            "SELECT token,name,mode,fixed_location_id,created_at,last_seen,user_agent,deleted_at "
+            "SELECT token,name,mode,fixed_location_id,created_at,last_seen,user_agent,"
+            "deleted_at,owner_user_id,shared "
             f"FROM devices WHERE {flt} ORDER BY last_seen DESC").fetchall()
+        if vis is not None:
+            allowed = set(vis)
+            devs = [d for d in devs if d["token"] in allowed]
         locs = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
         counts = {r["device_token"]: r["n"] for r in c.execute(
             "SELECT device_token, COUNT(*) n FROM browser_detections "
@@ -1927,6 +2294,7 @@ def list_devices(archived: bool = False) -> list[dict]:
                 "created_at": d["created_at"], "last_seen": d["last_seen"],
                 "user_agent": d["user_agent"], "detections": counts.get(d["token"], 0),
                 "deleted_at": d["deleted_at"],
+                "owner_user_id": d["owner_user_id"], "shared": bool(d["shared"]),
             })
     return out
 
@@ -1936,8 +2304,8 @@ def get_device(token: str) -> dict | None:
         return None
     with _conn() as c:
         d = c.execute(
-            "SELECT token,name,mode,fixed_location_id,created_at,last_seen FROM devices "
-            "WHERE token=?", (token,)).fetchone()
+            "SELECT token,name,mode,fixed_location_id,created_at,last_seen,owner_user_id,shared "
+            "FROM devices WHERE token=?", (token,)).fetchone()
         if not d:
             return None
         loc = None
@@ -1946,16 +2314,23 @@ def get_device(token: str) -> dict | None:
             loc = lr["name"] if lr else None
     return {"token": d["token"], "name": d["name"], "mode": d["mode"] or "adaptive",
             "fixed_location_id": d["fixed_location_id"], "fixed_location": loc,
-            "last_seen": d["last_seen"]}
+            "last_seen": d["last_seen"],
+            "owner_user_id": d["owner_user_id"], "shared": bool(d["shared"])}
 
 
 def upsert_device(token: str, name: str | None = None, mode: str | None = None,
                   fixed_location_id: int | None = None, user_agent: str | None = None,
-                  update_only: bool = False) -> dict | None:
+                  update_only: bool = False, shared: bool | None = None,
+                  owner_user_id: int | None = None) -> dict | None:
     """Create or update a device. Only non-None fields are written, so the
     settings form can patch one field at a time. update_only=True never creates a
     row (used by the on-load UA touch, so just viewing a page can't register a
-    phantom device) - it only refreshes an already-registered device."""
+    phantom device) - it only refreshes an already-registered device.
+
+    `shared` opts the device's detections into friend visibility; `owner_user_id`
+    claims the device for an account (the standalone app sets it from the session
+    on first use, which is also what closes the 'any token can post as any device'
+    gap)."""
     if not token:
         return None
     now = _now()
@@ -1965,11 +2340,22 @@ def upsert_device(token: str, name: str | None = None, mode: str | None = None,
         if not exists:
             if update_only:
                 return None
-            c.execute("INSERT INTO devices(token,name,mode,fixed_location_id,created_at,last_seen,user_agent) "
-                      "VALUES(?,?,?,?,?,?,?)",
-                      (token, (name or "").strip() or "New device",
-                       mode or "adaptive", fixed_location_id, now, now, ua or None))
+            real_name = (name or "").strip()
+            if real_name in ("", "New device", "Untitled device") and owner_user_id is None:
+                # No real name and no account claiming it → an unnamed/ephemeral
+                # device (a fresh browser pressing Listen, an automated test). Do
+                # NOT persist a placeholder row; its detections are still
+                # attributed by token. It becomes a real device the moment it is
+                # named or claimed by an account.
+                return None
+            c.execute(
+                "INSERT INTO devices(token,name,mode,fixed_location_id,created_at,last_seen,"
+                "user_agent,shared,owner_user_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                (token, real_name,
+                 mode or "adaptive", fixed_location_id, now, now, ua or None,
+                 1 if shared else 0, owner_user_id))
         else:
+            _assert_device_owner(c, token)  # member can't edit someone else's device
             sets, args = [], []
             if name is not None:
                 sets.append("name=?"); args.append(name.strip())
@@ -1979,6 +2365,10 @@ def upsert_device(token: str, name: str | None = None, mode: str | None = None,
                 sets.append("fixed_location_id=?"); args.append(fixed_location_id or None)
             if ua:
                 sets.append("user_agent=?"); args.append(ua)
+            if shared is not None:
+                sets.append("shared=?"); args.append(1 if shared else 0)
+            if owner_user_id is not None:
+                sets.append("owner_user_id=?"); args.append(owner_user_id)
             sets.append("last_seen=?"); args.append(now)
             args.append(token)
             c.execute(f"UPDATE devices SET {','.join(sets)} WHERE token=?", args)
@@ -1993,13 +2383,17 @@ def delete_device(token: str) -> dict:
     if not token:
         return {"ok": False, "deleted": 0}
     with _conn() as c:
+        _assert_device_owner(c, token)  # member can't remove someone else's device
         n = c.execute("UPDATE devices SET deleted_at=? WHERE token=? AND deleted_at IS NULL",
                       (_now(), token)).rowcount
     return {"ok": True, "deleted": n}
 
 
 def restore_device(token: str) -> dict:
-    """Bring a soft-removed device back into the active lists with all its data."""
+    """Bring a soft-removed device back into the active lists with all its data.
+    Admin-only: only the operator/admin may undo a removal."""
+    if not _is_admin():
+        return {"ok": False, "restored": 0, "error": "forbidden"}
     if not token:
         return {"ok": False, "restored": 0}
     with _conn() as c:
@@ -2072,6 +2466,101 @@ def merge_locations(src_id: int, dst_id: int) -> dict | None:
     return get_location(dst_id)
 
 
+# --------------------------------------------------------------------------
+# Always-on (BirdNET-Go) ingestion. The capture node POSTs each detection to
+# /birds/webhook; we land it in the SAME unified store the browser path writes
+# to, attributed to one 'yard' device. This is what makes the always-on station
+# "just another device" - one read path, no separate yard source. Metadata only:
+# the WAV clip stays on the capture node (clip_name is kept as a reference).
+# --------------------------------------------------------------------------
+YARD_TOKEN = "yard"
+
+
+def _yard_location(c: sqlite3.Connection) -> tuple[int | None, str | None]:
+    """The always-on station's place. Its pinned location if it has one, else a
+    'Yard' location pinned to BIRDNET_LATITUDE/LONGITUDE from the environment (so
+    the range filter and map work), else a coordinate-less 'Yard' to pin later."""
+    dev = c.execute("SELECT fixed_location_id FROM devices WHERE token=?", (YARD_TOKEN,)).fetchone()
+    if dev and dev["fixed_location_id"]:
+        row = c.execute("SELECT id,name FROM locations WHERE id=?", (dev["fixed_location_id"],)).fetchone()
+        if row:
+            return row["id"], row["name"]
+    row = c.execute("SELECT id,name FROM locations WHERE name='Yard' AND deleted_at IS NULL").fetchone()
+    if row:
+        return row["id"], row["name"]
+    lat = lon = None
+    try:
+        lat = float(os.environ["BIRDNET_LATITUDE"])
+        lon = float(os.environ["BIRDNET_LONGITUDE"])
+    except (KeyError, ValueError):
+        pass
+    cur = c.execute("INSERT INTO locations(name,lat,lon,created_at) VALUES('Yard',?,?,?)",
+                    (lat, lon, _now()))
+    return cur.lastrowid, "Yard"
+
+
+def ingest_yard_detection(payload: dict) -> dict:
+    """Store one always-on detection (BirdNET-Go webhook body) into the unified
+    browser_detections store as the 'yard' device. Mirrors the browser path's
+    trust + dedup so the always-on behaves identically to any other device."""
+    sci = (payload.get("scientific_name") or "").strip()
+    common = (payload.get("common_name") or "").strip()
+    if not sci:
+        return {"stored": False, "reason": "no scientific_name"}
+    try:
+        conf = float(payload.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        conf = 0.0
+    # Build a UTC ts from the webhook's local date+time (the box shares the tz).
+    date = (payload.get("date") or "").strip()
+    tm = (payload.get("time") or "").strip()
+    try:
+        ts = (datetime.strptime(f"{date} {tm}", "%Y-%m-%d %H:%M:%S")
+              .astimezone(timezone.utc).isoformat().replace("+00:00", "Z"))
+    except ValueError:
+        ts = _now()
+    clip = (payload.get("clip_name") or "").strip() or None
+    bird = is_bird(sci, common)
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO devices(token,name,mode,shared,owner_user_id,created_at,last_seen) "
+            "VALUES(?,?,'fixed',1,?,?,?) ON CONFLICT(token) DO UPDATE SET last_seen=excluded.last_seen",
+            (YARD_TOKEN, "Yard (always-on)", OPERATOR_USER_ID, ts, ts))
+        loc_id, loc_name = _yard_location(c)
+        c.execute("UPDATE devices SET fixed_location_id=COALESCE(fixed_location_id,?) WHERE token=?",
+                  (loc_id, YARD_TOKEN))
+        loc = c.execute("SELECT lat,lon FROM locations WHERE id=?", (loc_id,)).fetchone() if loc_id else None
+        llat = loc["lat"] if loc else None
+        llon = loc["lon"] if loc else None
+        if bird and llat is not None and llon is not None:
+            status, auto = _classify(c, sci, common, llat, llon)
+        else:
+            status, auto = "suggested", 0
+        if status == "rejected":
+            return {"stored": False, "reason": "muted"}
+        prev = c.execute(
+            "SELECT ts FROM browser_detections WHERE location_id=? AND scientific_name=? "
+            "ORDER BY id DESC LIMIT 1", (loc_id, sci)).fetchone()
+        if prev:
+            try:
+                if abs((datetime.fromisoformat(ts) -
+                        datetime.fromisoformat(prev["ts"])).total_seconds()) < DEDUP_S:
+                    return {"stored": False, "reason": "dedup"}
+            except ValueError:
+                pass
+        cur = c.execute(
+            "INSERT INTO browser_detections(station,ts,scientific_name,common_name,confidence,"
+            "start_s,end_s,device_token,is_bird,device_name,location_id,lat,lon,occurrence,in_range,"
+            "confirmed,status,auto,owner_user_id,clip_name) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (loc_name, ts, sci, common, conf, 0.0, 0.0, YARD_TOKEN, 1 if bird else 0,
+             "Yard (always-on)", loc_id, llat, llon, None, None, 1, status, auto,
+             OPERATOR_USER_ID, clip))
+        det_id = cur.lastrowid
+        c.commit()
+    return {"stored": True, "id": det_id, "location_id": loc_id, "status": status, "is_bird": bird}
+
+
 def get_location(location_id: int) -> dict | None:
     with _conn() as c:
         L = c.execute("SELECT id,name,lat,lon,address,radius_m,created_at,deleted_at FROM locations "
@@ -2099,7 +2588,10 @@ def delete_location(location_id: int) -> dict:
 
 
 def restore_location(location_id: int) -> dict:
-    """Bring a soft-removed location back with all its detections."""
+    """Bring a soft-removed location back with all its detections. Admin-only:
+    only the operator/admin may undo a removal."""
+    if not _is_admin():
+        return {"ok": False, "restored": 0, "error": "forbidden"}
     with _conn() as c:
         n = c.execute("UPDATE locations SET deleted_at=NULL WHERE id=?", (location_id,)).rowcount
     return {"ok": True, "restored": n}
@@ -2115,7 +2607,18 @@ def _location_devices(c: sqlite3.Connection, location_id: int) -> list[str]:
     return sorted({*seen, *fixed})
 
 
-def list_locations(include_nonbird: bool = False, archived: bool = False) -> dict:
+def list_locations(include_nonbird: bool = False, archived: bool = False,
+                   viewer_id: int | None = None) -> dict:
+    # Visibility: for a scoped viewer, a location's stats only count detections
+    # they may see, and a place with nothing visible is hidden entirely (so a
+    # non-friend never even learns the address exists). The operator (viewer_id
+    # None) sees every location, including empty ones.
+    # Removed locations are admin-only: a non-admin viewer never sees the "removed"
+    # list (and so can't restore from it). Active list is unchanged.
+    if archived and not _is_admin(viewer_id):
+        return {"locations": [], "home": get_setting("home_source")}
+    rv = _resolve_viewer(viewer_id)
+    vis_sql, vis_args = _visible_clause(viewer_id)
     with _conn() as c:
         flt = "deleted_at IS NOT NULL" if archived else "deleted_at IS NULL"
         locs = c.execute(f"SELECT id,name,lat,lon,address,radius_m FROM locations WHERE {flt}").fetchall()
@@ -2123,8 +2626,10 @@ def list_locations(include_nonbird: bool = False, archived: bool = False) -> dic
         for L in locs:
             agg = c.execute(
                 "SELECT COUNT(*) d, COUNT(DISTINCT scientific_name) s, MAX(ts) last "
-                "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird),
-                (L["id"],)).fetchone()
+                "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird) + vis_sql,
+                (L["id"], *vis_args)).fetchone()
+            if rv is not None and not (agg["d"] or 0):
+                continue  # nothing visible here for this viewer -> hide the place
             out.append({
                 "id": L["id"], "name": L["name"], "lat": L["lat"], "lon": L["lon"],
                 "address": L["address"],
@@ -2137,10 +2642,11 @@ def list_locations(include_nonbird: bool = False, archived: bool = False) -> dic
 
 def _loc_rows(location_id: int, include_nonbird: bool = False,
               status: str | None = None, device: str | None = None) -> list[sqlite3.Row]:
+    vis_sql, vis_args = _visible_clause(None)  # request-scoped viewer enforced here
     q = ("SELECT ts, scientific_name, common_name, confidence "
          "FROM browser_detections WHERE location_id=?" + _bird_clause(include_nonbird)
-         + _status_clause(status))
-    p: list = [location_id]
+         + _status_clause(status) + vis_sql)
+    p: list = [location_id, *vis_args]
     if device:
         q += " AND device_token=?"
         p.append(device)
@@ -2228,9 +2734,9 @@ def location_species(location_id: int, include_nonbird: bool = False,
     None/'active' = confirmed + suggested (the default working view), or one of
     confirmed/suggested/rejected, or 'all'."""
     want = status if status in ("confirmed", "suggested", "rejected", "all") else "active"
+    new_cutoff = datetime.now().astimezone() - timedelta(seconds=NEW_WINDOW_S)
     with _conn() as c:
         trust = _species_trust(c, location_id, include_nonbird, device)
-        new_set = _new_arrival_scinames(c, include_nonbird)
         auto_set = {r["scientific_name"] for r in c.execute(
             "SELECT DISTINCT scientific_name FROM species_area WHERE trust='auto'").fetchall()}
         # Rejected species count every detection (so the rejected tab shows the
@@ -2249,17 +2755,24 @@ def location_species(location_id: int, include_nonbird: bool = False,
     for s in species:
         sci = s["scientific_name"]
         s["status"] = trust.get(sci, "suggested")
-        s["is_new"] = sci in new_set and s["status"] == "suggested"
+        # "New" is purely a time window: a species first heard at this location
+        # within the last 24h. It is shared (derived from the detection data, not
+        # per-person), starts the moment the bird first appears, and expires on its
+        # own 24h later — no acknowledgement, no click, nothing the user does
+        # changes it. Only badge it while it is still suggested (un-triaged).
+        first_dt = _parse_ts(s.get("first_ts"))
+        s["is_new"] = bool(first_dt and first_dt >= new_cutoff and s["status"] == "suggested")
         s["auto"] = sci in auto_set
+        s.pop("first_ts", None)
     if want != "all":
         if want == "active":
             species = [s for s in species if s["status"] != "rejected"]
         else:
             species = [s for s in species if s["status"] == want]
-    # New arrivals pin to the top; then suggested, then by count, so things needing
-    # a look surface above the familiar high-count regulars.
-    rank = {"suggested": 0, "confirmed": 1, "rejected": 2}
-    species.sort(key=lambda s: (0 if s["is_new"] else 1, rank.get(s["status"], 1), -s["count"]))
+    # Stable order: most-heard first. Status and "new" are shown as badges, NOT
+    # used as sort keys, so confirming or expanding a row never makes it jump
+    # position. (Things needing a look are found via the Suggested tab.)
+    species.sort(key=lambda s: (-s["count"], s["scientific_name"]))
     return species
 
 
@@ -2289,31 +2802,223 @@ def _aggregate_species(rows: list[sqlite3.Row]) -> list[dict]:
             "count": a["count"], "max_conf": round(a["max_conf"], 4),
             "avg_conf": round(a["_sum"] / a["count"], 4), "days_seen": len(a["_days"]),
             "first_date": _local(a["first_ts"]).strftime("%Y-%m-%d"),
+            "first_ts": a["first_ts"],
             "last_date": _local(a["last_ts"]).strftime("%Y-%m-%d"),
         })
     out.sort(key=lambda x: x["count"], reverse=True)
     return out
 
 
+def _shannon(ctr: "Counter") -> float:
+    """Shannon diversity H = -Σ p·ln p over species in this bucket. Higher = more
+    species AND more even. 0 when one species dominates or only one is present."""
+    tot = sum(ctr.values())
+    if tot <= 0:
+        return 0.0
+    return round(-sum((n / tot) * math.log(n / tot) for n in ctr.values() if n), 3)
+
+
 def _aggregate_activity(rows: list[sqlite3.Row]) -> dict:
+    from collections import Counter
     daily: dict[str, dict] = {}
     hourly = {h: 0 for h in range(24)}
+    hourly_ctr: list[Counter] = [Counter() for _ in range(24)]  # all-days per-hour species counts
     for r in rows:
         lt = _local(r["ts"])
         d = lt.strftime("%Y-%m-%d")
-        day = daily.setdefault(d, {"date": d, "count": 0, "_species": set(), "hourly": [0] * 24})
+        sp = r["scientific_name"]
+        day = daily.setdefault(d, {"date": d, "count": 0, "_species": set(),
+                                   "hourly": [0] * 24, "_hctr": [Counter() for _ in range(24)]})
         day["count"] += 1
-        day["_species"].add(r["scientific_name"])
+        day["_species"].add(sp)
         day["hourly"][lt.hour] += 1
+        day["_hctr"][lt.hour][sp] += 1
         hourly[lt.hour] += 1
+        hourly_ctr[lt.hour][sp] += 1
     return {
         # Each day carries its own 24h histogram so the "Times of day" view can
         # show a specific day; the top-level hourly is the all-days aggregate.
+        # Per hour: `species` = distinct-species richness, `shannon` = evenness-
+        # weighted diversity (the day-chart's Diversity overlay).
         "daily": [{"date": d["date"], "count": d["count"], "species": len(d["_species"]),
-                   "hourly": d["hourly"]}
+                   "hourly": d["hourly"],
+                   "hourly_species": [len(c) for c in d["_hctr"]],
+                   "hourly_shannon": [_shannon(c) for c in d["_hctr"]]}
                   for d in sorted(daily.values(), key=lambda x: x["date"])],
-        "hourly": [{"hour": h, "count": hourly[h]} for h in range(24)],
+        "hourly": [{"hour": h, "count": hourly[h], "species": len(hourly_ctr[h]),
+                    "shannon": _shannon(hourly_ctr[h])} for h in range(24)],
     }
+
+
+def _parse_utc(iso) -> datetime | None:
+    try:
+        dt = datetime.fromisoformat(iso)
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _light_phase(astro: dict | None, now_utc: datetime) -> str:
+    """Coarse light phase from the sun times: night / dawn / midday / dusk / day.
+    Birds are most vocal at dawn (the chorus) and again near dusk; quiet at night
+    and in the midday lull — this drives the activity outlook's baseline."""
+    if not astro:
+        return "day"
+    cd, sr = _parse_utc(astro.get("civil_dawn")), _parse_utc(astro.get("sunrise"))
+    ss, cdu = _parse_utc(astro.get("sunset")), _parse_utc(astro.get("civil_dusk"))
+    sn = _parse_utc(astro.get("solar_noon"))
+    if cd and cdu and (now_utc < cd or now_utc > cdu):
+        return "night"
+    if cd and sr and cd <= now_utc <= sr + timedelta(hours=1.5):
+        return "dawn"
+    if ss and cdu and ss - timedelta(hours=1) <= now_utc <= cdu:
+        return "dusk"
+    if sn and abs((now_utc - sn).total_seconds()) <= 2 * 3600:
+        return "midday"
+    return "day"
+
+
+def _pressure_delta(weather: dict | None, recent: list, hours: int) -> float | None:
+    """hPa change over the last `hours`: current pressure minus the reading from
+    ~`hours` ago (nearest within 90 min). Negative = falling = front likely
+    incoming, the strongest documented driver of a pre-front activity bump."""
+    if not weather or weather.get("pressure_msl") is None:
+        return None
+    anchor = _parse_utc(weather.get("ts_hour"))
+    if anchor is None:
+        return None
+    target = anchor - timedelta(hours=hours)
+    best, bestd = None, 5400.0  # 90-min tolerance
+    for r in recent:
+        p, t = r.get("pressure_msl"), _parse_utc(r.get("ts_hour"))
+        if p is None or t is None:
+            continue
+        d = abs((t - target).total_seconds())
+        if d <= bestd:
+            best, bestd = p, d
+    return None if best is None else round(weather["pressure_msl"] - best, 1)
+
+
+def _activity_outlook(weather: dict | None, recent: list, future: list,
+                      astro: dict | None, now_utc: datetime) -> dict:
+    """A qualitative bird-activity outlook from current + incoming conditions, using
+    documented general patterns (NOT a model fit to our thin history): dawn/dusk
+    peaks, midday/night lulls, falling pressure → pre-front foraging, high wind and
+    rain suppress song. Framed as tendencies, never a guarantee."""
+    phase = _light_phase(astro, now_utc)
+    dp3 = _pressure_delta(weather, recent, 3)
+    dp6 = _pressure_delta(weather, recent, 6)
+    wind = (weather or {}).get("wind_speed") or 0      # km/h
+    gust = (weather or {}).get("wind_gust") or 0
+    precip = (weather or {}).get("precip") or 0        # mm
+    windy = wind >= 25 or gust >= 40
+    raining = precip >= 0.1
+    falling = (dp3 is not None and dp3 <= -1.0) or (dp6 is not None and dp6 <= -2.5)
+
+    # Precedence: suppressors (rain, wind, night) first, then boosters (dawn,
+    # falling pressure, dusk), then the midday lull, else normal.
+    if raining:
+        level, reason = "subdued", "Rain tends to quiet singing and foraging."
+    elif windy:
+        level, reason = "subdued", "Gusty wind suppresses song and activity."
+    elif phase == "night":
+        level, reason = "low", "Night, when most songbirds are roosting."
+    elif phase == "dawn":
+        level = "elevated"
+        reason = "Dawn chorus, the day's peak singing" + (", boosted by falling pressure." if falling else ".")
+    elif falling:
+        level, reason = "elevated", "Pressure is falling, so birds often forage actively ahead of a change."
+    elif phase == "dusk":
+        level, reason = "elevated", "Dusk, a secondary activity peak."
+    elif phase == "midday":
+        level, reason = "subdued", "Midday lull, when activity usually dips at the warmest hours."
+    else:
+        level, reason = "normal", "Typical activity for the conditions."
+
+    incoming = None
+    if weather and weather.get("pressure_msl") is not None and future:
+        fps = [r["pressure_msl"] for r in future if r.get("pressure_msl") is not None]
+        fpp = [r.get("precip_prob") or 0 for r in future]
+        if fps and (weather["pressure_msl"] - min(fps)) >= 3.0:
+            incoming = "Pressure drops over the next several hours, so a change is moving in. Activity often rises just before it."
+        elif fpp and max(fpp) >= 60:
+            incoming = "Rain is likely later, so expect a quieter spell once it arrives."
+
+    return {"level": level, "reason": reason, "incoming": incoming, "phase": phase,
+            "pressure_hpa": round(weather["pressure_msl"], 1) if weather and weather.get("pressure_msl") is not None else None,
+            "pressure_trend_3h": dp3,
+            "wind_mph": round(wind * 0.621371) if wind else 0}
+
+
+def birds_now(location_id: int) -> dict:
+    """The 'Right now' snapshot for a location: light (sun/moon/twilight), current
+    weather, today's early bird, and a descriptive what's-likely-now list.
+
+    The forecast is deliberately descriptive, not predictive: 'often heard around
+    this hour' = species ranked by how often we've actually detected them in this
+    hour-of-day bucket (±1h). With little history it's weak and says so (n shown);
+    it sharpens as detections accumulate. No baseline/pattern claim is made."""
+    try:
+        from services import environment as _env  # lazy: avoid import cycle at load
+    except Exception:  # pragma: no cover
+        _env = None
+    now = datetime.now(timezone.utc)
+    local_now = now.astimezone()
+    today = local_now.strftime("%Y-%m-%d")
+    hour = local_now.hour
+
+    astro = _env.get_astro(location_id, today) if _env else None
+    weather, recent, future = None, [], []
+    if _env:
+        # A window straddling now: recent hours feed the pressure trend, the next
+        # ~13h feed the incoming-change note.
+        conds = _env.get_conditions(
+            location_id, (now - timedelta(hours=8)).isoformat(), (now + timedelta(hours=13)).isoformat())
+        for r in conds:
+            t = _parse_utc(r.get("ts_hour"))
+            (recent if (t and t <= now) else future).append(r)
+        weather = recent[-1] if recent else (conds[0] if conds else None)
+    forecast = _activity_outlook(weather, recent, future, astro, now)
+
+    dawn_utc = None
+    if astro and astro.get("civil_dawn"):
+        try:
+            dawn_utc = datetime.fromisoformat(astro["civil_dawn"])
+        except ValueError:
+            dawn_utc = None
+
+    # Today's early bird: first bird heard today, after civil dawn if we know it
+    # (so a pre-dawn owl/noise doesn't steal the title).
+    early = None
+    with _conn() as c:
+        for r in c.execute(
+            "SELECT scientific_name, common_name, ts FROM browser_detections "
+            "WHERE location_id=? AND is_bird=1 ORDER BY ts", (location_id,)):
+            lt = _local(r["ts"])
+            if lt.strftime("%Y-%m-%d") != today:
+                continue
+            tutc = datetime.fromisoformat(r["ts"])
+            if tutc.tzinfo is None:
+                tutc = tutc.replace(tzinfo=timezone.utc)
+            if dawn_utc is None or tutc >= dawn_utc:
+                early = {"sci": r["scientific_name"], "common": r["common_name"], "ts": r["ts"]}
+                break
+
+    # Tier 1: conditional species ranking for the current context + day-shape +
+    # calibration (and log this hour's prediction for later scoring).
+    try:
+        from services import birds_forecast as _fc  # lazy: avoid import cycle at load
+        wbucket = _fc._weather_bucket(weather)
+        tier1 = _fc.forecast(location_id, forecast["phase"], wbucket, hour, today)
+    except Exception:  # forecast enrichment must never break the snapshot
+        tier1 = {"likely": [], "match": "none", "confidence": "none", "n_context": 0,
+                 "day_shape": None, "calibration": {"graded_hours": 0, "precision_at_k": None, "status": "measuring"}}
+
+    return {"hour": hour, "today": today, "astro": astro, "weather": weather,
+            "forecast": forecast, "early_bird": early,
+            "likely": tier1["likely"], "likely_match": tier1["match"],
+            "likely_confidence": tier1["confidence"], "likely_n": tier1["n_context"],
+            "day_shape": tier1["day_shape"], "calibration": tier1["calibration"]}
 
 
 def bird_detail(sci: str, location_id: int | None = None,
@@ -2328,9 +3033,10 @@ def bird_detail(sci: str, location_id: int | None = None,
     # NOT subject to the status tab), while the detection list below is filtered by
     # the page's own status control. `device`/`location_id` scope both.
     flt = _bird_clause(False)
+    vis_sql, vis_args = _visible_clause(None)  # request-scoped viewer enforced on every query below
     q = ("SELECT id, ts, common_name, confidence, location_id, device_token, device_name, "
-         "occurrence, in_range, status FROM browser_detections WHERE scientific_name=?" + flt)
-    params: list = [sci]
+         "occurrence, in_range, status FROM browser_detections WHERE scientific_name=?" + flt + vis_sql)
+    params: list = [sci, *vis_args]
     if location_id:
         q += " AND location_id=?"
         params.append(location_id)
@@ -2344,12 +3050,12 @@ def bird_detail(sci: str, location_id: int | None = None,
         # so switching filters always offers them all.
         all_locs = c.execute(
             "SELECT location_id, COUNT(*) n FROM browser_detections "
-            "WHERE scientific_name=? AND location_id IS NOT NULL AND status!='rejected'" + flt +
-            " GROUP BY location_id ORDER BY n DESC", (sci,)).fetchall()
+            "WHERE scientific_name=? AND location_id IS NOT NULL AND status!='rejected'" + flt + vis_sql +
+            " GROUP BY location_id ORDER BY n DESC", (sci, *vis_args)).fetchall()
         all_devs = c.execute(
             "SELECT device_token, MAX(device_name) name, COUNT(*) n FROM browser_detections "
-            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>'' AND status!='rejected'" + flt +
-            " GROUP BY device_token ORDER BY n DESC", (sci,)).fetchall()
+            "WHERE scientific_name=? AND device_token IS NOT NULL AND device_token<>'' AND status!='rejected'" + flt + vis_sql +
+            " GROUP BY device_token ORDER BY n DESC", (sci, *vis_args)).fetchall()
         rec_map = {r["det_id"]: r["id"] for r in c.execute(
             "SELECT id, det_id FROM recordings WHERE scientific_name=?", (sci,)).fetchall()}
         sr = c.execute("SELECT save_mode FROM species_recording WHERE scientific_name=?",

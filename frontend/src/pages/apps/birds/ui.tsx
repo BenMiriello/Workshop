@@ -1,9 +1,9 @@
 import { Link } from "react-router-dom";
 import {
-  Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, ComposedChart, Line, ReferenceLine, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Bird } from "lucide-react";
-import { CHART_SERIES, ChartTooltip } from "../../../ui";
+import { CHART_SERIES, CHART_TARGET, ChartTooltip } from "../../../ui";
 
 // Re-exported so the bird pages get their chart colors from the design-system
 // categorical suite (brand violet first) via the shared birds ui module.
@@ -42,35 +42,61 @@ export async function apost<T = unknown>(path: string, body: Record<string, stri
 
 export function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="card" style={{ padding: ".7rem 1rem" }}>
-      <div className="muted" style={{ fontSize: ".78rem" }}>{label}</div>
-      <div style={{ fontSize: "1.3rem", fontWeight: 600 }}>{value}</div>
+    <div className="card" style={{ padding: ".55rem .6rem" }}>
+      <div className="muted" style={{ fontSize: ".72rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+      <div style={{ fontSize: "1.2rem", fontWeight: 600 }}>{value}</div>
     </div>
   );
 }
 
 export function StatGrid({ children }: { children: React.ReactNode }) {
+  // Narrow min track so the four summary tiles fit on ONE row even on a phone
+  // (~360px), instead of wrapping to two rows; they still grow to fill wider
+  // screens via 1fr.
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: ".7rem", marginBottom: "1rem" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(74px,1fr))", gap: ".5rem", marginBottom: "1rem" }}>
       {children}
     </div>
   );
 }
 
-export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick }: {
+// Optional overlays for the times-of-day view: vertical reference lines (dawn /
+// dusk) and a secondary line series (e.g. temperature) on a right axis. Both are
+// off unless their props are passed, so every existing caller is unchanged.
+export type ChartMarker = { x: number | string; label?: string };
+export type ChartOverlay = { key: string; name?: string; color?: string; fmt?: (v: number) => string };
+// A secondary series sharing the LEFT count axis (same scale as the bars), e.g.
+// species-diversity per hour. Distinct from `overlay`, which gets its own right axis.
+export type ChartLine = { key: string; name?: string; color?: string };
+
+export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick, markers, overlay, lines }: {
   data: Record<string, unknown>[]; x: string; fill: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   xfmt?: (v: any) => string; interval?: number; labelFmt?: (v: any) => string; height?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onBarClick?: (datum: any) => void;
+  markers?: ChartMarker[]; overlay?: ChartOverlay; lines?: ChartLine[];
 }) {
+  const hasOverlay = !!overlay;
+  const hasLines = !!(lines && lines.length);
+  const namedSeries = hasOverlay || hasLines;
   return (
     <div style={{ height }}>
       <ResponsiveContainer>
-        <BarChart data={data} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+        {/* ComposedChart renders the bar identically to BarChart but also lets us
+            layer the optional temperature Line + dawn/dusk ReferenceLines. */}
+        <ComposedChart data={data} margin={{ top: 4, right: hasOverlay ? 4 : 8, left: -18, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey={x} tick={{ fontSize: 10 }} tickFormatter={xfmt} interval={interval} minTickGap={16} />
-          <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+          <YAxis yAxisId="count" tick={{ fontSize: 10 }} allowDecimals={false} />
+          {hasOverlay && (
+            <YAxis yAxisId="ov" orientation="right" width={30} tick={{ fontSize: 10 }}
+              tickFormatter={overlay!.fmt} />
+          )}
+          {/* Lines (e.g. diversity) get their own hidden, auto-scaled axis so the
+              SHAPE shows regardless of magnitude — a 0–2.5 Shannon line isn't
+              flattened against a 0–60 detection-count axis. Value lives in tooltip. */}
+          {hasLines && <YAxis yAxisId="ln" hide domain={["auto", "auto"]} />}
           <Tooltip
             isAnimationActive={false}
             cursor={{ fill: "rgba(120,160,255,0.08)" }}
@@ -79,16 +105,32 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, o
                 active={active}
                 payload={payload}
                 label={labelFmt ? labelFmt(label) : label}
-                format={(v) => `${v} detection${v === 1 ? "" : "s"}`}
+                showName={namedSeries}
+                format={(v) => (namedSeries ? String(v) : `${v} detection${v === 1 ? "" : "s"}`)}
               />
             )}
           />
+          {markers?.map((m, i) => (
+            <ReferenceLine key={`mk${i}`} yAxisId="count" x={m.x} stroke={CHART_TARGET}
+              strokeDasharray="3 3"
+              label={{ value: m.label, position: "top", fontSize: 9, fill: "var(--muted)" }} />
+          ))}
           {/* Cap bar width so a chart with one or two days doesn't render a
               single absurdly-wide bar across the whole panel. */}
-          <Bar dataKey="count" fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48}
+          <Bar yAxisId="count" dataKey="count" name="Detections" fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48}
             onClick={onBarClick ? (e: any) => onBarClick(e?.payload ?? e) : undefined}
             style={onBarClick ? { cursor: "pointer" } : undefined} />
-        </BarChart>
+          {lines?.map((ln, i) => (
+            <Line key={`ln${ln.key}`} yAxisId="ln" type="monotone" dataKey={ln.key}
+              name={ln.name ?? ln.key} stroke={ln.color ?? CHART_SERIES[(i + 2) % CHART_SERIES.length]}
+              strokeWidth={1.5} dot={false} connectNulls isAnimationActive={false} />
+          ))}
+          {hasOverlay && (
+            <Line yAxisId="ov" type="monotone" dataKey={overlay!.key} name={overlay!.name ?? overlay!.key}
+              stroke={overlay!.color ?? CHART_SERIES[0]} strokeWidth={1.5} dot={false}
+              connectNulls isAnimationActive={false} />
+          )}
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
