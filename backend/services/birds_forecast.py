@@ -300,6 +300,92 @@ def accuracy(location_id: int) -> dict:
             "status": "measuring" if n < 20 else "established"}
 
 
+def _day_outlook(day_conds: list) -> dict:
+    """A day-level activity outlook from that day's forecast weather. Dawn is always
+    the day's peak, so this captures how the day as a whole tilts: rain or high wind
+    suppress, a notable pressure fall lifts (pre-front foraging), strong high pressure
+    reads as settled fair weather."""
+    if not day_conds:
+        return {"level": "normal", "reason": "Forecast not available yet for this day."}
+    precip_tot = sum((r.get("precip") or 0) for r in day_conds)
+    pprob_max = max((r.get("precip_prob") or 0) for r in day_conds)
+    wind_max = max((r.get("wind_speed") or 0) for r in day_conds)
+    ps = [r.get("pressure_msl") for r in day_conds if r.get("pressure_msl") is not None]
+    p_trend = round(ps[-1] - ps[0], 1) if len(ps) >= 2 else None
+
+    if precip_tot >= 1.0 or pprob_max >= 60:
+        return {"level": "subdued", "reason": "Rain expected, which tends to quiet singing and foraging."}
+    if wind_max >= 35:
+        return {"level": "subdued", "reason": "Windy, which tends to suppress song and activity."}
+    if p_trend is not None and p_trend <= -3.0:
+        return {"level": "elevated", "reason": "Pressure falling through the day, so birds often forage actively ahead of the change."}
+    if p_trend is not None and p_trend >= 3.0:
+        return {"level": "normal", "reason": "Pressure rising into settled fair weather."}
+    return {"level": "normal", "reason": "Typical activity expected for the conditions."}
+
+
+def forecast_week(location_id: int, days: int = 7) -> dict:
+    """A per-day forecast for the next `days` days: each day's light (sun/moon/day
+    length), forecast weather summary, and a day-level activity outlook, plus the
+    week's usual regulars and the shared expected daily shape. Honest about thin
+    data: the per-day differences are real (weather, day length, moon), while the
+    species list is the same residents until weather-conditioned history exists."""
+    from services.birds_analyze import _light_phase
+    e = _env()
+    if not e:
+        return {"days": [], "regulars": [], "expected_shape": None}
+    loc = next((L for L in e._locations() if L["id"] == location_id), None)
+
+    now_local = datetime.now(timezone.utc).astimezone()
+    today = now_local.date()
+
+    # Group all available conditions by local date for quick per-day slicing.
+    by_date: dict[str, list] = defaultdict(list)
+    conds = e.get_conditions(location_id, (datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+                             (datetime.now(timezone.utc) + timedelta(days=days + 1)).isoformat())
+    for r in conds:
+        by_date[_local(r["ts_hour"]).strftime("%Y-%m-%d")].append(r)
+
+    out_days = []
+    for i in range(days):
+        d = today + timedelta(days=i)
+        ds = d.isoformat()
+        astro = e.astro_for(loc["lat"], loc["lon"], d) if loc else None
+        dc = sorted(by_date.get(ds, []), key=lambda r: r["ts_hour"])
+        temps = [r["temp"] for r in dc if r.get("temp") is not None]
+        wcodes = [r["wx_code"] for r in dc if r.get("wx_code") is not None]
+        hourly = [{"hour": _local(r["ts_hour"]).hour,
+                   "temp_f": round(r["temp"] * 9 / 5 + 32) if r.get("temp") is not None else None,
+                   "precip_prob": r.get("precip_prob"), "wx_code": r.get("wx_code")}
+                  for r in dc]
+        out_days.append({
+            "date": ds,
+            "weekday": d.strftime("%a"),
+            "is_today": i == 0,
+            "astro": {"sunrise": astro and astro.get("sunrise"), "sunset": astro and astro.get("sunset"),
+                      "day_length_min": astro and astro.get("day_length_min"),
+                      "moon_name": astro and astro.get("moon_name"),
+                      "moon_illum": astro and astro.get("moon_illum")} if astro else None,
+            "weather": {
+                "temp_hi_f": round(max(temps) * 9 / 5 + 32) if temps else None,
+                "temp_lo_f": round(min(temps) * 9 / 5 + 32) if temps else None,
+                "wx_code": Counter(wcodes).most_common(1)[0][0] if wcodes else None,
+                "wind_max": round(max((r.get("wind_speed") or 0) for r in dc) * 0.621371) if dc else None,
+                "precip_prob_max": max((r.get("precip_prob") or 0) for r in dc) if dc else None,
+            },
+            "outlook": _day_outlook(dc),
+            "hourly": hourly,
+            "has_weather": bool(dc),
+        })
+
+    # Week's usual regulars: the dawn conditional ranking (same residents most days
+    # until weather-conditioned history can differentiate them).
+    reg = conditional_scores(location_id, "dawn", "unknown", k=5)
+    return {"days": out_days, "regulars": reg["species"],
+            "regulars_confidence": reg["confidence"],
+            "expected_shape": day_shape(location_id, today.isoformat())}
+
+
 def forecast(location_id: int, light_phase: str, weather_bucket: str, hour: int,
              date_str: str) -> dict:
     """The Tier 1 bundle the API serves: conditional species ranking for now, the

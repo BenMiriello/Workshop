@@ -379,6 +379,13 @@ async def birds_now_ep(location_id: int):
     return birds_analyze.birds_now(location_id)
 
 
+@router.get("/forecast/week")
+async def birds_forecast_week_ep(location_id: int, days: int = Query(7, ge=1, le=14)):
+    """Per-day forecast for the next `days` days: light, weather, activity outlook."""
+    from services import birds_forecast
+    return birds_forecast.forecast_week(location_id, days)
+
+
 @router.get("/bird")
 async def bird_detail_ep(sci: str, location_id: int | None = None,
                          device: str | None = None, days: int = 0,

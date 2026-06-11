@@ -14,6 +14,7 @@ import BirdDetail from "./pages/apps/birds/BirdDetail";
 import BirdSettings from "./pages/apps/birds/BirdSettings";
 import Recordings from "./pages/apps/birds/RecordingsPage";
 import Atlas from "./pages/apps/birds/Atlas";
+import ForecastWeek from "./pages/apps/birds/ForecastWeek";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
 import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/apps/birds/settings" element={<BirdSettings />} />
           <Route path="/apps/birds/recordings" element={<Recordings />} />
           <Route path="/apps/birds/atlas" element={<Atlas />} />
+          <Route path="/apps/birds/forecast" element={<ForecastWeek />} />
           <Route path="/apps/commute" element={<CommuteApp />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />

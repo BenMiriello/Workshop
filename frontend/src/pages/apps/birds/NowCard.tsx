@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Sunrise, Sunset, Moon, Bird, Gauge, TrendingUp, TrendingDown, Minus, AlertTriangle,
-  Sun, Cloud, CloudSun, CloudRain, CloudSnow, CloudFog, CloudDrizzle, Zap,
-} from "lucide-react";
+import { Sunrise, Sunset, Moon, Sun, Bird, Gauge, AlertTriangle, CalendarDays, ChevronRight } from "lucide-react";
 import { API, hh } from "./ui";
+import { wx, OUTLOOK, cToF, localTime, dayLen, pressureSub, untilLabel, type Level } from "./forecastUtil";
 
 // The "Bird forecast" card. The forecast LEADS: activity level, what's likely now
-// (Tier 1 conditional ranking with a confidence chip), and the day's expected
-// shape. The reasoning and factors are SECONDARY underneath, then light/weather
-// conditions at the bottom. Built from /birds/now.
+// (Tier 1 conditional ranking), and the day's expected shape. Reasoning + calibration
+// are SECONDARY, then light/weather conditions. The moon is shown only when it's
+// actually relevant (night/twilight), not in broad daylight. Built from /birds/now.
 
 type Astro = {
   sunrise: string | null; sunset: string | null; day_length_min: number | null;
@@ -17,7 +15,7 @@ type Astro = {
 };
 type Weather = { temp: number | null; wind_speed: number | null; wx_code: number | null } | null;
 type Forecast = {
-  level: "elevated" | "normal" | "subdued" | "low"; reason: string; incoming: string | null;
+  level: Level; reason: string; incoming: string | null; phase: string;
   pressure_hpa: number | null; pressure_trend_3h: number | null; wind_mph: number;
 };
 type Likely = { sci: string; common: string | null; score: number; n: number };
@@ -28,41 +26,6 @@ type Now = {
   early_bird: { sci: string; common: string | null; ts: string } | null;
   likely: Likely[]; likely_match: string; likely_confidence: string; likely_n: number;
   day_shape: DayShape; calibration: Calib;
-};
-
-function wx(code: number | null): { label: string; Icon: typeof Sun } {
-  if (code == null) return { label: "-", Icon: CloudSun };
-  if (code <= 1) return { label: code === 0 ? "Clear" : "Mainly clear", Icon: Sun };
-  if (code === 2) return { label: "Partly cloudy", Icon: CloudSun };
-  if (code === 3) return { label: "Overcast", Icon: Cloud };
-  if (code === 45 || code === 48) return { label: "Fog", Icon: CloudFog };
-  if (code >= 51 && code <= 57) return { label: "Drizzle", Icon: CloudDrizzle };
-  if (code >= 61 && code <= 67) return { label: "Rain", Icon: CloudRain };
-  if (code >= 71 && code <= 77) return { label: "Snow", Icon: CloudSnow };
-  if (code >= 80 && code <= 82) return { label: "Showers", Icon: CloudRain };
-  if (code >= 85 && code <= 86) return { label: "Snow showers", Icon: CloudSnow };
-  if (code >= 95) return { label: "Thunderstorm", Icon: Zap };
-  return { label: "-", Icon: CloudSun };
-}
-
-const OUTLOOK: Record<Forecast["level"], { label: string; Icon: typeof Sun; tone: string }> = {
-  elevated: { label: "Elevated", Icon: TrendingUp, tone: "var(--accent)" },
-  normal: { label: "Normal", Icon: Minus, tone: "var(--text)" },
-  subdued: { label: "Subdued", Icon: TrendingDown, tone: "var(--muted)" },
-  low: { label: "Low", Icon: TrendingDown, tone: "var(--muted)" },
-};
-const cToF = (c: number) => Math.round(c * 9 / 5 + 32);
-const localTime = (iso: string | null) => {
-  if (!iso) return "-";
-  try { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
-  catch { return "-"; }
-};
-const dayLen = (min: number | null) => (min == null ? "-" : `${Math.floor(min / 60)}h ${Math.round(min % 60)}m`);
-const pressureSub = (t: number | null) => {
-  if (t == null) return undefined;
-  if (t <= -1) return `falling ${Math.abs(t)} / 3h`;
-  if (t >= 1) return `rising ${t} / 3h`;
-  return "steady";
 };
 
 // A compact 24-bar expected-activity sparkline with the current hour marked.
@@ -124,6 +87,10 @@ export default function NowCard({ locationId }: { locationId: number }) {
   const rankingNote = now.likely.length > 0
     ? `The ranking draws on ${now.likely_n} past detection${now.likely_n === 1 ? "" : "s"} at this time of day${calText}.`
     : "";
+  // The moon only matters at night / twilight. In broad daylight show how much
+  // daylight is left instead (the relevant "right now" light fact).
+  const isDark = ["night", "dawn", "dusk"].includes(f?.phase);
+  const dLeft = untilLabel(a.sunset);
 
   return (
     <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
@@ -137,6 +104,9 @@ export default function NowCard({ locationId }: { locationId: number }) {
             <ol.Icon size={16} /> Activity {ol.label.toLowerCase()}
           </span>
         )}
+        <Link to="/apps/birds/forecast" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: ".25rem", fontSize: ".82rem", color: "var(--accent)", textDecoration: "none" }}>
+          <CalendarDays size={14} /> 7-day forecast <ChevronRight size={13} />
+        </Link>
       </div>
 
       {now.likely.length > 0 && (
@@ -162,7 +132,7 @@ export default function NowCard({ locationId }: { locationId: number }) {
         </div>
       )}
 
-      {/* SECONDARY: why, and any incoming shift */}
+      {/* SECONDARY: why, calibration, and any incoming shift */}
       {f && (
         <p className="muted" style={{ margin: ".75rem 0 0", fontSize: ".84rem" }}>
           {f.reason} {rankingNote}
@@ -185,11 +155,11 @@ export default function NowCard({ locationId }: { locationId: number }) {
         ) : <span className="muted">Quiet so far today, no birds heard yet.</span>}
       </div>
 
-      {/* SUPPORTING: light + weather + pressure */}
+      {/* SUPPORTING: current weather + pressure + the day's light. */}
       <div style={{ marginTop: ".9rem", paddingTop: ".8rem", borderTop: "1px solid var(--border)",
         display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: ".8rem .9rem" }}>
         {w?.temp != null && (
-          <Tile icon={<cond.Icon size={20} />} value={`${cToF(w.temp)}°F`} label={cond.label}
+          <Tile icon={<cond.Icon size={20} />} value={`${cToF(w.temp)}°F`} label={`${cond.label} now`}
             sub={w.wind_speed != null ? `wind ${f?.wind_mph ?? Math.round(w.wind_speed * 0.621)} mph` : undefined} />
         )}
         {f?.pressure_hpa != null && (
@@ -197,7 +167,9 @@ export default function NowCard({ locationId }: { locationId: number }) {
         )}
         <Tile icon={<Sunrise size={20} />} value={localTime(a.sunrise)} label="Sunrise" />
         <Tile icon={<Sunset size={20} />} value={localTime(a.sunset)} label="Sunset" sub={`${dayLen(a.day_length_min)} of light`} />
-        <Tile icon={<Moon size={20} />} value={a.moon_illum != null ? `${Math.round(a.moon_illum * 100)}% lit` : "-"} label={a.moon_name || "Moon"} />
+        {isDark
+          ? <Tile icon={<Moon size={20} />} value={a.moon_illum != null ? `${Math.round(a.moon_illum * 100)}% lit` : "-"} label={a.moon_name || "Moon"} />
+          : dLeft && <Tile icon={<Sun size={20} />} value={dLeft} label="Daylight left" />}
       </div>
     </section>
   );

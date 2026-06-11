@@ -304,10 +304,11 @@ def backfill_weather() -> int:
 
 # ---------------------------------------------------------------- status / cli
 
-def refresh(days_back: int = 3, days_fwd: int = 2) -> int:
+def refresh(days_back: int = 3, days_fwd: int = 7) -> int:
     """Keep recent + near-future conditions fresh via the forecast endpoint
-    (covers recent past days AND forecast). Plus astro for the window. Run
-    this nightly (lifespan loop or cron). Idempotent. -1 if egress blocked."""
+    (covers recent past days AND a 7-day forecast for the week view). Plus astro
+    for the window. Run nightly (lifespan loop or cron). Idempotent. -1 if egress
+    blocked."""
     locs = _locations()
     if not locs:
         return 0
