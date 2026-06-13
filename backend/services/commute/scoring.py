@@ -20,7 +20,7 @@ from typing import Any
 
 from math import asin, cos, radians, sin, sqrt
 
-from . import config, poller, timefmt
+from . import config, places, poller, timefmt
 from .. import location as location_svc
 
 
@@ -65,9 +65,12 @@ def _location_status(sch: dict[str, Any], now: datetime) -> dict[str, Any]:
     """
     direction = sch.get("direction")
     dest_name = "work" if direction == "to-work" else "home"
-    dest = config.get_endpoint_coords(dest_name)
+    # Prefer LEARNED place coords (place-learning derives home/work from dwell
+    # history) so this works without the operator ever pasting coordinates;
+    # falls back to any manually-set schedule coord.
+    dest = places.endpoint_coords(dest_name)
     if not dest:
-        return {"available": False, "reason": f"no coords set for {dest_name} (Settings → Commute)"}
+        return {"available": False, "reason": f"no learned/known coords for {dest_name} yet (needs location history)"}
     rec = location_svc.latest()
     if not rec:
         return {"available": False, "reason": "no location pings yet (set up Owntracks)"}

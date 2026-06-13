@@ -228,7 +228,9 @@ async def poll_sfmta(client: httpx.AsyncClient | None = None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 async def poll_all() -> dict[str, Any]:
-    """Run every poller in parallel, return a summary."""
+    """Run every poller in parallel, return a summary. Also appends the freshly
+    fetched vehicle positions to a rolling history (FREE — no extra request) so
+    a finished rail/transit leg can later be matched to the vehicle that ran it."""
     import asyncio
     started = time.monotonic()
     async with httpx.AsyncClient(timeout=POLL_HTTP_TIMEOUT) as client:
@@ -238,12 +240,173 @@ async def poll_all() -> dict[str, Any]:
             return_exceptions=True,
         )
     elapsed = time.monotonic() - started
-    return {
+    out = {
         "ts": _now_iso(),
         "elapsed_s": round(elapsed, 3),
         "caltrain": results[0] if not isinstance(results[0], BaseException) else {"error": str(results[0])},
         "sfmta": results[1] if not isinstance(results[1], BaseException) else {"error": str(results[1])},
     }
+    try:
+        record_vehicle_history()
+    except Exception:  # noqa: BLE001 - history is best-effort
+        pass
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Rolling vehicle-position history (for transit_match) — derived for free from
+# the vehicle_positions feed already fetched each poll. Append-only jsonl,
+# trimmed to the last VEHICLE_HISTORY_HOURS so it can't grow without bound.
+# ---------------------------------------------------------------------------
+VEHICLE_HISTORY_HOURS = 6.0
+
+
+def record_vehicle_history(now: datetime | None = None) -> int:
+    """Append the latest vehicle snapshot (both agencies) to vehicles.jsonl.
+    Returns how many vehicle rows were written. Trims old rows opportunistically."""
+    poll_ts = (now or datetime.now(timezone.utc)).isoformat()
+    rows: list[dict[str, Any]] = []
+    for agency, fname in (("caltrain", "caltrain.json"), ("sfmta", "sfmta.json")):
+        feeds = (_read_json(fname) or {}).get("feeds") or {}
+        for v in (feeds.get("vehicle_positions") or {}).get("vehicles", []):
+            if v.get("lat") is None or v.get("lon") is None:
+                continue
+            rows.append({
+                "poll_ts": poll_ts,
+                "agency": agency,
+                "trip_id": v.get("trip_id"),
+                "route_id": v.get("route_id"),
+                "lat": v.get("lat"),
+                "lon": v.get("lon"),
+                "vts": v.get("ts"),          # feed-reported vehicle timestamp (epoch s)
+                "stop_id": v.get("stop_id"),
+            })
+    if not rows:
+        return 0
+    p = config.runtime_path("vehicles.jsonl")
+    with p.open("a", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, separators=(",", ":")) + "\n")
+    _trim_vehicle_history(p, now)
+    return len(rows)
+
+
+def _trim_vehicle_history(p: "Path", now: datetime | None = None) -> None:
+    cutoff = (now or datetime.now(timezone.utc)).timestamp() - VEHICLE_HISTORY_HOURS * 3600
+    try:
+        with p.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return
+    if len(lines) < 2000:  # only rewrite when it's worth it
+        return
+    kept = []
+    for ln in lines:
+        try:
+            rec = json.loads(ln)
+            ts = datetime.fromisoformat(str(rec["poll_ts"]).replace("Z", "+00:00")).timestamp()
+        except Exception:
+            continue
+        if ts >= cutoff:
+            kept.append(ln)
+    tmp = p.with_suffix(".jsonl.tmp")
+    tmp.write_text("".join(kept), encoding="utf-8")
+    tmp.replace(p)
+
+
+def read_vehicle_history(since: datetime | None = None) -> list[dict[str, Any]]:
+    """All vehicle rows with poll_ts >= since (default: all retained)."""
+    p = config.runtime_path("vehicles.jsonl")
+    if not p.exists():
+        return []
+    cut = since.timestamp() if since else None
+    out: list[dict[str, Any]] = []
+    with p.open("r", encoding="utf-8") as fh:
+        for ln in fh:
+            if not ln.strip():
+                continue
+            try:
+                rec = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if cut is not None:
+                try:
+                    ts = datetime.fromisoformat(str(rec["poll_ts"]).replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    continue
+                if ts < cut:
+                    continue
+            out.append(rec)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# StopMonitoring (SIRI/JSON) — predicted departures at a SPECIFIC stop. Used for
+# the LEARNED boarding stops only, during active windows, to answer "when does
+# the next train actually leave my stop / will I make it". 1 request per stop.
+# ---------------------------------------------------------------------------
+async def poll_stop_monitoring(agency: str, stop_code: str,
+                               client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """Fetch SIRI StopMonitoring JSON for one stop. Returns a compact summary
+    of upcoming departures: {stop_code, agency, ts, visits:[{line, dest,
+    aimed, expected, mins}]}. Persisted into stopmon.json keyed by stop_code."""
+    if not KEY_511:
+        return {"status": "needs_key"}
+    owns = client is None
+    client = client or httpx.AsyncClient(timeout=POLL_HTTP_TIMEOUT, follow_redirects=True)
+    try:
+        r = await client.get(f"{TRANSIT_511_BASE}/StopMonitoring",
+                             params={"api_key": KEY_511, "agency": agency,
+                                     "stopCode": stop_code, "format": "json"})
+        if r.status_code != 200:
+            return {"status": "error", "http": r.status_code, "body": r.text[:160]}
+        # 511 JSON often carries a UTF-8 BOM.
+        data = json.loads(r.content.decode("utf-8-sig"))
+        summary = _summarize_stop_monitoring(data, agency, stop_code)
+        cur = _read_json("stopmon.json")
+        cur[f"{agency}:{stop_code}"] = summary
+        _write_json("stopmon.json", cur)
+        return summary
+    except Exception as e:  # noqa: BLE001
+        return {"status": "error", "error": str(e)[:160]}
+    finally:
+        if owns:
+            await client.aclose()
+
+
+def _summarize_stop_monitoring(data: dict[str, Any], agency: str, stop_code: str) -> dict[str, Any]:
+    visits_out: list[dict[str, Any]] = []
+    try:
+        delivery = (data["ServiceDelivery"]["StopMonitoringDelivery"])
+        if isinstance(delivery, list):
+            delivery = delivery[0]
+        msv = delivery.get("MonitoredStopVisit", []) or []
+    except (KeyError, TypeError, IndexError):
+        msv = []
+    for v in msv:
+        try:
+            j = v["MonitoredVehicleJourney"]
+            call = j.get("MonitoredCall", {}) or {}
+            aimed = call.get("AimedDepartureTime") or call.get("AimedArrivalTime")
+            expected = call.get("ExpectedDepartureTime") or call.get("ExpectedArrivalTime")
+            visits_out.append({
+                "line": j.get("LineRef"),
+                "dest": j.get("DestinationName"),
+                "aimed": aimed,
+                "expected": expected,
+            })
+        except (KeyError, TypeError):
+            continue
+    return {
+        "agency": agency,
+        "stop_code": stop_code,
+        "ts": _now_iso(),
+        "visits": visits_out,
+    }
+
+
+def read_stop_monitoring() -> dict[str, Any]:
+    return _read_json("stopmon.json")
 
 
 def read_state() -> dict[str, Any]:

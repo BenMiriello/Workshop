@@ -25,7 +25,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from services.commute import alerter, config, llm, poller, scoring
+from services.commute import (
+    alerter, config, journeys, llm, messages, patterns, places, poller, reason, scoring,
+)
 
 
 router = APIRouter(prefix="/commute", tags=["commute"])
@@ -166,3 +168,108 @@ async def llm_decide(body: DecideBody) -> dict[str, Any]:
 @router.get("/llm/recent")
 async def llm_recent(limit: int = Query(20, ge=1, le=200)) -> dict[str, Any]:
     return {"decisions": llm.recent_decisions(limit=limit)}
+
+
+# --- adaptive layer: messages feed, journeys, places, patterns, reasoner -----
+
+@router.get("/messages")
+async def get_messages(limit: int = Query(20, ge=1, le=200),
+                       offset: int = Query(0, ge=0)) -> dict[str, Any]:
+    """The in-app Now/Suggestions feed: canonical messages, newest-first,
+    paginated. Same objects Discord renders."""
+    return messages.recent(limit=limit, offset=offset)
+
+
+@router.get("/messages/latest")
+async def get_latest_message() -> dict[str, Any]:
+    return {"message": messages.latest()}
+
+
+class ReasonBody(BaseModel):
+    checkpoint: str = "during"     # pre-1h | pre-30m | during | post
+    dispatch: str = "no"           # no | auto | always  (auto = caution/urgent or a pre-* checkpoint)
+    force_llm: bool = False        # always spend Claude (the app "Check now" button)
+
+
+def _should_dispatch(policy: str, checkpoint: str, severity: str, is_dupe: bool) -> bool:
+    if is_dupe or policy == "no":
+        return False
+    if policy == "always":
+        return True
+    # auto
+    return severity in ("caution", "urgent") or checkpoint in ("pre-1h", "pre-30m")
+
+
+@router.post("/reason")
+async def reason_now(body: ReasonBody) -> dict[str, Any]:
+    """Compose ONE adaptive message from the live brief + learned patterns,
+    store it to the feed (deduped), and dispatch to Discord per policy. This is
+    the cron-driven path that replaces the rigid template brief."""
+    brief = scoring.evaluate()
+    # Spend Claude only when it's worth it: an explicit app request, a non-during
+    # checkpoint (pre-1h/pre-30m/post), or an active late-risk. Routine on-track
+    # 'during' ticks take the cheap deterministic path (and dedup anyway).
+    allow_llm = (body.force_llm or body.checkpoint != "during"
+                 or bool(brief.get("late_risk")))
+    res = reason.compose_and_store(brief, checkpoint=body.checkpoint, allow_llm=allow_llm)
+    msg = res["message"]
+    dispatch = None
+    if _should_dispatch(body.dispatch, body.checkpoint, msg.get("severity", "info"), res["duplicate"]):
+        dispatch = await alerter.dispatch_message(msg)
+    return {"message": msg, "stored": res["stored"], "duplicate": res["duplicate"], "dispatch": dispatch}
+
+
+@router.get("/journeys")
+async def get_journeys(limit: int = Query(20, ge=1, le=200)) -> dict[str, Any]:
+    return {"journeys": journeys.recent(limit=limit)}
+
+
+@router.post("/journeys/finalize")
+async def finalize_journey() -> dict[str, Any]:
+    return journeys.finalize()
+
+
+@router.get("/patterns")
+async def get_patterns() -> dict[str, Any]:
+    return patterns.compute()
+
+
+@router.get("/places")
+async def get_places() -> dict[str, Any]:
+    return places.load()
+
+
+@router.post("/places/learn")
+async def learn_places() -> dict[str, Any]:
+    return places.learn()
+
+
+class LabelBody(BaseModel):
+    id: int
+    label: str
+
+
+@router.post("/places/label")
+async def label_place(body: LabelBody) -> dict[str, Any]:
+    return places.set_label(body.id, body.label)
+
+
+@router.post("/learn")
+async def learn_all() -> dict[str, Any]:
+    """Cron convenience: refresh learned places + finalize any completed
+    journey. Cheap and idempotent."""
+    pl = places.learn()
+    fin = journeys.finalize()
+    return {"places": len(pl.get("places", [])), "finalize": fin}
+
+
+@router.post("/stopmon")
+async def poll_stopmon() -> dict[str, Any]:
+    """Poll SIRI StopMonitoring for the LEARNED boarding stops only (best-effort
+    enrichment; gated to when we actually know the user's stops)."""
+    stops = journeys.learned_boarding_stops()
+    results = []
+    for s in stops[:6]:  # cap to protect the 60-req/hr budget
+        agency = "CT" if s["agency"] == "caltrain" else "SF"
+        results.append(await poller.poll_stop_monitoring(agency, s["stop_id"]))
+    return {"polled": len(results), "stops": stops, "results": results}

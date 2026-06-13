@@ -229,6 +229,46 @@ async def send_discord(text: str, channel_id: str | None = None) -> dict[str, An
             return {"error": str(e)[:200]}
 
 
+def render_message(msg: dict[str, Any]) -> str:
+    """Render a canonical commute message (messages.make_message) to Discord
+    text. Same predictable shape the in-app feed shows: headline, detail, and —
+    for anything that warrants a 'why' — the reasoning + action."""
+    lines = [f"**{msg.get('headline', 'Commute update')}**"]
+    detail = (msg.get("detail") or "").strip()
+    if detail:
+        lines.append(detail)
+    sev = msg.get("severity", "info")
+    reasoning = _clean_reason(msg.get("reasoning") or "")
+    if reasoning and sev in ("caution", "urgent"):
+        lines.append(f"_{reasoning}_")
+    action = (msg.get("action") or "").strip()
+    if action:
+        lines.append(f"→ {action}")
+    if msg.get("confidence") == "low":
+        lines.append("_(low confidence — data is thin/stale)_")
+    return "\n".join(lines)
+
+
+async def dispatch_message(msg: dict[str, Any], channel_id: str | None = None) -> dict[str, Any]:
+    """Send a canonical message to Discord (or the masini queue) and log it.
+    Used by the reasoner-driven cron path; the message itself is already
+    persisted to messages.jsonl by the reasoner."""
+    text = render_message(msg)
+    delivery = await send_discord(text, channel_id)
+    if delivery.get("ok") or delivery.get("queued"):
+        _queue_masini_notify(text, channel_id or COMMUTE_CHANNEL_ID)
+    _append_log({
+        "ts": _now().isoformat(),
+        "kind": f"message:{msg.get('kind')}",
+        "severity": msg.get("severity"),
+        "message_id": msg.get("id"),
+        "headline": msg.get("headline"),
+        "source": msg.get("source"),
+        "delivery": delivery,
+    })
+    return {"delivery": delivery, "text": text}
+
+
 async def maybe_alert(brief: dict[str, Any] | None = None, *, force: bool = False, reason: str = "") -> dict[str, Any]:
     """Apply the alert policy. Returns a decision dict including whether we
     sent + why-not.

@@ -132,6 +132,46 @@ def history(limit: int = 100, offset: int = 0) -> dict[str, Any]:
     }
 
 
+def recent_records(max_n: int = 20000) -> list[dict[str, Any]]:
+    """Return up to `max_n` most-recent records in CHRONOLOGICAL order (oldest
+    first) — the shape the commute segmenter/place-learner want. Read straight
+    from the history file."""
+    if not HISTORY_PATH.exists():
+        return []
+    max_n = max(1, min(max_n, 200000))
+    with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+        lines = [ln for ln in fh if ln.strip()]
+    out: list[dict[str, Any]] = []
+    for line in lines[-max_n:]:
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            continue
+    return out
+
+
+def records_between(start_iso: str, end_iso: str) -> list[dict[str, Any]]:
+    """All records whose ts falls in [start_iso, end_iso], chronological. Used to
+    assemble a single day's journey. Lexicographic ISO compare is fine for UTC Z
+    timestamps but we parse to be safe across offset forms."""
+    from datetime import datetime as _dt
+
+    def _p(s: str):
+        try:
+            return _dt.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+    lo, hi = _p(start_iso), _p(end_iso)
+    out: list[dict[str, Any]] = []
+    for r in recent_records():
+        ts = _p(str(r.get("ts", "")))
+        if ts is None or lo is None or hi is None:
+            continue
+        if lo <= ts <= hi:
+            out.append(r)
+    return out
+
+
 def clear() -> dict[str, int]:
     """Erase history + latest. Returns counts cleared."""
     n = 0

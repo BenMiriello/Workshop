@@ -68,25 +68,28 @@ echo "[$TS] tick checkpoint=$CHECKPOINT" >> "$LOG"
 POLL_RES=$(curl -s -X POST "$BACKEND/commute/poll" --max-time 30 || echo "{\"error\":\"poll http failure\"}")
 echo "[$TS] poll: $(echo "$POLL_RES" | head -c 300)" >> "$LOG"
 
-# 2) decide via LLM (auto-routed) — owns late-risk alerting
-DECIDE_RES=$(curl -s -X POST "$BACKEND/commute/llm/decide" \
-    -H "Content-Type: application/json" \
-    -d "{\"checkpoint\":\"$CHECKPOINT\"}" \
-    --max-time 180 || echo "{\"error\":\"decide http failure\"}")
-echo "[$TS] decide: $(echo "$DECIDE_RES" | head -c 400)" >> "$LOG"
+# 1b) learn — refresh learned places + finalize any completed journey. Cheap +
+# idempotent; this is how the system adapts (places, modes, trains, transfers
+# are all derived from observed history, never hardcoded).
+LEARN_RES=$(curl -s -X POST "$BACKEND/commute/learn" --max-time 30 || echo "{\"error\":\"learn http failure\"}")
+echo "[$TS] learn: $(echo "$LEARN_RES" | head -c 200)" >> "$LOG"
 
-# 2b) proactive brief at the pre-* checkpoints (regardless of late risk).
-# Operator request: get a quick "here's where you are" message at the
-# 1h-out and 30m-out marks so you know the system is alive + on-target.
-# The /commute/brief endpoint cooldowns per (schedule, day, checkpoint),
-# so repeated cron firings within the same window won't double-send.
-if [[ "$CHECKPOINT" == "pre-1h" || "$CHECKPOINT" == "pre-30m" ]]; then
-    BRIEF_RES=$(curl -s -X POST "$BACKEND/commute/brief" \
-        -H "Content-Type: application/json" \
-        -d "{\"checkpoint\":\"$CHECKPOINT\"}" \
-        --max-time 30 || echo "{\"error\":\"brief http failure\"}")
-    echo "[$TS] brief: $(echo "$BRIEF_RES" | head -c 300)" >> "$LOG"
+# 1c) StopMonitoring for the LEARNED boarding stops (best-effort, active windows
+# only — 1 request per stop, capped, to respect the 60-req/hr 511 budget).
+if [[ "$CHECKPOINT" != "post" ]]; then
+    SM_RES=$(curl -s -X POST "$BACKEND/commute/stopmon" --max-time 30 || echo "{\"error\":\"stopmon http failure\"}")
+    echo "[$TS] stopmon: $(echo "$SM_RES" | head -c 160)" >> "$LOG"
 fi
+
+# 2) reason — Claude composes ONE adaptive message from the live brief + learned
+# patterns, stores it to the in-app Now feed, and dispatches to Discord per the
+# 'auto' policy (sends at the pre-* checkpoints and on any caution/urgent late
+# risk; dedup suppresses repeats). Replaces the old qwen-decide + template-brief.
+REASON_RES=$(curl -s -X POST "$BACKEND/commute/reason" \
+    -H "Content-Type: application/json" \
+    -d "{\"checkpoint\":\"$CHECKPOINT\",\"dispatch\":\"auto\"}" \
+    --max-time 180 || echo "{\"error\":\"reason http failure\"}")
+echo "[$TS] reason: $(echo "$REASON_RES" | head -c 400)" >> "$LOG"
 
 # 3) drain notify-commute.txt
 # The alerter writes one JSON line per alert to notify-commute.txt when the

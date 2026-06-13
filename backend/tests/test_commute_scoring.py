@@ -289,13 +289,13 @@ class TestLocationStatus:
         return MON_AM
 
     def test_no_coords_configured(self):
-        with patch.object(scoring.config, "get_endpoint_coords", return_value=None):
+        with patch.object(scoring.places, "endpoint_coords", return_value=None):
             result = scoring._location_status(WEEKDAY_AM_SCHEDULE, self._now())
         assert result["available"] is False
-        assert "no coords" in result["reason"]
+        assert "coords" in result["reason"]
 
     def test_no_location_pings(self):
-        with patch.object(scoring.config, "get_endpoint_coords", return_value=WORK_COORDS), \
+        with patch.object(scoring.places, "endpoint_coords", return_value=WORK_COORDS), \
              patch.object(scoring.location_svc, "latest", return_value=None):
             result = scoring._location_status(WEEKDAY_AM_SCHEDULE, self._now())
         assert result["available"] is False
@@ -303,7 +303,7 @@ class TestLocationStatus:
     def test_stale_location(self):
         stale_ts = (self._now() - timedelta(hours=2)).isoformat()
         rec = {"ts": stale_ts, "lat": 37.394, "lng": -122.076, "source": "owntracks"}
-        with patch.object(scoring.config, "get_endpoint_coords", return_value=WORK_COORDS), \
+        with patch.object(scoring.places, "endpoint_coords", return_value=WORK_COORDS), \
              patch.object(scoring.location_svc, "latest", return_value=rec):
             result = scoring._location_status(WEEKDAY_AM_SCHEDULE, self._now())
         assert result["available"] is False
@@ -313,7 +313,7 @@ class TestLocationStatus:
         # Place operator at work (within 200m)
         fresh_ts = (self._now() - timedelta(minutes=5)).isoformat()
         rec = {"ts": fresh_ts, "lat": WORK_COORDS[0], "lng": WORK_COORDS[1], "source": "owntracks"}
-        with patch.object(scoring.config, "get_endpoint_coords", return_value=WORK_COORDS), \
+        with patch.object(scoring.places, "endpoint_coords", return_value=WORK_COORDS), \
              patch.object(scoring.location_svc, "latest", return_value=rec):
             result = scoring._location_status(WEEKDAY_AM_SCHEDULE, self._now())
         assert result["available"] is True
@@ -323,7 +323,7 @@ class TestLocationStatus:
         # Operator at home, destination is work
         fresh_ts = (self._now() - timedelta(minutes=5)).isoformat()
         rec = {"ts": fresh_ts, "lat": HOME_COORDS[0], "lng": HOME_COORDS[1], "source": "owntracks"}
-        with patch.object(scoring.config, "get_endpoint_coords", return_value=WORK_COORDS), \
+        with patch.object(scoring.places, "endpoint_coords", return_value=WORK_COORDS), \
              patch.object(scoring.location_svc, "latest", return_value=rec):
             result = scoring._location_status(WEEKDAY_AM_SCHEDULE, self._now())
         assert result["available"] is True
@@ -441,7 +441,7 @@ def _patch_all(am_sch=None, pm_sch=None, legs=None, loc_rec=None,
     return [
         patch.object(scoring.config, "get_schedule_for_day", side_effect=_sch_side_effect),
         patch.object(scoring.config, "get_legs_by_id", return_value=legs or []),
-        patch.object(scoring.config, "get_endpoint_coords", side_effect=_coords),
+        patch.object(scoring.places, "endpoint_coords", side_effect=_coords),
         patch.object(scoring.location_svc, "latest", return_value=loc_rec),
         patch.object(scoring.poller, "read_state", return_value=rt_state or {}),
         patch.object(scoring.poller, "read_alerts", return_value=alerts or []),

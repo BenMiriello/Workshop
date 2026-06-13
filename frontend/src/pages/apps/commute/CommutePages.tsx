@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot } from "lucide-react";
+import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
+  ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
 import { Stepper, Tabs } from "../../../ui";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -803,11 +804,234 @@ function AlertsTab() {
   );
 }
 
+// ── Now feed (adaptive messages) ───────────────────────────────────────────────
+
+type Msg = {
+  id: string;
+  ts: string;
+  kind: string;
+  severity: "ok" | "info" | "caution" | "urgent";
+  headline: string;
+  detail?: string;
+  reasoning?: string;
+  confidence?: "high" | "medium" | "low";
+  action?: string | null;
+  evidence?: Record<string, unknown>;
+  source?: string;
+};
+type MsgResp = { messages: Msg[]; total: number; has_more: boolean };
+
+const SEV_COLOR: Record<string, string> = {
+  ok: "var(--ok)",
+  info: "var(--accent, var(--fg))",
+  caution: "var(--warn)",
+  urgent: "var(--danger)",
+};
+
+function sevSoft(sev: string): string {
+  const c = SEV_COLOR[sev] ?? "var(--muted)";
+  return `color-mix(in srgb, ${c} 14%, transparent)`;
+}
+
+function SevPill({ sev }: { sev: string }) {
+  const c = SEV_COLOR[sev] ?? "var(--muted)";
+  return (
+    <span style={{
+      color: c, background: sevSoft(sev), border: `1px solid color-mix(in srgb, ${c} 40%, transparent)`,
+      borderRadius: 999, padding: "0.1rem 0.5rem", fontSize: "0.72rem", fontWeight: 600,
+      textTransform: "uppercase", letterSpacing: "0.03em", whiteSpace: "nowrap",
+    }}>{sev}</span>
+  );
+}
+
+function Evidence({ msg }: { msg: Msg }) {
+  const ev = msg.evidence ?? {};
+  const keys = Object.keys(ev);
+  return (
+    <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid var(--border)" }}>
+      <p className="muted" style={{ margin: "0 0 0.3rem", fontSize: "0.72rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Evidence</p>
+      {keys.length === 0 ? (
+        <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>No structured evidence recorded.</p>
+      ) : (
+        <pre style={{ margin: 0, fontSize: "0.74rem", whiteSpace: "pre-wrap", wordBreak: "break-word",
+          fontFamily: "ui-monospace, monospace", color: "var(--muted)", maxHeight: 260, overflow: "auto" }}>
+          {JSON.stringify(ev, null, 2)}
+        </pre>
+      )}
+      <p className="muted" style={{ margin: "0.4rem 0 0", fontSize: "0.7rem" }}>
+        {msg.source ? `via ${msg.source}` : ""}{msg.confidence ? ` · ${msg.confidence} confidence` : ""}
+      </p>
+    </div>
+  );
+}
+
+function TopMessageCard({ msg }: { msg: Msg }) {
+  const [open, setOpen] = useState(false);
+  const c = SEV_COLOR[msg.severity] ?? "var(--muted)";
+  return (
+    <div style={{ border: `1px solid color-mix(in srgb, ${c} 45%, var(--border))`, borderRadius: 12,
+      background: sevSoft(msg.severity), padding: "1rem", marginBottom: "1.25rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.4rem", flexWrap: "wrap" }}>
+        <SevPill sev={msg.severity} />
+        <span className="muted" style={{ fontSize: "0.75rem" }}>{fmtAge(msg.ts)}</span>
+        <span className="muted" style={{ fontSize: "0.72rem", marginLeft: "auto" }}>{msg.kind}</span>
+      </div>
+      <h3 style={{ margin: "0 0 0.3rem", fontSize: "1.12rem", lineHeight: 1.25 }}>{msg.headline}</h3>
+      {msg.detail && <p style={{ margin: "0 0 0.35rem", fontSize: "0.92rem" }}>{msg.detail}</p>}
+      {msg.reasoning && <p className="muted" style={{ margin: "0 0 0.35rem", fontSize: "0.85rem", fontStyle: "italic" }}>{msg.reasoning}</p>}
+      {msg.action && (
+        <p style={{ margin: "0.2rem 0 0", fontSize: "0.9rem", fontWeight: 600, color: c, display: "flex", alignItems: "center", gap: "0.3rem" }}>
+          <ChevronRight size={15} /> {msg.action}
+        </p>
+      )}
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        style={{ marginTop: "0.5rem", background: "none", border: "none", cursor: "pointer", color: "var(--muted)",
+          fontSize: "0.78rem", display: "inline-flex", alignItems: "center", gap: "0.25rem", padding: 0 }}>
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Why
+      </button>
+      {open && <Evidence msg={msg} />}
+    </div>
+  );
+}
+
+function HistoryRow({ msg }: { msg: Msg }) {
+  const [open, setOpen] = useState(false);
+  const c = SEV_COLOR[msg.severity] ?? "var(--muted)";
+  return (
+    <li style={{ borderBottom: "1px solid var(--border)", padding: "0.55rem 0" }}>
+      <button onClick={() => setOpen((v) => !v)} aria-expanded={open}
+        style={{ width: "100%", background: "none", border: "none", cursor: "pointer", color: "inherit",
+          display: "flex", alignItems: "center", gap: "0.55rem", textAlign: "left", padding: 0 }}>
+        <Dot size={18} style={{ color: c, flexShrink: 0 }} aria-hidden />
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ display: "block", fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{msg.headline}</span>
+          <span className="muted" style={{ fontSize: "0.72rem" }}>{fmtAge(msg.ts)} · {msg.kind}</span>
+        </span>
+        {open ? <ChevronDown size={15} className="muted" /> : <ChevronRight size={15} className="muted" />}
+      </button>
+      {open && (
+        <div style={{ paddingLeft: "1.1rem", marginTop: "0.4rem" }}>
+          {msg.detail && <p style={{ margin: "0 0 0.3rem", fontSize: "0.85rem" }}>{msg.detail}</p>}
+          {msg.reasoning && <p className="muted" style={{ margin: 0, fontSize: "0.82rem", fontStyle: "italic" }}>{msg.reasoning}</p>}
+          <Evidence msg={msg} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+const PAGE = 12;
+
+function NowTab() {
+  const [items, setItems] = useState<Msg[]>([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [checking, setChecking] = useState(false);
+
+  const loadFirst = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/commute/messages?limit=${PAGE}&offset=0`);
+      if (!r.ok) throw new Error(`${r.status}`);
+      const d: MsgResp = await r.json();
+      setItems(d.messages);
+      setTotal(d.total);
+      setHasMore(d.has_more);
+      setErr(null);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }, []);
+
+  const loadMore = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`/api/commute/messages?limit=${PAGE}&offset=${items.length}`);
+      if (!r.ok) throw new Error(`${r.status}`);
+      const d: MsgResp = await r.json();
+      setItems((prev) => [...prev, ...d.messages]);
+      setHasMore(d.has_more);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [items.length]);
+
+  // "Check now" composes a fresh adaptive message server-side and reloads.
+  const checkNow = useCallback(async () => {
+    setChecking(true);
+    try {
+      await fetch("/api/commute/reason", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkpoint: "during", dispatch: "no", force_llm: true }),
+      });
+      await loadFirst();
+    } finally {
+      setChecking(false);
+    }
+  }, [loadFirst]);
+
+  useEffect(() => {
+    loadFirst();
+    const t = setInterval(loadFirst, 30_000);
+    return () => clearInterval(t);
+  }, [loadFirst]);
+
+  if (err && items.length === 0) {
+    return <p className="err">Couldn’t load messages: {err} <code>/api/commute/messages</code></p>;
+  }
+
+  const top = items[0];
+  const rest = items.slice(1);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+        <p className="muted" style={{ margin: 0 }}>{total} message{total === 1 ? "" : "s"}</p>
+        <button onClick={checkNow} disabled={checking}
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
+          <Sparkles size={14} /> {checking ? "Thinking…" : "Check now"}
+        </button>
+      </div>
+
+      {items.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "2rem 1rem", color: "var(--muted)" }}>
+          <Inbox size={28} strokeWidth={1.6} />
+          <p style={{ margin: "0.5rem 0 0" }}>No commute messages yet.</p>
+          <p style={{ margin: "0.25rem 0 0", fontSize: "0.85rem" }}>
+            They arrive automatically around your commute. Tap <strong>Check now</strong> for an on-demand read.
+          </p>
+        </div>
+      ) : (
+        <>
+          {top && <TopMessageCard msg={top} />}
+          {rest.length > 0 && (
+            <>
+              <p className="muted" style={{ margin: "0 0 0.25rem", fontSize: "0.74rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Earlier</p>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {rest.map((m) => <HistoryRow key={m.id} msg={m} />)}
+              </ul>
+            </>
+          )}
+          {hasMore && (
+            <div style={{ textAlign: "center", marginTop: "0.9rem" }}>
+              <button onClick={loadMore} disabled={loading}>{loading ? "…" : "Load more"}</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-type Tab = "status" | "schedule" | "sources" | "alerts";
+type Tab = "now" | "status" | "schedule" | "sources" | "alerts";
 
 const TABS: { key: Tab; label: string }[] = [
+  { key: "now", label: "Now" },
   { key: "status", label: "Status" },
   { key: "schedule", label: "Schedule" },
   { key: "sources", label: "Sources" },
@@ -815,7 +1039,7 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export default function Commute() {
-  const [tab, setTab] = useState<Tab>("status");
+  const [tab, setTab] = useState<Tab>("now");
   const [brief, setBrief] = useState<Brief | null>(null);
   const [briefErr, setBriefErr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
@@ -863,6 +1087,7 @@ export default function Commute() {
         <Tabs items={TABS.map((t) => ({ value: t.key, label: t.label }))} value={tab} onChange={select} />
       </div>
 
+      {tab === "now" && <NowTab />}
       {tab === "status" && <StatusTab brief={brief} onPollNow={pollNow} polling={polling} />}
       {tab === "schedule" && <ScheduleTab />}
       {tab === "sources" && <SourcesTab />}
