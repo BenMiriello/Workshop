@@ -1,22 +1,22 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Plus, Bot, Brain } from "lucide-react";
-import type { Agent, BuildAgent } from "@shared/types";
+import type { Agent, BuildAgent, Project } from "@shared/types";
 import {
   Button,
   Card,
   CardGrid,
   ConfirmDialog,
   Field,
-  Input,
   Modal,
   PageHeader,
   Row,
+  SectionLabel,
   Segmented,
+  Select,
   StateBlock,
-  StatusPill,
+  StatusDot,
   Tag,
-  Textarea,
   catFor,
   type SegmentedOption,
   type StatusKind,
@@ -35,41 +35,62 @@ const KIND_OPTIONS: SegmentedOption<Kind>[] = [
   { value: "build", label: "Build" },
 ];
 
-const slugify = (s: string) =>
-  s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+const NEW_PROJECT = "__new__";
 
-// Two kinds of Agent per ADR-008:
-//   - Data agents (Letta-backed)     → existing fleet, narrow read/write tools
-//   - Build agents (Claude Code)     → coding sessions scoped to a cwd
-// This page lists both, with a kind filter and separate spawn CTAs.
+const titleCase = (slug: string) =>
+  slug.split("-").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
 
-function SpawnBuildAgentModal({
-  open, onCancel, onCreated,
-}: { open: boolean; onCancel: () => void; onCreated: (slug: string) => void }) {
-  const [name, setName] = useState("");
-  const [purpose, setPurpose] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugTouched, setSlugTouched] = useState(false);
+// Auto-generate a non-colliding builder slug `<project>-builder-<n>` and a readable
+// name `<Project> builder <n>`. No name/slug/purpose is asked of the operator —
+// the context (the chosen project) is the substance. See doc 01 §6.
+function deriveBuilderName(projectSlug: string, existing: BuildAgent[]): { slug: string; name: string } {
+  const taken = new Set(existing.map((a) => a.slug));
+  let n = 1;
+  while (taken.has(`${projectSlug}-builder-${n}`)) n += 1;
+  return {
+    slug: `${projectSlug}-builder-${n}`,
+    name: `${titleCase(projectSlug)} builder ${n}`,
+  };
+}
+
+// "New builder" asks WHICH PROJECT, not for a name/slug/purpose (doc 01 §6).
+// On submit the builder is auto-named from the project and started there.
+// "New project…" routes to the existing project-creation flow.
+function NewBuilderModal({
+  open, projects, existing, onCancel, onCreated, onNewProject,
+}: {
+  open: boolean;
+  projects: Project[] | null;
+  existing: BuildAgent[];
+  onCancel: () => void;
+  onCreated: (slug: string) => void;
+  onNewProject: () => void;
+}) {
+  const [projectSlug, setProjectSlug] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const effectiveSlug = useMemo(
-    () => (slugTouched ? slug : slugify(name)),
-    [slug, slugTouched, name],
-  );
+  // Default the picker to the first project once they load.
+  useEffect(() => {
+    if (open && !projectSlug && projects && projects.length) {
+      setProjectSlug(projects[0].slug);
+    }
+  }, [open, projectSlug, projects]);
 
   const submit = async () => {
+    if (projectSlug === NEW_PROJECT) {
+      onNewProject();
+      return;
+    }
+    if (!projectSlug) return;
     setBusy(true);
     setErr(null);
     try {
+      const { slug, name } = deriveBuilderName(projectSlug, existing);
       const r = await fetch("/api/agents/build", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slug: effectiveSlug,
-          name: name.trim() || effectiveSlug,
-          purpose: purpose.trim(),
-        }),
+        body: JSON.stringify({ slug, name, purpose: "", project_slug: projectSlug }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const a = await r.json();
@@ -81,37 +102,44 @@ function SpawnBuildAgentModal({
     }
   };
 
+  const noProjects = !!projects && projects.length === 0;
+
   return (
-    <Modal open={open} onClose={onCancel} title="Spawn freestanding Build agent">
+    <Modal open={open} onClose={onCancel} title="New builder">
       <div style={{ padding: "var(--space-4)" }}>
         <p className="ws-muted" style={{ marginBottom: "var(--space-3)" }}>
-          Opens a Claude Code coding session scoped to a fresh scratch directory under
-          <code className="ws-mono"> ~/workshop/build-agents/&lt;slug&gt;/</code>.
-          To work on an existing Project instead, open that Project and use "Spawn build agent" there.
+          A builder is a Claude Code session scoped to a project. Pick the project to
+          work on; the builder is named automatically and you can rename it later.
         </p>
-        <Field label="Name" required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <Field label="Project" required>
+          <Select
+            value={projectSlug}
+            onChange={(e) => setProjectSlug(e.target.value)}
+            disabled={busy || !projects}
+            autoFocus
+          >
+            {!projects && <option value="">Loading…</option>}
+            {noProjects && <option value="">No projects yet</option>}
+            {projects?.map((p) => (
+              <option key={p.slug} value={p.slug}>{p.title}</option>
+            ))}
+            <option value={NEW_PROJECT}>New project…</option>
+          </Select>
         </Field>
-        <Field label="Slug" help="kebab-case · used as the agent id + dir name">
-          <Input
-            value={effectiveSlug}
-            onChange={(e) => { setSlug(slugify(e.target.value)); setSlugTouched(true); }}
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="Purpose" help="What is this agent working on?">
-          <Textarea
-            value={purpose}
-            onChange={(e) => setPurpose(e.target.value)}
-            rows={4}
-            placeholder="e.g. prototype a tip calculator that consumes Finance data"
-          />
-        </Field>
-        {err && <p style={{ color: "var(--err)", fontSize: "var(--fs-sm)", marginTop: "var(--space-2)" }}>{err}</p>}
+        {err && (
+          <div style={{ marginTop: "var(--space-3)" }}>
+            <StateBlock variant="error" title="Couldn't start builder" hint={<code>{err}</code>} />
+          </div>
+        )}
         <div style={{ marginTop: "var(--space-4)", display: "flex", gap: "var(--space-3)", justifyContent: "flex-end" }}>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={busy || !effectiveSlug || !name.trim()} loading={busy}>
-            Spawn
+          <Button
+            variant="primary"
+            onClick={submit}
+            disabled={busy || !projectSlug || (projectSlug !== NEW_PROJECT && noProjects)}
+            loading={busy}
+          >
+            {projectSlug === NEW_PROJECT ? "New project…" : "Start builder"}
           </Button>
         </div>
       </div>
@@ -120,24 +148,29 @@ function SpawnBuildAgentModal({
 }
 
 export default function Agents() {
+  const nav = useNavigate();
   const [data, setData] = useState<Agent[] | null>(null);
   const [build, setBuild] = useState<BuildAgent[] | null>(null);
+  const [projects, setProjects] = useState<Project[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [autonomyBusy, setAutonomyBusy] = useState(false);
   const [confirmPause, setConfirmPause] = useState(false);
   const [kind, setKind] = useState<Kind>("all");
   const [spawning, setSpawning] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
-      const [dR, bR] = await Promise.all([
+      const [dR, bR, pR] = await Promise.all([
         fetch("/api/agents/"),
         fetch("/api/agents/build"),
+        fetch("/api/projects/"),
       ]);
       if (!dR.ok) throw new Error(`${dR.status} ${await dR.text()}`);
       setData(await dR.json());
       setBuild(bR.ok ? await bR.json() : []);
+      setProjects(pR.ok ? await pR.json() : []);
     } catch (e) {
       setErr(String(e));
     }
@@ -165,6 +198,20 @@ export default function Agents() {
     } finally {
       setBusy(false);
       setConfirmPause(false);
+    }
+  };
+
+  const enableAutonomy = async () => {
+    setAutonomyBusy(true);
+    try {
+      await fetch("/api/autonomy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      });
+      loadSup();
+    } finally {
+      setAutonomyBusy(false);
     }
   };
 
@@ -196,69 +243,78 @@ export default function Agents() {
             <Segmented options={KIND_OPTIONS} value={kind} onChange={setKind} ariaLabel="Agent kind" />
             <Link to="/agents/new">
               <Button variant="primary" size="sm">
-                <Plus aria-hidden /> New data agent
+                <Plus aria-hidden /> New assistant
               </Button>
             </Link>
             <Button variant="primary" size="sm" onClick={() => setSpawning(true)}>
-              <Plus aria-hidden /> Spawn build agent
+              <Plus aria-hidden /> New builder
             </Button>
           </Row>
         }
       />
 
-      {(() => {
-        if (!sup) return null;
-        const dataCount = sup.supervisor.agent_count;
+      {sup && (() => {
+        // At-a-glance status strip: three labeled segments (doc 01 §7).
+        // Builders: a live/idle split (running == live). Assistants: a plain
+        // count (request/response — "idle" is meaningless). Autonomy: the
+        // background-loop state with exactly ONE clearly-labeled control.
+        const assistantCount = sup.supervisor.agent_count;
         const liveBuilds = build.filter((a) => a.state === "running").length;
         const idleBuilds = build.filter((a) => a.state === "idle").length;
-        // Hide the card entirely when there's nothing to say.
-        if (dataCount === 0 && liveBuilds === 0 && idleBuilds === 0) return null;
-
-        let line1: { kind: StatusKind; text: string };
-        if (paused) {
-          line1 = { kind: "danger", text: "Supervisor paused" };
-        } else if (dataCount === 0) {
-          line1 = { kind: "ok", text: "0 data agents" };
-        } else {
-          line1 = { kind: "ok", text: `${dataCount} data agent${dataCount === 1 ? "" : "s"} idle` };
-        }
+        const autonomyOn = !sup.cron_autonomy.disabled;
+        // Dot agrees with the text: running only when something is actually live.
+        const builderDot: StatusKind = liveBuilds > 0 ? "running" : "ok";
 
         return (
-          <Card style={{ marginBottom: "var(--space-5)", padding: "var(--space-3) var(--space-4)" }}>
-            <Row between wrap>
+          <Card style={{ marginBottom: "var(--space-5)", padding: "var(--space-4)" }}>
+            <Row between wrap style={{ rowGap: "var(--space-4)" }}>
+              <Link to="/agents?kind=build" onClick={() => setKind("build")} style={{ textDecoration: "none", color: "inherit" }}>
+                <div>
+                  <SectionLabel>Builders</SectionLabel>
+                  <Row>
+                    <StatusDot status={builderDot}>
+                      {liveBuilds} live · {idleBuilds} idle
+                    </StatusDot>
+                  </Row>
+                </div>
+              </Link>
+
+              <Link to="/agents?kind=data" onClick={() => setKind("data")} style={{ textDecoration: "none", color: "inherit" }}>
+                <div>
+                  <SectionLabel>Assistants</SectionLabel>
+                  <Row>
+                    <StatusDot status="ok">
+                      {assistantCount} active
+                    </StatusDot>
+                  </Row>
+                </div>
+              </Link>
+
               <div>
-                <Row>
-                  <StatusPill status={line1.kind}>{line1.text}</StatusPill>
-                  {sup.cron_autonomy.disabled && (
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                      Background loop off ·{" "}
-                      <button
-                        type="button"
-                        onClick={() => fetch("/api/autonomy", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }) }).then(loadSup)}
-                        style={{ background: "none", border: 0, color: "var(--accent)", cursor: "pointer", padding: 0, font: "inherit" }}
-                      >
-                        Enable
-                      </button>
-                    </span>
-                  )}
-                </Row>
-                {(liveBuilds > 0 || idleBuilds > 0) && (
-                  <Row style={{ marginTop: "var(--space-2)" }}>
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                      {liveBuilds} build session{liveBuilds === 1 ? "" : "s"} live · {idleBuilds} idle
-                    </span>
+                <SectionLabel>Autonomy</SectionLabel>
+                {!autonomyOn ? (
+                  <Row>
+                    <StatusDot status="stopped">Off</StatusDot>
+                    <Button size="sm" variant="primary" loading={autonomyBusy} onClick={enableAutonomy}>
+                      Enable
+                    </Button>
+                  </Row>
+                ) : paused ? (
+                  <Row>
+                    <StatusDot status="warn">Paused</StatusDot>
+                    <Button size="sm" variant="primary" loading={busy} onClick={() => setPaused(false)}>
+                      Resume
+                    </Button>
+                  </Row>
+                ) : (
+                  <Row>
+                    <StatusDot status="running">On</StatusDot>
+                    <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => setConfirmPause(true)}>
+                      Pause
+                    </Button>
                   </Row>
                 )}
               </div>
-              {paused ? (
-                <Button size="sm" variant="primary" loading={busy} onClick={() => setPaused(false)}>
-                  Resume
-                </Button>
-              ) : (
-                <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => setConfirmPause(true)}>
-                  Pause
-                </Button>
-              )}
             </Row>
           </Card>
         );
@@ -269,8 +325,8 @@ export default function Agents() {
           title="No agents yet"
           hint={
             <span>
-              Use <strong>+ New data agent</strong> for a Letta-backed worker, or
-              <strong> + Spawn build agent</strong> for a Claude Code coding session.
+              Use <strong>+ New assistant</strong> for an in-app worker, or
+              <strong> + New builder</strong> to start a Claude Code session on a project.
             </span>
           }
         />
@@ -326,12 +382,18 @@ export default function Agents() {
         busy={busy}
       />
 
-      <SpawnBuildAgentModal
+      <NewBuilderModal
         open={spawning}
+        projects={projects}
+        existing={build}
         onCancel={() => setSpawning(false)}
         onCreated={(slug) => {
           setSpawning(false);
-          window.location.assign(`/agents/build/${slug}`);
+          nav(`/agents/build/${slug}`);
+        }}
+        onNewProject={() => {
+          setSpawning(false);
+          nav("/projects/new");
         }}
       />
     </div>

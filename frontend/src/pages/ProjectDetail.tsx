@@ -1,6 +1,20 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Bot, GitBranch, Plus, RefreshCw, Save } from "lucide-react";
+import {
+  Bot,
+  GitBranch,
+  GitMerge,
+  Trash2,
+  FileText,
+  ListTodo,
+  StickyNote,
+  Rocket,
+  Plus,
+  Pencil,
+  RefreshCw,
+  Send,
+  ExternalLink,
+} from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
   Button,
@@ -10,16 +24,30 @@ import {
   Modal,
   PageHeader,
   Row,
+  Stack,
+  SectionLabel,
   StateBlock,
   StatusPill,
-  Tabs,
+  StatusDot,
+  Tag,
+  Toggle,
+  Skeleton,
   Textarea,
   Input,
+  Select,
   Field,
+  ActionBar,
+  catFor,
   type StatusKind,
-  type TabItem,
 } from "../ui";
+import { useEditMode } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
+
+// Project detail = the project's hub (the "workbench"). NOT the coding UI — that
+// lives under Agents (AgentBuild). Phase 2 (docs/workshop-v1/02 §1-4) retires the
+// opaque "working brain" label; the middle column is three named sections:
+//   Brief (PROJECT.md, rendered + Edit mode) · Tasks (structured tree) · Notes.
+// Plus Build agents, Branches (main trunk + side branches), and Deployments.
 
 type Worktree = {
   branch_slug: string;
@@ -27,23 +55,19 @@ type Worktree = {
   dir: string;
 };
 
-// Project detail = the project's hub. NOT the coding UI — that lives under
-// Agents (AgentBuild). This page shows:
-//   - Title / purpose / state / sensitivity
-//   - The brief (PROJECT.md), TODO (TODO.md), interventions log (read-only)
-//   - The list of Build agents working on this project, with a "+ Spawn build
-//     agent" CTA that hops you straight into the coding UI
-//   - The surfaces summary (integrated/standalone/public) — wiring lives in
-//     Phase C (gated on app-platform Phase 3)
-// See decisions/ADR-008 + docs/projects-hub.md.
+type TaskStatus = "todo" | "doing" | "done" | "blocked";
 
-type DocTab = "brief" | "todo" | "interventions";
+type Task = {
+  id: string;
+  text: string;
+  status: TaskStatus;
+  owner: string;
+  parent: string | null;
+  created?: string;
+  updated?: string;
+};
 
-const DOC_TABS: TabItem<DocTab>[] = [
-  { value: "brief", label: "Brief" },
-  { value: "todo", label: "TODO" },
-  { value: "interventions", label: "Interventions" },
-];
+type NoteEntry = { ts: string | null; who: string; text: string };
 
 const stateKind = (s?: string): StatusKind => {
   switch (s) {
@@ -58,8 +82,139 @@ const stateKind = (s?: string): StatusKind => {
   }
 };
 
+const TASK_STATUS_KIND: Record<TaskStatus, StatusKind> = {
+  todo: "stopped",
+  doing: "running",
+  done: "ok",
+  blocked: "danger",
+};
+
+const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "done", "blocked"];
+
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+
+// ---- Tiny, safe Brief renderer ---------------------------------------------
+// PROJECT.md is plain text the operator + agents read. Render the common
+// markdown shapes (headings, bullets, bold, paragraphs) as real elements — no
+// dangerouslySetInnerHTML, no inline hex, tokens only. Good enough for a brief;
+// not a full markdown engine.
+function renderInline(text: string): ReactNode[] {
+  const parts: ReactNode[] = [];
+  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let key = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) {
+      parts.push(<strong key={key++}>{tok.slice(2, -2)}</strong>);
+    } else {
+      parts.push(<code key={key++} className="ws-mono">{tok.slice(1, -1)}</code>);
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function Brief({ source }: { source: string }) {
+  const lines = source.replace(/\r\n/g, "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let para: string[] = [];
+  let list: string[] = [];
+  let key = 0;
+
+  const flushPara = () => {
+    if (para.length) {
+      blocks.push(
+        <p key={key++} style={{ margin: "0 0 var(--space-3)", lineHeight: "var(--lh-base)" }}>
+          {renderInline(para.join(" "))}
+        </p>,
+      );
+      para = [];
+    }
+  };
+  const flushList = () => {
+    if (list.length) {
+      blocks.push(
+        <ul key={key++} style={{ margin: "0 0 var(--space-3)", paddingLeft: "var(--space-5)" }}>
+          {list.map((li, i) => (
+            <li key={i} style={{ marginBottom: "var(--space-1)", lineHeight: "var(--lh-base)" }}>
+              {renderInline(li)}
+            </li>
+          ))}
+        </ul>,
+      );
+      list = [];
+    }
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    const bullet = /^[-*]\s+(.*)$/.exec(line);
+    if (heading) {
+      flushPara();
+      flushList();
+      const level = Math.min(heading[1].length, 3);
+      const fs = level === 1 ? "var(--fs-lg)" : level === 2 ? "var(--fs-md)" : "var(--fs-sm)";
+      blocks.push(
+        <div
+          key={key++}
+          style={{
+            fontSize: fs,
+            fontWeight: "var(--fw-semi)",
+            margin: "var(--space-3) 0 var(--space-2)",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          {renderInline(heading[2])}
+        </div>,
+      );
+    } else if (bullet) {
+      flushPara();
+      list.push(bullet[1]);
+    } else if (line === "") {
+      flushPara();
+      flushList();
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  flushPara();
+  flushList();
+  return <div style={{ fontSize: "var(--fs-md)" }}>{blocks}</div>;
+}
+
+// ---- Notes parsing ---------------------------------------------------------
+// INTERVENTIONS.md is append-only stamped lines: "[<iso>] <who>: <text>".
+function parseNotes(content: string): NoteEntry[] {
+  return content
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const m = /^\[([^\]]+)\]\s*([^:]+):\s*(.*)$/.exec(line);
+      if (m) return { ts: m[1], who: m[2].trim(), text: m[3] };
+      return { ts: null, who: "operator", text: line };
+    });
+}
+
+function fmtTs(ts: string | null): string {
+  if (!ts) return "";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return ts;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 function SpawnAgentModal({
   open,
@@ -112,8 +267,8 @@ function SpawnAgentModal({
 
   return (
     <Modal open={open} onClose={onCancel} title="Spawn Build agent">
-      <div style={{ padding: "var(--space-4)" }}>
-        <p className="ws-muted" style={{ marginBottom: "var(--space-3)" }}>
+      <Stack>
+        <p className="ws-muted">
           A Build agent opens a Claude Code coding session scoped to this project's directory.
         </p>
         <Field label="Name" required>
@@ -129,15 +284,68 @@ function SpawnAgentModal({
         <Field label="Purpose" help="One sentence. What is this agent working on?">
           <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. build the landing-page hero section" />
         </Field>
-        {err && <p style={{ color: "var(--err)", fontSize: "var(--fs-sm)", marginTop: "var(--space-2)" }}>{err}</p>}
-        <div style={{ marginTop: "var(--space-4)", display: "flex", gap: "var(--space-3)", justifyContent: "flex-end" }}>
+        {err && <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{err}</p>}
+        <Row end>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
           <Button variant="primary" onClick={submit} disabled={busy || !effectiveSlug || !name.trim()} loading={busy}>
             Spawn
           </Button>
-        </div>
-      </div>
+        </Row>
+      </Stack>
     </Modal>
+  );
+}
+
+// ---- Tasks section ----------------------------------------------------------
+function TaskRow({
+  task,
+  childrenOf,
+  depth,
+  onStatus,
+  onDelete,
+}: {
+  task: Task;
+  childrenOf: (parent: string | null, owner: string) => Task[];
+  depth: number;
+  onStatus: (id: string, status: TaskStatus) => void;
+  onDelete: (task: Task) => void;
+}) {
+  const kids = childrenOf(task.id, task.owner);
+  return (
+    <li>
+      <Row wrap style={{ paddingLeft: `calc(${depth} * var(--space-5))`, paddingTop: "var(--space-2)", paddingBottom: "var(--space-2)", borderBottom: "1px solid var(--border)" }}>
+        <Select
+          value={task.status}
+          onChange={(e) => onStatus(task.id, e.target.value as TaskStatus)}
+          aria-label="Task status"
+          style={{ width: "9rem" }}
+        >
+          {TASK_STATUSES.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </Select>
+        <StatusDot status={TASK_STATUS_KIND[task.status]}>{task.status}</StatusDot>
+        <span
+          style={{
+            flex: "1 1 16rem",
+            textDecoration: task.status === "done" ? "line-through" : "none",
+            color: task.status === "done" ? "var(--muted)" : "inherit",
+          }}
+        >
+          {task.text}
+        </span>
+        <Button size="sm" variant="danger-ghost" icon aria-label="Delete task" onClick={() => onDelete(task)}>
+          <Trash2 aria-hidden />
+        </Button>
+      </Row>
+      {kids.length > 0 && (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {kids.map((k) => (
+            <TaskRow key={k.id} task={k} childrenOf={childrenOf} depth={depth + 1} onStatus={onStatus} onDelete={onDelete} />
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -147,12 +355,34 @@ export default function ProjectDetail() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [docTab, setDocTab] = useState<DocTab>("brief");
+
+  // Brief (PROJECT.md)
   const [brief, setBrief] = useState("");
-  const [briefDirty, setBriefDirty] = useState(false);
-  const [todo, setTodo] = useState("");
-  const [todoDirty, setTodoDirty] = useState(false);
-  const [interventions, setInterventions] = useState("");
+  const briefEdit = useEditMode({ content: brief }, async (draft) => {
+    await fetch(`/api/projects/${slug}/brief`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: draft.content }),
+    });
+    setBrief(draft.content);
+  });
+
+  // Tasks
+  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [tasksErr, setTasksErr] = useState<string | null>(null);
+  const [showDone, setShowDone] = useState(false);
+  const [addText, setAddText] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [deleteTask, setDeleteTask] = useState<Task | null>(null);
+  const [deletingTask, setDeletingTask] = useState(false);
+
+  // Notes (INTERVENTIONS.md)
+  const [notes, setNotes] = useState<NoteEntry[] | null>(null);
+  const [notesErr, setNotesErr] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [postingNote, setPostingNote] = useState(false);
+  const [notePostErr, setNotePostErr] = useState<string | null>(null);
+
   const [agents, setAgents] = useState<BuildAgent[] | null>(null);
   const [spawning, setSpawning] = useState(false);
 
@@ -167,6 +397,7 @@ export default function ProjectDetail() {
 
   useCrumbLabel(project?.title || null);
 
+  // ---- Loaders --------------------------------------------------------------
   const loadWorktrees = useCallback(async () => {
     setWorktreesLoading(true);
     setWorktreesErr(null);
@@ -182,8 +413,117 @@ export default function ProjectDetail() {
     }
   }, [slug]);
 
-  useEffect(() => { loadWorktrees(); }, [loadWorktrees]);
+  const loadTasks = useCallback(async () => {
+    setTasksErr(null);
+    try {
+      const r = await fetch(`/api/projects/${slug}/tasks?include_done=true`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const d = await r.json();
+      setTasks(d.tasks as Task[]);
+    } catch (e) {
+      setTasksErr(String(e));
+      setTasks([]);
+    }
+  }, [slug]);
 
+  const loadNotes = useCallback(async () => {
+    setNotesErr(null);
+    try {
+      const r = await fetch(`/api/projects/${slug}/interventions`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const d = await r.json();
+      setNotes(parseNotes(d.content || ""));
+    } catch (e) {
+      setNotesErr(String(e));
+      setNotes([]);
+    }
+  }, [slug]);
+
+  const loadAll = useCallback(async () => {
+    try {
+      const [pR, bR, aR] = await Promise.all([
+        fetch(`/api/projects/${slug}`),
+        fetch(`/api/projects/${slug}/brief`),
+        fetch(`/api/agents/build`),
+      ]);
+      if (!pR.ok) throw new Error(`project: ${pR.status} ${await pR.text()}`);
+      setProject(await pR.json());
+      setBrief((bR.ok ? await bR.json() : { content: "" }).content || "");
+      const all: BuildAgent[] = aR.ok ? await aR.json() : [];
+      setAgents(all.filter((a) => a.project_slug === slug));
+    } catch (e) {
+      setErr(String(e));
+    }
+  }, [slug]);
+
+  useEffect(() => { loadWorktrees(); }, [loadWorktrees]);
+  useEffect(() => { loadTasks(); }, [loadTasks]);
+  useEffect(() => { loadNotes(); }, [loadNotes]);
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  // ---- Task mutations -------------------------------------------------------
+  const addTask = useCallback(async () => {
+    const text = addText.trim();
+    if (!text) return;
+    setAdding(true);
+    try {
+      await fetch(`/api/projects/${slug}/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, owner: "operator" }),
+      });
+      setAddText("");
+      await loadTasks();
+    } finally {
+      setAdding(false);
+    }
+  }, [addText, slug, loadTasks]);
+
+  const setTaskStatus = useCallback(async (id: string, status: TaskStatus) => {
+    setTasks((prev) => prev?.map((t) => (t.id === id ? { ...t, status } : t)) ?? prev);
+    await fetch(`/api/projects/${slug}/tasks/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    await loadTasks();
+  }, [slug, loadTasks]);
+
+  const doDeleteTask = useCallback(async () => {
+    if (!deleteTask) return;
+    setDeletingTask(true);
+    try {
+      await fetch(`/api/projects/${slug}/tasks/${deleteTask.id}`, { method: "DELETE" });
+      await loadTasks();
+    } finally {
+      setDeletingTask(false);
+      setDeleteTask(null);
+    }
+  }, [deleteTask, slug, loadTasks]);
+
+  // ---- Notes mutation -------------------------------------------------------
+  const postNote = useCallback(async () => {
+    const text = noteDraft.trim();
+    if (!text) return;
+    setPostingNote(true);
+    setNotePostErr(null);
+    try {
+      const r = await fetch(`/api/projects/${slug}/interventions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setNoteDraft("");
+      await loadNotes();
+    } catch (e) {
+      setNotePostErr(String(e));
+    } finally {
+      setPostingNote(false);
+    }
+  }, [noteDraft, slug, loadNotes]);
+
+  // ---- Branch mutations -----------------------------------------------------
   const doMerge = useCallback(async () => {
     if (!mergeTarget) return;
     setMerging(true);
@@ -213,48 +553,36 @@ export default function ProjectDetail() {
     }
   }, [discardTarget, slug, loadWorktrees]);
 
-  const loadAll = useCallback(async () => {
-    try {
-      const [pR, bR, tdR, iR, aR] = await Promise.all([
-        fetch(`/api/projects/${slug}`),
-        fetch(`/api/projects/${slug}/brief`),
-        fetch(`/api/projects/${slug}/todo`),
-        fetch(`/api/projects/${slug}/interventions`),
-        fetch(`/api/agents/build`),
-      ]);
-      if (!pR.ok) throw new Error(`project: ${pR.status} ${await pR.text()}`);
-      setProject(await pR.json());
-      setBrief((bR.ok ? await bR.json() : { content: "" }).content || "");
-      setBriefDirty(false);
-      setTodo((tdR.ok ? await tdR.json() : { content: "" }).content || "");
-      setTodoDirty(false);
-      setInterventions((iR.ok ? await iR.json() : { content: "" }).content || "");
-      const all: BuildAgent[] = aR.ok ? await aR.json() : [];
-      setAgents(all.filter((a) => a.project_slug === slug));
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, [slug]);
+  // ---- Task tree shaping ----------------------------------------------------
+  // Group by owner (operator first, then each agent), nest by parent, hide done
+  // unless toggled. Build the tree client-side from the flat list.
+  const visibleTasks = useMemo(() => {
+    if (!tasks) return [];
+    return showDone ? tasks : tasks.filter((t) => t.status !== "done");
+  }, [tasks, showDone]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  const ownerOrder = useMemo(() => {
+    const owners = new Set<string>(visibleTasks.map((t) => t.owner));
+    const agentSlugs = (agents ?? []).map((a) => a.slug);
+    const ordered: string[] = [];
+    if (owners.has("operator")) ordered.push("operator");
+    for (const a of agentSlugs) if (owners.has(a) && !ordered.includes(a)) ordered.push(a);
+    for (const o of owners) if (!ordered.includes(o)) ordered.push(o);
+    return ordered;
+  }, [visibleTasks, agents]);
 
-  const saveBrief = useCallback(async () => {
-    await fetch(`/api/projects/${slug}/brief`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: brief }),
-    });
-    setBriefDirty(false);
-  }, [brief, slug]);
+  const childrenOf = useCallback(
+    (parent: string | null, owner: string) =>
+      visibleTasks.filter((t) => t.owner === owner && (t.parent ?? null) === parent),
+    [visibleTasks],
+  );
 
-  const saveTodo = useCallback(async () => {
-    await fetch(`/api/projects/${slug}/todo`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content: todo }),
-    });
-    setTodoDirty(false);
-  }, [todo, slug]);
+  const agentName = useCallback(
+    (owner: string) => (agents ?? []).find((a) => a.slug === owner)?.name ?? owner,
+    [agents],
+  );
+
+  const doneCount = useMemo(() => (tasks ?? []).filter((t) => t.status === "done").length, [tasks]);
 
   if (err) {
     return (
@@ -268,6 +596,8 @@ export default function ProjectDetail() {
     return <div><PageHeader title="Loading project…" /></div>;
   }
 
+  const sideBranches = (worktrees ?? []).filter((w) => w.branch_slug !== "main" && w.branch !== "main");
+
   return (
     <div>
       <PageHeader
@@ -276,7 +606,7 @@ export default function ProjectDetail() {
         actions={
           <Row>
             <StatusPill status={stateKind(project.state)}>{project.state}</StatusPill>
-            <Button size="sm" variant="ghost" onClick={loadAll}>
+            <Button size="sm" variant="ghost" onClick={() => { loadAll(); loadTasks(); loadNotes(); loadWorktrees(); }}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
           </Row>
@@ -286,13 +616,13 @@ export default function ProjectDetail() {
       {/* --- Build agents on this project --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
-          <h2 className="ws-section__title" style={{ margin: 0 }}>Build agents</h2>
+          <SectionLabel icon={<Bot aria-hidden />}>Build agents</SectionLabel>
           <Button variant="primary" size="sm" onClick={() => setSpawning(true)}>
             <Plus aria-hidden /> Spawn build agent
           </Button>
         </Row>
         {!agents ? (
-          <p className="ws-muted">…</p>
+          <Card><Skeleton width="40%" /></Card>
         ) : agents.length === 0 ? (
           <StateBlock
             title="No build agents yet"
@@ -321,98 +651,249 @@ export default function ProjectDetail() {
         )}
       </section>
 
-      {/* --- Brief / TODO / Interventions --- */}
+      {/* --- Brief (PROJECT.md) --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
-        <h2 className="ws-section__title">Working brain</h2>
-        <Tabs items={DOC_TABS} value={docTab} onChange={setDocTab} />
-        <Card style={{ padding: "var(--space-3)", marginTop: "var(--space-3)" }}>
-          {docTab === "brief" && (
-            <>
-              <Row between style={{ marginBottom: "0.5rem" }}>
-                <span className="ws-card__meta">PROJECT.md · build agents read this every turn</span>
-                <Button size="sm" variant="primary" onClick={saveBrief} disabled={!briefDirty}>
-                  <Save aria-hidden /> Save
-                </Button>
-              </Row>
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<FileText aria-hidden />}>Brief</SectionLabel>
+          {!briefEdit.editing && brief.trim() !== "" && (
+            <Button size="sm" variant="ghost" onClick={briefEdit.begin}>
+              <Pencil aria-hidden /> Edit
+            </Button>
+          )}
+        </Row>
+        <Card>
+          {briefEdit.editing ? (
+            <Stack>
+              <span className="ws-card__meta">PROJECT.md · build agents read this every turn</span>
               <Textarea
-                value={brief}
-                onChange={(e) => { setBrief(e.target.value); setBriefDirty(true); }}
+                value={briefEdit.draft.content}
+                onChange={(e) => briefEdit.set("content", e.target.value)}
                 rows={14}
-                style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fs-sm)" }}
+                autoFocus
+                className="ws-mono"
+                style={{ fontSize: "var(--fs-sm)" }}
               />
-            </>
-          )}
-          {docTab === "todo" && (
-            <>
-              <Row between style={{ marginBottom: "0.5rem" }}>
-                <span className="ws-card__meta">TODO.md · workshop checklist conventions apply</span>
-                <Button size="sm" variant="primary" onClick={saveTodo} disabled={!todoDirty}>
-                  <Save aria-hidden /> Save
+              <ActionBar flash={briefEdit.flash ? "Saved" : undefined}>
+                <Button variant="ghost" onClick={briefEdit.cancel} disabled={briefEdit.saving}>Cancel</Button>
+                <Button variant="primary" onClick={briefEdit.save} loading={briefEdit.saving} disabled={!briefEdit.dirty}>
+                  Save
                 </Button>
-              </Row>
-              <Textarea
-                value={todo}
-                onChange={(e) => { setTodo(e.target.value); setTodoDirty(true); }}
-                rows={12}
-                style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fs-sm)" }}
-              />
-            </>
-          )}
-          {docTab === "interventions" && (
-            <pre
-              style={{
-                padding: "0.6rem", background: "var(--surface-2)",
-                borderRadius: "var(--radius-sm)", fontSize: "var(--fs-xs)",
-                maxHeight: "30vh", overflow: "auto", whiteSpace: "pre-wrap",
-              }}
-            >
-              {interventions || "(no interventions yet)"}
-            </pre>
+              </ActionBar>
+            </Stack>
+          ) : brief.trim() === "" ? (
+            <StateBlock
+              title="Describe what this project is for"
+              hint="The brief (PROJECT.md) is the goal + constraints your build agents read every turn."
+              action={
+                <Button variant="primary" size="sm" onClick={briefEdit.begin}>
+                  <Pencil aria-hidden /> Write the brief
+                </Button>
+              }
+            />
+          ) : (
+            <Brief source={brief} />
           )}
         </Card>
       </section>
 
-      {/* --- Branches (git worktrees) --- */}
+      {/* --- Tasks (structured tree) --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
-          <h2 className="ws-section__title" style={{ margin: 0 }}>Branches</h2>
+          <SectionLabel icon={<ListTodo aria-hidden />}>Tasks</SectionLabel>
+          <Toggle
+            checked={showDone}
+            onChange={setShowDone}
+            label={`Show done${doneCount ? ` (${doneCount})` : ""}`}
+          />
+        </Row>
+        <Card>
+          <Stack>
+            <Row wrap>
+              <Input
+                value={addText}
+                onChange={(e) => setAddText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTask(); } }}
+                placeholder="Add a task (operator)…"
+                style={{ flex: "1 1 16rem" }}
+              />
+              <Button variant="primary" onClick={addTask} loading={adding} disabled={!addText.trim()}>
+                <Plus aria-hidden /> Add task
+              </Button>
+            </Row>
+
+            {tasks === null ? (
+              <Stack gap="sm">
+                <Skeleton width="70%" />
+                <Skeleton width="55%" />
+                <Skeleton width="60%" />
+              </Stack>
+            ) : tasksErr ? (
+              <StateBlock
+                variant="error"
+                title="Couldn't load tasks"
+                hint={<code>GET /api/projects/{slug}/tasks — {tasksErr}</code>}
+                action={<Button size="sm" onClick={loadTasks}>Retry</Button>}
+              />
+            ) : ownerOrder.length === 0 ? (
+              <StateBlock
+                title={tasks.length === 0 ? "No tasks yet" : "No open tasks"}
+                hint={tasks.length === 0
+                  ? "Add a task above, or a build agent can create its own."
+                  : "All tasks are done. Toggle “Show done” to see them."}
+              />
+            ) : visibleTasks.length > 400 ? (
+              <StateBlock title="Too many tasks to render" hint="Close out or delete completed tasks to keep this list readable." />
+            ) : (
+              <Stack>
+                {ownerOrder.map((owner) => {
+                  const roots = childrenOf(null, owner);
+                  if (roots.length === 0) return null;
+                  return (
+                    <div key={owner}>
+                      <Row style={{ marginBottom: "var(--space-1)" }}>
+                        {owner === "operator" ? (
+                          <Tag hue="slate">operator</Tag>
+                        ) : (
+                          <Tag hue={catFor(owner)}>{agentName(owner)}</Tag>
+                        )}
+                      </Row>
+                      <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                        {roots.map((t) => (
+                          <TaskRow
+                            key={t.id}
+                            task={t}
+                            childrenOf={childrenOf}
+                            depth={0}
+                            onStatus={setTaskStatus}
+                            onDelete={setDeleteTask}
+                          />
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+              </Stack>
+            )}
+          </Stack>
+        </Card>
+      </section>
+
+      {/* --- Notes (was Interventions) --- */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <SectionLabel icon={<StickyNote aria-hidden />}>Notes</SectionLabel>
+        <Card>
+          <Stack>
+            <Row wrap>
+              <Input
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); postNote(); } }}
+                placeholder="Leave a note for this project…"
+                style={{ flex: "1 1 16rem" }}
+              />
+              <Button variant="primary" onClick={postNote} loading={postingNote} disabled={!noteDraft.trim()}>
+                <Send aria-hidden /> Post
+              </Button>
+            </Row>
+            {notePostErr && <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{notePostErr}</p>}
+
+            {notes === null ? (
+              <Stack gap="sm">
+                <Skeleton width="65%" />
+                <Skeleton width="50%" />
+              </Stack>
+            ) : notesErr ? (
+              <StateBlock
+                variant="error"
+                title="Couldn't load notes"
+                hint={<code>GET /api/projects/{slug}/interventions — {notesErr}</code>}
+                action={<Button size="sm" onClick={loadNotes}>Retry</Button>}
+              />
+            ) : notes.length === 0 ? (
+              <StateBlock
+                title="No notes yet"
+                hint="Post a note above to leave context for this project and its agents."
+              />
+            ) : (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                {notes.slice().reverse().map((n, i) => (
+                  <li key={i} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
+                    <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                      <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.ts)}</span>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{n.who}</span>
+                    </Row>
+                    <p style={{ margin: "var(--space-1) 0 0", lineHeight: "var(--lh-base)" }}>{n.text}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Stack>
+        </Card>
+      </section>
+
+      {/* --- Branches (git worktrees): main trunk + side branches --- */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<GitBranch aria-hidden />}>Branches</SectionLabel>
           <Button size="sm" variant="ghost" onClick={loadWorktrees} disabled={worktreesLoading}>
             <RefreshCw aria-hidden /> Refresh
           </Button>
         </Row>
-        <Card style={{ padding: "var(--space-3)" }}>
+        <Card>
+          {/* Trunk is always present: you are working on main. */}
+          <Row wrap style={{ paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--border)", alignItems: "center" }}>
+            <GitBranch size={16} aria-hidden />
+            <span className="ws-mono" style={{ fontWeight: "var(--fw-semi)" }}>main</span>
+            <StatusDot status="ok">trunk</StatusDot>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>Working on main</span>
+          </Row>
+
           {worktreesLoading && !worktrees ? (
-            <p className="ws-muted">Loading branches...</p>
+            <Stack gap="sm" style={{ paddingTop: "var(--space-3)" }}>
+              <Skeleton width="60%" />
+              <Skeleton width="45%" />
+            </Stack>
           ) : worktreesErr ? (
-            <StateBlock variant="error" title="Couldn't load branches" hint={<code>{worktreesErr}</code>} />
-          ) : !worktrees || worktrees.length === 0 ? (
-            <StateBlock
-              title="No branches yet"
-              hint="Work on a branched copy without touching main. Merge back when ready."
-            />
-          ) : worktrees.length > 50 ? (
-            <StateBlock title="Too many branches" hint="Merge or discard old ones to keep this list readable." />
+            <div style={{ paddingTop: "var(--space-3)" }}>
+              <StateBlock
+                variant="error"
+                title="Couldn't load branches"
+                hint={<code>GET /api/worktrees/{slug} — {worktreesErr}</code>}
+                action={<Button size="sm" onClick={loadWorktrees}>Retry</Button>}
+              />
+            </div>
+          ) : sideBranches.length === 0 ? (
+            <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", fontSize: "var(--fs-sm)" }}>
+              No side branches; working on main.
+            </p>
+          ) : sideBranches.length > 50 ? (
+            <div style={{ paddingTop: "var(--space-3)" }}>
+              <StateBlock title="Too many branches" hint="Merge or discard old ones to keep this list readable." />
+            </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {worktrees.map((w) => (
-                <li key={w.branch_slug} style={{ borderBottom: "1px solid var(--border)", padding: "var(--space-2) 0" }}>
-                  <Row wrap>
+              {sideBranches.map((w) => (
+                <li key={w.branch_slug} style={{ borderBottom: "1px solid var(--border)", padding: "var(--space-3) 0" }}>
+                  <Row wrap style={{ alignItems: "center" }}>
                     <GitBranch size={14} aria-hidden />
-                    <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{w.branch_slug}</span>
-                    <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{w.branch}</span>
-                    <span className="ws-spacer" />
-                    <Link
-                      to={`/projects/${slug}/diff?branch=${encodeURIComponent(w.branch_slug)}`}
-                      style={{ color: "var(--accent)", fontSize: "var(--fs-sm)" }}
-                    >
-                      Diff vs main
-                    </Link>
-                    <Button size="sm" variant="primary" onClick={() => { setMergeTarget(w); setMergeMessage(""); }}>
-                      Merge
-                    </Button>
-                    <Button size="sm" variant="danger-ghost" onClick={() => setDiscardTarget(w)}>
-                      Discard
-                    </Button>
+                    <span className="ws-mono" style={{ fontSize: "var(--fs-sm)", flex: "1 1 12rem" }}>{w.branch_slug}</span>
+                    {/* Condensed, aligned, equal-height actions menu. */}
+                    <Row style={{ gap: "var(--space-2)" }}>
+                      <Link
+                        to={`/projects/${slug}/diff?branch=${encodeURIComponent(w.branch_slug)}`}
+                        style={{ textDecoration: "none" }}
+                      >
+                        <Button size="sm" variant="ghost">
+                          <ExternalLink aria-hidden /> Diff
+                        </Button>
+                      </Link>
+                      <Button size="sm" variant="default" onClick={() => { setMergeTarget(w); setMergeMessage(""); }}>
+                        <GitMerge aria-hidden /> Merge
+                      </Button>
+                      <Button size="sm" variant="danger-ghost" icon aria-label="Discard branch" onClick={() => setDiscardTarget(w)}>
+                        <Trash2 aria-hidden />
+                      </Button>
+                    </Row>
                   </Row>
                 </li>
               ))}
@@ -421,17 +902,50 @@ export default function ProjectDetail() {
         </Card>
       </section>
 
-      {/* --- Surfaces summary --- */}
+      {/* --- Deployments (was Surfaces) --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
-        <h2 className="ws-section__title">Surfaces</h2>
-        <Card style={{ padding: "var(--space-3)" }}>
-          <p className="ws-muted ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-            integrated: {project.surfaces.integrated ?? "—"} ·
-            standalone: {project.surfaces.standalone ? `:${project.surfaces.standalone.port}` : "—"} ·
-            public: {project.surfaces.public ?? "—"}
-          </p>
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.5rem" }}>
-            One-click mount + guest tokens land in Phase C (app-platform manifests + grants).
+        <SectionLabel icon={<Rocket aria-hidden />}>Deployments</SectionLabel>
+        <Card>
+          <Stack>
+            <DeploymentRow
+              name="Integrated"
+              desc="A route mounted inside Workshop."
+              active={project.surfaces.integrated != null}
+              value={project.surfaces.integrated}
+              activeAction={
+                <Link to={project.surfaces.integrated || "#"} style={{ textDecoration: "none" }}>
+                  <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
+                </Link>
+              }
+              idleLabel="Mount"
+            />
+            <DeploymentRow
+              name="Standalone"
+              desc="Its own origin and port."
+              active={project.surfaces.standalone != null}
+              value={project.surfaces.standalone ? `:${project.surfaces.standalone.port}` : null}
+              activeAction={
+                <Button size="sm" variant="ghost" disabled title="Standalone open lands with the runner (Phase 4)">
+                  <ExternalLink aria-hidden /> Open
+                </Button>
+              }
+              idleLabel="Start"
+            />
+            <DeploymentRow
+              name="Public"
+              desc="Shared / marketplace URL."
+              active={project.surfaces.public != null}
+              value={project.surfaces.public}
+              activeAction={
+                <Link to={project.surfaces.public || "#"} style={{ textDecoration: "none" }}>
+                  <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
+                </Link>
+              }
+              idleLabel="Publish"
+            />
+          </Stack>
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-3)" }}>
+            One-click mount + guest tokens land with the deployment runner (app-platform manifests + grants, Phase 4).
           </p>
         </Card>
       </section>
@@ -486,6 +1000,62 @@ export default function ProjectDetail() {
         confirmLabel="Discard"
         busy={discarding}
       />
+
+      <ConfirmDialog
+        open={deleteTask !== null}
+        onCancel={() => setDeleteTask(null)}
+        onConfirm={doDeleteTask}
+        title="Delete task?"
+        body={
+          <span>
+            Permanently removes the task <strong>{deleteTask?.text}</strong> and any of its sub-tasks.
+            This can't be undone.
+          </span>
+        }
+        confirmLabel="Delete"
+        busy={deletingTask}
+      />
     </div>
+  );
+}
+
+// One deployment surface row: state + an action affordance. Where there is no
+// backend yet, the control is disabled (dimmed, not cursor-blocked) with a clear
+// label — no fake behavior.
+function DeploymentRow({
+  name,
+  desc,
+  active,
+  value,
+  activeAction,
+  idleLabel,
+}: {
+  name: string;
+  desc: string;
+  active: boolean;
+  value: string | null;
+  activeAction: ReactNode;
+  idleLabel: string;
+}) {
+  return (
+    <Row wrap style={{ alignItems: "center", paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ flex: "1 1 16rem" }}>
+        <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
+          <span style={{ fontWeight: "var(--fw-semi)" }}>{name}</span>
+          {active ? (
+            <StatusDot status="ok">live</StatusDot>
+          ) : (
+            <StatusDot status="stopped">not deployed</StatusDot>
+          )}
+          {value && <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{value}</span>}
+        </Row>
+        <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-xs)" }}>{desc}</p>
+      </div>
+      {active ? activeAction : (
+        <Button size="sm" variant="ghost" disabled title="Lands with the deployment runner (Phase 4)">
+          {idleLabel}
+        </Button>
+      )}
+    </Row>
   );
 }

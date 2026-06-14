@@ -365,6 +365,30 @@ async def get_interventions(slug: str) -> dict:
     return {"content": _read_text(_project_dir(slug) / "INTERVENTIONS.md")}
 
 
+class InterventionIn(BaseModel):
+    text: str
+    who: str = "operator"
+
+
+@router.post("/{slug}/interventions")
+async def add_intervention(slug: str, body: InterventionIn) -> dict:
+    """Append a timestamped note to INTERVENTIONS.md. Format matches the
+    reader: `[<iso-utc>] <who>: <text>` (one line per entry, newest appended)."""
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "empty note")
+    d = _project_dir(slug)
+    if not d.exists():
+        raise HTTPException(404, f"project not found: {slug}")
+    who = (body.who or "operator").strip() or "operator"
+    line = f"[{_now()}] {who}: {text}\n"
+    p = d / "INTERVENTIONS.md"
+    with p.open("a", encoding="utf-8") as f:
+        f.write(line)
+    _touch(slug)
+    return {"content": _read_text(p)}
+
+
 def _touch(slug: str) -> None:
     data = _load_registry()
     if slug in (data.get("projects") or {}):

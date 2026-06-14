@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft, WifiOff } from "lucide-react";
-import { Button, ConfirmDialog, Select, StateBlock } from "../ui";
-import { chatApi, type ChatMsg, type Thread, type ThreadSummary, type Provider } from "../lib/chat";
+import { Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft, WifiOff, ChevronRight, ChevronDown, ListTodo, X } from "lucide-react";
+import { Button, ConfirmDialog, Select, StateBlock, Skeleton, Input, Toggle } from "../ui";
+import {
+  chatApi,
+  type ChatMsg,
+  type Thread,
+  type ThreadSummary,
+  type Provider,
+  type AgentTask,
+  type AgentTaskStatus,
+} from "../lib/chat";
 
 // Unified Chat component. Replaces ChatPanel + BuildChatPanel.
 //
@@ -34,6 +42,20 @@ type ToolCall = { name: string; input: string };
 function deriveMode(contextKey: string): ChatMode {
   return contextKey.startsWith("build:") ? "build" : "data";
 }
+
+// A build agent's contextKey is "build:<slug>". The slug owns its task list per
+// the backend contract; data/assistant and project: contexts have no such list.
+function buildSlug(contextKey: string): string | null {
+  return contextKey.startsWith("build:") ? contextKey.slice("build:".length) : null;
+}
+
+const TASK_STATUSES: AgentTaskStatus[] = ["todo", "doing", "done", "blocked"];
+const TASK_STATUS_LABELS: Record<AgentTaskStatus, string> = {
+  todo: "To do",
+  doing: "Doing",
+  done: "Done",
+  blocked: "Blocked",
+};
 
 // Friendly labels for the model ids the backend routes by. Used as a fallback
 // when a provider doesn't ship a label for a model id.
@@ -91,6 +113,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [pendingText, setPendingText] = useState("");
   const [pendingTools, setPendingTools] = useState<ToolCall[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Bumped after a chat turn completes so the task panel refetches (the agent may
+  // have created/updated tasks during the turn — same store).
+  const [taskRefetchKey, setTaskRefetchKey] = useState(0);
+  const slug = buildSlug(contextKey);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
@@ -245,6 +272,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setMessages((m) => [...m, message]);
       refreshThreads();
       scheduleAutoNameRefetch(isFirst);
+      setTaskRefetchKey((k) => k + 1);
       if (notes && notes.length) onAction?.();
     } catch (e) {
       setErr(String(e));
@@ -314,6 +342,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         setPendingTools([]);
         refreshThreads();
         scheduleAutoNameRefetch(isFirst);
+        setTaskRefetchKey((k) => k + 1);
       };
       es.addEventListener("done", finish);
       es.addEventListener("end", finish);
@@ -552,9 +581,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   );
 
+  const taskPanel = slug ? <AgentTaskPanel slug={slug} refetchKey={taskRefetchKey} /> : null;
+
   const panelInner = (
     <div className="chat-panel">
       {threadBar}
+      {taskPanel}
       {log}
       {egressBanner}
       {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{err}</div>}
@@ -612,4 +644,210 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }
 
   return panelInner;
+}
+
+// ---- Per-agent task panel (build chats only) -------------------------------
+// A compact, collapsible section listing the build agent's own tasks. Operator
+// can add tasks and cycle their status; the agent writes the same store, so we
+// refetch on mount, on `refetchKey` change (after a turn completes), and after
+// every mutation. Done tasks are hidden until the "show done" toggle is on.
+function AgentTaskPanel({ slug, refetchKey }: { slug: string; refetchKey: number }) {
+  const [open, setOpen] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+  const [tasks, setTasks] = useState<AgentTask[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const load = useCallback(async () => {
+    setErr(null);
+    try {
+      setTasks(await chatApi.listAgentTasks(slug, showDone));
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [slug, showDone]);
+
+  // Refetch on mount, when scope/showDone changes, and after each turn. Keep the
+  // skeleton only for the very first load so background refetches don't flicker.
+  useEffect(() => {
+    void load();
+  }, [load, refetchKey]);
+
+  const setStatus = useCallback(
+    async (id: string, status: AgentTaskStatus) => {
+      // Optimistic: reflect immediately, then reconcile from the server.
+      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
+      try {
+        await chatApi.updateAgentTask(slug, id, { status });
+      } catch (e) {
+        setErr(String(e));
+      } finally {
+        void load();
+      }
+    },
+    [slug, load],
+  );
+
+  const remove = useCallback(
+    async (id: string) => {
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+      try {
+        await chatApi.deleteAgentTask(slug, id);
+      } catch (e) {
+        setErr(String(e));
+      } finally {
+        void load();
+      }
+    },
+    [slug, load],
+  );
+
+  const add = useCallback(async () => {
+    const text = draft.trim();
+    if (!text || adding) return;
+    setAdding(true);
+    setErr(null);
+    try {
+      await chatApi.addAgentTask(slug, text);
+      setDraft("");
+      await load();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setAdding(false);
+    }
+  }, [draft, adding, slug, load]);
+
+  const OVERFLOW = 100;
+  const visible = tasks.slice(0, OVERFLOW);
+  const openCount = tasks.filter((t) => t.status !== "done").length;
+
+  let body: React.ReactNode;
+  if (loading) {
+    body = (
+      <div className="chat-tasks__list" aria-busy="true">
+        <Skeleton width="80%" />
+        <Skeleton width="60%" />
+        <Skeleton width="70%" />
+      </div>
+    );
+  } else if (err) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't load tasks."
+        hint={
+          <>
+            <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>
+              GET /api/agents/build/{slug}/tasks
+            </span>
+            <div style={{ marginTop: "var(--space-2)" }}>
+              <Button size="sm" variant="ghost" onClick={() => { setLoading(true); void load(); }}>
+                Retry
+              </Button>
+            </div>
+          </>
+        }
+      />
+    );
+  } else if (tasks.length === 0) {
+    body = (
+      <StateBlock
+        title="No tasks yet."
+        hint="Add one below, or the agent will add tasks as it works on them here."
+      />
+    );
+  } else {
+    body = (
+      <>
+        <ul className="chat-tasks__list">
+          {visible.map((t) => (
+            <li key={t.id} className={`chat-task${t.status === "done" ? " chat-task--done" : ""}`}>
+              <Select
+                className="chat-task__status"
+                value={t.status}
+                onChange={(e) => setStatus(t.id, e.target.value as AgentTaskStatus)}
+                aria-label={`Status for ${t.text}`}
+                title="Task status"
+              >
+                {TASK_STATUSES.map((s) => (
+                  <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
+                ))}
+              </Select>
+              <span className="chat-task__text">{t.text}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon
+                onClick={() => remove(t.id)}
+                aria-label={`Delete task ${t.text}`}
+                title="Delete task"
+              >
+                <X aria-hidden />
+              </Button>
+            </li>
+          ))}
+        </ul>
+        {tasks.length > OVERFLOW && (
+          <div className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+            Showing the first {OVERFLOW} of {tasks.length} tasks.
+          </div>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <section className="chat-tasks">
+      <button
+        type="button"
+        className="chat-tasks__head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+      >
+        <span className="chat-tasks__chev">
+          {open ? <ChevronDown size={16} aria-hidden /> : <ChevronRight size={16} aria-hidden />}
+        </span>
+        <ListTodo size={14} aria-hidden />
+        <span className="chat-tasks__title">Tasks</span>
+        <span className="chat-tasks__count">{openCount} open</span>
+      </button>
+      {open && (
+        <div className="chat-tasks__body">
+          <div className="chat-tasks__toolbar">
+            <Toggle checked={showDone} onChange={setShowDone} label="Show done" />
+          </div>
+          {body}
+          <div className="chat-tasks__add">
+            <Input
+              value={draft}
+              placeholder="Add a task..."
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void add();
+                }
+              }}
+              aria-label="New task"
+            />
+            <Button
+              variant="primary"
+              icon
+              onClick={() => void add()}
+              disabled={adding || !draft.trim()}
+              aria-label="Add task"
+              title="Add task"
+            >
+              <Plus aria-hidden />
+            </Button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
 }
