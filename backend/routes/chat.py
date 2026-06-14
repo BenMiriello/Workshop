@@ -154,6 +154,19 @@ def _build_prompt(
     if preamble:
         parts.append(preamble)
     parts.append(provider.persona())
+    # Capability-aware fragment (doc 01 §3): consult the permissions framework so
+    # an app-bound assistant states its REAL allowed actions instead of promising
+    # things it can't do. Additive + best-effort: returns "" for non-app-bound
+    # providers (general/build) and never raises, so it can't break the chat path.
+    # Default-permissive — for the operator this only adds accurate "what you may
+    # do" facts; it does not gate the operator.
+    try:
+        cap_note = provider.capability_note("operator")
+    except Exception as e:
+        log.warning("chat capability_note failed for %s: %s", provider.key, e)
+        cap_note = ""
+    if cap_note:
+        parts.append(cap_note)
     ctx = ""
     try:
         ctx = provider.live_context()

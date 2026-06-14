@@ -74,6 +74,7 @@ SEED: dict[str, dict[str, Any]] = {
 }
 
 _SENSITIVITIES = {"private", "shareable", "public"}
+_ACTION_POLICIES = {"read", "confirm", "allow"}
 
 
 def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
@@ -89,12 +90,21 @@ def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
     sensitivity = raw.get("sensitivity")
     if sensitivity not in _SENSITIVITIES:
         sensitivity = "private"
+    # Optional per-action policy map {<action>: "read"|"confirm"|"allow"} consumed
+    # by services/permissions.py. Absent => {} (every action takes its default).
+    # An unrecognized policy value normalizes to "read" (the safe default).
+    raw_actions = raw.get("actions")
+    actions: dict[str, str] = {}
+    if isinstance(raw_actions, dict):
+        for name, policy in raw_actions.items():
+            actions[str(name)] = policy if policy in _ACTION_POLICIES else "read"
     return {
         "title": str(raw.get("title") or app_id),
         "sensitivity": sensitivity,
         "api_prefixes": [str(p) for p in (raw.get("api_prefixes") or []) if isinstance(p, str)],
         "provides": [str(c) for c in (raw.get("provides") or []) if isinstance(c, str)],
         "needs": [str(c) for c in (raw.get("needs") or []) if isinstance(c, str)],
+        "actions": actions,
         "kit": str(raw.get("kit") or DEFAULT_KIT),
     }
 

@@ -9,9 +9,9 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 
-from services import manifests
+from services import manifests, permissions
 
 router = APIRouter()
 
@@ -69,3 +69,39 @@ async def get_app_manifest(app_id: str):
     if entry is None:
         raise HTTPException(404, f"app manifest not found: {app_id}")
     return entry
+
+
+# ---- Grants + permissions (the authz source of truth) -----------------------
+# Grants are operator-owned. These endpoints sit behind the same loopback-trusted
+# `_SECURE` deps the rest of base-apps uses (see main.py); they add NO new auth
+# surface and impose NO middleware on existing routes. The framework is a
+# CONSULTED source of truth — default-permissive for the operator — not a wall.
+
+
+@router.get("/grants")
+async def get_grants():
+    """Return the operator-owned grants document {"grants": [...], "guests": [...]}.
+    Auto-created empty on first read; tolerant of a corrupt file (serves empty)."""
+    return permissions.load_grants()
+
+
+@router.put("/grants")
+async def put_grants(doc: dict = Body(...)):
+    """Replace the full grants document. Validates the top-level shape (400 on a
+    bad shape) and atomically saves. Operator-only conceptually; loopback-trusted
+    like the existing manifest pattern — no new auth surface."""
+    try:
+        return permissions.save_grants(doc)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/permissions/{app_id}")
+async def get_app_permissions(app_id: str):
+    """Assistant capabilities for an app under the operator identity: what a data
+    assistant bound to this app may actually do (can_read, resolved action
+    policies, reachable apps). This is what the chat layer consults so an
+    assistant's preamble states its real allowed actions (doc 01 section 3)."""
+    if manifests.get_manifest(app_id) is None:
+        raise HTTPException(404, f"app manifest not found: {app_id}")
+    return permissions.assistant_capabilities(app_id, permissions.OPERATOR_IDENTITY)

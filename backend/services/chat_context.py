@@ -175,6 +175,62 @@ class ContextProvider:
         Default empty — the seam exists; no UI is built here yet."""
         return ""
 
+    # The app id this provider's chat is bound to, for permissions resolution.
+    # Data/app assistants whose `key` matches an apps.json manifest id (budget,
+    # finance, commute, location, ...) bind to that app. The `general` provider
+    # and build providers return None (no single app boundary). Subclasses may
+    # override if their key differs from their app id.
+    def permission_app_id(self) -> str | None:
+        from services import manifests as _mf
+
+        if _mf.get_manifest(self.key) is not None:
+            return self.key
+        return None
+
+    def capability_note(self, identity: Any = "operator") -> str:
+        """Capability-aware preamble fragment (doc 01 section 3): a short,
+        accurate statement of what this assistant may actually do, derived from
+        the permissions framework (the consulted source of truth). Returns "" for
+        providers not bound to a single app, so it's safe to append unconditionally.
+
+        DEFAULT-PERMISSIVE: for the operator this states broad read access plus any
+        confirm-gated actions — it never narrows or blocks the operator; it only
+        gives the model accurate "what you may do" facts so it stops promising
+        actions it can't take."""
+        app_id = self.permission_app_id()
+        if app_id is None:
+            return ""
+        try:
+            from services import permissions
+            caps = permissions.assistant_capabilities(app_id, identity)
+        except Exception as e:  # never let authz consultation break the chat path
+            log.warning("capability_note: permissions consult failed for %s: %s", app_id, e)
+            return ""
+
+        lines: list[str] = ["=== WHAT YOU MAY DO (from the permissions framework) ==="]
+        lines.append(
+            f"You are bound to the '{app_id}' app and may READ its data."
+            if caps.get("can_read")
+            else f"You are bound to the '{app_id}' app but may NOT read its data."
+        )
+        actions = caps.get("actions") or {}
+        allowed = [a for a, d in actions.items() if d == "allow"]
+        confirm = [a for a, d in actions.items() if d == "confirm"]
+        denied = [a for a, d in actions.items() if d == "deny"]
+        if allowed:
+            lines.append("Actions you may take directly: " + ", ".join(sorted(allowed)) + ".")
+        if confirm:
+            lines.append(
+                "Actions that require the operator to confirm first (propose, don't auto-apply): "
+                + ", ".join(sorted(confirm)) + "."
+            )
+        if denied:
+            lines.append("Actions you may NOT take: " + ", ".join(sorted(denied)) + ".")
+        reach = [a for a in (caps.get("reachable_apps") or []) if a != app_id]
+        if reach:
+            lines.append("Data from other apps you may reach (granted): " + ", ".join(reach) + ".")
+        return "\n".join(lines)
+
 
 # ---------------------------------------------------------------- budget provider
 
