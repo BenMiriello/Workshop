@@ -11,6 +11,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from services import manifests
+
 router = APIRouter()
 
 # Defaults to the tenant home. Configurable to scan a different root if needed.
@@ -46,3 +48,24 @@ async def list_base_apps():
         meta = _git_meta(entry)
         out.append({"name": entry.name, "path": str(entry), **(meta or {})})
     return out
+
+
+# ---- App manifests (data layer only — no enforcement) -----------------------
+# Read-only view of the per-app manifest store (backend/apps.json). See
+# services/manifests.py and docs/app-platform-plan.md section 3. These endpoints
+# expose the declared manifests; nothing here enforces scope or grants.
+
+
+@router.get("/manifests")
+async def get_app_manifests():
+    """Return the full app manifest map: {"apps": {<id>: {...}}}."""
+    return {"apps": manifests.load_manifests()}
+
+
+@router.get("/manifests/{app_id}")
+async def get_app_manifest(app_id: str):
+    """Return a single app's manifest, or 404 if it is not declared."""
+    entry = manifests.get_manifest(app_id)
+    if entry is None:
+        raise HTTPException(404, f"app manifest not found: {app_id}")
+    return entry
