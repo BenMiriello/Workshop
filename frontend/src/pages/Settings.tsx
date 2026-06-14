@@ -18,6 +18,7 @@ import {
   Moon,
   Monitor,
   Trash2,
+  FolderGit2,
 } from "lucide-react";
 import {
   Button,
@@ -72,6 +73,7 @@ export default function Settings() {
     <div style={{ maxWidth: 760 }}>
       <PageHeader title="Settings" />
       <AppearanceSection />
+      <BaseAppsSection />
       <LocationSection />
       <HealthSection />
       <CommuteSection />
@@ -80,6 +82,25 @@ export default function Settings() {
       <FinanceSection />
       <SystemSection />
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Base Apps section — pointer into Settings → Base Apps subroute. Holds the
+// tenant-level git-repo listing previously at /projects. See ADR-008.
+// ----------------------------------------------------------------------------
+function BaseAppsSection() {
+  return (
+    <Section icon={FolderGit2} title="Base Apps">
+      <Row label="repos">
+        <Link to="/settings/base-apps" style={{ color: "var(--accent)" }}>
+          tenant repos + branches ↗
+        </Link>
+        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
+          (foundational tooling: workshop, clawdbot, infra)
+        </span>
+      </Row>
+    </Section>
   );
 }
 

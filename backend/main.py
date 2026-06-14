@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 
 from deps_auth import require_token
 
-from routes import agents, projects, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health, autonomy, chat, birds, environment
+from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health, autonomy, chat, birds, environment, worktrees
 from services.supervisor import AgentSupervisor
 from services import global_memory, finance_cache, categorizer
 from services import environment as environment_svc
@@ -166,6 +166,8 @@ _SECURE = [Depends(require_token)]
 app.include_router(agent_runs.router, dependencies=_SECURE)  # MUST be before agents router so /agents/runs wins over /agents/{agent_id}
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_SECURE)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_SECURE)
+app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_SECURE)
+app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_SECURE)
 app.include_router(finance.router, prefix="/finance", tags=["finance"], dependencies=_SECURE)
 app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencies=_SECURE)
 app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_SECURE)

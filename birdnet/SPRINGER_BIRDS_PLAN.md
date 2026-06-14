@@ -1,6 +1,80 @@
 # Springer Birds — standalone multi-account plan
 
-Status: **proposal / for operator review** · Date: 2026-06-07 · Author: clawd-a
+Status: **partially implemented** · Updated: 2026-06-09 · Author: clawd-a
+
+## 2026-06-09 update — decisions locked by the operator + what is now BUILT
+
+Operator decisions this round (supersede the open questions where they conflict):
+
+1. **Server is authoritative for device settings.** A device's mode / fixed
+   location / shared flag live in the backend; the recorder hydrates from
+   `/birds/device` on load + on tab refocus, and localStorage is only a
+   first-paint cache. Setting a device from any screen (laptop, the Pi's admin
+   view) now drives that device. *(Built.)*
+2. **One store — the always-on is just a device.** BirdNET-Go is adapted via its
+   existing per-detection webhook: `/birds/webhook` now ingests each always-on
+   detection into the SAME `browser_detections` table the browser path writes
+   to, attributed to a fixed, shared `yard` device. The app reads one store; the
+   separate "yard source" card is gone (the yard shows up as an ordinary
+   location). `birds_store.py`/`birdnet.db` is no longer on the app's read path
+   for devices/locations (the public sanitized page is a separate artifact and
+   still builds from it for now — repoint later if desired). *(Built.)*
+3. **Friend model, not groups.** Mutual `friendships` (symmetric, accepted)
+   define sharing: a viewer sees their own devices plus accepted friends'
+   `shared=1` devices. No group table. *(Built: schema + visibility resolver.)*
+
+What is BUILT and verified (backend live; frontend on Vite HMR):
+- Schema: `users`, `friendships`, `devices.owner_user_id`, `devices.shared`,
+  `browser_detections.owner_user_id` + `clip_name`. Operator seeded as user 1
+  (admin, email from `SPRINGER_ADMIN_EMAIL`), all legacy devices+detections
+  backfilled to owner 1. Additive migration; private app unchanged.
+- `visible_tokens(viewer_id)` + `_visible_clause()` — per-device token visibility
+  honoring the CURRENT shared flag. Threaded through `/devices` and `/locations`
+  (and `list_devices`/`list_locations`) with optional `viewer_id`; **None =
+  operator/private app = see everything**. Verified: friend sees own + operator's
+  shared (yard) but not operator's private devices; unfriend cuts visibility.
+- `/birds/webhook` ingestion (always-on → unified store). Verified end-to-end.
+- Recorder server-authoritative hydration + a per-device **Private / Shared with
+  friends** toggle in the Devices editor (works fixed or adaptive).
+- Admin endpoints: `GET /users`, `POST /user`, `GET/POST/DELETE /friend(s)`.
+- The "fixed reverts to adaptive" bug (analyze_chunk stomping `mode` every chunk)
+  — fixed earlier this session.
+
+### Auth + exposure decided 2026-06-09 (supersedes §3 "Bundle A")
+
+- **Domain**: `benmiriello.com` (existing Cloudflare zone). App at `birds.benmiriello.com`
+  via a **named cloudflared tunnel → 127.0.0.1:8001**. Apex/www site untouched.
+- **Auth = our own app-native login (Bundle B), NOT Cloudflare Access.** Operator
+  wants a standalone username/password login, not CF email-OTP. Tradeoff accepted:
+  the login page is origin-served (vs Access edge-blocking), hardened instead.
+- **Hard requirement (operator, 2026-06-09)**: anonymous visitors see ONLY the
+  login page; the SPA bundle + all data ship only after a valid session.
+  `springer_app` binds 127.0.0.1 only, imports birds+auth only, serves the
+  birds-only build itself (NOT public Pages, so the JS isn't downloadable
+  anonymously).
+- **BUILT + tested this round**: `services/springer_auth.py` (stdlib scrypt
+  passwords, `sessions` table, login/session_user/logout, no pip dep — egress
+  guard blocks pip), `users.password_hash` + `sessions` schema (migrated),
+  `backend/scripts/springer_account.py` admin CLI (`set <email> <pw>` / `list`;
+  accounts are admin-created, no open signup). Verified: wrong pw rejected, valid
+  pw → session → resolve → logout invalidates. Operator/friend passwords set via
+  the CLI (keyed by email → same account as Workshop user 1).
+
+Remaining work (the parts that genuinely need the operator / are not yet wired):
+- **Thread `viewer_id` through the rest of the read endpoints** before the
+  standalone app is exposed (currently only `/devices` + `/locations` enforce it;
+  `location/summary|species|activity`, `bird`, `suggestions`, `stations`, atlas,
+  recordings still return unscoped data — fine while there is no session user,
+  MUST be done as part of standalone bring-up below or it is a data-leak).
+- **Standalone hardened app + Cloudflare Access** (§2-3 below) — `springer_app.py`,
+  the auth dependency, tunnel + Access policy, the 2 emails. Operator dashboard +
+  interactive auth; not startable by me. Decisions §10 #1-#5 still stand.
+- Optional: off-tab **Live panel** on the Location page (poll `/analyze/recent`)
+  and repointing the public dataset build off `birds_store`.
+
+---
+
+Status (original): **proposal / for operator review** · Date: 2026-06-07 · Author: clawd-a
 
 Goal (operator's words, 2026-06-07): take the existing Workshop birds app, give
 it an accounts/auth layer, keep it the *same data and same app* but run it

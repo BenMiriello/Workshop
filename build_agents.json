@@ -1,0 +1,95 @@
+{
+  "build_agents": {
+    "probe-free": {
+      "name": "Probe Free",
+      "purpose": "smoke",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/build-agents/probe-free",
+      "project_slug": null,
+      "state": "running",
+      "created": "2026-06-13T18:16:47+00:00",
+      "last_active": "2026-06-13T18:23:50+00:00",
+      "claude_session": "11300055-59d5-430a-aba7-f443a2fc7734"
+    },
+    "probe-linked": {
+      "name": "Probe Linked",
+      "purpose": "smoke",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/projects/demo-x",
+      "project_slug": "demo-x",
+      "state": "idle",
+      "created": "2026-06-13T18:16:47+00:00",
+      "last_active": "2026-06-13T18:16:47+00:00",
+      "claude_session": null
+    },
+    "probe-git": {
+      "name": "Probe Git",
+      "purpose": "verify auto-git",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/build-agents/probe-git",
+      "project_slug": null,
+      "state": "idle",
+      "created": "2026-06-13T18:28:50+00:00",
+      "last_active": "2026-06-13T18:28:58+00:00",
+      "claude_session": null
+    },
+    "test1234": {
+      "name": "test1234",
+      "purpose": "seeing how this works",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/build-agents/test1234",
+      "project_slug": null,
+      "state": "idle",
+      "created": "2026-06-13T18:51:56+00:00",
+      "last_active": "2026-06-13T18:51:56+00:00",
+      "claude_session": null
+    },
+    "smoke-fix": {
+      "name": "Smoke Fix",
+      "purpose": "verify route after restart",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/build-agents/smoke-fix",
+      "project_slug": null,
+      "state": "running",
+      "created": "2026-06-13T18:52:05+00:00",
+      "last_active": "2026-06-13T18:53:31+00:00",
+      "claude_session": "7babdedd-a67f-4831-892e-593a7d4a51d9"
+    },
+    "gengui-smoke": {
+      "name": "Gengui smoke",
+      "purpose": "E2E smoke after ADR-009",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/projects/gengui",
+      "project_slug": "gengui",
+      "branch_slug": null,
+      "state": "retired",
+      "created": "2026-06-13T21:18:51+00:00",
+      "last_active": "2026-06-13T21:18:51+00:00",
+      "claude_session": null
+    },
+    "gengui-builder-1": {
+      "name": "gengui builder 1",
+      "purpose": "",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/projects/gengui",
+      "project_slug": "gengui",
+      "branch_slug": null,
+      "state": "running",
+      "created": "2026-06-14T07:54:29+00:00",
+      "last_active": "2026-06-14T19:21:51+00:00",
+      "claude_session": "8a82560c-c2c7-43a4-8709-ed18350c8d32"
+    },
+    "test2": {
+      "name": "test2",
+      "purpose": "",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/build-agents/test2",
+      "project_slug": null,
+      "branch_slug": null,
+      "state": "idle",
+      "created": "2026-06-14T19:18:00+00:00",
+      "last_active": "2026-06-14T19:18:00+00:00",
+      "claude_session": null
+    }
+  }
+}

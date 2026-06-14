@@ -310,6 +310,8 @@ def call_cloud(
     tools_disabled: bool = False,
     allowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
+    session_id: str | None = None,
+    resume: bool = False,
 ) -> dict:
     """Subprocess `claude -p` with subscription auth.
 
@@ -381,6 +383,17 @@ def call_cloud(
             "--output-format", "text",
             "--max-turns", str(max_turns),
         ])
+
+    # Session persistence (Build mode): `--session-id` reserves a uuid on the
+    # first call so subsequent `--resume` calls continue the same conversation.
+    # The Claude Code CLI maintains its own checkpoint on disk; we just pass
+    # the handle. `resume=True` means "this is a follow-up turn, pull prior
+    # context from the saved session" — the caller's prompt becomes just the
+    # new user message rather than rebuilt history.
+    if session_id and resume:
+        cmd.extend(["--resume", session_id])
+    elif session_id:
+        cmd.extend(["--session-id", session_id])
 
     start = time.time()
     try:

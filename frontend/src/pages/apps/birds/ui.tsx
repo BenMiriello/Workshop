@@ -25,6 +25,18 @@ export const hh = (h: number) => {
   return `${h12} ${ap}`;
 };
 
+// A device is "recording" if it posted very recently. The Pi yard bridge POSTs a
+// block every ~3s while it's streaming, and the browser recorder refreshes
+// last_seen while live, so a 60s window cleanly separates "recording right now"
+// from "went quiet". Used to drive the live indicator on the header + device cards.
+export const RECORDING_WINDOW_S = 60;
+export function isRecording(lastSeen: string | null, withinSec = RECORDING_WINDOW_S): boolean {
+  if (!lastSeen) return false;
+  const t = new Date(lastSeen).getTime();
+  if (Number.isNaN(t)) return false;
+  return (Date.now() - t) / 1000 < withinSec;
+}
+
 export async function jget<T>(path: string): Promise<T> {
   const r = await fetch(`${API}${path}`);
   if (!r.ok) throw new Error(String(r.status));

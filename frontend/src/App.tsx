@@ -1,7 +1,11 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import Agents from "./pages/Agents";
 import AgentConfig from "./pages/AgentConfig";
+import AgentBuild from "./pages/AgentBuild";
 import Projects from "./pages/Projects";
+import ProjectNew from "./pages/ProjectNew";
+import ProjectDetail from "./pages/ProjectDetail";
+import BaseApps from "./pages/settings/BaseApps";
 import Apps from "./pages/Apps";
 import Finance from "./pages/apps/Finance";
 import Budget from "./pages/apps/Budget";
@@ -20,6 +24,7 @@ import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
+import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
 
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
@@ -39,8 +44,12 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/apps" replace />} />
           <Route path="/agents" element={<Agents />} />
+          <Route path="/agents/build/:slug" element={<AgentBuild />} />
           <Route path="/agents/:agentId" element={<AgentConfig />} />
           <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/new" element={<ProjectNew />} />
+          <Route path="/projects/:slug" element={<ProjectDetail />} />
+          <Route path="/settings/base-apps" element={<BaseApps />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/apps/finance" element={<Finance />} />
           <Route path="/apps/budget" element={<Budget />} />
@@ -57,6 +66,7 @@ export default function App() {
           <Route path="/apps/birds/atlas" element={<Atlas />} />
           <Route path="/apps/birds/forecast" element={<ForecastWeek />} />
           <Route path="/apps/commute" element={<CommuteApp />} />
+          <Route path="/chat/:contextKey" element={<FocusedChat />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />

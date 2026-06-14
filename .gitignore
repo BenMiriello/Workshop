@@ -52,3 +52,11 @@ infra/open-wearables/repo/
 # Regenerate with `pmtiles extract` (see docs/app-platform-plan.md).
 *.pmtiles
 frontend/public/basemap/
+
+# Per-project working trees, build-agent scratch dirs, and worktrees.
+# Each is its own git repo / ephemeral working state — not Workshop source.
+# The registries (projects.json, build_agents.json) and scaffold templates ARE tracked.
+/projects/*
+!/projects/_templates/
+/build-agents/
+/branches/

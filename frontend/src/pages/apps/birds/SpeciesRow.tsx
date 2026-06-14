@@ -21,8 +21,8 @@ import { PlayButton } from "./recordings";
 export type TrustStatus = "confirmed" | "suggested" | "rejected";
 export type SpeciesAgg = {
   scientific_name: string; common_name: string; count: number; max_conf: number;
-  // Trust state from the backend: is_new = an unacknowledged first appearance
-  // (the "New" badge); auto = auto-confirm is armed for this species.
+  // Trust state from the backend: is_new = first heard at this location within
+  // the last 24h (the "New" badge); auto = auto-confirm is armed for this species.
   is_new?: boolean; auto?: boolean;
 };
 type Ev = { id: number; at: string; confidence: number; device: string | null; status: string; location: string | null; recording_id: number | null };
@@ -46,13 +46,12 @@ export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
   const toggle = useCallback(() => {
     const next = !open;
     setOpen(next);
-    if (next) {
-      loadEvents();
-      // Looking at a suggestion (expanding it) acknowledges its first appearance
-      // and clears the new-arrival badge. No decision is forced.
-      if (status === "suggested") apost("/species/review", { sci: s.scientific_name }).then(onChanged).catch(() => {});
-    }
-  }, [open, status, s.scientific_name, loadEvents, onChanged]);
+    // Expanding a row only reveals its detections — it does NOT acknowledge the
+    // species or touch the "New" badge, so the row never jumps position when you
+    // open it. "New" is purely a time window (first heard < 24h ago), set by the
+    // backend; nothing the user does here changes it.
+    if (next) loadEvents();
+  }, [open, loadEvents]);
 
   const refresh = useCallback(() => { loadEvents(); onChanged(); }, [loadEvents, onChanged]);
 
@@ -91,7 +90,7 @@ export default function SpeciesRow({ s, locId, status, lat, lon, onChanged }: {
                 {/* What this row IS, not just its name: a brand-new arrival in the
                     Suggested tab, or an auto-confirming species in Confirmed. */}
                 {status === "suggested" && s.is_new && (
-                  <span className="pill new" title="First time at your stations, not yet acknowledged">
+                  <span className="pill new" title="First heard at this location in the last 24 hours">
                     <Sparkles size={11} /> New
                   </span>
                 )}

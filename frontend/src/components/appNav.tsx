@@ -44,19 +44,44 @@ const NODES: Record<string, RouteNode> = {
   "/apps/commute": { label: "Commute", parent: "/apps" },
   "/agents": { label: "Agents" },
   "/projects": { label: "Projects" },
+  "/projects/new": { label: "New project", parent: "/projects" },
   "/activity": { label: "Activity" },
   "/settings": { label: "Settings" },
+  "/settings/base-apps": { label: "Base Apps", parent: "/settings" },
 };
 
 // Longest-prefix lookup keys, most specific first.
 const NODE_KEYS = Object.keys(NODES).sort((a, b) => b.length - a.length);
 
 export function resolveCrumbs(pathname: string): Crumb[] {
+  // Focused chat: /chat/<context-key>. The leaf shows the decoded key so
+  // "build:foo" reads as "Chat · build:foo" rather than the encoded form.
+  if (pathname.startsWith("/chat/")) {
+    const key = decodeURIComponent(pathname.slice("/chat/".length));
+    return [{ label: `Chat · ${key}` }];
+  }
+  // Build-agent detail: /agents/build/<slug>. Resolved separately so the
+  // breadcrumb reads Agents / Build / <slug> instead of Agents / build/<slug>.
+  if (pathname.startsWith("/agents/build/")) {
+    return [
+      { label: "Agents", to: "/agents" },
+      { label: "Build" },
+      { label: decodeURIComponent(pathname.slice("/agents/build/".length)) },
+    ];
+  }
   // Dynamic detail under a known section, e.g. /agents/<id>.
   if (pathname.startsWith("/agents/")) {
     return [
       { label: "Agents", to: "/agents" },
       { label: decodeURIComponent(pathname.slice("/agents/".length)) },
+    ];
+  }
+  // Project detail: /projects/<slug>. The page calls useCrumbLabel to swap the
+  // leaf for the project title once loaded; until then we show the slug.
+  if (pathname.startsWith("/projects/") && pathname !== "/projects/new") {
+    return [
+      { label: "Projects", to: "/projects" },
+      { label: decodeURIComponent(pathname.slice("/projects/".length)) },
     ];
   }
   const key =
@@ -311,10 +336,12 @@ export function AppGroupNav() {
 // the links collapse to a single overflow-menu button so the toolbar stays one
 // row — the current section is already named in the breadcrumb, so nothing is
 // lost. CSS toggles which of the two renders at the breakpoint.
+// Per ADR-008: use first, build second, workers third, telemetry fourth,
+// config last. Matches frequency of operator use.
 const SECTIONS = [
-  { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/projects", label: "Projects", icon: FolderGit2 },
   { to: "/apps", label: "Apps", icon: LayoutGrid },
+  { to: "/projects", label: "Projects", icon: FolderGit2 },
+  { to: "/agents", label: "Agents", icon: Bot },
   { to: "/activity", label: "Activity", icon: ActivityIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];

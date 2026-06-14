@@ -24,9 +24,10 @@ const TOKEN_KEY = "birdDeviceToken";
 const NAME_KEY = "birdDeviceName";
 const MODE_KEY = "birdDeviceMode";
 const FIXED_KEY = "birdDeviceFixedLoc";
+const SHARED_KEY = "birdDeviceShared";
 
 export type DeviceMode = "adaptive" | "fixed";
-export type Device = { token: string; name: string; mode: DeviceMode; fixedLocationId: string };
+export type Device = { token: string; name: string; mode: DeviceMode; fixedLocationId: string; shared: boolean };
 export type Det = {
   scientific_name: string; common_name: string; confidence: number;
   is_bird: boolean; stored?: boolean;
@@ -63,6 +64,7 @@ type Ctx = {
   adoptDevice: (token: string, name: string) => void;
   setMode: (m: DeviceMode) => void;
   setFixedLocation: (id: string) => void;
+  setShared: (shared: boolean) => void;
   recording: boolean;
   status: "idle" | "listening" | "analyzing";
   elapsed: number;
@@ -89,6 +91,11 @@ export const useRecorder = () => {
   return c;
 };
 
+// The token is the only durable client identity. name/mode/fixed/shared are read
+// from localStorage as an OFFLINE CACHE for the first paint, then immediately
+// overwritten by the server's authoritative copy (see hydrateFromServer): the
+// backend is the source of truth, so a device's mode set from any screen (or the
+// Pi's admin view) drives this device too — localStorage no longer wins.
 function loadDevice(): Device {
   let token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem("birdStationToken") || "";
   if (!token) token = crypto.randomUUID?.() || String(Math.random()).slice(2);
@@ -96,7 +103,8 @@ function loadDevice(): Device {
   const name = localStorage.getItem(NAME_KEY) ?? localStorage.getItem("birdStationLabel") ?? "";
   const mode = (localStorage.getItem(MODE_KEY) as DeviceMode) || "adaptive";
   const fixedLocationId = localStorage.getItem(FIXED_KEY) || "";
-  return { token, name, mode, fixedLocationId };
+  const shared = localStorage.getItem(SHARED_KEY) === "1";
+  return { token, name, mode, fixedLocationId, shared };
 }
 
 // Encode Float32 PCM [-1,1] as a 16-bit mono WAV blob at the given sample rate.
@@ -188,6 +196,7 @@ async function postDevice(d: Device) {
   if (d.name) fd.append("name", d.name);
   fd.append("mode", d.mode);
   if (d.mode === "fixed" && d.fixedLocationId) fd.append("fixed_location_id", d.fixedLocationId);
+  fd.append("shared", d.shared ? "true" : "false");
   if (typeof navigator !== "undefined" && navigator.userAgent) fd.append("user_agent", navigator.userAgent);
   try { await fetch(`${API}/device`, { method: "POST", body: fd }); } catch { /* offline ok */ }
 }
@@ -241,10 +250,50 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const inFlightRef = useRef(0);
   const deviceRef = useRef(device);
   deviceRef.current = device;
+  const recordingRef = useRef(recording);
+  recordingRef.current = recording;
+
+  // Pull this device's authoritative settings from the server and adopt them,
+  // overwriting the localStorage cache. This is what makes the server the source
+  // of truth: set this device to "fixed" from your laptop (or the Pi admin view)
+  // and the next hydrate here flips it, no matter what this browser had cached.
+  // Skipped while recording so a refresh mid-session can't yank the live mode.
+  const hydrateFromServer = useCallback(() => {
+    const tok = deviceRef.current.token;
+    if (!tok || recordingRef.current) return;
+    fetch(`${API}/device?token=${encodeURIComponent(tok)}`)
+      .then((r) => r.json())
+      .then((res) => {
+        const sd = res.device;
+        if (!sd) return; // not registered server-side yet; keep the local cache
+        const mode: DeviceMode = sd.mode === "fixed" ? "fixed" : "adaptive";
+        const fixedLocationId = sd.fixed_location_id ? String(sd.fixed_location_id) : "";
+        const shared = !!sd.shared;
+        const name = sd.name || deviceRef.current.name;
+        localStorage.setItem(MODE_KEY, mode);
+        localStorage.setItem(FIXED_KEY, fixedLocationId);
+        localStorage.setItem(SHARED_KEY, shared ? "1" : "0");
+        if (name) localStorage.setItem(NAME_KEY, name);
+        setDevice((d) => ({ ...d, mode, fixedLocationId, shared, name }));
+      })
+      .catch(() => { /* offline: keep cache */ });
+  }, []);
+
+  // Poll the analyzer health, don't just check once at mount. A single failed
+  // probe (e.g. the backend was briefly restarting) used to set analyzerUp=false
+  // permanently, which DISABLES the Listen button until a manual reload. Re-probing
+  // every 20s lets the button recover on its own once the analyzer is reachable.
+  useEffect(() => {
+    let alive = true;
+    const probe = () => fetch(`${API}/analyze/health`).then((r) => r.json())
+      .then((h) => { if (alive) setAnalyzerUp(!!h.up); })
+      .catch(() => { if (alive) setAnalyzerUp(false); });
+    probe();
+    const t = setInterval(probe, 20000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
 
   useEffect(() => {
-    fetch(`${API}/analyze/health`).then((r) => r.json())
-      .then((h) => setAnalyzerUp(!!h.up)).catch(() => setAnalyzerUp(false));
     // Refresh this device's user-agent on load so it can be identified ("Chrome
     // on macOS") without having to start listening first. update_only: never
     // creates a row, so merely opening the app can't register a phantom device.
@@ -256,7 +305,16 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       fd.append("update_only", "1");
       fetch(`${API}/device`, { method: "POST", body: fd }).catch(() => {});
     }
-  }, []);
+    hydrateFromServer();
+  }, [hydrateFromServer]);
+
+  // Re-hydrate when the tab is brought back to the foreground, so a setting
+  // changed on another screen takes effect here without a manual reload.
+  useEffect(() => {
+    const onVis = () => { if (document.visibilityState === "visible") hydrateFromServer(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [hydrateFromServer]);
 
   // Spectrogram draw loop lives HERE (provider is always mounted) so the image
   // keeps scrolling and its history persists while you move between pages.
@@ -351,6 +409,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem(FIXED_KEY, id);
     setDevice((d) => { const nd = { ...d, fixedLocationId: id }; postDevice(nd); return nd; });
   }, []);
+  const setShared = useCallback((shared: boolean) => {
+    localStorage.setItem(SHARED_KEY, shared ? "1" : "0");
+    setDevice((d) => { const nd = { ...d, shared }; postDevice(nd); return nd; });
+  }, []);
 
   // Group overlapping windows into per-species vocalization EVENTS, then jointly
   // localize all active events against the energy heatmap and (re)place each
@@ -404,7 +466,11 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     const fd = new FormData();
     fd.append("audio", wav, "chunk.wav");
     fd.append("token", dev.token);
-    fd.append("device_name", dev.name || "Untitled device");
+    // Only send a real, user-given name. An unnamed device stays unnamed: the
+    // backend will NOT persist a placeholder "Untitled device" row from it, so
+    // ephemeral/test sessions never pollute the device list. Detections are still
+    // attributed by token regardless.
+    if (dev.name) fd.append("device_name", dev.name);
     fd.append("mode", dev.mode);
     fd.append("min_conf", "0.5");  // backend enforces its own floor too (smart_settings)
     if (dev.mode === "fixed" && dev.fixedLocationId) fd.append("location_id", dev.fixedLocationId);
@@ -561,11 +627,11 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   }, [recording, acquireWake]);
 
   const value = useMemo<Ctx>(() => ({
-    device, setDeviceName, adoptDevice, setMode, setFixedLocation,
+    device, setDeviceName, adoptDevice, setMode, setFixedLocation, setShared,
     recording, status, elapsed, location, needsLocation, wasListening,
     nowHearing, liveLog, sessionSpecies,
     analyzerUp, err, analyserRef, specCanvasRef, specMarkersRef, markerEpoch, start, stop,
-  }), [device, setDeviceName, adoptDevice, setMode, setFixedLocation, recording, status, elapsed,
+  }), [device, setDeviceName, adoptDevice, setMode, setFixedLocation, setShared, recording, status, elapsed,
     location, needsLocation, wasListening, nowHearing, liveLog, sessionSpecies, analyzerUp, err,
     markerEpoch, start, stop]);
 

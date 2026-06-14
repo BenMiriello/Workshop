@@ -1,0 +1,55 @@
+{
+  "projects": {
+    "demo-x": {
+      "title": "Demo X",
+      "purpose": "smoke test",
+      "dir": "/home/clawd-a/workshop/projects/demo-x",
+      "sensitivity": "private",
+      "state": "sketch",
+      "surfaces": {
+        "integrated": null,
+        "standalone": null,
+        "public": null
+      },
+      "needs": [],
+      "provides": [],
+      "created": "2026-06-13T17:55:08+00:00",
+      "last_touched": "2026-06-13T17:55:08+00:00",
+      "claude_session": null
+    },
+    "probe-static": {
+      "title": "Probe Static",
+      "purpose": "smoke static",
+      "dir": "/home/clawd-a/workshop/projects/probe-static",
+      "sensitivity": "shareable",
+      "state": "sketch",
+      "surfaces": {
+        "integrated": null,
+        "standalone": null,
+        "public": null
+      },
+      "needs": [],
+      "provides": [],
+      "created": "2026-06-13T18:36:23+00:00",
+      "last_touched": "2026-06-13T18:36:23+00:00",
+      "claude_session": null
+    },
+    "gengui": {
+      "title": "gengui",
+      "purpose": "gengui",
+      "dir": "/home/clawd-a/workshop/projects/gengui",
+      "sensitivity": "shareable",
+      "state": "mounted",
+      "surfaces": {
+        "integrated": null,
+        "standalone": null,
+        "public": null
+      },
+      "needs": [],
+      "provides": [],
+      "created": "2026-06-13T21:03:16+00:00",
+      "last_touched": "2026-06-13T21:03:16+00:00",
+      "claude_session": null
+    }
+  }
+}

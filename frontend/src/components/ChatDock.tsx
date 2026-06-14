@@ -1,34 +1,40 @@
 import { useState } from "react";
 import { MessageSquare, ChevronDown } from "lucide-react";
-import ChatPanel from "./ChatPanel";
+import Chat from "./Chat";
 
-// Floating chat surface — the shared "Ask about…" dock, placed consistently
-// across Commute / Finance / Location (design-system .ws-dock). Collapsed, it's
-// an accent FAB (.ws-dock--collapsed); expanded, a card-elevated panel. The
-// inline <ChatPanel> can also be embedded directly (e.g. as a tab).
+// Floating chat surface. The collapsed state is an accent FAB; the expanded
+// state is a card-elevated panel hosting the unified Chat component.
+//
+// Mode taxonomy per ADR-008:
+//   "data"  — read + narrow per-app writes only.
+//   "build" — full Claude Code toolset, scoped to a Project's cwd.
+// Server-enforced; surfaced in the header so the operator always knows what
+// the chat can and cannot do.
+type ChatMode = "data" | "build";
 
 type Props = {
   contextKey: string;
   title?: string;
   placeholder?: string;
   onAction?: () => void;
+  mode?: ChatMode;
 };
 
-export default function ChatDock({ contextKey, title = "Assistant", placeholder, onAction }: Props) {
+export default function ChatDock({ contextKey, title = "Assistant", placeholder, onAction, mode = "data" }: Props) {
   const [open, setOpen] = useState(false);
+  const modeLabel = mode === "build" ? "Build" : "Data";
 
   if (!open) {
     return (
-      <div className="ws-dock ws-dock--collapsed">
-        <div className="ws-dock__header" onClick={() => setOpen(true)} role="button" tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") setOpen(true);
-          }}
-        >
-          <MessageSquare size={16} strokeWidth={1.8} aria-hidden />
-          <span className="ws-dock__title">{title}</span>
-        </div>
-      </div>
+      <button
+        type="button"
+        className="ws-dock-fab"
+        onClick={() => setOpen(true)}
+        aria-label={`Open ${title} chat`}
+        title={`Open ${title} chat`}
+      >
+        <MessageSquare size={20} strokeWidth={1.8} aria-hidden />
+      </button>
     );
   }
 
@@ -41,10 +47,11 @@ export default function ChatDock({ contextKey, title = "Assistant", placeholder,
       >
         <MessageSquare size={16} strokeWidth={1.8} aria-hidden />
         <span className="ws-dock__title">{title}</span>
+        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "0.4rem" }}>· {modeLabel}</span>
         <span className="ws-spacer" />
         <ChevronDown size={16} strokeWidth={1.8} aria-hidden />
       </div>
-      <ChatPanel contextKey={contextKey} placeholder={placeholder} onAction={onAction} />
+      <Chat contextKey={contextKey} mode={mode} variant="dock" placeholder={placeholder} onAction={onAction} />
     </div>
   );
 }

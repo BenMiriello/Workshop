@@ -422,7 +422,8 @@ a.ws-btn { text-decoration: none; }
 
 /* ---- CHAT DOCK ----------------------------------------------------------- */
 .ws-dock {
-  position: fixed; right: var(--space-5); bottom: var(--space-5); z-index: var(--z-dock);
+  position: fixed; right: var(--space-5); z-index: var(--z-dock);
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
   width: 22rem; max-width: calc(100vw - 2 * var(--space-4));
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden;
@@ -437,18 +438,21 @@ a.ws-btn { text-decoration: none; }
 .ws-dock__msg--user { align-self: flex-end; background: var(--accent-soft); color: var(--fg); padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); max-width: 85%; }
 .ws-dock__msg--bot { color: var(--fg); }
 .ws-dock__footer { padding: var(--space-3); border-top: 1px solid var(--border); display: flex; gap: var(--space-2); }
-.ws-dock--collapsed .ws-dock__body, .ws-dock--collapsed .ws-dock__footer { display: none; }
-.ws-dock--collapsed { width: auto; }
-
-/* dock collapsed → floating launcher pill (FAB) */
-.ws-dock--collapsed {
-  width: auto; border: none; background: var(--accent); color: var(--accent-fg);
-  box-shadow: var(--shadow-md); border-radius: var(--radius-pill);
+/* Collapsed dock → small circular FAB: just the message-bubble icon, no label.
+   Respects env(safe-area-inset-bottom) so it is never clipped low on mobile. */
+.ws-dock-fab {
+  position: fixed; z-index: var(--z-dock);
+  right: var(--space-5);
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--control-h-lg); height: var(--control-h-lg); padding: 0;
+  background: var(--accent); color: var(--accent-fg);
+  border: none; border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-md); cursor: pointer;
+  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
 }
-.ws-dock--collapsed .ws-dock__header { border-bottom: none; padding: var(--space-3) var(--space-4); color: var(--accent-fg); }
-.ws-dock--collapsed .ws-dock__title { color: var(--accent-fg); }
-.ws-dock--collapsed { transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out); }
-.ws-dock--collapsed:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.ws-dock-fab:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.ws-dock-fab:focus-visible { box-shadow: var(--focus-ring); }
 
 /* ---- APP SHELL + NAV ----------------------------------------------------- */
 .ws-app { max-width: 980px; margin: 0 auto; padding: var(--space-6) var(--space-5) var(--space-8); }
@@ -621,11 +625,86 @@ a.ws-btn { text-decoration: none; }
 .ws-stepper__btns button + button { border-top: 1px solid var(--border); }
 .ws-stepper__btns svg { width: 13px; height: 13px; stroke-width: 2.2; }
 
+/* ---- AGENT BUILD LAYOUT (three-column desktop, stacked on mobile) -------- */
+.ws-agent-build {
+  display: grid;
+  grid-template-columns: 240px 1fr 380px;
+  gap: var(--space-4);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .ws-agent-build { grid-template-columns: 200px 1fr; }
+  .ws-agent-build > .ws-agent-build__chat { grid-column: 1 / -1; }
+}
+@media (max-width: 720px) {
+  .ws-agent-build { grid-template-columns: 1fr; }
+  .ws-agent-build > .ws-agent-build__chat { grid-column: 1; }
+  .ws-agent-build > .ws-agent-build__files { max-height: 40vh; }
+}
+
+.ws-agent-build__status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+.ws-agent-build__status > * { min-height: 32px; }
+
+/* Mobile-only "primary, full-width" treatment for the Open preview button. */
+@media (max-width: 720px) {
+  .ws-agent-build__preview-open { flex: 1 1 100%; }
+  .ws-agent-build__preview-open .ws-btn { width: 100%; }
+}
+
+/* ---- TASK ROW (touch-friendly tap targets, hover-aware actions) ---------- */
+.ws-task-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.3rem;
+  min-height: 40px;
+  border-bottom: 1px solid var(--border);
+}
+@media (hover: hover) {
+  .ws-task-row:hover { background: var(--surface-2); }
+}
+.ws-task-row__actions {
+  display: flex;
+  gap: 0.3rem;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+@media (hover: none) {
+  .ws-task-row__actions { opacity: 1; }
+}
+.ws-task-row:hover .ws-task-row__actions,
+.ws-task-row:focus-within .ws-task-row__actions { opacity: 1; }
+
+/* ---- FOCUSED CHAT (sidebar collapses on mobile) -------------------------- */
+.ws-focused-chat {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: var(--space-4);
+  height: calc(100vh - 8rem);
+}
+@media (max-width: 720px) {
+  .ws-focused-chat { grid-template-columns: 1fr; height: auto; }
+  .ws-focused-chat__sidebar { max-height: 35vh; }
+}
+
 /* ---- RESPONSIVE ---------------------------------------------------------- */
 @media (max-width: 640px) {
   .ws-card-grid { grid-template-columns: 1fr; }
   .ws-field--inline { grid-template-columns: 1fr; gap: var(--space-1); }
-  .ws-dock { right: 0; left: 0; bottom: 0; width: auto; border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
+  /* Bottom-sheet: pin to the bottom edge, but cap height so the composer stays
+     visible above the keyboard. The composer carries its own
+     safe-area-inset-bottom padding (.chat-input-row) so the send row never sits
+     under the iOS home indicator. */
+  .ws-dock {
+    right: 0; left: 0; bottom: 0; width: auto; max-width: none;
+    max-height: 85vh;
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  }
   .ws-app { padding: var(--space-4); }
   .ws-topnav { flex-wrap: wrap; gap: var(--space-3); }
 }

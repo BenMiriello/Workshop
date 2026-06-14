@@ -13,13 +13,16 @@ transcript, so history is fully owned here, not in the model session.
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_store, chat_context
 from services import llm_router
+from services import build_streaming
 
 log = logging.getLogger("workshop.chat")
 router = APIRouter()
@@ -146,29 +149,69 @@ async def send_message(thread_id: str, body: PostMessage):
     # Persist the user's message first so it isn't lost if the model call fails.
     chat_store.append_message(thread_id, "user", content)
 
-    # Build per-provider tool kwargs. When ENABLE_CHAT_TOOLS is on AND the
-    # provider declares allowed_tools, route through the narrow-tool path
-    # (read-only MCP, no built-ins). Otherwise — feature gated off or provider
-    # opted out — route through tools_disabled (single-turn text). Both paths
-    # use stream-json so partial-text recovery on non-zero exit works.
-    if ENABLE_CHAT_TOOLS and provider.allowed_tools:
+    # Build mode (Project chats + Build-agent chats): full agentic toolset
+    # (Read/Write/Edit/Bash/Grep/etc), cwd pinned to the project/agent directory,
+    # larger max_turns + timeout, and — for Build-agent chats — a persistent
+    # Claude Code session via --session-id (first turn) / --resume (subsequent).
+    # The narrow-tool / tools_disabled branches don't apply — those are for
+    # Data-mode surfaces.
+    is_build_mode = isinstance(
+        provider,
+        (chat_context.ProjectContextProvider, chat_context.BuildAgentContextProvider),
+    )
+    if is_build_mode:
+        call_kwargs = {
+            "max_turns": provider.max_turns,
+            "cwd": str(provider.dir),
+        }
+        # Sonnet is the right default for Build (codegen quality matters);
+        # the operator can opt up to opus later via the model picker.
+        model = llm_router.TIER_SONNET
+        # Build runs are often long. Keep a hard ceiling well above Data mode.
+        call_timeout = 900
+
+        # Persistent --resume sessions: only for BuildAgentContextProvider for
+        # now (Project chats don't have a dedicated agent record to hang a
+        # session_id on; spawn a Build agent for a project to get that).
+        is_resumed_turn = False
+        if isinstance(provider, chat_context.BuildAgentContextProvider):
+            from services import build_agents as _ba
+            try:
+                sid, is_new = _ba.ensure_session_id(provider.slug)
+                call_kwargs["session_id"] = sid
+                call_kwargs["resume"] = not is_new
+                is_resumed_turn = not is_new
+            except KeyError:
+                # Agent went away between provider construction and call; just
+                # do a stateless turn rather than 500ing the chat.
+                pass
+
+        # On resumed turns the prompt is just the user's new message: the
+        # Claude Code session already holds persona + prior context. Skip the
+        # full _build_prompt rebuild that was created above.
+        if is_resumed_turn:
+            prompt = content
+    elif ENABLE_CHAT_TOOLS and provider.allowed_tools:
+        # Narrow-tool path: read-only MCP, no built-ins.
         call_kwargs = {
             "allowed_tools": list(provider.allowed_tools),
             "mcp_servers": list(provider.mcp_servers),
             "max_turns": provider.max_turns,
         }
+        call_timeout = CHAT_TIMEOUT_S
     else:
         call_kwargs = {"tools_disabled": True}
+        call_timeout = CHAT_TIMEOUT_S
 
     try:
-        # call_cloud subprocesses `claude -p` and blocks for up to CHAT_TIMEOUT_S —
+        # call_cloud subprocesses `claude -p` and blocks for up to call_timeout —
         # push it off the event loop so other API requests (budget edits, refreshes,
         # parallel chat turns) don't stall behind a single in-flight chat call.
         result = await asyncio.to_thread(
             llm_router.call_cloud,
             prompt,
             model=model,
-            timeout_s=CHAT_TIMEOUT_S,
+            timeout_s=call_timeout,
             **call_kwargs,
         )
         reply = result.get("text", "").strip()
@@ -199,3 +242,99 @@ async def send_message(thread_id: str, body: PostMessage):
     meta = {"notes": notes} if notes else None
     msg = chat_store.append_message(thread_id, "assistant", cleaned, meta=meta)
     return {"message": msg, "notes": notes}
+
+
+# ---- SSE streaming for Build chats -----------------------------------------
+# Per turn, the operator gets a real-time event stream: thinking → tool calls
+# → text chunks → done. Implemented by:
+#   1) POST /threads/{id}/turns starts a streaming claude subprocess and
+#      returns a turn_id immediately.
+#   2) GET /turns/{turn_id}/stream is an SSE channel with `id: <offset>` per
+#      event so EventSource auto-reconnect resumes via Last-Event-ID.
+# Only Build providers (Project / BuildAgent) use this path; Data chats stay
+# on the synchronous POST /messages route since their turns are short.
+
+
+class StartTurnIn(BaseModel):
+    content: str
+
+
+@router.post("/threads/{thread_id}/turns")
+async def start_streaming_turn(thread_id: str, body: StartTurnIn):
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(400, "empty message")
+
+    provider = chat_context.get_provider(t.get("context_key"))
+    if not isinstance(provider, chat_context.BuildAgentContextProvider):
+        raise HTTPException(400, "streaming turns are Build-only; use POST /messages for Data chats")
+
+    history = t.get("messages", [])
+    chat_store.append_message(thread_id, "user", content)
+
+    # Persistent session via build_agents.ensure_session_id.
+    from services import build_agents as _ba
+    try:
+        sid, is_new = _ba.ensure_session_id(provider.slug)
+    except KeyError:
+        sid, is_new = None, True
+
+    # First turn: full prompt (persona + live context). Resumed turn: just
+    # the new user message (the session retains its prior context).
+    if sid and not is_new:
+        prompt = content
+        resume_flag = True
+    else:
+        prompt = _build_prompt(provider, history, content)
+        resume_flag = False
+
+    turn = await build_streaming.start_turn(
+        thread_id=thread_id,
+        agent_slug=provider.slug,
+        prompt=prompt,
+        model=llm_router.TIER_SONNET,
+        cwd=str(provider.dir),
+        session_id=sid,
+        resume=resume_flag,
+        max_turns=provider.max_turns,
+    )
+    return {"turn_id": turn.id}
+
+
+@router.get("/turns/{turn_id}/stream")
+async def stream_turn(turn_id: str, request: Request):
+    turn = build_streaming.get_turn(turn_id)
+    if not turn:
+        raise HTTPException(404, "turn not found")
+
+    last_event_id = request.headers.get("Last-Event-ID") or "0"
+    try:
+        after = max(0, int(last_event_id))
+    except ValueError:
+        after = 0
+
+    async def gen():
+        try:
+            async for offset, ev in build_streaming.iter_events(turn, after=after):
+                if await request.is_disconnected():
+                    return
+                payload = _json.dumps({"kind": ev.kind, "payload": ev.payload, "ts": ev.ts})
+                # SSE frame: id: <offset>\nevent: <kind>\ndata: <json>\n\n
+                yield f"id: {offset}\nevent: {ev.kind}\ndata: {payload}\n\n"
+            # Final terminator so clients close cleanly.
+            yield "event: end\ndata: {}\n\n"
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )

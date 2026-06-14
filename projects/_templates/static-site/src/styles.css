@@ -1,0 +1,18 @@
+:root {
+  color-scheme: light dark;
+  --fg: light-dark(#222, #eee);
+  --bg: light-dark(#fff, #111);
+  --muted: light-dark(#666, #999);
+  --accent: light-dark(#0066cc, #4d9fff);
+}
+
+html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.5; }
+main { max-width: 60ch; margin: 4rem auto; padding: 0 1rem; }
+h1 { font-size: clamp(1.6rem, 4vw, 2.6rem); margin-bottom: 0.5rem; }
+p { color: var(--muted); }
+
+@media (prefers-reduced-motion: no-preference) {
+  main { animation: fadein 0.3s ease-out; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
+}

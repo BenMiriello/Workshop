@@ -70,12 +70,6 @@ export default function BirdDetail() {
     return () => clearInterval(t);
   }, [sci, reload]);
 
-  // Opening a species counts as reviewing its first appearance (clears the
-  // new-arrival badge), per the trust model.
-  useEffect(() => {
-    if (sci) apost("/species/review", { sci }).catch(() => {});
-  }, [sci]);
-
   const setFilter = (key: string, val: string) => {
     const p = new URLSearchParams(params);
     if (key === "dstatus") {

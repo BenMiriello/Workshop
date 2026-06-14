@@ -24,6 +24,19 @@ bpid=$(pgrep -f 'uvicorn main:app.*8000' | head -1)
 KEY=""
 [ -n "$bpid" ] && KEY=$(tr '\0' '\n' < "/proc/$bpid/environ" 2>/dev/null | grep '^WORKSHOP_511_API_KEY=' | cut -d= -f2-)
 
+# Backend secret files. A respawn MUST source these or the health / owntracks /
+# finance routes lose their auth + creds. (Previously the watchdog preserved only
+# WORKSHOP_511_API_KEY, so every restart silently degraded those subsystems.)
+ENV_FILES=(
+  /home/clawd-a/.config/workshop/secrets.env
+  /home/clawd-a/.config/clawdbot/health-auth.env
+  /home/clawd-a/.config/clawdbot/owntracks-auth.env
+)
+[ -n "$KEY" ] && export WORKSHOP_511_API_KEY="$KEY"
+for f in "${ENV_FILES[@]}"; do
+  [ -r "$f" ] && { set -a; . "$f"; set +a; }
+done
+
 restart_analyzer() {
   LOG "analyzer DOWN -> restarting"
   pkill -f "$ANALYZER_DIR/service.py" 2>/dev/null

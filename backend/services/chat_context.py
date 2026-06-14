@@ -681,6 +681,135 @@ def build_budget_context() -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- project provider
+# Build-mode chat scoped to a Projects-hub project. The provider is parameterized
+# by the project slug; context_key looks like "project:<slug>". Reads PROJECT.md,
+# AGENTS.md, and TODO.md as the system context every turn so the agent always has
+# the brief, the rules, and the live checklist in front of it.
+
+import os as _os
+from pathlib import Path as _Path
+
+
+def _projects_root() -> _Path:
+    return _Path(_os.environ.get(
+        "WORKSHOP_PROJECTS_ROOT_NEW",
+        str(_Path.home() / "workshop" / "projects"),
+    ))
+
+
+class ProjectContextProvider(ContextProvider):
+    """Build-mode provider for a single Project. Routes call_cloud with cwd
+    set to the project directory and the full default agentic toolset enabled
+    (Read/Write/Edit/Bash/Grep/MultiEdit/Glob) so the chat behaves like a
+    terminal-resident `claude` session inside the project."""
+
+    label = "Build · project"
+    # Build mode runs the default agentic path in call_cloud (NOT the
+    # tools_disabled or allowed_tools narrow paths). Leaving these empty
+    # signals routes/chat.py to switch into the project-build branch.
+    allowed_tools = []
+    mcp_servers = []
+    # Vibe-coding wants real headroom; tasks routinely span 20+ tool calls.
+    max_turns = 60
+
+    def __init__(self, slug: str):
+        self.slug = slug
+        self.key = f"project:{slug}"
+        self.dir = _projects_root() / slug
+
+    def _read(self, name: str, default: str = "") -> str:
+        p = self.dir / name
+        try:
+            return p.read_text() if p.exists() else default
+        except Exception:
+            return default
+
+    def persona(self) -> str:
+        rules = self._read("AGENTS.md")
+        return (
+            "You are the build agent for the operator's Workshop Project "
+            f"'{self.slug}'. You have full Claude Code tool access inside the "
+            f"project directory ({self.dir}). The operator is benmiriello — a "
+            "senior engineer who dislikes padding. Be direct and brief.\n\n"
+            "Always read PROJECT.md FIRST to ground your work in the current "
+            "goal and constraints, then act. When you finish a task, update "
+            "TODO.md (check items off, add follow-ups). When the operator gives "
+            "a non-trivial direction, append a one-line decision note to "
+            "PROJECT.md.\n\n"
+            f"Project-local agent rules:\n\n{rules or '(none)'}"
+        )
+
+    def live_context(self) -> str:
+        brief = self._read("PROJECT.md")
+        todo = self._read("TODO.md")
+        parts = []
+        if brief:
+            parts.append("=== PROJECT.md (brief) ===\n" + brief)
+        if todo:
+            parts.append("=== TODO.md ===\n" + todo)
+        return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------- build-agent provider
+# Build agents are Claude Code coding sessions surfaced under the Agents tab,
+# distinct from Projects. context_key looks like "build:<slug>". Same Build-mode
+# behavior as a Project chat: full agentic toolset, cwd pinned to the agent's
+# directory (which is either a Project dir for project-linked agents or a
+# freestanding scratch dir).
+
+
+class BuildAgentContextProvider(ContextProvider):
+    label = "Build · agent"
+    allowed_tools = []
+    mcp_servers = []
+    max_turns = 60
+
+    def __init__(self, slug: str):
+        # Defer build_agents import to avoid circulars at module load.
+        from services import build_agents as _ba
+        try:
+            record = _ba.get_agent(slug)
+        except KeyError:
+            record = {"name": slug, "purpose": "", "cwd": str(_Path.home() / "workshop"), "project_slug": None}
+        self.slug = slug
+        self.key = f"build:{slug}"
+        self.name = record.get("name") or slug
+        self.purpose = record.get("purpose") or ""
+        self.dir = _Path(record["cwd"])
+        self.project_slug = record.get("project_slug")
+
+    def _read(self, name: str, default: str = "") -> str:
+        p = self.dir / name
+        try:
+            return p.read_text() if p.exists() else default
+        except Exception:
+            return default
+
+    def persona(self) -> str:
+        rules = self._read("AGENTS.md")
+        return (
+            f"You are the build agent '{self.name}' inside the Workshop. You have full "
+            f"Claude Code tool access inside the directory {self.dir}. The operator is "
+            "benmiriello — a senior engineer who dislikes padding. Be direct and brief.\n\n"
+            "Always read PROJECT.md FIRST to ground your work in the current goal and "
+            "constraints, then act. When you finish a task, update TODO.md (check items off, "
+            "add follow-ups). When the operator gives a non-trivial direction, append a "
+            "one-line decision note to PROJECT.md.\n\n"
+            f"Build-agent rules:\n\n{rules or '(none)'}"
+        )
+
+    def live_context(self) -> str:
+        parts = []
+        brief = self._read("PROJECT.md")
+        todo = self._read("TODO.md")
+        if brief:
+            parts.append("=== PROJECT.md (brief) ===\n" + brief)
+        if todo:
+            parts.append("=== TODO.md ===\n" + todo)
+        return "\n\n".join(parts)
+
+
 # ---------------------------------------------------------------- registry
 
 PROVIDERS: dict[str, ContextProvider] = {
@@ -692,9 +821,42 @@ PROVIDERS: dict[str, ContextProvider] = {
 }
 
 
+def _project_slugs() -> list[str]:
+    """Read project slugs from the projects.json registry, if present."""
+    reg = _projects_root().parent / "projects.json"
+    if not reg.exists():
+        return []
+    try:
+        data = json.loads(reg.read_text())
+        return sorted((data.get("projects") or {}).keys())
+    except Exception:
+        return []
+
+
+def _build_agent_slugs() -> list[str]:
+    try:
+        from services import build_agents as _ba
+        return sorted(_ba.slugs())
+    except Exception:
+        return []
+
+
 def get_provider(context_key: str | None) -> ContextProvider:
+    if context_key and context_key.startswith("project:"):
+        slug = context_key.split(":", 1)[1]
+        return ProjectContextProvider(slug)
+    if context_key and context_key.startswith("build:"):
+        slug = context_key.split(":", 1)[1]
+        return BuildAgentContextProvider(slug)
     return PROVIDERS.get(context_key or "general", PROVIDERS["general"])
 
 
 def list_providers() -> list[dict]:
-    return [{"key": p.key, "label": p.label} for p in PROVIDERS.values()]
+    # Static providers + dynamically discovered project + build-agent providers
+    # so the UI picker can route to any current Build session.
+    out = [{"key": p.key, "label": p.label} for p in PROVIDERS.values()]
+    for slug in _project_slugs():
+        out.append({"key": f"project:{slug}", "label": f"Build · project · {slug}"})
+    for slug in _build_agent_slugs():
+        out.append({"key": f"build:{slug}", "label": f"Build · agent · {slug}"})
+    return out

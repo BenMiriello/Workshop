@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import ChatDock from "../../components/ChatDock";
 import { AppGroupNav } from "../../components/appNav";
@@ -9,17 +9,34 @@ import {
   NumCell,
   PageHeader,
   SectionLabel,
+  Skeleton,
   Stat,
   StateBlock,
+  StatusPill,
   Table,
   TableScroll,
   TimeCell,
 } from "../../ui";
 
-// Full Finance app page. Opens from the Apps grid card. Privacy is handled at
-// the *card* layer (no balances shown on the Apps grid). Once the operator has
-// tapped into the app, they explicitly asked to see real data — no redaction
-// here.
+// Finance app — shows Plaid-linked accounts and recent transactions.
+// Data layer: backend cache (finance-cache.json, 10min TTL) + localStorage
+// backup so the page never goes blank when the backend or Plaid is down.
+
+const LS_BAL = "ws_finance_bal";
+const LS_TXN = "ws_finance_txn";
+
+function lsGet<T>(key: string): { data: T; ts: number } | null {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "null");
+  } catch {
+    return null;
+  }
+}
+function lsSet<T>(key: string, data: T) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ data, ts: Date.now() }));
+  } catch {}
+}
 
 type Account = {
   id: string;
@@ -55,7 +72,7 @@ type Transaction = {
   institution_name?: string;
 };
 
-type CacheMeta = { cached: boolean; ts: number; age_s: number; ttl_s: number };
+type CacheMeta = { cached: boolean; stale?: boolean; ts: number; age_s: number; ttl_s: number };
 type BalancesResp = { items: Item[]; _cache?: CacheMeta };
 type TransactionsResp = { transactions: Transaction[]; _cache?: CacheMeta };
 
@@ -64,7 +81,8 @@ const fmt = (n: number | null, ccy: string | null) => {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: ccy || "USD" }).format(n);
 };
 
-const fmtAge = (sec: number) => {
+const fmtAge = (ms: number) => {
+  const sec = ms / 1000;
   if (sec < 60) return `${Math.round(sec)}s ago`;
   if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
   if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
@@ -72,42 +90,106 @@ const fmtAge = (sec: number) => {
 };
 
 export default function Finance() {
+  // What to display — starts with localStorage, updated by live API
   const [items, setItems] = useState<Item[] | null>(null);
   const [txns, setTxns] = useState<Transaction[] | null>(null);
+  // Backend cache metadata (freshness indicator when serving live data)
   const [balCache, setBalCache] = useState<CacheMeta | null>(null);
-  const [txnCache, setTxnCache] = useState<CacheMeta | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [, setTxnCache] = useState<CacheMeta | null>(null);
+  // When the localStorage snapshot was saved (null = no local backup yet)
+  const [localBalTs, setLocalBalTs] = useState<number | null>(null);
+  // True while displaying localStorage data before a successful live fetch
+  const [isLocal, setIsLocal] = useState(false);
+  // Network/HTTP error (not per-item Plaid errors)
+  const [fetchErr, setFetchErr] = useState<string | null>(null);
+  // Per-institution errors when some (but not all) banks fail
+  const [itemErrors, setItemErrors] = useState<{ name: string; error: string }[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadBalances = useCallback(async (force: boolean = false) => {
+  const staleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadBalances = useCallback(async (force = false) => {
     try {
-      const q = force ? "?refresh=1" : "";
-      const r = await fetch(`/api/finance/balances${q}`);
-      if (!r.ok) throw new Error(`balances HTTP ${r.status}`);
+      const r = await fetch(`/api/finance/balances${force ? "?refresh=1" : ""}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status} from /api/finance/balances`);
       const b = (await r.json()) as BalancesResp;
-      setItems(b.items || []);
-      setBalCache(b._cache || null);
+
+      const goodItems = (b.items ?? []).filter((i) => (i.accounts?.length ?? 0) > 0);
+      const failedItems = (b.items ?? []).filter((i) => i.error);
+
+      setBalCache(b._cache ?? null);
+      setItemErrors(
+        failedItems.map((i) => ({ name: i.institution_name ?? i.item_id, error: i.error! })),
+      );
+
+      if (goodItems.length > 0) {
+        // We have real data — show it, clear any prior error, save to localStorage
+        setItems(b.items);
+        setIsLocal(false);
+        setFetchErr(null);
+        lsSet(LS_BAL, b.items);
+        setLocalBalTs(Date.now());
+      } else {
+        // All institutions failed — surface as error, keep whatever is displayed
+        // (may be localStorage data pre-loaded below)
+        setFetchErr(
+          failedItems.length > 0
+            ? `Plaid returned errors for all institutions (${failedItems.map((i) => i.institution_name).join(", ")})`
+            : "No accounts returned from Plaid",
+        );
+      }
+
+      // Backend cache is stale: a background refresh is in progress. Poll
+      // again in 5s to pick up the fresh numbers.
+      if (b._cache?.stale && !force) {
+        if (staleTimer.current) clearTimeout(staleTimer.current);
+        staleTimer.current = setTimeout(() => loadBalances(false), 5000);
+      }
     } catch (e) {
-      setErr(String(e));
+      // Network/HTTP failure — show error but keep displaying whatever we have
+      setFetchErr(String(e));
     }
   }, []);
 
-  const loadTxns = useCallback(async (force: boolean = false) => {
+  const loadTxns = useCallback(async (force = false) => {
     try {
       const r = await fetch(`/api/finance/transactions?days=30${force ? "&refresh=1" : ""}`);
-      if (!r.ok) throw new Error(`transactions HTTP ${r.status}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const t = (await r.json()) as TransactionsResp;
-      setTxns(t.transactions || []);
-      setTxnCache(t._cache || null);
-    } catch (e) {
-      setErr(String(e));
+      setTxns(t.transactions ?? []);
+      setTxnCache(t._cache ?? null);
+      lsSet(LS_TXN, t.transactions ?? []);
+    } catch {
+      // Transaction load failures are non-fatal; balance errors surface separately
     }
   }, []);
 
-  const refresh = useCallback(
-    async (force: boolean = false) => {
+  useEffect(() => {
+    // Pre-load from localStorage immediately so the page is never blank
+    const localBal = lsGet<Item[]>(LS_BAL);
+    const localTxn = lsGet<Transaction[]>(LS_TXN);
+    if (localBal) {
+      setItems(localBal.data);
+      setLocalBalTs(localBal.ts);
+      setIsLocal(true);
+    }
+    if (localTxn) {
+      setTxns(localTxn.data);
+    }
+    // Then fetch live data
+    loadBalances();
+    loadTxns();
+    return () => {
+      if (staleTimer.current) clearTimeout(staleTimer.current);
+    };
+  }, [loadBalances, loadTxns]);
+
+  const doRefresh = useCallback(
+    async (force = false) => {
+      if (staleTimer.current) clearTimeout(staleTimer.current);
       setRefreshing(true);
-      setErr(null);
+      setFetchErr(null);
+      setItemErrors([]);
       try {
         await Promise.all([loadBalances(force), loadTxns(force)]);
       } finally {
@@ -117,31 +199,50 @@ export default function Finance() {
     [loadBalances, loadTxns],
   );
 
-  useEffect(() => {
-    loadBalances(false);
-    loadTxns(false);
-  }, [loadBalances, loadTxns]);
-
   const accounts = useMemo(
-    () => items?.flatMap((i) => i.accounts.map((a) => ({ ...a, institution: i.institution_name }))) || [],
+    () =>
+      items?.flatMap((i) => i.accounts.map((a) => ({ ...a, institution: i.institution_name }))) ??
+      [],
     [items],
   );
 
   const summary = useMemo(() => {
     if (!items) return null;
     const all = items.flatMap((i) => i.accounts);
-    const liquid = all.filter((a) => a.type === "depository").reduce((s, a) => s + (a.balance.current ?? 0), 0);
+    if (all.length === 0) return null;
+    const liquid = all
+      .filter((a) => a.type === "depository")
+      .reduce((s, a) => s + (a.balance.current ?? 0), 0);
     const invest = all
       .filter((a) => a.type === "investment" || a.type === "brokerage")
       .reduce((s, a) => s + (a.balance.current ?? 0), 0);
-    const creditAvail = all.filter((a) => a.type === "credit").reduce((s, a) => s + (a.balance.available ?? 0), 0);
-    const creditUsed = all.filter((a) => a.type === "credit").reduce((s, a) => s + (a.balance.current ?? 0), 0);
+    const creditAvail = all
+      .filter((a) => a.type === "credit")
+      .reduce((s, a) => s + (a.balance.available ?? 0), 0);
+    const creditUsed = all
+      .filter((a) => a.type === "credit")
+      .reduce((s, a) => s + (a.balance.current ?? 0), 0);
     const netWorth = liquid + invest - creditUsed;
     return { liquid, invest, creditAvail, creditUsed, netWorth, accountCount: all.length };
   }, [items]);
 
-  const oldestCacheAge = Math.max(balCache?.age_s ?? 0, txnCache?.age_s ?? 0);
-  const financeLoading = items === null || txns === null;
+  const isLoading = items === null && txns === null;
+  const isStale = balCache?.stale ?? false;
+
+  // Data age label for the header subtitle
+  const ageLabel = (() => {
+    if (refreshing) return "refreshing…";
+    if (isLoading) return "loading…";
+    if (isLocal && !balCache) {
+      // Showing localStorage data, no live fetch succeeded yet
+      return localBalTs ? `saved ${fmtAge(Date.now() - localBalTs)}` : "saved data";
+    }
+    if (balCache) {
+      const label = `updated ${fmtAge(balCache.age_s * 1000)}`;
+      return label;
+    }
+    return "fresh";
+  })();
 
   return (
     <div>
@@ -149,26 +250,82 @@ export default function Finance() {
         title="Finance"
         sub={
           <span>
-            {financeLoading ? "loading…" : oldestCacheAge > 0 ? `updated ${fmtAge(oldestCacheAge)}` : "fresh"}
+            {ageLabel}
+            {isStale && !refreshing && (
+              <>
+                {" "}
+                <StatusPill status="running">syncing</StatusPill>
+              </>
+            )}
+            {isLocal && !refreshing && (
+              <>
+                {" "}
+                <StatusPill status="warn">offline</StatusPill>
+              </>
+            )}
           </span>
         }
         actions={
           <>
             <AppGroupNav />
-            <Button size="sm" onClick={() => refresh(true)} loading={refreshing}>
+            <Button size="sm" onClick={() => doRefresh(true)} loading={refreshing}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
           </>
         }
       />
 
-      {err && (
+      {/* Network / HTTP error — show alongside any data we have, not instead of it */}
+      {fetchErr && (
         <div style={{ marginBottom: "var(--space-4)" }}>
-          <StateBlock variant="error" title="Couldn't load finance data" hint={err} />
+          <StateBlock
+            variant="error"
+            title="Couldn't load live data"
+            hint={
+              <>
+                {fetchErr}
+                {isLocal && (
+                  <>
+                    {" "}
+                    — showing last saved data
+                    {localBalTs ? ` from ${fmtAge(Date.now() - localBalTs)}` : ""}
+                  </>
+                )}
+              </>
+            }
+            action={
+              <Button size="sm" onClick={() => doRefresh(true)} loading={refreshing}>
+                Retry
+              </Button>
+            }
+          />
         </div>
       )}
 
-      {/* Summary KPI tiles. */}
+      {/* Per-institution errors (partial failure — some banks work, others don't) */}
+      {itemErrors.length > 0 && !fetchErr && (
+        <div style={{ marginBottom: "var(--space-4)" }}>
+          <StateBlock
+            variant="error"
+            title={`${itemErrors.length} institution${itemErrors.length > 1 ? "s" : ""} unavailable`}
+            hint={itemErrors.map((ie) => `${ie.name}: ${ie.error}`).join(" · ")}
+          />
+        </div>
+      )}
+
+      {/* Loading skeleton — only when nothing at all is available */}
+      {isLoading && (
+        <div style={{ marginBottom: "var(--space-5)" }}>
+          <Skeleton style={{ height: "80px", marginBottom: "var(--space-4)" }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "var(--space-3)" }}>
+            {[1, 2, 3, 4].map((n) => (
+              <Skeleton key={n} style={{ height: "60px" }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Summary KPI tiles */}
       {summary && (
         <div style={{ marginBottom: "var(--space-5)" }}>
           <Card style={{ marginBottom: "var(--space-4)" }}>
@@ -176,7 +333,10 @@ export default function Finance() {
             <div className="ws-stat__num">{fmt(summary.netWorth, "USD")}</div>
             <div className="ws-stat__sub">cash + investments − credit owed</div>
           </Card>
-          <div className="ws-card-grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
+          <div
+            className="ws-card-grid"
+            style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
+          >
             <Stat label="Liquid" value={fmt(summary.liquid, "USD")} />
             <Stat label="Investments" value={fmt(summary.invest, "USD")} />
             <Stat label="Credit avail" value={fmt(summary.creditAvail, "USD")} />
@@ -190,7 +350,7 @@ export default function Finance() {
         </div>
       )}
 
-      {/* Accounts. */}
+      {/* Accounts grid */}
       {items !== null && accounts.length > 0 && (
         <section style={{ marginBottom: "var(--space-6)" }}>
           <SectionLabel>Accounts</SectionLabel>
@@ -203,12 +363,18 @@ export default function Finance() {
                     {a.institution} · {a.subtype || a.type}
                     {a.mask ? ` · ··${a.mask}` : ""}
                   </p>
-                  <p className="ws-num" style={{ fontSize: "var(--fs-lg)", margin: "var(--space-2) 0 0" }}>
+                  <p
+                    className="ws-num"
+                    style={{ fontSize: "var(--fs-lg)", margin: "var(--space-2) 0 0" }}
+                  >
                     {fmt(a.balance.current, a.balance.iso_currency_code)}
                   </p>
-                  {a.balance.available != null && a.balance.available !== a.balance.current && (
-                    <p className="ws-card__meta">Available: {fmt(a.balance.available, a.balance.iso_currency_code)}</p>
-                  )}
+                  {a.balance.available != null &&
+                    a.balance.available !== a.balance.current && (
+                      <p className="ws-card__meta">
+                        Available: {fmt(a.balance.available, a.balance.iso_currency_code)}
+                      </p>
+                    )}
                 </Card>
               </li>
             ))}
@@ -216,14 +382,20 @@ export default function Finance() {
         </section>
       )}
 
-      {/* Transactions. */}
+      {/* Transactions */}
       {txns === null ? (
-        <p className="ws-muted">Loading transactions…</p>
+        items !== null ? (
+          <p className="ws-muted">Loading transactions…</p>
+        ) : null
       ) : (
         <TransactionsTable txns={txns} />
       )}
 
-      <ChatDock contextKey="finance" title="Accounts assistant" placeholder="Ask about balances or recent spend…" />
+      <ChatDock
+        contextKey="finance"
+        title="Accounts assistant"
+        placeholder="Ask about balances or recent spend…"
+      />
     </div>
   );
 }
@@ -240,7 +412,10 @@ function TransactionsTable({ txns }: { txns: Transaction[] }) {
         Transactions ({visible.length} of {txns.length} · 30d)
       </SectionLabel>
       {txns.length === 0 ? (
-        <StateBlock title="No transactions" hint="No spending in the last 30 days, or Plaid hasn't synced yet." />
+        <StateBlock
+          title="No transactions"
+          hint="No spending in the last 30 days, or Plaid hasn't synced yet."
+        />
       ) : (
         <>
           <TableScroll>
