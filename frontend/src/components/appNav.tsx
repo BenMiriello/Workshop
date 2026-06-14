@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Menu, Bot, FolderGit2, LayoutGrid, Activity as ActivityIcon, Settings as SettingsIcon } from "lucide-react";
+import { Menu, Bot, FolderGit2, LayoutGrid, Store, Activity as ActivityIcon, Settings as SettingsIcon } from "lucide-react";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
@@ -30,6 +30,7 @@ export type Crumb = { label: string; to?: string };
 type RouteNode = { label: string; parent?: string };
 const NODES: Record<string, RouteNode> = {
   "/apps": { label: "Apps" },
+  "/marketplace": { label: "Marketplace" },
   "/apps/finance": { label: "Finance", parent: "/apps" },
   "/apps/budget": { label: "Budget", parent: "/apps" },
   "/apps/location": { label: "Location", parent: "/apps" },
@@ -340,6 +341,7 @@ export function AppGroupNav() {
 // config last. Matches frequency of operator use.
 const SECTIONS = [
   { to: "/apps", label: "Apps", icon: LayoutGrid },
+  { to: "/marketplace", label: "Marketplace", icon: Store },
   { to: "/projects", label: "Projects", icon: FolderGit2 },
   { to: "/agents", label: "Agents", icon: Bot },
   { to: "/activity", label: "Activity", icon: ActivityIcon },

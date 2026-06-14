@@ -105,6 +105,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   busy,
+  danger = true,
 }: {
   open: boolean;
   onCancel: () => void;
@@ -114,6 +115,10 @@ export function ConfirmDialog({
   confirmLabel?: ReactNode;
   cancelLabel?: ReactNode;
   busy?: boolean;
+  // Destructive by default (danger styling + "can't be undone" framing). Set
+  // false for a non-destructive confirm (e.g. publish), which renders a primary
+  // confirm button instead of a red one.
+  danger?: boolean;
 }) {
   const confirm = useCallback(() => {
     if (!busy) onConfirm();
@@ -124,13 +129,13 @@ export function ConfirmDialog({
       open={open}
       onClose={onCancel}
       title={title}
-      danger
+      danger={danger}
       actions={
         <>
           <Button data-autofocus onClick={onCancel}>
             {cancelLabel}
           </Button>
-          <Button variant="danger" loading={busy} onClick={confirm}>
+          <Button variant={danger ? "danger" : "primary"} loading={busy} onClick={confirm}>
             {confirmLabel}
           </Button>
         </>

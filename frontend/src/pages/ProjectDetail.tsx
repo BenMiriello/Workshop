@@ -14,6 +14,8 @@ import {
   RefreshCw,
   Send,
   ExternalLink,
+  Upload,
+  Store,
 } from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
@@ -40,8 +42,10 @@ import {
   catFor,
   type StatusKind,
 } from "../ui";
+import { Badge } from "../ui";
 import { useEditMode } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
+import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 
 // Project detail = the project's hub (the "workbench"). NOT the coding UI — that
 // lives under Agents (AgentBuild). Phase 2 (docs/workshop-v1/02 §1-4) retires the
@@ -395,6 +399,12 @@ export default function ProjectDetail() {
   const [discardTarget, setDiscardTarget] = useState<Worktree | null>(null);
   const [discarding, setDiscarding] = useState(false);
 
+  // Publish-to-marketplace (the Deployments "Public" row).
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [publishErr, setPublishErr] = useState<string | null>(null);
+  const [published, setPublished] = useState<RegistryItem | null>(null);
+
   useCrumbLabel(project?.title || null);
 
   // ---- Loaders --------------------------------------------------------------
@@ -552,6 +562,24 @@ export default function ProjectDetail() {
       setDiscardTarget(null);
     }
   }, [discardTarget, slug, loadWorktrees]);
+
+  // ---- Publish to marketplace -----------------------------------------------
+  // Publishing cuts a local release of this project and lists it in the
+  // marketplace, where anyone on this workshop can install (fork) it. Gated by a
+  // ConfirmDialog because it exposes the project to the local registry.
+  const doPublish = useCallback(async () => {
+    setPublishing(true);
+    setPublishErr(null);
+    try {
+      const item = await marketplaceApi.publish({ slug });
+      setPublished(item);
+      setConfirmPublish(false);
+    } catch (e) {
+      setPublishErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPublishing(false);
+    }
+  }, [slug]);
 
   // ---- Task tree shaping ----------------------------------------------------
   // Group by owner (operator first, then each agent), nest by parent, hide done
@@ -933,19 +961,41 @@ export default function ProjectDetail() {
             />
             <DeploymentRow
               name="Public"
-              desc="Shared / marketplace URL."
+              desc="Shared / marketplace listing."
               active={project.surfaces.public != null}
-              value={project.surfaces.public}
+              value={project.surfaces.public ?? (published ? `v${published.version}` : null)}
               activeAction={
                 <Link to={project.surfaces.public || "#"} style={{ textDecoration: "none" }}>
                   <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
                 </Link>
               }
               idleLabel="Publish"
+              // Publishing IS wired (the local marketplace registry). Once
+              // published, show the release version + a link to the listing;
+              // until then, a real Publish button gated by a confirm dialog.
+              idleAction={
+                published ? (
+                  <Row style={{ gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                    <Badge>v{published.version}</Badge>
+                    <Link to="/marketplace" style={{ textDecoration: "none" }}>
+                      <Button size="sm" variant="ghost"><Store aria-hidden /> View in marketplace</Button>
+                    </Link>
+                  </Row>
+                ) : (
+                  <Button size="sm" variant="primary" onClick={() => { setPublishErr(null); setConfirmPublish(true); }}>
+                    <Upload aria-hidden /> Publish
+                  </Button>
+                )
+              }
             />
           </Stack>
+          {publishErr && (
+            <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: "var(--space-2) 0 0" }}>
+              POST /api/base-apps/registry/publish: {publishErr}
+            </p>
+          )}
           <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-3)" }}>
-            One-click mount + guest tokens land with the deployment runner (app-platform manifests + grants, Phase 4).
+            Publish cuts a local release and lists it in the marketplace. One-click mount + guest tokens land with the deployment runner (app-platform manifests + grants, Phase 4).
           </p>
         </Card>
       </section>
@@ -1015,6 +1065,23 @@ export default function ProjectDetail() {
         confirmLabel="Delete"
         busy={deletingTask}
       />
+
+      <ConfirmDialog
+        open={confirmPublish}
+        onCancel={() => setConfirmPublish(false)}
+        onConfirm={doPublish}
+        title="Publish to the marketplace?"
+        body={
+          <span>
+            Cuts a local release of <strong>{project.title}</strong> and lists it in the
+            marketplace, where anyone on this workshop can install (fork) it. This
+            exposes the project to the local registry.
+          </span>
+        }
+        confirmLabel="Publish"
+        busy={publishing}
+        danger={false}
+      />
     </div>
   );
 }
@@ -1029,6 +1096,7 @@ function DeploymentRow({
   value,
   activeAction,
   idleLabel,
+  idleAction,
 }: {
   name: string;
   desc: string;
@@ -1036,6 +1104,10 @@ function DeploymentRow({
   value: string | null;
   activeAction: ReactNode;
   idleLabel: string;
+  // When provided, replaces the default disabled idle button (used by the
+  // Public row, whose Publish action is wired). Other rows stay disabled until
+  // the deployment runner lands (Phase 4), no fake behavior.
+  idleAction?: ReactNode;
 }) {
   return (
     <Row wrap style={{ alignItems: "center", paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--border)" }}>
@@ -1051,7 +1123,7 @@ function DeploymentRow({
         </Row>
         <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-xs)" }}>{desc}</p>
       </div>
-      {active ? activeAction : (
+      {active ? activeAction : idleAction ?? (
         <Button size="sm" variant="ghost" disabled title="Lands with the deployment runner (Phase 4)">
           {idleLabel}
         </Button>

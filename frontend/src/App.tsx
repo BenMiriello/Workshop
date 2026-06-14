@@ -7,6 +7,7 @@ import ProjectNew from "./pages/ProjectNew";
 import ProjectDetail from "./pages/ProjectDetail";
 import BaseApps from "./pages/settings/BaseApps";
 import Apps from "./pages/Apps";
+import Marketplace from "./pages/Marketplace";
 import Finance from "./pages/apps/Finance";
 import Budget from "./pages/apps/Budget";
 import LocationApp from "./pages/apps/Location";
@@ -51,6 +52,7 @@ export default function App() {
           <Route path="/projects/:slug" element={<ProjectDetail />} />
           <Route path="/settings/base-apps" element={<BaseApps />} />
           <Route path="/apps" element={<Apps />} />
+          <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/apps/finance" element={<Finance />} />
           <Route path="/apps/budget" element={<Budget />} />
           <Route path="/apps/location" element={<LocationApp />} />
