@@ -475,7 +475,18 @@ export default function AgentBuild() {
     try {
       const r = await fetch(`/api/agents/build/${slug}/tasks`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setTasks(await r.json());
+      const j = await r.json();
+      // The structured task store returns {tasks:[{...,status,owner}]}; map to
+      // this view's {done,source} shape (done = status "done").
+      const raw: any[] = Array.isArray(j) ? j : (j.tasks ?? []);
+      setTasks(
+        raw.map((t) => ({
+          id: t.id,
+          text: t.text,
+          done: t.done ?? t.status === "done",
+          source: t.source ?? (t.owner === "operator" ? "operator" : "agent"),
+        })),
+      );
     } catch (e) {
       setTasksErr(String(e));
       setTasks([]);
@@ -509,7 +520,7 @@ export default function AgentBuild() {
       await fetch(`/api/agents/build/${slug}/tasks/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ done }),
+        body: JSON.stringify({ status: done ? "done" : "todo" }),
       });
     } finally {
       loadTasks();
