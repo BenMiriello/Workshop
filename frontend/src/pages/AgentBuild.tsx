@@ -1084,6 +1084,7 @@ export default function AgentBuild() {
               mode="build"
               variant="panel"
               placeholder="Tell the agent what to build..."
+              scoped
             />
           </div>
         </Card>

@@ -239,6 +239,36 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     except Exception:
         pass
 
+    # Auto-name the thread after the first streamed exchange completes (mirrors
+    # the sync /messages path). Reuses the same cheap-Haiku namer in routes.chat
+    # so naming behavior can't drift between the two paths. Lazy import avoids an
+    # import cycle (routes.chat imports build_streaming at module load). Runs off
+    # the event loop; failures are swallowed (best-effort, never blocks the turn).
+    try:
+        first_user = _first_user_text(turn.thread_id)
+        if first_user and text and not text.startswith("(model exited"):
+            from routes import chat as _chat
+            await _maybe_autoname_stream(_chat, turn.thread_id, first_user, text)
+    except Exception as e:
+        log.info("turn %s: auto-name skipped: %s", turn.id, e)
+
+
+def _first_user_text(thread_id: str) -> str:
+    t = chat_store.get_thread(thread_id)
+    if not t:
+        return ""
+    for m in t.get("messages", []):
+        if m.get("role") == "user":
+            return m.get("content", "")
+    return ""
+
+
+async def _maybe_autoname_stream(chat_mod, thread_id: str, user_msg: str, assistant_msg: str) -> None:
+    """Run the route's naming guard+generator for a just-completed streamed turn.
+    chat_mod._maybe_autoname already checks 'first assistant reply + blank title',
+    so this is safe to call unconditionally here."""
+    await chat_mod._maybe_autoname(thread_id, user_msg, assistant_msg)
+
 
 def get_turn(turn_id: str) -> Turn | None:
     return TURNS.get(turn_id)

@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft } from "lucide-react";
-import { Button, ConfirmDialog } from "../ui";
+import { Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft, WifiOff } from "lucide-react";
+import { Button, ConfirmDialog, Select, StateBlock } from "../ui";
 import { chatApi, type ChatMsg, type Thread, type ThreadSummary, type Provider } from "../lib/chat";
 
 // Unified Chat component. Replaces ChatPanel + BuildChatPanel.
@@ -23,6 +23,10 @@ export type ChatProps = {
   variant?: ChatVariant;
   placeholder?: string;
   onAction?: () => void;
+  // When true, the chat is bound to one app's contextKey and the provider list
+  // is fetched scoped to it (only that app's assistant(s)). When false/omitted,
+  // the full cross-context provider list is fetched (Agents / focused view).
+  scoped?: boolean;
 };
 
 type ToolCall = { name: string; input: string };
@@ -31,13 +35,49 @@ function deriveMode(contextKey: string): ChatMode {
   return contextKey.startsWith("build:") ? "build" : "data";
 }
 
-export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction }: ChatProps) {
+// Friendly labels for the model ids the backend routes by. Used as a fallback
+// when a provider doesn't ship a label for a model id.
+const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-4-8": "Opus 4.8",
+  "claude-sonnet-4-6": "Sonnet 4.6",
+  "claude-haiku-4-5-20251001": "Haiku 4.5",
+};
+
+function modelLabel(id: string): string {
+  return MODEL_LABELS[id] ?? id;
+}
+
+// Best-effort detection of a network/egress block, so the builder shows a
+// concise notice instead of a wall of stderr. We keep the raw detail available.
+const EGRESS_MARKERS = [
+  "egress",
+  "blocked",
+  "could not resolve host",
+  "network is unreachable",
+  "npm err! network",
+  "fatal: unable to access",
+  "temporary failure in name resolution",
+  "connection refused",
+];
+
+function isEgressFailure(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.toLowerCase();
+  return EGRESS_MARKERS.some((m) => t.includes(m));
+}
+
+export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
 
   const [providers, setProviders] = useState<Provider[]>([]);
   const showProviderPicker = variant === "full" || effectiveMode === "data";
   const [activeProvider, setActiveProvider] = useState<string>(contextKey);
+
+  // Per-thread model selection. `selectedModel` is what the next send uses;
+  // it's reset to the active provider's default / the thread's saved model on
+  // thread switch and provider load.
+  const [selectedModel, setSelectedModel] = useState<string>("");
 
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -55,12 +95,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const scrollRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
 
-  // Provider list (only relevant where the picker shows; load anyway so the
-  // pop-out from a build view still resolves the label).
+  // Provider list. When `scoped`, fetch only the provider(s) relevant to this
+  // app's contextKey; otherwise fetch the full cross-context list so the
+  // operator can pick any. Load even where the picker is hidden so the pop-out
+  // from a build view still resolves the label + default model.
   useEffect(() => {
     let cancelled = false;
     chatApi
-      .listProviders()
+      .listProviders(scoped ? contextKey : undefined)
       .then((list) => {
         if (cancelled) return;
         setProviders(list);
@@ -70,11 +112,32 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       })
       .catch(() => { /* non-essential */ });
     return () => { cancelled = true; };
-  }, [contextKey, effectiveMode]);
+  }, [contextKey, effectiveMode, scoped]);
 
   // Scope key for thread list. In build mode this is the contextKey directly
   // (which is e.g. "build:my-agent"); in data mode the operator can swap.
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
+
+  // The provider whose model menu drives the picker. Build chats use the
+  // contextKey provider; data chats use the operator-selected provider.
+  const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
+  const activeProviderObj = useMemo(
+    () => providers.find((p) => p.key === providerKey),
+    [providers, providerKey],
+  );
+  const modelOptions = useMemo(
+    () => activeProviderObj?.models ?? Object.keys(MODEL_LABELS),
+    [activeProviderObj],
+  );
+
+  // When providers resolve (or the active provider changes) and we have no
+  // model chosen yet for the current thread, fall back to the provider default.
+  useEffect(() => {
+    if (selectedModel && modelOptions.includes(selectedModel)) return;
+    const def = activeProviderObj?.default_model;
+    if (def && modelOptions.includes(def)) setSelectedModel(def);
+    else if (modelOptions.length) setSelectedModel(modelOptions[0]);
+  }, [activeProviderObj, modelOptions, selectedModel]);
 
   const refreshThreads = useCallback(async () => {
     try {
@@ -98,6 +161,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           if (cancelled) return;
           setActiveId(t.id);
           setMessages(t.messages);
+          if (t.model) setSelectedModel(t.model);
         } else {
           setActiveId(null);
           setMessages([]);
@@ -125,6 +189,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const t: Thread = await chatApi.getThread(id);
       setActiveId(t.id);
       setMessages(t.messages);
+      // Reflect the thread's remembered model; if it has none, fall back to the
+      // provider default via the seeding effect (clear the selection).
+      setSelectedModel(t.model || "");
       setPendingText("");
       setPendingTools([]);
     } catch (e) {
@@ -138,6 +205,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setPendingText("");
     setPendingTools([]);
     setErr(null);
+    // Reset to the provider default for a fresh thread (seeding effect re-fills).
+    setSelectedModel("");
     sseRef.current?.close();
     sseRef.current = null;
   }, []);
@@ -154,8 +223,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     refreshThreads();
   }, [activeId, newChat, refreshThreads]);
 
+  // After the first exchange the backend auto-generates a title asynchronously.
+  // Refetch the thread list a moment later so the new title surfaces without a
+  // manual reload. Only fire when the thread had no title (a fresh chat).
+  const scheduleAutoNameRefetch = useCallback((wasFirstExchange: boolean) => {
+    if (!wasFirstExchange) return;
+    window.setTimeout(() => { void refreshThreads(); }, 2500);
+  }, [refreshThreads]);
+
   const sendData = useCallback(async (text: string) => {
     setBusy(true);
+    const isFirst = messages.length <= 1;
     try {
       let id = activeId;
       if (!id) {
@@ -163,9 +241,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         id = t.id;
         setActiveId(id);
       }
-      const { message, notes } = await chatApi.sendMessage(id, text);
+      const { message, notes } = await chatApi.sendMessage(id, text, selectedModel || undefined);
       setMessages((m) => [...m, message]);
       refreshThreads();
+      scheduleAutoNameRefetch(isFirst);
       if (notes && notes.length) onAction?.();
     } catch (e) {
       setErr(String(e));
@@ -176,12 +255,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     } finally {
       setBusy(false);
     }
-  }, [activeId, scope, refreshThreads, onAction]);
+  }, [activeId, scope, refreshThreads, onAction, messages.length, selectedModel, scheduleAutoNameRefetch]);
 
   const sendBuild = useCallback(async (text: string) => {
     setPendingText("");
     setPendingTools([]);
     setStreaming(true);
+    const isFirst = messages.length <= 1;
     try {
       let id = activeId;
       if (!id) {
@@ -192,7 +272,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const r = await fetch(`/api/chat/threads/${id}/turns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: text }),
+        body: JSON.stringify(selectedModel ? { content: text, model: selectedModel } : { content: text }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const { turn_id } = await r.json();
@@ -233,6 +313,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         setPendingText("");
         setPendingTools([]);
         refreshThreads();
+        scheduleAutoNameRefetch(isFirst);
       };
       es.addEventListener("done", finish);
       es.addEventListener("end", finish);
@@ -246,7 +327,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setErr(String(e));
       setStreaming(false);
     }
-  }, [activeId, scope, refreshThreads]);
+  }, [activeId, scope, refreshThreads, selectedModel, messages.length, scheduleAutoNameRefetch]);
 
   const send = useCallback(async () => {
     const text = input.trim();
@@ -278,6 +359,52 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const inFlight = effectiveMode === "build" ? streaming : busy;
 
+  // Egress banner (build only). If the latest error or an assistant-error
+  // message looks like a network/egress block, surface a concise notice instead
+  // of raw stderr. The raw detail stays available in a collapsible <details>.
+  const lastErrorMessage = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].meta?.error) return messages[i].content;
+    }
+    return null;
+  }, [messages]);
+  const egressDetail = isEgressFailure(err)
+    ? err
+    : isEgressFailure(lastErrorMessage)
+      ? lastErrorMessage
+      : null;
+  const showEgressBanner = effectiveMode === "build" && egressDetail != null;
+
+  const egressBanner = showEgressBanner ? (
+    <div style={{ padding: "var(--space-2) var(--space-3)" }}>
+      <StateBlock
+        variant="error"
+        icon={<WifiOff aria-hidden />}
+        title="External network is blocked in this environment."
+        hint={
+          <>
+            <span>
+              Run network commands (git clone / npm install) in your own terminal, or
+              approve the host in Settings.
+            </span>
+            <details style={{ marginTop: "var(--space-2)" }}>
+              <summary className="ws-card__meta" style={{ cursor: "pointer" }}>Details</summary>
+              <pre
+                className="ws-mono"
+                style={{
+                  marginTop: "var(--space-2)", whiteSpace: "pre-wrap",
+                  fontSize: "var(--fs-xs)", maxHeight: "12vh", overflow: "auto",
+                }}
+              >
+                {egressDetail}
+              </pre>
+            </details>
+          </>
+        }
+      />
+    </div>
+  ) : null;
+
   const composer = (
     <div className="chat-input-row">
       <textarea
@@ -289,6 +416,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onKeyDown={onKey}
         disabled={inFlight}
       />
+      {modelOptions.length > 0 && (
+        <Select
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          aria-label="Model"
+          title="Model for this conversation"
+          style={{ flex: "0 0 auto", width: "auto", fontSize: "var(--fs-sm)" }}
+        >
+          {modelOptions.map((id) => (
+            <option key={id} value={id}>{modelLabel(id)}</option>
+          ))}
+        </Select>
+      )}
       {effectiveMode === "build" && streaming ? (
         <Button variant="primary" icon onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
           <Square aria-hidden />
@@ -416,7 +556,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     <div className="chat-panel">
       {threadBar}
       {log}
-      {err && messages.length > 0 && <div className="chat-err">{err}</div>}
+      {egressBanner}
+      {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{err}</div>}
       {composer}
       {deleteDialog}
     </div>

@@ -64,15 +64,43 @@ class CreateThread(BaseModel):
 
 class PostMessage(BaseModel):
     content: str
+    # Optional per-turn model override (short tier name "haiku"/"sonnet"/"opus"
+    # OR a full model id). Normalized + validated in the handler; persisted on
+    # the thread so it sticks for subsequent turns.
+    model: str | None = None
 
 
 class RenameThread(BaseModel):
     title: str
 
 
+def _resolve_model(
+    body_model: str | None,
+    thread: dict,
+    provider: chat_context.ContextProvider,
+) -> str:
+    """Resolution order: explicit body.model > thread.model > provider default.
+    Returns a full model id. Raises HTTPException(400) on an invalid body.model."""
+    try:
+        explicit = chat_context.normalize_model(body_model)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if explicit:
+        return explicit
+    # thread.model was already normalized when persisted, but normalize again
+    # defensively (tolerate hand-edited thread files).
+    try:
+        stored = chat_context.normalize_model(thread.get("model"))
+    except ValueError:
+        stored = None
+    if stored:
+        return stored
+    return provider.default_model
+
+
 @router.get("/providers")
-async def providers():
-    return chat_context.list_providers()
+async def providers(scope: str | None = None):
+    return chat_context.list_providers(scope=scope)
 
 
 @router.get("/threads")
@@ -108,8 +136,24 @@ async def remove(thread_id: str):
     return {"deleted": chat_store.delete_thread(thread_id)}
 
 
-def _build_prompt(provider: chat_context.ContextProvider, history: list[dict], user_msg: str) -> str:
-    parts = [provider.persona()]
+def _build_prompt(
+    provider: chat_context.ContextProvider,
+    history: list[dict],
+    user_msg: str,
+    *,
+    preamble: str = "",
+) -> str:
+    # Layered prompt (see docs 01 §3):
+    #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — first, and
+    #      never overridden by anything below it. Computed from the real run
+    #      config in the caller and passed in, so it can't drift from reality.
+    #   2. App/project context (persona + live snapshot).
+    #   3. User-owned custom prompt (provider.custom_prompt(); default "").
+    #   4. The conversation.
+    parts: list[str] = []
+    if preamble:
+        parts.append(preamble)
+    parts.append(provider.persona())
     ctx = ""
     try:
         ctx = provider.live_context()
@@ -117,6 +161,13 @@ def _build_prompt(provider: chat_context.ContextProvider, history: list[dict], u
         log.warning("chat context build failed for %s: %s", provider.key, e)
     if ctx:
         parts.append("=== LIVE CONTEXT (current app state) ===\n" + ctx)
+    try:
+        custom = provider.custom_prompt()
+    except Exception as e:
+        log.warning("chat custom_prompt failed for %s: %s", provider.key, e)
+        custom = ""
+    if custom:
+        parts.append("=== CUSTOM INSTRUCTIONS (operator-set) ===\n" + custom)
     if history:
         convo = []
         for m in history[-MAX_HISTORY:]:
@@ -132,6 +183,70 @@ def _build_prompt(provider: chat_context.ContextProvider, history: list[dict], u
     return "\n\n".join(parts)
 
 
+def _is_blank_title(title: str | None) -> bool:
+    """A thread title that should be auto-generated: empty/blank or the
+    placeholder. (chat_store seeds 'New chat'; append_message also seeds a
+    first-user-message snippet, so we treat that snippet as auto-nameable too
+    only when still the seed — see _maybe_autoname which checks msg count.)"""
+    return (title or "").strip() in ("", "New chat")
+
+
+def _autoname_blocking(thread_id: str, first_user: str, first_assistant: str) -> None:
+    """Generate a short (<=6 word) title from the first exchange via a cheap
+    Haiku, tools-off, single-turn call, then rename the thread. Runs in a
+    worker thread (call_cloud blocks). Best-effort: any failure leaves the
+    existing title untouched. Re-checks the title under the current state so we
+    never clobber a title the operator set in the meantime."""
+    cur = chat_store.get_thread(thread_id)
+    if cur is None or not _is_blank_title(cur.get("title")):
+        return
+    prompt = (
+        "Generate a concise chat title (at most 6 words, Title Case, no quotes, "
+        "no trailing punctuation, no emoji) summarizing this exchange. Output "
+        "ONLY the title.\n\n"
+        f"User: {first_user[:600]}\n\n"
+        f"Assistant: {first_assistant[:600]}"
+    )
+    try:
+        result = llm_router.call_cloud(
+            prompt,
+            model=llm_router.TIER_HAIKU,
+            tools_disabled=True,
+            max_turns=1,
+            timeout_s=60,
+        )
+    except Exception as e:
+        log.info("auto-name skipped (model call failed) for %s: %s", thread_id, e)
+        return
+    title = (result.get("text") or "").strip().strip('"').strip()
+    # First line only; guard against the model adding a preface.
+    title = title.splitlines()[0].strip() if title else ""
+    # Hard cap at 6 words.
+    words = title.split()
+    if len(words) > 6:
+        title = " ".join(words[:6])
+    if not title:
+        return
+    # Final guard: only rename if still blank (operator may have renamed).
+    cur = chat_store.get_thread(thread_id)
+    if cur is not None and _is_blank_title(cur.get("title")):
+        chat_store.rename_thread(thread_id, title)
+
+
+async def _maybe_autoname(thread_id: str, user_msg: str, assistant_msg: str) -> None:
+    """Fire-and-forget auto-naming after the first assistant reply lands in a
+    thread whose title is still the seed. Non-blocking: scheduled as a task so
+    it never delays the user-facing reply."""
+    t = chat_store.get_thread(thread_id)
+    if t is None or not _is_blank_title(t.get("title")):
+        return
+    # Only after the first exchange (1 user + 1 assistant message persisted).
+    msgs = t.get("messages", [])
+    if len([m for m in msgs if m.get("role") == "assistant"]) != 1:
+        return
+    await asyncio.to_thread(_autoname_blocking, thread_id, user_msg, assistant_msg)
+
+
 @router.post("/threads/{thread_id}/messages")
 async def send_message(thread_id: str, body: PostMessage):
     t = chat_store.get_thread(thread_id)
@@ -143,8 +258,26 @@ async def send_message(thread_id: str, body: PostMessage):
 
     provider = chat_context.get_provider(t.get("context_key"))
     history = t.get("messages", [])
-    prompt = _build_prompt(provider, history, content)
-    model = PROVIDER_MODELS.get(provider.key, DEFAULT_CHAT_MODEL)
+
+    # Resolve the model up front: explicit body.model > thread.model > provider
+    # default. Persist the choice so it sticks for later turns. (400 on a bad id.)
+    model = _resolve_model(body.model, t, provider)
+    if body.model is not None and model != t.get("model"):
+        chat_store.set_thread_model(thread_id, model)
+
+    # Capability facts: computed from the SAME branch that decides the run config
+    # (capability_for mirrors the build/narrow/tools-off ladder below), so the
+    # role preamble can never claim tools the run doesn't actually have.
+    tools_active, tool_summary = chat_context.capability_for(
+        provider, enable_chat_tools=ENABLE_CHAT_TOOLS
+    )
+    is_build_mode = chat_context.is_build_provider(provider)
+    preamble = chat_context.role_preamble(
+        tools_active=tools_active,
+        tool_summary=tool_summary,
+        cwd=(str(provider.dir) if is_build_mode else None),
+    )
+    prompt = _build_prompt(provider, history, content, preamble=preamble)
 
     # Persist the user's message first so it isn't lost if the model call fails.
     chat_store.append_message(thread_id, "user", content)
@@ -155,18 +288,11 @@ async def send_message(thread_id: str, body: PostMessage):
     # Claude Code session via --session-id (first turn) / --resume (subsequent).
     # The narrow-tool / tools_disabled branches don't apply — those are for
     # Data-mode surfaces.
-    is_build_mode = isinstance(
-        provider,
-        (chat_context.ProjectContextProvider, chat_context.BuildAgentContextProvider),
-    )
     if is_build_mode:
         call_kwargs = {
             "max_turns": provider.max_turns,
             "cwd": str(provider.dir),
         }
-        # Sonnet is the right default for Build (codegen quality matters);
-        # the operator can opt up to opus later via the model picker.
-        model = llm_router.TIER_SONNET
         # Build runs are often long. Keep a hard ceiling well above Data mode.
         call_timeout = 900
 
@@ -241,6 +367,11 @@ async def send_message(thread_id: str, body: PostMessage):
         cleaned = "(done)"
     meta = {"notes": notes} if notes else None
     msg = chat_store.append_message(thread_id, "assistant", cleaned, meta=meta)
+
+    # Auto-name the thread after the first exchange — non-blocking so it never
+    # delays this reply (scheduled as a background task; the reply returns now).
+    asyncio.create_task(_maybe_autoname(thread_id, content, cleaned))
+
     return {"message": msg, "notes": notes}
 
 
@@ -257,6 +388,9 @@ async def send_message(thread_id: str, body: PostMessage):
 
 class StartTurnIn(BaseModel):
     content: str
+    # Optional per-turn model override (short tier name or full id); same
+    # semantics as PostMessage.model.
+    model: str | None = None
 
 
 @router.post("/threads/{thread_id}/turns")
@@ -272,6 +406,12 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if not isinstance(provider, chat_context.BuildAgentContextProvider):
         raise HTTPException(400, "streaming turns are Build-only; use POST /messages for Data chats")
 
+    # Resolve + persist the model (explicit > thread > provider default). 400 on
+    # a bad id. Build providers no longer hard-force sonnet — opus is selectable.
+    model = _resolve_model(body.model, t, provider)
+    if body.model is not None and model != t.get("model"):
+        chat_store.set_thread_model(thread_id, model)
+
     history = t.get("messages", [])
     chat_store.append_message(thread_id, "user", content)
 
@@ -282,20 +422,29 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     except KeyError:
         sid, is_new = None, True
 
-    # First turn: full prompt (persona + live context). Resumed turn: just
-    # the new user message (the session retains its prior context).
+    # First turn: full prompt with the platform role preamble (capability +
+    # egress facts) + persona + live context. Resumed turn: just the new user
+    # message (the session retains its prior context, including turn-1 preamble).
     if sid and not is_new:
         prompt = content
         resume_flag = True
     else:
-        prompt = _build_prompt(provider, history, content)
+        tools_active, tool_summary = chat_context.capability_for(
+            provider, enable_chat_tools=ENABLE_CHAT_TOOLS
+        )
+        preamble = chat_context.role_preamble(
+            tools_active=tools_active,
+            tool_summary=tool_summary,
+            cwd=str(provider.dir),
+        )
+        prompt = _build_prompt(provider, history, content, preamble=preamble)
         resume_flag = False
 
     turn = await build_streaming.start_turn(
         thread_id=thread_id,
         agent_slug=provider.slug,
         prompt=prompt,
-        model=llm_router.TIER_SONNET,
+        model=model,
         cwd=str(provider.dir),
         session_id=sid,
         resume=resume_flag,

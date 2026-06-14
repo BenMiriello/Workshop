@@ -25,6 +25,87 @@ from typing import Any
 
 log = logging.getLogger("workshop.chat_context")
 
+# The three pickable models surfaced in the composer's model selector, full ids.
+# Sourced from llm_router so they never drift from the actual call tiers.
+from services import llm_router as _llm  # noqa: E402
+
+PICKABLE_MODELS: list[str] = [
+    _llm.TIER_OPUS,    # claude-opus-4-8
+    _llm.TIER_SONNET,  # claude-sonnet-4-6
+    _llm.TIER_HAIKU,   # claude-haiku-4-5-20251001
+]
+
+# Short tier-name aliases accepted from the API alongside the full ids.
+MODEL_ALIASES: dict[str, str] = {
+    "opus": _llm.TIER_OPUS,
+    "sonnet": _llm.TIER_SONNET,
+    "haiku": _llm.TIER_HAIKU,
+}
+
+
+def normalize_model(value: str | None) -> str | None:
+    """Map an incoming model selector value (short tier name OR full id) to a
+    full, pickable model id. Returns None for blank input; raises ValueError if
+    the value isn't one of the three pickable models."""
+    if value is None:
+        return None
+    v = value.strip()
+    if not v:
+        return None
+    if v in MODEL_ALIASES:
+        return MODEL_ALIASES[v]
+    if v in PICKABLE_MODELS:
+        return v
+    raise ValueError(
+        f"unknown model {value!r}; pick one of {PICKABLE_MODELS} "
+        f"or a tier name {list(MODEL_ALIASES)}"
+    )
+
+
+# ---------------------------------------------------------------- role preamble
+
+
+def role_preamble(
+    *,
+    tools_active: bool,
+    tool_summary: str = "",
+    cwd: str | None = None,
+) -> str:
+    """Platform-owned layer-1 system facts, generated from the ACTUAL run config
+    (tools_active is computed in routes/chat.py from the same branch that decides
+    tools_disabled/allowed_tools, so the preamble can never drift from reality).
+
+    tools_active=False -> a tools-off safety preamble (no actions, no promises).
+    tools_active=True  -> the real toolset + working dir + egress facts.
+    """
+    if not tools_active:
+        return (
+            "=== YOUR CAPABILITIES (read this first) ===\n"
+            "You have NO tools in this session: you cannot run commands, fetch "
+            "data, edit files, browse the web, or take any action. Do not claim "
+            "you will do something or that you did it. Answer from the provided "
+            "context only; if an action is needed, tell the operator the exact "
+            "steps to take or offer to draft the text for them."
+        )
+    where = cwd or "the working directory"
+    tools = tool_summary or (
+        "full Claude Code toolset (Read, Write, Edit, Bash, Grep, Glob, and the "
+        "rest)"
+    )
+    return (
+        "=== YOUR CAPABILITIES (read this first) ===\n"
+        f"You have {tools}, operating in {where}. You can read and edit files, "
+        "run commands, and search the project.\n\n"
+        "NETWORK EGRESS IS RESTRICTED: external network access (git clone, "
+        "npm install, curl/wget to public hosts like github.com or "
+        "registry.npmjs.org) is BLOCKED in this environment. Only loopback "
+        "(127.0.0.1) and the tailnet are reachable. If a task needs an external "
+        "fetch, do NOT promise it and do NOT pretend it succeeded: surface that "
+        "it is blocked and ask the operator to run it in their own terminal or "
+        "to approve the host."
+    )
+
+
 # ---------------------------------------------------------------- base / general
 
 
@@ -46,6 +127,13 @@ class ContextProvider:
     allowed_tools: list[str] = []
     mcp_servers: list[str] = []
     max_turns: int = 4
+    # Role surfaced to the UI: "assistant" for data/app chats, "builder" for
+    # project:/build: providers. Drives the composer label + default model.
+    role: str = "assistant"
+    # Provider default model (full id). Resolution order at call time is:
+    # explicit body.model > thread.model > this default. Assistants default to
+    # the fast tier; builders override to a strong tier (see subclasses).
+    default_model: str = _llm.TIER_HAIKU
 
     def persona(self) -> str:
         return (
@@ -80,6 +168,13 @@ class ContextProvider:
         """Returns (cleaned_reply, notes). Default: nothing to apply."""
         return reply, []
 
+    def custom_prompt(self) -> str:
+        """User-owned free-text system prompt (layer 3), appended after the
+        platform context and BEFORE the conversation. The platform safety
+        preamble (layer 1) always precedes this and is never overridden by it.
+        Default empty — the seam exists; no UI is built here yet."""
+        return ""
+
 
 # ---------------------------------------------------------------- budget provider
 
@@ -100,6 +195,9 @@ class BudgetContextProvider(ContextProvider):
     ]
     mcp_servers = ["plaid"]
     max_turns = 4
+    # Budget chat keeps a stronger default — plan-patch path generation wants
+    # careful reasoning (operator can still drop to haiku via the picker).
+    default_model = _llm.TIER_SONNET
 
     def persona(self) -> str:
         return (
@@ -712,6 +810,9 @@ class ProjectContextProvider(ContextProvider):
     mcp_servers = []
     # Vibe-coding wants real headroom; tasks routinely span 20+ tool calls.
     max_turns = 60
+    role = "builder"
+    # Builders default to a strong model for codegen quality; opus is selectable.
+    default_model = _llm.TIER_SONNET
 
     def __init__(self, slug: str):
         self.slug = slug
@@ -764,6 +865,8 @@ class BuildAgentContextProvider(ContextProvider):
     allowed_tools = []
     mcp_servers = []
     max_turns = 60
+    role = "builder"
+    default_model = _llm.TIER_SONNET
 
     def __init__(self, slug: str):
         # Defer build_agents import to avoid circulars at module load.
@@ -841,6 +944,38 @@ def _build_agent_slugs() -> list[str]:
         return []
 
 
+def is_build_provider(provider: ContextProvider) -> bool:
+    """A build provider runs the full agentic Claude Code path."""
+    return isinstance(provider, (ProjectContextProvider, BuildAgentContextProvider))
+
+
+def capability_for(
+    provider: ContextProvider, *, enable_chat_tools: bool
+) -> tuple[bool, str]:
+    """SINGLE SOURCE OF TRUTH for "does this provider get tools in the actual
+    run?" — used both to build the role preamble (so it can't drift) and to
+    report `tools_active` from /providers.
+
+    Mirrors the branch order in routes/chat.send_message exactly:
+      - build providers always run the agentic toolset -> True
+      - data providers get narrow MCP tools ONLY when ENABLE_CHAT_TOOLS is on
+        AND they declare a non-empty allowed_tools list -> else tools-off.
+
+    Returns (tools_active, tool_summary). tool_summary is human-readable text
+    for the preamble's layer-1 tool list.
+    """
+    if is_build_provider(provider):
+        return True, (
+            "full Claude Code tool access (Read, Write, Edit, Bash, Grep, Glob, "
+            "MultiEdit, and the rest)"
+        )
+    if enable_chat_tools and provider.allowed_tools:
+        return True, (
+            "a narrow read-only tool set: " + ", ".join(provider.allowed_tools)
+        )
+    return False, ""
+
+
 def get_provider(context_key: str | None) -> ContextProvider:
     if context_key and context_key.startswith("project:"):
         slug = context_key.split(":", 1)[1]
@@ -851,12 +986,58 @@ def get_provider(context_key: str | None) -> ContextProvider:
     return PROVIDERS.get(context_key or "general", PROVIDERS["general"])
 
 
-def list_providers() -> list[dict]:
-    # Static providers + dynamically discovered project + build-agent providers
-    # so the UI picker can route to any current Build session.
-    out = [{"key": p.key, "label": p.label} for p in PROVIDERS.values()]
+def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict:
+    """Rich /providers entry the composer relies on: key, label, role, the
+    pickable models, the default model, and whether this provider actually gets
+    tools in the current run config."""
+    from routes.chat import ENABLE_CHAT_TOOLS
+
+    tools_active, _summary = capability_for(provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
+    return {
+        "key": provider.key,
+        "label": label if label is not None else provider.label,
+        "role": provider.role,
+        "models": list(PICKABLE_MODELS),
+        "default_model": provider.default_model,
+        "tools_active": tools_active,
+    }
+
+
+def list_providers(scope: str | None = None) -> list[dict]:
+    """Provider directory for the composer/picker.
+
+    scope=None  -> the FULL list (static data providers + every discovered
+                   project + build-agent provider). The Agents page needs this.
+    scope=<key> -> ONLY the single matching provider entry (an in-app dock
+                   passes its own contextKey and must not see unrelated
+                   projects/build agents). Returns [] if the key resolves to
+                   nothing valid.
+
+    Each entry: {key, label, role, models, default_model, tools_active}.
+    """
+    if scope:
+        provider = get_provider(scope)
+        # get_provider falls back to the `general` provider for unknown keys;
+        # only return an entry if the resolved key actually matches the request
+        # (so a bogus scope doesn't silently expose `general`).
+        if provider.key != scope and scope not in PROVIDERS:
+            return []
+        # Preserve the nicer dynamic labels for project:/build: keys.
+        if scope.startswith("project:"):
+            label = f"Build · project · {scope.split(':', 1)[1]}"
+        elif scope.startswith("build:"):
+            label = f"Build · agent · {scope.split(':', 1)[1]}"
+        else:
+            label = None
+        return [_provider_entry(provider, label)]
+
+    out = [_provider_entry(p) for p in PROVIDERS.values()]
     for slug in _project_slugs():
-        out.append({"key": f"project:{slug}", "label": f"Build · project · {slug}"})
+        out.append(_provider_entry(
+            ProjectContextProvider(slug), f"Build · project · {slug}"
+        ))
     for slug in _build_agent_slugs():
-        out.append({"key": f"build:{slug}", "label": f"Build · agent · {slug}"})
+        out.append(_provider_entry(
+            BuildAgentContextProvider(slug), f"Build · agent · {slug}"
+        ))
     return out

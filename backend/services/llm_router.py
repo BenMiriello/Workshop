@@ -5,7 +5,7 @@ Tier ladder:
                                (classification, routing decisions, redaction, single-word answers)
     1  Claude Haiku 4.5        subscription, default cloud — most agent reasoning, simple code
     2  Claude Sonnet 4.6       subscription, mid-cost — bigger tasks
-    3  Claude Opus 4.7         subscription, expensive — only when truly needed
+    3  Claude Opus 4.8         subscription, expensive — only when truly needed
 
 The router gates Ollama on health + GPU availability. If Ollama is down or the
 GPU is saturated by another workload (image gen, another model, etc.), the
@@ -47,7 +47,7 @@ AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", "/home/clawd-a/.config/clawdbot/aut
 # Tier model handles (claude -p --model arg)
 TIER_HAIKU = "claude-haiku-4-5-20251001"
 TIER_SONNET = "claude-sonnet-4-6"
-TIER_OPUS = "claude-opus-4-7"
+TIER_OPUS = "claude-opus-4-8"
 
 # Health thresholds
 OLLAMA_HEALTH_TIMEOUT_S = 3

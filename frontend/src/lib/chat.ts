@@ -15,6 +15,7 @@ export type ThreadSummary = {
   updated_at: string;
   message_count: number;
   last_message: string;
+  model?: string | null;
 };
 
 export type Thread = ThreadSummary & { messages: ChatMsg[] };
@@ -24,10 +25,25 @@ async function j<T>(r: Response): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-export type Provider = { key: string; label: string };
+export type ProviderRole = "assistant" | "builder";
+
+export type Provider = {
+  key: string;
+  label: string;
+  role?: ProviderRole;
+  models?: string[];
+  default_model?: string;
+  tools_active?: boolean;
+};
 
 export const chatApi = {
-  listProviders: () => fetch(`/api/chat/providers`).then(j<Provider[]>),
+  // With `scope` set to a contextKey the backend returns ONLY the relevant
+  // provider(s) (used by an in-app dock); without scope it returns the FULL list
+  // (used by the Agents page / focused chat so the operator can pick any).
+  listProviders: (scope?: string) =>
+    fetch(
+      scope ? `/api/chat/providers?scope=${encodeURIComponent(scope)}` : `/api/chat/providers`,
+    ).then(j<Provider[]>),
 
   // listThreads now accepts an empty contextKey to list ALL threads (used when
   // we want the cross-scope thread picker to surface every chat the operator
@@ -51,10 +67,10 @@ export const chatApi = {
   deleteThread: (id: string) =>
     fetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then(j<{ deleted: boolean }>),
 
-  sendMessage: (id: string, content: string) =>
+  sendMessage: (id: string, content: string, model?: string) =>
     fetch(`/api/chat/threads/${id}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify(model ? { content, model } : { content }),
     }).then(j<{ message: ChatMsg; notes: string[] }>),
 };

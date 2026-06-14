@@ -51,7 +51,7 @@ export default function ChatDock({ contextKey, title = "Assistant", placeholder,
         <span className="ws-spacer" />
         <ChevronDown size={16} strokeWidth={1.8} aria-hidden />
       </div>
-      <Chat contextKey={contextKey} mode={mode} variant="dock" placeholder={placeholder} onAction={onAction} />
+      <Chat contextKey={contextKey} mode={mode} variant="dock" placeholder={placeholder} onAction={onAction} scoped />
     </div>
   );
 }

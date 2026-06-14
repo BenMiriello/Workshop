@@ -41,17 +41,36 @@ def _write(thread: dict) -> dict:
     return thread
 
 
-def create_thread(context_key: str = "general", title: str = "", agent_id: str | None = None) -> dict:
+def create_thread(
+    context_key: str = "general",
+    title: str = "",
+    agent_id: str | None = None,
+    model: str | None = None,
+) -> dict:
     tid = uuid.uuid4().hex
     thread = {
         "id": tid,
         "context_key": context_key or "general",
         "agent_id": agent_id,
+        # Per-thread model preference (full model id) chosen via the composer's
+        # model picker. None = fall back to the provider default at call time.
+        "model": model,
         "title": title or "New chat",
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
         "messages": [],
     }
+    return _write(thread)
+
+
+def set_thread_model(thread_id: str, model: str | None) -> dict | None:
+    """Persist the per-thread model preference (full model id, or None to clear).
+    Returns the updated thread, or None if the thread is missing."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread["model"] = model
+    thread["updated_at"] = _now_iso()
     return _write(thread)
 
 
@@ -78,11 +97,17 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         if context_key and t.get("context_key") != context_key:
             continue
         msgs = t.get("messages", [])
+        title = t.get("title", "New chat")
+        # Until auto-naming runs (or if it never can), show the first-user-message
+        # seed instead of a bare "New chat".
+        if title in (None, "", "New chat") and t.get("_seed_title"):
+            title = t["_seed_title"]
         out.append({
             "id": t["id"],
             "context_key": t.get("context_key", "general"),
             "agent_id": t.get("agent_id"),
-            "title": t.get("title", "New chat"),
+            "model": t.get("model"),
+            "title": title,
             "created_at": t.get("created_at"),
             "updated_at": t.get("updated_at"),
             "message_count": len(msgs),
@@ -101,9 +126,14 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
         msg["meta"] = meta
     thread["messages"].append(msg)
     thread["updated_at"] = _now_iso()
-    # Auto-title from the first user message so the thread list is legible.
+    # Title is left as the "New chat" seed here; the chat route generates a
+    # proper short title via a cheap model call after the first assistant reply
+    # (see routes/chat._maybe_autoname). The thread-list summary already carries
+    # a `last_message` snippet, so an interim snippet-title is redundant. If a
+    # thread somehow never gets named (model unavailable), fall back to a first-
+    # user-message snippet so the list never shows a wall of "New chat".
     if role == "user" and thread.get("title") in (None, "", "New chat"):
-        thread["title"] = content.strip().split("\n")[0][:60] or "New chat"
+        thread["_seed_title"] = content.strip().split("\n")[0][:60] or "New chat"
     _write(thread)
     return msg
 
