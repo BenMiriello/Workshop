@@ -368,8 +368,17 @@ async def send_message(thread_id: str, body: PostMessage):
     meta = {"notes": notes} if notes else None
     msg = chat_store.append_message(thread_id, "assistant", cleaned, meta=meta)
 
-    # Auto-name the thread after the first exchange — non-blocking so it never
-    # delays this reply (scheduled as a background task; the reply returns now).
+    # Auto-checkpoint a build turn so the builder's work is a recoverable
+    # timeline (doc 05 history substrate). Best-effort, off the event loop.
+    if is_build_mode:
+        try:
+            from services import checkpoints
+            await asyncio.to_thread(checkpoints.checkpoint, str(provider.dir), f"{provider.key} turn")
+        except Exception as e:
+            log.info("build checkpoint skipped: %s", e)
+
+    # Auto-name the thread after the first exchange (non-blocking so it never
+    # delays this reply; scheduled as a background task; the reply returns now).
     asyncio.create_task(_maybe_autoname(thread_id, content, cleaned))
 
     return {"message": msg, "notes": notes}

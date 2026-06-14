@@ -239,6 +239,16 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     except Exception:
         pass
 
+    # Auto-checkpoint: commit the working tree so the builder's work is a
+    # recoverable timeline (doc 05 history substrate). Best-effort, off-loop.
+    try:
+        from services import checkpoints
+        sha = await asyncio.to_thread(checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn")
+        if sha:
+            _push(turn, "checkpoint", {"sha": sha})
+    except Exception as e:
+        log.info("turn %s: checkpoint skipped: %s", turn.id, e)
+
     # Auto-name the thread after the first streamed exchange completes (mirrors
     # the sync /messages path). Reuses the same cheap-Haiku namer in routes.chat
     # so naming behavior can't drift between the two paths. Lazy import avoids an
