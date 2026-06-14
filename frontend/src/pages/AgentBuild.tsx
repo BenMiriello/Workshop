@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   File, Folder, FolderOpen, GitCommit, Play, RefreshCw, RotateCcw, Save, Square,
-  Trash2, ExternalLink, Pencil, Plus, Maximize2, Minimize2, FileCode, MonitorPlay,
+  Trash2, ExternalLink, Plus, Maximize2, Minimize2, FileCode, MonitorPlay,
   GitCompare, MessageSquare, FolderTree,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -30,9 +30,9 @@ import Chat from "../components/Chat";
 import { useCrumbLabel } from "../components/appNav";
 
 // Build-agent detail = the in-web coding UI. Per ADR-009:
-//   - Top status strip with pills (state / preview / branch / tasks) and a
+//   - Top status strip with pills (state / preview / branch) and a
 //     pop-chat link.
-//   - Three docs tabs: system-prompt | tasks | interventions.
+//   - Two docs tabs: system-prompt | interventions.
 //   - Preview is a link-out-of-box card; custom-command behind a disclosure.
 //   - Branches picker on the status bar; modal opens for a new branch.
 //   - Existing file tree + editor + diff tabs preserved.
@@ -46,13 +46,11 @@ type TreeNode = {
 };
 
 type PaneTab = "editor" | "preview" | "diff";
-type DocTab = "system-prompt" | "tasks" | "interventions";
+type DocTab = "system-prompt" | "interventions";
 
 // Which region is expanded full-width (IDE-style focus). "all" = the 3-up layout.
 type FocusRegion = "all" | "files" | "center" | "chat";
 const FOCUS_KEY = "ws-agent-build-focus";
-
-type Task = { id: string; text: string; done: boolean; source: "agent" | "operator" };
 
 type Worktree = {
   branch_slug: string;
@@ -97,7 +95,6 @@ const PANE_HELP: Record<PaneTab, string> = {
 
 const DOC_TABS: TabItem<DocTab>[] = [
   { value: "system-prompt", label: "System prompt" },
-  { value: "tasks", label: "Tasks" },
   { value: "interventions", label: "Interventions" },
 ];
 
@@ -203,72 +200,6 @@ function FileTreeNode({ node, depth, onPick, picked }: {
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{node.name}</span>
       </button>
     </li>
-  );
-}
-
-function TaskRow({
-  task, onToggle, onEdit, onDelete,
-}: {
-  task: Task;
-  onToggle: (done: boolean) => void;
-  onEdit: (text: string) => void;
-  onDelete: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(task.text);
-
-  const commit = () => {
-    const t = draft.trim();
-    if (t && t !== task.text) onEdit(t);
-    setEditing(false);
-  };
-
-  return (
-    <div className="ws-task-row">
-      <input
-        type="checkbox"
-        checked={task.done}
-        onChange={(e) => onToggle(e.target.checked)}
-        aria-label="done"
-      />
-      {editing ? (
-        <Input
-          value={draft}
-          autoFocus
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") { e.preventDefault(); commit(); }
-            if (e.key === "Escape") { setDraft(task.text); setEditing(false); }
-          }}
-          style={{ flex: 1 }}
-        />
-      ) : (
-        <span
-          style={{
-            flex: 1,
-            textDecoration: task.done ? "line-through" : "none",
-            color: task.done ? "var(--muted)" : "var(--fg)",
-            fontSize: "var(--fs-sm)",
-          }}
-        >
-          {task.text}
-        </span>
-      )}
-      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-        from {task.source}
-      </span>
-      {!editing && (
-        <div className="ws-task-row__actions">
-          <Button size="sm" variant="ghost" onClick={() => { setDraft(task.text); setEditing(true); }} aria-label="Edit task">
-            <Pencil aria-hidden />
-          </Button>
-          <Button size="sm" variant="danger-ghost" onClick={onDelete} aria-label="Delete task">
-            <Trash2 aria-hidden />
-          </Button>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -396,12 +327,6 @@ export default function AgentBuild() {
   const [systemPrompt, setSystemPrompt] = useState<string>("");
   const [systemPromptDirty, setSystemPromptDirty] = useState(false);
 
-  // Tasks
-  const [tasks, setTasks] = useState<Task[] | null>(null);
-  const [tasksErr, setTasksErr] = useState<string | null>(null);
-  const [tasksLoading, setTasksLoading] = useState(false);
-  const [newTask, setNewTask] = useState("");
-
   // Interventions
   const [interventions, setInterventions] = useState<string>("");
   const [newIntervention, setNewIntervention] = useState("");
@@ -468,84 +393,6 @@ export default function AgentBuild() {
       .catch(() => { if (!cancelled) setWorktrees([]); });
     return () => { cancelled = true; };
   }, [agent?.project_slug]);
-
-  const loadTasks = useCallback(async () => {
-    setTasksLoading(true);
-    setTasksErr(null);
-    try {
-      const r = await fetch(`/api/agents/build/${slug}/tasks`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const j = await r.json();
-      // The structured task store returns {tasks:[{...,status,owner}]}; map to
-      // this view's {done,source} shape (done = status "done").
-      const raw: any[] = Array.isArray(j) ? j : (j.tasks ?? []);
-      setTasks(
-        raw.map((t) => ({
-          id: t.id,
-          text: t.text,
-          done: t.done ?? t.status === "done",
-          source: t.source ?? (t.owner === "operator" ? "operator" : "agent"),
-        })),
-      );
-    } catch (e) {
-      setTasksErr(String(e));
-      setTasks([]);
-    } finally {
-      setTasksLoading(false);
-    }
-  }, [slug]);
-
-  useEffect(() => { loadTasks(); }, [loadTasks]);
-
-  const addTask = useCallback(async () => {
-    const text = newTask.trim();
-    if (!text) return;
-    setNewTask("");
-    try {
-      const r = await fetch(`/api/agents/build/${slug}/tasks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      await loadTasks();
-    } catch (e) {
-      setTasksErr(String(e));
-    }
-  }, [newTask, slug, loadTasks]);
-
-  const toggleTask = useCallback(async (id: string, done: boolean) => {
-    setTasks((prev) => prev?.map((t) => (t.id === id ? { ...t, done } : t)) ?? prev);
-    try {
-      await fetch(`/api/agents/build/${slug}/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: done ? "done" : "todo" }),
-      });
-    } finally {
-      loadTasks();
-    }
-  }, [slug, loadTasks]);
-
-  const editTask = useCallback(async (id: string, text: string) => {
-    try {
-      await fetch(`/api/agents/build/${slug}/tasks/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-    } finally {
-      loadTasks();
-    }
-  }, [slug, loadTasks]);
-
-  const deleteTask = useCallback(async (id: string) => {
-    try {
-      await fetch(`/api/agents/build/${slug}/tasks/${id}`, { method: "DELETE" });
-    } finally {
-      loadTasks();
-    }
-  }, [slug, loadTasks]);
 
   const dropIntervention = useCallback(async () => {
     const text = newIntervention.trim();
@@ -727,9 +574,6 @@ export default function AgentBuild() {
     }
   }, [slug, commitMessage, loadDiff]);
 
-  const doneCount = useMemo(() => (tasks ? tasks.filter((t) => t.done).length : 0), [tasks]);
-  const totalCount = tasks?.length ?? 0;
-
   if (err) {
     return (
       <div>
@@ -818,9 +662,6 @@ export default function AgentBuild() {
           ) : (
             <StatusPill status="stopped">No project</StatusPill>
           )}
-          <StatusPill status={totalCount > 0 && doneCount === totalCount ? "ok" : "running"}>
-            Tasks · {doneCount}/{totalCount} done
-          </StatusPill>
         </Row>
       </Card>
 
@@ -1066,7 +907,7 @@ export default function AgentBuild() {
             )}
           </div>
 
-          {/* --- Docs tabs: system-prompt | tasks | interventions --- */}
+          {/* --- Docs tabs: system-prompt | interventions --- */}
           <div style={{ marginTop: "var(--space-5)", flex: "0 0 auto" }}>
             <Tabs items={DOC_TABS} value={docTab} onChange={setDocTab} />
             <Card style={{ padding: "var(--space-3)", marginTop: "var(--space-3)" }}>
@@ -1087,51 +928,6 @@ export default function AgentBuild() {
                   <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.4rem" }}>
                     Treat this like the system prompt. Stored as <code className="ws-mono">PROJECT.md</code>.
                   </p>
-                </>
-              )}
-              {docTab === "tasks" && (
-                <>
-                  <Row between style={{ marginBottom: "0.5rem" }}>
-                    <span className="ws-card__meta">
-                      Tasks · {doneCount}/{totalCount} done
-                    </span>
-                    <Button size="sm" variant="ghost" onClick={loadTasks} disabled={tasksLoading}>
-                      <RefreshCw aria-hidden /> Refresh
-                    </Button>
-                  </Row>
-                  {tasksLoading && !tasks ? (
-                    <p className="ws-muted">Loading tasks...</p>
-                  ) : tasksErr ? (
-                    <StateBlock variant="error" title="Couldn't load tasks" hint={<code>{tasksErr}</code>} />
-                  ) : !tasks || tasks.length === 0 ? (
-                    <StateBlock title="No tasks yet" hint="Add one below. The agent edits the same list via TODO.md." />
-                  ) : tasks.length > 500 ? (
-                    <StateBlock title="Too many tasks" hint="Showing the first 500. Trim TODO.md to keep things readable." />
-                  ) : (
-                    <div>
-                      {tasks.map((t) => (
-                        <TaskRow
-                          key={t.id}
-                          task={t}
-                          onToggle={(done) => toggleTask(t.id, done)}
-                          onEdit={(text) => editTask(t.id, text)}
-                          onDelete={() => deleteTask(t.id)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <Row style={{ marginTop: "var(--space-3)" }}>
-                    <Input
-                      value={newTask}
-                      placeholder="Add a task..."
-                      onChange={(e) => setNewTask(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTask(); } }}
-                      style={{ flex: 1 }}
-                    />
-                    <Button variant="primary" onClick={addTask} disabled={!newTask.trim()}>
-                      <Plus aria-hidden /> Add
-                    </Button>
-                  </Row>
                 </>
               )}
               {docTab === "interventions" && (
