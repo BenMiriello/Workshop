@@ -10,8 +10,9 @@ import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException
+from pydantic import BaseModel
 
-from services import manifests, permissions
+from services import manifests, permissions, registry
 
 router = APIRouter()
 
@@ -105,3 +106,64 @@ async def get_app_permissions(app_id: str):
     if manifests.get_manifest(app_id) is None:
         raise HTTPException(404, f"app manifest not found: {app_id}")
     return permissions.assistant_capabilities(app_id, permissions.OPERATOR_IDENTITY)
+
+
+# ---- Marketplace / registry (LOCAL dev version) -----------------------------
+# The local app + kit registry (docs/workshop-v1/03-ui-kit-and-marketplace.md
+# sections 4-5). Publish bundles a project's git history into a local release;
+# install/fork clones that bundle into the workspace and registers it as a new
+# project (reusing the projects hub registry as the single source of truth).
+# No network: releases are git bundles on disk. See services/registry.py.
+
+
+class PublishIn(BaseModel):
+    slug: str
+    version: str | None = None
+    kind: str = "app"
+    description: str = ""
+
+
+class InstallIn(BaseModel):
+    target_slug: str | None = None
+
+
+@router.get("/registry")
+async def list_registry():
+    """Return the registry catalog: {"items": [...]}."""
+    return {"items": registry.list_items()}
+
+
+@router.get("/registry/{item_id}")
+async def get_registry_item(item_id: str):
+    """Return a single registry item, or 404 if it is not published."""
+    item = registry.get_item(item_id)
+    if item is None:
+        raise HTTPException(404, f"registry item not found: {item_id}")
+    return item
+
+
+@router.post("/registry/publish")
+async def publish_registry_item(body: PublishIn):
+    """Publish a project as a new local release. 404 if the project is unknown,
+    400 if it is not a git repo with at least one commit."""
+    kind = body.kind if body.kind in ("app", "kit") else "app"
+    try:
+        return registry.publish(
+            body.slug.strip(),
+            version=body.version,
+            kind=kind,
+            description=body.description or "",
+        )
+    except registry.RegistryError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.post("/registry/{item_id}/install")
+async def install_registry_item(item_id: str, body: InstallIn = Body(default=InstallIn())):
+    """Fork a registry item into the workspace and register it as a project.
+    404 if the item is missing, 409 if the target slug exists and cannot be
+    auto-suffixed. Returns the new project entry."""
+    try:
+        return registry.install(item_id, target_slug=body.target_slug)
+    except registry.RegistryError as e:
+        raise HTTPException(e.status, e.message)

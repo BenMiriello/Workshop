@@ -53,6 +53,10 @@ infra/open-wearables/repo/
 *.pmtiles
 frontend/public/basemap/
 
+# Local marketplace release artifacts — git bundles can be large and are
+# regenerable from the source projects; the catalog (registry.json) IS tracked.
+registry-bundles/
+
 # Per-project working trees, build-agent scratch dirs, and worktrees.
 # Each is its own git repo / ephemeral working state — not Workshop source.
 # The registries (projects.json, build_agents.json) and scaffold templates ARE tracked.
