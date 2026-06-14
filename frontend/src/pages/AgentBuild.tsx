@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   File, Folder, FolderOpen, GitCommit, Play, RefreshCw, RotateCcw, Save, Square,
-  Trash2, ExternalLink, Pencil, Plus,
+  Trash2, ExternalLink, Pencil, Plus, Maximize2, Minimize2, FileCode, MonitorPlay,
+  GitCompare, MessageSquare, FolderTree,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import type { BuildAgent } from "@shared/types";
 import {
   Button,
@@ -14,11 +16,13 @@ import {
   Modal,
   PageHeader,
   Row,
+  Segmented,
   Select,
   StateBlock,
   StatusPill,
   Tabs,
   Textarea,
+  type SegmentedOption,
   type StatusKind,
   type TabItem,
 } from "../ui";
@@ -43,6 +47,10 @@ type TreeNode = {
 
 type PaneTab = "editor" | "preview" | "diff";
 type DocTab = "system-prompt" | "tasks" | "interventions";
+
+// Which region is expanded full-width (IDE-style focus). "all" = the 3-up layout.
+type FocusRegion = "all" | "files" | "center" | "chat";
+const FOCUS_KEY = "ws-agent-build-focus";
 
 type Task = { id: string; text: string; done: boolean; source: "agent" | "operator" };
 
@@ -73,11 +81,19 @@ const stateKind = (s?: string): StatusKind => {
   }
 };
 
-const PANE_TABS: TabItem<PaneTab>[] = [
-  { value: "editor", label: "Editor" },
-  { value: "preview", label: "Preview" },
-  { value: "diff", label: "Diff" },
+// Editor/Preview/Diff is a view switch (view preference) — a Segmented control
+// reads more clearly as "pick a view" than tab underlines, and keeps one height.
+const PANE_VIEWS: SegmentedOption<PaneTab>[] = [
+  { value: "editor", label: <><FileCode size={15} aria-hidden /> Editor</> },
+  { value: "preview", label: <><MonitorPlay size={15} aria-hidden /> Preview</> },
+  { value: "diff", label: <><GitCompare size={15} aria-hidden /> Diff</> },
 ];
+
+const PANE_HELP: Record<PaneTab, string> = {
+  editor: "The file selected in Files.",
+  preview: "The live running app (dev server).",
+  diff: "Working-tree changes vs HEAD, with commit.",
+};
 
 const DOC_TABS: TabItem<DocTab>[] = [
   { value: "system-prompt", label: "System prompt" },
@@ -318,6 +334,39 @@ function NewBranchModal({
   );
 }
 
+// Region header: title + a focus/restore toggle. When this region is focused it
+// shows "restore" (Minimize2); otherwise "expand" (Maximize2). One control height.
+function RegionHead({
+  icon, title, region, focus, onFocus, extra,
+}: {
+  icon: ReactNode;
+  title: string;
+  region: Exclude<FocusRegion, "all">;
+  focus: FocusRegion;
+  onFocus: (next: FocusRegion) => void;
+  extra?: ReactNode;
+}) {
+  const focused = focus === region;
+  return (
+    <div className="ws-region-head">
+      <span className="ws-region-head__title">{icon} {title}</span>
+      <Row style={{ gap: "var(--space-1)" }}>
+        {extra}
+        <Button
+          size="sm"
+          variant="ghost"
+          icon
+          onClick={() => onFocus(focused ? "all" : region)}
+          aria-label={focused ? `Restore ${title} to split view` : `Expand ${title} full width`}
+          title={focused ? "Restore split view" : "Expand full width"}
+        >
+          {focused ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+        </Button>
+      </Row>
+    </div>
+  );
+}
+
 export default function AgentBuild() {
   const { slug = "" } = useParams();
   const [agent, setAgent] = useState<BuildAgent | null>(null);
@@ -331,6 +380,17 @@ export default function AgentBuild() {
 
   const [paneTab, setPaneTab] = useState<PaneTab>("editor");
   const [docTab, setDocTab] = useState<DocTab>("system-prompt");
+
+  // IDE-style pane focus, persisted across reloads.
+  const [focus, setFocus] = useState<FocusRegion>(() => {
+    if (typeof localStorage === "undefined") return "all";
+    const v = localStorage.getItem(FOCUS_KEY) as FocusRegion | null;
+    return v === "files" || v === "center" || v === "chat" || v === "all" ? v : "all";
+  });
+  const changeFocus = useCallback((next: FocusRegion) => {
+    setFocus(next);
+    try { localStorage.setItem(FOCUS_KEY, next); } catch { /* ignore */ }
+  }, []);
 
   // System prompt (file is PROJECT.md; the label is what's "system prompt"-y).
   const [systemPrompt, setSystemPrompt] = useState<string>("");
@@ -496,6 +556,8 @@ export default function AgentBuild() {
   const pickFile = useCallback(async (path: string) => {
     setPickedPath(path);
     setPaneTab("editor");
+    // If Files is focused full-width, picking a file should reveal the editor.
+    setFocus((f) => (f === "files" ? "all" : f));
     try {
       const r = await fetch(`/api/agents/build/${slug}/file?path=${encodeURIComponent(path)}`);
       if (!r.ok) {
@@ -719,12 +781,11 @@ export default function AgentBuild() {
             <StatusPill status={previewRunning ? "ok" : "stopped"}>{previewLabel}</StatusPill>
           )}
           {agent.project_slug && (worktrees && worktrees.length > 0) ? (
-            <Row style={{ gap: "0.3rem" }}>
-              <span className="ws-card__meta" style={{ fontSize: "var(--fs-xs)" }}>Branch</span>
+            <Row style={{ gap: "var(--space-2)" }}>
+              <span className="ws-card__meta">Branch</span>
               <Select
                 value={branchSlug}
                 onChange={(e) => setBranchSlug(e.target.value)}
-                style={{ fontSize: "var(--fs-xs)", padding: "0.15rem 0.4rem" }}
                 aria-label="Branch"
               >
                 <option value="">Main branch</option>
@@ -737,7 +798,7 @@ export default function AgentBuild() {
               </Button>
             </Row>
           ) : agent.project_slug ? (
-            <Row style={{ gap: "0.3rem" }}>
+            <Row style={{ gap: "var(--space-2)" }}>
               <StatusPill status="stopped">Main branch</StatusPill>
               <Button size="sm" variant="ghost" onClick={() => setNewBranchOpen(true)}>
                 <Plus aria-hidden /> New branch
@@ -752,30 +813,56 @@ export default function AgentBuild() {
         </Row>
       </Card>
 
-      <div className="ws-agent-build">
+      <div className="ws-agent-build" data-focus={focus}>
         {/* --- Files tree --- */}
-        <Card className="ws-agent-build__files" style={{ padding: "var(--space-3)", maxHeight: "70vh", overflow: "auto" }}>
-          <div className="ws-card__meta" style={{ marginBottom: "0.4rem" }}>Files</div>
+        <Card className="ws-agent-build__files ws-agent-build__region" style={{ padding: "var(--space-3)" }}>
+          <RegionHead
+            icon={<FolderTree size={14} aria-hidden />}
+            title="Files"
+            region="files"
+            focus={focus}
+            onFocus={changeFocus}
+          />
           <p className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", marginBottom: "0.5rem" }}>
             {agent.cwd}
           </p>
-          {!tree ? (
-            <p className="ws-muted">...</p>
-          ) : tree.length === 0 ? (
-            <p className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>(empty)</p>
-          ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-              {tree.map((n) => (
-                <FileTreeNode key={n.path} node={n} depth={0} onPick={pickFile} picked={pickedPath} />
-              ))}
-            </ul>
-          )}
+          <div className="ws-agent-build__region-body">
+            {!tree ? (
+              <p className="ws-muted">...</p>
+            ) : tree.length === 0 ? (
+              <p className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>(empty)</p>
+            ) : (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                {tree.map((n) => (
+                  <FileTreeNode key={n.path} node={n} depth={0} onPick={pickFile} picked={pickedPath} />
+                ))}
+              </ul>
+            )}
+          </div>
         </Card>
 
-        {/* --- Editor / Preview / Diff --- */}
-        <div className="ws-agent-build__main">
-          <Tabs items={PANE_TABS} value={paneTab} onChange={setPaneTab} />
-          <div style={{ marginTop: "var(--space-3)" }}>
+        {/* --- Center region: Editor / Preview / Diff --- */}
+        <div className="ws-agent-build__main ws-agent-build__region">
+          <RegionHead
+            icon={<FileCode size={14} aria-hidden />}
+            title="Center"
+            region="center"
+            focus={focus}
+            onFocus={changeFocus}
+            extra={
+              <Segmented
+                options={PANE_VIEWS}
+                value={paneTab}
+                onChange={setPaneTab}
+                ariaLabel="Center view"
+              />
+            }
+          />
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-2)" }}>
+            {PANE_HELP[paneTab]}
+          </p>
+          <div className="ws-agent-build__region-body">
+          <div className="ws-agent-build__center-view">
             {paneTab === "editor" && (
               <Card style={{ padding: "var(--space-3)" }}>
                 {!pickedPath ? (
@@ -791,6 +878,7 @@ export default function AgentBuild() {
                     <Textarea
                       value={fileContent}
                       onChange={(e) => { setFileContent(e.target.value); setFileDirty(true); }}
+                      className="ws-agent-build__editor-area"
                       rows={22}
                       style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fs-sm)" }}
                     />
@@ -809,7 +897,7 @@ export default function AgentBuild() {
                   </StatusPill>
                   {previewRunning && preview?.public_url && (
                     <a href={preview.public_url} target="_blank" rel="noreferrer" className="ws-agent-build__preview-open">
-                      <Button size="sm" variant="primary">
+                      <Button variant="primary">
                         <ExternalLink aria-hidden /> Open preview
                       </Button>
                     </a>
@@ -834,8 +922,8 @@ export default function AgentBuild() {
                           >
                             {suggestedCmd}
                           </code>
-                          <Button size="sm" variant="ghost" onClick={() => setCustomCmd(suggestedCmd)}>
-                            Use suggested command
+                          <Button variant="ghost" onClick={() => setCustomCmd(suggestedCmd)}>
+                            Use suggested
                           </Button>
                         </Row>
                       </div>
@@ -881,14 +969,14 @@ export default function AgentBuild() {
                   <>
                     <Row between style={{ marginBottom: "var(--space-3)" }}>
                       <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{preview?.command}</span>
-                      <Button size="sm" variant="danger-ghost" onClick={stopPreview} loading={previewBusy}>
+                      <Button variant="danger-ghost" onClick={stopPreview} loading={previewBusy}>
                         <Square aria-hidden /> Stop
                       </Button>
                     </Row>
                     <iframe
                       title="preview"
                       src={preview?.public_url || `http://localhost:${preview?.port}/`}
-                      style={{ width: "100%", height: "55vh", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
+                      style={{ width: "100%", flex: 1, minHeight: "55vh", border: "1px solid var(--border)", borderRadius: "var(--radius-sm)" }}
                     />
                   </>
                 )}
@@ -921,7 +1009,7 @@ export default function AgentBuild() {
                     value={commitMessage}
                     onChange={(e) => setCommitMessage(e.target.value)}
                   />
-                  <Button size="sm" variant="primary" onClick={commitAll} loading={committing}
+                  <Button variant="primary" onClick={commitAll} loading={committing}
                     disabled={!diffFiles || diffFiles.length === 0}>
                     <GitCommit aria-hidden /> Commit all
                   </Button>
@@ -968,7 +1056,7 @@ export default function AgentBuild() {
           </div>
 
           {/* --- Docs tabs: system-prompt | tasks | interventions --- */}
-          <div style={{ marginTop: "var(--space-5)" }}>
+          <div style={{ marginTop: "var(--space-5)", flex: "0 0 auto" }}>
             <Tabs items={DOC_TABS} value={docTab} onChange={setDocTab} />
             <Card style={{ padding: "var(--space-3)", marginTop: "var(--space-3)" }}>
               {docTab === "system-prompt" && (
@@ -1029,7 +1117,7 @@ export default function AgentBuild() {
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTask(); } }}
                       style={{ flex: 1 }}
                     />
-                    <Button size="sm" variant="primary" onClick={addTask} disabled={!newTask.trim()}>
+                    <Button variant="primary" onClick={addTask} disabled={!newTask.trim()}>
                       <Plus aria-hidden /> Add
                     </Button>
                   </Row>
@@ -1049,7 +1137,7 @@ export default function AgentBuild() {
                       onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); dropIntervention(); } }}
                       style={{ flex: 1 }}
                     />
-                    <Button size="sm" variant="primary" onClick={dropIntervention} disabled={!newIntervention.trim()}>
+                    <Button variant="primary" onClick={dropIntervention} disabled={!newIntervention.trim()}>
                       Drop
                     </Button>
                   </Row>
@@ -1066,19 +1154,24 @@ export default function AgentBuild() {
               )}
             </Card>
           </div>
+          </div>
         </div>
 
         {/* --- Chat (Build mode) --- */}
-        <Card className="ws-agent-build__chat" style={{ padding: "var(--space-3)", height: "calc(70vh + 60px)", display: "flex", flexDirection: "column" }}>
-          <Row between style={{ marginBottom: "0.5rem" }}>
-            <span className="ws-card__meta">
-              <strong>Build · {agent.slug}</strong>
-            </span>
-            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-              {agent.claude_session ? "session live" : "per-turn"}
-            </span>
-          </Row>
-          <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <Card className="ws-agent-build__chat ws-agent-build__region" style={{ padding: "var(--space-3)" }}>
+          <RegionHead
+            icon={<MessageSquare size={14} aria-hidden />}
+            title="Chat"
+            region="chat"
+            focus={focus}
+            onFocus={changeFocus}
+            extra={
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                {agent.claude_session ? "session live" : "per-turn"}
+              </span>
+            }
+          />
+          <div className="ws-agent-build__region-body" style={{ display: "flex", flexDirection: "column" }}>
             <Chat
               contextKey={`build:${agent.slug}`}
               mode="build"

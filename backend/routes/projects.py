@@ -21,7 +21,9 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from services import tasks
 
 router = APIRouter()
 
@@ -214,7 +216,10 @@ def _git_init(target: Path) -> None:
         "GIT_COMMITTER_NAME": "Workshop Projects",
         "GIT_COMMITTER_EMAIL": "projects@workshop.local",
     }
-    subprocess.run(["git", "init", "-q"], cwd=target, env=env, check=True)
+    # -b main so the trunk is always `main` (git's default is often `master`,
+    # which leaves the branches UI — which looks for `main` — empty). Existing
+    # projects are NOT rewritten; this only affects fresh scaffolds.
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=target, env=env, check=True)
     subprocess.run(["git", "add", "."], cwd=target, env=env, check=True)
     subprocess.run(
         ["git", "commit", "-q", "-m", f"Scaffold {target.name}"],
@@ -282,14 +287,77 @@ async def put_brief(slug: str, body: FileWriteIn) -> dict:
 
 @router.get("/{slug}/todo")
 async def get_todo(slug: str) -> dict:
-    return {"content": _read_text(_project_dir(slug) / "TODO.md")}
+    # Read through the structured store so the rendered markdown is always
+    # current (the store is the single source of truth; TODO.md is its export).
+    return {"content": tasks.export_markdown(_project_dir(slug))}
 
 
 @router.put("/{slug}/todo")
 async def put_todo(slug: str, body: FileWriteIn) -> dict:
-    _write_text(_project_dir(slug) / "TODO.md", body.content)
+    # Legacy raw-markdown write: persist the body then re-derive the store
+    # from it so the structured tasks stay authoritative and consistent.
+    tasks.import_markdown(_project_dir(slug), body.content)
     _touch(slug)
     return {"ok": True}
+
+
+# ---- Structured tasks (per-agent + project roll-up; plan item 14) -----------
+# Authoritative store lives at projects/<slug>/.tasks.json; TODO.md is the
+# regenerated export (so chat_context, which reads TODO.md, stays current).
+
+
+class TaskCreateIn(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    owner: str = "operator"
+    parent: str | None = None
+
+
+class TaskPatchIn(BaseModel):
+    status: str | None = None
+    text: str | None = None
+
+
+@router.get("/{slug}/tasks")
+async def list_tasks(slug: str, include_done: bool = True) -> dict:
+    return {"tasks": tasks.list_tasks(_project_dir(slug), include_done=include_done)}
+
+
+@router.post("/{slug}/tasks")
+async def add_task(slug: str, body: TaskCreateIn) -> dict:
+    try:
+        task = tasks.add(
+            _project_dir(slug),
+            text=body.text,
+            owner=(body.owner or "operator").strip() or "operator",
+            parent=body.parent,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _touch(slug)
+    return task
+
+
+@router.patch("/{slug}/tasks/{task_id}")
+async def patch_task(slug: str, task_id: str, body: TaskPatchIn) -> dict:
+    if body.status is None and body.text is None:
+        raise HTTPException(400, "no fields to update")
+    try:
+        task = tasks.update(_project_dir(slug), task_id, status=body.status, text=body.text)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    _touch(slug)
+    return task
+
+
+@router.delete("/{slug}/tasks/{task_id}")
+async def delete_task(slug: str, task_id: str) -> dict:
+    deleted = tasks.remove(_project_dir(slug), task_id)
+    if not deleted:
+        raise HTTPException(404, f"task not found: {task_id}")
+    _touch(slug)
+    return {"deleted": True}
 
 
 @router.get("/{slug}/interventions")

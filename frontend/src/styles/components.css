@@ -625,21 +625,80 @@ a.ws-btn { text-decoration: none; }
 .ws-stepper__btns button + button { border-top: 1px solid var(--border); }
 .ws-stepper__btns svg { width: 13px; height: 13px; stroke-width: 2.2; }
 
-/* ---- AGENT BUILD LAYOUT (three-column desktop, stacked on mobile) -------- */
+/* ---- AGENT BUILD LAYOUT (focusable three-region IDE; stacked on mobile) ---
+ * Three regions: Files | Center (Editor/Preview/Diff) | Chat.
+ * `data-focus` on the root drives an IDE-style focus: any one region can expand
+ * to full width while the others collapse. `all` is the default 3-up layout.
+ * Each region is a flex column with a region header (title + focus toggle). */
 .ws-agent-build {
   display: grid;
-  grid-template-columns: 240px 1fr 380px;
+  grid-template-columns: 260px minmax(0, 1fr) 400px;
   gap: var(--space-4);
-  align-items: start;
+  align-items: stretch;
+  /* Tall, comfortable panes — the operator's core complaint was cramped size. */
+  height: calc(100vh - 220px);
+  min-height: 520px;
 }
+/* Each region fills the grid cell and scrolls internally, not the page. */
+.ws-agent-build__region {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+.ws-agent-build__region-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+/* Region header: title left, focus/restore control right. One control height. */
+.ws-region-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  margin-bottom: var(--space-2);
+}
+.ws-region-head__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+/* Focus modes: hide the non-focused regions, let the focused one fill width. */
+.ws-agent-build[data-focus="files"]  { grid-template-columns: 1fr; }
+.ws-agent-build[data-focus="center"] { grid-template-columns: 1fr; }
+.ws-agent-build[data-focus="chat"]   { grid-template-columns: 1fr; }
+.ws-agent-build[data-focus="files"]  > :not(.ws-agent-build__files),
+.ws-agent-build[data-focus="center"] > :not(.ws-agent-build__main),
+.ws-agent-build[data-focus="chat"]   > :not(.ws-agent-build__chat) { display: none; }
+
 @media (max-width: 1100px) {
-  .ws-agent-build { grid-template-columns: 200px 1fr; }
-  .ws-agent-build > .ws-agent-build__chat { grid-column: 1 / -1; }
+  .ws-agent-build[data-focus="all"] { grid-template-columns: 220px minmax(0, 1fr); }
+  .ws-agent-build[data-focus="all"] > .ws-agent-build__chat { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
-  .ws-agent-build { grid-template-columns: 1fr; }
-  .ws-agent-build > .ws-agent-build__chat { grid-column: 1; }
-  .ws-agent-build > .ws-agent-build__files { max-height: 40vh; }
+  /* Stacked, page-scrolling. Chat first (primary driver), then center, files. */
+  .ws-agent-build {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
+  }
+  /* On mobile we stack everything; a persisted desktop focus must not hide a
+   * region here. Re-show all, then order them chat-first. */
+  .ws-agent-build[data-focus] > .ws-agent-build__region { display: flex; }
+  .ws-agent-build > .ws-agent-build__chat   { order: 0; min-height: 60vh; }
+  .ws-agent-build > .ws-agent-build__main   { order: 1; }
+  .ws-agent-build > .ws-agent-build__files  { order: 2; }
+  .ws-agent-build .ws-agent-build__region-body { overflow: visible; }
+  .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; overflow: auto; }
 }
 
 .ws-agent-build__status {
@@ -648,7 +707,27 @@ a.ws-btn { text-decoration: none; }
   gap: var(--space-2);
   align-items: center;
 }
-.ws-agent-build__status > * { min-height: 32px; }
+.ws-agent-build__status > * { min-height: var(--control-h); }
+
+/* The center region's view body sits below the Editor/Preview/Diff switch. */
+.ws-agent-build__center-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ws-agent-build__center-view > .ws-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* Editor textarea grows to fill the focused/large pane. */
+.ws-agent-build__editor-area {
+  flex: 1;
+  min-height: 220px;
+  resize: none;
+}
 
 /* Mobile-only "primary, full-width" treatment for the Open preview button. */
 @media (max-width: 720px) {

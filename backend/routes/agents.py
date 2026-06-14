@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
 from services.budget import budget_for
-from services import global_memory, per_channel_agents, build_agents, dev_servers, todos
+from services import global_memory, per_channel_agents, build_agents, dev_servers
 
 router = APIRouter()
 
@@ -253,66 +253,81 @@ async def build_agent_interventions_get(slug: str):
     return {"content": p.read_text() if p.exists() else ""}
 
 
-# ---- Structured TODO (per ADR-009 section 4) -------------------------------
-# Backed by TODO.md so the agent can still read/edit it. The UI uses these
-# endpoints to render an interactive checklist instead of a raw textarea.
+# ---- Structured tasks (plan item 14; docs/workshop-v1 02 §3) ---------------
+# A build agent owns its OWN task list. Tasks live in the agent's linked
+# project (so they roll up into the project view) when the agent has a
+# project_slug, else in the agent's own cwd. Owner is forced to the agent slug
+# and all reads/writes are scoped to that owner so an agent can only touch its
+# own tasks. The structured store (.tasks.json) is authoritative; TODO.md is
+# the regenerated export so chat_context (which reads TODO.md) stays current.
+
+from services import tasks
 
 
 class _TaskCreate(BaseModel):
-    text: str = Field(min_length=1, max_length=1000)
+    text: str = Field(min_length=1, max_length=2000)
+    parent: str | None = None
 
 
 class _TaskPatch(BaseModel):
+    status: str | None = None
     text: str | None = None
-    done: bool | None = None
 
 
-def _todo_path(slug: str) -> _P:
-    return _agent_cwd(slug) / "TODO.md"
+def _tasks_root(slug: str) -> _P:
+    """Where this agent's structured task store lives: the linked project dir
+    if the agent has one, else the agent's own cwd."""
+    try:
+        a = build_agents.get_agent(slug)
+    except KeyError:
+        raise HTTPException(404, f"build agent not found: {slug}")
+    project_slug = a.get("project_slug")
+    if project_slug:
+        pd = build_agents._project_dir(project_slug)
+        if pd is not None:
+            return pd
+    return _P(a["cwd"])
 
 
 @router.get("/build/{slug}/tasks")
-async def build_agent_tasks_list(slug: str):
-    return todos.list_items(_todo_path(slug))
+async def build_agent_tasks_list(slug: str, include_done: bool = True):
+    return {"tasks": tasks.list_tasks(_tasks_root(slug), include_done=include_done, owner=slug)}
 
 
 @router.post("/build/{slug}/tasks")
 async def build_agent_tasks_add(slug: str, body: _TaskCreate):
+    root = _tasks_root(slug)
+    # Guard: a parent (if given) must belong to this agent's own tasks.
+    if body.parent is not None and tasks.get_task(root, body.parent, owner=slug) is None:
+        raise HTTPException(400, f"parent task not found: {body.parent}")
     try:
-        item = todos.add(body.text, source="operator", path=_todo_path(slug))
+        task = tasks.add(root, text=body.text, owner=slug, parent=body.parent)
     except ValueError as e:
         raise HTTPException(400, str(e))
     build_agents.touch(slug)
-    return item
+    return task
 
 
 @router.patch("/build/{slug}/tasks/{task_id}")
 async def build_agent_tasks_patch(slug: str, task_id: str, body: _TaskPatch):
-    path = _todo_path(slug)
-    updated: dict | None = None
-    if body.text is not None:
-        try:
-            updated = todos.edit(task_id, text=body.text, path=path)
-        except ValueError as e:
-            raise HTTPException(400, str(e))
-        if updated is None:
-            raise HTTPException(404, f"task not found: {task_id}")
-    if body.done is not None:
-        updated = todos.set_done(task_id, done=body.done, path=path)
-        if updated is None:
-            raise HTTPException(404, f"task not found: {task_id}")
-    if updated is None:
+    if body.status is None and body.text is None:
         raise HTTPException(400, "no fields to update")
+    try:
+        task = tasks.update(_tasks_root(slug), task_id, status=body.status, text=body.text, owner=slug)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
     build_agents.touch(slug)
-    return updated
+    return task
 
 
 @router.delete("/build/{slug}/tasks/{task_id}")
 async def build_agent_tasks_delete(slug: str, task_id: str):
-    if not todos.remove(task_id, path=_todo_path(slug)):
+    if not tasks.remove(_tasks_root(slug), task_id, owner=slug):
         raise HTTPException(404, f"task not found: {task_id}")
     build_agents.touch(slug)
-    return {"ok": True}
+    return {"deleted": True}
 
 
 # ---- Interventions: append-only operator nudges (ADR-009 section 5) --------
