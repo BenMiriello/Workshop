@@ -60,3 +60,11 @@ frontend/public/basemap/
 !/projects/_templates/
 /build-agents/
 /branches/
+
+# Ephemeral working files — NEVER committed. Put smoke tests, scratch scripts,
+# throwaway probes, and ad-hoc working notes in one of these folders (anywhere in
+# the tree) instead of dropping stray test_*/tmp_* files into source dirs.
+scratch/
+tmp/
+**/scratch/
+**/tmp/
