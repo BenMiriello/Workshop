@@ -585,10 +585,10 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-input {
   display: block; width: 100%; resize: none;
-  /* Starts at one line so an empty composer doesn't waste 2-3 blank rows; the
-     autosize handler grows it as you type (up to ~6 lines, then it scrolls). */
+  /* Starts at one row; the autosize handler grows it as you type, up to 3 rows
+     (then it scrolls internally). Keep --chat-input-max in sync with the JS cap. */
   min-height: 2.6rem;
-  max-height: 160px;
+  max-height: 6rem;
   padding: 0.55rem 3.1rem 0.55rem 0.75rem;   /* right room for the send button */
   /* 16px minimum: stops iOS auto-zoom on focus */
   font-size: 1rem; line-height: 1.45; font-family: inherit;

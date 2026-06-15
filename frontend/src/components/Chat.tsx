@@ -328,7 +328,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    // Grow to fit content, capped at the CSS max-height (3 rows) — read it so
+    // the JS cap can't drift from the stylesheet; beyond that it scrolls.
+    const max = parseFloat(getComputedStyle(el).maxHeight) || 96;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
   }, []);
   useEffect(() => { autosize(); }, [input, autosize]);
 
@@ -641,7 +644,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       <textarea
         ref={inputRef}
         className="chat-input"
-        rows={2}
+        rows={1}
         value={input}
         placeholder={placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message Clawd...")}
         onChange={(e) => setInput(e.target.value)}
