@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "gen:tokens": "node ../scripts/gen-tokens.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.16.0",

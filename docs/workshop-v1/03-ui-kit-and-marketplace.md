@@ -26,6 +26,21 @@ package**:
 This is the prerequisite that app-platform-plan.md and app-manager-ui.md both already
 assume ("promote `src/ui` to a workspace package").
 
+**Status (2026-06-14): the package + single-source tokens seam is in place** (no
+workspace/pnpm migration; consumed via the existing `@workshop/ui` path alias, no
+install step):
+
+- `frontend/src/ui/package.json` declares `@workshop/ui@1.0.0` (type module,
+  `main`/`exports` -> `index.ts`). Manifests reference it as `kit: "@workshop/ui@^1"`.
+- `frontend/src/ui/CHANGELOG.md` records v1.0.0 as the versioned baseline, so the
+  AI-assisted migration (section 3) has a grounded changelog to read.
+- Single-source tokens: `frontend/src/styles/tokens.css` is canonical. Run
+  `npm run gen:tokens` (from `frontend/`, wraps `scripts/gen-tokens.mjs`) to parse
+  it and emit `frontend/src/styles/tokens.generated.js` (the mobile token object).
+  The generator is idempotent and never modifies `tokens.css`. The generated file
+  is the diff oracle for the hand-maintained `tokens.js` (the Expo-consumed module
+  with usage docs + `makeTheme`); reconcile real value differences there.
+
 ## 2. Multiple kits, default kit
 
 - There is one **default kit** (the current system). Apps inherit it unless they

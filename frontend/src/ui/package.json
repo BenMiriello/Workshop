@@ -1,0 +1,13 @@
+{
+  "name": "@workshop/ui",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Workshop Design System kit: React primitives over components.css plus the canonical design tokens. Consumed via the @workshop/ui path alias (no install step). App manifests reference this version as kit: \"@workshop/ui@^1\".",
+  "main": "./index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./tokens.css": "../styles/tokens.css",
+    "./tokens.js": "../styles/tokens.js"
+  },
+  "sideEffects": false
+}
