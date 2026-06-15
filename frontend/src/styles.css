@@ -540,6 +540,26 @@ input[type="range"].grad::-moz-range-thumb {
 @keyframes chat-typing-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .chat-typing { animation: none; } }
 
+/* ---- Progressive disclosure: Show more/less + collapsed work history ---- */
+.chat-more {
+  display: inline-block; margin: 0.15rem 0;
+  background: none; border: none; padding: 0;
+  color: var(--accent); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+}
+.chat-more:hover { text-decoration: underline; }
+.chat-work { margin: 0.1rem 0 0.35rem; }
+.chat-work__toggle {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  background: none; border: none; padding: 0.15rem 0; margin: 0.05rem 0 0.25rem;
+  color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+}
+.chat-work__toggle:hover { color: var(--fg); }
+.chat-work__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-work__toggle.is-open .chat-work__chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-work__chev { transition: none; } }
+.chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
+.chat-work__text { font-size: var(--fs-sm); }
+
 /* ---- Tool call: compact row, tap to expand ---- */
 .chat-tool {
   margin: 0.3rem 0; min-width: 0;

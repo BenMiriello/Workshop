@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
@@ -69,6 +69,23 @@ function modelLabel(id: string): string {
   return MODEL_LABELS[id] ?? id;
 }
 
+// ---- Per-model display handling -------------------------------------------
+// How aggressively a model's turns collapse in the transcript. Keyed by model
+// id with a `default` fallback, so a newly-added model can be tuned (or render
+// differently) without touching the components.
+type ModelDisplay = {
+  headLines: number;       // lines kept at the top when a block is elided
+  tailLines: number;       // lines kept at the bottom
+  elideOverLines: number;  // elide only when a block exceeds this many lines
+  recentSteps: number;     // work steps shown inline on the most recent turn
+};
+const MODEL_DISPLAY: Record<string, ModelDisplay> = {
+  default: { headLines: 6, tailLines: 3, elideOverLines: 12, recentSteps: 2 },
+};
+function modelDisplay(model?: string | null): ModelDisplay {
+  return (model && MODEL_DISPLAY[model]) || MODEL_DISPLAY.default;
+}
+
 const EGRESS_MARKERS = [
   "egress", "blocked", "could not resolve host", "network is unreachable",
   "npm err! network", "fatal: unable to access",
@@ -106,17 +123,113 @@ function ToolChip({ name, input }: { name: string; input: string }) {
   );
 }
 
-// Render an assistant turn from its ordered segments: text runs as markdown,
-// tool calls as compact chips, preserving interleaving.
-function MessageSegments({ segments }: { segments: ChatSegment[] }) {
+// First-several + last-few line elision with Show more/less. `render` turns a
+// source slice into nodes (markdown for assistant text, plain for user text).
+// `expanded` seeds the open state (the most recent turn opens fully).
+function ElidedContent({
+  source, render, cfg, expanded,
+}: {
+  source: string;
+  render: (s: string) => ReactNode;
+  cfg: ModelDisplay;
+  expanded?: boolean;
+}) {
+  const lines = source.split("\n");
+  // Estimate *visual* lines: a long paragraph with no newlines still wraps to
+  // many lines, so count wrapped rows (~CPL chars each), not just "\n"s.
+  const CPL = 46; // ~chars per line on a phone; over-counts a little on desktop
+  const visualLines = lines.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / CPL)), 0);
+  const elide = visualLines > Math.max(cfg.elideOverLines, cfg.headLines + cfg.tailLines + 1);
+  const [open, setOpen] = useState(!!expanded);
+  useEffect(() => { setOpen(!!expanded); }, [expanded]);
+  if (!elide) return <>{render(source)}</>;
+  if (open) {
+    return (
+      <>
+        {render(source)}
+        <button type="button" className="chat-more" onClick={() => setOpen(false)}>Show less</button>
+      </>
+    );
+  }
+  // Prefer slicing on real line breaks (lists, paragraphs, code); fall back to
+  // characters when it's a few long wrapped lines so the preview still trims.
+  let headSrc: string, tailSrc: string, label: string;
+  if (lines.length >= cfg.headLines + cfg.tailLines + 2) {
+    headSrc = lines.slice(0, cfg.headLines).join("\n");
+    tailSrc = lines.slice(-cfg.tailLines).join("\n");
+    label = `… Show ${lines.length - cfg.headLines - cfg.tailLines} more lines`;
+  } else {
+    headSrc = source.slice(0, cfg.headLines * CPL);
+    tailSrc = source.slice(-cfg.tailLines * CPL);
+    label = "… Show more";
+  }
   return (
     <>
-      {segments.map((s, i) =>
-        s.t === "text" ? (
-          s.text.trim() ? <Markdown key={i}>{s.text}</Markdown> : null
-        ) : (
-          <ToolChip key={i} name={s.name} input={s.input} />
-        ),
+      {render(headSrc)}
+      <button type="button" className="chat-more" onClick={() => setOpen(true)}>{label}</button>
+      {render(tailSrc)}
+    </>
+  );
+}
+
+// The "work" of an assistant turn — its tool calls + interim text. On the most
+// recent turn the latest few steps stay inline and older ones fold into a
+// re-openable accordion; on older turns all of it folds away (just the answer
+// shows). Tool calls themselves stay individually expandable (ToolChip).
+function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay }) {
+  const [open, setOpen] = useState(false);
+  const inlineCount = isLatest ? cfg.recentSteps : 0;
+  const older = inlineCount > 0 ? work.slice(0, Math.max(0, work.length - inlineCount)) : work;
+  const recent = inlineCount > 0 ? work.slice(Math.max(0, work.length - inlineCount)) : [];
+  const olderTools = older.filter((s) => s.t === "tool").length;
+  const renderSeg = (s: ChatSegment, i: number) =>
+    s.t === "tool"
+      ? <ToolChip key={i} name={s.name} input={s.input} />
+      : (s.text.trim() ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div> : null);
+  return (
+    <div className="chat-work">
+      {older.length > 0 && (
+        <>
+          <button
+            type="button"
+            className={`chat-work__toggle${open ? " is-open" : ""}`}
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+          >
+            <ChevronRight size={13} aria-hidden className="chat-work__chev" />
+            {open ? "Hide" : "Show"} {older.length} earlier step{older.length > 1 ? "s" : ""}
+            {olderTools > 0 ? ` · ${olderTools} tool${olderTools > 1 ? "s" : ""}` : ""}
+          </button>
+          {open && <div className="chat-work__list">{older.map(renderSeg)}</div>}
+        </>
+      )}
+      {recent.length > 0 && <div className="chat-work__list">{recent.map(renderSeg)}</div>}
+    </div>
+  );
+}
+
+// An assistant turn: split the trailing run of text (the answer) from the work
+// (tools + interim thinking). The answer renders fully on the most recent turn
+// and is elided on older ones; the work collapses per WorkSteps.
+function AssistantTurn({ segments, isLatest, model }: { segments: ChatSegment[]; isLatest: boolean; model?: string }) {
+  const cfg = modelDisplay(model);
+  let cut = segments.length;
+  while (cut > 0 && segments[cut - 1].t === "text") cut--;
+  const work = segments.slice(0, cut);
+  const answer = segments.slice(cut);
+  return (
+    <>
+      {work.length > 0 && <WorkSteps work={work} isLatest={isLatest} cfg={cfg} />}
+      {answer.map((s, i) =>
+        s.t === "text" && s.text.trim() ? (
+          <ElidedContent
+            key={i}
+            source={s.text}
+            cfg={cfg}
+            expanded={isLatest}
+            render={(src) => <Markdown>{src}</Markdown>}
+          />
+        ) : null,
       )}
     </>
   );
@@ -626,10 +739,30 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const overflowed = messages.length >= 500;
 
-  const renderAssistant = (m: ChatMsg) => {
+  // Recency nuance: the most recent assistant answer is expanded; older ones
+  // auto-shorten. "Most recent" only applies when nothing is streaming (a live
+  // turn is itself the most recent).
+  const idle = !streaming && !busy && pendingSegments.length === 0;
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") { lastAssistantIdx = i; break; }
+  }
+  const threadCfg = modelDisplay(selectedModel);
+
+  const renderAssistant = (m: ChatMsg, isLatest: boolean) => {
     if (m.meta?.error) return m.content;
-    if (m.meta?.segments && m.meta.segments.length) return <MessageSegments segments={m.meta.segments} />;
-    return <Markdown>{m.content}</Markdown>;
+    const model = m.meta?.model ?? selectedModel;
+    if (m.meta?.segments && m.meta.segments.length) {
+      return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} />;
+    }
+    return (
+      <ElidedContent
+        source={m.content}
+        cfg={modelDisplay(model)}
+        expanded={isLatest}
+        render={(s) => <Markdown>{s}</Markdown>}
+      />
+    );
   };
 
   const log = (
@@ -651,7 +784,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {messages.map((m, i) => (
         <div key={i} className={`chat-msg ${m.role}`}>
           <div className={`chat-bubble ${m.meta?.error ? "error" : ""}`}>
-            {m.role === "assistant" ? renderAssistant(m) : m.content}
+            {m.role === "assistant" ? (
+              renderAssistant(m, idle && i === lastAssistantIdx)
+            ) : (
+              <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+            )}
           </div>
           {m.meta?.notes?.map((n, j) => (
             <div key={j} className="chat-note">{n}</div>
@@ -661,7 +798,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {(busy || streaming || pendingSegments.length > 0) && (
         <div className="chat-msg assistant">
           <div className="chat-bubble">
-            {pendingSegments.length > 0 && <MessageSegments segments={pendingSegments} />}
+            {pendingSegments.length > 0 && (
+              <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} />
+            )}
             {(streaming || busy) && <span className="chat-typing" aria-label="working">•••</span>}
           </div>
         </div>

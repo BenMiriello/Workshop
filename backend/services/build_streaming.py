@@ -175,7 +175,7 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     # Persist an empty assistant placeholder bound to this turn. As the turn
     # streams we update its segments; a reload sees partial content + reconnects.
     try:
-        chat_store.append_streaming_assistant(turn.thread_id, turn.id)
+        chat_store.append_streaming_assistant(turn.thread_id, turn.id, model=model)
     except Exception as e:  # pragma: no cover — defensive
         log.warning("turn %s: could not seed streaming message: %s", turn.id, e)
 

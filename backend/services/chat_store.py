@@ -156,16 +156,19 @@ def _find_by_turn(thread: dict, turn_id: str) -> dict | None:
     return None
 
 
-def append_streaming_assistant(thread_id: str, turn_id: str) -> dict:
+def append_streaming_assistant(thread_id: str, turn_id: str, model: str | None = None) -> dict:
     """Append an empty assistant message marked as the live turn `turn_id`."""
     thread = get_thread(thread_id)
     if thread is None:
         raise KeyError(thread_id)
+    meta = {"streaming": True, "turn_id": turn_id, "segments": []}
+    if model:
+        meta["model"] = model
     msg = {
         "role": "assistant",
         "content": "",
         "ts": _now_iso(),
-        "meta": {"streaming": True, "turn_id": turn_id, "segments": []},
+        "meta": meta,
     }
     thread["messages"].append(msg)
     thread["updated_at"] = _now_iso()

@@ -21,6 +21,9 @@ export type ChatMsg = {
     // to the live SSE channel and keep rendering.
     streaming?: boolean;
     turn_id?: string;
+    // The model that produced this assistant message — drives per-model display
+    // handling (how aggressively to collapse thinking/tools, elision sizes).
+    model?: string;
   };
 };
 
