@@ -611,7 +611,7 @@ export default function AgentBuild() {
           </span>
         }
         actions={
-          <Row>
+          <Row wrap>
             <Button size="sm" variant="ghost" onClick={loadAll}>
               <RefreshCw aria-hidden /> Refresh
             </Button>

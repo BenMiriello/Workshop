@@ -33,15 +33,25 @@ import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appN
 // Apps tab is the discovery surface.
 
 export default function App() {
-  // Workbench / IDE pages need the full viewport, not the reading-width cap that
-  // suits content pages. The builder page is a 3-pane IDE; capping it at 980px
-  // crams the editor into a sliver. Let those routes go wide.
+  // Width by page type. Content/app pages keep the reading-width cap (980).
+  // The builder is a 3-pane IDE and needs the full viewport (wide). The
+  // launcher/dashboard grids (apps, projects, agents, marketplace) look sparse
+  // at 980 on wide screens, so they get a roomier cap. Tuned content apps
+  // (finance/budget/birds/location/commute) are deliberately left at 980.
   const { pathname } = useLocation();
   const wide = pathname.startsWith("/agents/build/");
+  const roomy =
+    !wide &&
+    (pathname === "/apps" ||
+      pathname === "/projects" ||
+      pathname.startsWith("/projects/") ||
+      pathname === "/agents" ||
+      pathname === "/marketplace");
+  const widthClass = wide ? " ws-app--wide" : roomy ? " ws-app--roomy" : "";
   return (
     <RecorderProvider>
     <BreadcrumbProvider>
-    <div className={"ws-root ws-app" + (wide ? " ws-app--wide" : "")}>
+    <div className={"ws-root ws-app" + widthClass}>
       <header className="ws-topnav">
         <BreadcrumbBar />
         <SectionNav />

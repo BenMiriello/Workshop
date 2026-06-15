@@ -171,7 +171,7 @@ def _scaffold_blank(target: Path, slug: str, title: str, purpose: str, brief: st
     rules_dir = target / ".claude"
     rules_dir.mkdir()
     _write_text(rules_dir / "CLAUDE.md",
-        f"# {title} — house rules\n\n"
+        f"# {title}: house rules\n\n"
         "This project lives inside the workshop. The workshop design system\n"
         "applies: build from `frontend/src/ui` primitives + `src/styles/tokens.css`;\n"
         "no inline hex; lucide icons only; five status kinds; Edit-mode for\n"
@@ -540,7 +540,7 @@ async def import_project(body: ImportProjectIn) -> Project:
     project_md = target / "PROJECT.md"
     if not project_md.exists():
         project_md.write_text(
-            f"# {title}\n\n> {purpose}\n\n## Goal\n\n(imported repo — fill in)\n\n## Constraints\n\n- (fill in)\n"
+            f"# {title}\n\n> {purpose}\n\n## Goal\n\n(imported repo, fill in the goal)\n\n## Constraints\n\n- (fill in)\n"
         )
 
     now = _now()

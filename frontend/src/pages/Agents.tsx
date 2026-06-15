@@ -239,7 +239,7 @@ export default function Agents() {
         title="Agents"
         sub={`${totalCount} agent${totalCount === 1 ? "" : "s"}`}
         actions={
-          <Row>
+          <Row wrap>
             <Segmented options={KIND_OPTIONS} value={kind} onChange={setKind} ariaLabel="Agent kind" />
             <Link to="/agents/new">
               <Button variant="primary" size="sm">

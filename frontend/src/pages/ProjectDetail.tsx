@@ -632,7 +632,7 @@ export default function ProjectDetail() {
         title={project.title}
         sub={<span><code className="ws-mono">{project.slug}</code> · {project.purpose}</span>}
         actions={
-          <Row>
+          <Row wrap>
             <StatusPill status={stateKind(project.state)}>{project.state}</StatusPill>
             <Button size="sm" variant="ghost" onClick={() => { loadAll(); loadTasks(); loadNotes(); loadWorktrees(); }}>
               <RefreshCw aria-hidden /> Refresh

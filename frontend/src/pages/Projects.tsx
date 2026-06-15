@@ -183,7 +183,7 @@ export default function Projects() {
         title="Projects"
         sub={projects ? `${projects.length} project${projects.length === 1 ? "" : "s"}` : undefined}
         actions={
-          <Row>
+          <Row wrap>
             <Link to="/projects/new">
               <Button variant="primary" size="sm">
                 <Plus aria-hidden /> New project

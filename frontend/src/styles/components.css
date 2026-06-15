@@ -460,6 +460,9 @@ a.ws-btn { text-decoration: none; }
    reading-width cap. Wider so the three panes have real room; still bounded so
    it does not sprawl on ultra-wide displays. */
 .ws-app--wide { max-width: 1680px; }
+/* Launcher / dashboard grids: roomier than reading width so they do not sit in a
+   narrow column with large empty margins on wide displays. */
+.ws-app--roomy { max-width: 1280px; }
 .ws-topnav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
 .ws-brand { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg); text-decoration: none; }
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }

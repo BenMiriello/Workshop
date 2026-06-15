@@ -454,7 +454,7 @@ export default function Apps() {
         if (!probe) return { text: "no probe configured", tone: "muted" } as const;
         return probe.status === "up"
           ? ({ text: `up · ${probe.http_status} · ${probe.latency_ms}ms`, tone: "ok" } as const)
-          : ({ text: `down — ${probe.notes || `HTTP ${probe.http_status}`}`, tone: "err" } as const);
+          : ({ text: probe.notes ? `down: ${probe.notes}` : probe.http_status ? `down: HTTP ${probe.http_status}` : "down", tone: "err" } as const);
       })(),
     },
   ];
