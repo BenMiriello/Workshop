@@ -42,14 +42,20 @@ PROVIDER_MODELS: dict[str, str] = {
 # everywhere; only the named MCP tools are surfaced. Providers with empty
 # allowed_tools fall through to tools_disabled (single-turn text).
 #
-# Gated by ENABLE_CHAT_TOOLS (default off) until the MCP-startup race in
-# subprocess `claude -p` is resolved: when stdin is EOF'd immediately (the
-# default for capture_output=True), the CLI launches the model BEFORE the
-# --mcp-config servers finish their handshake, so the model sees `tools: []`
-# and either admits no-tools or fabricates a call. Same exact argv from
-# `bash` with a TTY-ish stdin works fine. Until that's pinned down, chat
-# stays text-only — the design is in place; flipping the flag re-enables it.
-ENABLE_CHAT_TOOLS = False
+# Gated by ENABLE_CHAT_TOOLS. The MCP-startup race that kept this off has been
+# resolved (2026-06-15): the `claude -p` CLI starts --mcp-config servers fully
+# async by default and fires the first model turn ~176ms BEFORE the stdio
+# handshake completes, so the model saw `tools: []` (init event: server
+# `pending`, tools_count=0) and either admitted no-tools or fabricated a tool
+# call as literal text. The fix lives in llm_router.call_cloud's narrow-tool
+# path: it sets MCP_CONNECTION_NONBLOCKING=false in the subprocess env, which
+# flips the CLI's internal gate to AWAIT the MCP connection before the first
+# turn (bounded by the CLI's own 30s connect timeout). Verified end to end and
+# reproducibly: with it set the init event shows the server `connected`,
+# tools_count=7, and the model emits a real tool_use + consumes a real
+# tool_result (e.g. budget chat searching Plaid transactions). See
+# llm_router._MCP_BLOCK_STARTUP_ENV for the full mechanism.
+ENABLE_CHAT_TOOLS = True
 # Timeout: 300s comfortably covers cold-start + Sonnet on prompt-heavy budget
 # turns + one optional Plaid roundtrip + synthesis.
 CHAT_TIMEOUT_S = 300

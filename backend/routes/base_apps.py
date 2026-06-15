@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
-from services import gc, manifests, permissions, registry
+from services import gc, local_runner, manifests, permissions, registry
 
 router = APIRouter()
 
@@ -218,3 +218,36 @@ async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
     apply=true; with apply=false this is equivalent to preview for those two
     categories. Checkpoint history is never rewritten."""
     return gc.run(apply=body.apply)
+
+
+# ---- Deploy: LocalRunner standalone surface (doc 05 section 2) ---------------
+# Start/stop/status a project's STANDALONE deployment as a scoped local
+# subprocess. The app runs in its project dir, on an allocated port, with a
+# SCOPED env (allowlist + PORT only — the platform's secret env is never
+# passed). See services/local_runner.py. INTEGRATED route-mount (needs frontend
+# route injection) and the RemoteRunner (containers) are out of scope for v1.
+
+
+@router.post("/deploy/{slug}/start")
+async def deploy_start(slug: str):
+    """Start the project's standalone deploy. Returns
+    {running, port, url, pid, command}. 400 if no run command can be detected,
+    404 if the project is unknown, 503 if no deploy port is free."""
+    try:
+        return local_runner.start_deploy(slug)
+    except local_runner.DeployError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.post("/deploy/{slug}/stop")
+async def deploy_stop(slug: str):
+    """Stop the project's standalone deploy. Idempotent: {stopped: true} even if
+    it was not running."""
+    return local_runner.stop_deploy(slug)
+
+
+@router.get("/deploy/{slug}/status")
+async def deploy_status(slug: str):
+    """Status of the project's standalone deploy:
+    {running, port?, url?, pid?, command?}."""
+    return local_runner.deploy_status(slug)

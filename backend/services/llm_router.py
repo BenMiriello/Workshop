@@ -287,6 +287,23 @@ _TOOLS_OFF_SYSTEM_NUDGE = (
     "Answer in pure text only — do not attempt to call any tool."
 )
 
+# MCP-startup race fix. By default the `claude -p` CLI starts --mcp-config
+# servers FULLY ASYNC ("[MCP] ... running fully async (nonblocking)") and fires
+# the first model turn before the stdio handshake completes — so the model sees
+# `tools: []`, the init event reports the server as `pending`, and it either
+# admits no-tools or FABRICATES a tool call as literal text. Verified in the
+# 2.1.177 CLI: the API request went out ~176ms BEFORE the plaid server finished
+# connecting. Setting MCP_CONNECTION_NONBLOCKING to a falsy value flips the
+# CLI's internal gate (g5q(): `if (P9(env.MCP_CONNECTION_NONBLOCKING)) return
+# false; return true`) so it AWAITS the MCP connection (bounded by the CLI's own
+# 30s connect timeout) before the first turn. With it set, the same call shows
+# the server `connected`, tools_count=7, and a real tool_use + tool_result.
+# Only applied on the narrow-tool path (where we actually spawn an MCP server we
+# need the model to use); the tools-off path spawns no servers so blocking is a
+# no-op there, and we leave it unset for build/agentic runs to preserve their
+# existing latency profile.
+_MCP_BLOCK_STARTUP_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
+
 # Registry of MCP server launch specs available to chat subprocesses. Each
 # entry must match the {"command","args"} stdio launch the parent uses (see
 # ~/.claude.json). Only servers needed by some provider's allowed_tools live
@@ -342,6 +359,10 @@ def call_cloud(
         "--model", model,
     ]
     use_stream_json = False
+    # Whether to force the CLI to block on MCP-server startup before the first
+    # model turn (fixes the handshake race — see _MCP_BLOCK_STARTUP_ENV). Only
+    # the narrow-tool path sets this; it spawns the server the model must use.
+    block_mcp_startup = False
     if tools_disabled:
         # Tools-off path: stream-json so we can salvage partial text on error,
         # hardened MCP/tool config, and pin max_turns=1 (there's no agentic
@@ -378,6 +399,9 @@ def call_cloud(
             "--permission-mode", "bypassPermissions",
         ])
         use_stream_json = True
+        # Wait for the MCP handshake before the model turn — otherwise the model
+        # sees no tools and fabricates the call (see _MCP_BLOCK_STARTUP_ENV).
+        block_mcp_startup = bool(servers_subset)
     else:
         cmd.extend([
             "--output-format", "text",
@@ -395,10 +419,14 @@ def call_cloud(
     elif session_id:
         cmd.extend(["--session-id", session_id])
 
+    env = _claude_env()
+    if block_mcp_startup:
+        env.update(_MCP_BLOCK_STARTUP_ENV)
+
     start = time.time()
     try:
         proc = subprocess.run(
-            cmd, env=_claude_env(), cwd=cwd,
+            cmd, env=env, cwd=cwd,
             capture_output=True, text=True, timeout=timeout_s,
         )
     except subprocess.TimeoutExpired as e:

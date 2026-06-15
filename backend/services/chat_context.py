@@ -287,12 +287,16 @@ class BudgetContextProvider(ContextProvider):
             "Only emit a plan-patch when the operator actually asks to change something. Always "
             "also explain the change in plain words. When only answering a question, do NOT emit a "
             "patch. Be direct and brief. No emojis.\n\n"
-            "IMPORTANT: You do NOT have tool access in this chat surface — no Read, Bash, Gmail, "
-            "Plaid, etc. You only have what's in the context below. If the operator asks you to "
-            "look something up (e.g. 'check my emails for the Citi statement'), don't pretend to "
-            "go fetch it — say plainly that the chat surface is text-only and the data isn't in "
-            "the current context, then suggest where they can find it themselves or which "
-            "Workshop page to open."
+            "TOOLS: you have a NARROW read-only Plaid lookup tool set in this chat — ad-hoc "
+            "transaction search (mcp__plaid__search_transactions) and date-range listing "
+            "(mcp__plaid__list_transactions). Use them ONLY for questions the injected 30-day "
+            "rollup and balances above can't answer (e.g. 'what did I spend at Whole Foods last "
+            "month', 'find Comcast bills in the last 90 days'). Prefer the context that's already "
+            "in front of you; reach for a lookup only when the answer truly isn't there. You have "
+            "NO other tools — no Read, Bash, Gmail, web, file edits. If asked for something outside "
+            "the plan edits and these Plaid lookups (e.g. 'check my emails for the Citi "
+            "statement'), say plainly you can't and point the operator to where to find it. The "
+            "authoritative capability statement is in the preamble above this persona."
         )
 
     def live_context(self) -> str:
