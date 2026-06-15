@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import Agents from "./pages/Agents";
 import AgentConfig from "./pages/AgentConfig";
 import AgentBuild from "./pages/AgentBuild";
@@ -33,10 +33,15 @@ import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appN
 // Apps tab is the discovery surface.
 
 export default function App() {
+  // Workbench / IDE pages need the full viewport, not the reading-width cap that
+  // suits content pages. The builder page is a 3-pane IDE; capping it at 980px
+  // crams the editor into a sliver. Let those routes go wide.
+  const { pathname } = useLocation();
+  const wide = pathname.startsWith("/agents/build/");
   return (
     <RecorderProvider>
     <BreadcrumbProvider>
-    <div className="ws-root ws-app">
+    <div className={"ws-root ws-app" + (wide ? " ws-app--wide" : "")}>
       <header className="ws-topnav">
         <BreadcrumbBar />
         <SectionNav />

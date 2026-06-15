@@ -456,6 +456,10 @@ a.ws-btn { text-decoration: none; }
 
 /* ---- APP SHELL + NAV ----------------------------------------------------- */
 .ws-app { max-width: 980px; margin: 0 auto; padding: var(--space-6) var(--space-5) var(--space-8); }
+/* Workbench / IDE routes (e.g. the build page) need the full viewport, not the
+   reading-width cap. Wider so the three panes have real room; still bounded so
+   it does not sprawl on ultra-wide displays. */
+.ws-app--wide { max-width: 1680px; }
 .ws-topnav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
 .ws-brand { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg); text-decoration: none; }
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
