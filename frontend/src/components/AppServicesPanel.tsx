@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw } from "lucide-react";
+import { Link } from "react-router-dom";
+import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Modal, Skeleton, type StatusKind,
@@ -203,9 +204,14 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                       {(s?.restarts ?? 0) > 0 && <Badge>{s!.restarts} restarts</Badge>}
                       <span style={{ flex: "1 1 2rem" }} />
                       {st === "running" && (ms.expose || s?.healthy) && (
-                        <a href={proxyHref(slug, ms.name)} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
-                          <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
-                        </a>
+                        <>
+                          <Link to={`/projects/${slug}/run`} style={{ textDecoration: "none" }}>
+                            <Button size="sm" variant="ghost"><Eye aria-hidden /> Preview</Button>
+                          </Link>
+                          <a href={proxyHref(slug, ms.name)} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
+                            <Button size="sm" variant="ghost" icon aria-label="Open full screen in new tab"><ExternalLink aria-hidden /></Button>
+                          </a>
+                        </>
                       )}
                       {ms.enabled && (st === "running" || st === "failed" || st === "crashlooping") && (
                         <Button size="sm" variant="ghost" loading={busy} onClick={() => act(`services/${ms.name}/restart`)}>

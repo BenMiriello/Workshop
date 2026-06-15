@@ -511,6 +511,55 @@ def _bring_up_deps(manifest: AppManifest, project_dir: Path) -> list[dict]:
 
 # ---- lifecycle --------------------------------------------------------------
 
+_RUNTIME_HINTS = ("node", "bun", "vite", "python", "python3", "uvicorn", "deno", "gunicorn")
+
+
+def _reap_project_orphans(project_dir: Path, keep_pids: set[int]) -> list[int]:
+    """Kill leftover service processes for this project that we no longer track.
+
+    A backend restart detaches previously-spawned children (they keep running on
+    their old port), so a later start picks a new port and the old ones pile up as
+    orphans. On stop/start we reap them: a process is reaped only if its cwd is
+    under the project dir AND its command is a known runtime (node/bun/python/...),
+    so an operator shell that happens to be cd'd into the project is never killed.
+    `keep_pids` (currently-tracked children) are spared."""
+    root = str(project_dir.resolve())
+    killed: list[int] = []
+    try:
+        pids = [int(p) for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return killed
+    for pid in pids:
+        if pid in keep_pids or pid == os.getpid():
+            continue
+        try:
+            cwd = os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            continue
+        if not (cwd == root or cwd.startswith(root + os.sep)):
+            continue
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                argv = f.read().split(b"\x00")
+        except OSError:
+            continue
+        first = os.path.basename((argv[0] or b"").decode("utf-8", "replace")).lower()
+        if not any(h in first for h in _RUNTIME_HINTS):
+            continue
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            killed.append(pid)
+        except OSError:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed.append(pid)
+            except OSError:
+                pass
+    if killed:
+        log.info("reaped %d orphan process(es) under %s: %s", len(killed), root, killed)
+    return killed
+
+
 def _init_service_state(spec: ServiceSpec, port: int | None) -> dict:
     return {
         "name": spec.name,
@@ -539,6 +588,11 @@ def _bring_up(slug: str, manifest: AppManifest) -> None:
             app["phase"] = "failed"
             _persist_state()
             return
+
+        # Clean slate: kill any leftover service processes for this project (from a
+        # prior backend run / a previous start) so we never accumulate orphans or
+        # double-spawn. Then a fresh, predictable bring-up.
+        _reap_project_orphans(project_dir, set())
 
         dep_results = _bring_up_deps(manifest, project_dir)
         _STATE[slug]["deps"] = dep_results
@@ -684,6 +738,12 @@ def stop_app(slug: str) -> dict:
     app["desired"] = "stopped"
     for name, sstate in app.get("services", {}).items():
         _stop_service(slug, name, sstate)
+    # Reap any orphaned service processes too (leftovers from prior runs), so Stop
+    # really means everything for this project is down.
+    try:
+        _reap_project_orphans(_project_dir(slug), set())
+    except AppError:
+        pass
     app["phase"] = "stopped"
     local_runner._reflect_surface(slug, None)
     _persist_state()

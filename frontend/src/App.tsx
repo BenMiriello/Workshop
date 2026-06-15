@@ -5,6 +5,7 @@ import AgentBuild from "./pages/AgentBuild";
 import Projects from "./pages/Projects";
 import ProjectNew from "./pages/ProjectNew";
 import ProjectDetail from "./pages/ProjectDetail";
+import AppPreview from "./pages/AppPreview";
 import BaseApps from "./pages/settings/BaseApps";
 import Grants from "./pages/settings/Grants";
 import Apps from "./pages/Apps";
@@ -72,6 +73,7 @@ export default function App() {
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectDetail />} />
+          <Route path="/projects/:slug/run" element={<AppPreview />} />
           <Route path="/settings/base-apps" element={<BaseApps />} />
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/apps" element={<Apps />} />
