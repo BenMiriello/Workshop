@@ -41,14 +41,20 @@ export default function App() {
   // (finance/budget/birds/location/commute) are deliberately left at 980.
   const { pathname } = useLocation();
   const wide = pathname.startsWith("/agents/build/");
+  // The focused chat is a full-screen surface: the shell becomes a viewport-tall
+  // flex column that never scrolls, so the chat log is the only scroller and the
+  // composer pins to the bottom (above the mobile keyboard). See .ws-app--chatfull.
+  const chatFull = pathname.startsWith("/chat/");
   const roomy =
-    !wide &&
+    !wide && !chatFull &&
     (pathname === "/apps" ||
       pathname === "/projects" ||
       pathname.startsWith("/projects/") ||
       pathname === "/agents" ||
       pathname === "/marketplace");
-  const widthClass = wide ? " ws-app--wide" : roomy ? " ws-app--roomy" : "";
+  const widthClass = chatFull
+    ? " ws-app--chatfull"
+    : wide ? " ws-app--wide" : roomy ? " ws-app--roomy" : "";
   return (
     <RecorderProvider>
     <BreadcrumbProvider>

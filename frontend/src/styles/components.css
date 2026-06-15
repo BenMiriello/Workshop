@@ -777,13 +777,31 @@ a.ws-btn { text-decoration: none; }
    internally and the composer pins to the bottom (same on mobile and desktop —
    no unbounded growth, no sidebar that dumps on top of the conversation). */
 .ws-chat-full {
-  max-width: 880px; margin: 0 auto;
-  height: calc(100dvh - 7rem);
-  min-height: 20rem;
+  max-width: 880px; width: 100%; margin: 0 auto;
+  flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }
-@media (max-width: 640px) {
-  .ws-chat-full { height: calc(100dvh - 4.5rem); }
+
+/* Focused-chat shell: the whole app becomes a viewport-tall flex column that
+   never scrolls. Only the chat log scrolls; the composer pins to the bottom and
+   (with interactive-widget=resizes-content + dvh) stays above the mobile
+   keyboard. This is what stops the page from scrolling underneath the chat — the
+   source of the blank gap and the "swiping a bubble scrolls the page" bug. */
+/* .ws-app.ws-app--chatfull (specificity 0,2,0) so it beats the later mobile
+   `.ws-app { padding: ... }` rule that would otherwise restore a bottom padding. */
+.ws-app.ws-app--chatfull {
+  /* border-box so 100dvh includes the shell's own padding (the root .ws-app is
+     content-box, which otherwise made the box taller than the viewport). */
+  box-sizing: border-box;
+  max-width: none;
+  height: 100dvh;
+  padding-bottom: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.ws-app.ws-app--chatfull > main {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
 }
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */

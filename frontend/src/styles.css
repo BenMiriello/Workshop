@@ -512,7 +512,13 @@ input[type="range"].grad::-moz-range-thumb {
 }
 
 /* ---- Log + messages ---- */
-.chat-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.chat-log {
+  flex: 1 1 auto; min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  /* Keep a touch swipe inside the log; don't chain it to the page. */
+  overscroll-behavior: contain;
+  padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem;
+}
 .chat-empty { color: var(--muted); font-size: 0.85rem; text-align: center; margin: auto 0; }
 .chat-empty--err { color: var(--danger); }
 .chat-empty--note { font-size: var(--fs-xs); margin: 0 0 0.4rem; }
