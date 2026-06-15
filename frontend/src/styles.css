@@ -526,13 +526,20 @@ input[type="range"].grad::-moz-range-thumb {
    share --control-h and sit flush to the textarea's bottom. No padding drift —
    the textarea's min-height equals --control-h so a single row lines up with the
    buttons; its vertical padding centers the first line at that height. */
-.chat-input-row {
-  display: flex; gap: var(--space-2); align-items: flex-end;
+/* Composer: textarea on its own row (full width, never squeezed), with a
+   controls bar below (model picker left, send/expand right). Identical at every
+   width, so mobile no longer crams the input into a sliver. */
+.chat-composer {
+  display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-3) var(--space-3);
   /* keep the composer above the iOS keyboard / home indicator on mobile docks */
   padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
+.chat-composer .chat-input { flex: none; width: 100%; }
+.chat-composer__controls { display: flex; align-items: center; gap: var(--space-2); }
+.chat-composer__spacer { flex: 1 1 auto; }
+.chat-composer .chat-model { width: auto; flex: 0 0 auto; font-size: var(--fs-sm); }
 .chat-input {
   flex: 1; resize: none;
   min-height: var(--control-h); max-height: 120px;

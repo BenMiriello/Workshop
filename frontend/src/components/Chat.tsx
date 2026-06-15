@@ -435,7 +435,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   ) : null;
 
   const composer = (
-    <div className="chat-input-row">
+    <div className="chat-composer">
       <textarea
         className="chat-input"
         rows={1}
@@ -445,33 +445,36 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onKeyDown={onKey}
         disabled={inFlight}
       />
-      {modelOptions.length > 0 && (
-        <Select
-          value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          aria-label="Model"
-          title="Model for this conversation"
-          style={{ flex: "0 0 auto", width: "auto", fontSize: "var(--fs-sm)" }}
-        >
-          {modelOptions.map((id) => (
-            <option key={id} value={id}>{modelLabel(id)}</option>
-          ))}
-        </Select>
-      )}
-      {effectiveMode === "build" && streaming ? (
-        <Button variant="primary" icon onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
-          <Square aria-hidden />
-        </Button>
-      ) : (
-        <Button variant="primary" icon onClick={send} disabled={inFlight || !input.trim()} aria-label="Send (Enter)" title="Send (Enter)">
-          <CornerDownLeft aria-hidden />
-        </Button>
-      )}
-      {variant !== "full" && (
-        <Button icon onClick={popOut} aria-label="Expand chat" title="Expand chat">
-          <Maximize2 aria-hidden />
-        </Button>
-      )}
+      <div className="chat-composer__controls">
+        {modelOptions.length > 0 && (
+          <Select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            aria-label="Model"
+            title="Model for this conversation"
+            className="chat-model"
+          >
+            {modelOptions.map((id) => (
+              <option key={id} value={id}>{modelLabel(id)}</option>
+            ))}
+          </Select>
+        )}
+        <span className="chat-composer__spacer" />
+        {variant !== "full" && (
+          <Button icon onClick={popOut} aria-label="Expand chat" title="Expand chat">
+            <Maximize2 aria-hidden />
+          </Button>
+        )}
+        {effectiveMode === "build" && streaming ? (
+          <Button variant="primary" icon onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
+            <Square aria-hidden />
+          </Button>
+        ) : (
+          <Button variant="primary" icon onClick={send} disabled={inFlight || !input.trim()} aria-label="Send (Enter)" title="Send (Enter)">
+            <CornerDownLeft aria-hidden />
+          </Button>
+        )}
+      </div>
     </div>
   );
 
