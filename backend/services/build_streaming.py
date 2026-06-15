@@ -40,6 +40,9 @@ class Turn:
     thread_id: str
     agent_slug: str
     events: list[TurnEvent] = field(default_factory=list)
+    # Ordered text/tool segments, persisted incrementally so a reload mid-turn
+    # reconstructs the interleaving (text → tool → text …).
+    segments: list[dict] = field(default_factory=list)
     complete: bool = False
     error: str | None = None
     final_text: str = ""
@@ -123,12 +126,14 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
 def _summarize_tool_input(inp: dict) -> str:
     """One-line preview for the UI. Long tool inputs (full file contents in
     a Write) shouldn't bloat the SSE stream — show file path + size only."""
+    # Cap at 300 chars: enough that expanding a tool chip shows a useful detail
+    # (a full command / path), without streaming whole file bodies into history.
     if not isinstance(inp, dict):
-        return str(inp)[:80]
-    for key in ("file_path", "path", "pattern", "command", "url"):
+        return str(inp)[:300]
+    for key in ("file_path", "path", "pattern", "command", "url", "query", "prompt"):
         if key in inp:
             v = str(inp[key])
-            return v if len(v) <= 120 else v[:117] + "…"
+            return v if len(v) <= 300 else v[:297] + "…"
     # Generic fallback: short keys list.
     keys = ",".join(list(inp.keys())[:4])
     return f"({keys})"
@@ -167,6 +172,13 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     env = llm_router._claude_env()
     _push(turn, "started", {"cwd": cwd, "model": model, "resume": resume})
 
+    # Persist an empty assistant placeholder bound to this turn. As the turn
+    # streams we update its segments; a reload sees partial content + reconnects.
+    try:
+        chat_store.append_streaming_assistant(turn.thread_id, turn.id)
+    except Exception as e:  # pragma: no cover — defensive
+        log.warning("turn %s: could not seed streaming message: %s", turn.id, e)
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=cwd, env=env,
@@ -179,9 +191,31 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
         _push(turn, "error", {"detail": turn.error})
         return
 
+    def _seg_text(s: str) -> None:
+        if not s:
+            return
+        if turn.segments and turn.segments[-1].get("t") == "text":
+            turn.segments[-1]["text"] += s
+        else:
+            turn.segments.append({"t": "text", "text": s})
+
+    def _seg_tool(name: str, inp: str) -> None:
+        turn.segments.append({"t": "tool", "name": name or "?", "input": inp or ""})
+
+    def _content() -> str:
+        return "".join(s["text"] for s in turn.segments if s.get("t") == "text").strip()
+
+    def _persist() -> None:
+        try:
+            chat_store.update_streaming_assistant(
+                turn.thread_id, turn.id, turn.segments, _content()
+            )
+        except Exception as e:  # pragma: no cover — defensive
+            log.debug("turn %s: incremental persist failed: %s", turn.id, e)
+
     async def _read_stdout() -> None:
         assert proc.stdout
-        accumulated_text: list[str] = []
+        last_persist = 0.0
         async for raw in proc.stdout:
             line = raw.decode(errors="replace").rstrip()
             if not line:
@@ -190,16 +224,29 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
             if not parsed:
                 continue
             kind, payload = parsed
+            saw_tool = False
             if kind == "_multi":
                 for k2, p2 in payload.get("events", []):
                     if k2 == "text":
-                        accumulated_text.append(p2.get("content", ""))
+                        _seg_text(p2.get("content", ""))
+                    elif k2 == "tool":
+                        _seg_tool(p2.get("name"), p2.get("input"))
+                        saw_tool = True
                     _push(turn, k2, p2)
             else:
                 if kind == "text":
-                    accumulated_text.append(payload.get("content", ""))
+                    _seg_text(payload.get("content", ""))
+                elif kind == "tool":
+                    _seg_tool(payload.get("name"), payload.get("input"))
+                    saw_tool = True
                 _push(turn, kind, payload)
-        turn.final_text = "".join(accumulated_text).strip()
+            # Persist on every tool call (so a reload mid-tool shows it) and at
+            # most a few times a second for text, to bound disk churn.
+            now = time.time()
+            if saw_tool or now - last_persist > 0.4:
+                _persist()
+                last_persist = now
+        turn.final_text = _content()
 
     async def _read_stderr() -> None:
         assert proc.stderr
@@ -226,14 +273,16 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     _push(turn, "done", {"exit_code": rc, "text_len": len(turn.final_text)})
     turn.complete = True
 
-    # Persist the final assistant message + touch the agent record. Even on
-    # non-zero exit, salvage any text that was emitted (matches call_cloud's
-    # recovery behavior).
+    # Finalize the streaming assistant message (segments + text, streaming off).
+    # Even on non-zero exit, salvage any text emitted (matches call_cloud).
     text = turn.final_text or ("(model exited without text)" if rc != 0 else "")
+    is_error = bool(turn.error) or (rc != 0 and not turn.final_text)
     try:
-        chat_store.append_message(turn.thread_id, "assistant", text)
+        chat_store.finalize_streaming_assistant(
+            turn.thread_id, turn.id, turn.segments, text, error=is_error
+        )
     except Exception as e:
-        log.warning("turn %s: chat_store append failed: %s", turn.id, e)
+        log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)
     try:
         build_agents.touch(turn.agent_slug)
     except Exception:

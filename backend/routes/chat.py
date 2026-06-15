@@ -126,6 +126,21 @@ async def thread(thread_id: str):
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
+    # Self-heal: a message left mid-stream by a backend restart (turn no longer
+    # in memory) would otherwise stay streaming=true forever and make the client
+    # keep trying to reconnect. Clear the flag so its persisted segments render
+    # as final.
+    changed = False
+    for m in t.get("messages", []):
+        meta = m.get("meta") or {}
+        if meta.get("streaming"):
+            live = build_streaming.get_turn(meta.get("turn_id") or "")
+            if live is None or live.complete:
+                meta["streaming"] = False
+                m["meta"] = meta
+                changed = True
+    if changed:
+        chat_store.save_thread(t)
     return t
 
 

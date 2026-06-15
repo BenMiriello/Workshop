@@ -138,6 +138,87 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
     return msg
 
 
+def save_thread(thread: dict) -> dict:
+    """Persist a thread dict the caller already mutated (atomic write)."""
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
+# ---- Streaming assistant turns --------------------------------------------
+# A Build turn streams over SSE. We persist its assistant message incrementally
+# (ordered text/tool segments) so a reload mid-turn shows what's there so far
+# and can reconnect, instead of a blank gap that snaps to one aggregate block.
+
+def _find_by_turn(thread: dict, turn_id: str) -> dict | None:
+    for m in reversed(thread.get("messages", [])):
+        if (m.get("meta") or {}).get("turn_id") == turn_id:
+            return m
+    return None
+
+
+def append_streaming_assistant(thread_id: str, turn_id: str) -> dict:
+    """Append an empty assistant message marked as the live turn `turn_id`."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        raise KeyError(thread_id)
+    msg = {
+        "role": "assistant",
+        "content": "",
+        "ts": _now_iso(),
+        "meta": {"streaming": True, "turn_id": turn_id, "segments": []},
+    }
+    thread["messages"].append(msg)
+    thread["updated_at"] = _now_iso()
+    _write(thread)
+    return msg
+
+
+def update_streaming_assistant(
+    thread_id: str, turn_id: str, segments: list[dict], content: str
+) -> None:
+    """Overwrite the live turn's segments + concatenated text (throttled by the
+    caller). No-op if the thread/message is gone."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return
+    m = _find_by_turn(thread, turn_id)
+    if m is None:
+        return
+    m["content"] = content
+    meta = m.setdefault("meta", {})
+    meta["segments"] = segments
+    meta["streaming"] = True
+    save_thread(thread)
+
+
+def finalize_streaming_assistant(
+    thread_id: str,
+    turn_id: str,
+    segments: list[dict],
+    content: str,
+    error: bool = False,
+) -> dict | None:
+    """Mark the live turn complete (streaming=False) with its final segments.
+    If the placeholder message is missing, append a finished one instead."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    m = _find_by_turn(thread, turn_id)
+    if m is None:
+        meta = {"segments": segments} if segments else {}
+        if error:
+            meta["error"] = True
+        return append_message(thread_id, "assistant", content, meta=meta or None)
+    m["content"] = content
+    meta = m.setdefault("meta", {})
+    meta["segments"] = segments
+    meta["streaming"] = False
+    if error:
+        meta["error"] = True
+    save_thread(thread)
+    return m
+
+
 def rename_thread(thread_id: str, title: str) -> dict | None:
     thread = get_thread(thread_id)
     if thread is None:

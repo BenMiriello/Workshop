@@ -464,107 +464,145 @@ input[type="range"].grad::-moz-range-thumb {
 .stat .v { font-size: 1.15rem; font-weight: 600; margin: 0.2rem 0 0; }
 
 /* ============================================================
-   In-app chat (ChatPanel / ChatDock) — generalized, app-agnostic.
+   In-app chat — generalized, app-agnostic. One compact control
+   row (picker + new/delete + tasks + model + expand), an auto-
+   growing composer (~2.5 lines, editable mid-stream), and
+   assistant turns rendered as ordered text + collapsible tool
+   calls. Used by the dock, the build IDE panel, and the
+   full-page focused view.
    ============================================================ */
 
-/* Floating launcher button, pinned bottom-right. */
-.chat-fab {
-  position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 50;
-  display: inline-flex; align-items: center; gap: 0.5rem;
-  padding: 0.6rem 0.95rem; border-radius: 999px; cursor: pointer;
-  background: var(--accent); color: #fff; border: none; font-weight: 600;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+/* Panel fills its host; the log scrolls, toolbar + composer pin. */
+.chat-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: 100%; }
+
+/* ---- Toolbar: a single row of compact controls ---- */
+.chat-toolbar {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: nowrap;
 }
-.chat-fab:hover { filter: brightness(1.05); }
-
-/* Slide-over dock holding the panel. */
-.chat-dock {
-  position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 50;
-  width: min(400px, calc(100vw - 2rem)); height: min(620px, calc(100vh - 2.5rem));
-  display: flex; flex-direction: column;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.35); overflow: hidden;
+.chat-tb__select {
+  height: 2rem; min-width: 0; padding: 0 0.45rem;
+  font-size: var(--fs-sm); line-height: 1;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  cursor: pointer;
 }
-.chat-dock-head {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border);
-  font-weight: 600; font-size: 0.95rem;
+.chat-tb__thread { flex: 1 1 5rem; }       /* focal control — absorbs slack */
+.chat-tb__provider { flex: 0 1 6rem; min-width: 3rem; }
+.chat-tb__model { flex: 0 1 6.5rem; min-width: 3.5rem; }
+.chat-tb__spacer { flex: 0 1 var(--space-2); min-width: 0; }
+.chat-tb__btn {
+  flex: 0 0 auto; position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; padding: 0;
+  background: transparent; color: var(--muted);
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.chat-tb__btn:hover { color: var(--fg); background: var(--card-hover); }
+.chat-tb__btn.is-active { color: var(--accent); background: var(--accent-soft); }
+.chat-tb__badge {
+  position: absolute; top: -3px; right: -3px;
+  min-width: 1rem; height: 1rem; padding: 0 0.2rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.62rem; font-weight: var(--fw-semi); line-height: 1;
+  background: var(--accent); color: #fff; border-radius: 999px;
 }
 
-/* The panel itself (also usable inline, e.g. as a tab). */
-.chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-
-.chat-bar { display: flex; gap: 0.4rem; align-items: center; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); }
-.chat-thread-select { flex: 1; min-width: 0; padding: 0.3rem 0.45rem; font-size: 0.85rem; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; }
-/* Agent picker — narrower than the thread select so the thread title stays
-   the focal element when both are present. */
-.chat-agent-select { flex: 0 1 9rem; min-width: 0; padding: 0.3rem 0.45rem; font-size: 0.85rem; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; }
-.chat-icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 0.3rem; background: var(--card); border: 1px solid var(--border); border-radius: 6px; color: var(--muted); cursor: pointer; }
-.chat-icon-btn:hover { color: var(--fg); }
-
-.chat-log { flex: 1; min-height: 0; overflow-y: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem; }
+/* ---- Log + messages ---- */
+.chat-log { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem; }
 .chat-empty { color: var(--muted); font-size: 0.85rem; text-align: center; margin: auto 0; }
+.chat-empty--err { color: var(--danger); }
+.chat-empty--note { font-size: var(--fs-xs); margin: 0 0 0.4rem; }
 
 .chat-msg { display: flex; flex-direction: column; max-width: 88%; }
 .chat-msg.user { align-self: flex-end; align-items: flex-end; }
-.chat-msg.assistant { align-self: flex-start; align-items: flex-start; }
+.chat-msg.assistant { align-self: flex-start; align-items: flex-start; max-width: 94%; }
 .chat-bubble {
+  /* max-width caps the bubble at the message column so a nowrap tool preview
+     truncates inside it instead of pushing the bubble past the viewport. */
+  max-width: 100%; min-width: 0;
   padding: 0.5rem 0.7rem; border-radius: 12px; font-size: 0.9rem; line-height: 1.4;
   white-space: pre-wrap; word-break: break-word;
 }
 .chat-msg.user .chat-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-.chat-bubble.error { background: #d9534f22; border-color: #d9534f; color: var(--fg); }
-.chat-typing { color: var(--muted); letter-spacing: 0.15em; }
+.chat-bubble.error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--fg); }
+.chat-typing { display: inline-block; color: var(--muted); letter-spacing: 0.15em; animation: chat-typing-pulse 1.2s ease-in-out infinite; }
+@keyframes chat-typing-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-typing { animation: none; } }
+
+/* ---- Tool call: compact row, tap to expand ---- */
+.chat-tool {
+  margin: 0.3rem 0; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-inset); overflow: hidden;
+}
+.chat-tool__head {
+  display: flex; align-items: center; gap: 0.4rem;
+  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-xs); text-align: left; cursor: pointer;
+}
+.chat-tool__head:hover { color: var(--fg); }
+.chat-tool__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
+.chat-tool__icon { flex: 0 0 auto; }
+.chat-tool__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
+.chat-tool__preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+.chat-tool__detail {
+  margin: 0; padding: 0.4rem 0.6rem; border-top: 1px solid var(--border);
+  font-size: var(--fs-xs); white-space: pre-wrap; word-break: break-word;
+  max-height: 30vh; overflow: auto;
+}
 
 /* Action confirmations (e.g. "Updated plan: ..."). */
 .chat-note { margin-top: 0.3rem; font-size: 0.74rem; color: var(--accent); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem; }
+.chat-err { padding: 0.4rem 0.8rem; font-size: 0.78rem; color: var(--danger); }
 
-.chat-err { padding: 0.4rem 0.8rem; font-size: 0.78rem; color: #d9534f; }
+/* Egress notice (build only). */
+.chat-egress { padding: var(--space-2) var(--space-3); }
+.chat-egress__details { margin-top: var(--space-2); }
+.chat-egress__details summary { cursor: pointer; }
+.chat-egress__pre { margin-top: var(--space-2); white-space: pre-wrap; font-size: var(--fs-xs); max-height: 12vh; overflow: auto; }
 
-/* Composer: textarea grows; action buttons (Button primitive, .ws-btn--icon)
-   share --control-h and sit flush to the textarea's bottom. No padding drift —
-   the textarea's min-height equals --control-h so a single row lines up with the
-   buttons; its vertical padding centers the first line at that height. */
-/* Composer: textarea on its own row (full width, never squeezed), with a
-   controls bar below (model picker left, send/expand right). Identical at every
-   width, so mobile no longer crams the input into a sliver. */
+/* ---- Composer: auto-growing textarea (~2.5 lines) + inline send ---- */
 .chat-composer {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  padding: var(--space-3) var(--space-3);
-  /* keep the composer above the iOS keyboard / home indicator on mobile docks */
+  position: relative;
+  padding: var(--space-3);
+  /* keep the composer above the iOS keyboard / home indicator on mobile */
   padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
-.chat-composer .chat-input { flex: none; width: 100%; }
-.chat-composer__controls { display: flex; align-items: center; gap: var(--space-2); }
-.chat-composer__spacer { flex: 1 1 auto; }
-.chat-composer .chat-model { width: auto; flex: 0 0 auto; font-size: var(--fs-sm); }
 .chat-input {
-  flex: 1; resize: none;
-  min-height: var(--control-h); max-height: 120px;
-  /* (control-h - 1.4em line) / 2 keeps a single line vertically centered */
-  padding: calc((var(--control-h) - 1.4em) / 2) var(--field-pad-x);
-  /* 16px minimum: stops iOS auto-zoom on focus (item: mobile composer) */
-  font-size: 1rem; line-height: 1.4; font-family: inherit;
+  display: block; width: 100%; resize: none;
+  min-height: 4.4rem;     /* ~2.5 lines, so there's room to write */
+  max-height: 160px;
+  padding: 0.55rem 3.1rem 0.55rem 0.75rem;   /* right room for the send button */
+  /* 16px minimum: stops iOS auto-zoom on focus */
+  font-size: 1rem; line-height: 1.45; font-family: inherit;
   background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius-md);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
 }
+.chat-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.chat-send {
+  position: absolute;
+  right: calc(var(--space-3) + 0.45rem);
+  bottom: calc(max(var(--space-3), env(safe-area-inset-bottom)) + 0.45rem);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.1rem; height: 2.1rem; padding: 0;
+  background: var(--accent); color: #fff;
+  border: none; border-radius: var(--radius-md); cursor: pointer;
+}
+.chat-send:hover:not(:disabled) { background: var(--accent-hover); }
+.chat-send:disabled { opacity: 0.4; }
 
-/* ---- Per-agent task panel (build chats only) -----------------------------
-   A compact, collapsible section between the thread bar and the log. Header is
-   a single toggle row; the body scrolls so a long list never crowds the chat. */
+/* ---- Per-agent task drawer (build chats only) ----
+   Opened from the toolbar Tasks button; the list scrolls so it never crowds. */
 .chat-tasks { border-bottom: 1px solid var(--border); }
-.chat-tasks__head {
-  display: flex; align-items: center; gap: var(--space-2);
-  width: 100%; padding: var(--space-2) var(--space-3);
-  background: none; border: none; color: var(--fg); font: inherit;
-  font-size: var(--fs-sm); cursor: pointer; text-align: left;
-}
-.chat-tasks__head:hover { background: var(--card-hover); }
-.chat-tasks__chev { color: var(--muted); display: inline-flex; flex: 0 0 auto; }
-.chat-tasks__title { font-weight: 600; }
-.chat-tasks__count { color: var(--muted); margin-left: auto; font-size: var(--fs-xs); }
 .chat-tasks__body {
   display: flex; flex-direction: column; gap: var(--space-2);
   padding: var(--space-2) var(--space-3) var(--space-3);

@@ -1,11 +1,27 @@
 // Client for the generalized in-app chat backend (/api/chat/*).
 // App-agnostic: every call is scoped by a `contextKey` (e.g. "budget").
 
+// An assistant turn is an ordered list of segments so text and tool calls keep
+// their interleaving (text → tool → text …) instead of collapsing into one
+// block. Persisted on the message so a reload reconstructs the same turn.
+export type ChatSegment =
+  | { t: "text"; text: string }
+  | { t: "tool"; name: string; input: string };
+
 export type ChatMsg = {
   role: "user" | "assistant";
   content: string;
   ts: string;
-  meta?: { notes?: string[]; error?: boolean };
+  meta?: {
+    notes?: string[];
+    error?: boolean;
+    // Ordered text/tool segments (assistant turns). Absent on plain messages.
+    segments?: ChatSegment[];
+    // True while the turn is still streaming; turn_id lets a reload reconnect
+    // to the live SSE channel and keep rendering.
+    streaming?: boolean;
+    turn_id?: string;
+  };
 };
 
 export type ThreadSummary = {

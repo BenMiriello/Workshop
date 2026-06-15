@@ -287,6 +287,7 @@ function RegionHead({
           size="sm"
           variant="ghost"
           icon
+          className="ws-region-head__focus"
           onClick={() => onFocus(focused ? "all" : region)}
           aria-label={focused ? `Restore ${title} to split view` : `Expand ${title} full width`}
           title={focused ? "Restore split view" : "Expand full width"}

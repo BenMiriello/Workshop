@@ -706,6 +706,12 @@ a.ws-btn { text-decoration: none; }
   .ws-agent-build > .ws-agent-build__files  { order: 2; }
   .ws-agent-build .ws-agent-build__region-body { overflow: visible; }
   .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; overflow: auto; }
+  /* The per-region "expand full width" toggle is the desktop 3-pane focus model;
+     stacked on mobile it does nothing useful and reads as a stray second expand
+     button next to the chat's own full-screen control — hide it. */
+  .ws-region-head__focus { display: none; }
+  /* The chat region's own body must let its panel size + scroll internally. */
+  .ws-agent-build__chat .ws-agent-build__region-body { min-height: 0; }
 }
 
 .ws-agent-build__status {
@@ -766,16 +772,18 @@ a.ws-btn { text-decoration: none; }
 .ws-task-row:hover .ws-task-row__actions,
 .ws-task-row:focus-within .ws-task-row__actions { opacity: 1; }
 
-/* ---- FOCUSED CHAT (sidebar collapses on mobile) -------------------------- */
-.ws-focused-chat {
-  display: grid;
-  grid-template-columns: 260px 1fr;
-  gap: var(--space-4);
-  height: calc(100vh - 8rem);
+/* ---- FOCUSED CHAT (full-page) -------------------------------------------
+   A centred, viewport-tall column. The Chat panel fills it; the log scrolls
+   internally and the composer pins to the bottom (same on mobile and desktop —
+   no unbounded growth, no sidebar that dumps on top of the conversation). */
+.ws-chat-full {
+  max-width: 880px; margin: 0 auto;
+  height: calc(100dvh - 7rem);
+  min-height: 20rem;
+  display: flex; flex-direction: column;
 }
-@media (max-width: 720px) {
-  .ws-focused-chat { grid-template-columns: 1fr; height: auto; }
-  .ws-focused-chat__sidebar { max-height: 35vh; }
+@media (max-width: 640px) {
+  .ws-chat-full { height: calc(100dvh - 4.5rem); }
 }
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */

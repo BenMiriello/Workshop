@@ -39,7 +39,7 @@ export default function ChatDock({ contextKey, title = "Assistant", placeholder,
   }
 
   return (
-    <div className="ws-dock" style={{ maxHeight: "min(620px, calc(100vh - 2.5rem))" }}>
+    <div className="ws-dock" style={{ height: "min(620px, calc(100dvh - 2.5rem))" }}>
       <div className="ws-dock__header" onClick={() => setOpen(false)} role="button" tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") setOpen(false);
