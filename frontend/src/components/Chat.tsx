@@ -157,16 +157,20 @@ function ElidedContent({
   if (lines.length >= cfg.headLines + cfg.tailLines + 2) {
     headSrc = lines.slice(0, cfg.headLines).join("\n");
     tailSrc = lines.slice(-cfg.tailLines).join("\n");
-    label = `… Show ${lines.length - cfg.headLines - cfg.tailLines} more lines`;
+    label = `Show ${lines.length - cfg.headLines - cfg.tailLines} more lines`;
   } else {
     headSrc = source.slice(0, cfg.headLines * CPL);
     tailSrc = source.slice(-cfg.tailLines * CPL);
-    label = "… Show more";
+    label = "Show more";
   }
+  // A visible "···" divider marks the cut; the whole line expands on click.
   return (
     <>
       {render(headSrc)}
-      <button type="button" className="chat-more" onClick={() => setOpen(true)}>{label}</button>
+      <button type="button" className="chat-ellipsis" onClick={() => setOpen(true)}>
+        <span className="chat-ellipsis__dots" aria-hidden>•••</span>
+        <span className="chat-ellipsis__label">{label}</span>
+      </button>
       {render(tailSrc)}
     </>
   );

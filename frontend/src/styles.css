@@ -547,6 +547,24 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--accent); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-more:hover { text-decoration: underline; }
+/* Truncation divider: a visible "•••" + label + dashed rule marking the cut.
+   The whole line is the expand control. */
+.chat-ellipsis {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  margin: 0.35rem 0; padding: 0;
+  background: none; border: none; color: var(--muted);
+  font: inherit; font-size: var(--fs-xs); cursor: pointer; text-align: left;
+}
+.chat-ellipsis::after { content: ""; flex: 1 1 auto; border-top: 1px dashed var(--border); }
+.chat-ellipsis:hover { color: var(--fg); }
+.chat-ellipsis:hover::after { border-color: var(--border-strong); }
+.chat-ellipsis__dots { flex: 0 0 auto; letter-spacing: 0.15em; }
+.chat-ellipsis__label { flex: 0 0 auto; }
+/* Legible on the accent-filled user bubble. */
+.chat-msg.user .chat-more { color: rgba(255, 255, 255, 0.9); }
+.chat-msg.user .chat-ellipsis { color: rgba(255, 255, 255, 0.85); }
+.chat-msg.user .chat-ellipsis::after { border-color: rgba(255, 255, 255, 0.4); }
+.chat-msg.user .chat-ellipsis:hover { color: #fff; }
 .chat-work { margin: 0.1rem 0 0.35rem; }
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
