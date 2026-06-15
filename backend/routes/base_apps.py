@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
 
-from services import manifests, permissions, registry
+from services import gc, manifests, permissions, registry
 
 router = APIRouter()
 
@@ -167,3 +167,30 @@ async def install_registry_item(item_id: str, body: InstallIn = Body(default=Ins
         return registry.install(item_id, target_slug=body.target_slug)
     except registry.RegistryError as e:
         raise HTTPException(e.status, e.message)
+
+
+# ---- Anti-bloat GC (doc 05 section 7) ---------------------------------------
+# Copies must not accumulate forever. preview reports everything reapable with
+# no side effects; run performs only the SAFE reaps (merged worktrees + stopped
+# dev-server runtimes). Checkpoint history is REPORTED, never rewritten here --
+# history rewrite is exactly what the git-guard hook blocks for agents.
+
+
+class GcRunIn(BaseModel):
+    apply: bool = True
+
+
+@router.get("/gc/preview")
+async def gc_preview():
+    """Report what is reapable: merged worktrees, per-project checkpoint counts
+    (squashable beyond retention, report-only), and stopped dev-server runtimes.
+    No destructive side effects."""
+    return gc.preview()
+
+
+@router.post("/gc/run")
+async def gc_run(body: GcRunIn = Body(default=GcRunIn())):
+    """Perform the SAFE reaps (merged worktrees + stopped runtimes) when
+    apply=true; with apply=false this is equivalent to preview for those two
+    categories. Checkpoint history is never rewritten."""
+    return gc.run(apply=body.apply)
