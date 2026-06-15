@@ -50,6 +50,16 @@ All verified live at the widths above after fixing.
 > specifically), 4 (LocalRunner), 5 (chat tools / MCP race), and 3 (markdown
 > renderer, needs a lib install) remain. Details unchanged below.
 
+> **Update 2 (2026-06-14, npm install authorized):** the remaining items are now
+> BUILT: markdown renderer (react-markdown), LocalRunner standalone deploy
+> (backend + wired into the Deployments UI), chat tools enabled (MCP race fixed via
+> `MCP_CONNECTION_NONBLOCKING=false`; flag flipped), and `@workshop/ui` is a real
+> npm workspace package. Genuinely remaining: plaid MCP creds in the backend chat
+> subprocess env (config, so live tool lookups complete; today the assistant
+> honestly declines, no fabrication), Integrated route-mount deploy (needs frontend
+> route injection), remote registry migration (needs remote hosting), and a minor
+> tokens.js value reconciliation. The v1 plan is otherwise complete.
+
 ### P1 — should do next, mostly safe
 1. **`@workshop/ui` as a real versioned package + single-source tokens** (Phase 5,
    doc 03). This is build-system surgery: it restructures the frontend into a
