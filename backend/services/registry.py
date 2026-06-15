@@ -365,6 +365,10 @@ def install(item_id: str, *, target_slug: str | None = None) -> dict[str, Any]:
         "created": now,
         "last_touched": now,
         "claude_session": None,
+        # Provenance: which registry item + version this fork was installed from.
+        # update_from_upstream uses this to find newer upstream releases and to
+        # bump the recorded version after a clean merge.
+        "from_registry": {"id": item_id, "version": item.get("version")},
     }
     # Single writer: read-modify-write projects.json through the projects hub
     # helpers, exactly as create_project / import_project do.
@@ -373,3 +377,192 @@ def install(item_id: str, *, target_slug: str | None = None) -> dict[str, Any]:
     projects_routes._save_registry(pdata)
 
     return {"slug": slug, **record}
+
+
+# ---- Update from upstream (doc 03 section 4: "update via branch merge") ------
+# A forked/installed project records its provenance (from_registry: {id, version})
+# at install time. update_from_upstream looks up the registry item's LATEST
+# release and merges that bundle's history into the project's current branch via
+# the normal git fetch + merge machinery. Clean merge bumps the recorded version;
+# a conflicting merge is aborted so the working tree is never left half-merged.
+
+
+def _version_key(v: str) -> tuple:
+    """Sort key for a version string. Semver-ish (M.m.p) sorts numerically;
+    anything unparseable sorts below all parseable versions (by raw string) so a
+    parseable release is always preferred as 'latest'."""
+    m = _SEMVER_RE.match(v.strip()) if isinstance(v, str) else None
+    if m:
+        return (1, int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return (0, 0, 0, 0)
+
+
+def _latest_history_entry(item: dict) -> dict | None:
+    """The newest release in an item's history, by version order. Falls back to
+    the item's top-level version/bundle_path when history is absent."""
+    history = item.get("history") or []
+    if history:
+        return max(history, key=lambda h: _version_key(h.get("version", "")))
+    if item.get("version") and item.get("bundle_path"):
+        return {"version": item["version"], "bundle_path": item["bundle_path"]}
+    return None
+
+
+def _project_provenance(slug: str) -> tuple[dict, dict]:
+    """Return (project_record, from_registry) for a slug, or raise a RegistryError
+    (404) if the project is unknown or carries no provenance."""
+    pdata = projects_routes._load_registry()
+    project = (pdata.get("projects") or {}).get(slug)
+    if not project:
+        raise RegistryError(f"project not found: {slug}", status=404)
+    prov = project.get("from_registry")
+    if not isinstance(prov, dict) or not prov.get("id"):
+        raise RegistryError(
+            f"project '{slug}' was not installed from the registry (no provenance)",
+            status=404,
+        )
+    return project, prov
+
+
+def update_status(slug: str) -> dict[str, Any]:
+    """Report whether a newer upstream release exists for an installed project.
+
+    Returns {current, latest, update_available}. 404 (RegistryError) if the
+    project is unknown or has no registry provenance, or if the source item has
+    since been removed from the registry.
+    """
+    _project, prov = _project_provenance(slug)
+    item = get_item(prov["id"])
+    if item is None:
+        raise RegistryError(
+            f"upstream registry item not found: {prov['id']}", status=404
+        )
+    latest_entry = _latest_history_entry(item)
+    latest = latest_entry["version"] if latest_entry else None
+    current = prov.get("version")
+    update_available = bool(
+        latest is not None
+        and (current is None or _version_key(latest) > _version_key(current))
+    )
+    return {
+        "current": current,
+        "latest": latest,
+        "update_available": update_available,
+    }
+
+
+def update_from_upstream(slug: str) -> dict[str, Any]:
+    """Pull the project's latest upstream release and merge it into the current
+    branch (doc 03 section 4, "update via branch merge").
+
+    Looks up the project's from_registry provenance, finds the registry item's
+    latest version, and:
+      - if already at latest -> {updated: False, reason: "up to date"}
+      - else fetch the latest bundle into the project repo and merge FETCH_HEAD
+        into the current branch with a neutral committer.
+        * clean merge  -> bump from_registry.version, {updated: True, ...,
+          merged: True}
+        * conflict     -> git merge --abort, {updated: False, conflict: True,
+          reason: ...} (nothing left half-merged)
+
+    Raises RegistryError (mapped to HTTP) for missing project/provenance/item or
+    a broken working tree; never surfaces raw subprocess errors.
+    """
+    project, prov = _project_provenance(slug)
+    item = get_item(prov["id"])
+    if item is None:
+        raise RegistryError(
+            f"upstream registry item not found: {prov['id']}", status=404
+        )
+
+    latest_entry = _latest_history_entry(item)
+    if latest_entry is None:
+        raise RegistryError(
+            f"upstream item '{prov['id']}' has no published releases", status=400
+        )
+    latest = latest_entry["version"]
+    current = prov.get("version")
+
+    if current is not None and _version_key(latest) <= _version_key(current):
+        return {"updated": False, "reason": "up to date", "current": current,
+                "latest": latest}
+
+    bundle_path = Path(latest_entry["bundle_path"])
+    if not bundle_path.exists():
+        raise RegistryError(
+            f"bundle artifact missing for {prov['id']}@{latest}: {bundle_path}",
+            status=400,
+        )
+
+    repo = Path(project["dir"])
+    if not repo.exists():
+        raise RegistryError(f"project dir missing on disk: {repo}", status=400)
+    if not _is_git_repo_with_commit(repo):
+        raise RegistryError(
+            f"project '{slug}' is not a git repo with at least one commit",
+            status=400,
+        )
+
+    # Refuse to merge over a dirty tree: the merge would be ambiguous and an
+    # abort could not cleanly restore the operator's uncommitted work.
+    status = _run_git(
+        ["status", "--porcelain"], cwd=repo, what="git status"
+    )
+    if status.stdout.strip():
+        raise RegistryError(
+            f"project '{slug}' has uncommitted changes; commit or stash before updating",
+            status=409,
+        )
+
+    # Fetch the latest bundle directly (no persistent remote left behind) and
+    # merge its tip. --no-ff forces a deterministic merge commit; --no-edit +
+    # the neutral _git_env() committer keep authorship clean.
+    _run_git(
+        ["fetch", "--no-tags", str(bundle_path), "HEAD"],
+        cwd=repo,
+        what="git fetch (upstream bundle)",
+    )
+
+    try:
+        merge = subprocess.run(
+            ["git", "merge", "--no-ff", "--no-edit",
+             "-m", f"Update from upstream {prov['id']} {current or '?'} -> {latest}",
+             "FETCH_HEAD"],
+            cwd=str(repo),
+            env=_git_env(),
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+    except subprocess.TimeoutExpired:
+        # Best-effort abort so the tree is not left mid-merge.
+        subprocess.run(["git", "merge", "--abort"], cwd=str(repo),
+                       env=_git_env(), capture_output=True, text=True)
+        raise RegistryError("git merge timed out after 180s", status=504)
+    except OSError as e:
+        raise RegistryError(f"git merge could not run: {e}", status=500)
+
+    if merge.returncode != 0:
+        # Conflict (or any merge failure): abort so nothing is left half-merged.
+        subprocess.run(["git", "merge", "--abort"], cwd=str(repo),
+                       env=_git_env(), capture_output=True, text=True)
+        detail = (merge.stdout or merge.stderr or "").strip()[:300]
+        return {
+            "updated": False,
+            "conflict": True,
+            "from": current,
+            "to": latest,
+            "reason": f"merge conflict, aborted (working tree restored): {detail}",
+        }
+
+    # Clean merge: record the new version. Single writer -> projects.py helpers.
+    pdata = projects_routes._load_registry()
+    rec = (pdata.get("projects") or {}).get(slug)
+    if rec is not None:
+        rec.setdefault("from_registry", {})
+        rec["from_registry"]["id"] = prov["id"]
+        rec["from_registry"]["version"] = latest
+        rec["last_touched"] = _now()
+        projects_routes._save_registry(pdata)
+
+    return {"updated": True, "from": current, "to": latest, "merged": True}

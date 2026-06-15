@@ -162,9 +162,33 @@ async def publish_registry_item(body: PublishIn):
 async def install_registry_item(item_id: str, body: InstallIn = Body(default=InstallIn())):
     """Fork a registry item into the workspace and register it as a project.
     404 if the item is missing, 409 if the target slug exists and cannot be
-    auto-suffixed. Returns the new project entry."""
+    auto-suffixed. Returns the new project entry (with from_registry provenance)."""
     try:
         return registry.install(item_id, target_slug=body.target_slug)
+    except registry.RegistryError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.get("/registry/projects/{slug}/status")
+async def registry_project_status(slug: str):
+    """Whether a newer upstream release is available for an installed project.
+    Returns {current, latest, update_available}. 404 if the project is unknown
+    or has no registry provenance (was not installed from the registry)."""
+    try:
+        return registry.update_status(slug)
+    except registry.RegistryError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.post("/registry/projects/{slug}/update")
+async def registry_project_update(slug: str):
+    """Pull the project's latest upstream release and merge it into the current
+    branch (doc 03 section 4, "update via branch merge"). On a clean merge:
+    {updated: true, from, to, merged: true}; on conflict the merge is aborted and
+    {updated: false, conflict: true, reason}; if already current {updated: false,
+    reason: "up to date"}. 404 if the project has no from_registry provenance."""
+    try:
+        return registry.update_from_upstream(slug)
     except registry.RegistryError as e:
         raise HTTPException(e.status, e.message)
 
