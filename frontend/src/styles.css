@@ -599,7 +599,10 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-send {
   position: absolute;
   right: calc(var(--space-3) + 0.45rem);
-  bottom: calc(max(var(--space-3), env(safe-area-inset-bottom)) + 0.45rem);
+  /* Bottom-anchored so it stays bottom-right as the input grows; the +0.25rem
+     offset = half the slack of a 1-row input (2.6rem) over the 2.1rem button,
+     so at one row it reads as vertically centered. */
+  bottom: calc(max(var(--space-3), env(safe-area-inset-bottom)) + 0.25rem);
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.1rem; height: 2.1rem; padding: 0;
   background: var(--accent); color: #fff;
