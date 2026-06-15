@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft, WifiOff, ChevronRight, ChevronDown, ListTodo, X } from "lucide-react";
-import { Button, ConfirmDialog, Select, StateBlock, Skeleton, Input, Toggle } from "../ui";
+import { Button, ConfirmDialog, Select, StateBlock, Skeleton, Input, Toggle, Markdown } from "../ui";
 import {
   chatApi,
   type ChatMsg,
@@ -557,7 +557,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       )}
       {messages.map((m, i) => (
         <div key={i} className={`chat-msg ${m.role}`}>
-          <div className={`chat-bubble ${m.meta?.error ? "error" : ""}`}>{m.content}</div>
+          <div className={`chat-bubble ${m.meta?.error ? "error" : ""}`}>
+            {m.role === "assistant" && !m.meta?.error ? (
+              <Markdown>{m.content}</Markdown>
+            ) : (
+              m.content
+            )}
+          </div>
           {m.meta?.notes?.map((n, j) => (
             <div key={j} className="chat-note">{n}</div>
           ))}
@@ -577,7 +583,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
                 ))}
               </div>
             )}
-            {pendingText || (inFlight ? "..." : "")}
+            {pendingText ? <Markdown>{pendingText}</Markdown> : inFlight ? "..." : ""}
           </div>
         </div>
       )}

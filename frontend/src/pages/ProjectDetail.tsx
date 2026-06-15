@@ -39,6 +39,7 @@ import {
   Select,
   Field,
   ActionBar,
+  Markdown,
   catFor,
   type StatusKind,
 } from "../ui";
@@ -97,101 +98,6 @@ const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "done", "blocked"];
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
-
-// ---- Tiny, safe Brief renderer ---------------------------------------------
-// PROJECT.md is plain text the operator + agents read. Render the common
-// markdown shapes (headings, bullets, bold, paragraphs) as real elements — no
-// dangerouslySetInnerHTML, no inline hex, tokens only. Good enough for a brief;
-// not a full markdown engine.
-function renderInline(text: string): ReactNode[] {
-  const parts: ReactNode[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let key = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith("**")) {
-      parts.push(<strong key={key++}>{tok.slice(2, -2)}</strong>);
-    } else {
-      parts.push(<code key={key++} className="ws-mono">{tok.slice(1, -1)}</code>);
-    }
-    last = m.index + tok.length;
-  }
-  if (last < text.length) parts.push(text.slice(last));
-  return parts;
-}
-
-function Brief({ source }: { source: string }) {
-  const lines = source.replace(/\r\n/g, "\n").split("\n");
-  const blocks: ReactNode[] = [];
-  let para: string[] = [];
-  let list: string[] = [];
-  let key = 0;
-
-  const flushPara = () => {
-    if (para.length) {
-      blocks.push(
-        <p key={key++} style={{ margin: "0 0 var(--space-3)", lineHeight: "var(--lh-base)" }}>
-          {renderInline(para.join(" "))}
-        </p>,
-      );
-      para = [];
-    }
-  };
-  const flushList = () => {
-    if (list.length) {
-      blocks.push(
-        <ul key={key++} style={{ margin: "0 0 var(--space-3)", paddingLeft: "var(--space-5)" }}>
-          {list.map((li, i) => (
-            <li key={i} style={{ marginBottom: "var(--space-1)", lineHeight: "var(--lh-base)" }}>
-              {renderInline(li)}
-            </li>
-          ))}
-        </ul>,
-      );
-      list = [];
-    }
-  };
-
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    const bullet = /^[-*]\s+(.*)$/.exec(line);
-    if (heading) {
-      flushPara();
-      flushList();
-      const level = Math.min(heading[1].length, 3);
-      const fs = level === 1 ? "var(--fs-lg)" : level === 2 ? "var(--fs-md)" : "var(--fs-sm)";
-      blocks.push(
-        <div
-          key={key++}
-          style={{
-            fontSize: fs,
-            fontWeight: "var(--fw-semi)",
-            margin: "var(--space-3) 0 var(--space-2)",
-            letterSpacing: "-0.01em",
-          }}
-        >
-          {renderInline(heading[2])}
-        </div>,
-      );
-    } else if (bullet) {
-      flushPara();
-      list.push(bullet[1]);
-    } else if (line === "") {
-      flushPara();
-      flushList();
-    } else {
-      flushList();
-      para.push(line);
-    }
-  }
-  flushPara();
-  flushList();
-  return <div style={{ fontSize: "var(--fs-md)" }}>{blocks}</div>;
-}
 
 // ---- Notes parsing ---------------------------------------------------------
 // INTERVENTIONS.md is append-only stamped lines: "[<iso>] <who>: <text>".
@@ -719,7 +625,7 @@ export default function ProjectDetail() {
               }
             />
           ) : (
-            <Brief source={brief} />
+            <Markdown>{brief}</Markdown>
           )}
         </Card>
       </section>
@@ -850,7 +756,7 @@ export default function ProjectDetail() {
                       <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.ts)}</span>
                       <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{n.who}</span>
                     </Row>
-                    <p style={{ margin: "var(--space-1) 0 0", lineHeight: "var(--lh-base)" }}>{n.text}</p>
+                    <Markdown className="ws-md--note">{n.text}</Markdown>
                   </li>
                 ))}
               </ul>

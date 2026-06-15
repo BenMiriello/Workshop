@@ -30,3 +30,4 @@ export { StateBlock, Skeleton, ActionBar, CopyButton, RevealField } from "./feed
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";
 export { useEditMode, type EditMode } from "./useEditMode";
+export { Markdown } from "./Markdown";
