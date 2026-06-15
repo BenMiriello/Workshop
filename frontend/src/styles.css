@@ -596,20 +596,30 @@ input[type="range"].grad::-moz-range-thumb {
   border: 1px solid var(--border); border-radius: var(--radius-lg);
 }
 .chat-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
-.chat-send {
+/* While a build turn streams there are two buttons (Send + Stop); widen the
+   textarea's right padding so text never slides under them. */
+.chat-composer.is-streaming .chat-input { padding-right: 5.6rem; }
+.chat-actions {
   position: absolute;
   right: calc(var(--space-3) + 0.45rem);
   /* Bottom-anchored so it stays bottom-right as the input grows; the +0.25rem
-     offset = half the slack of a 1-row input (2.6rem) over the 2.1rem button,
-     so at one row it reads as vertically centered. */
+     offset = half the slack of a 1-row input (2.6rem) over the 2.1rem buttons,
+     so at one row they read as vertically centered. */
   bottom: calc(max(var(--space-3), env(safe-area-inset-bottom)) + 0.25rem);
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.chat-send, .chat-stop {
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.1rem; height: 2.1rem; padding: 0;
-  background: var(--accent); color: #fff;
-  border: none; border-radius: var(--radius-md); cursor: pointer;
+  border-radius: var(--radius-md); cursor: pointer;
 }
+.chat-send { background: var(--accent); color: #fff; border: none; }
 .chat-send:hover:not(:disabled) { background: var(--accent-hover); }
 .chat-send:disabled { opacity: 0.4; }
+.chat-stop { background: var(--bg-inset); color: var(--fg); border: 1px solid var(--border); }
+.chat-stop:hover { background: var(--card-hover); }
+/* Queued user messages (typed while a turn is streaming). */
+.chat-bubble--queued { opacity: 0.55; }
 
 /* ---- Per-agent task drawer (build chats only) ----
    Opened from the toolbar Tasks button; the list scrolls so it never crowds. */

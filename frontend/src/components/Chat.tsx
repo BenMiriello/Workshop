@@ -145,6 +145,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
+  // Messages typed while a build turn is streaming are queued (a session can't
+  // run two turns at once) and sent automatically when the turn finishes. They
+  // render as pending user bubbles below the live response.
+  const [queued, setQueued] = useState<string[]>([]);
+  const queuedRef = useRef<string[]>([]);
+  const sendBuildRef = useRef<(t: string) => void>(() => {});
+
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
@@ -202,6 +209,22 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     window.setTimeout(() => { void refreshThreads(); }, 2500);
   }, [refreshThreads]);
 
+  const setQueue = useCallback((next: string[]) => {
+    queuedRef.current = next;
+    setQueued(next);
+  }, []);
+
+  // Send the next queued message (if any) as a fresh turn. Called when a turn
+  // finishes (or is stopped) so queued messages run one after another.
+  const dispatchNext = useCallback(() => {
+    const q = queuedRef.current;
+    if (!q.length) return;
+    const [next, ...rest] = q;
+    setQueue(rest);
+    setMessages((m) => [...m, { role: "user", content: next, ts: new Date().toISOString() }]);
+    sendBuildRef.current(next);
+  }, [setQueue]);
+
   // ---- Live SSE stream (build turns) --------------------------------------
   // Used both for a freshly-started turn and for reconnecting to an in-flight
   // turn after a reload (the server replays all events via Last-Event-ID=0).
@@ -257,6 +280,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         refreshThreads();
         scheduleAutoNameRefetch(isFirst);
         setTaskRefetchKey((k) => k + 1);
+        // Type-ahead: run the next queued message, if any.
+        dispatchNext();
       };
       es.addEventListener("done", finish);
       es.addEventListener("end", finish);
@@ -266,12 +291,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (es.readyState === EventSource.CLOSED) void finish();
       };
     },
-    [refreshThreads, scheduleAutoNameRefetch],
+    [refreshThreads, scheduleAutoNameRefetch, dispatchNext],
   );
 
   // Render a thread's messages, reconnecting to a still-streaming last turn.
   const hydrate = useCallback(
     (t: Thread) => {
+      setQueue([]);
       const msgs = t.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
@@ -282,7 +308,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         setPendingSegments([]);
       }
     },
-    [attachStream],
+    [attachStream, setQueue],
   );
 
   useEffect(() => {
@@ -321,7 +347,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, pendingSegments, busy, streaming]);
+  }, [messages, pendingSegments, queued, busy, streaming]);
 
   // Auto-grow the composer: 2.5 lines tall by default, grows with content.
   const autosize = useCallback(() => {
@@ -355,15 +381,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setActiveId(null);
     setMessages([]);
     setPendingSegments([]);
+    setQueue([]);
     setErr(null);
     setSelectedModel("");
-  }, []);
+  }, [setQueue]);
 
   const stop = useCallback(() => {
     sseRef.current?.close();
     sseRef.current = null;
     setStreaming(false);
-  }, []);
+    // Stopped watching the current turn; run anything queued behind it.
+    dispatchNext();
+  }, [dispatchNext]);
 
   const removeThread = useCallback(async (id: string) => {
     await chatApi.deleteThread(id);
@@ -423,17 +452,27 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }
   }, [activeId, scope, selectedModel, messages.length, attachStream]);
 
+  // Keep a ref to the latest sendBuild so dispatchNext (used inside attachStream)
+  // can fire a queued turn without a render cycle.
+  sendBuildRef.current = sendBuild;
+
   const send = useCallback(async () => {
     const text = input.trim();
     if (!text) return;
-    if (effectiveMode === "build" ? streaming : busy) return;
     setErr(null);
     setInput("");
+    // Build turn already streaming → queue this message; it sends when the
+    // current turn finishes (a session can't run two turns at once).
+    if (effectiveMode === "build" && streaming) {
+      setQueue([...queuedRef.current, text]);
+      return;
+    }
+    if (effectiveMode !== "build" && busy) return;
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     if (effectiveMode === "build") sendBuild(text);
     else sendData(text);
-  }, [input, effectiveMode, streaming, busy, sendBuild, sendData]);
+  }, [input, effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -627,6 +666,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           </div>
         </div>
       )}
+      {queued.map((q, i) => (
+        <div key={`q${i}`} className="chat-msg user">
+          <div className="chat-bubble chat-bubble--queued" title="Queued — sends when the current turn finishes">{q}</div>
+        </div>
+      ))}
     </div>
   );
 
@@ -639,8 +683,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     />
   ) : null;
 
+  const streamingBuild = effectiveMode === "build" && streaming;
   const composer = (
-    <div className="chat-composer">
+    <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}`}>
       <textarea
         ref={inputRef}
         className="chat-input"
@@ -650,15 +695,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKey}
       />
-      {effectiveMode === "build" && streaming ? (
-        <button className="chat-send" onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
-          <Square size={16} aria-hidden />
-        </button>
-      ) : (
-        <button className="chat-send" onClick={send} disabled={inFlight || !input.trim()} aria-label="Send (Enter)" title="Send (Enter)">
+      <div className="chat-actions">
+        {/* While a build turn streams, Send (queues the next message) sits to the
+            left of Stop. Otherwise just Send. */}
+        <button className="chat-send" onClick={send} disabled={!input.trim() || (effectiveMode !== "build" && busy)} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>
           <CornerDownLeft size={16} aria-hidden />
         </button>
-      )}
+        {streamingBuild && (
+          <button className="chat-stop" onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
+            <Square size={16} aria-hidden />
+          </button>
+        )}
+      </div>
     </div>
   );
 
