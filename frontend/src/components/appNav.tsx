@@ -49,6 +49,7 @@ const NODES: Record<string, RouteNode> = {
   "/activity": { label: "Activity" },
   "/settings": { label: "Settings" },
   "/settings/base-apps": { label: "Base Apps", parent: "/settings" },
+  "/settings/grants": { label: "Grants", parent: "/settings" },
 };
 
 // Longest-prefix lookup keys, most specific first.

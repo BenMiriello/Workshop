@@ -19,6 +19,7 @@ import {
   Monitor,
   Trash2,
   FolderGit2,
+  Network,
 } from "lucide-react";
 import {
   Button,
@@ -74,6 +75,7 @@ export default function Settings() {
       <PageHeader title="Settings" />
       <AppearanceSection />
       <BaseAppsSection />
+      <PlatformSection />
       <LocationSection />
       <HealthSection />
       <CommuteSection />
@@ -98,6 +100,26 @@ function BaseAppsSection() {
         </Link>
         <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
           (foundational tooling: workshop, clawdbot, infra)
+        </span>
+      </Row>
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Platform section: pointer into Settings -> Grants. Cross-app + guest access
+// control (capability grants). Operator is always fully permitted; these govern
+// shared/guest access only.
+// ----------------------------------------------------------------------------
+function PlatformSection() {
+  return (
+    <Section icon={Network} title="Platform">
+      <Row label="grants">
+        <Link to="/settings/grants" style={{ color: "var(--accent)" }}>
+          capability map + cross-app/guest access ↗
+        </Link>
+        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
+          (governs shared/guest access only)
         </span>
       </Row>
     </Section>
