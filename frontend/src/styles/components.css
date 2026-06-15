@@ -794,7 +794,9 @@ a.ws-btn { text-decoration: none; }
      content-box, which otherwise made the box taller than the viewport). */
   box-sizing: border-box;
   max-width: none;
-  height: 100dvh;
+  /* --app-vh = visualViewport.height (set by FocusedChat); 100dvh is the
+     first-paint / no-visualViewport fallback. */
+  height: var(--app-vh, 100dvh);
   padding-bottom: 0;
   display: flex; flex-direction: column;
   overflow: hidden;
