@@ -311,6 +311,31 @@ export default function ProjectDetail() {
   const [publishErr, setPublishErr] = useState<string | null>(null);
   const [published, setPublished] = useState<RegistryItem | null>(null);
 
+  // Standalone deploy (LocalRunner): start/stop a scoped subprocess on a port.
+  const [deploy, setDeploy] = useState<{ running: boolean; port?: number; url?: string } | null>(null);
+  const [deployBusy, setDeployBusy] = useState(false);
+  const [deployErr, setDeployErr] = useState<string | null>(null);
+  const loadDeploy = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/base-apps/deploy/${slug}/status`);
+      if (r.ok) setDeploy(await r.json());
+    } catch { /* non-essential */ }
+  }, [slug]);
+  useEffect(() => { loadDeploy(); }, [loadDeploy]);
+  const toggleDeploy = useCallback(async (start: boolean) => {
+    setDeployBusy(true);
+    setDeployErr(null);
+    try {
+      const r = await fetch(`/api/base-apps/deploy/${slug}/${start ? "start" : "stop"}`, { method: "POST" });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setDeploy(await r.json());
+    } catch (e) {
+      setDeployErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeployBusy(false);
+    }
+  }, [slug]);
+
   useCrumbLabel(project?.title || null);
 
   // ---- Loaders --------------------------------------------------------------
@@ -856,14 +881,25 @@ export default function ProjectDetail() {
             <DeploymentRow
               name="Standalone"
               desc="Its own origin and port."
-              active={project.surfaces.standalone != null}
-              value={project.surfaces.standalone ? `:${project.surfaces.standalone.port}` : null}
+              active={deploy?.running ?? false}
+              value={deploy?.running && deploy.port ? `:${deploy.port}` : null}
               activeAction={
-                <Button size="sm" variant="ghost" disabled title="Standalone open lands with the runner (Phase 4)">
-                  <ExternalLink aria-hidden /> Open
+                <Row wrap>
+                  {deploy?.url && (
+                    <a href={deploy.url} target="_blank" rel="noreferrer">
+                      <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
+                    </a>
+                  )}
+                  <Button size="sm" variant="danger-ghost" loading={deployBusy} onClick={() => toggleDeploy(false)}>
+                    Stop
+                  </Button>
+                </Row>
+              }
+              idleAction={
+                <Button size="sm" variant="primary" loading={deployBusy} onClick={() => toggleDeploy(true)}>
+                  <Rocket aria-hidden /> Start
                 </Button>
               }
-              idleLabel="Start"
             />
             <DeploymentRow
               name="Public"
@@ -898,6 +934,11 @@ export default function ProjectDetail() {
           {publishErr && (
             <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: "var(--space-2) 0 0" }}>
               POST /api/base-apps/registry/publish: {publishErr}
+            </p>
+          )}
+          {deployErr && (
+            <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: "var(--space-2) 0 0" }}>
+              Deploy: {deployErr}
             </p>
           )}
           <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-3)" }}>
@@ -1009,10 +1050,10 @@ function DeploymentRow({
   active: boolean;
   value: string | null;
   activeAction: ReactNode;
-  idleLabel: string;
-  // When provided, replaces the default disabled idle button (used by the
-  // Public row, whose Publish action is wired). Other rows stay disabled until
-  // the deployment runner lands (Phase 4), no fake behavior.
+  // A wired idleAction replaces the default disabled idle button (Standalone
+  // Start and Public Publish are wired). Rows without either stay disabled with
+  // idleLabel until their runner lands, no fake behavior.
+  idleLabel?: string;
   idleAction?: ReactNode;
 }) {
   return (
