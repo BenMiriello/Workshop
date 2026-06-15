@@ -41,6 +41,15 @@ All verified live at the widths above after fixing.
 
 ## 3. Remaining work, prioritized (complete / refine / fix / improve)
 
+> **Update (2026-06-14, later):** several P1/P2 items below are now BUILT and
+> committed: the mobile chat composer squeeze is fixed (textarea full-width +
+> controls bar); `@workshop/ui` is a versioned package (1.0.0) + single-source
+> tokens (tokens.css canonical, mobile derived via `npm run gen:tokens`); the
+> marketplace has update-from-upstream (conflict-safe branch merge); and the Grants
+> operator UI is live at /settings/grants. Items 1 (the full workspace migration
+> specifically), 4 (LocalRunner), 5 (chat tools / MCP race), and 3 (markdown
+> renderer, needs a lib install) remain. Details unchanged below.
+
 ### P1 — should do next, mostly safe
 1. **`@workshop/ui` as a real versioned package + single-source tokens** (Phase 5,
    doc 03). This is build-system surgery: it restructures the frontend into a
