@@ -61,22 +61,26 @@ into a deployed app. The manifest `env` supplies the non-secret config a service
 
 ## Viewing a running app over the tailnet
 
-Services bind `127.0.0.1:<port>` (not tailnet-exposed). Two ways to see one:
+Services bind `127.0.0.1:<port>` (not tailnet-exposed). Three ways to see one:
 
-1. **Backend reverse proxy** (no new exposure): `https://<host>:8446/base-apps/run/<slug>/proxy/<service>/...`
-   — reachable through the existing backend tailnet origin (`:8446`, trusted CGNAT
-   range). HTTP + SSE stream through. **Limits:** WebSockets (Vite HMR) do not traverse
-   it, and an app must be **base-aware** — it serves correctly only if its assets use
-   relative/`WORKSHOP_PROXY_BASE` paths AND its client router uses that base. A typical
-   SPA that owns an absolute `/` route (e.g. gengui's React Router) will load assets but
-   render its own "Not Found", so the proxy suits APIs, static sites, and base-aware
-   frontends.
-2. **Dedicated origin** (full functionality — recommended for SPAs): give the service
-   its own tailnet HTTPS origin. Operator-run (the platform is sandboxed from
+1. **Embedded preview** (default, always has nav-back): the App panel's **Preview**
+   button → `/projects/<slug>/run`, a Workshop page that frames the running service in
+   an iframe with Workshop chrome (Back to project / Reload / Full screen). Use this so
+   you are never stranded on a bare app page.
+2. **Backend reverse proxy** (what the preview/Full-screen frames):
+   `https://<host>:8446/base-apps/run/<slug>/proxy/<service>/...` — through the existing
+   backend tailnet origin (`:8446`, trusted CGNAT). HTTP + SSE stream through.
+   **The app must be base-aware:** it serves correctly only if its assets use
+   `WORKSHOP_PROXY_BASE` (a web service can pass `--base $WORKSHOP_PROXY_BASE` to Vite)
+   AND its client router uses that base (e.g. `basepath: import.meta.env.BASE_URL`).
+   Done that way, the SPA renders fully (verified on gengui). **Limit:** WebSockets
+   (Vite HMR) do not traverse the HTTP proxy — edits need a manual reload, not hot.
+3. **Dedicated origin** (for an app you can't make base-aware, or want HMR): give the
+   service its own tailnet HTTPS origin. Operator-run (the platform is sandboxed from
    `tailscale serve`):
    ```bash
    tailscale serve --bg --https=8448 http://127.0.0.1:<frontend-port>
-   # then open https://<host>:8448/  — full app: its own /api proxy, routing, HMR
+   # then open https://<host>:8448/  — full app at base=/, its own /api proxy, HMR
    ```
    Look up `<frontend-port>` in the App panel or `GET /base-apps/ports`.
 
