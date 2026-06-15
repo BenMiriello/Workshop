@@ -27,13 +27,17 @@ _PREWARM_INTERVAL_S = 9 * 60
 _CATEGORIZE_HOUR_LOCAL = 23
 
 
-async def _prewarm_finance_cache():
+async def _prewarm_finance_cache(realtime: bool = False):
     """Pre-fetch balances + transactions so the next browser load is already hot.
-    Uses Plaid's fast cached balances (accountsGet) — not the slow per-bank
-    real-time call. Background, best-effort; on Plaid trouble the UI just hits
-    the normal cache path."""
+    realtime=True uses accountsBalanceGet (live bank connection, ~4s). Used on
+    startup so a fresh restart doesn't serve Plaid's own stale snapshot. The
+    periodic loop uses realtime=False (fast accountsGet). Background, best-effort."""
     try:
-        await finance_cache.get_or_fetch("balances", plaid_bridge.balances)
+        await finance_cache.get_or_fetch(
+            "balances",
+            lambda: plaid_bridge.balances(realtime=realtime),
+            force_refresh=realtime,
+        )
         await finance_cache.get_or_fetch("transactions:30", lambda: plaid_bridge.transactions(days=30))
     except Exception:
         pass
@@ -43,7 +47,7 @@ async def _prewarm_loop():
     """Periodically re-prewarm so the cache never goes cold between visits."""
     while True:
         await asyncio.sleep(_PREWARM_INTERVAL_S)
-        await _prewarm_finance_cache()
+        await _prewarm_finance_cache(realtime=False)
 
 
 async def _categorize_loop():
@@ -120,13 +124,17 @@ async def lifespan(app: FastAPI):
     finance_cache.set_invalidate_hook(_prewarm_finance_cache)
     # Fire-and-forget cache prewarm so startup isn't blocked on Plaid latency,
     # plus background loops to keep it warm and categorize nightly.
-    asyncio.create_task(_prewarm_finance_cache())
+    asyncio.create_task(_prewarm_finance_cache(realtime=True))
     app.state._bg_prewarm = asyncio.create_task(_prewarm_loop())
     app.state._bg_categorize = asyncio.create_task(_categorize_loop())
     app.state._bg_env = asyncio.create_task(_env_refresh_loop())
     app.state._bg_atlas = asyncio.create_task(_atlas_rebuild_loop())
+    # App platform: keep desired-running multi-service apps alive (restart crashed
+    # services with backoff) and reconcile the port registry each pass.
+    from services import app_monitor
+    app.state._bg_app_monitor = asyncio.create_task(app_monitor.monitor_loop())
     yield
-    for t in (getattr(app.state, "_bg_prewarm", None), getattr(app.state, "_bg_categorize", None), getattr(app.state, "_bg_env", None), getattr(app.state, "_bg_atlas", None)):
+    for t in (getattr(app.state, "_bg_prewarm", None), getattr(app.state, "_bg_categorize", None), getattr(app.state, "_bg_env", None), getattr(app.state, "_bg_atlas", None), getattr(app.state, "_bg_app_monitor", None)):
         if t:
             t.cancel()
     await app.state.supervisor.stop()

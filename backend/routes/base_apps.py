@@ -9,10 +9,12 @@ import os
 import subprocess
 from pathlib import Path
 
-from fastapi import APIRouter, Body, HTTPException
+import httpx
+from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from services import gc, local_runner, manifests, permissions, registry
+from services import app_runner, gc, local_runner, manifests, permissions, port_registry, registry
 
 router = APIRouter()
 
@@ -251,3 +253,138 @@ async def deploy_status(slug: str):
     """Status of the project's standalone deploy:
     {running, port?, url?, pid?, command?}."""
     return local_runner.deploy_status(slug)
+
+
+# ---- Run: multi-service app runner (services/app_runner.py) ------------------
+# Start/stop/status an app made of SEVERAL cooperating services (e.g. a backend
+# API + a frontend + a worker, plus docker deps). Each service is a scoped
+# subprocess on a centrally-allocated port; build + spawn run on a background
+# thread (status reflects a live state machine). app_monitor restarts a service
+# that crashes while the app is desired-running. This supersedes single-process
+# /deploy for multi-service apps; /deploy stays for trivial one-process projects.
+
+
+@router.get("/run/{slug}/manifest")
+async def run_manifest(slug: str):
+    """The resolved app manifest (declared workshop.app.json, else auto-detected):
+    {name, detected, services[], deps[]}."""
+    try:
+        return app_runner.manifest_dict(slug)
+    except app_runner.AppError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.post("/run/{slug}/start")
+async def run_start(slug: str):
+    """Start all enabled services. Returns immediately with a 'starting' snapshot;
+    build + spawn proceed on a background thread. Poll status for progress."""
+    try:
+        return app_runner.start_app(slug)
+    except app_runner.AppError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.post("/run/{slug}/stop")
+async def run_stop(slug: str):
+    """Stop all services and set desired state = stopped (monitor won't restart)."""
+    return app_runner.stop_app(slug)
+
+
+@router.get("/run/{slug}/status")
+async def run_status(slug: str):
+    """Live per-service status + health, app phase, desired state, declared deps."""
+    return app_runner.app_status(slug)
+
+
+@router.get("/run/{slug}/logs")
+async def run_logs(slug: str, service: str):
+    """Tail one service's combined build+run log."""
+    return {"service": service, "log": app_runner.app_logs(slug, service)}
+
+
+@router.post("/run/{slug}/services/{service}/restart")
+async def run_restart_service(slug: str, service: str):
+    """Re-spawn one service (no rebuild). Manual counterpart to the monitor."""
+    try:
+        return app_runner.restart_service(slug, service)
+    except app_runner.AppError as e:
+        raise HTTPException(e.status, e.message)
+
+
+@router.get("/run")
+async def run_list():
+    """Status of every app the runner knows about."""
+    return {"apps": app_runner.list_apps()}
+
+
+@router.get("/ports")
+async def ports():
+    """The central port registry: every current local-service port allocation
+    (preview / deploy / app), after a reconcile pass. The single source of truth
+    that prevents port conflicts across all three runners."""
+    return {"windows": port_registry.WINDOWS, "allocations": port_registry.all_allocations()}
+
+
+# ---- Reverse proxy: view a running app's service over the tailnet ------------
+# App services bind 127.0.0.1:<port> (not exposed to the tailnet). This proxy
+# forwards to one service so the operator can open it through the EXISTING backend
+# origin (https://<host>:8446/base-apps/run/<slug>/proxy/<service>/...), without a
+# new tailscale-serve mapping. HTTP + SSE stream through fine. Two honest limits:
+# WebSockets (e.g. Vite HMR) do not traverse this HTTP proxy, and an SPA that calls
+# an absolute `/api` expects its OWN origin — for those, give the app a dedicated
+# origin with `tailscale serve` (see docs/app-platform-runner.md).
+
+_HOP_BY_HOP = {
+    "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+    "te", "trailers", "transfer-encoding", "upgrade", "content-encoding",
+    "content-length",
+}
+
+
+@router.api_route(
+    "/run/{slug}/proxy/{service}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+)
+async def run_proxy(slug: str, service: str, path: str, request: Request):
+    st = app_runner.app_status(slug)
+    svc = next((s for s in st.get("services", []) if s["name"] == service), None)
+    if not svc or not svc.get("port"):
+        raise HTTPException(404, f"no running service '{service}' for app '{slug}'")
+    if svc.get("status") != "running":
+        raise HTTPException(409, f"service '{service}' is {svc.get('status')}, not running")
+
+    # Forward the FULL incoming path verbatim (not just the {path} tail), so an
+    # app configured with base = this proxy path serves its assets correctly. The
+    # app's public base path is exactly request.url.path's prefix up to {service}.
+    target = f"http://127.0.0.1:{svc['port']}{request.url.path}"
+    fwd_headers = {k: v for k, v in request.headers.items()
+                   if k.lower() not in _HOP_BY_HOP and k.lower() != "host"}
+    body = await request.body()
+    client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None))
+    try:
+        upstream = await client.send(
+            client.build_request(
+                request.method, target, headers=fwd_headers,
+                params=dict(request.query_params), content=body or None,
+            ),
+            stream=True,
+        )
+    except httpx.RequestError as e:
+        await client.aclose()
+        raise HTTPException(502, f"upstream service unreachable: {e}")
+
+    resp_headers = {k: v for k, v in upstream.headers.items()
+                    if k.lower() not in _HOP_BY_HOP}
+
+    async def _body():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        _body(), status_code=upstream.status_code, headers=resp_headers,
+        media_type=upstream.headers.get("content-type"),
+    )

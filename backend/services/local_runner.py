@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from services import dev_servers
+from services import dev_servers, port_registry
 
 log = logging.getLogger("workshop.local_runner")
 
@@ -264,12 +264,14 @@ def scoped_env(port: int) -> dict[str, str]:
 
 # ---- port allocation --------------------------------------------------------
 
-def _next_free_port() -> int:
-    used = {d.port for d in RUNNING.values()}
-    for p in range(PORT_MIN, PORT_MAX + 1):
-        if p not in used:
-            return p
-    raise DeployError(f"no free deploy ports in [{PORT_MIN},{PORT_MAX}]", status=503)
+def _next_free_port(slug: str) -> int:
+    """Allocate a deploy port for `slug` via the central port_registry, so the
+    deploy never collides with a preview, an app service, or any other process on
+    the box. The pid is recorded after the child spawns (set_pid)."""
+    try:
+        return port_registry.allocate(f"deploy:{slug}", "deploy")
+    except RuntimeError as e:
+        raise DeployError(str(e), status=503)
 
 
 # ---- lifecycle --------------------------------------------------------------
@@ -295,6 +297,7 @@ def deploy_status(project_slug: str) -> dict:
     if not _alive(d.pid):
         # Process gone (crashed / killed externally); reap and clear the surface.
         RUNNING.pop(project_slug, None)
+        port_registry.release(f"deploy:{project_slug}")
         _persist_runtime()
         _reflect_surface(project_slug, None)
         return {"running": False, "stale_pid": d.pid}
@@ -331,7 +334,7 @@ def start_deploy(project_slug: str) -> dict:
 
     cwd = _project_dir(project_slug)
     command = resolve_command(cwd)
-    port = _next_free_port()
+    port = _next_free_port(project_slug)
     url = f"http://127.0.0.1:{port}"
 
     LOG_ROOT.mkdir(parents=True, exist_ok=True)
@@ -373,6 +376,7 @@ def start_deploy(project_slug: str) -> dict:
         log_path=str(log_path),
     )
     RUNNING[project_slug] = deploy
+    port_registry.set_pid(f"deploy:{project_slug}", proc.pid)
     _persist_runtime()
     _reflect_surface(project_slug, {
         "runner": "local",
@@ -397,7 +401,8 @@ def stop_deploy(project_slug: str) -> dict:
     Clears the runtime store entry and the project's surfaces.standalone."""
     d = RUNNING.pop(project_slug, None)
     if not d:
-        # Nothing tracked; make sure the surface is clear anyway.
+        # Nothing tracked; make sure the surface + port claim are clear anyway.
+        port_registry.release(f"deploy:{project_slug}")
         _reflect_surface(project_slug, None)
         return {"stopped": True, "reason": "not running"}
 
@@ -416,6 +421,7 @@ def stop_deploy(project_slug: str) -> dict:
     except OSError as e:
         log.warning("error stopping deploy %s (pid %s): %s", project_slug, d.pid, e)
 
+    port_registry.release(f"deploy:{project_slug}")
     _persist_runtime()
     _reflect_surface(project_slug, None)
     result = {"stopped": True}

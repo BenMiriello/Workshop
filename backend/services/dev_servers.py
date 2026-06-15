@@ -19,6 +19,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from services import port_registry
+
 log = logging.getLogger("workshop.dev_servers")
 
 # Reserved port window for project dev servers (Vite typically auto-selects;
@@ -47,15 +49,12 @@ RUNNING: dict[str, DevServer] = {}
 
 
 def next_free_port() -> int:
-    """Return the lowest port in [PORT_MIN, PORT_MAX] not currently claimed
-    by a running dev server. Used by the Preview UI to default the port
-    picker (ADR-009 section 6). Raises RuntimeError if the window is full.
-    """
-    used = {s.port for s in RUNNING.values()}
-    for p in range(PORT_MIN, PORT_MAX + 1):
-        if p not in used:
-            return p
-    raise RuntimeError(f"no free ports in [{PORT_MIN},{PORT_MAX}]")
+    """Return the lowest free port in the preview window. Used by the Preview UI
+    to default the port picker (ADR-009 section 6). Delegates to the central
+    port_registry so the suggestion accounts for ports held by deploys, apps, and
+    any other process on the box — not just this module's RUNNING map. Raises
+    RuntimeError if the window is full."""
+    return port_registry.peek("preview")
 
 
 def status(slug: str) -> dict:
@@ -116,11 +115,18 @@ def start(slug: str, *, cwd: str, command: str, port: int) -> dict:
         started_at=time.time(),
         log_path=str(log_path),
     )
+    # Record the claim in the central registry so deploys/apps see this port as
+    # taken and reconcile() frees it if this preview process dies.
+    try:
+        port_registry.allocate(f"preview:{slug}", "preview", pid=proc.pid, preferred=port)
+    except RuntimeError:
+        pass  # preview still runs; the registry just couldn't record the claim
     return {"ok": True, "status": status(slug)}
 
 
 def stop(slug: str) -> dict:
     s = RUNNING.pop(slug, None)
+    port_registry.release(f"preview:{slug}")
     if not s:
         return {"ok": True, "reason": "not running"}
     try:
