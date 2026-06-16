@@ -304,6 +304,84 @@ def test_reasoner_falls_back_when_claude_unavailable(monkeypatch):
     assert m["source"] == "reasoner:deterministic" and m["severity"] == "ok"
 
 
+def test_reasoner_marks_and_logs_degraded_on_fallback(monkeypatch, caplog):
+    # When an LLM rung is configured + allowed but both fail, the fallback must
+    # not be silent: flag it in evidence AND log it (the operator hit a silent
+    # degrade once and couldn't tell why).
+    import logging
+    from services.commute import reason
+    monkeypatch.setattr(reason, "REASONER", "claude")
+    monkeypatch.setattr(reason, "_call_claude", lambda p: None)
+    monkeypatch.setattr(reason, "_call_qwen", lambda p: None)
+    brief = {"active": True, "direction": "to-home", "late_risk": False, "late_by_min": 0.0,
+             "leave_by_local": "6:00 PM", "target_arrive_local": "7:29 PM",
+             "projected_arrive_local": "7:29 PM",
+             "realtime_status": {"available": True}, "location": {"available": True},
+             "timeline": [], "alerts": []}
+    with caplog.at_level(logging.WARNING, logger="commute.reason"):
+        m = reason.compose(brief, "during")
+    assert m["evidence"]["reasoner_route"] == "deterministic"
+    assert m["evidence"]["llm_degraded"] is True
+    assert any("degraded to deterministic" in r.message for r in caplog.records)
+
+
+def test_reasoner_not_degraded_when_llm_disabled(monkeypatch):
+    # allow_llm=False is a deliberate cheap path, not a degrade — don't flag it.
+    from services.commute import reason
+    monkeypatch.setattr(reason, "REASONER", "claude")
+    brief = {"active": True, "direction": "to-home", "late_risk": False, "late_by_min": 0.0,
+             "leave_by_local": "6:00 PM", "target_arrive_local": "7:29 PM",
+             "projected_arrive_local": "7:29 PM",
+             "realtime_status": {"available": True}, "location": {"available": True},
+             "timeline": [], "alerts": []}
+    m = reason.compose(brief, "during", allow_llm=False)
+    assert m["evidence"]["llm_degraded"] is False
+
+
+# --- message dedup (severity-aware suppression) ------------------------------
+def test_dedup_urgent_is_never_suppressed(tmp_path, monkeypatch):
+    # The safety property: a late-risk alert can never be silenced as a "dup".
+    from services.commute import messages
+    monkeypatch.setattr(messages, "_path", lambda: tmp_path / "m.jsonl")
+    mk = lambda: messages.make_message(kind="alert", severity="urgent",
+                                       headline="Running late → home: ~28m past target")
+    _, s1 = messages.append_deduped(mk())
+    _, s2 = messages.append_deduped(mk())
+    assert s1 is True and s2 is True
+
+
+def test_dedup_window_is_severity_aware(tmp_path, monkeypatch):
+    # A 60-min-old identical 'ok' stays suppressed (120m window); an identical
+    # 'caution' that old re-posts (20m window). Pins the per-severity windows.
+    from datetime import datetime, timezone, timedelta
+    from services.commute import messages
+    monkeypatch.setattr(messages, "_path", lambda: tmp_path / "m.jsonl")
+    old_ts = (datetime.now(timezone.utc) - timedelta(minutes=60)).isoformat()
+
+    messages.append(messages.make_message(kind="brief", severity="ok",
+                                           headline="On track → home", ts=old_ts))
+    _, s_ok = messages.append_deduped(messages.make_message(kind="brief", severity="ok",
+                                                            headline="On track → home"))
+    assert s_ok is False   # 60m < 120m ok-window → still suppressed
+
+    messages.append(messages.make_message(kind="brief", severity="caution",
+                                          headline="Can't confirm your home commute — flying blind",
+                                          ts=old_ts))
+    _, s_caut = messages.append_deduped(messages.make_message(kind="brief", severity="caution",
+                                        headline="Can't confirm your home commute — flying blind"))
+    assert s_caut is True  # 60m > 20m caution-window → re-posts
+
+
+def test_dedup_explicit_window_override(tmp_path, monkeypatch):
+    # An explicit within_min still wins over the severity default; 0 disables.
+    from services.commute import messages
+    monkeypatch.setattr(messages, "_path", lambda: tmp_path / "m.jsonl")
+    mk = lambda: messages.make_message(kind="brief", severity="ok", headline="On track → work")
+    _, s1 = messages.append_deduped(mk(), within_min=0)
+    _, s2 = messages.append_deduped(mk(), within_min=0)
+    assert s1 is True and s2 is True
+
+
 # --- patterns ----------------------------------------------------------------
 def test_patterns_compute_and_miss_rate(monkeypatch):
     from services.commute import patterns

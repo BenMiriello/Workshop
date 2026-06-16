@@ -13,6 +13,7 @@ data); only surface what's worth surfacing; prefer one concrete action.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -22,6 +23,8 @@ from typing import Any
 import httpx
 
 from . import config, messages, patterns
+
+log = logging.getLogger("commute.reason")
 
 # Operator chose Claude for the reasoning step.
 REASONER = os.environ.get("COMMUTE_REASONER", "claude")          # claude | qwen | deterministic
@@ -119,9 +122,14 @@ def _claude_bin() -> str | None:
 
 
 def _call_claude(prompt: str) -> dict[str, Any] | None:
+    """Run the Claude CLI reasoner. Returns the parsed message dict, or None on
+    any failure — and logs WHY at WARNING so a fall-through to qwen/deterministic
+    is diagnosable instead of silent (the operator hit a silent fallback once)."""
     token = _oauth_token()
     binary = _claude_bin()
     if not token or not binary:
+        log.warning("claude reasoner unavailable: %s",
+                    "no oauth token" if not token else "claude binary not found")
         return None
     env = {**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": token}
     env.pop("ANTHROPIC_API_KEY", None)  # subscription only — never the API key
@@ -132,17 +140,29 @@ def _call_claude(prompt: str) -> dict[str, Any] | None:
             input=prompt, capture_output=True, text=True, timeout=CLAUDE_TIMEOUT_S,
             env=env, cwd="/tmp",
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired:
+        log.warning("claude reasoner timed out after %ss", CLAUDE_TIMEOUT_S)
+        return None
+    except OSError as e:
+        log.warning("claude reasoner spawn failed: %s", e)
         return None
     if proc.returncode != 0:
+        log.warning("claude reasoner exit %s: %s", proc.returncode,
+                    (proc.stderr or "").strip()[-300:] or "(no stderr)")
         return None
     try:
         envelope = json.loads(proc.stdout)
     except json.JSONDecodeError:
+        log.warning("claude reasoner: stdout not JSON (%d bytes)", len(proc.stdout or ""))
         return None
     if envelope.get("is_error"):
+        log.warning("claude reasoner returned is_error: %s",
+                    str(envelope.get("result", ""))[:300])
         return None
-    return _extract_json(envelope.get("result", ""))
+    parsed = _extract_json(envelope.get("result", ""))
+    if parsed is None:
+        log.warning("claude reasoner: no JSON message in result")
+    return parsed
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
@@ -162,9 +182,14 @@ def _call_qwen(prompt: str) -> dict[str, Any] | None:
         with httpx.Client(timeout=90.0) as c:
             r = c.post(RELAY_LOCAL_URL, json={"task": SYSTEM + "\n\n" + prompt, "max_tokens": 700})
         if r.status_code != 200:
+            log.warning("qwen reasoner: relay HTTP %s", r.status_code)
             return None
-        return _extract_json(r.json().get("response", ""))
-    except (httpx.HTTPError, json.JSONDecodeError):
+        parsed = _extract_json(r.json().get("response", ""))
+        if parsed is None:
+            log.warning("qwen reasoner: no JSON message in relay response")
+        return parsed
+    except (httpx.HTTPError, json.JSONDecodeError) as e:
+        log.warning("qwen reasoner request failed: %s", e)
         return None
 
 
@@ -259,6 +284,13 @@ def compose(brief: dict[str, Any], checkpoint: str = "during",
     if raw is None:
         raw = _deterministic(brief, evidence)
         route = "deterministic"
+    # Degraded = an LLM rung was configured AND allowed, yet we still landed on
+    # the deterministic fallback. The per-rung reasons are already logged above;
+    # this is the one-line "the smart path lost" marker (log + in-app evidence).
+    degraded = bool(allow_llm and REASONER in ("claude", "qwen") and route == "deterministic")
+    if degraded:
+        log.warning("commute reasoner degraded to deterministic (REASONER=%s, checkpoint=%s)",
+                    REASONER, checkpoint)
     msg = messages.validate(raw)
     msg["source"] = f"reasoner:{route}"
     # attach the evidence we reasoned over (for the in-app "why" expander)
@@ -269,6 +301,8 @@ def compose(brief: dict[str, Any], checkpoint: str = "during",
         "realtime_available": brief.get("realtime_status", {}).get("available"),
         "location": brief.get("location", {}),
         "patterns": evidence["patterns"].get("stats"),
+        "reasoner_route": route,
+        "llm_degraded": degraded,
     }}
     return msg
 

@@ -40,7 +40,7 @@ TARGETS=$(curl -s "$BACKEND/commute/targets" --max-time 10 || echo "{}")
 PROMPT=$(TODAY="$TODAY" DECISIONS="$DECISIONS" ALERTS="$ALERTS" \
          SCHEDULE="$SCHEDULE" TARGETS="$TARGETS" \
          python3 - <<'PYEOF'
-import json, os
+import json, os, sys
 
 today         = os.environ.get("TODAY", "")
 decisions_raw = os.environ.get("DECISIONS", "[]")
@@ -62,6 +62,14 @@ targets   = _load(targets_raw)
 today_decisions = [d for d in decisions if isinstance(d, dict) and str(d.get("ts","")).startswith(today)]
 today_alerts    = [a for a in alerts    if isinstance(a, dict) and str(a.get("ts","")).startswith(today)]
 
+# No checkpoints AND no alerts = the monitor saw nothing today. Do NOT ask the
+# LLM to "summarise how the commute went" from an empty record — it invents a
+# confident "arrived on time, smooth travel". Emit a sentinel so the shell
+# writes a factual no-data note instead (same blind-case rule as the reasoner).
+if not today_decisions and not today_alerts:
+    print("__NO_COMMUTE_DATA__")
+    sys.exit(0)
+
 sched_lines = []
 for s in schedule.get("schedules", []):
     if s.get("direction") == "to-work":
@@ -75,7 +83,8 @@ lines = [
     f"You are writing {today}'s commute log entry for benmiriello's personal notes.",
     "Write ONE concise paragraph (3-5 sentences) summarising how today's commute went.",
     "Cover: on-time vs delayed, what the monitoring system flagged, any patterns worth remembering.",
-    "Be factual. Plain prose only, no bullet points. Do not begin with 'I'.",
+    "Be factual and ground every claim in the data below. Only call the commute on-time or delayed if a checkpoint or alert says so; if the data doesn't show it, say monitoring had no clear signal rather than assuming on-time.",
+    "Plain prose only, no bullet points. Do not begin with 'I'.",
     "",
     "Planned schedule:",
 ]
@@ -109,6 +118,19 @@ PYEOF
 if [[ -z "${PROMPT:-}" ]]; then
     echo "[$TS] commute-notes: prompt build failed; aborting" >> "$LOG"
     exit 1
+fi
+
+# No data today: write a factual note WITHOUT the LLM (which would hallucinate a
+# confident "on-time, smooth" summary from an empty record).
+if [[ "$PROMPT" == "__NO_COMMUTE_DATA__" ]]; then
+    echo "[$TS] commute-notes: no checkpoints or alerts today; writing no-data note (skipping LLM)" >> "$LOG"
+    {
+        printf "# Commute note — %s\n\n" "$TODAY"
+        printf "No commute data recorded today — the monitor logged no checkpoints and dispatched no alerts, so there is nothing to summarise (schedule inactive or data unavailable). On-time status is unknown, not assumed.\n\n"
+        printf -- "---\n_Generated %s by commute_notes.sh (no-data path)_\n" "$TS"
+    } > "$OUTFILE"
+    echo "[$TS] commute-notes: wrote $OUTFILE (no-data)" >> "$LOG"
+    exit 0
 fi
 
 echo "[$TS] commute-notes: prompt built (${#PROMPT} chars)" >> "$LOG"
