@@ -232,6 +232,35 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     if labels:
         lines.append("Detected stack: " + ", ".join(labels) + ".")
 
+    # Self / platform project: you are editing the RUNNING Workshop, not a
+    # separate deployment. Different rules (hot-reload vs restart, don't deploy,
+    # don't commit the whole tree), so emit them and return — the app/env/runner
+    # sections below do not apply.
+    if getattr(provider, "is_self", False):
+        lines.append(
+            "THIS PROJECT IS THE LIVE WORKSHOP — you are editing the running app "
+            "itself (the monorepo at ~/workshop). There is NO separate deployment; "
+            "your edits change the app the operator is using right now.\n"
+            "- FRONTEND (frontend/, Vite + React): HOT-RELOADS on save — edits to "
+            "frontend/src/... appear in the running UI immediately. Built-in apps live "
+            "in frontend/src/pages/apps/<app> (backend logic in backend/services/<app>); "
+            "shared primitives in frontend/src/ui. Follow frontend/CLAUDE.md (design "
+            "system: lucide icons, no inline hex, the five status kinds).\n"
+            "- BACKEND (backend/, FastAPI on :8000): does NOT auto-reload. After backend "
+            "edits, restart with `bash scripts/restart_backend.sh`. CRITICAL: this chat "
+            "is served BY that backend — restarting it mid-turn kills this conversation's "
+            "stream. So make ALL edits first, then EITHER ask the operator to restart OR "
+            "run the restart as your VERY LAST action (the stream drops; the operator "
+            "reopens). Never restart in the middle of multi-step work.\n"
+            "- VALIDATE before claiming done: `cd frontend && npx tsc --noEmit` + "
+            "`bash scripts/check_design.sh` for UI; a quick import check for backend.\n"
+            "- COMMITS: this is the real repo with real history and unrelated work in "
+            "progress. Do NOT `git add -A` / commit the whole tree — stage only the files "
+            "you changed, branch off main for non-trivial work, commit only when asked. "
+            "Don't pick ports or start servers; they are already running."
+        )
+        return "\n".join(lines)
+
     # Shadow detection: a project named after a built-in Workshop app whose real
     # code lives in the monorepo, not this (empty) project dir. The recurring
     # "I was spawned in an empty box orthogonal to the real code" confusion.
@@ -1099,7 +1128,19 @@ class ProjectContextProvider(ContextProvider):
     def __init__(self, slug: str):
         self.slug = slug
         self.key = f"project:{slug}"
+        # Honor the registry's `dir` (the self/platform project points at the
+        # monorepo root, not projects/<slug>); fall back to the conventional path.
         self.dir = _projects_root() / slug
+        self.is_self = False
+        try:
+            reg = _projects_root().parent / "projects.json"
+            rec = (json.loads(reg.read_text()).get("projects") or {}).get(slug) if reg.exists() else None
+            if rec:
+                if rec.get("dir"):
+                    self.dir = _Path(rec["dir"])
+                self.is_self = bool(rec.get("self"))
+        except Exception:
+            pass
 
     def _read(self, name: str, default: str = "") -> str:
         p = self.dir / name

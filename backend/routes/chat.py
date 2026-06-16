@@ -416,8 +416,9 @@ async def send_message(thread_id: str, body: PostMessage):
     # timeline (doc 05 history substrate). Best-effort, off the event loop.
     if is_build_mode:
         try:
-            from services import checkpoints
-            await asyncio.to_thread(checkpoints.checkpoint, str(provider.dir), f"{provider.key} turn")
+            from services import checkpoints, app_runner
+            if not app_runner.is_self_dir(str(provider.dir)):
+                await asyncio.to_thread(checkpoints.checkpoint, str(provider.dir), f"{provider.key} turn")
         except Exception as e:
             log.info("build checkpoint skipped: %s", e)
 

@@ -47,6 +47,41 @@ log = logging.getLogger("workshop.app_runner")
 
 PROJECTS_REGISTRY = local_runner.PROJECTS_REGISTRY
 
+# The Workshop monorepo itself. A project whose dir resolves here (or is flagged
+# `self` in the registry) is the SELF / platform project: editing it edits the
+# running app, so it is never a separate deployment (frontend hot-reloads;
+# backend changes need scripts/restart_backend.sh).
+WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop"))).resolve()
+
+
+def is_self_project(slug: str) -> bool:
+    """True if this project IS the running Workshop (the monorepo), not a
+    separate deployable app. Detected by the registry `self` flag or a dir that
+    resolves to WORKSHOP_ROOT. Never raises."""
+    try:
+        data = json.loads(PROJECTS_REGISTRY.read_text(encoding="utf-8")) if PROJECTS_REGISTRY.exists() else {}
+        rec = (data.get("projects") or {}).get(slug) or {}
+    except (OSError, json.JSONDecodeError):
+        rec = {}
+    if rec.get("self"):
+        return True
+    d = rec.get("dir")
+    try:
+        return bool(d) and Path(d).resolve() == WORKSHOP_ROOT
+    except OSError:
+        return False
+
+
+def is_self_dir(path: str | Path) -> bool:
+    """True if a working dir resolves to the Workshop monorepo root (the self
+    project). Used to suppress auto-checkpoint there — never auto-commit the live
+    repo's working tree."""
+    try:
+        return Path(path).resolve() == WORKSHOP_ROOT
+    except OSError:
+        return False
+
+
 LOG_ROOT = Path(os.environ.get(
     "WORKSHOP_APP_LOG_ROOT",
     str(Path.home() / "workshop" / ".runtime" / "app-logs"),
@@ -769,10 +804,17 @@ def _reflect_primary_surface(slug: str, manifest: AppManifest) -> None:
     })
 
 
+_SELF_MSG = ("This project is the running Workshop itself — it is not a separate "
+             "deployable app. The frontend hot-reloads on save; backend changes need "
+             "`bash scripts/restart_backend.sh`.")
+
+
 def start_app(slug: str) -> dict:
     """Start (or resume) all enabled services of an app. Returns immediately with a
     'starting' snapshot; build + spawn run on a background thread. Idempotent: an
     already-running app returns its status. Sets desired state = running."""
+    if is_self_project(slug):
+        raise AppError(_SELF_MSG, status=409)
     manifest = resolve_manifest(slug)  # raises AppError
     lock = _slug_lock(slug)
     if lock.locked():
@@ -824,6 +866,8 @@ def stop_app(slug: str) -> dict:
     """Stop all services of an app (SIGTERM→SIGKILL each process group), release
     their ports, clear the surface, and set desired state = stopped (so the monitor
     won't restart them). Idempotent."""
+    if is_self_project(slug):
+        raise AppError(_SELF_MSG, status=409)
     app = _STATE.get(slug)
     if not app:
         local_runner._reflect_surface(slug, None)
@@ -846,6 +890,8 @@ def stop_app(slug: str) -> dict:
 def restart_service(slug: str, svc_name: str) -> dict:
     """Re-spawn one already-built service (no rebuild). Used by the monitor when a
     service crashed while the app is desired-running, and exposed for manual use."""
+    if is_self_project(slug):
+        raise AppError(_SELF_MSG, status=409)
     manifest = resolve_manifest(slug)
     spec = next((s for s in manifest.services if s.name == svc_name), None)
     if spec is None:
@@ -889,6 +935,9 @@ def app_status(slug: str) -> dict:
     """Live status: per-service status + health, the app phase, desired state, and
     declared deps. Probes liveness (pid) and readiness (health/TCP) on each call so
     the snapshot is current, not cached."""
+    if is_self_project(slug):
+        return {"slug": slug, "self": True, "phase": "self", "desired": "self",
+                "services": [], "deps": []}
     app = _STATE.get(slug)
     if not app:
         return {"slug": slug, "phase": "stopped", "desired": "stopped", "services": [], "deps": []}
@@ -949,6 +998,9 @@ def app_logs(slug: str, svc_name: str, max_bytes: int = 16384) -> str:
 def manifest_dict(slug: str) -> dict:
     """Resolved manifest as a plain dict for the API/UI (so the operator can see
     exactly what the runner will start, detected or declared)."""
+    if is_self_project(slug):
+        return {"name": slug, "self": True, "detected": False,
+                "services": [], "deps": [], "env_requirements": []}
     m = resolve_manifest(slug)
     return {
         "name": m.name,
@@ -981,10 +1033,15 @@ def env_overview(slug: str) -> dict:
     agent reason about completeness without touching secrets. Also reports any
     stored keys that are NOT declared requirements (so they aren't invisible)."""
     from services import secrets_store
+    if is_self_project(slug):
+        # The platform itself isn't a deployable app with declared env; its
+        # secrets live in the operator's own config, not this registry.
+        return {"slug": slug, "self": True, "requirements": [],
+                "undeclared_set": [], "missing_required": []}
     try:
         m = resolve_manifest(slug)
         reqs = m.env_requirements
-    except AppError:
+    except Exception:
         reqs = []
     set_keys = set(secrets_store.set_keys(slug))
     declared = {r.key for r in reqs}

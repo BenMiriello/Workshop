@@ -290,11 +290,14 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
 
     # Auto-checkpoint: commit the working tree so the builder's work is a
     # recoverable timeline (doc 05 history substrate). Best-effort, off-loop.
+    # SKIP for the self/platform project — never auto-commit the live monorepo's
+    # working tree (it would sweep in the operator's unrelated WIP every turn).
     try:
-        from services import checkpoints
-        sha = await asyncio.to_thread(checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn")
-        if sha:
-            _push(turn, "checkpoint", {"sha": sha})
+        from services import checkpoints, app_runner
+        if not app_runner.is_self_dir(cwd):
+            sha = await asyncio.to_thread(checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn")
+            if sha:
+                _push(turn, "checkpoint", {"sha": sha})
     except Exception as e:
         log.info("turn %s: checkpoint skipped: %s", turn.id, e)
 

@@ -24,6 +24,7 @@ type Requirement = {
 };
 type EnvOverview = {
   slug: string;
+  self?: boolean;
   requirements: Requirement[];
   undeclared_set: string[];
   missing_required: string[];
@@ -114,6 +115,10 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
   }, [data]);
 
   const missingCount = data?.missing_required?.length ?? 0;
+
+  // The self / platform project has no deployable-app env registry (its secrets
+  // live in the operator's own config) — don't show this panel for it.
+  if (data?.self) return null;
 
   return (
     <section style={{ marginBottom: "var(--space-6)" }}>

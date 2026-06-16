@@ -35,6 +35,7 @@ type AppStatus = {
 type Manifest = {
   name: string;
   detected: boolean;
+  self?: boolean;
   services: { name: string; cwd: string; build: string | null; start: string; enabled: boolean; expose: boolean; depends_on: string[] }[];
   deps: { name: string }[];
 };
@@ -136,6 +137,23 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
       setLogText(String(e));
     }
   }, [slug]);
+
+  // The self / platform project IS the running Workshop — not a separate
+  // deployable app. Show what that means instead of Start/Stop controls.
+  if (manifest?.self) {
+    return (
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<Boxes aria-hidden />}>App</SectionLabel>
+        </Row>
+        <Card>
+          <StateBlock
+            title="This project is the running Workshop"
+            hint="Editing it edits the live app you're using — there is no separate deployment. The frontend hot-reloads on save; backend changes need a restart (bash scripts/restart_backend.sh). Use the builder chat to make changes." />
+        </Card>
+      </section>
+    );
+  }
 
   const services = status?.services ?? [];
   const anyRunning = services.some((s) => s.status === "running");
