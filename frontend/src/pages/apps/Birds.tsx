@@ -12,6 +12,7 @@ import { RecordingsBanner } from "./birds/recordings";
 import SpeciesRow from "./birds/SpeciesRow";
 import ActivityCard from "./birds/ActivityCard";
 import NowCard from "./birds/NowCard";
+import LiveFeed from "./birds/LiveFeed";
 
 // Birds home. One page, reshaped by two dropdown filters: which place (the
 // always-on yard, or any device-created location) and which device. The live
@@ -121,6 +122,9 @@ export default function Birds() {
       )}
 
       {!PUBLIC && (rec.recording || rec.wasListening) && <LivePanel />}
+      {/* Live feeds from any broadcasting device you can see (your shared devices,
+          friends' shared devices) — this is how you watch another mic's feed. */}
+      {!PUBLIC && <LiveFeed />}
       {!PUBLIC && yardAvailable && <YardLiveFeed nb={nb} />}
 
       {selected

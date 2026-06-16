@@ -252,6 +252,33 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   deviceRef.current = device;
   const recordingRef = useRef(recording);
   recordingRef.current = recording;
+  const nowHearingRef = useRef(nowHearing);
+  nowHearingRef.current = nowHearing;
+
+  // Live broadcast: while listening, a SHARED device pushes its rolling
+  // spectrogram columns + current detections so anyone who can see this device
+  // can watch the feed live on another screen. Private devices never broadcast.
+  useEffect(() => {
+    if (!recording) return;
+    const tick = () => {
+      const dev = deviceRef.current;
+      if (!dev.shared || !dev.token) return;
+      const hist = specHistRef.current;
+      if (!hist.length) return;
+      const cols = hist.slice(-150).map((c) => c.bands.map((b) => Math.round(b)));
+      const hearing = (nowHearingRef.current || []).map((d) => ({
+        common_name: d.common_name, scientific_name: d.scientific_name,
+        confidence: d.confidence, is_bird: d.is_bird,
+      }));
+      fetch(`${API}/live/publish`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ token: dev.token, cols, hearing }),
+      }).catch(() => { /* transient */ });
+    };
+    const id = window.setInterval(tick, 800);
+    return () => clearInterval(id);
+  }, [recording]);
 
   // Pull this device's authoritative settings from the server and adopt them,
   // overwriting the localStorage cache. This is what makes the server the source

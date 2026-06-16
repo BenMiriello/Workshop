@@ -21,12 +21,31 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from services import birds_store, birds_analyze
 from services.birds_store import DatabaseMissing
 
 router = APIRouter(prefix="/birds", tags=["birds"])
 log = logging.getLogger("workshop.birds")
+
+
+class LiveBody(BaseModel):
+    token: str
+    cols: list = []      # recent spectrogram columns: each a list of band energies 0..255
+    hearing: list = []   # current "now hearing" detections (same shape the UI uses)
+
+
+@router.post("/live/publish")
+async def live_publish(body: LiveBody):
+    """A shared, listening device pushes its live spectrogram + detections here."""
+    return birds_analyze.publish_live(body.token, body.cols, body.hearing)
+
+
+@router.get("/live")
+async def live_get(location_id: int | None = None):
+    """Active live feeds the viewer may see (optionally one location)."""
+    return birds_analyze.live_feeds(location_id)
 
 
 def _guard(fn):

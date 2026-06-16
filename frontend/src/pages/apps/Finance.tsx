@@ -210,18 +210,15 @@ export default function Finance() {
     if (!items) return null;
     const all = items.flatMap((i) => i.accounts);
     if (all.length === 0) return null;
-    const liquid = all
-      .filter((a) => a.type === "depository")
-      .reduce((s, a) => s + (a.balance.current ?? 0), 0);
-    const invest = all
-      .filter((a) => a.type === "investment" || a.type === "brokerage")
-      .reduce((s, a) => s + (a.balance.current ?? 0), 0);
-    const creditAvail = all
-      .filter((a) => a.type === "credit")
-      .reduce((s, a) => s + (a.balance.available ?? 0), 0);
-    const creditUsed = all
-      .filter((a) => a.type === "credit")
-      .reduce((s, a) => s + (a.balance.current ?? 0), 0);
+    const depositories = all.filter((a) => a.type === "depository");
+    const credits = all.filter((a) => a.type === "credit");
+    const investments = all.filter((a) => a.type === "investment" || a.type === "brokerage");
+    // Use available balance for depositories: it reflects pending charges/credits
+    // and is what banks display as "your balance". Fall back to current if unavailable.
+    const liquid = depositories.reduce((s, a) => s + (a.balance.available ?? a.balance.current ?? 0), 0);
+    const invest = investments.reduce((s, a) => s + (a.balance.current ?? 0), 0);
+    const creditAvail = credits.reduce((s, a) => s + (a.balance.available ?? 0), 0);
+    const creditUsed = credits.reduce((s, a) => s + (a.balance.current ?? 0), 0);
     const netWorth = liquid + invest - creditUsed;
     return { liquid, invest, creditAvail, creditUsed, netWorth, accountCount: all.length };
   }, [items]);
@@ -355,29 +352,45 @@ export default function Finance() {
         <section style={{ marginBottom: "var(--space-6)" }}>
           <SectionLabel>Accounts</SectionLabel>
           <CardGrid>
-            {accounts.map((a) => (
-              <li key={a.id}>
-                <Card>
-                  <h3 className="ws-card__title">{a.name}</h3>
-                  <p className="ws-card__meta">
-                    {a.institution} · {a.subtype || a.type}
-                    {a.mask ? ` · ··${a.mask}` : ""}
-                  </p>
-                  <p
-                    className="ws-num"
-                    style={{ fontSize: "var(--fs-lg)", margin: "var(--space-2) 0 0" }}
-                  >
-                    {fmt(a.balance.current, a.balance.iso_currency_code)}
-                  </p>
-                  {a.balance.available != null &&
-                    a.balance.available !== a.balance.current && (
+            {accounts.map((a) => {
+              const isDepository = a.type === "depository";
+              const isCredit = a.type === "credit";
+              const ccy = a.balance.iso_currency_code;
+              // Depository: show available (what you can spend, reflects pending).
+              // Credit: show current (amount owed). Investment: show current (NAV).
+              const primaryBalance = isDepository
+                ? (a.balance.available ?? a.balance.current)
+                : a.balance.current;
+              // Sub-note shows the other number when there's a meaningful difference
+              const hasPendingActivity =
+                a.balance.available != null &&
+                a.balance.current != null &&
+                Math.abs(a.balance.available - a.balance.current) > 0.01;
+              return (
+                <li key={a.id}>
+                  <Card>
+                    <h3 className="ws-card__title">{a.name}</h3>
+                    <p className="ws-card__meta">
+                      {a.institution} · {a.subtype || a.type}
+                      {a.mask ? ` · ··${a.mask}` : ""}
+                    </p>
+                    <p className="ws-num" style={{ fontSize: "var(--fs-lg)", margin: "var(--space-2) 0 0" }}>
+                      {fmt(primaryBalance, ccy)}
+                    </p>
+                    {hasPendingActivity && isDepository && (
                       <p className="ws-card__meta">
-                        Available: {fmt(a.balance.available, a.balance.iso_currency_code)}
+                        Ledger: {fmt(a.balance.current, ccy)}
                       </p>
                     )}
-                </Card>
-              </li>
-            ))}
+                    {hasPendingActivity && isCredit && (
+                      <p className="ws-card__meta">
+                        Available credit: {fmt(a.balance.available, ccy)}
+                      </p>
+                    )}
+                  </Card>
+                </li>
+              );
+            })}
           </CardGrid>
         </section>
       )}
@@ -402,14 +415,42 @@ export default function Finance() {
 
 const TXN_PAGE_SIZE = 25;
 
+function TxnRow({ t }: { t: Transaction }) {
+  return (
+    <tr key={t.id}>
+      <TimeCell>{t.date}</TimeCell>
+      <td>
+        {t.merchant_name || t.name}
+        {t.pending && (
+          <>
+            {" "}
+            <StatusPill status="running">pending</StatusPill>
+          </>
+        )}
+      </td>
+      <td className="ws-muted">{t.category}</td>
+      <NumCell>{fmt(-t.amount, t.iso_currency_code || "USD")}</NumCell>
+    </tr>
+  );
+}
+
 function TransactionsTable({ txns }: { txns: Transaction[] }) {
   const [pages, setPages] = useState(1);
-  const visible = txns.slice(0, pages * TXN_PAGE_SIZE);
-  const hasMore = visible.length < txns.length;
+
+  // Sort: pending first (within each date), then by date desc
+  const sorted = [...txns].sort((a, b) => {
+    if (a.pending !== b.pending) return a.pending ? -1 : 1;
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+  });
+  const settled = sorted.filter((t) => !t.pending);
+  const visible = settled.slice(0, pages * TXN_PAGE_SIZE);
+  const pending = sorted.filter((t) => t.pending);
+  const hasMore = visible.length < settled.length;
+
   return (
     <section>
       <SectionLabel>
-        Transactions ({visible.length} of {txns.length} · 30d)
+        Transactions ({txns.length} · 30d)
       </SectionLabel>
       {txns.length === 0 ? (
         <StateBlock
@@ -418,34 +459,61 @@ function TransactionsTable({ txns }: { txns: Transaction[] }) {
         />
       ) : (
         <>
-          <TableScroll>
-            <Table>
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Name</th>
-                  <th>Category</th>
-                  <th style={{ textAlign: "right" }}>Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visible.map((t) => (
-                  <tr key={t.id} aria-disabled={t.pending || undefined}>
-                    <TimeCell>{t.date}</TimeCell>
-                    <td>{t.merchant_name || t.name}</td>
-                    <td className="ws-muted">{t.category}</td>
-                    <NumCell>{fmt(-t.amount, t.iso_currency_code || "USD")}</NumCell>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
-          </TableScroll>
-          {hasMore && (
-            <div style={{ marginTop: "var(--space-3)", display: "flex", justifyContent: "center" }}>
-              <Button onClick={() => setPages((p) => p + 1)}>
-                Load {Math.min(TXN_PAGE_SIZE, txns.length - visible.length)} more
-              </Button>
+          {/* Pending section — always fully shown, no pagination */}
+          {pending.length > 0 && (
+            <div style={{ marginBottom: "var(--space-4)" }}>
+              <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-2)" }}>
+                {pending.length} pending
+              </p>
+              <TableScroll>
+                <Table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Name</th>
+                      <th>Category</th>
+                      <th style={{ textAlign: "right" }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pending.map((t) => <TxnRow key={t.id} t={t} />)}
+                  </tbody>
+                </Table>
+              </TableScroll>
             </div>
+          )}
+
+          {/* Settled transactions with pagination */}
+          {settled.length > 0 && (
+            <>
+              {pending.length > 0 && (
+                <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-2)" }}>
+                  {settled.length} settled
+                </p>
+              )}
+              <TableScroll>
+                <Table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Name</th>
+                      <th>Category</th>
+                      <th style={{ textAlign: "right" }}>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((t) => <TxnRow key={t.id} t={t} />)}
+                  </tbody>
+                </Table>
+              </TableScroll>
+              {hasMore && (
+                <div style={{ marginTop: "var(--space-3)", display: "flex", justifyContent: "center" }}>
+                  <Button onClick={() => setPages((p) => p + 1)}>
+                    Load {Math.min(TXN_PAGE_SIZE, settled.length - visible.length)} more
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}

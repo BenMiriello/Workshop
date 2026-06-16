@@ -266,6 +266,14 @@ def _conn() -> sqlite3.Connection:
     c.execute("""CREATE TABLE IF NOT EXISTS invites (
         token TEXT PRIMARY KEY, email TEXT, name TEXT,
         created_at TEXT, expires_at TEXT, used_at TEXT)""")
+    # Live broadcast: a shared device, WHILE listening, pushes its rolling
+    # spectrogram columns + "now hearing" here (one row per device, overwritten).
+    # Viewers who can see the device poll it to watch in near-real-time. Stored in
+    # the shared DB (not process memory) so it works across the tailnet app and the
+    # standalone app. Rows older than LIVE_TTL_S are treated as offline.
+    c.execute("""CREATE TABLE IF NOT EXISTS live_feed (
+        device_token TEXT PRIMARY KEY, ts TEXT, location_id INTEGER,
+        owner_user_id INTEGER, device_name TEXT, payload TEXT)""")
     # Friendship is MUTUAL and symmetric. We store one row per pair with the
     # smaller id as user_a (canonical), so a pair can't be duplicated. status:
     # accepted = both see each other's SHARED detections; pending = requested,
@@ -2254,6 +2262,72 @@ def _visible_clause(viewer_id: int | None, col: str = "device_token") -> tuple[s
         return " AND 1=0", []
     qs = ",".join("?" * len(toks))
     return f" AND {col} IN ({qs})", list(toks)
+
+
+# --------------------------------------------------------------------------
+# Live broadcast. A shared device, while listening, calls publish_live() ~1/s
+# with its rolling spectrogram columns + current detections; viewers who can see
+# that device read it via live_feeds(). Near-real-time (poll-based), shared-DB
+# backed so it crosses the tailnet/standalone process boundary.
+# --------------------------------------------------------------------------
+LIVE_TTL_S = 12
+
+
+def publish_live(token: str, cols: list, hearing: list) -> dict:
+    """Store the latest live frame for a (shared, listening) device. Location +
+    owner + name are resolved from the device row so viewers can label the feed."""
+    token = (token or "").strip()
+    if not token:
+        return {"ok": False}
+    with _conn() as c:
+        d = c.execute("SELECT owner_user_id,name,fixed_location_id,shared FROM devices WHERE token=?",
+                      (token,)).fetchone()
+        if not d or not d["shared"]:
+            return {"ok": False, "reason": "device not shared"}  # only shared devices broadcast
+        loc = d["fixed_location_id"]
+        if not loc:
+            r = c.execute("SELECT location_id FROM browser_detections WHERE device_token=? "
+                          "AND location_id IS NOT NULL ORDER BY id DESC LIMIT 1", (token,)).fetchone()
+            loc = r["location_id"] if r else None
+        payload = json.dumps({"cols": cols, "hearing": hearing}, separators=(",", ":"))
+        c.execute(
+            "INSERT INTO live_feed(device_token,ts,location_id,owner_user_id,device_name,payload) "
+            "VALUES(?,?,?,?,?,?) ON CONFLICT(device_token) DO UPDATE SET "
+            "ts=excluded.ts, location_id=excluded.location_id, owner_user_id=excluded.owner_user_id, "
+            "device_name=excluded.device_name, payload=excluded.payload",
+            (token, _now(), loc, d["owner_user_id"], d["name"], payload))
+        c.commit()
+    return {"ok": True}
+
+
+def live_feeds(location_id: int | None = None) -> dict:
+    """Active live feeds (last LIVE_TTL_S) the request viewer may see, optionally
+    scoped to one location. Each carries its spectrogram columns + now-hearing."""
+    cutoff = _now_minus(LIVE_TTL_S)
+    toks = visible_tokens(_resolve_viewer(None))
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT device_token,ts,location_id,owner_user_id,device_name,payload "
+            "FROM live_feed WHERE ts>=?", (cutoff,)).fetchall()
+        locs = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM locations")}
+        names = {u["id"]: (u["name"] or u["email"].split("@")[0]).split(" ")[0] for u in list_users()}
+    out = []
+    for r in rows:
+        if toks is not None and r["device_token"] not in toks:
+            continue
+        if location_id is not None and r["location_id"] != location_id:
+            continue
+        try:
+            payload = json.loads(r["payload"])
+        except (ValueError, TypeError):
+            continue
+        out.append({
+            "device_token": r["device_token"], "device": r["device_name"],
+            "location_id": r["location_id"], "location": locs.get(r["location_id"]),
+            "owner_user_id": r["owner_user_id"], "owner": names.get(r["owner_user_id"]),
+            "cols": payload.get("cols", []), "hearing": payload.get("hearing", []),
+        })
+    return {"feeds": out}
 
 
 def list_devices(archived: bool = False, viewer_id: int | None = None) -> list[dict]:

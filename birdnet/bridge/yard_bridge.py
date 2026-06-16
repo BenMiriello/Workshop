@@ -28,23 +28,6 @@ DEVICE  = os.environ.get("YARD_DEVICE","Yard Mic")
 LOCID   = os.environ.get("YARD_LOCID", "6")
 MINCONF = os.environ.get("YARD_MINCONF","0.5")
 
-# Band-pass to strip the two STEADY electronic tones the cheap USB interface injects
-# (measured by high-res FFT 2026-06-14, both confirmed rock-steady = electronic, not
-# acoustic): (1) a 60/120/180Hz mains-hum family (ground/power coupling), loudest of
-# all; (2) a ~19.8-20.3kHz switching/charge-pump whine cluster spaced ~120Hz (rectified-
-# mains sidebands => the interface's bias supply re-radiating the Pi's mains-rippled 5V
-# rail). Birds live ~0.3-10kHz, so HPF 200Hz + LPF 12kHz removes BOTH tones with zero
-# bird impact (lowest local callers >300Hz; highest kinglet harmonics <11kHz). Stacked
-# twice each for a steep ~-24dB/oct skirt. Set YARD_HPF=0 / YARD_LPF=0 to disable.
-# NOTE this only masks the symptom in software; the root cause is hardware/power
-# (USB ground loop + the interface's noisy bias supply) - see BIRDSTATION-CONTEXT-2.md.
-HPF = os.environ.get("YARD_HPF", "200").strip()
-LPF = os.environ.get("YARD_LPF", "12000").strip()
-# Narrow notches for the mains-hum harmonics that survive the 200Hz corner (120/180/
-# 240Hz sit just inside the passband). Surgical bandreject (high-Q) so nearby bird
-# energy is untouched. Comma-list of Hz; YARD_NOTCH=0 to disable.
-NOTCH = os.environ.get("YARD_NOTCH", "120,180,240").strip()
-
 RATE, CH, SW = 48000, 1, 2
 CHUNK_SECS   = 3
 CHUNK_BYTES  = RATE * CH * SW * CHUNK_SECS
@@ -113,22 +96,11 @@ def fmt_dets(dets):
 def run_ffmpeg():
     # Source is a raw s16le byte stream over plain TCP (the Pi's lean streamer).
     # Tell ffmpeg the raw input format explicitly; output the same to stdout.
-    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
-           "-f", "s16le", "-ar", str(RATE), "-ac", str(CH), "-i", SRC]
-    af = []
-    if HPF and HPF != "0":
-        af += ["highpass=f=%s" % HPF, "highpass=f=%s" % HPF]
-    if NOTCH and NOTCH != "0":
-        for hz in NOTCH.split(","):
-            hz = hz.strip()
-            if hz:
-                af.append("bandreject=f=%s:width_type=h:w=8" % hz)
-    if LPF and LPF != "0":
-        af += ["lowpass=f=%s" % LPF, "lowpass=f=%s" % LPF]
-    if af:
-        cmd += ["-af", ",".join(af)]
-    cmd += ["-f", "s16le", "-ac", str(CH), "-ar", str(RATE), "-"]
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    return subprocess.Popen(
+        ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+         "-f", "s16le", "-ar", str(RATE), "-ac", str(CH), "-i", SRC,
+         "-f", "s16le", "-ac", str(CH), "-ar", str(RATE), "-"],
+        stdout=subprocess.PIPE)
 
 
 def main():

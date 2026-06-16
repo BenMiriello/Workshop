@@ -76,7 +76,7 @@
       "branch_slug": null,
       "state": "running",
       "created": "2026-06-14T07:54:29+00:00",
-      "last_active": "2026-06-14T19:21:51+00:00",
+      "last_active": "2026-06-15T15:56:32+00:00",
       "claude_session": "8a82560c-c2c7-43a4-8709-ed18350c8d32"
     },
     "test2": {
@@ -90,6 +90,18 @@
       "created": "2026-06-14T19:18:00+00:00",
       "last_active": "2026-06-14T19:18:00+00:00",
       "claude_session": null
+    },
+    "commute-builder": {
+      "name": "Commute builder",
+      "purpose": "",
+      "kind": "build",
+      "cwd": "/home/clawd-a/workshop/projects/commute",
+      "project_slug": "commute",
+      "branch_slug": null,
+      "state": "running",
+      "created": "2026-06-16T02:56:39+00:00",
+      "last_active": "2026-06-16T15:21:41+00:00",
+      "claude_session": "cc11c12f-5f4c-4c13-b190-b3c451067eb3"
     }
   }
 }
