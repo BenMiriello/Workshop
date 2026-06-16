@@ -20,6 +20,19 @@ envv=()
 while IFS= read -r -d '' line; do
   [ -n "$line" ] && envv+=("$line")
 done < "/proc/$pid/environ"
+
+# Overlay auth.env LAST so its values win over the live snapshot. A prior restart
+# can carry a BLANK WORKSHOP_511_API_KEY forward (the recurring "commute went dumb,
+# 511 feeds need_key" gotcha); sourcing auth.env here repopulates the key (and the
+# OAuth token) every restart so it cannot drift blank again. In `env -i K=a K=b`,
+# the LAST K wins, so appending these after the snapshot makes them authoritative.
+AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/clawdbot/auth.env}"
+if [ -f "$AUTH_ENV" ]; then
+  while IFS= read -r line; do
+    line="${line#export }"
+    case "$line" in ''|\#*) continue;; *=*) envv+=("$line");; esac
+  done < "$AUTH_ENV"
+fi
 pkill -f 'uvicorn main:app.*8000' || true
 sleep 1
 env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 \

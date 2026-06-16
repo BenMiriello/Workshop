@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from services import app_runner, gc, local_runner, manifests, permissions, port_registry, registry
+from services import app_overlay, app_runner, gc, local_runner, manifests, permissions, port_registry, registry
 
 router = APIRouter()
 
@@ -359,6 +359,10 @@ async def run_proxy(slug: str, service: str, path: str, request: Request):
     target = f"http://127.0.0.1:{svc['port']}{request.url.path}"
     fwd_headers = {k: v for k, v in request.headers.items()
                    if k.lower() not in _HOP_BY_HOP and k.lower() != "host"}
+    # Force an unencoded upstream body so we can string-inject the nav overlay
+    # into HTML (you cannot rewrite a gzipped body). Dev preview, so the small
+    # cost of skipping compression is fine.
+    fwd_headers["accept-encoding"] = "identity"
     body = await request.body()
     client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None))
     try:
@@ -373,8 +377,30 @@ async def run_proxy(slug: str, service: str, path: str, request: Request):
         await client.aclose()
         raise HTTPException(502, f"upstream service unreachable: {e}")
 
-    resp_headers = {k: v for k, v in upstream.headers.items()
-                    if k.lower() not in _HOP_BY_HOP}
+    # Strip framing/CSP guards so the app can be framed in the Workshop preview
+    # and the injected overlay's inline script runs (a dev-preview proxy, not a
+    # production origin). Drop these regardless of body type.
+    _STRIP = _HOP_BY_HOP | {
+        "content-security-policy", "content-security-policy-report-only", "x-frame-options",
+    }
+    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _STRIP}
+
+    ctype = upstream.headers.get("content-type", "")
+    # HTML documents get the nav overlay injected and are returned whole (small,
+    # and string-injection needs the full body). Everything else (assets, SSE)
+    # streams through untouched.
+    if "text/html" in ctype.lower():
+        raw = await upstream.aread()
+        await upstream.aclose()
+        await client.aclose()
+        try:
+            text = raw.decode("utf-8")
+            text = app_overlay.inject(text, slug, service)
+            out = text.encode("utf-8")
+        except UnicodeDecodeError:
+            out = raw  # non-utf8 HTML: pass through unmodified
+        return Response(content=out, status_code=upstream.status_code,
+                        headers=resp_headers, media_type=ctype)
 
     async def _body():
         try:

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
 import { Button, PageHeader, Row, StateBlock, StatusDot, Skeleton } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
@@ -21,9 +21,28 @@ function backendOrigin(): string {
 
 export default function AppPreview() {
   const { slug = "" } = useParams();
+  const navigate = useNavigate();
   const [status, setStatus] = useState<AppStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+
+  // The overlay injected into the framed app (services/app_overlay.py) posts
+  // namespaced, versioned messages up to this shell when its buttons are tapped.
+  // Verify the sender is the proxy origin (where the iframe is served) and the
+  // type is ours before acting — any frame can postMessage to us.
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      if (e.origin !== backendOrigin()) return;
+      const d = e.data;
+      if (!d || typeof d !== "object" || d.v !== 1 || typeof d.type !== "string") return;
+      if (!d.type.startsWith("workshop/v1/")) return;
+      const target = typeof d.slug === "string" ? d.slug : slug;
+      if (d.type === "workshop/v1/nav") navigate(`/projects/${target}`);
+      else if (d.type === "workshop/v1/openChat") navigate(`/projects/${target}#chat`);
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [navigate, slug]);
 
   const load = useCallback(async () => {
     setErr(null);
