@@ -532,6 +532,32 @@ class TestEvaluate:
         assert result["late_risk"] is True
         assert result["late_by_min"] > 15
 
+    def test_overdue_is_late_without_realtime_or_location(self):
+        # The 7:57-on-the-train bug at the source: PM commute, scheduled home
+        # 6:45 PM (flex deadline 7:00 PM), it's now 7:30 PM, no realtime feed and
+        # a 2h-stale location ping. The wall clock alone proves he's late — the
+        # engine must not report on-track just because nothing *set* late_risk.
+        now_overdue = datetime(2026, 1, 6, 3, 30, tzinfo=timezone.utc)  # 7:30 PM PST Tue
+        stale_ts = (now_overdue - timedelta(minutes=125)).isoformat()
+        loc_rec = {"ts": stale_ts, "lat": HOME_COORDS[0] + 0.5, "lng": HOME_COORDS[1],
+                   "source": "owntracks"}
+        patches = _patch_all(
+            pm_sch=WEEKDAY_PM_SCHEDULE,
+            legs=SAMPLE_LEGS,
+            loc_rec=loc_rec,
+            work_coords=WORK_COORDS,
+            home_coords=HOME_COORDS,
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+            result = scoring.evaluate(now_overdue)
+        assert result["active"] is True
+        assert result["direction"] == "to-home"
+        assert result["realtime_status"]["available"] is False
+        assert result["location"]["available"] is False
+        assert result["arrival_overdue"] is True
+        assert result["late_risk"] is True
+        assert result["late_by_min"] >= 30
+
     def test_result_shape_keys_present(self):
         fresh_ts = (MON_AM - timedelta(minutes=2)).isoformat()
         loc_rec = {"ts": fresh_ts, "lat": HOME_COORDS[0], "lng": HOME_COORDS[1], "source": "owntracks"}

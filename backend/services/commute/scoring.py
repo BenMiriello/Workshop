@@ -548,8 +548,19 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
     _, target_arr = resolve_times(sch, legs, now)
     flex_min = int(sch.get("flex_minutes_late", 15))
     flex_deadline = target_arr + timedelta(minutes=flex_min)
-    late_risk = arr > flex_deadline
-    late_by_min = max(0.0, (arr - target_arr).total_seconds() / 60.0)
+    # We only reach here when the commute is active AND we have NOT confirmed
+    # the operator is at the destination (that case early-returns above). So
+    # the earliest he could realistically arrive is *now* — once the wall clock
+    # passes the static schedule's arrival with no at-destination confirmation,
+    # "arrived 7:29" is moot and he is, in fact, late. Using max(arr, now) makes
+    # "past your arrival but no realtime/location to prove it" read as late.
+    # This signal needs neither a GTFS-RT feed nor a fresh GPS ping — the
+    # schedule plus the clock are enough. When realtime IS available and arr is
+    # a genuine future projection, effective_arr == arr and nothing changes.
+    effective_arr = max(arr, now)
+    arrival_overdue = now > arr  # wall clock already past the projected arrival
+    late_risk = effective_arr > flex_deadline
+    late_by_min = max(0.0, (effective_arr - target_arr).total_seconds() / 60.0)
     # Leave-by = depart_at of leg 1 (the moment the operator needs to leave
     # their current location). Surfaced explicitly so the brief can say
     # "leave by 7:10 AM" instead of leaving the operator to compute it.
@@ -569,8 +580,10 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
         "flex_minutes_late": flex_min,
         "flex_deadline": flex_deadline.isoformat(),
         "flex_deadline_local": timefmt.local_clock(flex_deadline),
-        "projected_arrive": arr.isoformat(),
-        "projected_arrive_local": timefmt.local_clock(arr),
+        "projected_arrive": effective_arr.isoformat(),
+        "projected_arrive_local": timefmt.local_clock(effective_arr),
+        "scheduled_arrive_local": timefmt.local_clock(arr),
+        "arrival_overdue": arrival_overdue,
         "leave_by": leave_by_at,
         "leave_by_local": leave_by_local,
         "expected_leg_index": leg_i,

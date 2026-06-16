@@ -125,9 +125,21 @@ def is_recent_duplicate(msg: dict[str, Any], within_min: float = 25.0) -> bool:
     return age_min < within_min
 
 
-def append_deduped(msg: dict[str, Any], within_min: float = 25.0) -> tuple[dict[str, Any], bool]:
-    """Append unless it's a recent duplicate. Returns (message, stored)."""
-    if is_recent_duplicate(msg, within_min):
+# State-aware suppression windows by severity. An unchanged "On track" (ok)
+# tick has no news, so it stays quiet for a long stretch; a late-risk (urgent)
+# is always allowed through. Keyed on headline+severity, which already encodes
+# the state (direction + leave-by time), so a genuine change re-posts at once.
+_SUPPRESS_MIN = {"ok": 120.0, "info": 90.0, "caution": 20.0, "urgent": 0.0}
+
+
+def append_deduped(msg: dict[str, Any], within_min: float | None = None) -> tuple[dict[str, Any], bool]:
+    """Append unless it's a recent duplicate. Returns (message, stored).
+
+    within_min=None picks a severity-aware window (routine on-track is suppressed
+    far longer than a caution; urgent is never suppressed). Pass an explicit
+    number to override."""
+    win = within_min if within_min is not None else _SUPPRESS_MIN.get(msg.get("severity"), 25.0)
+    if win > 0 and is_recent_duplicate(msg, win):
         return msg, False
     append(msg)
     return msg, True

@@ -40,6 +40,11 @@ SYSTEM = (
     '"high|medium|low","action":"optional imperative or null"}\n\n'
     "Rules:\n"
     "- Be concise and concrete. The headline is the one thing he should know.\n"
+    "- data_quality.location fields, read them EXACTLY: 'meters_from_destination' "
+    "is DISTANCE to the destination (not a time and not staleness); "
+    "'fix_age_seconds' is how old the GPS fix is. Never describe a distance in "
+    "meters as 'stale' — staleness is fix_age_seconds. If available is false, the "
+    "location is simply unknown; say that, don't invent a number.\n"
     "- Confidence MUST reflect data_quality: thin/stale/low-coverage data => low, and "
     "say so in reasoning rather than inventing a conclusion.\n"
     "- Reason adaptively from patterns: if his real leg times / transfer waits / "
@@ -52,11 +57,27 @@ SYSTEM = (
 )
 
 
+def _location_for_reasoner(loc: dict[str, Any]) -> dict[str, Any]:
+    """Self-describing location object for the reasoner. The raw brief uses
+    `distance_m`/`age_s`, which the model has misread as "location stale 123m"
+    (conflating distance-to-destination with freshness). Rename to unit-bearing
+    keys so the units are unambiguous."""
+    if not loc.get("available"):
+        return {"available": False, "reason": loc.get("reason", "unknown")}
+    return {
+        "available": True,
+        "meters_from_destination": loc.get("distance_m"),
+        "at_destination": loc.get("at_destination"),
+        "fix_age_seconds": loc.get("age_s"),
+        "source": loc.get("source"),
+    }
+
+
 def _evidence(brief: dict[str, Any]) -> dict[str, Any]:
     direction = brief.get("direction")
     dq = {
         "realtime": brief.get("realtime_status", {}),
-        "location": brief.get("location", {}),
+        "location": _location_for_reasoner(brief.get("location", {})),
     }
     return {
         "brief": {k: v for k, v in brief.items() if k not in ("legs", "timeline", "alerts")},
@@ -159,21 +180,57 @@ def _deterministic(brief: dict[str, Any], evidence: dict[str, Any]) -> dict[str,
         return {"kind": "brief", "severity": "ok", "confidence": "high",
                 "headline": "No commute active", "detail": "", "reasoning": brief.get("reason", "")}
     rt = brief.get("realtime_status", {})
-    conf = "high" if rt.get("available") else "low"
+    loc = brief.get("location", {})
+    rt_ok = bool(rt.get("available"))
+    loc_ok = bool(loc.get("available"))
+    blind = not rt_ok and not loc_ok       # can't see the train OR where he is
+    underway = bool(brief.get("current_leg"))  # already departed — leave-by is moot
+    conf = "high" if rt_ok else ("medium" if loc_ok else "low")
     dirn = "work" if brief.get("direction") == "to-work" else "home"
+
     if brief.get("late_risk"):
-        return {"kind": "alert", "severity": "caution" if brief.get("late_by_min", 0) < 20 else "urgent",
+        # Name the actual signal: a live delay, or just the wall clock passing
+        # the deadline with nothing to prove he already arrived.
+        if rt_ok:
+            why = "Live transit delay pushes projected arrival past the flex deadline."
+        elif brief.get("arrival_overdue"):
+            why = ("The clock is already past your scheduled arrival and nothing "
+                   "confirms you're there — so you're running late.")
+        else:
+            why = "Projected arrival exceeds the flex deadline."
+        caveats = []
+        if not rt_ok:
+            caveats.append("no live transit data")
+        if not loc_ok:
+            caveats.append(f"location {loc.get('reason', 'unavailable')}")
+        if caveats:
+            why += " (" + "; ".join(caveats) + ".)"
+        return {"kind": "alert",
+                "severity": "caution" if brief.get("late_by_min", 0) < 20 else "urgent",
                 "confidence": conf,
-                "headline": f"Late risk → {dirn}: ~{int(brief.get('late_by_min', 0))}m past target",
+                "headline": f"Running late → {dirn}: ~{int(brief.get('late_by_min', 0))}m past target",
                 "detail": f"Target {brief.get('target_arrive_local')}, projected {brief.get('projected_arrive_local')}.",
-                "reasoning": ("Projected arrival exceeds the flex deadline."
-                              + ("" if rt.get("available") else " (Times are static schedule — realtime unavailable.)")),
-                "action": "Consider an earlier train or trimming the first leg."}
+                "reasoning": why,
+                "action": ("If you're already there, ignore — your location is stale and I can't confirm."
+                           if blind else "Consider an earlier train or trimming the first leg.")}
+
+    # Not flagged late. If we're blind (no realtime AND no fresh location) we
+    # have no business claiming "On track" — absence of a late signal is not
+    # evidence of being on time. Say plainly that we can't see.
+    if blind:
+        return {"kind": "brief", "severity": "caution", "confidence": "low",
+                "headline": f"Can't confirm your {dirn} commute — flying blind",
+                "detail": f"No live transit data and {loc.get('reason', 'no location fix')}.",
+                "reasoning": ("Both the realtime feed and your location are unavailable, so this is "
+                              "the static timetable only — treat the times as a guess, not a status."),
+                "action": "Open the app for a fresh read if you're mid-commute."}
+
+    leave_by = "" if underway else f" — leave by {brief.get('leave_by_local')}"
     return {"kind": "brief", "severity": "ok", "confidence": conf,
-            "headline": f"On track → {dirn} — leave by {brief.get('leave_by_local')}",
+            "headline": f"On track → {dirn}{leave_by}",
             "detail": f"Target {brief.get('target_arrive_local')}, projected {brief.get('projected_arrive_local')}.",
             "reasoning": "Projected arrival is within the flex window."
-                         + ("" if rt.get("available") else " Times are static schedule (no live transit data).")}
+                         + ("" if rt_ok else " Times are static schedule (no live transit data).")}
 
 
 # --- public ------------------------------------------------------------------

@@ -248,6 +248,51 @@ def test_reasoner_deterministic_late_risk_is_alert(monkeypatch):
     assert m["kind"] == "alert" and m["severity"] == "urgent"
 
 
+def test_reasoner_blind_never_claims_on_track(monkeypatch):
+    # The 7:57-on-the-train bug: no realtime AND stale location. Absence of a
+    # late signal must NOT be rendered as "On track" — say we can't see.
+    from services.commute import reason
+    monkeypatch.setattr(reason, "REASONER", "deterministic")
+    brief = {"active": True, "direction": "to-home", "leave_by_local": "6:00 PM",
+             "target_arrive_local": "7:29 PM", "projected_arrive_local": "7:29 PM",
+             "late_risk": False, "late_by_min": 0.0,
+             "realtime_status": {"available": False},
+             "location": {"available": False, "reason": "last ping 116m ago — too stale to trust"},
+             "timeline": [], "alerts": []}
+    m = reason.compose(brief, "during")
+    assert "on track" not in m["headline"].lower()
+    assert m["severity"] == "caution" and m["confidence"] == "low"
+    assert "blind" in m["headline"].lower()
+
+
+def test_reasoner_overdue_late_cites_clock_and_caveats(monkeypatch):
+    # Late detected from the wall clock alone (no realtime), with stale location.
+    from services.commute import reason
+    monkeypatch.setattr(reason, "REASONER", "deterministic")
+    brief = {"active": True, "direction": "to-home", "late_risk": True, "late_by_min": 28.0,
+             "arrival_overdue": True, "target_arrive_local": "7:29 PM",
+             "projected_arrive_local": "7:57 PM",
+             "realtime_status": {"available": False},
+             "location": {"available": False, "reason": "last ping 116m ago — too stale to trust"},
+             "current_leg": {"mode": "rail"}, "timeline": [], "alerts": []}
+    m = reason.compose(brief, "during")
+    assert m["kind"] == "alert" and m["severity"] == "urgent"
+    assert "running late" in m["headline"].lower()
+    assert "clock" in m["reasoning"].lower() and "no live transit data" in m["reasoning"].lower()
+
+
+def test_reasoner_on_track_drops_leave_by_once_underway(monkeypatch):
+    from services.commute import reason
+    monkeypatch.setattr(reason, "REASONER", "deterministic")
+    brief = {"active": True, "direction": "to-work", "leave_by_local": "7:10 AM",
+             "target_arrive_local": "8:45 AM", "projected_arrive_local": "8:39 AM",
+             "late_risk": False, "late_by_min": 0.0,
+             "realtime_status": {"available": True}, "location": {"available": True},
+             "current_leg": {"mode": "rail"}, "timeline": [], "alerts": []}
+    m = reason.compose(brief, "during")
+    assert "on track" in m["headline"].lower() and "leave by" not in m["headline"].lower()
+
+
 def test_reasoner_falls_back_when_claude_unavailable(monkeypatch):
     from services.commute import reason
     monkeypatch.setattr(reason, "REASONER", "claude")
