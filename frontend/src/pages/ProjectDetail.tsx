@@ -48,6 +48,7 @@ import { useEditMode } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 import AppServicesPanel from "../components/AppServicesPanel";
+import EnvironmentPanel from "../components/EnvironmentPanel";
 
 // Project detail = the project's hub (the "workbench"). NOT the coding UI — that
 // lives under Agents (AgentBuild). Phase 2 (docs/workshop-v1/02 §1-4) retires the
@@ -864,6 +865,9 @@ export default function ProjectDetail() {
 
       {/* --- App (multi-service runner) --- */}
       <AppServicesPanel slug={slug} />
+
+      {/* --- Environment / secrets registry --- */}
+      <EnvironmentPanel slug={slug} />
 
       {/* --- Deployments (was Surfaces) --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>

@@ -317,6 +317,41 @@ async def run_list():
     return {"apps": app_runner.list_apps()}
 
 
+# ---- Environment / secrets registry -----------------------------------------
+# The manifest declares env REQUIREMENTS (key + metadata, no values); the
+# operator fills VALUES here; secrets_store holds them (gitignored, 0600); the
+# runner injects them at spawn. Status is presence-only (the `check_secrets`
+# view) — values are write-only and never returned through these endpoints.
+
+
+class EnvValuesIn(BaseModel):
+    values: dict[str, str]
+
+
+@router.get("/run/{slug}/env")
+async def run_env(slug: str):
+    """Declared env requirements + per-key SET status (never values). Also lists
+    any stored keys not declared as requirements."""
+    return app_runner.env_overview(slug)
+
+
+@router.put("/run/{slug}/env")
+async def run_env_set(slug: str, body: EnvValuesIn):
+    """Set/merge env values for a project. A blank value clears that key. Returns
+    the refreshed presence-only overview (no values echoed back)."""
+    from services import secrets_store
+    secrets_store.set_values(slug, body.values or {})
+    return app_runner.env_overview(slug)
+
+
+@router.delete("/run/{slug}/env/{key}")
+async def run_env_delete(slug: str, key: str):
+    """Unset one env value. Returns the refreshed overview."""
+    from services import secrets_store
+    secrets_store.delete_key(slug, key)
+    return app_runner.env_overview(slug)
+
+
 @router.get("/ports")
 async def ports():
     """The central port registry: every current local-service port allocation

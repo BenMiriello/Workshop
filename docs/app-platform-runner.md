@@ -95,6 +95,34 @@ overlay run).
    ```
    Look up `<frontend-port>` in the App panel or `GET /base-apps/ports`.
 
+## Environment / secrets registry
+
+Apps need secrets (API keys, OAuth sets) the manifest must not contain. Following
+the universal platform split (Vercel/Railway/Heroku/Replit): the manifest declares
+**requirements** (key + metadata, no values, safe in the repo); a separate store
+holds the **values** (gitignored, `0600`, never logged); the runner injects them at
+spawn. This mirrors Replit's `ask_secrets`/`check_secrets` — the agent declares keys
+and can see which are *set*, never their values.
+
+- **Declare** (in `workshop.app.json`): an `env_requirements[]` list, each entry
+  `{key, description, required, secret, example, how_to_obtain:{url,steps}, service, group}`.
+  The builder writes these (it's told how, in its runtime briefing). `service` scopes a
+  var to one service (default `*`); `group` bundles related keys in the UI (e.g.
+  `google-oauth`).
+- **Store** (`services/secrets_store.py`): values at `.runtime/secrets/<slug>.json`,
+  created `0600`. `status()`/`set_keys()` return presence only — never values.
+- **Fill** (UI): the project page's **Environment** panel (`EnvironmentPanel.tsx`) —
+  per-key description, the how-to-obtain link, Set/Missing status, and (in Edit mode)
+  masked write-only inputs. Secrets are never shown back; "Replace" sets a new value,
+  "Clear" unsets.
+- **Inject** (`app_runner`): `_service_env`/`_run_build` merge the service's scoped
+  secret values into its process env. A **required value left unset blocks that service
+  from starting** with a clear "Missing required env: X" instead of a crash-loop.
+- **API**: `GET /base-apps/run/<slug>/env` (requirements + per-key `set:bool`, no
+  values), `PUT …/env` ({values}), `DELETE …/env/<key>`.
+
+`env_overview(slug)` is the presence-only view any agent or the UI consults.
+
 ## Builder awareness of the runtime
 
 The build chat (a real `claude -p` session, see `services/chat_context.py`) is given

@@ -292,6 +292,33 @@ def runtime_briefing(provider: "ContextProvider") -> str:
         # the app section rather than guessing.
         pass
 
+    # Environment / secrets: what the app needs, what's set, how to declare more.
+    try:
+        from services import app_runner
+        ov = app_runner.env_overview(project_slug)
+        reqs = ov.get("requirements") or []
+        if reqs or ov.get("undeclared_set"):
+            env_lines = ["Environment (declared in workshop.app.json `env_requirements`; "
+                         "the operator fills values in the project's Environment panel):"]
+            for r in reqs:
+                mark = "SET" if r.get("set") else ("MISSING" if r.get("required") else "unset")
+                tail = f" — {r['how_to_obtain']}" if r.get("how_to_obtain") else ""
+                env_lines.append(f"  - {r['key']} [{mark}{', required' if r.get('required') else ''}]"
+                                 f" {r.get('description','')}{tail}")
+            miss = ov.get("missing_required") or []
+            if miss:
+                env_lines.append("  Missing required (the app won't start until set): " + ", ".join(miss))
+            env_lines.append(
+                "To request a NEW key from the operator: add an entry to "
+                "`env_requirements` in workshop.app.json (key, description, required, "
+                "secret, how_to_obtain) — it appears in the Environment panel for them "
+                "to fill. NEVER hardcode, echo, or print secret VALUES; you can see "
+                "which keys are set, never their values."
+            )
+            lines.append("\n".join(env_lines))
+    except Exception:
+        pass
+
     lines.append(
         "PLATFORM OWNS THE RUNTIME: do NOT pick ports or hand-start/stop the dev "
         "servers — the app runner allocates ports centrally, spawns each service, "

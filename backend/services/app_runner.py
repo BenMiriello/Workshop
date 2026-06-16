@@ -98,10 +98,31 @@ class DepSpec:
 
 
 @dataclass
+class EnvRequirement:
+    """A declared env var the app needs (key + metadata, NO value). The builder
+    writes these into the manifest; the operator fills values via the Environment
+    panel; secrets_store holds the values. Schema synthesized from Heroku app.json
+    + Render/Railway + the Replit ask_secrets pattern (a how_to_obtain pointer is
+    the AI-builder differentiator)."""
+    key: str
+    description: str = ""
+    required: bool = True
+    secret: bool = True               # true → write-only in the UI; false → plain config
+    example: str = ""                 # format hint, never a real value
+    how_to_obtain: str = ""           # where/how to get it (URL or short steps)
+    service: str = "*"                # which service needs it ("*" = all)
+    group: str = ""                   # optional UI bundle (e.g. "google-oauth")
+
+    def applies_to(self, service_name: str) -> bool:
+        return self.service in ("", "*", None) or self.service == service_name
+
+
+@dataclass
 class AppManifest:
     name: str
     services: list[ServiceSpec]
     deps: list[DepSpec] = field(default_factory=list)
+    env_requirements: list[EnvRequirement] = field(default_factory=list)
     detected: bool = False   # True if auto-detected (no workshop.app.json on disk)
 
 
@@ -159,6 +180,31 @@ def _spec_from_raw(raw: dict, idx: int) -> ServiceSpec:
         depends_on=[str(d) for d in (raw.get("depends_on") or []) if isinstance(d, str)],
         env={str(k): str(v) for k, v in (raw.get("env") or {}).items()},
     )
+
+
+def _env_requirements_from_raw(raw: dict) -> list[EnvRequirement]:
+    """Parse the manifest's optional `env_requirements` list. Tolerant: skips
+    entries without a `key`; a how_to_obtain object {url,steps} is flattened to a
+    short string."""
+    out: list[EnvRequirement] = []
+    for item in (raw.get("env_requirements") or []):
+        if not isinstance(item, dict) or not item.get("key"):
+            continue
+        how = item.get("how_to_obtain")
+        if isinstance(how, dict):
+            parts = [str(how.get("steps") or "").strip(), str(how.get("url") or "").strip()]
+            how = " — ".join(p for p in parts if p)
+        out.append(EnvRequirement(
+            key=str(item["key"]).strip(),
+            description=str(item.get("description") or "").strip(),
+            required=bool(item.get("required", True)),
+            secret=bool(item.get("secret", True)),
+            example=str(item.get("example") or "").strip(),
+            how_to_obtain=str(how or "").strip(),
+            service=str(item.get("service") or "*").strip() or "*",
+            group=str(item.get("group") or "").strip(),
+        ))
+    return out
 
 
 def _autodetect(project_dir: Path) -> AppManifest:
@@ -282,7 +328,10 @@ def resolve_manifest(slug: str) -> AppManifest:
     # If exactly one service and none marked expose, it is the surface.
     if len(services) == 1 and not any(s.expose for s in services):
         services[0].expose = True
-    return AppManifest(name=str(raw.get("name") or slug), services=services, deps=deps)
+    return AppManifest(
+        name=str(raw.get("name") or slug), services=services, deps=deps,
+        env_requirements=_env_requirements_from_raw(raw),
+    )
 
 
 def _topo_order(services: list[ServiceSpec]) -> list[ServiceSpec]:
@@ -361,7 +410,32 @@ def _alive(pid: int | None) -> bool:
 
 # ---- env + spawn ------------------------------------------------------------
 
-def _service_env(port: int, spec: ServiceSpec, peers: dict[str, dict]) -> dict[str, str]:
+def _secret_env_for_service(slug: str, spec_name: str) -> dict[str, str]:
+    """The stored secret VALUES this service should receive, scoped by each env
+    requirement's `service` field. Loads from secrets_store; returns {} if the
+    manifest can't be resolved. Runner-only (handles real values)."""
+    from services import secrets_store
+    try:
+        man = resolve_manifest(slug)
+    except AppError:
+        return {}
+    keys = [r.key for r in man.env_requirements if r.applies_to(spec_name)]
+    return secrets_store.env_for(slug, keys) if keys else {}
+
+
+def _missing_required_env(slug: str, spec_name: str, manifest: AppManifest) -> list[str]:
+    """Required env requirement keys for this service that have NO stored value.
+    Presence-only (never reads values)."""
+    from services import secrets_store
+    reqs = [r for r in manifest.env_requirements if r.required and r.applies_to(spec_name)]
+    if not reqs:
+        return []
+    st = secrets_store.status(slug, [r.key for r in reqs])
+    return [k for k, present in st.items() if not present]
+
+
+def _service_env(port: int, spec: ServiceSpec, peers: dict[str, dict],
+                 secrets: dict[str, str] | None = None) -> dict[str, str]:
     """Scoped env (allowlist + PORT) plus this service's manifest env, with peer
     service URLs available two ways:
 
@@ -385,6 +459,11 @@ def _service_env(port: int, spec: ServiceSpec, peers: dict[str, dict]) -> dict[s
             out = out.replace(f"${{{name}.url}}", str(peer.get("url") or ""))
             out = out.replace(f"${{{name}.port}}", str(peer.get("port") or ""))
         env[k] = out
+    # Declared secret values last (distinct key names; the operator-supplied
+    # GEMINI_API_KEY / GOOGLE_* etc.). Injected only into the process env here —
+    # never logged, never written to the manifest.
+    if secrets:
+        env.update(secrets)
     return env
 
 
@@ -420,7 +499,7 @@ def _spawn_service(slug: str, spec: ServiceSpec, project_dir: Path, port: int,
     cwd = (project_dir / spec.cwd).resolve()
     if not str(cwd).startswith(str(project_dir.resolve())):
         raise AppError(f"service '{spec.name}' cwd escapes project dir", status=400)
-    env = _service_env(port, spec, peers)
+    env = _service_env(port, spec, peers, secrets=_secret_env_for_service(slug, spec.name))
     # Identity + the path this service is reachable at through the backend reverse
     # proxy. A web service can use WORKSHOP_PROXY_BASE as its base path (e.g. Vite
     # `--base $WORKSHOP_PROXY_BASE`) so its assets resolve when viewed over the
@@ -464,6 +543,9 @@ def _run_build(slug: str, spec: ServiceSpec, project_dir: Path,
             out = out.replace(f"${{{name}.url}}", str(peer.get("url") or ""))
             out = out.replace(f"${{{name}.port}}", str(peer.get("port") or ""))
         build_env[k] = out
+    # Builds may need the declared secrets too (a migration, a typed-codegen
+    # against an API). Same scope as the runtime service.
+    build_env.update(_secret_env_for_service(slug, spec.name))
     try:
         with open(log_path, "ab", buffering=0) as logf:
             logf.write(f"\n--- build {spec.name}: {spec.build} @ {time.ctime()} ---\n".encode())
@@ -627,6 +709,17 @@ def _bring_up(slug: str, manifest: AppManifest) -> None:
             sstate = _STATE[slug]["services"][spec.name]
             if sstate.get("port") is None:
                 continue  # port allocation already failed above
+
+            # Required-secret gate: refuse to spawn a service whose required env
+            # is unfilled — surface a clear, actionable error instead of letting
+            # it crash-loop on a missing key.
+            missing = _missing_required_env(slug, spec.name, manifest)
+            if missing:
+                sstate["status"] = "failed"
+                sstate["error"] = ("Missing required env: " + ", ".join(missing)
+                                   + " — set in the project's Environment panel.")
+                _persist_state()
+                continue
 
             sstate["status"] = "building"
             sstate["error"] = None
@@ -870,7 +963,40 @@ def manifest_dict(slug: str) -> dict:
         ],
         "deps": [{"name": d.name, "compose_file": d.compose_file, "compose_service": d.compose_service}
                  for d in m.deps],
+        "env_requirements": [_req_dict(r) for r in m.env_requirements],
     }
+
+
+def _req_dict(r: EnvRequirement) -> dict:
+    return {
+        "key": r.key, "description": r.description, "required": r.required,
+        "secret": r.secret, "example": r.example, "how_to_obtain": r.how_to_obtain,
+        "service": r.service, "group": r.group,
+    }
+
+
+def env_overview(slug: str) -> dict:
+    """Declared env requirements + per-key SET status (presence only, never the
+    value — the `check_secrets` view). Drives the Environment panel and lets any
+    agent reason about completeness without touching secrets. Also reports any
+    stored keys that are NOT declared requirements (so they aren't invisible)."""
+    from services import secrets_store
+    try:
+        m = resolve_manifest(slug)
+        reqs = m.env_requirements
+    except AppError:
+        reqs = []
+    set_keys = set(secrets_store.set_keys(slug))
+    declared = {r.key for r in reqs}
+    requirements = []
+    for r in reqs:
+        d = _req_dict(r)
+        d["set"] = r.key in set_keys
+        requirements.append(d)
+    extra = sorted(set_keys - declared)  # values set without a declared requirement
+    missing_required = [r["key"] for r in requirements if r["required"] and not r["set"]]
+    return {"slug": slug, "requirements": requirements,
+            "undeclared_set": extra, "missing_required": missing_required}
 
 
 def list_apps() -> list[dict]:
