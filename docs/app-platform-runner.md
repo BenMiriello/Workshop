@@ -63,10 +63,21 @@ into a deployed app. The manifest `env` supplies the non-secret config a service
 
 Services bind `127.0.0.1:<port>` (not tailnet-exposed). Three ways to see one:
 
-1. **Embedded preview** (default, always has nav-back): the App panel's **Preview**
-   button → `/projects/<slug>/run`, a Workshop page that frames the running service in
-   an iframe with Workshop chrome (Back to project / Reload / Full screen). Use this so
-   you are never stranded on a bare app page.
+**Nav overlay (always present, never stranded).** The reverse proxy injects a small
+floating widget into every proxied HTML page (`services/app_overlay.py`): a circle
+pinned bottom-left that expands to **Back to project / Open builder chat / Reload**.
+It lives in an open Shadow DOM (`all: initial`, pointer-events isolated) so the host
+app's CSS can't break it. It works **both** framed (it postMessages the Workshop shell,
+namespaced `workshop/v1/*`, origin-checked, handled in `AppPreview`) **and** full-screen
+at the bare proxy URL (it drives `window.top`). This is why opening an app full-screen
+no longer dead-ends. The proxy forces identity encoding (so HTML is injectable) and
+strips CSP / X-Frame-Options on proxied responses (dev preview, so framing + the inline
+overlay run).
+
+1. **Embedded preview** (default): the App panel's **Preview** button →
+   `/projects/<slug>/run`, a Workshop page that frames the running service in an iframe
+   with Workshop chrome (Back to project / Reload / Full screen) — plus the injected
+   overlay inside the frame.
 2. **Backend reverse proxy** (what the preview/Full-screen frames):
    `https://<host>:8446/base-apps/run/<slug>/proxy/<service>/...` — through the existing
    backend tailnet origin (`:8446`, trusted CGNAT). HTTP + SSE stream through.
@@ -83,6 +94,21 @@ Services bind `127.0.0.1:<port>` (not tailnet-exposed). Three ways to see one:
    # then open https://<host>:8448/  — full app at base=/, its own /api proxy, HMR
    ```
    Look up `<frontend-port>` in the App panel or `GET /base-apps/ports`.
+
+## Builder awareness of the runtime
+
+The build chat (a real `claude -p` session, see `services/chat_context.py`) is given
+a **runtime briefing** every turn (`chat_context.runtime_briefing`) so it never guesses
+its environment — the pattern every AI builder (v0/Bolt/Lovable/Replit/Cursor) uses.
+The briefing states: the working dir, the detected stack, the app's services + their
+**centrally-allocated ports** + start commands (pulled from this runner's
+`manifest_dict` + `app_status`), how to **run** the app (the `/base-apps/run/<slug>`
+endpoints) and **see** it (`/projects/<slug>/run`), where to read each service's logs,
+and the negative capability that **the platform owns ports + process lifecycle** (don't
+hand-start servers or pick ports — the runner allocates, spawns, and auto-restarts).
+It also detects a scaffold project that *shadows* a built-in app (e.g. a `commute`
+project whose real code is in the monorepo) and says so, instead of the agent concluding
+"nothing exists". Re-sent on resumed turns too, since the session never re-reads it.
 
 ## gengui status (2026-06-15)
 
