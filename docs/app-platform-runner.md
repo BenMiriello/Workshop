@@ -123,6 +123,33 @@ and can see which are *set*, never their values.
 
 `env_overview(slug)` is the presence-only view any agent or the UI consults.
 
+## Editing the Workshop itself (the self / platform project)
+
+The Workshop monorepo is registered as a first-class project (`workshop`,
+`dir=~/workshop`, `self: true` in `projects.json`) so the operator can build the
+platform — and its built-in apps (birds/commute/budget/location/finance, which
+live in `frontend/src/pages/apps` + `backend/services`) — through the same
+chat/builder. It is **not** a separate deployment: editing it edits the running
+app. (Dogfooding, the way Claude Code/Cursor edit their own repos — point the
+agent at the repo, the dev server reloads.)
+
+What's different for a self project:
+- `app_runner.is_self_project(slug)` → `manifest_dict`/`app_status` report
+  `self: true`; `start_app`/`stop_app`/`restart_service` raise **409** (there's
+  nothing to deploy). The App panel shows a "this is the running Workshop" notice
+  instead of Start/Stop; the Environment panel is hidden.
+- The builder's runtime briefing has a self branch: **frontend hot-reloads** on
+  save; **backend changes need `bash scripts/restart_backend.sh`** — and since the
+  chat is served *by* that backend, a mid-turn restart kills its own stream, so
+  the rule is *edit first, restart last (or ask the operator)*. Never run the
+  backend under `uvicorn --reload` for this reason.
+- **No auto-checkpoint** runs for the self dir (`is_self_dir`) — the platform
+  builder must not auto-commit the live monorepo's working tree (it would sweep in
+  unrelated WIP every turn). Commit only the files you changed, when asked.
+
+`ProjectContextProvider` honors the registry `dir`, so the self project resolves
+to the monorepo root rather than `projects/<slug>`.
+
 ## Builder awareness of the runtime
 
 The build chat (a real `claude -p` session, see `services/chat_context.py`) is given
