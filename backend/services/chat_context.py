@@ -70,6 +70,7 @@ def role_preamble(
     tools_active: bool,
     tool_summary: str = "",
     cwd: str | None = None,
+    is_build: bool = False,
 ) -> str:
     """Platform-owned layer-1 system facts, generated from the ACTUAL run config
     (tools_active is computed in routes/chat.py from the same branch that decides
@@ -77,6 +78,9 @@ def role_preamble(
 
     tools_active=False -> a tools-off safety preamble (no actions, no promises).
     tools_active=True  -> the real toolset + working dir + egress facts.
+    is_build=True       -> use the accurate BUILD-context egress facts (clone /
+    install from dev hosts is allowed; only push/publish goes through the
+    platform), instead of the strict data-context "egress blocked" text.
     """
     if not tools_active:
         return (
@@ -92,18 +96,209 @@ def role_preamble(
         "full Claude Code toolset (Read, Write, Edit, Bash, Grep, Glob, and the "
         "rest)"
     )
+    if is_build:
+        # Build contexts run under ~/workshop/{projects,branches,build-agents},
+        # where the egress + git guards already ALLOW clone/install from standard
+        # dev hosts (and any host for the operator's private projects). Telling a
+        # builder "egress is blocked" is false and wastes turns — state what is
+        # actually true so it just does the work.
+        egress = (
+            "NETWORK + GIT: you CAN `git clone` and install dependencies "
+            "(npm/pnpm/yarn/bun, pip/uv, cargo, go) from standard registries "
+            "(github.com, npmjs, pypi, crates.io, proxy.golang.org, jsdelivr/"
+            "unpkg/esm.sh, huggingface). Loopback (127.0.0.1) and the tailnet are "
+            "always reachable. PUBLISHING goes through the Workshop platform, NOT "
+            "your shell: `git push` to main/master, force-push, and repointing "
+            "`origin` are blocked by design — commit locally and tell the operator "
+            "to publish/deploy through Workshop. If a specific fetch is genuinely "
+            "blocked, say so plainly rather than pretending it worked."
+        )
+    else:
+        egress = (
+            "NETWORK EGRESS IS RESTRICTED: external network access (git clone, "
+            "npm install, curl/wget to public hosts like github.com or "
+            "registry.npmjs.org) is BLOCKED in this environment. Only loopback "
+            "(127.0.0.1) and the tailnet are reachable. If a task needs an external "
+            "fetch, do NOT promise it and do NOT pretend it succeeded: surface that "
+            "it is blocked and ask the operator to run it in their own terminal or "
+            "to approve the host."
+        )
     return (
         "=== YOUR CAPABILITIES (read this first) ===\n"
         f"You have {tools}, operating in {where}. You can read and edit files, "
         "run commands, and search the project.\n\n"
-        "NETWORK EGRESS IS RESTRICTED: external network access (git clone, "
-        "npm install, curl/wget to public hosts like github.com or "
-        "registry.npmjs.org) is BLOCKED in this environment. Only loopback "
-        "(127.0.0.1) and the tailnet are reachable. If a task needs an external "
-        "fetch, do NOT promise it and do NOT pretend it succeeded: surface that "
-        "it is blocked and ask the operator to run it in their own terminal or "
-        "to approve the host."
+        + egress
     )
+
+
+# ----------------------------------------------------------- runtime briefing
+# The single highest-leverage builder fix (researched against v0/Bolt/Lovable/
+# Replit/Cursor): every build platform injects a TEMPLATED environment briefing
+# so the agent never guesses where it is, what it can run, or how to see the app.
+# Built fresh from the real run config + app manifest and re-sent every turn
+# (including resumed turns) so the agent can't drift out of sync with reality.
+
+
+def _detect_stack(dir_path) -> tuple[list[str], bool]:
+    """Best-effort stack labels for a project dir + whether it looks like an
+    empty scaffold (no real source yet). Cheap: stats a handful of marker files.
+    Returns (labels, is_scaffold)."""
+    from pathlib import Path as _P
+
+    d = _P(dir_path)
+    labels: list[str] = []
+    has_source = False
+    try:
+        pkg = d / "package.json"
+        if pkg.exists():
+            has_source = True
+            try:
+                data = json.loads(pkg.read_text())
+                deps = {**(data.get("dependencies") or {}), **(data.get("devDependencies") or {})}
+                if "next" in deps:
+                    labels.append("Next.js")
+                elif "vite" in deps:
+                    labels.append("Vite")
+                if "react" in deps:
+                    labels.append("React")
+                if "typescript" in deps:
+                    labels.append("TypeScript")
+                node = "Node"
+                if (d / "bun.lockb").exists() or (d / "bun.lock").exists():
+                    node = "Bun"
+                elif (d / "pnpm-lock.yaml").exists():
+                    node = "pnpm"
+                elif (d / "yarn.lock").exists():
+                    node = "yarn"
+                labels.insert(0, node)
+            except (json.JSONDecodeError, OSError):
+                labels.append("Node")
+        if (d / "pyproject.toml").exists() or (d / "requirements.txt").exists():
+            has_source = True
+            labels.append("Python")
+        if (d / "go.mod").exists():
+            has_source = True
+            labels.append("Go")
+        if (d / "Cargo.toml").exists():
+            has_source = True
+            labels.append("Rust")
+        if (d / "docker-compose.yml").exists() or (d / "docker-compose.yaml").exists():
+            labels.append("docker-compose")
+        # A real source tree means an actual FILE somewhere that isn't a scaffold
+        # doc or dotfile — an empty `src/` dir does NOT count (that is exactly the
+        # commute-shadow scaffold case). Bounded walk; only reached when no
+        # package.json/pyproject/etc marker already proved source above.
+        if not has_source:
+            scaffold_docs = {"PROJECT.md", "TODO.md", "AGENTS.md", "README.md", ".gitignore"}
+            checked = 0
+            for p in d.rglob("*"):
+                checked += 1
+                if checked > 2000:
+                    break
+                rel_parts = p.relative_to(d).parts
+                if any(part.startswith(".") for part in rel_parts):
+                    continue  # skip .git/.claude/.tasks.json etc.
+                if p.is_file() and p.name not in scaffold_docs:
+                    has_source = True
+                    break
+    except (OSError, FileNotFoundError):
+        pass
+    return labels, (not has_source)
+
+
+def runtime_briefing(provider: "ContextProvider") -> str:
+    """Templated environment briefing for a build provider (empty for others).
+
+    Tells the builder: where it is, the detected stack, the app's services +
+    centrally-allocated ports + run/build commands, HOW to run and SEE the app,
+    where to read logs, the edit scope, and the negative capabilities (what the
+    platform owns so the agent shouldn't fight it). Re-sent every turn."""
+    if not is_build_provider(provider):
+        return ""
+    dirp = provider.dir
+    slug = getattr(provider, "slug", "") or ""
+    project_slug = getattr(provider, "project_slug", None) or slug
+
+    lines = ["=== RUNTIME BRIEFING (your environment — re-read every turn) ==="]
+    lines.append(f"Working directory (cwd): {dirp} — all relative paths resolve here.")
+    lines.append(
+        "Host: Linux, shell: bash. You ARE a Claude Code session with the full "
+        "default toolset (Read, Write, Edit, MultiEdit, Bash, Grep, Glob, "
+        "WebFetch, WebSearch, Task). Use them directly — don't ask the operator "
+        "to run things you can run yourself."
+    )
+
+    labels, is_scaffold = _detect_stack(dirp)
+    if labels:
+        lines.append("Detected stack: " + ", ".join(labels) + ".")
+
+    # Shadow detection: a project named after a built-in Workshop app whose real
+    # code lives in the monorepo, not this (empty) project dir. The recurring
+    # "I was spawned in an empty box orthogonal to the real code" confusion.
+    try:
+        from services import manifests as _mf
+        builtin = _mf.get_manifest(slug) is not None
+    except Exception:
+        builtin = False
+    if is_scaffold and builtin:
+        lines.append(
+            f"NOTE: this directory is an empty scaffold, but '{slug}' is an "
+            "existing built-in Workshop app whose LIVE code is in the monorepo "
+            "(~/workshop/backend and ~/workshop/frontend), NOT here. Do not "
+            "scaffold a fresh app — read the real code there, and confirm with "
+            "the operator which files to edit. You may edit the monorepo files "
+            "for this app."
+        )
+    elif is_scaffold:
+        lines.append(
+            "NOTE: this directory has no source yet (empty scaffold). If you were "
+            "asked to change an existing app, its code is NOT here — confirm where "
+            "it lives before building from scratch."
+        )
+
+    # App manifest + live ports + how to run / see it.
+    try:
+        from services import app_runner
+        man = app_runner.manifest_dict(project_slug)
+        st = app_runner.app_status(project_slug)
+        st_by = {s["name"]: s for s in st.get("services", [])}
+        svc_lines = []
+        for ms in man.get("services", []):
+            s = st_by.get(ms["name"], {})
+            bits = [ms["name"]]
+            if ms.get("expose"):
+                bits.append("web")
+            if not ms.get("enabled", True):
+                bits.append("disabled")
+            port = s.get("port")
+            if port:
+                bits.append(f":{port} ({s.get('status')})")
+            cmd = ms.get("start")
+            line = "  - " + " ".join(bits)
+            if cmd:
+                line += f" — start: `{cmd}`"
+            svc_lines.append(line)
+        if svc_lines:
+            lines.append("App services (the runner owns these; ports are allocated centrally):")
+            lines.extend(svc_lines)
+        lines.append(
+            f"To RUN it: start from the project's App panel, or POST "
+            f"/base-apps/run/{project_slug}/start. To SEE it: open "
+            f"/projects/{project_slug}/run in Workshop (framed, with a nav overlay). "
+            f"Logs: GET /base-apps/run/{project_slug}/logs?service=<name>."
+        )
+    except Exception:
+        # No resolvable app manifest (e.g. a freestanding build agent) — skip
+        # the app section rather than guessing.
+        pass
+
+    lines.append(
+        "PLATFORM OWNS THE RUNTIME: do NOT pick ports or hand-start/stop the dev "
+        "servers — the app runner allocates ports centrally, spawns each service, "
+        "and auto-restarts crashes. Edit code and let it reload; use the run "
+        "endpoints above to control the app."
+    )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- base / general

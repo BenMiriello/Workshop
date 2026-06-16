@@ -174,6 +174,12 @@ def _build_prompt(
     parts: list[str] = []
     if preamble:
         parts.append(preamble)
+    # Build providers get the templated runtime briefing right after the platform
+    # preamble: cwd, stack, app services/ports, how to run+see the app, edit
+    # scope, negative capabilities. Empty for data providers.
+    briefing = chat_context.runtime_briefing(provider)
+    if briefing:
+        parts.append(briefing)
     parts.append(provider.persona())
     # Capability-aware fragment (doc 01 §3): consult the permissions framework so
     # an app-bound assistant states its REAL allowed actions instead of promising
@@ -310,6 +316,7 @@ async def send_message(thread_id: str, body: PostMessage):
         tools_active=tools_active,
         tool_summary=tool_summary,
         cwd=(str(provider.dir) if is_build_mode else None),
+        is_build=is_build_mode,
     )
     prompt = _build_prompt(provider, history, content, preamble=preamble)
 
@@ -346,11 +353,14 @@ async def send_message(thread_id: str, body: PostMessage):
                 # do a stateless turn rather than 500ing the chat.
                 pass
 
-        # On resumed turns the prompt is just the user's new message: the
-        # Claude Code session already holds persona + prior context. Skip the
-        # full _build_prompt rebuild that was created above.
+        # On resumed turns the session already holds persona + prior context, so
+        # we skip the full _build_prompt rebuild — but we STILL re-send the
+        # runtime briefing (cwd/stack/ports/how-to-run can change between turns,
+        # and the resumed session never re-reads it otherwise). This is the
+        # researched "refresh the environment block every turn" pattern.
         if is_resumed_turn:
-            prompt = content
+            briefing = chat_context.runtime_briefing(provider)
+            prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
     elif ENABLE_CHAT_TOOLS and provider.allowed_tools:
         # Narrow-tool path: read-only MCP, no built-ins.
         call_kwargs = {
@@ -466,10 +476,12 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         sid, is_new = None, True
 
     # First turn: full prompt with the platform role preamble (capability +
-    # egress facts) + persona + live context. Resumed turn: just the new user
-    # message (the session retains its prior context, including turn-1 preamble).
+    # egress facts) + runtime briefing + persona + live context. Resumed turn:
+    # the new user message, with the runtime briefing re-sent (the session
+    # retains persona/history but the environment block must refresh every turn).
     if sid and not is_new:
-        prompt = content
+        briefing = chat_context.runtime_briefing(provider)
+        prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
         resume_flag = True
     else:
         tools_active, tool_summary = chat_context.capability_for(
@@ -479,6 +491,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
             tools_active=tools_active,
             tool_summary=tool_summary,
             cwd=str(provider.dir),
+            is_build=True,
         )
         prompt = _build_prompt(provider, history, content, preamble=preamble)
         resume_flag = False
