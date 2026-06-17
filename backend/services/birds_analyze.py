@@ -1535,22 +1535,39 @@ def _protected_bytes(c: sqlite3.Connection) -> int:
 
 
 def _evict_for(c: sqlite3.Connection, need: int, cap: int) -> bool:
-    """Free space so used+need <= cap by deleting oldest evictable clips (not
-    pinned, species not keep_all). Returns True if there is now room, False if
-    protected clips alone fill the budget."""
+    """Free space so used+need <= cap by max-min fair ("water-filling") eviction:
+    each step removes one clip from whichever species currently holds the most
+    evictable clips, taking that species' oldest clip; ties for tallest are broken
+    by globally-oldest clip. This equalizes clip counts from the top down, so an
+    abundant species is trimmed before a rare one regardless of clip age, while
+    age still orders removal within a species and breaks ties between equally
+    abundant ones. Pinned clips and keep_all species are protected. Returns True
+    if there is now room, False if protected clips alone fill the budget."""
     keep = _keepall_species(c)
     used = _used_bytes(c)
     if used + need <= cap:
         return True
-    for r in c.execute("SELECT id, path, bytes, scientific_name, pinned "
-                       "FROM recordings ORDER BY ts ASC, id ASC"):
-        if used + need <= cap:
+    counts = {}  # species -> remaining evictable clip count
+    for r in c.execute("SELECT scientific_name AS sci, COUNT(*) AS n "
+                       "FROM recordings WHERE pinned=0 GROUP BY scientific_name"):
+        if r["sci"] not in keep:
+            counts[r["sci"]] = r["n"]
+    while used + need > cap and counts:
+        top = max(counts.values())
+        tied = [s for s, n in counts.items() if n == top]
+        ph = ",".join("?" * len(tied))
+        row = c.execute(
+            f"SELECT id, path, bytes, scientific_name AS sci FROM recordings "
+            f"WHERE pinned=0 AND scientific_name IN ({ph}) "
+            f"ORDER BY ts ASC, id ASC LIMIT 1", tied).fetchone()
+        if row is None:
             break
-        if r["pinned"] or r["scientific_name"] in keep:
-            continue
-        _delete_clip_file(r["path"])
-        c.execute("DELETE FROM recordings WHERE id=?", (r["id"],))
-        used -= r["bytes"] or 0
+        _delete_clip_file(row["path"])
+        c.execute("DELETE FROM recordings WHERE id=?", (row["id"],))
+        used -= row["bytes"] or 0
+        counts[row["sci"]] -= 1
+        if counts[row["sci"]] <= 0:
+            del counts[row["sci"]]
     return used + need <= cap
 
 

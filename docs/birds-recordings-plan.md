@@ -111,8 +111,15 @@ Global settings reuse the existing `app_settings` k/v + `get_setting/set_setting
 
 ## 4. Protection tiers (what eviction may touch)
 
-- **rolling** — `record=on, keep_all=off`, clip not pinned → evictable (FIFO by
-  `ts`, oldest first).
+- **rolling** — `record=on, keep_all=off`, clip not pinned → evictable. Eviction
+  order is **max-min fair** ("water-filling"): each step drops one clip from the
+  species that currently holds the most evictable clips, taking that species'
+  oldest clip; ties for tallest break by globally-oldest clip. This equalizes
+  per-species clip counts from the top down, so abundant species are trimmed
+  before rare ones regardless of clip age (a rare species' lone old clip is not
+  evicted while a common species still holds thousands). Age orders removal within
+  a species and breaks ties between equally abundant ones. Not configurable —
+  always on.
 - **keep_all species** — every clip of a species with `keep_all=on` → protected.
   ("Save all recordings of this bird.")
 - **pinned recording** — a single clip with `pinned=1` → protected, regardless of
@@ -138,7 +145,8 @@ if used + need <= cap:
 elif rec_when_full == 'evict_old':
     free = used - protected               # bytes we are allowed to reclaim
     if (cap - protected) >= need:
-        delete oldest rolling clips (file + row) until used + need <= cap
+        evict rolling clips max-min fair (tallest species, oldest clip)
+        until used + need <= cap
         write clip, insert row
     else:
         # protected clips alone exceed the budget — cannot make room
