@@ -41,9 +41,29 @@ except ImportError:  # pragma: no cover
 TRANSIT_511_BASE = "https://api.511.org/transit"
 CALTRAIN_AGENCY = "CT"
 SFMTA_AGENCY = "SF"
-KEY_511 = os.environ.get("WORKSHOP_511_API_KEY", "")
+AUTH_ENV = os.path.expanduser("~/.config/clawdbot/auth.env")
 
 POLL_HTTP_TIMEOUT = 8.0
+
+
+def _key_511() -> str:
+    """The 511.org API key. Prefer the env var, else fall back to auth.env so the
+    key works regardless of how the backend was launched. The platform's
+    auto-restart doesn't always inject the env — when it didn't, the old
+    import-time constant stayed empty and every poll returned `needs_key` with
+    realtime dark for the whole commute. Read at call time (not import) so a key
+    present on disk is always picked up. Mirrors reason._oauth_token."""
+    key = os.environ.get("WORKSHOP_511_API_KEY", "")
+    if key:
+        return key
+    try:
+        for ln in open(AUTH_ENV):
+            ln = ln.strip()
+            if ln.startswith("WORKSHOP_511_API_KEY="):
+                return ln.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
 
 
 def _now_iso() -> str:
@@ -85,7 +105,8 @@ async def _poll_511_agency(agency: str, source_key: str, out_file: str,
 
     Caltrain (agency=CT) and SFMTA (agency=SF) both ride this code path.
     """
-    if not KEY_511:
+    key = _key_511()
+    if not key:
         _record_source_status(source_key, "needs_key",
                               note="set WORKSHOP_511_API_KEY env var; register at https://511.org/open-data/token")
         return {"status": "needs_key"}
@@ -102,7 +123,7 @@ async def _poll_511_agency(agency: str, source_key: str, out_file: str,
             "service_alerts": f"{TRANSIT_511_BASE}/servicealerts",
             "vehicle_positions": f"{TRANSIT_511_BASE}/vehiclepositions",
         }
-        params = {"agency": agency, "api_key": KEY_511}
+        params = {"agency": agency, "api_key": key}
         parsed: dict[str, Any] = {"ts": _now_iso(), "agency": agency, "feeds": {}}
         for name, url in endpoints.items():
             try:
@@ -350,13 +371,14 @@ async def poll_stop_monitoring(agency: str, stop_code: str,
     """Fetch SIRI StopMonitoring JSON for one stop. Returns a compact summary
     of upcoming departures: {stop_code, agency, ts, visits:[{line, dest,
     aimed, expected, mins}]}. Persisted into stopmon.json keyed by stop_code."""
-    if not KEY_511:
+    key = _key_511()
+    if not key:
         return {"status": "needs_key"}
     owns = client is None
     client = client or httpx.AsyncClient(timeout=POLL_HTTP_TIMEOUT, follow_redirects=True)
     try:
         r = await client.get(f"{TRANSIT_511_BASE}/StopMonitoring",
-                             params={"api_key": KEY_511, "agency": agency,
+                             params={"api_key": key, "agency": agency,
                                      "stopCode": stop_code, "format": "json"})
         if r.status_code != 200:
             return {"status": "error", "http": r.status_code, "body": r.text[:160]}

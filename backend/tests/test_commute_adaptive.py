@@ -382,6 +382,26 @@ def test_dedup_explicit_window_override(tmp_path, monkeypatch):
     assert s1 is True and s2 is True
 
 
+# --- poller 511 key resolution -----------------------------------------------
+def test_key_511_prefers_env_then_auth_env(tmp_path, monkeypatch):
+    # The recurring "commute went dumb, 511 needs_key" gotcha: a backend launched
+    # with a clean env (no WORKSHOP_511_API_KEY) must still find the key on disk,
+    # so realtime never goes dark just because of how the process was started.
+    from services.commute import poller
+    authf = tmp_path / "auth.env"
+    monkeypatch.setattr(poller, "AUTH_ENV", str(authf))
+
+    monkeypatch.setenv("WORKSHOP_511_API_KEY", "envkey")
+    assert poller._key_511() == "envkey"          # env wins when present
+
+    monkeypatch.delenv("WORKSHOP_511_API_KEY", raising=False)
+    authf.write_text('OTHER=x\nWORKSHOP_511_API_KEY="filekey"\n')
+    assert poller._key_511() == "filekey"         # falls back to auth.env (quotes stripped)
+
+    authf.write_text("OTHER=x\n")
+    assert poller._key_511() == ""                # neither → empty (honest needs_key)
+
+
 # --- patterns ----------------------------------------------------------------
 def test_patterns_compute_and_miss_rate(monkeypatch):
     from services.commute import patterns
