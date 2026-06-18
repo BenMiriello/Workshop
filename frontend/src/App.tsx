@@ -50,8 +50,10 @@ export default function App() {
   // Width by page type. Content/app pages keep the reading-width cap (980).
   // The builder is a 3-pane IDE and needs the full viewport (wide). The
   // launcher/dashboard grids (apps, projects, agents, marketplace) look sparse
-  // at 980 on wide screens, so they get a roomier cap. Tuned content apps
-  // (finance/budget/birds/location/commute) are deliberately left at 980.
+  // at 980 on wide screens, so they get a roomier cap. The Birds app needs the
+  // room too (sidebar + content), and Activity/Settings were inconsistently
+  // narrow — so they share the roomy cap. (finance/budget/location/commute stay
+  // at 980 by choice; an app may impose its own column.)
   const { pathname } = useLocation();
   const wide = pathname.startsWith("/agents/build/");
   // The focused chat is a full-screen surface: the shell becomes a viewport-tall
@@ -64,7 +66,10 @@ export default function App() {
       pathname === "/projects" ||
       pathname.startsWith("/projects/") ||
       pathname === "/agents" ||
-      pathname === "/marketplace");
+      pathname === "/marketplace" ||
+      pathname.startsWith("/apps/birds") ||
+      pathname === "/activity" ||
+      pathname === "/settings");
   const widthClass = chatFull
     ? " ws-app--chatfull"
     : wide ? " ws-app--wide" : roomy ? " ws-app--roomy" : "";

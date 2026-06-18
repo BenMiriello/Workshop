@@ -30,7 +30,7 @@ function BirdsApp() {
     <RecorderProvider>
       <BreadcrumbProvider>
         <BirdsScopeProvider>
-          <div className="ws-root ws-app">
+          <div className="ws-root ws-app ws-app--roomy">
             {/* Standalone: no Workshop topnav, so the Birds shell IS the whole
                 chrome (sidebar / mobile tabs + scope). Root-mounted — the
                 dashboard is "/", not "/apps/birds"; shared page components link to

@@ -33,14 +33,12 @@ export default function Birds() {
     <div>
       {!PUBLIC && <RecordingsBanner />}
 
-      {/* The live card is the home's primary surface and the ONE recording
-          affordance: Listen/Stop + a single pulsing "Live" sit in its header
-          (the old top-bar Listen + bottom RecorderBar pill are gone). It's
-          persistent so Listen is always reachable, showing an idle invite when
-          not listening and this device's real scrolling spectrogram while live. */}
-      {!PUBLIC && <LiveCard />}
-      {/* Recent: presence (15-min windows), newest first — directly under the
-          live card per the redesign order. */}
+      {/* The live card is the Aviary (the ambient "who's in the yard now" scene).
+          Listening on this device is the one recording affordance (its mic); the
+          spectrogram for it appears in a panel below only while actually listening. */}
+      {!PUBLIC && <AviaryCard />}
+      {!PUBLIC && <DeviceListenPanel />}
+      {/* Recent: presence (15-min windows), newest first. */}
       {!PUBLIC && yardAvailable && <RecentCard nb={nb} />}
       {/* Live feeds from any broadcasting device you can see (your shared devices,
           friends' shared devices) — this is how you watch another mic's feed. */}
@@ -60,92 +58,85 @@ export default function Birds() {
   );
 }
 
-// --- Live card: the home's primary surface + sole recording affordance --------
-// Persistent on Home. Header carries the single Listen/Stop control, a single
-// pulsing "Live" indicator, a Histogram <-> Aviary view toggle, and an expand
-// button. Histogram = this device's real scrolling spectrogram (the dense read);
-// Aviary = the ambient "who's in the yard now" scene on the same live data.
-// Expand opens the Aviary fullscreen ("cast"), made to be left running on a TV.
-function LiveCard() {
+// --- Live card: the Aviary ----------------------------------------------------
+// The home's live card IS the Aviary — the ambient "who's in the yard now" scene
+// on the rolling-15-min live data — with an expand ("cast") button and the single
+// Listen affordance (this device's mic). No Histogram/Aviary toggle: the always-on
+// yard's scrolling spectrogram already lives in the Live feed below.
+function AviaryCard() {
+  const rec = useRecorder();
+  const [fullscreen, setFullscreen] = useState(false);
+  return (
+    <section className="card birds-livecard is-live">
+      <div className="birds-livecard__head">
+        <span className="birds-live"><Radio size={14} className="spin-pulse" /> Live Aviary</span>
+        <span className="muted" style={{ fontSize: ".85rem" }}>who's in the yard now</span>
+        <span className="birds-livecard__ctl">
+          <button className="btn sm" title="Open the Aviary fullscreen" aria-label="Open the Aviary fullscreen"
+            onClick={() => setFullscreen(true)}><Maximize2 size={15} /></button>
+          <ListenButton />
+        </span>
+      </div>
+      <Aviary />
+      {rec.err && <p className="error" style={{ marginBottom: 0, marginTop: ".5rem" }}>{rec.err}</p>}
+      {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
+      {fullscreen && <AviaryCast location={rec.location} onExit={() => setFullscreen(false)} />}
+    </section>
+  );
+}
+
+// This device's listening panel — its spectrogram + now-hearing + session list.
+// Shown ONLY while you're actually listening on this device (started from the
+// Aviary card's mic); hidden otherwise so it never clutters the home.
+function DeviceListenPanel() {
   const rec = useRecorder();
   const [showNonBird] = useShowNonBird();
-  const [view, setView] = useState<"histogram" | "aviary">("histogram");
-  const [fullscreen, setFullscreen] = useState(false);
   const live = rec.recording;
-  const paused = rec.wasListening && !rec.recording; // was listening, not capturing (after a reload)
-  const active = live || paused;
+  const paused = rec.wasListening && !rec.recording;
+  if (!live && !paused) return null;
   const species = showNonBird ? rec.sessionSpecies : rec.sessionSpecies.filter((s) => s.is_bird);
   const hearing = (showNonBird ? rec.nowHearing : rec.nowHearing.filter((d) => d.is_bird))
     .sort((a, b) => b.confidence - a.confidence);
-
   return (
-    <section className={`card birds-livecard${live ? " is-live" : ""}`}>
-      <div className="birds-livecard__head">
-        {live
-          ? <span className="birds-live"><Radio size={14} className="spin-pulse" /> Live</span>
-          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} className="muted" />}
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".6rem", flexWrap: "wrap" }}>
+        {paused ? <Radio size={16} className="muted" />
+          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "var(--ok)" }} />}
         <strong>{rec.device.name || "This device"}</strong>
-        <span className="muted" style={{ fontSize: ".85rem" }}>
-          {live ? (rec.location ? `· ${rec.location}` : "· locating…") : paused ? "· paused" : "· not listening"}
-        </span>
-        <span className="birds-livecard__ctl">
-          <Segmented<"histogram" | "aviary"> ariaLabel="Live view" value={view} onChange={setView}
-            options={[{ value: "histogram", label: "Histogram" }, { value: "aviary", label: "Aviary" }]} />
-          <button className="btn sm" title="Open the Aviary fullscreen" aria-label="Open the Aviary fullscreen"
-            onClick={() => setFullscreen(true)}><Maximize2 size={15} /></button>
+        <span className="muted" style={{ fontSize: ".85rem" }}>{paused ? "· paused" : rec.location ? `· ${rec.location}` : "· locating…"}</span>
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: ".4rem" }}>
           {paused && <button className="btn sm" onClick={rec.stop} title="Dismiss" aria-label="Dismiss"><X size={14} /></button>}
           <ListenButton />
         </span>
       </div>
-
-      {view === "aviary" ? (
-        <Aviary />
-      ) : (
+      <Spectrogram height={150} />
+      {live && rec.needsLocation && <SetLocationInline />}
+      <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
+        {paused ? (
+          <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
+        ) : hearing.length > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
+            <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
+            {hearing.slice(0, 4).map((d, i) => (
+              <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
+            ))}
+          </div>
+        ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
+      </div>
+      {species.length > 0 && (
         <>
-          {active && <Spectrogram height={150} />}
-          {live && rec.needsLocation && <SetLocationInline />}
-
-          {!active && (
-            <p className="muted" style={{ margin: ".4rem 0 0", fontSize: ".85rem" }}>
-              Not listening. Tap the mic to detect birds from this device, or switch to the Aviary to watch the yard.
-            </p>
-          )}
-
-          {active && (
-            <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
-              {paused ? (
-                <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
-              ) : hearing.length > 0 ? (
-                <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
-                  <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
-                  {hearing.slice(0, 4).map((d, i) => (
-                    <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
-                  ))}
-                </div>
-              ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
-            </div>
-          )}
-
-          {active && species.length > 0 && (
-            <>
-              <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
-                {species.map((s) => (
-                  <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
-                    <span className="pill neutral" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.65, borderStyle: "dashed", cursor: "pointer" }}>
-                      {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
-                    </span>
-                  </SpeciesLink>
-                ))}
-              </div>
-            </>
-          )}
+          <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
+            {species.map((s) => (
+              <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
+                <span className="pill neutral" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.65, borderStyle: "dashed", cursor: "pointer" }}>
+                  {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
+                </span>
+              </SpeciesLink>
+            ))}
+          </div>
         </>
       )}
-      {rec.err && <p className="error" style={{ marginBottom: 0, marginTop: ".5rem" }}>{rec.err}</p>}
-      {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
-
-      {fullscreen && <AviaryCast location={rec.location} onExit={() => setFullscreen(false)} />}
     </section>
   );
 }

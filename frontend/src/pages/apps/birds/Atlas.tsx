@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Waypoints, Tag as TagIcon, Volume2, Info, Map as MapIcon, ZoomIn, ZoomOut, Maximize2, X, ScatterChart, Grid3x3, Sparkles } from "lucide-react";
-import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, CHART_TARGET, type CatHue } from "../../../ui";
+import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue } from "../../../ui";
 import BirdsHeader, { InlineSelect } from "./BirdsHeader";
 import { ClipPlayButton } from "./recordings";
-import { jget, apost, API, conf, hh } from "./ui";
+import { jget, apost, API, conf } from "./ui";
+import { scatterSVG, heatSVG, noveltySVG } from "./atlasInsightCharts";
 
 // The Soundscape Atlas: every stored detection is a point in a learned acoustic
 // map (BirdNET embedding -> UMAP). The Overview colours the whole yard by species
@@ -210,120 +211,54 @@ function Insights() {
   );
 }
 
-// 5.1 — presence vs chatter scatter. x=presence (15-min windows), y=raw
-// detections; the dashed diagonal is the typical detections-per-presence ratio.
-// Above the line = over-talkers (false signals); below = present but quiet.
+// 5.1 — presence vs chatter scatter (ported from the handoff's renderPresenceScatter).
 function PresenceChatter({ rows }: { rows: ScatterPt[] }) {
   if (!rows.length) return null;
-  const W = 320, H = 210, pad = { l: 38, r: 12, t: 10, b: 30 };
-  const maxP = Math.max(1, ...rows.map((r) => r.presence));
-  const maxD = Math.max(1, ...rows.map((r) => r.detections));
-  const totP = rows.reduce((s, r) => s + r.presence, 0) || 1;
-  const ratio = rows.reduce((s, r) => s + r.detections, 0) / totP;
-  const x = (p: number) => pad.l + (p / maxP) * (W - pad.l - pad.r);
-  const y = (n: number) => H - pad.b - (n / maxD) * (H - pad.t - pad.b);
-  const diagX = maxP, diagY = Math.min(maxD, ratio * maxP);
+  const svg = scatterSVG(rows.map((s) => ({ name: s.common, win: s.presence, det: s.detections })));
   return (
-    <section className="card" style={{ padding: "1rem" }}>
+    <section className="card birds-ins" style={{ padding: "1rem" }}>
       <h3 className="atlas-h3"><ScatterChart size={16} /> Presence ↔ chatter</h3>
-      <p className="muted" style={{ fontSize: ".82rem", margin: ".2rem 0 .6rem" }}>
-        Each dot is a species: how present (15-min windows) against how chatty (raw detections). Dots above the line over-talk; below are present but quiet.
-      </p>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", maxHeight: 230 }} role="img" aria-label="Presence versus detections by species">
-        <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke="var(--border)" />
-        <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke="var(--border)" />
-        <line x1={x(0)} y1={y(0)} x2={x(diagX)} y2={y(diagY)} stroke={CHART_TARGET} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
-        {rows.map((r) => (
-          <circle key={r.sci} cx={x(r.presence)} cy={y(r.detections)} r={3.2}
-            fill="var(--cat-violet)" fillOpacity={0.82}>
-            <title>{r.common}: {r.presence} window{r.presence === 1 ? "" : "s"}, {r.detections} detection{r.detections === 1 ? "" : "s"}</title>
-          </circle>
-        ))}
-        <text x={(pad.l + W - pad.r) / 2} y={H - 6} textAnchor="middle" fontSize="9" fill="var(--muted)">presence (15-min windows)</text>
-        <text x={10} y={(pad.t + H - pad.b) / 2} fontSize="9" fill="var(--muted)" transform={`rotate(-90 10 ${(pad.t + H - pad.b) / 2})`} textAnchor="middle">raw detections</text>
-      </svg>
+      <div dangerouslySetInnerHTML={{ __html: svg }} />
+      <p className="cap-note">Plot presence against raw detections and the false signals separate out: dots above the dashed line talk more than their presence warrants; those below are around constantly but quiet — exactly the over-counting the 15-minute window corrects.</p>
     </section>
   );
 }
 
-// 5.2 — call-type x hour-of-day heatmap (intensity = frequency).
+// 5.2 — call-type x hour heatmap (ported from the handoff's renderHeat). Hidden
+// until call clusters are labeled (no fabricated data).
 function CallTypeHeatmap({ heatmap }: { heatmap: { call_types: string[]; rows: HeatRow[] } }) {
-  const max = Math.max(1, ...heatmap.rows.flatMap((r) => r.hours));
-  const has = heatmap.rows.some((r) => r.hours.some((h) => h > 0));
-  if (!has) return null;
+  const heat = heatmap.rows.map((r) => r.hours);
+  const has = heat.some((row) => row.some((v) => v > 0));
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
   return (
-    <section className="card" style={{ padding: "1rem" }}>
+    <section className="card birds-ins" style={{ padding: "1rem" }}>
       <h3 className="atlas-h3"><Grid3x3 size={16} /> Daily rhythm by call type</h3>
-      <p className="muted" style={{ fontSize: ".82rem", margin: ".2rem 0 .6rem" }}>
-        When each kind of call happens across the day — the dawn chorus, the all-day contact hum, the begging spike.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "5rem 1fr", gap: ".25rem .5rem", alignItems: "center" }}>
-        {heatmap.rows.map((r) => (
-          <Fragment key={r.call_type}>
-            <span className="muted" style={{ fontSize: ".78rem", textTransform: "capitalize" }}>{r.call_type}</span>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", gap: 1 }}>
-              {r.hours.map((v, h) => (
-                <div key={h} title={`${r.call_type} · ${hh(h)} · ${v}`}
-                  style={{ height: 14, borderRadius: 2, background: v > 0 ? "var(--cat-blue)" : "var(--border)", opacity: v > 0 ? Math.max(0.18, v / max) : 0.4 }} />
-              ))}
-            </div>
-            <span />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", fontSize: ".6rem" }} className="muted">
-              {Array.from({ length: 24 }).map((_, h) => <span key={h} style={{ textAlign: "center" }}>{h % 6 === 0 ? h : ""}</span>)}
-            </div>
-          </Fragment>
-        ))}
-      </div>
+      {has ? (
+        <>
+          <div dangerouslySetInnerHTML={{ __html: heatSVG(heatmap.rows.map((r) => cap(r.call_type)), heat) }} />
+          <p className="cap-note">When each kind of call happens — the dawn chorus of song, the all-day hum of contact calls, the morning begging spike at the nest.</p>
+        </>
+      ) : (
+        <p className="muted" style={{ fontSize: ".84rem", margin: ".3rem 0 0" }}>Label call groups in the map above to populate this — call types come from your cluster labels.</p>
+      )}
     </section>
   );
 }
 
-// 5.3 — acoustic-novelty timeline: first appearance of each species over the
-// window; recent arrivals (<=7d) are ringed and labeled.
+// 5.3 — acoustic-novelty timeline (ported from the handoff's renderNovelty).
 function NoveltyTimeline({ items, days }: { items: NoveltyPt[]; days: number }) {
   if (!items.length) return null;
-  const W = 320, H = 64, pad = { l: 10, r: 10, t: 10, b: 18 };
   const now = Date.now();
-  const start = now - days * 86_400_000;
-  const span = now - start || 1;
-  const px = (date: string) => {
-    const t = new Date(`${date}T12:00:00`).getTime();
-    return pad.l + Math.max(0, Math.min(1, (t - start) / span)) * (W - pad.l - pad.r);
-  };
-  const recent = items.filter((it) => new Date(`${it.date}T12:00:00`).getTime() >= now - 7 * 86_400_000);
-  const baseY = H - pad.b;
+  const pts = items.map((n) => {
+    const t = new Date(`${n.date}T12:00:00`).getTime();
+    const ago = (now - t) / 86_400_000;
+    return { day: Math.max(0, Math.min(days, days - ago)), label: n.common, kind: "species" as const, flag: ago <= 7, t };
+  }).sort((a, b) => a.t - b.t);
   return (
-    <section className="card" style={{ padding: "1rem" }}>
+    <section className="card birds-ins" style={{ padding: "1rem" }}>
       <h3 className="atlas-h3"><Sparkles size={16} /> Acoustic novelty</h3>
-      <p className="muted" style={{ fontSize: ".82rem", margin: ".2rem 0 .6rem" }}>
-        First time each species was heard in the last {days} days — recent arrivals ringed.
-      </p>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Species first-appearance timeline">
-        <line x1={pad.l} y1={baseY} x2={W - pad.r} y2={baseY} stroke="var(--border)" />
-        {items.map((it, i) => {
-          const isRecent = new Date(`${it.date}T12:00:00`).getTime() >= now - 7 * 86_400_000;
-          return (
-            <circle key={`${it.sci}${i}`} cx={px(it.date)} cy={baseY} r={isRecent ? 4 : 2.6}
-              fill={isRecent ? "var(--accent)" : "var(--cat-slate)"}
-              stroke={isRecent ? "var(--accent)" : "none"} strokeOpacity={0.4} strokeWidth={isRecent ? 4 : 0}>
-              <title>{it.common} · first heard {it.date}</title>
-            </circle>
-          );
-        })}
-        <text x={pad.l} y={H - 4} fontSize="9" fill="var(--muted)">{days}d ago</text>
-        <text x={W - pad.r} y={H - 4} fontSize="9" fill="var(--muted)" textAnchor="end">today</text>
-      </svg>
-      {recent.length > 0 && (
-        <div style={{ marginTop: ".5rem", fontSize: ".82rem" }}>
-          <span className="muted">Just arrived: </span>
-          {recent.slice(0, 6).map((it, i) => (
-            <span key={it.sci}>
-              {i > 0 ? ", " : ""}
-              <Link to={`/apps/birds/bird?sci=${encodeURIComponent(it.sci)}`} style={{ textDecoration: "none", color: "inherit", fontWeight: 500 }}>{it.common}</Link>
-            </span>
-          ))}
-        </div>
-      )}
+      <div dangerouslySetInnerHTML={{ __html: noveltySVG(pts.map(({ day, label, kind, flag }) => ({ day, label, kind, flag }))) }} />
+      <p className="cap-note">What's new in your yard — every point is the first time a species was heard in the last {days} days. Ringed points are recent arrivals worth a look.</p>
     </section>
   );
 }

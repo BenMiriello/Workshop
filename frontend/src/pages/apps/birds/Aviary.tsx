@@ -42,7 +42,6 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
   const apiRef = useRef<AviaryApi | null>(null);
 
   const [nameTags, setNameTags] = useState<boolean>(() => localStorage.getItem(TAGS_KEY) === "1");
-  const [count, setCount] = useState<number | null>(null); // present-species count; null = before first poll
 
   // Mount the engine once. Register the full NA species set, keep the demo
   // simulation OFF (real detections drive the scene), then tear down on unmount.
@@ -91,7 +90,7 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
           }
         }
       } catch { /* no live feed -> rely on detections only */ }
-      if (alive) { apiRef.current?.setPresent([...present]); setCount(present.size); }
+      if (alive) apiRef.current?.setPresent([...present]);
     };
     tick();
     const iv = setInterval(tick, POLL_MS);
@@ -107,13 +106,6 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
         <div className="ws-aviary__tags">
           <Toggle checked={nameTags} onChange={setNameTags} label="Name tags" />
         </div>
-        {/* Quiet-yard empty state — a calm idle, better than a flat-lined histogram. */}
-        {count === 0 && (
-          <div className="ws-aviary__quiet">
-            <span className="ws-aviary__quiet-title">Listening…</span>
-            <span className="muted">Quiet yard — nothing heard in the last {PRESENT_WINDOW_MIN} minutes.</span>
-          </div>
-        )}
       </div>
     </div>
   );
