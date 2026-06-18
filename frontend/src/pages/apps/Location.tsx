@@ -34,6 +34,54 @@ const PAGE_SIZE = 25;
 // At OwnTracks "significant" density this spans many days; backend caps at 5000.
 const MAP_TRACK_LIMIT = 2000;
 
+// Breadcrumb segmentation tunables. A new line segment begins when consecutive
+// fixes are too far apart in time, or imply an impossible speed — so a phone
+// that went quiet for hours, or flushed an old buffered fix from far away, is
+// NOT drawn as one long straight line across the map. (OwnTracks buffers fixes
+// offline and delivers them late; we order by the true fix time, not receipt.)
+const SEGMENT_GAP_MS = 15 * 60_000; // > 15 min between fixes => break the line
+const SEGMENT_TELEPORT_KMH = 250; // implied speed above this => break (teleport)
+const MAX_ACCURACY_M = 200; // drop wildly imprecise fixes before drawing
+
+const fixTime = (r: LocationRecord) => Date.parse(r.client_ts || r.ts);
+
+function haversineKm(a: LngLat, b: LngLat): number {
+  const R = 6371;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b[1] - a[1]);
+  const dLng = toRad(b[0] - a[0]);
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+// Order fixes by true fix time, then cut the breadcrumb into gap-free segments.
+function buildSegments(records: LocationRecord[]): LngLat[][] {
+  const pts = records
+    .filter((r) => r.accuracy_m == null || r.accuracy_m <= MAX_ACCURACY_M)
+    .map((r) => ({ t: fixTime(r), p: [r.lng, r.lat] as LngLat }))
+    .filter((x) => Number.isFinite(x.t))
+    .sort((a, b) => a.t - b.t);
+
+  const segments: LngLat[][] = [];
+  let cur: LngLat[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0) {
+      const dtMs = pts[i].t - pts[i - 1].t;
+      const km = haversineKm(pts[i - 1].p, pts[i].p);
+      const kmh = dtMs > 0 ? km / (dtMs / 3_600_000) : Infinity;
+      if (dtMs > SEGMENT_GAP_MS || kmh > SEGMENT_TELEPORT_KMH) {
+        if (cur.length) segments.push(cur);
+        cur = [];
+      }
+    }
+    cur.push(pts[i].p);
+  }
+  if (cur.length) segments.push(cur);
+  return segments;
+}
+
 const fmtAge = (iso: string) => {
   const ms = Date.now() - Date.parse(iso);
   const s = Math.round(ms / 1000);
@@ -128,10 +176,12 @@ export default function Location() {
     }
   };
 
-  // Breadcrumb in chronological order (history is newest-first); marker = latest.
-  // Use the dedicated larger track fetch; fall back to the table page if empty.
+  // Breadcrumb segmented by time/teleport gaps so quiet stretches don't draw as
+  // long straight lines. Use the dedicated larger track fetch; fall back to the
+  // table page if empty.
   const trackSrc = trackRecords.length ? trackRecords : records;
-  const track: LngLat[] = trackSrc.map((r) => [r.lng, r.lat] as LngLat).reverse();
+  const segments = buildSegments(trackSrc);
+  const pointCount = segments.reduce((n, s) => n + s.length, 0);
   const marker: LngLat | null = latest ? [latest.lng, latest.lat] : null;
 
   return (
@@ -168,14 +218,16 @@ export default function Location() {
       <div className="card">
         <strong>Map</strong>
         <div style={{ marginTop: "0.5rem" }}>
-          <Map track={track} marker={marker} height={380} />
+          <Map track={segments} marker={marker} height={380} />
         </div>
         <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>
-          {track.length} point{track.length === 1 ? "" : "s"}. The line is a breadcrumb of
-          recorded pings, not continuous tracking — OwnTracks "significant" mode only
-          pings on meaningful movement, so stationary stretches (home, work) leave gaps
-          and the line jumps straight between them. Switch the phone to "move" mode for
-          dense tracking (higher battery use). Nothing is deleted server-side.
+          {pointCount} point{pointCount === 1 ? "" : "s"} in {segments.length} segment
+          {segments.length === 1 ? "" : "s"}. The breadcrumb is recorded pings, not
+          continuous tracking — OwnTracks "significant" mode only pings on meaningful
+          movement. When it goes quiet for a while (or flushes a buffered fix from far
+          away), the line breaks into a new segment instead of drawing a long straight
+          line across the gap. Switch the phone to "move" mode for denser tracking
+          (higher battery use). Nothing is deleted server-side.
         </p>
       </div>
 

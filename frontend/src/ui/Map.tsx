@@ -12,8 +12,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
 // renders the track + marker on a plain background and surfaces a hint, so the
 // feature is useful before the (operator-installed) .pmtiles is in place.
 //
-// Reusable: pass a `track` (breadcrumb polyline) and/or a `marker` (current
-// position). Colors are read from design tokens at runtime so it matches theme.
+// Reusable: pass a `track` (one or more breadcrumb segments) and/or a `marker`
+// (current position). Each segment is drawn as its own polyline (MultiLineString)
+// so callers can break the line across time/teleport gaps instead of letting the
+// map connect distant fixes with a long straight line. Colors are read from
+// design tokens at runtime so it matches theme.
 
 const BASEMAP_URL = "/basemap/bayarea.pmtiles";
 const GLYPHS = "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf";
@@ -58,7 +61,7 @@ export function Map({
   height = 360,
   className,
 }: {
-  track?: LngLat[];
+  track?: LngLat[][]; // breadcrumb broken into gap-free segments
   marker?: LngLat | null;
   height?: number | string;
   className?: string;
@@ -91,7 +94,7 @@ export function Map({
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: buildStyle(resolveTheme(), hasBasemap),
-      center: marker ?? track?.[track.length - 1] ?? [-122.08, 37.39],
+      center: marker ?? track?.flat().at(-1) ?? [-122.08, 37.39],
       zoom: 11,
       attributionControl: { compact: true },
     });
@@ -120,19 +123,23 @@ export function Map({
     // The breadcrumb line + camera fit touch the style (sources/layers), so they
     // do need to wait for it.
     const applyStyleBits = () => {
+      // MultiLineString: each segment is its own polyline, so the map never
+      // joins two segments separated by a gap with a straight line.
+      const segs = (track ?? []).filter((s) => s.length > 1);
       const line: GeoJSON.Feature = {
         type: "Feature", properties: {},
-        geometry: { type: "LineString", coordinates: track ?? [] },
+        geometry: { type: "MultiLineString", coordinates: segs },
       };
       const src = map.getSource("track") as maplibregl.GeoJSONSource | undefined;
       if (src) {
         src.setData(line);
-      } else if (track && track.length > 1) {
+      } else if (segs.length) {
         map.addSource("track", { type: "geojson", data: line });
         map.addLayer({ id: "track", type: "line", source: "track",
+          layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": accent, "line-width": 3, "line-opacity": 0.85 } });
       }
-      const pts = [...(track ?? [])];
+      const pts = [...(track ?? []).flat()];
       if (marker) pts.push(marker);
       if (pts.length === 1) {
         map.easeTo({ center: pts[0], zoom: 14 });
