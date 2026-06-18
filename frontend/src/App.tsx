@@ -18,6 +18,7 @@ import Locations from "./pages/apps/birds/Locations";
 import LocationDetail from "./pages/apps/birds/LocationDetail";
 import Devices from "./pages/apps/birds/Devices";
 import BirdDetail from "./pages/apps/birds/BirdDetail";
+import BirdsReview from "./pages/apps/birds/BirdsReview";
 import BirdSettings from "./pages/apps/birds/BirdSettings";
 import Recordings from "./pages/apps/birds/RecordingsPage";
 import Atlas from "./pages/apps/birds/Atlas";
@@ -97,6 +98,7 @@ export default function App() {
               above stays the outer nav level; this is the inner one. */}
           <Route element={<BirdsLayout />}>
             <Route path="/apps/birds" element={<Birds />} />
+            <Route path="/apps/birds/birds" element={<BirdsReview />} />
             <Route path="/apps/birds/locations" element={<Locations />} />
             <Route path="/apps/birds/location" element={<LocationDetail />} />
             <Route path="/apps/birds/devices" element={<Devices />} />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines, MapPin } from "lucide-react";
+import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines, MapPin, ListChecks } from "lucide-react";
 import { useRecorder } from "./recorder";
 import { jget } from "./ui";
 
@@ -12,6 +12,7 @@ import { jget } from "./ui";
 export type NavItem = { path: string; label: string; Icon: typeof Bird };
 export const PRIMARY_NAV: NavItem[] = [
   { path: "/apps/birds", label: "Home", Icon: Bird },
+  { path: "/apps/birds/birds", label: "Birds", Icon: ListChecks },
   { path: "/apps/birds/forecast", label: "Forecast", Icon: CalendarDays },
   { path: "/apps/birds/atlas", label: "Atlas", Icon: Waypoints },
 ];

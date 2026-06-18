@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import { Radio, Loader2, AlertTriangle, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
 import { ListenButton } from "./birds/BirdsHeader";
@@ -10,7 +11,6 @@ import { useBirdsScope, type Source } from "./birds/scope";
 import { Segmented } from "../../ui";
 import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
 import { RecordingsBanner } from "./birds/recordings";
-import SpeciesRow from "./birds/SpeciesRow";
 import ActivityCard from "./birds/ActivityCard";
 import NowCard from "./birds/NowCard";
 import LiveFeed from "./birds/LiveFeed";
@@ -22,14 +22,6 @@ import AppChatDock from "../../components/AppChatDock";
 // panel (this device's spectrogram + feed) appears while you're listening; the
 // always-on yard's live feed is viewable on its own.
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
-// The species-list filter is a view preference: it persists across navigation and
-// reloads (and every place), so it doesn't snap back to "All" each time you land
-// on a dashboard. Stored as one shared value, not per-location.
-const SPECIES_FILTER_KEY = "birdSpeciesFilter";
-function loadSpeciesFilter(): ListStatus {
-  const v = localStorage.getItem(SPECIES_FILTER_KEY);
-  return v === "confirmed" || v === "suggested" || v === "rejected" || v === "active" ? v : "active";
-}
 
 export default function Birds() {
   const rec = useRecorder();
@@ -286,17 +278,10 @@ type Norm = {
   speciesList: { scientific_name: string; common_name: string; count: number; max_conf: number; status?: string; is_new?: boolean; auto?: boolean }[];
   lat?: number | null; lon?: number | null;
 };
-type ListStatus = "active" | "confirmed" | "suggested" | "rejected";
 
 function Dashboard({ source, nb, device }: { source: Source; nb: string; device: string }) {
   const [d, setD] = useState<Norm | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [status, setStatusState] = useState<ListStatus>(loadSpeciesFilter);
-  const setStatus = useCallback((v: ListStatus) => {
-    localStorage.setItem(SPECIES_FILTER_KEY, v);
-    setStatusState(v);
-  }, []);
-  const [newCount, setNewCount] = useState(0);
   const dev = device ? `&device=${encodeURIComponent(device)}` : "";
 
   const load = useCallback(() => {
@@ -305,15 +290,14 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
       Promise.all([
         jget<any>(`/location/summary?location_id=${id}${nb}${dev}`),
         jget<any>(`/location/activity?location_id=${id}${nb}${dev}`),
-        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}${dev}&status=${status}`),
+        // Home is confirmed-only ("settled truth"); the full review (Suggested/
+        // Rejected) lives on the Birds page.
+        jget<{ species: any[] }>(`/location/species?location_id=${id}${nb}${dev}&status=confirmed`),
       ]).then(([s, a, sp]) => {
         setD({
           species: s.species, detections: s.detections, today: s.today, active_days: s.active_days,
           daily: a.daily, hourly: a.hourly, speciesList: sp.species, lat: s.lat, lon: s.lon,
         });
-        // "New" badge = species first heard here in the last 24h, straight from
-        // the list, so the count and the per-row badges can never disagree.
-        setNewCount(sp.species.filter((x) => x.is_new).length);
       }).catch((e) => setErr(String(e)));
     } else {
       Promise.all([
@@ -327,14 +311,14 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
         daily: dd.daily, hourly: h.hourly, speciesList: sp.species, lat: null, lon: null,
       })).catch((e) => setErr(String(e)));
     }
-  }, [source.kind, source.id, nb, dev, status]);
+  }, [source.kind, source.id, nb, dev]);
 
   useEffect(() => { setD(null); setErr(null); load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
 
   if (err && !d) return <p className="error">Could not load: {err}</p>;
   if (!d) return <p className="muted">Loading…</p>;
-  const isLoc = source.kind === "loc";
-  const locId = isLoc ? source.id : undefined;
+  const locId = source.kind === "loc" ? source.id : undefined;
+  const topBirds = [...d.speciesList].sort((a, b) => b.count - a.count).slice(0, 8);
 
   return (
     <>
@@ -347,50 +331,32 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
       {/* Forecast peek: the compact "what to expect" card for a location. */}
       {locId != null && <NowCard locationId={locId} />}
 
-      <section className="card" style={card}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".6rem", flexWrap: "wrap", marginBottom: ".5rem" }}>
-          <h3 style={{ ...h3, margin: 0 }}>
-            Species ({d.speciesList.length})
-            {isLoc && newCount > 0 && <span className="bird-badge" style={{ marginLeft: ".4rem" }}>{newCount} new</span>}
-          </h3>
-          {isLoc && (
-            <select className="num-in" style={{ width: "auto" }} value={status} onChange={(e) => setStatus(e.target.value as ListStatus)}>
-              <option value="active">All</option>
-              <option value="confirmed">Confirmed</option>
-              <option value="suggested">Suggested</option>
-              <option value="rejected">Rejected</option>
-            </select>
-          )}
-        </div>
-        {d.speciesList.length === 0 && (
-          <p className="muted">
-            {!isLoc ? "Nothing yet."
-              : status === "suggested" ? "No suggestions right now."
-              : status === "rejected" ? "Nothing rejected."
-              : "Nothing here yet."}
-          </p>
-        )}
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {isLoc
-            ? d.speciesList.map((s) => (
-                <SpeciesRow key={s.scientific_name} s={s} locId={locId}
-                  status={(s.status as any) || "suggested"}
-                  lat={d.lat} lon={d.lon} onChanged={load} />
-              ))
-            : d.speciesList.map((s) => (
-                <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
-                  <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
-                    <BirdThumb sci={s.scientific_name} common={s.common_name} />
-                    <span style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ display: "block" }}>{s.common_name}</span>
-                      <span className="muted" style={{ fontStyle: "italic", fontSize: ".78rem" }}>{s.scientific_name}</span>
-                    </span>
-                    <span className="muted" style={{ fontSize: ".8rem", textAlign: "right" }}>{s.count}×<br />best {pct(s.max_conf)}</span>
-                  </div>
-                </SpeciesLink>
-              ))}
-        </div>
-      </section>
+      {/* Top birds: a confirmed-only peek; the full review (Confirmed/Suggested/
+          Rejected) lives on the Birds page. */}
+      {topBirds.length > 0 && (
+        <section className="card" style={card}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".6rem", flexWrap: "wrap", marginBottom: ".5rem" }}>
+            <h3 style={{ ...h3, margin: 0 }}>Top birds</h3>
+            <Link to="/apps/birds/birds" className="muted" style={{ fontSize: ".82rem", display: "inline-flex", alignItems: "center", gap: ".15rem" }}>
+              See all <ChevronRight size={14} />
+            </Link>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {topBirds.map((s) => (
+              <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
+                <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
+                  <BirdThumb sci={s.scientific_name} common={s.common_name} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block" }}>{s.common_name}</span>
+                    <span className="muted" style={{ fontStyle: "italic", fontSize: ".78rem" }}>{s.scientific_name}</span>
+                  </span>
+                  <span className="muted" style={{ fontSize: ".8rem", textAlign: "right" }}>{s.count}×<br />best {pct(s.max_conf)}</span>
+                </div>
+              </SpeciesLink>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* At-a-glance stats, at the foot of the page. */}
       <StatGrid>

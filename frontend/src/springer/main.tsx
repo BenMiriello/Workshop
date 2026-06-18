@@ -18,6 +18,7 @@ import Locations from "../pages/apps/birds/Locations";
 import LocationDetail from "../pages/apps/birds/LocationDetail";
 import Devices from "../pages/apps/birds/Devices";
 import BirdDetail from "../pages/apps/birds/BirdDetail";
+import BirdsReview from "../pages/apps/birds/BirdsReview";
 import BirdSettings from "../pages/apps/birds/BirdSettings";
 import Recordings from "../pages/apps/birds/RecordingsPage";
 import Atlas from "../pages/apps/birds/Atlas";
@@ -38,6 +39,7 @@ function BirdsApp() {
             <BirdsShell>
               <Routes>
                 <Route path="/" element={<Birds />} />
+                <Route path="/birds" element={<BirdsReview />} />
                 <Route path="/locations" element={<Locations />} />
                 <Route path="/location" element={<LocationDetail />} />
                 <Route path="/devices" element={<Devices />} />

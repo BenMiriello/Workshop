@@ -10,6 +10,7 @@ import { ConfirmDialog, Segmented } from "../../../ui";
 import { pct, conf, jget, apost, API, Stat, StatGrid } from "./ui";
 import ActivityCard from "./ActivityCard";
 import BirdsHeader from "./BirdsHeader";
+import { useBirdsScope } from "./scope";
 import { PlayButton, fmtBytes } from "./recordings";
 
 // One species' page: photo + description (client-side reference lookup), stats,
@@ -45,11 +46,13 @@ type Detail = {
 export default function BirdDetail() {
   const [params, setParams] = useSearchParams();
   const sci = params.get("sci") || "";
-  const locId = params.get("location_id") || "";
-  const device = params.get("device") || "";
-  const days = params.get("days") || "0";
-  // Detection-list filter. Falls back to the `status` a species link carried in
-  // (e.g. tapping a Suggested species lands on its suggested detections).
+  // Bird detail uses the global Location · Device · Time scope (no local pickers).
+  const { selected, deviceTok, days: scopeDays, setDevice } = useBirdsScope();
+  const locId = selected?.kind === "loc" && selected.id != null ? String(selected.id) : "";
+  const device = deviceTok;
+  const days = String(scopeDays);
+  // Detection-list filter (page-local, not scope). Falls back to the `status` a
+  // species link carried in (e.g. tapping a Suggested species lands on it).
   const status = (params.get("dstatus") || params.get("status") || "all") as DetStatus;
   const [d, setD] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -59,7 +62,7 @@ export default function BirdDetail() {
     const qs = new URLSearchParams({ sci, status });
     if (locId) qs.set("location_id", locId);
     if (device) qs.set("device", device);
-    if (days !== "0") qs.set("days", days);
+    qs.set("days", days);
     return jget<Detail>(`/bird?${qs.toString()}`).then(setD).catch((e) => setErr(String(e)));
   }, [sci, locId, device, days, status]);
 
@@ -70,19 +73,13 @@ export default function BirdDetail() {
     return () => clearInterval(t);
   }, [sci, reload]);
 
-  const setFilter = (key: string, val: string) => {
+  // Only the detection-status filter is page-local now; Location/Device/Time come
+  // from the global scope. Always write it (including "all") and drop any legacy
+  // `status` a species link carried in, so "All" clears the inherited scope.
+  const setStatusFilter = (val: string) => {
     const p = new URLSearchParams(params);
-    if (key === "dstatus") {
-      // The detection filter is one source of truth: always write it (including
-      // "all") and drop any legacy `status` a species link carried in, so picking
-      // "All" actually clears the inherited scope instead of falling back to it.
-      p.set("dstatus", val);
-      p.delete("status");
-    } else if (val && val !== "0") {
-      p.set(key, val);
-    } else {
-      p.delete(key);
-    }
+    p.set("dstatus", val);
+    p.delete("status");
     setParams(p);
   };
 
@@ -96,9 +93,6 @@ export default function BirdDetail() {
   if (locId && place) trail.push({ label: place, to: `/apps/birds?source=loc:${locId}` });
   trail.push({ label: common });
   useCrumbTrail(trail);
-
-  const showLoc = (d?.locations.length || 0) > 1;
-  const showDev = (d?.devices.length || 0) > 1;
 
   return (
     <div>
@@ -130,36 +124,6 @@ export default function BirdDetail() {
 
       {d && (
         <>
-          {/* Filters: location, device, date range (NOT the trust status) */}
-          {(showLoc || showDev) && (
-            <div className="filters">
-              {showLoc && (
-                <label>Location
-                  <select className="num-in" value={locId} onChange={(e) => setFilter("location_id", e.target.value)}>
-                    <option value="">All locations ({d.total_all})</option>
-                    {d.locations.map((L) => <option key={L.id} value={L.id}>{L.name} ({L.count})</option>)}
-                  </select>
-                </label>
-              )}
-              {showDev && (
-                <label>Device
-                  <select className="num-in" value={device} onChange={(e) => setFilter("device", e.target.value)}>
-                    <option value="">All devices</option>
-                    {d.devices.map((D) => <option key={D.token} value={D.token}>{D.name} ({D.count})</option>)}
-                  </select>
-                </label>
-              )}
-              <label>When
-                <select className="num-in" value={days} onChange={(e) => setFilter("days", e.target.value)}>
-                  <option value="0">All time</option>
-                  <option value="1">Today</option>
-                  <option value="7">Last 7 days</option>
-                  <option value="30">Last 30 days</option>
-                </select>
-              </label>
-            </div>
-          )}
-
           <StatGrid>
             <Stat label="Detections" value={d.count.toLocaleString()} />
             <Stat label="Days heard" value={d.days_seen} />
@@ -178,7 +142,7 @@ export default function BirdDetail() {
               <Segmented<DetStatus>
                 ariaLabel="Filter detections by status"
                 value={status}
-                onChange={(v) => setFilter("dstatus", v)}
+                onChange={(v) => setStatusFilter(v)}
                 options={[
                   { value: "all", label: "All" },
                   { value: "confirmed", label: "Confirmed" },
@@ -193,7 +157,7 @@ export default function BirdDetail() {
                 <div>
                   {d.recent.map((r) => (
                     <DetectionRow key={r.id} r={r} hideLoc={!!locId} onChanged={reload}
-                      onDevice={(t) => setFilter("device", t)} />
+                      onDevice={(t) => setDevice(t)} />
                   ))}
                 </div>
               )}
