@@ -1,5 +1,12 @@
 # Birds Redesign — Plan of Action
 
+> **Status: COMPLETE (2026-06-18).** All 8 phases shipped on branch `birds-redesign`,
+> each `tsc` + `check_design` + production-build clean and visually verified.
+> Backend restarted (presence-per-day `windows` field + `/atlas/insights`).
+> Phase 8 (manage pages) needed no changes — already spec-compliant inline-edit
+> lists, verified rendering in the new shell. The call-type×hour heatmap (6/5.2)
+> stays hidden until call clusters are labeled (no fabricated data).
+
 Derived from `BirdsRedesignCompleteHandoff.html` (the complete, self-contained handoff — the source of truth), cross-checked against `MASTER_SPEC.md` and `CHARTS_SPEC.md` (which are textual subsets of it) and the current code under `frontend/src/pages/apps/birds/`.
 
 ## Completeness check (the worry about a lost plan)
