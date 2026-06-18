@@ -191,15 +191,6 @@ class ReasonBody(BaseModel):
     force_llm: bool = False        # always spend Claude (the app "Check now" button)
 
 
-def _should_dispatch(policy: str, checkpoint: str, severity: str, is_dupe: bool) -> bool:
-    if is_dupe or policy == "no":
-        return False
-    if policy == "always":
-        return True
-    # auto
-    return severity in ("caution", "urgent") or checkpoint in ("pre-1h", "pre-30m")
-
-
 @router.post("/reason")
 async def reason_now(body: ReasonBody) -> dict[str, Any]:
     """Compose ONE adaptive message from the live brief + learned patterns,
@@ -213,9 +204,15 @@ async def reason_now(body: ReasonBody) -> dict[str, Any]:
                  or bool(brief.get("late_risk")))
     res = reason.compose_and_store(brief, checkpoint=body.checkpoint, allow_llm=allow_llm)
     msg = res["message"]
-    dispatch = None
-    if _should_dispatch(body.dispatch, body.checkpoint, msg.get("severity", "info"), res["duplicate"]):
+    # Discord dispatch is state-keyed (see alerter.gate_dispatch): suppresses the
+    # LLM's reworded repeats and the non-actionable blind state, so the feed stays
+    # complete while Discord only buzzes on a genuine change.
+    gate = alerter.gate_dispatch(body.dispatch, body.checkpoint, msg, brief, res["duplicate"])
+    if gate["dispatch"]:
         dispatch = await alerter.dispatch_message(msg)
+        alerter.mark_dispatch(gate["state_key"])
+    else:
+        dispatch = {"sent": False, "reason": gate["reason"]}
     return {"message": msg, "stored": res["stored"], "duplicate": res["duplicate"], "dispatch": dispatch}
 
 

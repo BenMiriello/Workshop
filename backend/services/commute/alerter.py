@@ -249,6 +249,93 @@ def render_message(msg: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# --- Discord dispatch gating (state-keyed) -----------------------------------
+# The in-app feed shows every composed message; Discord must not. Two real noise
+# sources motivated this (observed 2026-06-17, up to 10 alerts/day): (1) the LLM
+# rewords the same situation every 5-min tick, slipping past the headline-keyed
+# dedup and firing 3 near-identical alerts in 10 min; (2) the non-actionable
+# "flying blind" caution re-posted every ~20 min. So gate Discord on a STABLE
+# state signature with a per-severity cooldown, and never push the blind state
+# (the operator can't act on "I can't see you").
+_DISPATCH_COOLDOWN_MIN = {"urgent": 15.0, "caution": 30.0, "info": 60.0, "ok": 120.0}
+
+
+def _is_blind(brief: dict[str, Any]) -> bool:
+    rt = (brief.get("realtime_status") or {}).get("available")
+    loc = (brief.get("location") or {}).get("available")
+    return not rt and not loc
+
+
+def _dispatch_state_key(brief: dict[str, Any], severity: str, checkpoint: str) -> str:
+    """A signature of the SITUATION, not the wording. Re-alerts only when the
+    state changes — checkpoint, direction, severity, or lateness crossing a
+    10-min bucket — so the LLM rephrasing the same status can't spam Discord.
+    Checkpoint is included so the pre-1h and pre-30m briefs both still fire."""
+    direction = brief.get("direction") or "?"
+    late_bucket = int((brief.get("late_by_min") or 0) // 10)
+    return f"{checkpoint}|{direction}|{severity}|late{late_bucket}"
+
+
+def _read_dispatch_cooldown() -> dict[str, Any]:
+    p = config.runtime_path("dispatch-cooldown.json")
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except json.JSONDecodeError:
+        return {}
+
+
+def _dispatch_on_cooldown(state_key: str, minutes: float, now: datetime | None = None) -> bool:
+    now = now or _now()
+    last = _read_dispatch_cooldown().get(state_key)
+    if not last:
+        return False
+    try:
+        last_ts = datetime.fromisoformat(str(last).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (now - last_ts).total_seconds() < minutes * 60
+
+
+def mark_dispatch(state_key: str) -> None:
+    """Record that `state_key` was just dispatched to Discord (cooldown anchor).
+    Called by the caller only on an ACTUAL send, so a suppressed message never
+    resets the clock."""
+    if not state_key:
+        return
+    cd = _read_dispatch_cooldown()
+    cd[state_key] = _now().isoformat()
+    p = config.runtime_path("dispatch-cooldown.json")
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cd, indent=2))
+    tmp.replace(p)
+
+
+def gate_dispatch(policy: str, checkpoint: str, msg: dict[str, Any],
+                  brief: dict[str, Any], is_dupe: bool,
+                  now: datetime | None = None) -> dict[str, Any]:
+    """Decide whether a composed message goes to Discord. Pure read (no writes);
+    the caller marks the cooldown only on an actual send. Returns
+    {dispatch: bool, reason: str, state_key: str | None}."""
+    if policy == "no" or is_dupe:
+        return {"dispatch": False, "reason": "policy=no or duplicate", "state_key": None}
+    sev = msg.get("severity", "info")
+    # Non-actionable blind state: in-app feed only, never nag Discord. An urgent
+    # (e.g. clock-confirmed very late) is still allowed through but cooldown'd.
+    if _is_blind(brief) and sev != "urgent":
+        return {"dispatch": False, "reason": "blind state — in-app only (non-actionable)", "state_key": None}
+    base_ok = (policy == "always" or sev in ("caution", "urgent")
+               or checkpoint in ("pre-1h", "pre-30m"))
+    if not base_ok:
+        return {"dispatch": False, "reason": "below auto threshold", "state_key": None}
+    state_key = _dispatch_state_key(brief, sev, checkpoint)
+    win = _DISPATCH_COOLDOWN_MIN.get(sev, 30.0)
+    if _dispatch_on_cooldown(state_key, win, now):
+        return {"dispatch": False, "reason": f"state cooldown {state_key} ({win:.0f}m)", "state_key": state_key}
+    return {"dispatch": True, "reason": "dispatch", "state_key": state_key}
+
+
 async def dispatch_message(msg: dict[str, Any], channel_id: str | None = None) -> dict[str, Any]:
     """Send a canonical message to Discord (or the masini queue) and log it.
     Used by the reasoner-driven cron path; the message itself is already

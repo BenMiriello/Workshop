@@ -179,6 +179,63 @@ class TestExistingPolicyStillHolds:
 
 
 # ---------------------------------------------------------------------------
+# State-keyed Discord dispatch gate (2026-06-17 noise fix): the in-app feed gets
+# every message; Discord only buzzes on a genuine state change.
+# ---------------------------------------------------------------------------
+
+class TestDispatchGate:
+    @staticmethod
+    def _msg(severity="caution", headline="x"):
+        return {"severity": severity, "headline": headline, "kind": "alert"}
+
+    @staticmethod
+    def _brief(direction="to-work", late_by_min=0.0, rt=True, loc=True):
+        return {"direction": direction, "late_by_min": late_by_min,
+                "realtime_status": {"available": rt}, "location": {"available": loc}}
+
+    def test_blind_caution_is_in_app_only(self):
+        g = alerter.gate_dispatch("auto", "during",
+                                  self._msg("caution", "Can't confirm — flying blind"),
+                                  self._brief(rt=False, loc=False), is_dupe=False)
+        assert g["dispatch"] is False and "blind" in g["reason"]
+
+    def test_blind_urgent_still_allowed(self):
+        with patch.object(alerter, "_read_dispatch_cooldown", return_value={}):
+            g = alerter.gate_dispatch("auto", "during",
+                                      self._msg("urgent", "35 min past target"),
+                                      self._brief(late_by_min=35, rt=False, loc=False), False)
+        assert g["dispatch"] is True
+
+    def test_llm_wording_variance_suppressed_by_state_cooldown(self):
+        brief = self._brief(late_by_min=35)
+        with patch.object(alerter, "_read_dispatch_cooldown", return_value={}):
+            g1 = alerter.gate_dispatch("auto", "during",
+                                       self._msg("urgent", "35 min past — at office?"), brief, False)
+        assert g1["dispatch"] is True
+        sk, recent = g1["state_key"], alerter._now().isoformat()
+        # 5 min later, DIFFERENT wording but SAME situation → cooldown suppresses.
+        with patch.object(alerter, "_read_dispatch_cooldown", return_value={sk: recent}):
+            g2 = alerter.gate_dispatch("auto", "during",
+                                       self._msg("urgent", "you should be at work by now"), brief, False)
+        assert g2["dispatch"] is False and "cooldown" in g2["reason"]
+
+    def test_worsening_lateness_crosses_bucket_and_realerts(self):
+        k25 = alerter._dispatch_state_key(self._brief(late_by_min=25), "urgent", "during")
+        k35 = alerter._dispatch_state_key(self._brief(late_by_min=35), "urgent", "during")
+        assert k25 != k35   # 10-min bucket flip → new key → re-alert allowed
+
+    def test_pre_briefs_have_distinct_state_keys(self):
+        b = self._brief(direction="to-home")
+        assert (alerter._dispatch_state_key(b, "ok", "pre-1h")
+                != alerter._dispatch_state_key(b, "ok", "pre-30m"))
+
+    def test_dupe_and_policy_no_suppress(self):
+        b = self._brief()
+        assert alerter.gate_dispatch("auto", "during", self._msg(), b, is_dupe=True)["dispatch"] is False
+        assert alerter.gate_dispatch("no", "during", self._msg(), b, is_dupe=False)["dispatch"] is False
+
+
+# ---------------------------------------------------------------------------
 # _clean_reason — small helper, but the operator has reported "the fle" type
 # mid-word truncations before. Keep these tests so regressions are caught.
 # ---------------------------------------------------------------------------
