@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { MapPin, Smartphone, Clock, RotateCcw, MoreHorizontal, X } from "lucide-react";
-import { PRIMARY_NAV, MANAGE_NAV, InlineSelect, ListenButton, RecordingIndicator } from "./BirdsHeader";
+import { PRIMARY_NAV, MANAGE_NAV, InlineSelect } from "./BirdsHeader";
 import { useBirdsScope, useIsNarrow, ALL_LOCS, TIME_OPTIONS } from "./scope";
 
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
@@ -51,7 +51,6 @@ function Sidebar() {
           {(() => { const H = PRIMARY_NAV[0].Icon; return <H size={22} strokeWidth={1.8} />; })()}
           <span>Birds</span>
         </Link>
-        <RecordingIndicator />
       </div>
 
       <nav className="birds-nav" aria-label="Primary">
@@ -71,8 +70,6 @@ function Sidebar() {
         <div className="birds-nav__label">Scope</div>
         <ScopeControls layout="stack" />
       </div>
-
-      {!PUBLIC && <div className="birds-side-foot"><ListenButton /></div>}
     </aside>
   );
 }
@@ -81,10 +78,6 @@ function MobileTopBar() {
   return (
     <div className="birds-topbar">
       <ScopeControls layout="row" />
-      <div className="birds-topbar__end">
-        <RecordingIndicator />
-        {!PUBLIC && <ListenButton />}
-      </div>
     </div>
   );
 }

@@ -13,7 +13,6 @@ import { RecorderProvider } from "../pages/apps/birds/recorder";
 import { BreadcrumbProvider } from "../components/appNav";
 import { BirdsScopeProvider } from "../pages/apps/birds/scope";
 import BirdsShell from "../pages/apps/birds/BirdsShell";
-import RecorderBar from "../pages/apps/birds/RecorderBar";
 import Birds from "../pages/apps/Birds";
 import Locations from "../pages/apps/birds/Locations";
 import LocationDetail from "../pages/apps/birds/LocationDetail";
@@ -50,7 +49,6 @@ function BirdsApp() {
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </BirdsShell>
-            <RecorderBar />
           </div>
         </BirdsScopeProvider>
       </BreadcrumbProvider>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Mic, Square, Radio, Loader2, AlertTriangle, X } from "lucide-react";
+import { Radio, Loader2, AlertTriangle, X } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
+import { ListenButton } from "./birds/BirdsHeader";
 import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
@@ -39,17 +40,12 @@ export default function Birds() {
     <div>
       {!PUBLIC && <RecordingsBanner />}
 
-      {/* If start() failed (mic blocked/denied, analyzer down), the live panel is
-          torn down — so surface the reason here instead of the button silently
-          doing nothing. */}
-      {!PUBLIC && rec.err && !(rec.recording || rec.wasListening) && (
-        <div className="card" style={{ padding: ".6rem .9rem", marginBottom: "1rem", display: "flex", alignItems: "center", gap: ".5rem" }}>
-          <AlertTriangle size={16} style={{ color: "var(--warn)" }} />
-          <span className="error" style={{ flex: 1, margin: 0 }}>{rec.err}</span>
-        </div>
-      )}
-
-      {!PUBLIC && (rec.recording || rec.wasListening) && <LivePanel />}
+      {/* The live card is the home's primary surface and the ONE recording
+          affordance: Listen/Stop + a single pulsing "Live" sit in its header
+          (the old top-bar Listen + bottom RecorderBar pill are gone). It's
+          persistent so Listen is always reachable, showing an idle invite when
+          not listening and this device's real scrolling spectrogram while live. */}
+      {!PUBLIC && <LiveCard />}
       {/* Live feeds from any broadcasting device you can see (your shared devices,
           friends' shared devices) — this is how you watch another mic's feed. */}
       {!PUBLIC && <LiveFeed />}
@@ -74,51 +70,62 @@ export default function Birds() {
   );
 }
 
-// --- Live panel: this device's spectrogram + now hearing + session species ----
-function LivePanel() {
+// --- Live card: the home's primary surface + sole recording affordance --------
+// Persistent on Home. Header carries the single Listen/Stop control (ListenButton)
+// and a single pulsing "Live" indicator. While listening it shows this device's
+// real scrolling spectrogram + now-hearing + session species; idle, it invites a
+// tap. (Phase 7 adds the Histogram <-> Aviary view toggle + expand here.)
+function LiveCard() {
   const rec = useRecorder();
   const [showNonBird] = useShowNonBird();
-  const paused = !rec.recording; // wasListening but not capturing (after a reload)
+  const live = rec.recording;
+  const paused = rec.wasListening && !rec.recording; // was listening, not capturing (after a reload)
+  const active = live || paused;
   const species = showNonBird ? rec.sessionSpecies : rec.sessionSpecies.filter((s) => s.is_bird);
   const hearing = (showNonBird ? rec.nowHearing : rec.nowHearing.filter((d) => d.is_bird))
     .sort((a, b) => b.confidence - a.confidence);
 
   return (
-    <section className="card" style={{ padding: "1rem", marginBottom: "1rem", border: "1px solid color-mix(in srgb, var(--accent) 33%, transparent)" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: ".5rem", marginBottom: ".6rem", flexWrap: "wrap" }}>
-        {paused
-          ? <Radio size={16} className="muted" />
-          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} style={{ color: "var(--ok)" }} />}
+    <section className={`card birds-livecard${live ? " is-live" : ""}`}>
+      <div className="birds-livecard__head">
+        {live
+          ? <span className="birds-live"><Radio size={14} className="spin-pulse" /> Live</span>
+          : rec.status === "analyzing" ? <Loader2 size={16} className="spin" /> : <Radio size={16} className="muted" />}
         <strong>{rec.device.name || "This device"}</strong>
         <span className="muted" style={{ fontSize: ".85rem" }}>
-          {paused ? "· paused" : rec.location ? `· ${rec.location}` : "· locating…"}
+          {live ? (rec.location ? `· ${rec.location}` : "· locating…") : paused ? "· paused" : "· not listening"}
         </span>
-        {paused ? (
-          <span style={{ marginLeft: "auto", display: "inline-flex", gap: ".4rem" }}>
-            <button className="btn" onClick={rec.start}><Mic size={14} /> Resume</button>
-            <button className="btn" onClick={rec.stop} title="Dismiss"><X size={14} /></button>
-          </span>
-        ) : <button className="btn" onClick={rec.stop} style={{ marginLeft: "auto" }}><Square size={14} /> Stop</button>}
+        <span className="birds-livecard__ctl">
+          {paused && <button className="btn sm" onClick={rec.stop} title="Dismiss" aria-label="Dismiss"><X size={14} /></button>}
+          <ListenButton />
+        </span>
       </div>
 
-      <Spectrogram height={150} />
+      {active && <Spectrogram height={150} />}
+      {live && rec.needsLocation && <SetLocationInline />}
 
-      {rec.needsLocation && <SetLocationInline />}
+      {!active && (
+        <p className="muted" style={{ margin: ".4rem 0 0", fontSize: ".85rem" }}>
+          Not listening. Tap the mic to detect birds from this device.
+        </p>
+      )}
 
-      <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
-        {paused ? (
-          <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
-        ) : hearing.length > 0 ? (
-          <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
-            <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
-            {hearing.slice(0, 4).map((d, i) => (
-              <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
-            ))}
-          </div>
-        ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
-      </div>
+      {active && (
+        <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
+          {paused ? (
+            <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
+          ) : hearing.length > 0 ? (
+            <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
+              <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
+              {hearing.slice(0, 4).map((d, i) => (
+                <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
+              ))}
+            </div>
+          ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
+        </div>
+      )}
 
-      {species.length > 0 && (
+      {active && species.length > 0 && (
         <>
           <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
@@ -132,7 +139,7 @@ function LivePanel() {
           </div>
         </>
       )}
-      {rec.err && <p className="error" style={{ marginBottom: 0 }}>{rec.err}</p>}
+      {rec.err && <p className="error" style={{ marginBottom: 0, marginTop: ".5rem" }}>{rec.err}</p>}
       {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
     </section>
   );
@@ -277,18 +284,14 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
 
   return (
     <>
-      <StatGrid>
-        <Stat label="Species" value={d.species} />
-        <Stat label="Detections" value={d.detections.toLocaleString()} />
-        <Stat label="Today" value={d.today} />
-        <Stat label="Active days" value={d.active_days} />
-      </StatGrid>
-
-      {locId != null && <NowCard locationId={locId} />}
-
+      {/* Home order (redesign): Activity -> Forecast peek -> Top birds -> stats.
+          Recent (presence) slots above Activity in Phase 3. */}
       {(d.daily.length > 0 || d.hourly.some((h) => h.count > 0)) && (
         <ActivityCard daily={d.daily} hourly={d.hourly} locationId={locId} />
       )}
+
+      {/* Forecast peek: the compact "what to expect" card for a location. */}
+      {locId != null && <NowCard locationId={locId} />}
 
       <section className="card" style={card}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: ".6rem", flexWrap: "wrap", marginBottom: ".5rem" }}>
@@ -334,6 +337,14 @@ function Dashboard({ source, nb, device }: { source: Source; nb: string; device:
               ))}
         </div>
       </section>
+
+      {/* At-a-glance stats, at the foot of the page. */}
+      <StatGrid>
+        <Stat label="Species" value={d.species} />
+        <Stat label="Detections" value={d.detections.toLocaleString()} />
+        <Stat label="Today" value={d.today} />
+        <Stat label="Active days" value={d.active_days} />
+      </StatGrid>
     </>
   );
 }

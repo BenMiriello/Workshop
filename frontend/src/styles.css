@@ -295,6 +295,16 @@ label {
 .birds-pagehead { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 1rem; }
 .birds-pagehead__title { margin: 0; font-size: 1.4rem; }
 
+/* Live card: the home's primary surface and sole recording affordance — Listen +
+   a single pulsing "Live" live in its header. */
+.birds-livecard { padding: 1rem; margin-bottom: 1rem; }
+.birds-livecard.is-live { border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.birds-livecard__head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; flex-wrap: wrap; }
+.birds-livecard__ctl { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; }
+.birds-live { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--accent); font-weight: 700;
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.birds-live > svg { color: var(--accent); }
+
 /* Mobile: top filter bar + fixed bottom tab bar. */
 .birds-shell--mobile { display: block; }
 .birds-shell--mobile .birds-content { padding-bottom: 4.75rem; }

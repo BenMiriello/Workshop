@@ -25,7 +25,6 @@ import ForecastWeek from "./pages/apps/birds/ForecastWeek";
 import { BirdsScopeProvider } from "./pages/apps/birds/scope";
 import BirdsShell from "./pages/apps/birds/BirdsShell";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
-import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
@@ -124,7 +123,6 @@ export default function App() {
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />
         </Routes>
       </main>
-      <RecorderBar />
     </div>
     </BreadcrumbProvider>
     </RecorderProvider>

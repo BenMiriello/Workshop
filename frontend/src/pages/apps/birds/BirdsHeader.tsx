@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines, MapPin } from "lucide-react";
 import { useRecorder } from "./recorder";
-import { StatusPill } from "../../../ui";
-import { jget, isRecording } from "./ui";
+import { jget } from "./ui";
 
 // Navigation for the Birds app, the SINGLE source of navigable sections. The
 // responsive chrome (BirdsShell) renders these; pages never hand-roll section
@@ -34,35 +33,6 @@ export default function BirdsHeader({ title, children }: { title?: React.ReactNo
       {title && <h2 className="birds-pagehead__title">{title}</h2>}
       {children}
     </div>
-  );
-}
-
-// A glanceable "something is listening right now" badge, shown on every birds page
-// (including the public site). Polls the device list and lights up while any device
-// is actively posting — primarily the always-on yard Pi. Animated dot = the only
-// thing on the page that animates, per the design system's "running" status.
-export function RecordingIndicator() {
-  const rec = useRecorder();
-  const [others, setOthers] = useState(0);
-  useEffect(() => {
-    let alive = true;
-    // Count OTHER devices by last_seen (the always-on yard Pi only ever bumps it
-    // by posting audio, so freshness == recording). The current browser is excluded
-    // here because its last_seen is also bumped just by loading the app; its true
-    // recording state comes from the local recorder below.
-    const load = () => jget<{ devices: { token: string; last_seen: string | null }[] }>("/devices")
-      .then((d) => { if (alive) setOthers(d.devices.filter((x) => x.token !== rec.device.token && isRecording(x.last_seen)).length); })
-      .catch(() => {});
-    load();
-    const t = setInterval(load, 20000);
-    return () => { alive = false; clearInterval(t); };
-  }, [rec.device.token]);
-  const count = others + (rec.recording ? 1 : 0);
-  if (count < 1) return null;
-  return (
-    <StatusPill status="running" className="birds-live">
-      {count === 1 ? "Recording" : `${count} recording`}
-    </StatusPill>
   );
 }
 
