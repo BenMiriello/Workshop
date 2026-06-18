@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import {
-  Bar, ComposedChart, Line, ReferenceLine, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  Bar, ComposedChart, Line, ReferenceLine, ReferenceArea, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Bird } from "lucide-react";
 import { CHART_SERIES, CHART_TARGET, ChartTooltip } from "../../../ui";
@@ -81,34 +81,49 @@ export type ChartOverlay = { key: string; name?: string; color?: string; fmt?: (
 // species-diversity per hour. Distinct from `overlay`, which gets its own right axis.
 export type ChartLine = { key: string; name?: string; color?: string };
 
-export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick, markers, overlay, lines }: {
+export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick, markers, overlay, lines, sky }: {
   data: Record<string, unknown>[]; x: string; fill: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   xfmt?: (v: any) => string; interval?: number; labelFmt?: (v: any) => string; height?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   onBarClick?: (datum: any) => void;
   markers?: ChartMarker[]; overlay?: ChartOverlay; lines?: ChartLine[];
+  // Day/night backdrop for hourly charts: shade the hours before sunrise and
+  // after sunset, always paired with the Sunrise/Sunset markers so it reads as
+  // time-of-day, never decoration.
+  sky?: { sunrise: number | null; sunset: number | null };
 }) {
   const hasOverlay = !!overlay;
   const hasLines = !!(lines && lines.length);
   const namedSeries = hasOverlay || hasLines;
+  const lineColor = lines?.[0]?.color ?? CHART_SERIES[2];
   return (
     <div style={{ height }}>
       <ResponsiveContainer>
         {/* ComposedChart renders the bar identically to BarChart but also lets us
-            layer the optional temperature Line + dawn/dusk ReferenceLines. */}
-        <ComposedChart data={data} margin={{ top: 4, right: hasOverlay ? 4 : 8, left: -18, bottom: 0 }}>
+            layer the optional temperature Line, diversity line, the day/night
+            backdrop, and the Sunrise/Sunset ReferenceLines. */}
+        <ComposedChart data={data} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+          {sky?.sunrise != null && (
+            <ReferenceArea yAxisId="count" x1={0} x2={Math.round(sky.sunrise)} fill="var(--muted)" fillOpacity={0.12} stroke="none" />
+          )}
+          {sky?.sunset != null && (
+            <ReferenceArea yAxisId="count" x1={Math.round(sky.sunset)} x2={23} fill="var(--muted)" fillOpacity={0.12} stroke="none" />
+          )}
           <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
           <XAxis dataKey={x} tick={{ fontSize: 10 }} tickFormatter={xfmt} interval={interval} minTickGap={16} />
           <YAxis yAxisId="count" tick={{ fontSize: 10 }} allowDecimals={false} />
           {hasOverlay && (
-            <YAxis yAxisId="ov" orientation="right" width={30} tick={{ fontSize: 10 }}
-              tickFormatter={overlay!.fmt} />
+            <YAxis yAxisId="ov" orientation="right" width={34} tick={{ fontSize: 10, fill: overlay!.color }}
+              stroke={overlay!.color} tickFormatter={overlay!.fmt} />
           )}
-          {/* Lines (e.g. diversity) get their own hidden, auto-scaled axis so the
-              SHAPE shows regardless of magnitude — a 0–2.5 Shannon line isn't
-              flattened against a 0–60 detection-count axis. Value lives in tooltip. */}
-          {hasLines && <YAxis yAxisId="ln" hide domain={["auto", "auto"]} />}
+          {/* Diversity (e.g. Shannon H per hour) rides its OWN labeled right axis,
+              color-matched to its line — no longer floating on a hidden scale.
+              recharts stacks it outside the temperature axis when both are shown. */}
+          {hasLines && (
+            <YAxis yAxisId="ln" orientation="right" width={30} domain={["auto", "auto"]}
+              tick={{ fontSize: 10, fill: lineColor }} stroke={lineColor} />
+          )}
           <Tooltip
             isAnimationActive={false}
             cursor={{ fill: "rgba(120,160,255,0.08)" }}

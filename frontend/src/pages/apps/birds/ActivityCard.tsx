@@ -89,12 +89,12 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
   const canWeather = env != null && env.temps.some((t) => t != null);
   const markers = env
     ? ([
-        env.srHour != null ? { x: Math.round(env.srHour), label: "Dawn" } : null,
-        env.ssHour != null ? { x: Math.round(env.ssHour), label: "Dusk" } : null,
+        env.srHour != null ? { x: Math.round(env.srHour), label: "Sunrise" } : null,
+        env.ssHour != null ? { x: Math.round(env.ssHour), label: "Sunset" } : null,
       ].filter(Boolean) as { x: number; label: string }[])
     : undefined;
   const tempOverlay = showWeather && canWeather
-    ? { key: "temp", name: "Temp", fmt: (v: number) => `${Math.round(v)}°F` }
+    ? { key: "temp", name: "Temperature", color: "var(--warn)", fmt: (v: number) => `${Math.round(v)}°F` }
     : undefined;
   // Diversity layer: Shannon H per hour (evenness-weighted — high when many species
   // share the hour, low when one dominates). On its own hidden auto-scaled axis so
@@ -115,7 +115,7 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
             <DayScope day={day} activeDays={activeDays} onAll={() => setDay(null)} onPick={setDay} />
           )}
           {view === "hour" && canWeather && (
-            <Toggle checked={showWeather} onChange={setShowWeather} label="Weather" />
+            <Toggle checked={showWeather} onChange={setShowWeather} label="Temperature" />
           )}
           {view === "hour" && canDiversity && (
             <Toggle checked={showDiversity} onChange={setShowDiversity} label="Diversity" />
@@ -132,7 +132,8 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
       {view === "day"
         ? <Chart data={dailyAsc} x="date" fill={CHART_SERIES[1]} xfmt={(x: string) => x.slice(5)} onBarClick={drillToDay} />
         : <Chart data={hourView} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh}
-            markers={markers} overlay={tempOverlay} lines={diversityLines} />}
+            markers={markers} overlay={tempOverlay} lines={diversityLines}
+            sky={env ? { sunrise: env.srHour, sunset: env.ssHour } : undefined} />}
     </section>
   );
 }
