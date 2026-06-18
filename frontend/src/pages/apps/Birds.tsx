@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Radio, Loader2, AlertTriangle, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Radio, Loader2, AlertTriangle, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
 import { ListenButton } from "./birds/BirdsHeader";
 import Spectrogram from "./birds/Spectrogram";
@@ -7,6 +7,7 @@ import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
 import { useShowNonBird } from "./birds/settings";
 import { useBirdsScope, type Source } from "./birds/scope";
+import { Segmented } from "../../ui";
 import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
 import { RecordingsBanner } from "./birds/recordings";
 import SpeciesRow from "./birds/SpeciesRow";
@@ -46,10 +47,12 @@ export default function Birds() {
           persistent so Listen is always reachable, showing an idle invite when
           not listening and this device's real scrolling spectrogram while live. */}
       {!PUBLIC && <LiveCard />}
+      {/* Recent: presence (15-min windows), newest first — directly under the
+          live card per the redesign order. */}
+      {!PUBLIC && yardAvailable && <RecentCard nb={nb} />}
       {/* Live feeds from any broadcasting device you can see (your shared devices,
           friends' shared devices) — this is how you watch another mic's feed. */}
       {!PUBLIC && <LiveFeed />}
-      {!PUBLIC && yardAvailable && <YardLiveFeed nb={nb} />}
 
       {/* The Live Aviary: an ambient "who's in the yard right now" diorama, sitting
           directly under the live feed, driven by real detections from the mic.
@@ -145,47 +148,98 @@ function LiveCard() {
   );
 }
 
-// The always-on yard's live feed: the latest detections it is logging right now.
-// No spectrogram (we don't have the yard's audio) — just the rolling list, so you
-// can watch what the house mic is hearing without listening on this device.
-type YardDet = { id: number; time: string; common_name: string; scientific_name: string; confidence: number };
-function t12(t: string): string {
-  const [h, m] = (t || "").split(":").map(Number);
-  if (Number.isNaN(h)) return t;
-  const ap = h < 12 ? "AM" : "PM";
-  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${ap}`;
+// Recent (presence): each species once, newest first, with how many 15-minute
+// windows it appeared in over the selected lookback. Presence over chatter — a
+// constantly-calling bird does not outrank a quiet, reliably-present one; raw
+// per-detection lists live on the bird page. Reads the always-on yard feed
+// (/detections); shown when a live yard feed exists.
+const RECENT_WINDOWS = [
+  { value: "15m", label: "15m", mins: 15 },
+  { value: "1h", label: "1h", mins: 60 },
+  { value: "today", label: "Today", mins: 0 },
+];
+const PER_PAGE = 10;
+type RecentDet = { date?: string; time: string; common_name: string; scientific_name: string };
+function detEpoch(date: string | undefined, time: string): number {
+  const t = (time || "").slice(0, 8);
+  const d = date || new Date().toISOString().slice(0, 10);
+  return new Date(`${d}T${t}`).getTime();
 }
-function YardLiveFeed({ nb }: { nb: string }) {
-  const [open, setOpen] = useState(false);
-  const [dets, setDets] = useState<YardDet[]>([]);
+function clockOf(epoch: number): string {
+  return new Date(epoch).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+function RecentCard({ nb }: { nb: string }) {
+  const [win, setWin] = useState("1h");
+  const [page, setPage] = useState(0);
+  const [dets, setDets] = useState<RecentDet[]>([]);
   useEffect(() => {
-    if (!open) return;
-    const load = () => jget<{ detections: YardDet[] }>(`/detections?limit=8${nb}`)
-      .then((d) => setDets(d.detections)).catch(() => {});
+    const load = () => jget<{ detections: RecentDet[] }>(`/detections?limit=1000${nb}`)
+      .then((d) => setDets(d.detections || [])).catch(() => {});
     load();
     const t = setInterval(load, 8000);
     return () => clearInterval(t);
-  }, [open, nb]);
+  }, [nb]);
+  useEffect(() => setPage(0), [win]);
+
+  const cutoff = useMemo(() => {
+    const w = RECENT_WINDOWS.find((x) => x.value === win)!;
+    if (w.mins) return Date.now() - w.mins * 60_000;
+    const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime();
+  }, [win]);
+
+  const rows = useMemo(() => {
+    const map = new Map<string, { common: string; latest: number; buckets: Set<number> }>();
+    for (const r of dets) {
+      const t = detEpoch(r.date, r.time);
+      if (!Number.isFinite(t) || t < cutoff) continue;
+      let e = map.get(r.scientific_name);
+      if (!e) { e = { common: r.common_name, latest: t, buckets: new Set() }; map.set(r.scientific_name, e); }
+      if (t > e.latest) e.latest = t;
+      e.buckets.add(Math.floor(t / (15 * 60_000)));
+    }
+    return [...map.entries()]
+      .map(([sci, e]) => ({ sci, common: e.common, latest: e.latest, windows: e.buckets.size }))
+      .sort((a, b) => b.latest - a.latest);
+  }, [dets, cutoff]);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+  const safePage = Math.min(page, pageCount - 1);
+  const shown = rows.slice(safePage * PER_PAGE, safePage * PER_PAGE + PER_PAGE);
 
   return (
-    <section className="card" style={{ padding: ".7rem 1rem", marginBottom: "1rem" }}>
-      <button type="button" onClick={() => setOpen((v) => !v)}
-        style={{ display: "flex", alignItems: "center", gap: ".5rem", width: "100%", background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
-        <Radio size={15} style={{ color: "var(--ok)" }} />
-        <strong style={{ fontSize: ".92rem" }}>Yard live feed</strong>
-        <span className="muted" style={{ fontSize: ".8rem", marginLeft: "auto" }}>{open ? "Hide" : "Show what the always-on mic hears"}</span>
-      </button>
-      {open && (
-        <div style={{ marginTop: ".5rem" }}>
-          {dets.length === 0
-            ? <p className="muted" style={{ fontSize: ".82rem", margin: 0 }}>Nothing in the last few minutes.</p>
-            : dets.map((r) => (
-              <div key={r.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".35rem 0", borderTop: "1px solid var(--border)", fontSize: ".84rem" }}>
-                <span className="mono muted" style={{ minWidth: 78, flexShrink: 0 }}>{t12(r.time)}</span>
-                <SpeciesLink sci={r.scientific_name} common={r.common_name} style={{ flex: 1, minWidth: 0 }}>{r.common_name}</SpeciesLink>
-                <span className="muted" style={{ fontSize: ".78rem" }}>{pct(r.confidence)}</span>
+    <section className="card" style={{ padding: "1rem", marginBottom: "1rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap", marginBottom: ".5rem" }}>
+        <h3 style={{ margin: 0, fontSize: "1rem", display: "flex", alignItems: "center", gap: ".4rem" }}>
+          <Radio size={15} style={{ color: "var(--ok)" }} /> Recent
+        </h3>
+        <span style={{ marginLeft: "auto" }}>
+          <Segmented value={win} onChange={setWin} ariaLabel="Recent window"
+            options={RECENT_WINDOWS.map((w) => ({ value: w.value, label: w.label }))} />
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="muted" style={{ fontSize: ".84rem", margin: 0 }}>Nothing heard in this window yet.</p>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {shown.map((r) => (
+            <SpeciesLink key={r.sci} sci={r.sci} common={r.common}>
+              <div style={{ display: "flex", alignItems: "center", gap: ".7rem", padding: ".5rem 0", borderTop: "1px solid var(--border)" }}>
+                <BirdThumb sci={r.sci} common={r.common} />
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block" }}>{r.common}</span>
+                  <span className="muted" style={{ fontSize: ".78rem" }}>{r.windows} {r.windows === 1 ? "window" : "windows"}</span>
+                </span>
+                <span className="mono muted" style={{ fontSize: ".8rem", flexShrink: 0 }}>{clockOf(r.latest)}</span>
               </div>
-            ))}
+            </SpeciesLink>
+          ))}
+        </div>
+      )}
+      {pageCount > 1 && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: ".75rem", marginTop: ".6rem" }}>
+          <button className="btn sm" disabled={safePage === 0} onClick={() => setPage(safePage - 1)} aria-label="Previous page"><ChevronLeft size={15} /></button>
+          <span className="muted" style={{ fontSize: ".8rem" }}>Page {safePage + 1} / {pageCount}</span>
+          <button className="btn sm" disabled={safePage >= pageCount - 1} onClick={() => setPage(safePage + 1)} aria-label="Next page"><ChevronRight size={15} /></button>
         </div>
       )}
     </section>
