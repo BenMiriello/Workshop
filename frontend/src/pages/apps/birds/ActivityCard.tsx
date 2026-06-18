@@ -12,7 +12,7 @@ import { hh, Chart, CHART_SERIES } from "./ui";
 //                  a Per-day bar selects that day here.
 // Reused on the home dashboard, location pages, and the species page.
 
-type Day = { date: string; count: number; hourly?: number[]; hourly_species?: number[]; hourly_shannon?: number[] };
+type Day = { date: string; count: number; windows?: number; hourly?: number[]; hourly_species?: number[]; hourly_shannon?: number[] };
 type Hour = { hour: number; count: number; species?: number; shannon?: number };
 type View = "day" | "hour";
 // Sun/dusk hours (local, fractional) + per-local-hour temperature for the day in
@@ -31,10 +31,12 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
   const [day, setDay] = useState<string | null>(null); // a specific day, or null = all days
   const [showWeather, setShowWeather] = useState(false); // temperature overlay — off by default
   const [showDiversity, setShowDiversity] = useState(false); // species-richness line — off by default
+  const [dayMetric, setDayMetric] = useState<"presence" | "count">("presence"); // day-over-day: presence over chatter
   const [env, setEnv] = useState<EnvData | null>(null);
 
   const dailyAsc = useMemo(
     () => [...daily].sort((a, b) => (a.date < b.date ? -1 : 1)), [daily]);
+  const canPresence = useMemo(() => dailyAsc.some((d) => d.windows != null), [dailyAsc]);
 
   // The days that actually have activity — the only ones selectable in the picker.
   const activeDays = useMemo(
@@ -111,6 +113,14 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
           <h3 style={{ margin: 0, display: "flex", alignItems: "center", gap: ".5rem", fontSize: "1rem" }}>
             <Sunrise size={17} /> Activity
           </h3>
+          {view === "day" && canPresence && (
+            <Segmented<"presence" | "count">
+              ariaLabel="Day metric"
+              value={dayMetric}
+              onChange={setDayMetric}
+              options={[{ value: "presence", label: "Presence" }, { value: "count", label: "Detections" }]}
+            />
+          )}
           {view === "hour" && (
             <DayScope day={day} activeDays={activeDays} onAll={() => setDay(null)} onPick={setDay} />
           )}
@@ -130,7 +140,10 @@ export default function ActivityCard({ daily, hourly, locationId }: { daily: Day
       </div>
 
       {view === "day"
-        ? <Chart data={dailyAsc} x="date" fill={CHART_SERIES[1]} xfmt={(x: string) => x.slice(5)} onBarClick={drillToDay} />
+        ? <Chart data={dailyAsc} x="date" fill={CHART_SERIES[1]} xfmt={(x: string) => x.slice(5)} onBarClick={drillToDay}
+            barKey={dayMetric === "presence" && canPresence ? "windows" : "count"}
+            barName={dayMetric === "presence" && canPresence ? "Presence" : "Detections"}
+            unit={dayMetric === "presence" && canPresence ? "window" : "detection"} />
         : <Chart data={hourView} x="hour" fill={CHART_SERIES[3]} xfmt={(h: number) => String(h)} interval={1} labelFmt={hh}
             markers={markers} overlay={tempOverlay} lines={diversityLines}
             sky={env ? { sunrise: env.srHour, sunset: env.ssHour } : undefined} />}

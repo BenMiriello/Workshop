@@ -1238,6 +1238,159 @@ def recent(station: str, limit: int = 100, include_nonbird: bool = False) -> lis
     return [dict(r) for r in rows]
 
 
+# The always-on yard mic's device token (the bridge posts under this). Detections
+# from it ARE the yard's data in the unified store, so this is the scope for the
+# yard read path that replaced the retired BirdNET-Go birdnet.db reader.
+YARD_DEVICE_TOKEN = os.environ.get("BIRDNET_YARD_DEVICE", "yard-pi-springer-01")
+
+
+def yard_detections(limit: int = 100, min_conf: float = 0.0,
+                    include_nonbird: bool = False) -> list[dict]:
+    """Recent detections from the always-on yard mic (unified store), shaped like
+    the old birds_store.detections() the UI expects: the stored UTC ts split into
+    local date + time. Drives the Live Aviary, the yard live feed, and any other
+    recent-detections reader."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT id, ts, scientific_name, common_name, round(confidence,4) AS confidence, "
+            "is_bird, clip_name FROM browser_detections WHERE device_token=? AND confidence>=?"
+            + _bird_clause(include_nonbird) +
+            " ORDER BY id DESC LIMIT ?",
+            (YARD_DEVICE_TOKEN, min_conf, max(1, min(limit, 1000))),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        dt = _parse_ts(d.pop("ts"))
+        d["date"] = dt.strftime("%Y-%m-%d") if dt else None
+        d["time"] = dt.strftime("%H:%M:%S") if dt else None
+        out.append(d)
+    return out
+
+
+def _yard_bird_rows(c, include_nonbird: bool = False):
+    return c.execute(
+        "SELECT id, ts, scientific_name, common_name, round(confidence,4) AS confidence "
+        "FROM browser_detections WHERE device_token=?" + _bird_clause(include_nonbird) +
+        " ORDER BY id DESC", (YARD_DEVICE_TOKEN,)).fetchall()
+
+
+def yard_summary(include_nonbird: bool = False) -> dict:
+    """Always-on yard totals (unified store), in the shape the home dashboard's yard
+    view expects. Replaces birds_store.summary() / the retired birdnet.db."""
+    today = _local(_now()).strftime("%Y-%m-%d")
+    with _conn() as c:
+        rows = _yard_bird_rows(c, include_nonbird)
+    dates, species, today_sp = set(), set(), set()
+    today_n = 0
+    last_dt = None
+    for r in rows:
+        dt = _parse_ts(r["ts"])
+        d = dt.strftime("%Y-%m-%d") if dt else None
+        if d:
+            dates.add(d)
+        if r["scientific_name"]:
+            species.add(r["scientific_name"])
+        if d == today:
+            today_n += 1
+            today_sp.add(r["scientific_name"])
+        if last_dt is None and dt is not None:
+            last_dt = (dt, r)   # rows are id DESC, so the first parseable is the latest
+    first_date = min(dates) if dates else None
+    last = None
+    if last_dt:
+        dt, r = last_dt
+        last = {"date": dt.strftime("%Y-%m-%d"), "time": dt.strftime("%H:%M:%S"),
+                "common_name": r["common_name"], "scientific_name": r["scientific_name"],
+                "confidence": r["confidence"]}
+    return {
+        "total_detections": len(rows), "species_count": len(species),
+        "first_date": first_date, "last_date": max(dates) if dates else None,
+        "active_days": len(dates),
+        "today": {"detections": today_n, "species": len(today_sp), "date": today},
+        "last_detection": last,
+    }
+
+
+def yard_species(include_nonbird: bool = False) -> list[dict]:
+    """Per-species rollup for the yard, count-desc — shape of birds_store.species_list()."""
+    with _conn() as c:
+        rows = _yard_bird_rows(c, include_nonbird)
+    agg: dict = {}
+    for r in rows:
+        sci = r["scientific_name"]
+        if not sci:
+            continue
+        a = agg.get(sci)
+        dt = _parse_ts(r["ts"])
+        d = dt.strftime("%Y-%m-%d") if dt else None
+        conf = r["confidence"] or 0
+        if not a:
+            agg[sci] = {"scientific_name": sci, "common_name": r["common_name"],
+                        "species_code": None, "count": 1, "first_date": d, "last_date": d,
+                        "max_conf": conf, "_sum": conf}
+        else:
+            a["count"] += 1; a["_sum"] += conf
+            a["max_conf"] = max(a["max_conf"], conf)
+            if d and (a["first_date"] is None or d < a["first_date"]):
+                a["first_date"] = d
+            if d and (a["last_date"] is None or d > a["last_date"]):
+                a["last_date"] = d
+    out = []
+    for a in agg.values():
+        a["max_conf"] = round(a["max_conf"], 4)
+        a["avg_conf"] = round(a.pop("_sum") / a["count"], 4)
+        out.append(a)
+    out.sort(key=lambda x: x["count"], reverse=True)
+    return out
+
+
+def yard_activity_daily(days: int = 90, include_nonbird: bool = False) -> list[dict]:
+    cutoff = (_local(_now()).date() - timedelta(days=int(days)))
+    with _conn() as c:
+        rows = _yard_bird_rows(c, include_nonbird)
+    by_day: dict = {}
+    for r in rows:
+        dt = _parse_ts(r["ts"])
+        if not dt or dt.date() < cutoff:
+            continue
+        d = dt.strftime("%Y-%m-%d")
+        b = by_day.setdefault(d, {"date": d, "count": 0, "_sp": set(), "_win": set()})
+        b["count"] += 1; b["_sp"].add(r["scientific_name"])
+        # Presence = distinct 15-min windows with >=1 detection (0..95 within a day).
+        b["_win"].add(dt.hour * 4 + dt.minute // 15)
+    out = [{"date": d, "count": b["count"], "species": len(b["_sp"]), "windows": len(b["_win"])}
+           for d, b in sorted(by_day.items())]
+    return out
+
+
+def yard_activity_hourly(days: int = 30, include_nonbird: bool = False) -> list[dict]:
+    cutoff = (_local(_now()).date() - timedelta(days=int(days)))
+    by_hour = {h: 0 for h in range(24)}
+    with _conn() as c:
+        rows = _yard_bird_rows(c, include_nonbird)
+    for r in rows:
+        dt = _parse_ts(r["ts"])
+        if not dt or dt.date() < cutoff:
+            continue
+        by_hour[dt.hour] += 1
+    return [{"hour": h, "count": by_hour[h]} for h in range(24)]
+
+
+def yard_first_seen(sci: str, date: str) -> dict:
+    """Event-bridge enrichment: is this the species' first-ever yard detection, and
+    its first today? Unified-store version of birds_store.first_seen_flags()."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT ts FROM browser_detections WHERE device_token=? AND scientific_name=?",
+            (YARD_DEVICE_TOKEN, sci)).fetchall()
+    dates = [d.strftime("%Y-%m-%d") for d in (_parse_ts(r["ts"]) for r in rows) if d]
+    today_n = sum(1 for d in dates if d == date)
+    return {"first_ever": bool(dates) and min(dates) == date,
+            "first_today": today_n <= 1,
+            "total_for_species": len(rows)}
+
+
 def _parse_ts(ts: str | None) -> datetime | None:
     """Stored ISO ts -> tz-aware datetime (local), or None if missing/unparseable.
     Used for the time-windowed 'New' badge."""
@@ -2918,10 +3071,12 @@ def _aggregate_activity(rows: list[sqlite3.Row]) -> dict:
         lt = _local(r["ts"])
         d = lt.strftime("%Y-%m-%d")
         sp = r["scientific_name"]
-        day = daily.setdefault(d, {"date": d, "count": 0, "_species": set(),
+        day = daily.setdefault(d, {"date": d, "count": 0, "_species": set(), "_win": set(),
                                    "hourly": [0] * 24, "_hctr": [Counter() for _ in range(24)]})
         day["count"] += 1
         day["_species"].add(sp)
+        # Presence = distinct 15-min windows with >=1 detection (0..95 within a day).
+        day["_win"].add(lt.hour * 4 + lt.minute // 15)
         day["hourly"][lt.hour] += 1
         day["_hctr"][lt.hour][sp] += 1
         hourly[lt.hour] += 1
@@ -2932,6 +3087,7 @@ def _aggregate_activity(rows: list[sqlite3.Row]) -> dict:
         # Per hour: `species` = distinct-species richness, `shannon` = evenness-
         # weighted diversity (the day-chart's Diversity overlay).
         "daily": [{"date": d["date"], "count": d["count"], "species": len(d["_species"]),
+                   "windows": len(d["_win"]),
                    "hourly": d["hourly"],
                    "hourly_species": [len(c) for c in d["_hctr"]],
                    "hourly_shannon": [_shannon(c) for c in d["_hctr"]]}

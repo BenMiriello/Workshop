@@ -81,7 +81,7 @@ export type ChartOverlay = { key: string; name?: string; color?: string; fmt?: (
 // species-diversity per hour. Distinct from `overlay`, which gets its own right axis.
 export type ChartLine = { key: string; name?: string; color?: string };
 
-export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick, markers, overlay, lines, sky }: {
+export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, onBarClick, markers, overlay, lines, sky, barKey = "count", barName = "Detections", unit = "detection" }: {
   data: Record<string, unknown>[]; x: string; fill: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   xfmt?: (v: any) => string; interval?: number; labelFmt?: (v: any) => string; height?: number;
@@ -92,11 +92,15 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, o
   // after sunset, always paired with the Sunrise/Sunset markers so it reads as
   // time-of-day, never decoration.
   sky?: { sunrise: number | null; sunset: number | null };
+  // The primary bar series: which field to plot, its legend name, and the unit
+  // for the tooltip (e.g. presence "window" vs raw "detection").
+  barKey?: string; barName?: string; unit?: string;
 }) {
   const hasOverlay = !!overlay;
   const hasLines = !!(lines && lines.length);
   const namedSeries = hasOverlay || hasLines;
   const lineColor = lines?.[0]?.color ?? CHART_SERIES[2];
+  const reduceMotion = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   return (
     <div style={{ height }}>
       <ResponsiveContainer>
@@ -133,7 +137,7 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, o
                 payload={payload}
                 label={labelFmt ? labelFmt(label) : label}
                 showName={namedSeries}
-                format={(v) => (namedSeries ? String(v) : `${v} detection${v === 1 ? "" : "s"}`)}
+                format={(v) => (namedSeries ? String(v) : `${v} ${unit}${v === 1 ? "" : "s"}`)}
               />
             )}
           />
@@ -144,7 +148,8 @@ export function Chart({ data, x, fill, xfmt, interval, labelFmt, height = 150, o
           ))}
           {/* Cap bar width so a chart with one or two days doesn't render a
               single absurdly-wide bar across the whole panel. */}
-          <Bar yAxisId="count" dataKey="count" name="Detections" fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48}
+          <Bar yAxisId="count" dataKey={barKey} name={barName} fill={fill} radius={[2, 2, 0, 0]} maxBarSize={48}
+            isAnimationActive={!reduceMotion}
             onClick={onBarClick ? (e: any) => onBarClick(e?.payload ?? e) : undefined}
             style={onBarClick ? { cursor: "pointer" } : undefined} />
           {lines?.map((ln, i) => (
