@@ -305,6 +305,22 @@ label {
   font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
 .birds-live > svg { color: var(--accent); }
 
+/* Live-card Aviary view: the name-tags control + quiet-yard empty state overlaid
+   on the reused engine's scene. */
+.ws-aviary__tags { position: absolute; top: 10px; right: 12px; z-index: 18; }
+.ws-aviary__quiet { position: absolute; inset: 0; z-index: 16; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 0.25rem; text-align: center; pointer-events: none; padding: 1rem; }
+.ws-aviary__quiet-title { font-weight: 700; font-size: 1.05rem; color: var(--accent); }
+
+/* Fullscreen / "cast" Aviary — full-bleed, chrome minimized. */
+.birds-cast { position: fixed; inset: 0; z-index: 60; background: var(--card); display: flex; flex-direction: column; }
+.birds-cast__bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border); }
+.birds-cast__loc { font-weight: 600; }
+.birds-cast__clock { margin-left: auto; color: var(--muted); font-size: 0.9rem; }
+.birds-cast__scene { flex: 1; min-height: 0; }
+.birds-cast__scene .ws-aviary, .ws-aviary--full { height: 100%; }
+
 /* Mobile: top filter bar + fixed bottom tab bar. */
 .birds-shell--mobile { display: block; }
 .birds-shell--mobile .birds-content { padding-bottom: 4.75rem; }

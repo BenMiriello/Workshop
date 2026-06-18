@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Radio, Loader2, AlertTriangle, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Radio, Loader2, AlertTriangle, X, ChevronLeft, ChevronRight, Maximize2 } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
 import { ListenButton } from "./birds/BirdsHeader";
 import Spectrogram from "./birds/Spectrogram";
@@ -46,11 +46,6 @@ export default function Birds() {
           friends' shared devices) — this is how you watch another mic's feed. */}
       {!PUBLIC && <LiveFeed />}
 
-      {/* The Live Aviary: an ambient "who's in the yard right now" diorama, sitting
-          directly under the live feed, driven by real detections from the mic.
-          Private app only — the public deploy has no live detection feed to drive it. */}
-      {!PUBLIC && <div style={{ marginBottom: "1rem" }}><Aviary /></div>}
-
       {selected
         ? <Dashboard source={selected} nb={nb} device={selected.kind === "loc" ? deviceTok : ""} />
         : !rec.recording && (
@@ -66,13 +61,16 @@ export default function Birds() {
 }
 
 // --- Live card: the home's primary surface + sole recording affordance --------
-// Persistent on Home. Header carries the single Listen/Stop control (ListenButton)
-// and a single pulsing "Live" indicator. While listening it shows this device's
-// real scrolling spectrogram + now-hearing + session species; idle, it invites a
-// tap. (Phase 7 adds the Histogram <-> Aviary view toggle + expand here.)
+// Persistent on Home. Header carries the single Listen/Stop control, a single
+// pulsing "Live" indicator, a Histogram <-> Aviary view toggle, and an expand
+// button. Histogram = this device's real scrolling spectrogram (the dense read);
+// Aviary = the ambient "who's in the yard now" scene on the same live data.
+// Expand opens the Aviary fullscreen ("cast"), made to be left running on a TV.
 function LiveCard() {
   const rec = useRecorder();
   const [showNonBird] = useShowNonBird();
+  const [view, setView] = useState<"histogram" | "aviary">("histogram");
+  const [fullscreen, setFullscreen] = useState(false);
   const live = rec.recording;
   const paused = rec.wasListening && !rec.recording; // was listening, not capturing (after a reload)
   const active = live || paused;
@@ -91,53 +89,94 @@ function LiveCard() {
           {live ? (rec.location ? `· ${rec.location}` : "· locating…") : paused ? "· paused" : "· not listening"}
         </span>
         <span className="birds-livecard__ctl">
+          <Segmented<"histogram" | "aviary"> ariaLabel="Live view" value={view} onChange={setView}
+            options={[{ value: "histogram", label: "Histogram" }, { value: "aviary", label: "Aviary" }]} />
+          <button className="btn sm" title="Open the Aviary fullscreen" aria-label="Open the Aviary fullscreen"
+            onClick={() => setFullscreen(true)}><Maximize2 size={15} /></button>
           {paused && <button className="btn sm" onClick={rec.stop} title="Dismiss" aria-label="Dismiss"><X size={14} /></button>}
           <ListenButton />
         </span>
       </div>
 
-      {active && <Spectrogram height={150} />}
-      {live && rec.needsLocation && <SetLocationInline />}
-
-      {!active && (
-        <p className="muted" style={{ margin: ".4rem 0 0", fontSize: ".85rem" }}>
-          Not listening. Tap the mic to detect birds from this device.
-        </p>
-      )}
-
-      {active && (
-        <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
-          {paused ? (
-            <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
-          ) : hearing.length > 0 ? (
-            <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
-              <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
-              {hearing.slice(0, 4).map((d, i) => (
-                <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
-              ))}
-            </div>
-          ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
-        </div>
-      )}
-
-      {active && species.length > 0 && (
+      {view === "aviary" ? (
+        <Aviary />
+      ) : (
         <>
-          <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
-            {species.map((s) => (
-              <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
-                <span className="pill neutral" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.65, borderStyle: "dashed", cursor: "pointer" }}>
-                  {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
-                </span>
-              </SpeciesLink>
-            ))}
-          </div>
+          {active && <Spectrogram height={150} />}
+          {live && rec.needsLocation && <SetLocationInline />}
+
+          {!active && (
+            <p className="muted" style={{ margin: ".4rem 0 0", fontSize: ".85rem" }}>
+              Not listening. Tap the mic to detect birds from this device, or switch to the Aviary to watch the yard.
+            </p>
+          )}
+
+          {active && (
+            <div style={{ minHeight: 26, margin: ".6rem 0 .2rem" }}>
+              {paused ? (
+                <span className="muted" style={{ fontSize: ".82rem" }}>Paused. Resume to keep listening.</span>
+              ) : hearing.length > 0 ? (
+                <div style={{ display: "flex", alignItems: "center", gap: ".5rem", flexWrap: "wrap" }}>
+                  <span className="muted" style={{ fontSize: ".8rem" }}>Now:</span>
+                  {hearing.slice(0, 4).map((d, i) => (
+                    <span key={i} className="pill ok">{d.common_name} {pct(d.confidence)}</span>
+                  ))}
+                </div>
+              ) : <span className="muted" style={{ fontSize: ".82rem" }}>Listening…</span>}
+            </div>
+          )}
+
+          {active && species.length > 0 && (
+            <>
+              <div className="muted" style={{ fontSize: ".78rem", margin: ".5rem 0 .3rem" }}>Detected this session</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
+                {species.map((s) => (
+                  <SpeciesLink key={s.scientific_name} sci={s.scientific_name} common={s.common_name}>
+                    <span className="pill neutral" style={s.is_bird ? { cursor: "pointer" } : { opacity: 0.65, borderStyle: "dashed", cursor: "pointer" }}>
+                      {s.common_name} <span className="muted">{pct(s.max_conf)}{s.hits > 1 ? ` ·${s.hits}` : ""}</span>
+                    </span>
+                  </SpeciesLink>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
       {rec.err && <p className="error" style={{ marginBottom: 0, marginTop: ".5rem" }}>{rec.err}</p>}
       {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
+
+      {fullscreen && <AviaryCast location={rec.location} onExit={() => setFullscreen(false)} />}
     </section>
   );
+}
+
+// Fullscreen / "cast" Aviary — full-bleed, chrome minimized to back/exit, a
+// location pill, and a live clock. Made to be left running on a tablet or TV.
+function AviaryCast({ location, onExit }: { location: string | null; onExit: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onExit(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onExit]);
+  return (
+    <div className="birds-cast" role="dialog" aria-label="Live Aviary fullscreen">
+      <div className="birds-cast__bar">
+        <button className="btn sm" onClick={onExit} title="Exit fullscreen" aria-label="Exit fullscreen"><X size={16} /></button>
+        <span className="birds-cast__loc">{location || "Yard"}</span>
+        <LiveClock />
+      </div>
+      <div className="birds-cast__scene"><Aviary fullscreen /></div>
+    </div>
+  );
+}
+
+function LiveClock() {
+  const [now, setNow] = useState(() => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+  useEffect(() => {
+    const t = setInterval(() => setNow(new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  return <span className="birds-cast__clock mono">{now}</span>;
 }
 
 // Recent (presence): each species once, newest first, with how many 15-minute
