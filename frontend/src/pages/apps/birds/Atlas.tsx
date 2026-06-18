@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Waypoints, Tag as TagIcon, Volume2, Info, Map as MapIcon, ZoomIn, ZoomOut, Maximize2, X } from "lucide-react";
-import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue } from "../../../ui";
+import { Waypoints, Tag as TagIcon, Volume2, Info, Map as MapIcon, ZoomIn, ZoomOut, Maximize2, X, ScatterChart, Grid3x3, Sparkles } from "lucide-react";
+import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, CHART_TARGET, type CatHue } from "../../../ui";
 import BirdsHeader, { InlineSelect } from "./BirdsHeader";
 import { ClipPlayButton } from "./recordings";
-import { jget, apost, API, conf } from "./ui";
+import { jget, apost, API, conf, hh } from "./ui";
 
 // The Soundscape Atlas: every stored detection is a point in a learned acoustic
 // map (BirdNET embedding -> UMAP). The Overview colours the whole yard by species
@@ -150,27 +150,181 @@ export default function Atlas() {
       ) : !data || data.points.length === 0 ? (
         <EmptyAtlas status={status} scope={scope} />
       ) : (
-        <div className="atlas-layout">
-          <Scatter
-            data={data} scope={scope} colors={colors}
-            colorForSpecies={colorForSpecies} clusterColors={clusterColors}
-            sel={sel} setSel={(p) => { setSel(p); if (scope === "species" && p?.cluster_id) setActiveCluster(p.cluster_id); }}
-            activeCluster={activeCluster}
-          />
-          <aside className="atlas-side">
-            {scope === "species" ? (
-              <ClusterPanel
-                data={data} clusterColors={clusterColors} activeCluster={activeCluster}
-                setActiveCluster={setActiveCluster} onLabeled={() => { loadStatus(); load(); }}
-              />
-            ) : (
-              <OverviewLegend data={data} colorForSpecies={colorForSpecies}
-                onPick={(sci) => { setScope("species"); setSpecies(sci); }} />
-            )}
-          </aside>
-        </div>
+        <>
+          <div className="atlas-layout">
+            <Scatter
+              data={data} scope={scope} colors={colors}
+              colorForSpecies={colorForSpecies} clusterColors={clusterColors}
+              sel={sel} setSel={(p) => { setSel(p); if (scope === "species" && p?.cluster_id) setActiveCluster(p.cluster_id); }}
+              activeCluster={activeCluster}
+            />
+            <aside className="atlas-side">
+              {scope === "species" ? (
+                <ClusterPanel
+                  data={data} clusterColors={clusterColors} activeCluster={activeCluster}
+                  setActiveCluster={setActiveCluster} onLabeled={() => { loadStatus(); load(); }}
+                />
+              ) : (
+                <OverviewLegend data={data} colorForSpecies={colorForSpecies}
+                  onPick={(sci) => { setScope("species"); setSpecies(sci); }} />
+              )}
+            </aside>
+          </div>
+          {/* Reading the soundscape: presence-aware insight views the embedding map
+              can't show — built so the loudest birds don't dominate. */}
+          <Insights />
+        </>
       )}
     </div>
+  );
+}
+
+// ----- Soundscape insight views (presence over chatter) ----------------------
+type ScatterPt = { sci: string; common: string; detections: number; presence: number };
+type HeatRow = { call_type: string; hours: number[] };
+type NoveltyPt = { date: string; sci: string; common: string; kind: string };
+type InsightsData = {
+  days: number; scatter: ScatterPt[];
+  heatmap: { call_types: string[]; rows: HeatRow[] }; novelty: NoveltyPt[];
+};
+
+function Insights() {
+  const [d, setD] = useState<InsightsData | null>(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    let live = true;
+    fetch(`${API}/atlas/insights?days=30`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then((x) => { if (live) setD(x); })
+      .catch(() => { if (live) setErr(true); });
+    return () => { live = false; };
+  }, []);
+  if (err) return null;
+  if (!d) return <Skeleton style={{ height: 200, marginTop: "1rem" }} />;
+  return (
+    <div style={{ marginTop: "1.25rem", display: "grid", gap: "1rem" }}>
+      <PresenceChatter rows={d.scatter} />
+      <CallTypeHeatmap heatmap={d.heatmap} />
+      <NoveltyTimeline items={d.novelty} days={d.days} />
+    </div>
+  );
+}
+
+// 5.1 — presence vs chatter scatter. x=presence (15-min windows), y=raw
+// detections; the dashed diagonal is the typical detections-per-presence ratio.
+// Above the line = over-talkers (false signals); below = present but quiet.
+function PresenceChatter({ rows }: { rows: ScatterPt[] }) {
+  if (!rows.length) return null;
+  const W = 320, H = 210, pad = { l: 38, r: 12, t: 10, b: 30 };
+  const maxP = Math.max(1, ...rows.map((r) => r.presence));
+  const maxD = Math.max(1, ...rows.map((r) => r.detections));
+  const totP = rows.reduce((s, r) => s + r.presence, 0) || 1;
+  const ratio = rows.reduce((s, r) => s + r.detections, 0) / totP;
+  const x = (p: number) => pad.l + (p / maxP) * (W - pad.l - pad.r);
+  const y = (n: number) => H - pad.b - (n / maxD) * (H - pad.t - pad.b);
+  const diagX = maxP, diagY = Math.min(maxD, ratio * maxP);
+  return (
+    <section className="card" style={{ padding: "1rem" }}>
+      <h3 className="atlas-h3"><ScatterChart size={16} /> Presence ↔ chatter</h3>
+      <p className="muted" style={{ fontSize: ".82rem", margin: ".2rem 0 .6rem" }}>
+        Each dot is a species: how present (15-min windows) against how chatty (raw detections). Dots above the line over-talk; below are present but quiet.
+      </p>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block", maxHeight: 230 }} role="img" aria-label="Presence versus detections by species">
+        <line x1={pad.l} y1={pad.t} x2={pad.l} y2={H - pad.b} stroke="var(--border)" />
+        <line x1={pad.l} y1={H - pad.b} x2={W - pad.r} y2={H - pad.b} stroke="var(--border)" />
+        <line x1={x(0)} y1={y(0)} x2={x(diagX)} y2={y(diagY)} stroke={CHART_TARGET} strokeDasharray="4 3" vectorEffect="non-scaling-stroke" />
+        {rows.map((r) => (
+          <circle key={r.sci} cx={x(r.presence)} cy={y(r.detections)} r={3.2}
+            fill="var(--cat-violet)" fillOpacity={0.82}>
+            <title>{r.common}: {r.presence} window{r.presence === 1 ? "" : "s"}, {r.detections} detection{r.detections === 1 ? "" : "s"}</title>
+          </circle>
+        ))}
+        <text x={(pad.l + W - pad.r) / 2} y={H - 6} textAnchor="middle" fontSize="9" fill="var(--muted)">presence (15-min windows)</text>
+        <text x={10} y={(pad.t + H - pad.b) / 2} fontSize="9" fill="var(--muted)" transform={`rotate(-90 10 ${(pad.t + H - pad.b) / 2})`} textAnchor="middle">raw detections</text>
+      </svg>
+    </section>
+  );
+}
+
+// 5.2 — call-type x hour-of-day heatmap (intensity = frequency).
+function CallTypeHeatmap({ heatmap }: { heatmap: { call_types: string[]; rows: HeatRow[] } }) {
+  const max = Math.max(1, ...heatmap.rows.flatMap((r) => r.hours));
+  const has = heatmap.rows.some((r) => r.hours.some((h) => h > 0));
+  if (!has) return null;
+  return (
+    <section className="card" style={{ padding: "1rem" }}>
+      <h3 className="atlas-h3"><Grid3x3 size={16} /> Daily rhythm by call type</h3>
+      <p className="muted" style={{ fontSize: ".82rem", margin: ".2rem 0 .6rem" }}>
+        When each kind of call happens across the day — the dawn chorus, the all-day contact hum, the begging spike.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "5rem 1fr", gap: ".25rem .5rem", alignItems: "center" }}>
+        {heatmap.rows.map((r) => (
+          <Fragment key={r.call_type}>
+            <span className="muted" style={{ fontSize: ".78rem", textTransform: "capitalize" }}>{r.call_type}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", gap: 1 }}>
+              {r.hours.map((v, h) => (
+                <div key={h} title={`${r.call_type} · ${hh(h)} · ${v}`}
+                  style={{ height: 14, borderRadius: 2, background: v > 0 ? "var(--cat-blue)" : "var(--border)", opacity: v > 0 ? Math.max(0.18, v / max) : 0.4 }} />
+              ))}
+            </div>
+            <span />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(24, 1fr)", fontSize: ".6rem" }} className="muted">
+              {Array.from({ length: 24 }).map((_, h) => <span key={h} style={{ textAlign: "center" }}>{h % 6 === 0 ? h : ""}</span>)}
+            </div>
+          </Fragment>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// 5.3 — acoustic-novelty timeline: first appearance of each species over the
+// window; recent arrivals (<=7d) are ringed and labeled.
+function NoveltyTimeline({ items, days }: { items: NoveltyPt[]; days: number }) {
+  if (!items.length) return null;
+  const W = 320, H = 64, pad = { l: 10, r: 10, t: 10, b: 18 };
+  const now = Date.now();
+  const start = now - days * 86_400_000;
+  const span = now - start || 1;
+  const px = (date: string) => {
+    const t = new Date(`${date}T12:00:00`).getTime();
+    return pad.l + Math.max(0, Math.min(1, (t - start) / span)) * (W - pad.l - pad.r);
+  };
+  const recent = items.filter((it) => new Date(`${it.date}T12:00:00`).getTime() >= now - 7 * 86_400_000);
+  const baseY = H - pad.b;
+  return (
+    <section className="card" style={{ padding: "1rem" }}>
+      <h3 className="atlas-h3"><Sparkles size={16} /> Acoustic novelty</h3>
+      <p className="muted" style={{ fontSize: ".82rem", margin: ".2rem 0 .6rem" }}>
+        First time each species was heard in the last {days} days — recent arrivals ringed.
+      </p>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ display: "block" }} role="img" aria-label="Species first-appearance timeline">
+        <line x1={pad.l} y1={baseY} x2={W - pad.r} y2={baseY} stroke="var(--border)" />
+        {items.map((it, i) => {
+          const isRecent = new Date(`${it.date}T12:00:00`).getTime() >= now - 7 * 86_400_000;
+          return (
+            <circle key={`${it.sci}${i}`} cx={px(it.date)} cy={baseY} r={isRecent ? 4 : 2.6}
+              fill={isRecent ? "var(--accent)" : "var(--cat-slate)"}
+              stroke={isRecent ? "var(--accent)" : "none"} strokeOpacity={0.4} strokeWidth={isRecent ? 4 : 0}>
+              <title>{it.common} · first heard {it.date}</title>
+            </circle>
+          );
+        })}
+        <text x={pad.l} y={H - 4} fontSize="9" fill="var(--muted)">{days}d ago</text>
+        <text x={W - pad.r} y={H - 4} fontSize="9" fill="var(--muted)" textAnchor="end">today</text>
+      </svg>
+      {recent.length > 0 && (
+        <div style={{ marginTop: ".5rem", fontSize: ".82rem" }}>
+          <span className="muted">Just arrived: </span>
+          {recent.slice(0, 6).map((it, i) => (
+            <span key={it.sci}>
+              {i > 0 ? ", " : ""}
+              <Link to={`/apps/birds/bird?sci=${encodeURIComponent(it.sci)}`} style={{ textDecoration: "none", color: "inherit", fontWeight: 500 }}>{it.common}</Link>
+            </span>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 

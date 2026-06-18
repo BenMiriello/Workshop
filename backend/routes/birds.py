@@ -57,19 +57,16 @@ def _guard(fn):
         return None
 
 
+# NOTE: the home dashboard's "Yard (always-on)" view reads these. They now serve the
+# UNIFIED store (the always-on yard device), not the retired BirdNET-Go birdnet.db.
 @router.get("/summary")
 async def get_summary(include_nonbird: bool = False):
-    data = _guard(lambda: birds_store.summary(not include_nonbird))
-    if data is None:
-        return {"available": False, "total_detections": 0, "species_count": 0,
-                "today": {"detections": 0, "species": 0, "date": None}, "last_detection": None}
-    return {"available": True, **data}
+    return {"available": True, **birds_analyze.yard_summary(include_nonbird)}
 
 
 @router.get("/species")
 async def get_species(include_nonbird: bool = False):
-    data = _guard(lambda: birds_store.species_list(not include_nonbird))
-    return {"available": data is not None, "species": data or []}
+    return {"available": True, "species": birds_analyze.yard_species(include_nonbird)}
 
 
 @router.get("/detections")
@@ -77,32 +74,23 @@ async def get_detections(limit: int = Query(100, ge=1, le=1000),
                          species: str | None = None, date: str | None = None,
                          min_conf: float = Query(0.0, ge=0.0, le=1.0),
                          include_nonbird: bool = False):
-    data = _guard(lambda: birds_store.detections(limit, species, date, min_conf, not include_nonbird))
-    return {"available": data is not None, "detections": data or []}
-
-
-@router.get("/recent-arrivals")
-async def get_recent_arrivals(days: int = Query(7, ge=1, le=90), include_nonbird: bool = False):
-    data = _guard(lambda: birds_store.recent_arrivals(days, not include_nonbird))
-    return {"available": data is not None, "arrivals": data or []}
+    # Unified store (always-on yard device), not the retired birdnet.db.
+    data = birds_analyze.yard_detections(limit, min_conf, include_nonbird)
+    return {"available": True, "detections": data}
 
 
 @router.get("/activity/daily")
 async def get_daily(days: int = Query(90, ge=1, le=730), include_nonbird: bool = False):
-    data = _guard(lambda: birds_store.daily_counts(days, not include_nonbird))
-    return {"available": data is not None, "daily": data or []}
+    return {"available": True, "daily": birds_analyze.yard_activity_daily(days, include_nonbird)}
 
 
 @router.get("/activity/hourly")
 async def get_hourly(days: int = Query(30, ge=1, le=730), include_nonbird: bool = False):
-    data = _guard(lambda: birds_store.hourly_activity(days, not include_nonbird))
-    return {"available": data is not None, "hourly": data or []}
+    return {"available": True, "hourly": birds_analyze.yard_activity_hourly(days, include_nonbird)}
 
 
-@router.get("/timeseries")
-async def get_timeseries(species: str, days: int = Query(90, ge=1, le=730)):
-    data = _guard(lambda: birds_store.timeseries(species, days))
-    return {"available": data is not None, "species": species, "series": data or []}
+# /timeseries and /recent-arrivals were unused legacy birds_store readers (no
+# frontend consumer) — removed with the birdnet.db retirement.
 
 
 @router.get("/clip/{note_id}")
@@ -517,6 +505,11 @@ async def atlas_points_ep(scope: str = "global", species: str | None = None,
     return birds_analyze.atlas_points(scope, species, location_id, limit)
 
 
+@router.get("/atlas/insights")
+async def atlas_insights_ep(days: int = Query(30, ge=1, le=365), include_nonbird: bool = False):
+    return birds_analyze.atlas_insights(days, include_nonbird)
+
+
 @router.get("/atlas/cluster/{cluster_id}/clips")
 async def atlas_cluster_clips_ep(cluster_id: int, limit: int = Query(16, ge=1, le=64)):
     return birds_analyze.atlas_cluster_clips(cluster_id, limit)
@@ -649,8 +642,8 @@ async def detection_webhook(request: Request):
     flags = {"first_ever": False, "first_today": False, "total_for_species": 0}
     if sci:
         try:
-            flags = birds_store.first_seen_flags(sci, date)
-        except DatabaseMissing:
+            flags = birds_analyze.yard_first_seen(sci, date)
+        except Exception:  # noqa: BLE001
             pass
 
     summary = {

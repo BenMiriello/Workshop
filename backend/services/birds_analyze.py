@@ -2035,6 +2035,61 @@ def atlas_points(scope: str, species: str | None = None,
             "call_types": list(CALL_TYPES)}
 
 
+def atlas_insights(days: int = 30, include_nonbird: bool = False) -> dict:
+    """Soundscape insight aggregates over the always-on yard feed:
+      - scatter: per species, presence (distinct 15-min windows) vs raw detections,
+        so over-talkers (high detections, low presence) separate from the present-
+        but-quiet. This is exactly what the 15-minute window corrects for.
+      - heatmap: call-type x hour-of-day frequency (from the embedding labels).
+      - novelty: first appearance (date) of each species within the window.
+    """
+    cutoff_date = _local(_now()).date() - timedelta(days=int(days))
+    with _conn() as c:
+        rows = _yard_bird_rows(c, include_nonbird)
+        ct_rows = c.execute(
+            "SELECT bd.ts AS ts, de.call_type AS call_type "
+            "FROM detection_embedding de JOIN browser_detections bd ON bd.id=de.det_id "
+            "WHERE bd.device_token=? AND de.call_type IS NOT NULL", (YARD_DEVICE_TOKEN,)).fetchall()
+
+    per_sp: dict[str, dict] = {}
+    first_ever: dict[str, datetime] = {}
+    for r in rows:
+        dt = _parse_ts(r["ts"])
+        if not dt:
+            continue
+        sci = r["scientific_name"]
+        if not sci:
+            continue
+        fe = first_ever.get(sci)
+        if fe is None or dt < fe:
+            first_ever[sci] = dt
+        if dt.date() < cutoff_date:
+            continue
+        a = per_sp.setdefault(sci, {"sci": sci, "common": r["common_name"], "detections": 0, "_win": set()})
+        a["detections"] += 1
+        a["_win"].add(f'{dt:%Y-%m-%d}:{dt.hour * 4 + dt.minute // 15}')
+    scatter = [{"sci": a["sci"], "common": a["common"], "detections": a["detections"],
+                "presence": len(a["_win"])} for a in per_sp.values()]
+    scatter.sort(key=lambda x: x["detections"], reverse=True)
+
+    novelty = [{"date": f"{dt:%Y-%m-%d}", "sci": sci,
+                "common": per_sp.get(sci, {}).get("common", sci), "kind": "species"}
+               for sci, dt in first_ever.items() if dt.date() >= cutoff_date]
+    novelty.sort(key=lambda x: x["date"])
+
+    heat = {ct: [0] * 24 for ct in CALL_TYPES}
+    for r in ct_rows:
+        dt = _parse_ts(r["ts"])
+        ct = r["call_type"]
+        if not dt or ct not in heat or dt.date() < cutoff_date:
+            continue
+        heat[ct][dt.hour] += 1
+    heatmap = {"call_types": list(CALL_TYPES),
+               "rows": [{"call_type": ct, "hours": heat[ct]} for ct in CALL_TYPES]}
+
+    return {"days": int(days), "scatter": scatter, "heatmap": heatmap, "novelty": novelty}
+
+
 def atlas_cluster_clips(cluster_id: int, limit: int = 16) -> dict:
     """Playable exemplars for labelling a cluster by ear: the dedicated Atlas pool
     (exemplars first) plus any clips the recordings system already saved for this
