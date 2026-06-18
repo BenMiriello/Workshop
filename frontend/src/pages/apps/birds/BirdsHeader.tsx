@@ -1,59 +1,38 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
-import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines } from "lucide-react";
+import { Bird, Mic, Square, SlidersHorizontal, Smartphone, Loader2, X, ChevronDown, ChevronRight, Pencil, Waypoints, CalendarDays, AudioLines, MapPin } from "lucide-react";
 import { useRecorder } from "./recorder";
 import { StatusPill } from "../../../ui";
 import { jget, isRecording } from "./ui";
 
-// The Birds app's top toolbar, shared across EVERY birds page. It draws the section
-// nav with the current section highlighted, so navigation is identical everywhere
-// and "you are here" is always clear.
-//
-// NAVIGATION CONTRACT (keep it hard to break):
-//   1. Every page under pages/apps/birds renders <BirdsHeader> as its top element.
-//      The home dashboard passes its place/device selectors as children.
-//   2. BIRDS_NAV is the SINGLE source of navigable sections. To add a page: add a
-//      <Route> in App.tsx AND one entry here. Don't hand-roll a birds header or
-//      scatter one-off section links in page bodies.
-//   3. The bird icon is always Home (the dashboard).
-export const BIRDS_NAV: { path: string; label: string; Icon: typeof Bird }[] = [
+// Navigation for the Birds app, the SINGLE source of navigable sections. The
+// responsive chrome (BirdsShell) renders these; pages never hand-roll section
+// links. To add a page: add a <Route> in App.tsx AND one entry to the right list.
+//   · PRIMARY_NAV — the four destinations (sidebar top / mobile bottom tabs).
+//   · MANAGE_NAV  — secondary lists (sidebar "Manage" group / mobile "More").
+// Home is the first primary item; its Bird glyph doubles as the shell brand mark.
+export type NavItem = { path: string; label: string; Icon: typeof Bird };
+export const PRIMARY_NAV: NavItem[] = [
+  { path: "/apps/birds", label: "Home", Icon: Bird },
   { path: "/apps/birds/forecast", label: "Forecast", Icon: CalendarDays },
   { path: "/apps/birds/atlas", label: "Atlas", Icon: Waypoints },
+];
+export const MANAGE_NAV: NavItem[] = [
+  { path: "/apps/birds/locations", label: "Locations", Icon: MapPin },
+  { path: "/apps/birds/devices", label: "Devices", Icon: Smartphone },
   { path: "/apps/birds/recordings", label: "Recordings", Icon: AudioLines },
   { path: "/apps/birds/settings", label: "Settings", Icon: SlidersHorizontal },
 ];
 
-const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
 type KnownDevice = { token: string; name: string };
 
+// An in-content page title. Navigation and scope live in the shell now, so this
+// is just the page's heading (and an optional inline slot for page-local actions).
 export default function BirdsHeader({ title, children }: { title?: React.ReactNode; children?: React.ReactNode }) {
-  const { pathname } = useLocation();
-  const onHome = pathname === "/apps/birds";
+  if (!title && !children) return null;
   return (
-    <div className="birds-toolbar">
-      <h2 className="birds-toolbar__title">
-        <Link to="/apps/birds" className={`birds-toolbar__home${onHome ? " is-active" : ""}`}
-          title="Birds home" aria-label="Birds home" aria-current={onHome ? "page" : undefined}>
-          <Bird size={22} strokeWidth={1.8} />
-        </Link>
-        {title && <span>{title}</span>}
-      </h2>
+    <div className="birds-pagehead">
+      {title && <h2 className="birds-pagehead__title">{title}</h2>}
       {children}
-      <RecordingIndicator />
-      {!PUBLIC && (
-        <nav className="birds-toolbar__nav" aria-label="Birds sections">
-          <ListenButton />
-          {BIRDS_NAV.map((s) => {
-            const active = pathname === s.path;
-            return (
-              <Link key={s.path} to={s.path} className={`btn sm${active ? " is-active" : ""}`}
-                title={s.label} aria-current={active ? "page" : undefined}>
-                <s.Icon size={15} /> <span className="birds-label">{s.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-      )}
     </div>
   );
 }
@@ -62,7 +41,7 @@ export default function BirdsHeader({ title, children }: { title?: React.ReactNo
 // (including the public site). Polls the device list and lights up while any device
 // is actively posting — primarily the always-on yard Pi. Animated dot = the only
 // thing on the page that animates, per the design system's "running" status.
-function RecordingIndicator() {
+export function RecordingIndicator() {
   const rec = useRecorder();
   const [others, setOthers] = useState(0);
   useEffect(() => {

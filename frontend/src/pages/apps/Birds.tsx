@@ -1,27 +1,25 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { Mic, Square, MapPin, Smartphone, Radio, Loader2, AlertTriangle, X } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Mic, Square, Radio, Loader2, AlertTriangle, X } from "lucide-react";
 import { useRecorder } from "./birds/recorder";
-import BirdsHeader, { InlineSelect } from "./birds/BirdsHeader";
 import Spectrogram from "./birds/Spectrogram";
 import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
-import { useShowNonBird, nonBirdQuery } from "./birds/settings";
+import { useShowNonBird } from "./birds/settings";
+import { useBirdsScope, type Source } from "./birds/scope";
 import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
 import { RecordingsBanner } from "./birds/recordings";
 import SpeciesRow from "./birds/SpeciesRow";
 import ActivityCard from "./birds/ActivityCard";
 import NowCard from "./birds/NowCard";
 import LiveFeed from "./birds/LiveFeed";
+import Aviary from "./birds/Aviary";
+import AppChatDock from "../../components/AppChatDock";
 
 // Birds home. One page, reshaped by two dropdown filters: which place (the
 // always-on yard, or any device-created location) and which device. The live
 // panel (this device's spectrogram + feed) appears while you're listening; the
 // always-on yard's live feed is viewable on its own.
 const PUBLIC = import.meta.env.VITE_PUBLIC === "1";
-// Sentinel option in the Place dropdown: not a real source, just a row whose
-// caret (and label) jump to the full Locations list.
-const ALL_LOCS = "__all_locations__";
 // The species-list filter is a view preference: it persists across navigation and
 // reloads (and every place), so it doesn't snap back to "All" each time you land
 // on a dashboard. Stored as one shared value, not per-location.
@@ -31,84 +29,14 @@ function loadSpeciesFilter(): ListStatus {
   return v === "confirmed" || v === "suggested" || v === "rejected" || v === "active" ? v : "active";
 }
 
-type Loc = { id: number; name: string; detections: number; species: number; devices: string[] };
-type KnownDevice = { token: string; name: string };
-type Source = { key: string; name: string; kind: "yard" | "loc"; id?: number };
-
 export default function Birds() {
-  const [params, setParams] = useSearchParams();
-  const nav = useNavigate();
-  const [locs, setLocs] = useState<Loc[]>([]);
-  const [devices, setDevices] = useState<KnownDevice[]>([]);
-  const [home, setHome] = useState<string | null>(null);
-  const [yardAvailable, setYardAvailable] = useState(false);
-  const [showNonBird] = useShowNonBird();
-  const nb = nonBirdQuery(showNonBird);
   const rec = useRecorder();
-
-  const load = useCallback(() => {
-    jget<{ locations: Loc[]; home: string | null }>(`/locations?_=1${nb}`)
-      .then((d) => { setLocs(d.locations); setHome(d.home); }).catch(() => {});
-    jget<{ devices: KnownDevice[] }>(`/devices`).then((d) => setDevices(d.devices)).catch(() => {});
-    jget<{ available: boolean; total_detections: number }>(`/summary?_=1`)
-      .then((s) => setYardAvailable(s.available && s.total_detections > 0)).catch(() => {});
-  }, [nb]);
-  useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
-
-  const sources = useMemo<Source[]>(() => {
-    const out: Source[] = [];
-    if (yardAvailable) out.push({ key: "yard", name: "Yard (always-on)", kind: "yard" });
-    for (const L of locs) out.push({ key: `loc:${L.id}`, name: L.name, kind: "loc", id: L.id });
-    return out;
-  }, [yardAvailable, locs]);
-
-  const selKey = params.get("source") || home || sources[0]?.key || "";
-  const selected = sources.find((s) => s.key === selKey) || sources[0] || null;
-  const deviceTok = params.get("device") || "";
-
-  const setParam = (key: string, val: string) => {
-    const p = new URLSearchParams(params);
-    if (val) p.set(key, val); else p.delete(key);
-    if (key === "source") p.delete("device"); // device filter is per-location
-    setParams(p);
-  };
+  // The persistent Location · Device · Time scope now lives in the shell; the
+  // home page just reads the current selection from it.
+  const { selected, deviceTok, yardAvailable, nb } = useBirdsScope();
 
   return (
     <div>
-      <BirdsHeader>
-        {sources.length > 0 && (
-          <>
-            <InlineSelect
-              ariaLabel="Place"
-              icon={<MapPin size={15} />}
-              value={selected?.key || ""}
-              options={[
-                { value: ALL_LOCS, label: "All locations", listAll: true },
-                ...sources.map((s) => ({ value: s.key, label: s.name, editable: s.kind === "loc" })),
-              ]}
-              onChange={(v) => { if (v === ALL_LOCS) nav("/apps/birds/locations"); else setParam("source", v); }}
-              onEdit={(v) => { const s = sources.find((x) => x.key === v); if (s?.id) nav(`/apps/birds/locations?id=${s.id}`); }}
-              editTitle="Edit this place (name, coordinates, devices)"
-              onListAll={() => nav("/apps/birds/locations")}
-              listAllTitle="See all locations"
-            />
-            {selected?.kind === "loc" && devices.length > 0 && (
-              <InlineSelect
-                ariaLabel="Device"
-                icon={<Smartphone size={15} />}
-                value={deviceTok}
-                options={[{ value: "", label: "All devices", listAll: true }, ...devices.map((dv) => ({ value: dv.token, label: dv.name || "Untitled device", editable: true }))]}
-                onChange={(v) => setParam("device", v)}
-                onEdit={(v) => nav(`/apps/birds/devices?token=${encodeURIComponent(v)}`)}
-                editTitle="Edit this device"
-                onListAll={() => nav("/apps/birds/devices")}
-                listAllTitle="See all devices"
-              />
-            )}
-          </>
-        )}
-      </BirdsHeader>
-
       {!PUBLIC && <RecordingsBanner />}
 
       {/* If start() failed (mic blocked/denied, analyzer down), the live panel is
@@ -127,6 +55,11 @@ export default function Birds() {
       {!PUBLIC && <LiveFeed />}
       {!PUBLIC && yardAvailable && <YardLiveFeed nb={nb} />}
 
+      {/* The Live Aviary: an ambient "who's in the yard right now" diorama, sitting
+          directly under the live feed, driven by real detections from the mic.
+          Private app only — the public deploy has no live detection feed to drive it. */}
+      {!PUBLIC && <div style={{ marginBottom: "1rem" }}><Aviary /></div>}
+
       {selected
         ? <Dashboard source={selected} nb={nb} device={selected.kind === "loc" ? deviceTok : ""} />
         : !rec.recording && (
@@ -136,6 +69,7 @@ export default function Birds() {
             </p>
           </div>
         )}
+      {!PUBLIC && <AppChatDock appId="birds" title="Birds assistant" placeholder="Ask about recent detections…" />}
     </div>
   );
 }

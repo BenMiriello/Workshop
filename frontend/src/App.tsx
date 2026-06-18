@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import Agents from "./pages/Agents";
 import AgentConfig from "./pages/AgentConfig";
 import AgentBuild from "./pages/AgentBuild";
@@ -22,6 +22,8 @@ import BirdSettings from "./pages/apps/birds/BirdSettings";
 import Recordings from "./pages/apps/birds/RecordingsPage";
 import Atlas from "./pages/apps/birds/Atlas";
 import ForecastWeek from "./pages/apps/birds/ForecastWeek";
+import { BirdsScopeProvider } from "./pages/apps/birds/scope";
+import BirdsShell from "./pages/apps/birds/BirdsShell";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
 import RecorderBar from "./pages/apps/birds/RecorderBar";
 import Activity from "./pages/Activity";
@@ -33,6 +35,16 @@ import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appN
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
 // INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
 // Apps tab is the discovery surface.
+
+// Layout route for the Birds app: provides the persistent scope and the
+// responsive chrome around every birds page.
+function BirdsLayout() {
+  return (
+    <BirdsScopeProvider>
+      <BirdsShell><Outlet /></BirdsShell>
+    </BirdsScopeProvider>
+  );
+}
 
 export default function App() {
   // Width by page type. Content/app pages keep the reading-width cap (980).
@@ -81,17 +93,22 @@ export default function App() {
           <Route path="/apps/finance" element={<Finance />} />
           <Route path="/apps/budget" element={<Budget />} />
           <Route path="/apps/location" element={<LocationApp />} />
-          <Route path="/apps/birds" element={<Birds />} />
-          <Route path="/apps/birds/locations" element={<Locations />} />
-          <Route path="/apps/birds/location" element={<LocationDetail />} />
-          <Route path="/apps/birds/devices" element={<Devices />} />
-          <Route path="/apps/birds/bird" element={<BirdDetail />} />
-          {/* Old per-station route now resolves to the location page by name is gone;
-              StationDetail is superseded by LocationDetail (by id). */}
-          <Route path="/apps/birds/settings" element={<BirdSettings />} />
-          <Route path="/apps/birds/recordings" element={<Recordings />} />
-          <Route path="/apps/birds/atlas" element={<Atlas />} />
-          <Route path="/apps/birds/forecast" element={<ForecastWeek />} />
+          {/* Birds runs inside the responsive Birds shell (sidebar / mobile tabs)
+              with the persistent Location·Device·Time scope. The Workshop topnav
+              above stays the outer nav level; this is the inner one. */}
+          <Route element={<BirdsLayout />}>
+            <Route path="/apps/birds" element={<Birds />} />
+            <Route path="/apps/birds/locations" element={<Locations />} />
+            <Route path="/apps/birds/location" element={<LocationDetail />} />
+            <Route path="/apps/birds/devices" element={<Devices />} />
+            <Route path="/apps/birds/bird" element={<BirdDetail />} />
+            {/* Old per-station route now resolves to the location page by name is gone;
+                StationDetail is superseded by LocationDetail (by id). */}
+            <Route path="/apps/birds/settings" element={<BirdSettings />} />
+            <Route path="/apps/birds/recordings" element={<Recordings />} />
+            <Route path="/apps/birds/atlas" element={<Atlas />} />
+            <Route path="/apps/birds/forecast" element={<ForecastWeek />} />
+          </Route>
           <Route path="/apps/commute" element={<CommuteApp />} />
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}

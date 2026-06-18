@@ -251,26 +251,73 @@ label {
 .bird-act.ok.on { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
 .bird-act.danger.on { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 
-/* Birds app toolbar: title + Listen + (page filters) + Settings on one row.
-   Button text labels collapse to icon-only when horizontal space runs out. */
-.birds-toolbar { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin: 0 0 1rem; }
-.birds-toolbar__title { display: flex; align-items: center; gap: 0.4rem; margin: 0; font-size: 1.4rem;
-  min-width: 1.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
-/* The section nav sits right-aligned; on narrow screens it wraps to its own line
-   (the whole toolbar wraps) rather than overflowing. */
-.birds-toolbar__nav { margin-left: auto; display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
-/* Active section: clearly "you are here", consistent across every birds page. */
-.birds-toolbar .btn.is-active, .birds-toolbar__home.is-active {
-  background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-/* The bird icon is a persistent home button in every Birds toolbar. */
-.birds-toolbar__home { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-  color: var(--fg); border-radius: 0.5rem; padding: 0.15rem; }
-/* Hover only where a real pointer can hover, so a tap/click that navigates here
-   doesn't leave the icon stuck in its highlight (sticky :hover after SPA nav). */
-@media (hover: hover) {
-  .birds-toolbar__home:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-}
-.birds-toolbar .btn { flex: 0 0 auto; }
+/* ---- Birds app shell ------------------------------------------------------
+   The single responsive chrome wrapping every birds page: a left sidebar on web
+   (>=920px), a top filter bar + bottom tab bar on mobile (<920px). The chrome is
+   chosen in JS (useIsNarrow); the styles below dress each branch. */
+.birds-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+.birds-content { min-width: 0; }
+
+/* Sidebar (web) */
+.birds-sidebar { position: sticky; top: 1rem; align-self: start; display: flex; flex-direction: column;
+  gap: 0.3rem; padding: 0.5rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.birds-brand { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.4rem 0.5rem 0.6rem; }
+.birds-brand__link { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--fg);
+  text-decoration: none; font-weight: 700; font-size: 1.05rem; }
+.birds-brand__link > svg { color: var(--accent); }
+.birds-nav { display: flex; flex-direction: column; gap: 0.12rem; }
+.birds-nav__item { display: flex; align-items: center; gap: 0.6rem; padding: 0.45rem 0.6rem; border-radius: 8px;
+  color: var(--fg); text-decoration: none; font-size: 0.9rem; }
+.birds-nav__item > svg { color: var(--muted); flex: 0 0 auto; }
+.birds-nav__item.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.birds-nav__item.is-active > svg { color: var(--accent); }
+@media (hover: hover) { .birds-nav__item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); } }
+.birds-nav__label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted);
+  font-weight: 600; padding: 0.5rem 0.6rem 0.25rem; }
+.birds-side-scope { margin-top: 0.4rem; border-top: 1px solid var(--border); padding-top: 0.2rem; }
+.birds-side-foot { margin-top: 0.4rem; border-top: 1px solid var(--border); padding: 0.5rem 0.4rem 0.2rem; }
+
+/* Scope controls (Location · Device · Time · Reset) — stacked in the sidebar,
+   inline in the mobile top bar. */
+.birds-scope { display: flex; align-items: center; gap: 0.4rem; }
+.birds-scope--stack { flex-direction: column; align-items: stretch; gap: 0.1rem; padding: 0 0.2rem; }
+.birds-scope--stack .birds-inline { display: flex; }
+.birds-scope--stack .birds-inline__trigger { width: 100%; }
+.birds-scope--stack .birds-scope__reset { align-self: flex-start; margin-top: 0.15rem; }
+.birds-scope--row { flex-direction: row; flex-wrap: wrap; gap: 0.3rem 0.6rem; }
+.birds-scope__reset { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
+  width: 1.8rem; height: 1.8rem; padding: 0; border: none; background: none; color: var(--muted);
+  border-radius: 6px; cursor: pointer; }
+.birds-scope__reset:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* In-content page title (nav + scope live in the shell now, not here). */
+.birds-pagehead { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 1rem; }
+.birds-pagehead__title { margin: 0; font-size: 1.4rem; }
+
+/* Mobile: top filter bar + fixed bottom tab bar. */
+.birds-shell--mobile { display: block; }
+.birds-shell--mobile .birds-content { padding-bottom: 4.75rem; }
+.birds-topbar { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin: 0 0 1rem;
+  padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
+.birds-topbar__end { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4rem; }
+.birds-tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; background: var(--card);
+  border-top: 1px solid var(--border); padding: 0.25rem 0.25rem calc(0.25rem + env(safe-area-inset-bottom)); }
+.birds-tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.15rem;
+  padding: 0.35rem 0.2rem; background: none; border: none; cursor: pointer; color: var(--muted);
+  text-decoration: none; font: inherit; font-size: 0.66rem; }
+.birds-tab > svg { color: var(--muted); }
+.birds-tab.is-active, .birds-tab.is-active > svg { color: var(--accent); }
+
+/* "More" bottom sheet (mobile Manage group). */
+.birds-sheet-backdrop { position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.45);
+  display: flex; align-items: flex-end; }
+.birds-sheet { width: 100%; background: var(--card); border-radius: 14px 14px 0 0; border-top: 1px solid var(--border);
+  padding: 0.75rem 0.75rem calc(1rem + env(safe-area-inset-bottom)); }
+.birds-sheet__head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem; }
+
+/* Fallback if the JS branch hasn't applied: never show a 232px rail on mobile. */
+@media (max-width: 920px) { .birds-shell { display: block; } }
 /* Inline, text-style filter: the current value reads as plain text behind an
    icon; clicking opens the option list below it. Not a chunky select control. */
 .birds-inline { position: relative; display: inline-flex; min-width: 0; flex: 0 1 auto; }

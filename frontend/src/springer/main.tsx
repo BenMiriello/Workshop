@@ -11,6 +11,8 @@ import "../styles/components.css";
 import "../styles.css";
 import { RecorderProvider } from "../pages/apps/birds/recorder";
 import { BreadcrumbProvider } from "../components/appNav";
+import { BirdsScopeProvider } from "../pages/apps/birds/scope";
+import BirdsShell from "../pages/apps/birds/BirdsShell";
 import RecorderBar from "../pages/apps/birds/RecorderBar";
 import Birds from "../pages/apps/Birds";
 import Locations from "../pages/apps/birds/Locations";
@@ -20,32 +22,37 @@ import BirdDetail from "../pages/apps/birds/BirdDetail";
 import BirdSettings from "../pages/apps/birds/BirdSettings";
 import Recordings from "../pages/apps/birds/RecordingsPage";
 import Atlas from "../pages/apps/birds/Atlas";
+import ForecastWeek from "../pages/apps/birds/ForecastWeek";
 
 // The birds app, no Workshop top-nav. Each page renders its own BirdsHeader.
 function BirdsApp() {
   return (
     <RecorderProvider>
       <BreadcrumbProvider>
-        <div className="ws-root ws-app">
-          <main>
-            {/* Root-mounted: this is a standalone birds app, so the dashboard is
-                "/", not "/apps/birds". The shared page components link to
-                "/apps/birds/…"; the build's rewriteBirdsPaths plugin rewrites
+        <BirdsScopeProvider>
+          <div className="ws-root ws-app">
+            {/* Standalone: no Workshop topnav, so the Birds shell IS the whole
+                chrome (sidebar / mobile tabs + scope). Root-mounted — the
+                dashboard is "/", not "/apps/birds"; shared page components link to
+                "/apps/birds/…" and the build's rewriteBirdsPaths plugin rewrites
                 those to root so they match these routes. */}
-            <Routes>
-              <Route path="/" element={<Birds />} />
-              <Route path="/locations" element={<Locations />} />
-              <Route path="/location" element={<LocationDetail />} />
-              <Route path="/devices" element={<Devices />} />
-              <Route path="/bird" element={<BirdDetail />} />
-              <Route path="/settings" element={<BirdSettings />} />
-              <Route path="/recordings" element={<Recordings />} />
-              <Route path="/atlas" element={<Atlas />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </main>
-          <RecorderBar />
-        </div>
+            <BirdsShell>
+              <Routes>
+                <Route path="/" element={<Birds />} />
+                <Route path="/locations" element={<Locations />} />
+                <Route path="/location" element={<LocationDetail />} />
+                <Route path="/devices" element={<Devices />} />
+                <Route path="/bird" element={<BirdDetail />} />
+                <Route path="/settings" element={<BirdSettings />} />
+                <Route path="/recordings" element={<Recordings />} />
+                <Route path="/atlas" element={<Atlas />} />
+                <Route path="/forecast" element={<ForecastWeek />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </BirdsShell>
+            <RecorderBar />
+          </div>
+        </BirdsScopeProvider>
       </BreadcrumbProvider>
     </RecorderProvider>
   );
