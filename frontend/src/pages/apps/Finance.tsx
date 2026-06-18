@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
-import ChatDock from "../../components/ChatDock";
+import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
 import {
   Button,
@@ -404,8 +404,8 @@ export default function Finance() {
         <TransactionsTable txns={txns} />
       )}
 
-      <ChatDock
-        contextKey="finance"
+      <AppChatDock
+        appId="finance"
         title="Accounts assistant"
         placeholder="Ask about balances or recent spend…"
       />

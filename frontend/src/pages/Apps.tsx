@@ -25,6 +25,7 @@ import {
   Skeleton,
   StateBlock,
   StatusDot,
+  Toggle,
   type SegmentedOption,
   type StatusKind,
 } from "../ui";
@@ -144,6 +145,100 @@ const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
 // The destination an app launches to, for display in the manage panel.
 const cardRoute = (card: AppCard): string => card.to ?? card.href ?? "(none)";
 
+// Async state for one app's manifest-backed agent-button setting.
+type AgentState =
+  | { kind: "loading" }
+  | { kind: "ready"; on: boolean }
+  | { kind: "absent" } // no manifest (external app) — setting not applicable
+  | { kind: "error"; message: string };
+
+// The "Assistant" toggle in an app's Manage panel. Reads the app's manifest
+// (ui.agent_button) and writes it back on change — a view preference, so it
+// commits immediately rather than behind an Edit/Save bar. Optimistic with
+// revert on failure. Apps with no manifest (external, e.g. Wearables) render
+// nothing here.
+function AgentButtonSetting({ appId }: { appId: string }) {
+  const [state, setState] = useState<AgentState>({ kind: "loading" });
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setState({ kind: "loading" });
+    try {
+      const r = await fetch(`/api/base-apps/manifests/${appId}`);
+      if (r.status === 404) {
+        setState({ kind: "absent" });
+        return;
+      }
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const m = await r.json();
+      setState({ kind: "ready", on: m?.ui?.agent_button !== false });
+    } catch (e) {
+      setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }, [appId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const toggle = useCallback(
+    async (next: boolean) => {
+      const prev = state;
+      setState({ kind: "ready", on: next }); // optimistic
+      setSaving(true);
+      try {
+        const r = await fetch(`/api/base-apps/manifests/${appId}/ui`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agent_button: next }),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        const m = await r.json();
+        setState({ kind: "ready", on: m?.ui?.agent_button !== false });
+      } catch (e) {
+        setState(prev); // revert
+        setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+      } finally {
+        setSaving(false);
+      }
+    },
+    [appId, state],
+  );
+
+  if (state.kind === "absent") return null;
+
+  return (
+    <>
+      <SectionLabel>Assistant</SectionLabel>
+      {state.kind === "loading" ? (
+        <Skeleton width="14rem" style={{ height: "var(--space-6)" }} />
+      ) : state.kind === "error" ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load the assistant setting"
+          hint={
+            <>
+              <code>PUT /api/base-apps/manifests/{appId}/ui</code>: {state.message}
+            </>
+          }
+          action={
+            <Button variant="ghost" size="sm" onClick={() => void load()}>
+              Retry
+            </Button>
+          }
+        />
+      ) : (
+        <Toggle
+          checked={state.on}
+          disabled={saving}
+          onChange={(next) => void toggle(next)}
+          label="Show the assistant button inside this app"
+        />
+      )}
+    </>
+  );
+}
+
 // The expanded manage panel for a single app. Shows only fields we genuinely
 // know (title, description, route, status) plus the link-not-fuse workbench
 // bridge. Richer manage data (storage/grants/jobs/agents) arrives with the
@@ -238,6 +333,8 @@ function ManageDetails({
           )}
         </dd>
       </dl>
+
+      <AgentButtonSetting appId={card.key} />
 
       <SectionLabel>Workbench</SectionLabel>
       {bridge}

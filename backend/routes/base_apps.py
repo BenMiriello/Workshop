@@ -74,6 +74,23 @@ async def get_app_manifest(app_id: str):
     return entry
 
 
+class AppUiIn(BaseModel):
+    agent_button: bool | None = None
+
+
+@router.put("/manifests/{app_id}/ui")
+async def set_app_manifest_ui(app_id: str, body: AppUiIn):
+    """Update an app's per-app UI settings (currently `agent_button`, which gates
+    the floating assistant dock inside the app) and persist apps.json. Returns the
+    refreshed manifest, or 404 if the app is not declared. View-pref style: a
+    single boolean that commits on change, like theme/filters."""
+    ui = {k: v for k, v in body.model_dump().items() if v is not None}
+    entry = manifests.set_app_ui(app_id, ui)
+    if entry is None:
+        raise HTTPException(404, f"app manifest not found: {app_id}")
+    return entry
+
+
 # ---- Grants + permissions (the authz source of truth) -----------------------
 # Grants are operator-owned. These endpoints sit behind the same loopback-trusted
 # `_SECURE` deps the rest of base-apps uses (see main.py); they add NO new auth

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import ChatDock from "../../components/ChatDock";
+import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
 import { PageHeader } from "../../ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
@@ -280,7 +280,7 @@ export default function Location() {
       </div>
       {/* In-app assistant — defaults to location scope (knows last ping + age);
           operator can swap providers from the picker inside the dock. */}
-      <ChatDock contextKey="location" title="Location assistant" placeholder="Ask about latest position…" />
+      <AppChatDock appId="location" title="Location assistant" placeholder="Ask about latest position…" />
     </div>
   );
 }

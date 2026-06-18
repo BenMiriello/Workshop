@@ -98,6 +98,12 @@ def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
     if isinstance(raw_actions, dict):
         for name, policy in raw_actions.items():
             actions[str(name)] = policy if policy in _ACTION_POLICIES else "read"
+    # Per-app UI config. `agent_button` controls whether the floating assistant
+    # dock (ChatDock) renders inside the app. Defaults to True so every app can
+    # have it; the operator toggles it per app from the Apps "Manage" view.
+    raw_ui = raw.get("ui")
+    raw_ui = raw_ui if isinstance(raw_ui, dict) else {}
+    ui = {"agent_button": raw_ui.get("agent_button", True) is not False}
     return {
         "title": str(raw.get("title") or app_id),
         "sensitivity": sensitivity,
@@ -105,6 +111,7 @@ def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
         "provides": [str(c) for c in (raw.get("provides") or []) if isinstance(c, str)],
         "needs": [str(c) for c in (raw.get("needs") or []) if isinstance(c, str)],
         "actions": actions,
+        "ui": ui,
         "kit": str(raw.get("kit") or DEFAULT_KIT),
     }
 
@@ -148,6 +155,43 @@ def load_manifests() -> dict[str, dict[str, Any]]:
 def get_manifest(app_id: str) -> dict[str, Any] | None:
     """Return a single app's normalized manifest, or None if not declared."""
     return load_manifests().get(app_id)
+
+
+def set_app_ui(app_id: str, ui: dict[str, Any]) -> dict[str, Any] | None:
+    """Merge UI settings into one app's manifest entry and persist apps.json.
+
+    Reads the raw on-disk doc (falling back to SEED), merges the given `ui` keys
+    into that app's `ui` block, and atomically rewrites apps.json. Returns the
+    re-normalized manifest entry, or None if the app is not declared. Only known
+    UI keys are accepted (currently `agent_button`); unknown keys are ignored.
+    """
+    try:
+        data = json.loads(MANIFESTS_PATH.read_text(encoding="utf-8"))
+        apps = data.get("apps") if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        apps = None
+    if not isinstance(apps, dict):
+        # No usable file on disk — seed it first so the write has a base.
+        apps = {k: dict(v) for k, v in SEED.items()}
+        data = {"apps": apps}
+
+    if app_id not in apps:
+        return None
+
+    entry = apps[app_id] if isinstance(apps[app_id], dict) else {}
+    cur_ui = entry.get("ui") if isinstance(entry.get("ui"), dict) else {}
+    if "agent_button" in ui:
+        cur_ui["agent_button"] = ui["agent_button"] is not False
+    entry["ui"] = cur_ui
+    apps[app_id] = entry
+
+    MANIFESTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"apps": apps}, indent=2) + "\n"
+    tmp = MANIFESTS_PATH.with_suffix(MANIFESTS_PATH.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, MANIFESTS_PATH)
+
+    return _normalize_entry(app_id, entry)
 
 
 def resolve_app_for_path(path: str, manifests: dict[str, dict[str, Any]] | None = None) -> str | None:

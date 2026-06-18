@@ -3,7 +3,7 @@ import { Check, TriangleAlert, Pencil, Trash2, Plus, RefreshCw } from "lucide-re
 import { AppGroupNav } from "../../components/appNav";
 import { Button, PageHeader, Tabs } from "../../ui";
 import Projection from "./budget/Projection";
-import ChatDock from "../../components/ChatDock";
+import AppChatDock from "../../components/AppChatDock";
 
 // Budget app — the planning layer over the raw Finance viewer. Implements the
 // operator's mental model as a priority waterfall: income flows down through
@@ -423,8 +423,9 @@ export default function Budget() {
       {data && tab === "projection" && <Projection budget={data} />}
 
       {/* In-app assistant — query the budget or tell it to change the plan.
-          Reusable: <ChatDock contextKey="..."> drops into any app. */}
-      <ChatDock contextKey="budget" title="Budget assistant" placeholder="Ask about or change your budget…" onAction={() => load()} />
+          Reusable: <AppChatDock appId="..."> drops into any app, gated by the
+          app's manifest ui.agent_button setting. */}
+      <AppChatDock appId="budget" title="Budget assistant" placeholder="Ask about or change your budget…" onAction={() => load()} />
     </div>
   );
 }
