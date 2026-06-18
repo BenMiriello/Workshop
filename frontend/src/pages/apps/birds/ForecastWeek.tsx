@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Sunrise, Sunset, Moon, Droplets, Wind, Bird } from "lucide-react";
-import { Skeleton, StateBlock } from "../../../ui";
+import {
+  Area, Bar, CartesianGrid, ComposedChart, ErrorBar, LabelList, Line,
+  ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
+} from "recharts";
+import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET } from "../../../ui";
 import BirdsHeader from "./BirdsHeader";
-import { API, hh, Chart, CHART_SERIES } from "./ui";
+import { API, hh, CHART_SERIES } from "./ui";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";
 
 // The 7-day BIRD forecast: the bird activity is the subject. A week-activity graph
@@ -31,6 +35,19 @@ const fmtFull = (d: string) => {
   try { return new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }); }
   catch { return d; }
 };
+
+// A forecast is a guess, so it's drawn as a range, never a false-precise value.
+// The model yields a point estimate; counts have ~Poisson spread, so a ±1.5·√n
+// band is a principled likely-range (not fabricated uncertainty).
+function band(n: number): [number, number] {
+  const s = Math.sqrt(Math.max(n, 0));
+  return [Math.max(0, Math.round(n - 1.5 * s)), Math.round(n + 1.5 * s)];
+}
+function localHourOf(iso?: string | null): number | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.getHours() + d.getMinutes() / 60;
+}
 
 export default function ForecastWeek() {
   const [week, setWeek] = useState<Week | null>(null);
@@ -75,23 +92,70 @@ export default function ForecastWeek() {
   );
 }
 
-// Week-activity graph: expected detections per day (bars) + expected species (line).
+// Week-activity graph: expected detections per day as bars with a likely-range
+// "I" bar (capped top AND bottom), the species count above each bar (the week's
+// diversity read), and a weather gutter below — off the activity axis.
 function WeekActivity({ days, onPick, historyDays }: { days: Day[]; onPick: (i: number) => void; historyDays: number }) {
   const data = days.map((d, i) => ({
-    label: d.is_today ? "Today" : d.weekday, count: d.expected_detections, species: d.expected_species, idx: i,
+    label: d.is_today ? "Today" : d.weekday, count: d.expected_detections,
+    species: Math.round(d.expected_species),
+    // Symmetric Poisson half-width (±1.5·√n) — drawn as the capped "I" range bar.
+    err: Math.round(1.5 * Math.sqrt(Math.max(d.expected_detections, 0))), idx: i,
   }));
   return (
     <section className="card" style={{ padding: "1rem", marginBottom: ".4rem" }}>
       <h3 style={{ margin: "0 0 .5rem", display: "flex", alignItems: "center", gap: ".5rem", fontSize: "1rem" }}>
         <Bird size={17} /> Expected activity this week
       </h3>
-      <Chart data={data} x="label" fill={CHART_SERIES[1]} height={150}
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        onBarClick={(p: any) => onPick(p?.idx ?? 0)} lines={[{ key: "species", name: "Species" }]} />
-      <p className="muted" style={{ fontSize: ".76rem", margin: ".3rem 0 0" }}>
-        Predicted detections per day (tap a bar) with species count. Built from {historyDays} day{historyDays === 1 ? "" : "s"} of history and tilted by each day's conditions; it sharpens as history grows.
+      <div style={{ height: 168 }}>
+        <ResponsiveContainer>
+          <ComposedChart data={data} margin={{ top: 18, right: 8, left: -18, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} />
+            <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+            <Tooltip isAnimationActive={false} cursor={{ fill: "rgba(120,160,255,0.08)" }}
+              content={({ active, payload, label }: any) => (
+                <ChartTooltip active={active} payload={payload} label={label}
+                  format={(v) => `${v} detection${v === 1 ? "" : "s"}`} />
+              )} />
+            <Bar dataKey="count" name="Expected" fill={CHART_SERIES[1]} radius={[2, 2, 0, 0]} maxBarSize={48}
+              isAnimationActive={false}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              onClick={(p: any) => onPick(p?.idx ?? 0)} style={{ cursor: "pointer" }}>
+              <ErrorBar dataKey="err" width={5} strokeWidth={1.2} stroke="var(--muted)" direction="y" />
+              <LabelList dataKey="species" position="top" fontSize={10} fill="var(--muted)" />
+            </Bar>
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      <WeatherGutter days={days} />
+      <p className="muted" style={{ fontSize: ".76rem", margin: ".4rem 0 0" }}>
+        Predicted detections per day (tap a bar); the I-bar is the likely range and the number above each bar is the species count. Built from {historyDays} day{historyDays === 1 ? "" : "s"} of history and tilted by each day's conditions; it sharpens as history grows.
       </p>
     </section>
+  );
+}
+
+// Weather context under the week chart — one column per day, aligned with the
+// bars, kept off the activity axis.
+function WeatherGutter({ days }: { days: Day[] }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${days.length}, 1fr)`, gap: ".25rem", marginTop: ".35rem", paddingLeft: 6 }}>
+      {days.map((d) => {
+        const c = wx(d.weather.wx_code);
+        return (
+          <div key={d.date} style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: ".1rem" }}>
+            <c.Icon size={14} className="muted" />
+            <span className="muted" style={{ fontSize: ".68rem" }}>{d.weather.temp_hi_f ?? "-"}°/{d.weather.temp_lo_f ?? "-"}°</span>
+            {d.weather.precip_prob_max != null && (
+              <span className="muted" style={{ fontSize: ".66rem", display: "inline-flex", alignItems: "center", gap: "2px" }}>
+                <Droplets size={9} /> {d.weather.precip_prob_max}%
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -160,9 +224,6 @@ function DayDetail({ day, profiles, regulars, locationId }: {
   const a = day.astro;
   const w = day.weather;
   const peaks = (day.peak_hours || []).length ? day.peak_hours.map(hh).join(" and ") : null;
-  const actData = profiles
-    ? profiles.activity.map((v, h) => ({ hour: h, count: v, diversity: profiles.diversity[h] }))
-    : [];
 
   return (
     <section className="card" style={{ padding: "1rem", marginTop: ".6rem" }}>
@@ -180,9 +241,8 @@ function DayDetail({ day, profiles, regulars, locationId }: {
 
       {profiles && (
         <div style={{ marginTop: ".8rem" }}>
-          <span className="muted" style={{ fontSize: ".76rem" }}>Expected activity (bars) and diversity (line) by hour</span>
-          <Chart data={actData} x="hour" fill={CHART_SERIES[3]} height={150} interval={2}
-            xfmt={(h: number) => String(h)} labelFmt={hh} lines={[{ key: "diversity", name: "Diversity" }]} />
+          <span className="muted" style={{ fontSize: ".76rem" }}>Expected activity by hour — shaded band is the likely range, rain behind on its own axis</span>
+          <DayShape day={day} activity={profiles.activity} />
         </div>
       )}
 
@@ -220,5 +280,44 @@ function DayDetail({ day, profiles, regulars, locationId }: {
         </div>
       </div>
     </section>
+  );
+}
+
+// A single day's expected shape: the expected curve inside a shaded likely-range
+// band, with rain on its own % axis behind it, on the day/night backdrop. (A
+// forecast is a guess, drawn as one — band over plain bars.)
+function DayShape({ day, activity }: { day: Day; activity: number[] }) {
+  const rain: (number | null)[] = Array(24).fill(null);
+  for (const h of day.hourly) if (h.precip_prob != null) rain[h.hour] = h.precip_prob;
+  const data = activity.map((v, h) => {
+    const [low, high] = band(v);
+    return { hour: h, expected: v, band: [low, high] as [number, number], rain: rain[h] };
+  });
+  const sr = localHourOf(day.astro?.sunrise);
+  const ss = localHourOf(day.astro?.sunset);
+  return (
+    <div style={{ height: 160 }}>
+      <ResponsiveContainer>
+        <ComposedChart data={data} margin={{ top: 6, right: 4, left: -18, bottom: 0 }}>
+          {sr != null && <ReferenceArea yAxisId="act" x1={0} x2={Math.round(sr)} fill="var(--muted)" fillOpacity={0.12} stroke="none" />}
+          {ss != null && <ReferenceArea yAxisId="act" x1={Math.round(ss)} x2={23} fill="var(--muted)" fillOpacity={0.12} stroke="none" />}
+          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+          <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={2} tickFormatter={(h: number) => String(h)} />
+          <YAxis yAxisId="act" tick={{ fontSize: 10 }} allowDecimals={false} />
+          <YAxis yAxisId="rain" orientation="right" width={32} domain={[0, 100]}
+            tick={{ fontSize: 10, fill: "var(--cat-blue)" }} stroke="var(--cat-blue)" tickFormatter={(v: number) => `${v}%`} />
+          <Tooltip isAnimationActive={false} cursor={{ fill: "rgba(120,160,255,0.08)" }}
+            content={({ active, payload, label }: any) => (
+              <ChartTooltip active={active} payload={(payload || []).filter((p: any) => p.dataKey !== "band")}
+                label={hh(label)} showName format={(v) => String(v)} />
+            )} />
+          {sr != null && <ReferenceLine yAxisId="act" x={Math.round(sr)} stroke={CHART_TARGET} strokeDasharray="3 3" label={{ value: "Sunrise", position: "top", fontSize: 9, fill: "var(--muted)" }} />}
+          {ss != null && <ReferenceLine yAxisId="act" x={Math.round(ss)} stroke={CHART_TARGET} strokeDasharray="3 3" label={{ value: "Sunset", position: "top", fontSize: 9, fill: "var(--muted)" }} />}
+          <Area yAxisId="act" dataKey="band" name="Likely range" stroke="none" fill={CHART_SERIES[3]} fillOpacity={0.18} isAnimationActive={false} legendType="none" />
+          <Line yAxisId="rain" type="monotone" dataKey="rain" name="Rain" stroke="var(--cat-blue)" strokeWidth={1.2} strokeDasharray="4 3" dot={false} connectNulls isAnimationActive={false} />
+          <Line yAxisId="act" type="monotone" dataKey="expected" name="Expected" stroke={CHART_SERIES[3]} strokeWidth={1.8} dot={false} isAnimationActive={false} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
