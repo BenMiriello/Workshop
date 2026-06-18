@@ -5,6 +5,22 @@
 # OWNTRACKS_USER, BIRDNET_* ...) are preserved without anyone re-typing them.
 # Nothing is printed from the environment. Run it from your own shell.
 set -euo pipefail
+
+# Deferred mode: schedule the restart DETACHED and after a short delay, then exit
+# immediately. A builder agent editing the Workshop runs `restart_backend.sh
+# --deferred` as its final action so this backend — which is serving the agent's
+# own chat turn — only goes down AFTER the reply has been delivered. setsid
+# detaches the restarter from the agent's process tree so it survives the backend
+# dying. (See docs/app-platform-runner.md, "restart the server that hosts the agent".)
+if [ "${1:-}" = "--deferred" ]; then
+  delay="${2:-5}"
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  setsid bash -c "sleep ${delay}; bash '${self}'" >>/tmp/workshop-backend.log 2>&1 </dev/null &
+  disown || true
+  echo "Backend restart scheduled in ${delay}s (deferred + detached) — this reply lands first, then it reloads with your changes."
+  exit 0
+fi
+
 cd /home/clawd-a/workshop/backend
 
 pid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
