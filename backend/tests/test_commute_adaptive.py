@@ -192,6 +192,38 @@ def test_build_journey_none_without_movement():
     assert journeys.build_journey(recs, []) is None
 
 
+def test_finalize_skips_partial_journeys(monkeypatch):
+    # The journeys log had 24 identical dir=None/13h partials because finalize
+    # re-appended a partial every tick. A partial is never usable — skip it.
+    import services.location as location_svc
+    from services.commute import journeys
+    monkeypatch.setattr(location_svc, "records_between", lambda a, b: [{}] * 8, raising=False)
+    monkeypatch.setattr(journeys.poller, "read_vehicle_history", lambda s: [])
+    monkeypatch.setattr(journeys, "build_journey",
+                        lambda recs, vrows: {"date": "2026-06-14", "direction": None,
+                                             "partial": True, "total_min": 798.1})
+    def _boom(j):
+        raise AssertionError("must not append a partial journey")
+    monkeypatch.setattr(journeys, "_append", _boom)
+    res = journeys.finalize()
+    assert res["built"] is False and res["reason"] == "partial_skipped"
+
+
+def test_finalize_appends_confident_journey(monkeypatch):
+    import services.location as location_svc
+    from services.commute import journeys
+    monkeypatch.setattr(location_svc, "records_between", lambda a, b: [{}] * 8, raising=False)
+    monkeypatch.setattr(journeys.poller, "read_vehicle_history", lambda s: [])
+    monkeypatch.setattr(journeys, "build_journey",
+                        lambda recs, vrows: {"date": "2026-06-16", "direction": "to-work",
+                                             "partial": False, "total_min": 95.0})
+    monkeypatch.setattr(journeys, "_already_recorded", lambda d, dirn: False)
+    appended = []
+    monkeypatch.setattr(journeys, "_append", lambda j: appended.append(j))
+    res = journeys.finalize()
+    assert res["built"] is True and len(appended) == 1 and appended[0]["direction"] == "to-work"
+
+
 def test_places_user_label_survives_relearn(tmp_path, monkeypatch):
     from services.commute import places
     from services import location as location_svc

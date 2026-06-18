@@ -215,7 +215,15 @@ def finalize(now: datetime | None = None, lookback_hours: float = 18.0) -> dict[
     j = build_journey(records, vrows)
     if not j:
         return {"built": False, "reason": "no_journey"}
-    if j.get("date") and not j.get("partial") and _already_recorded(j["date"], j.get("direction")):
+    # Only persist CONFIDENT journeys. A partial (coverage < MIN_COVERAGE or < 2
+    # stays) is never usable for pattern-learning, and since _already_recorded
+    # ignores partials, falling through here re-appended the SAME junk every
+    # tick — the journeys log was 24 identical dir=None, 13h rows. Skip it; the
+    # cause (sparse pings / overnight-merged segmentation) is the real fix.
+    if j.get("partial"):
+        return {"built": False, "reason": "partial_skipped",
+                "date": j.get("date"), "direction": j.get("direction")}
+    if j.get("date") and _already_recorded(j["date"], j.get("direction")):
         return {"built": False, "reason": "already_recorded", "date": j["date"], "direction": j.get("direction")}
     _append(j)
     return {"built": True, "journey": j}
