@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
+import { Play, Square } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
-import { PageHeader } from "../../ui";
+import { Button, PageHeader } from "../../ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
 import { Map, type LngLat } from "../../ui/Map";
+import { isNativeShell } from "../../native/bridge";
+import {
+  backgroundTrackingSupported,
+  startDeviceTracking,
+  stopDeviceTracking,
+} from "../../native/location";
 
 // Location app page — read-only view of operator position fed by Owntracks
 // iOS. Web geolocation is gone; this page is a viewer.
@@ -90,6 +97,60 @@ const fmtAge = (iso: string) => {
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
   return `${Math.round(s / 86400)}d ago`;
 };
+
+// Reports THIS device's position to the backend. In the mobile shell this hands
+// off to native background tracking (works while the app is suspended); in a
+// browser it is a foreground-only share (stops when the tab is backgrounded).
+function DeviceTrackingCard() {
+  const [tracking, setTracking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inShell = isNativeShell();
+  const trueBackground = backgroundTrackingSupported();
+
+  const toggle = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (tracking) {
+        await stopDeviceTracking();
+        setTracking(false);
+      } else {
+        await startDeviceTracking({ mode: "active" });
+        setTracking(true);
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <strong>This device</strong>
+      <p className="muted" style={{ marginTop: "0.4rem", fontSize: "0.88rem" }}>
+        {trueBackground
+          ? "Report this phone's position to the backend, continuously and in the background, replacing OwnTracks."
+          : inShell
+            ? "Native background tracking is not available in this build yet."
+            : "Share this browser's position while this tab is open. Continuous background tracking needs the Workshop app."}
+      </p>
+      <div style={{ marginTop: "0.6rem", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+        <Button onClick={toggle} disabled={busy} variant={tracking ? "ghost" : "primary"}>
+          {tracking ? <Square size={16} /> : <Play size={16} />}
+          {tracking ? "Stop sharing" : trueBackground ? "Start background tracking" : "Share from this browser"}
+        </Button>
+        {tracking && (
+          <span className="muted" style={{ fontSize: "0.85rem" }}>
+            {trueBackground ? "tracking in background" : "sharing while tab is open"}
+          </span>
+        )}
+      </div>
+      {err && <div className="err" style={{ marginTop: "0.5rem" }}>{err}</div>}
+    </div>
+  );
+}
 
 export default function Location() {
   const [latest, setLatest] = useState<LocationRecord | null>(null);
@@ -214,6 +275,8 @@ export default function Location() {
           </p>
         )}
       </div>
+
+      <DeviceTrackingCard />
 
       <div className="card">
         <strong>Map</strong>

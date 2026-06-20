@@ -5,7 +5,7 @@ from fastapi.responses import RedirectResponse
 
 from deps_auth import require_token
 
-from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, redaction, tools, health, autonomy, chat, birds, environment, worktrees
+from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees
 from services.supervisor import AgentSupervisor
 from services import global_memory, finance_cache, categorizer
 from services import environment as environment_svc
@@ -193,6 +193,7 @@ app.include_router(auto_pr.router)
 app.include_router(commute.router)
 app.include_router(location.router)
 app.include_router(owntracks.router)
+app.include_router(push.router)
 app.include_router(health.router)
 app.include_router(redaction.router)
 app.include_router(redaction.restore_router)

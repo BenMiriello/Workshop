@@ -6,10 +6,44 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "workshop",
-    "ios": { "supportsTablet": false, "bundleIdentifier": "com.benmiriello.workshop" },
-    "plugins": ["expo-router"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.benmiriello.workshop",
+      "infoPlist": {
+        "UIBackgroundModes": ["location", "audio", "fetch"],
+        "NSLocationWhenInUseUsageDescription": "Workshop uses your location for the Location and Commute apps.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Workshop tracks your location in the background to power commute alerts and the location history, replacing OwnTracks.",
+        "NSMicrophoneUsageDescription": "Workshop records audio for the Birds app.",
+        "NSSupportsLiveActivities": true,
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "isIosBackgroundLocationEnabled": true,
+          "locationAlwaysAndWhenInUsePermission": "Workshop tracks your location in the background to power commute alerts and location history."
+        }
+      ],
+      [
+        "expo-av",
+        { "microphonePermission": "Workshop records audio for the Birds app." }
+      ],
+      "expo-notifications",
+      [
+        "expo-build-properties",
+        { "ios": { "deploymentTarget": "16.2" } }
+      ],
+      "./plugins/withLiveActivity"
+    ],
     "extra": {
-      "apiBase": "http://192.168.1.10:8000"
+      "comment": "webUrl = Workshop SPA the WebView loads; apiBase = backend for native posts. Prod (Tailscale Serve): set both to https://debian.tail38e62e.ts.net:8446 and apiBase to .../api. tier flips to 'paid' after Apple Developer Program enrolment.",
+      "webUrl": "http://192.168.1.10:5173",
+      "apiBase": "http://192.168.1.10:8000",
+      "tier": "free"
     }
   }
 }

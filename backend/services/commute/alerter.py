@@ -208,6 +208,17 @@ async def send_discord(text: str, channel_id: str | None = None) -> dict[str, An
     """POST a message via the Discord bot REST API. Returns the parsed
     response or an error dict. Best-effort — failure does NOT raise."""
     ch = channel_id or COMMUTE_CHANNEL_ID
+
+    # Best-effort native push to the operator's phone. No-op until the Apple
+    # Developer Program + APNs are configured (deferred paid feature); never
+    # raises, never blocks the Discord path.
+    try:
+        from services import push
+
+        await push.send_push("Commute", text.split("\n", 1)[0][:160])
+    except Exception:  # noqa: BLE001
+        pass
+
     if not DISCORD_TOKEN:
         # Fall back to disk queue: masini bridge tails this and forwards.
         p = config.runtime_path("notify-commute.txt")

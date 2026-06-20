@@ -1,0 +1,127 @@
+// Background location capability. Replaces OwnTracks: a registered TaskManager
+// task posts every fix straight to the backend `/location/update`, even while
+// the app is suspended (iOS keeps a location-mode app alive). FREE — no paid
+// entitlement; `UIBackgroundModes:["location"]` is an Info.plist key.
+
+import * as Location from "expo-location";
+import * as TaskManager from "expo-task-manager";
+
+import type {
+  BackgroundTrackingOptions,
+  LocationFix,
+  PermissionState,
+  TrackingStatus,
+} from "@shared/native-bridge";
+import { apiUrl } from "./config";
+import { authHeaders } from "./auth";
+
+export const LOCATION_TASK = "workshop-bg-location";
+
+let lastFix: LocationFix | undefined;
+let currentMode: BackgroundTrackingOptions["mode"];
+
+function toFix(loc: Location.LocationObject): LocationFix {
+  const c = loc.coords;
+  return {
+    lat: c.latitude,
+    lng: c.longitude,
+    accuracy_m: c.accuracy ?? undefined,
+    altitude_m: c.altitude ?? undefined,
+    heading_deg: c.heading ?? undefined,
+    speed_mps: c.speed ?? undefined,
+    client_ts: new Date(loc.timestamp).toISOString(),
+  };
+}
+
+async function postFix(fix: LocationFix): Promise<void> {
+  try {
+    await fetch(apiUrl("/location/update"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ ...fix, source: "workshop-ios" }),
+    });
+  } catch {
+    // Best-effort: a dropped fix is acceptable; the next one will land.
+    // (A durable offline queue can be added here later if needed.)
+  }
+}
+
+// Registered at module import (imported by app/_layout.tsx so it exists before
+// iOS ever relaunches the app into the background to deliver a fix).
+TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
+  if (error) return;
+  const locations = (data as { locations?: Location.LocationObject[] })?.locations ?? [];
+  for (const loc of locations) {
+    const fix = toFix(loc);
+    lastFix = fix;
+    await postFix(fix);
+  }
+});
+
+function mapPermission(status: Location.PermissionStatus): PermissionState {
+  switch (status) {
+    case Location.PermissionStatus.GRANTED:
+      return "granted";
+    case Location.PermissionStatus.DENIED:
+      return "denied";
+    default:
+      return "undetermined";
+  }
+}
+
+export async function getCurrent(): Promise<LocationFix> {
+  const { status } = await Location.requestForegroundPermissionsAsync();
+  if (status !== Location.PermissionStatus.GRANTED) {
+    throw new Error("location permission denied");
+  }
+  const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+  const fix = toFix(loc);
+  lastFix = fix;
+  return fix;
+}
+
+export async function startBackgroundTracking(opts?: BackgroundTrackingOptions): Promise<void> {
+  const fg = await Location.requestForegroundPermissionsAsync();
+  if (fg.status !== Location.PermissionStatus.GRANTED) {
+    throw new Error("location permission denied");
+  }
+  // "Always" is required to run while suspended; without it we still get
+  // foreground tracking but not true background.
+  await Location.requestBackgroundPermissionsAsync();
+
+  const mode = opts?.mode ?? "significant";
+  currentMode = mode;
+
+  if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK)) {
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK);
+  }
+
+  await Location.startLocationUpdatesAsync(LOCATION_TASK, {
+    accuracy: mode === "active" ? Location.Accuracy.High : Location.Accuracy.Balanced,
+    distanceInterval: opts?.distanceM ?? (mode === "active" ? 25 : 120),
+    // Low-power, OwnTracks-like behaviour when not in an active commute.
+    deferredUpdatesInterval: mode === "active" ? 0 : 60_000,
+    pausesUpdatesAutomatically: mode !== "active",
+    activityType: Location.ActivityType.OtherNavigation,
+    showsBackgroundLocationIndicator: mode === "active",
+    foregroundService: undefined, // iOS-only target; Android would set this
+  });
+}
+
+export async function stopBackgroundTracking(): Promise<void> {
+  if (await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK)) {
+    await Location.stopLocationUpdatesAsync(LOCATION_TASK);
+  }
+  currentMode = undefined;
+}
+
+export async function trackingStatus(): Promise<TrackingStatus> {
+  const started = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK);
+  const perm = await Location.getForegroundPermissionsAsync();
+  return {
+    tracking: started,
+    mode: currentMode,
+    last: lastFix,
+    permission: mapPermission(perm.status),
+  };
+}

@@ -1,0 +1,7 @@
+{
+  "name": "workshop-live-activity",
+  "version": "1.0.0",
+  "description": "Workshop commute Live Activity (local ActivityKit updates).",
+  "main": "index.ts",
+  "private": true
+}
