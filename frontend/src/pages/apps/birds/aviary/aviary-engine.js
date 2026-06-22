@@ -366,14 +366,6 @@ export function createAviary(opts) {
     const have={}; birds.forEach(b=>{ if(b.state!=='out') have[b.sp.id]=(have[b.sp.id]||0)+1; });
     Object.keys(want).forEach(id=>{ for(let i=(have[id]||0); i<want[id] && birds.length<MAX; i++) spawn(id); });
     birds.forEach(b=>{ if(b.state==='ground' && !want[b.sp.id]) leave(b,performance.now()); });
-    // Self-heal: drop any DOM the engine no longer owns. Under React StrictMode the
-    // mount effect double-invokes, and a discarded first engine can leave orphaned
-    // bird/shadow nodes in the shared field that no live bird tracks (so they never
-    // animate or leave). Sweep them so the rendered field always matches birds[].
-    // Props (trees) also use class 'bird' but live in PROPS, not birds[] — spare them.
-    const own=new Set(); birds.forEach(b=>{ own.add(b.el); own.add(b.shadow); });
-    PROPS.forEach(p=>{ if(p.el) own.add(p.el); });
-    field.querySelectorAll('.bird,.shadow').forEach(n=>{ if(!own.has(n)) n.remove(); });
   }
   function destroy(){
     stopped=true; if(raf) cancelAnimationFrame(raf);
