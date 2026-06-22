@@ -40,6 +40,12 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
   const fieldRef = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLSpanElement>(null);
   const apiRef = useRef<AviaryApi | null>(null);
+  // Rolling "last heard" per renderable species id (epoch ms). A species stays
+  // present until PRESENT_WINDOW_MIN after its most recent signal; every new
+  // detection or live hearing refreshes the timer. Sticky on purpose: /live is
+  // momentary (a calling bird blips in and out of it), so reconciling the raw
+  // per-poll union would fly birds out and back in every few seconds.
+  const lastSeenRef = useRef<Record<string, number>>({});
 
   const [nameTags, setNameTags] = useState<boolean>(() => localStorage.getItem(TAGS_KEY) === "1");
 
@@ -63,34 +69,36 @@ export default function Aviary({ fullscreen = false }: { fullscreen?: boolean })
     apiRef.current?.setNameTags(nameTags);
   }, [nameTags]);
 
-  // Poll real detections and reconcile the present set. Present = species heard in
-  // the rolling window (durable /detections) plus anything calling right now (/live).
+  // Poll real signal and refresh the rolling "last heard" map, then hand the
+  // engine the species still inside the 15-min window. Both sources only ever
+  // PUSH a species' timer forward — presence decays on the clock, not on a
+  // single quiet poll — so the scene is stable instead of churning.
   useEffect(() => {
     let alive = true;
     const tick = async () => {
-      const cutoff = Date.now() - PRESENT_WINDOW_MIN * 60_000;
-      const present = new Set<string>();
+      const now = Date.now();
+      const seen = lastSeenRef.current;
       try {
         const d = await jget<{ detections: Det[] }>(`/detections?limit=80`);
         for (const r of d.detections || []) {
           const t = detTime(r.date, r.time);
-          if (t != null && t >= cutoff) {
-            const id = SCI_TO_ID[r.scientific_name];
-            if (id) present.add(id);
-          }
+          const id = SCI_TO_ID[r.scientific_name];
+          if (id && t != null && t > (seen[id] || 0)) seen[id] = t;
         }
-      } catch { /* endpoint unavailable (e.g. public build) -> quiet yard */ }
+      } catch { /* endpoint unavailable (e.g. public build) -> rely on what we have */ }
       try {
         const l = await jget<{ feeds: Feed[] }>(`/live`);
         for (const f of l.feeds || []) {
           for (const h of f.hearing || []) {
             if (!h.is_bird) continue;
             const id = SCI_TO_ID[h.scientific_name];
-            if (id) present.add(id);
+            if (id) seen[id] = Math.max(seen[id] || 0, now);
           }
         }
-      } catch { /* no live feed -> rely on detections only */ }
-      if (alive) apiRef.current?.setPresent([...present]);
+      } catch { /* no live feed -> detections only */ }
+      const cutoff = now - PRESENT_WINDOW_MIN * 60_000;
+      const present = Object.keys(seen).filter((id) => seen[id] >= cutoff);
+      if (alive) apiRef.current?.setPresent(present);
     };
     tick();
     const iv = setInterval(tick, POLL_MS);

@@ -46,8 +46,12 @@ export function createAviary(opts) {
   function model(id){ return MODELS[id] || (SPECIES[id] ? (MODELS[id] = buildBird(SPECIES[id])) : null); }
   YARD_IDS.forEach(id => { model(id); });
   // Merge generated species profiles into the registry. Each entry is the same
-  // shape as SPECIES (template/group/pattern/colors). Safe to call repeatedly.
-  function registerSpecies(map){ if(!map) return; for(const id in map){ SPECIES[id] = map[id]; } }
+  // shape as SPECIES (template/group/pattern/colors). The generated set keys by
+  // id but omits the `id` FIELD; presence reconciliation, panel counts, and
+  // selection all read `b.sp.id`, so stamp it from the key — otherwise every
+  // generated species lands with id===undefined and setPresent churns it in/out
+  // each poll (want[id] never matches have[undefined]). Safe to call repeatedly.
+  function registerSpecies(map){ if(!map) return; for(const id in map){ const p=map[id]; SPECIES[id] = (p && p.id!=null) ? p : Object.assign({}, p, {id}); } }
   function feetRel(m){ return [m.anchors.feet[0] - m.bounds.minX, m.anchors.feet[1] - m.bounds.minY]; }
 
   // species weighting: common songbirds spawn more; hawk rare
@@ -339,6 +343,9 @@ export function createAviary(opts) {
   window.addEventListener('resize',onResize);
 
   // ---- go ---- (no demo auto-spawn; the scene fills from setPresent())
+  // Clear the host nodes first so a remount (StrictMode double-invoke, HMR) can
+  // never inherit orphaned bird/shadow DOM from a prior engine instance.
+  field.innerHTML=''; scenery.innerHTML='';
   layout();
   raf=requestAnimationFrame(loop);
 
@@ -358,6 +365,12 @@ export function createAviary(opts) {
     const have={}; birds.forEach(b=>{ if(b.state!=='out') have[b.sp.id]=(have[b.sp.id]||0)+1; });
     Object.keys(want).forEach(id=>{ for(let i=(have[id]||0); i<want[id] && birds.length<MAX; i++) spawn(id); });
     birds.forEach(b=>{ if(b.state==='ground' && !want[b.sp.id]) leave(b,performance.now()); });
+    // Self-heal: drop any DOM the engine no longer owns. Under React StrictMode the
+    // mount effect double-invokes, and a discarded first engine can leave orphaned
+    // bird/shadow nodes in the shared field that no live bird tracks (so they never
+    // animate or leave). Sweep them so the rendered field always matches birds[].
+    const own=new Set(); birds.forEach(b=>{ own.add(b.el); own.add(b.shadow); });
+    field.querySelectorAll('.bird,.shadow').forEach(n=>{ if(!own.has(n)) n.remove(); });
   }
   function destroy(){
     stopped=true; if(raf) cancelAnimationFrame(raf);
