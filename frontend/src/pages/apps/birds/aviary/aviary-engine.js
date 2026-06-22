@@ -27,7 +27,7 @@ export function createAviary(opts) {
   const GW = 20, GH = 20;           // square lawn (bigger)
   const TW = 17, TH = 8.5, ZH = 14; // iso tile half-width/height, altitude scale
   const SC = 0.36;                  // bird display scale (smaller on a bigger yard)
-  const PROP_SC = SC * 2;           // trees/props render 2x the birds (operator: keep birds small, scenery big)
+  const PROP_SC = SC * 1.5;         // trees/props render 1.5x the birds (operator-tuned: 3/4 of the earlier 2x)
   const MAX = 12;
   let OX = 0, OY = 0, sceneW = 0, sceneH = 0;
 
