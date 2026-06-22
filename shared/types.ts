@@ -8,6 +8,9 @@ export type Agent = {
   name: string;
   kind?: AgentKind;
   created_at?: string;
+  // Last touched (Letta updated_at, falling back to created_at). Drives the
+  // Agents-tab recency sort + the per-card activity timestamp.
+  last_active?: string;
   memory_blocks: string[];
 };
 

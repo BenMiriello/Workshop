@@ -42,6 +42,10 @@ export type ChatProps = {
   placeholder?: string;
   onAction?: () => void;
   scoped?: boolean;
+  // Hide the toolbar's "open full screen" pop-out. Set when the host already
+  // owns a single expand control for the chat (e.g. AgentBuild's region focus),
+  // so there aren't two maximize buttons doing near-identical things.
+  hideExpand?: boolean;
 };
 
 function deriveMode(contextKey: string): ChatMode {
@@ -239,7 +243,7 @@ function AssistantTurn({ segments, isLatest, model }: { segments: ChatSegment[];
   );
 }
 
-export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped }: ChatProps) {
+export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
 
@@ -709,7 +713,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           ))}
         </select>
       )}
-      {variant !== "full" && (
+      {variant !== "full" && !hideExpand && (
         <button className="chat-tb__btn" onClick={popOut} title="Open full screen" aria-label="Open full screen">
           <Maximize2 size={16} aria-hidden />
         </button>

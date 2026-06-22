@@ -986,6 +986,7 @@ export default function AgentBuild() {
               variant="panel"
               placeholder="Tell the agent what to build..."
               scoped
+              hideExpand
             />
           </div>
         </Card>

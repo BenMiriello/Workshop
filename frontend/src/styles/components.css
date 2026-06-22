@@ -203,6 +203,23 @@ a.ws-btn { text-decoration: none; }
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
 }
 
+/* Agents grid: uniform card heights regardless of content length. Every card
+   has the same row structure (title / id / link / timestamp); the variable
+   lines clamp to one line with an ellipsis so nothing wraps a card taller than
+   its neighbours. grid-auto-rows:1fr + height:100% make a row's cards equal. */
+.ws-agents-grid { grid-auto-rows: 1fr; }
+.ws-agents-grid > li { display: flex; }
+.ws-agent-card { width: 100%; display: flex; flex-direction: column; }
+.ws-agent-card .ws-card__title {
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-agent-card .ws-card__meta {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* The timestamp sits at the bottom edge so cards align even when one has an
+   empty meta line. */
+.ws-agent-card__when { margin-top: auto; padding-top: var(--space-2); min-height: 1.2em; }
+
 /* ---- FIELD / INPUT / SELECT / TEXTAREA ----------------------------------- */
 .ws-field { display: flex; flex-direction: column; gap: var(--space-2); }
 .ws-field__label { font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--fg); }
@@ -808,6 +825,18 @@ a.ws-btn { text-decoration: none; }
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }
+/* Focused chat owns its own chrome (the compact chat-toolbar with Back). The
+   global topnav above it must not add a tall band + a space-6 gap that pushes
+   the chat down and eats the viewport. Collapse it to a slim breadcrumb row and
+   drop the section-nav links (the chat toolbar already has Back + pickers). */
+.ws-app.ws-app--chatfull > .ws-topnav {
+  margin-bottom: 0;
+  padding: var(--space-2) 0;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
+.ws-app.ws-app--chatfull > .ws-topnav .ws-sectionnav-inline,
+.ws-app.ws-app--chatfull > .ws-topnav .ws-sectionnav-menu { display: none; }
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */
 /* Rendered markdown (Brief, Notes, assistant chat). Tight + calm: tokens only,

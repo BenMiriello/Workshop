@@ -1,23 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain } from "lucide-react";
+import { Plus, Bot, Brain, Clock } from "lucide-react";
 import type { Agent, BuildAgent, Project } from "@shared/types";
 import {
   Button,
   Card,
   CardGrid,
-  ConfirmDialog,
   Field,
+  Input,
   Modal,
   PageHeader,
   Row,
   SectionLabel,
   Segmented,
   Select,
+  Stack,
   StateBlock,
   StatusDot,
   Tag,
-  catFor,
+  Toggle,
   type SegmentedOption,
   type StatusKind,
 } from "../ui";
@@ -27,18 +28,40 @@ type SupervisorStatus = {
   cron_autonomy: { disabled: boolean };
 };
 
+// Internal kind tokens stay "data"/"build" (Letta vs Claude Code wiring); the
+// UI says "Assistant"/"Builder" everywhere — one name per concept (no more
+// "data" leaking into the operator-facing surface).
 type Kind = "all" | "data" | "build";
 
 const KIND_OPTIONS: SegmentedOption<Kind>[] = [
   { value: "all", label: "All" },
-  { value: "data", label: "Data" },
-  { value: "build", label: "Build" },
+  { value: "data", label: "Assistants" },
+  { value: "build", label: "Builders" },
 ];
 
 const NEW_PROJECT = "__new__";
 
 const titleCase = (slug: string) =>
   slug.split("-").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
+
+const slugify = (s: string) =>
+  s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
+
+// Recency label for a card: a time within the last 24h ("Today 3:42 PM"),
+// otherwise a plain date ("Jun 18"). Empty when there's no usable timestamp.
+function activityLabel(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const diff = Date.now() - d.getTime();
+  if (diff >= 0 && diff < 24 * 3600 * 1000) {
+    return `Today ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  }
+  return d.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+const dataTs = (a: Agent) => a.last_active || a.created_at || "";
+const buildTs = (a: BuildAgent) => a.last_active || a.created || "";
 
 // Auto-generate a non-colliding builder slug `<project>-builder-<n>` and a readable
 // name `<Project> builder <n>`. No name/slug/purpose is asked of the operator —
@@ -53,8 +76,10 @@ function deriveBuilderName(projectSlug: string, existing: BuildAgent[]): { slug:
   };
 }
 
-// "New builder" asks WHICH PROJECT, not for a name/slug/purpose (doc 01 §6).
-// On submit the builder is auto-named from the project and started there.
+// "New builder" picks WHICH PROJECT and then offers the same Name/Slug/Purpose
+// fields as the in-project "Spawn build agent" modal (ProjectDetail) — the two
+// creation paths are identical apart from this picker. Name/slug default from
+// the chosen project and the existing builders, but stay editable.
 // "New project…" routes to the existing project-creation flow.
 function NewBuilderModal({
   open, projects, existing, onCancel, onCreated, onNewProject,
@@ -67,6 +92,11 @@ function NewBuilderModal({
   onNewProject: () => void;
 }) {
   const [projectSlug, setProjectSlug] = useState("");
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [slugTouched, setSlugTouched] = useState(false);
+  const [nameTouched, setNameTouched] = useState(false);
+  const [purpose, setPurpose] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -77,20 +107,36 @@ function NewBuilderModal({
     }
   }, [open, projectSlug, projects]);
 
+  // Defaults derived from the chosen project (only while the operator hasn't
+  // typed over them). Switching projects re-derives the untouched fields.
+  const defaults = useMemo(
+    () =>
+      projectSlug && projectSlug !== NEW_PROJECT
+        ? deriveBuilderName(projectSlug, existing)
+        : { slug: "", name: "" },
+    [projectSlug, existing],
+  );
+  const effectiveName = nameTouched ? name : defaults.name;
+  const effectiveSlug = slugTouched ? slug : slugify(effectiveName) || defaults.slug;
+
   const submit = async () => {
     if (projectSlug === NEW_PROJECT) {
       onNewProject();
       return;
     }
-    if (!projectSlug) return;
+    if (!projectSlug || !effectiveSlug || !effectiveName.trim()) return;
     setBusy(true);
     setErr(null);
     try {
-      const { slug, name } = deriveBuilderName(projectSlug, existing);
       const r = await fetch("/api/agents/build", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slug, name, purpose: "", project_slug: projectSlug }),
+        body: JSON.stringify({
+          slug: effectiveSlug,
+          name: effectiveName.trim(),
+          purpose: purpose.trim(),
+          project_slug: projectSlug,
+        }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const a = await r.json();
@@ -103,13 +149,14 @@ function NewBuilderModal({
   };
 
   const noProjects = !!projects && projects.length === 0;
+  const isNewProject = projectSlug === NEW_PROJECT;
 
   return (
     <Modal open={open} onClose={onCancel} title="New builder">
-      <div style={{ padding: "var(--space-4)" }}>
-        <p className="ws-muted" style={{ marginBottom: "var(--space-3)" }}>
-          A builder is a Claude Code session scoped to a project. Pick the project to
-          work on; the builder is named automatically and you can rename it later.
+      <Stack>
+        <p className="ws-muted">
+          A builder is a Claude Code session scoped to a project. Pick the project,
+          then name the builder (or keep the suggested name).
         </p>
         <Field label="Project" required>
           <Select
@@ -126,23 +173,45 @@ function NewBuilderModal({
             <option value={NEW_PROJECT}>New project…</option>
           </Select>
         </Field>
-        {err && (
-          <div style={{ marginTop: "var(--space-3)" }}>
-            <StateBlock variant="error" title="Couldn't start builder" hint={<code>{err}</code>} />
-          </div>
+        {!isNewProject && !noProjects && (
+          <>
+            <Field label="Name" required>
+              <Input
+                value={effectiveName}
+                onChange={(e) => { setName(e.target.value); setNameTouched(true); }}
+              />
+            </Field>
+            <Field label="Slug" help="kebab-case · used as the agent's id">
+              <Input
+                value={effectiveSlug}
+                onChange={(e) => { setSlug(slugify(e.target.value)); setSlugTouched(true); }}
+                spellCheck={false}
+              />
+            </Field>
+            <Field label="Purpose" help="One sentence. What is this agent working on?">
+              <Input
+                value={purpose}
+                onChange={(e) => setPurpose(e.target.value)}
+                placeholder="e.g. build the landing-page hero section"
+              />
+            </Field>
+          </>
         )}
-        <div style={{ marginTop: "var(--space-4)", display: "flex", gap: "var(--space-3)", justifyContent: "flex-end" }}>
+        {err && (
+          <StateBlock variant="error" title="Couldn't start builder" hint={<code>{err}</code>} />
+        )}
+        <Row end>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
           <Button
             variant="primary"
             onClick={submit}
-            disabled={busy || !projectSlug || (projectSlug !== NEW_PROJECT && noProjects)}
+            disabled={busy || !projectSlug || (!isNewProject && (noProjects || !effectiveSlug || !effectiveName.trim()))}
             loading={busy}
           >
-            {projectSlug === NEW_PROJECT ? "New project…" : "Start builder"}
+            {isNewProject ? "New project…" : "Start builder"}
           </Button>
-        </div>
-      </div>
+        </Row>
+      </Stack>
     </Modal>
   );
 }
@@ -154,9 +223,7 @@ export default function Agents() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
-  const [busy, setBusy] = useState(false);
   const [autonomyBusy, setAutonomyBusy] = useState(false);
-  const [confirmPause, setConfirmPause] = useState(false);
   const [kind, setKind] = useState<Kind>("all");
   const [spawning, setSpawning] = useState(false);
 
@@ -190,25 +257,14 @@ export default function Agents() {
     return () => clearInterval(t);
   }, [loadAll, loadSup]);
 
-  const setPaused = async (pause: boolean) => {
-    setBusy(true);
-    try {
-      await fetch(pause ? "/api/agents/supervisor/pause" : "/api/agents/supervisor/resume", { method: "POST" });
-      loadSup();
-    } finally {
-      setBusy(false);
-      setConfirmPause(false);
-    }
-  };
 
-  const enableAutonomy = async () => {
+  // Autonomy = the cron/Ralph background loop. Enabling clears the disable flag
+  // (backend deletes .runtime/AUTONOMY_DISABLED); disabling re-creates it. This
+  // is a live, current control — the cron scripts check this flag every tick.
+  const setAutonomy = async (enabled: boolean) => {
     setAutonomyBusy(true);
     try {
-      await fetch("/api/autonomy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: true }),
-      });
+      await fetch(`/api/agents/autonomy/${enabled ? "enable" : "disable"}`, { method: "POST" });
       loadSup();
     } finally {
       setAutonomyBusy(false);
@@ -227,11 +283,20 @@ export default function Agents() {
     return <div><PageHeader title="Agents" sub="Loading…" /></div>;
   }
 
-  const paused = !!sup?.supervisor.paused;
   const showData = kind === "all" || kind === "data";
   const showBuild = kind === "all" || kind === "build";
-  const totalCount =
-    (showData ? data.length : 0) + (showBuild ? build.filter((a) => a.state !== "retired").length : 0);
+  const liveBuild = build.filter((a) => a.state !== "retired");
+  const totalCount = (showData ? data.length : 0) + (showBuild ? liveBuild.length : 0);
+
+  // One merged, recency-sorted list (most recent at top) across both kinds —
+  // each row tagged with its kind so the card renders the right chrome.
+  type Row =
+    | { kind: "data"; ts: string; agent: Agent }
+    | { kind: "build"; ts: string; agent: BuildAgent };
+  const rows: Row[] = [
+    ...(showData ? data.map((a): Row => ({ kind: "data", ts: dataTs(a), agent: a })) : []),
+    ...(showBuild ? liveBuild.map((a): Row => ({ kind: "build", ts: buildTs(a), agent: a })) : []),
+  ].sort((x, y) => (y.ts || "").localeCompare(x.ts || ""));
 
   return (
     <div>
@@ -256,9 +321,10 @@ export default function Agents() {
       {sup && (() => {
         // At-a-glance status strip: three labeled segments (doc 01 §7).
         // Builders: a live/idle split (running == live). Assistants: a plain
-        // count (request/response — "idle" is meaningless). Autonomy: the
-        // background-loop state with exactly ONE clearly-labeled control.
-        const assistantCount = sup.supervisor.agent_count;
+        // count. Autonomy: ONE toggle bound to the cron/Ralph background loop —
+        // on clears .runtime/AUTONOMY_DISABLED, off re-creates it. (The old
+        // separate supervisor pause/resume was a stale, confusing second
+        // control; the cron flag is the live switch.)
         const liveBuilds = build.filter((a) => a.state === "running").length;
         const idleBuilds = build.filter((a) => a.state === "idle").length;
         const autonomyOn = !sup.cron_autonomy.disabled;
@@ -284,7 +350,7 @@ export default function Agents() {
                   <SectionLabel>Assistants</SectionLabel>
                   <Row>
                     <StatusDot status="ok">
-                      {assistantCount} active
+                      {data.length} {data.length === 1 ? "assistant" : "assistants"}
                     </StatusDot>
                   </Row>
                 </div>
@@ -292,28 +358,17 @@ export default function Agents() {
 
               <div>
                 <SectionLabel>Autonomy</SectionLabel>
-                {!autonomyOn ? (
-                  <Row>
-                    <StatusDot status="stopped">Off</StatusDot>
-                    <Button size="sm" variant="primary" loading={autonomyBusy} onClick={enableAutonomy}>
-                      Enable
-                    </Button>
-                  </Row>
-                ) : paused ? (
-                  <Row>
-                    <StatusDot status="warn">Paused</StatusDot>
-                    <Button size="sm" variant="primary" loading={busy} onClick={() => setPaused(false)}>
-                      Resume
-                    </Button>
-                  </Row>
-                ) : (
-                  <Row>
-                    <StatusDot status="running">On</StatusDot>
-                    <Button size="sm" variant="danger-ghost" disabled={busy} onClick={() => setConfirmPause(true)}>
-                      Pause
-                    </Button>
-                  </Row>
-                )}
+                <Row>
+                  <StatusDot status={autonomyOn ? "running" : "stopped"}>
+                    {autonomyOn ? "On" : "Off"}
+                  </StatusDot>
+                  <Toggle
+                    checked={autonomyOn}
+                    disabled={autonomyBusy}
+                    onChange={(next) => setAutonomy(next)}
+                    label={<span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>background loop</span>}
+                  />
+                </Row>
               </div>
             </Row>
           </Card>
@@ -331,56 +386,60 @@ export default function Agents() {
           }
         />
       ) : (
-        <CardGrid>
-          {showData && data.map((a) => (
-            <li key={`data:${a.id}`}>
-              <Link to={`/agents/${a.id}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive>
-                  <Row between>
-                    <h2 className="ws-card__title">
-                      <Brain size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-                      {a.name}
-                    </h2>
-                    <Tag hue={catFor(a.id)}>data</Tag>
-                  </Row>
-                  <p className="ws-card__meta ws-mono">{a.id}</p>
-                  <p className="ws-card__meta">memory: {a.memory_blocks.join(", ") || "—"}</p>
-                </Card>
-              </Link>
-            </li>
-          ))}
-          {showBuild && build.filter((a) => a.state !== "retired").map((a) => (
-            <li key={`build:${a.slug}`}>
-              <Link to={`/agents/build/${a.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive>
-                  <Row between>
-                    <h2 className="ws-card__title">
-                      <Bot size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-                      {a.name}
-                    </h2>
-                    <Tag hue="turquoise">build</Tag>
-                  </Row>
-                  <p className="ws-card__meta ws-mono">{a.slug}</p>
-                  <p className="ws-card__meta">
-                    {a.project_slug ? <>linked to <code>{a.project_slug}</code></> : "freestanding"}
-                  </p>
-                  {a.purpose && <p style={{ marginTop: "var(--space-2)" }}>{a.purpose}</p>}
-                </Card>
-              </Link>
-            </li>
-          ))}
+        <CardGrid className="ws-agents-grid">
+          {rows.map((r) => {
+            // Categorical color is by KIND only — assistants share one hue,
+            // builders another. (No more per-id rainbow on assistants.)
+            const when = activityLabel(r.ts);
+            if (r.kind === "data") {
+              const a = r.agent;
+              return (
+                <li key={`data:${a.id}`}>
+                  <Link to={`/agents/${a.id}`} style={{ textDecoration: "none", color: "inherit" }}>
+                    <Card interactive className="ws-agent-card">
+                      <Row between>
+                        <h2 className="ws-card__title">
+                          <Brain size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                          {a.name}
+                        </h2>
+                        <Tag hue="violet">assistant</Tag>
+                      </Row>
+                      <p className="ws-card__meta ws-mono">{a.id}</p>
+                      <p className="ws-card__meta">memory: {a.memory_blocks.join(", ") || "—"}</p>
+                      <p className="ws-card__meta ws-agent-card__when">
+                        {when && <><Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{when}</>}
+                      </p>
+                    </Card>
+                  </Link>
+                </li>
+              );
+            }
+            const a = r.agent;
+            return (
+              <li key={`build:${a.slug}`}>
+                <Link to={`/agents/build/${a.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
+                  <Card interactive className="ws-agent-card">
+                    <Row between>
+                      <h2 className="ws-card__title">
+                        <Bot size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                        {a.name}
+                      </h2>
+                      <Tag hue="turquoise">builder</Tag>
+                    </Row>
+                    <p className="ws-card__meta ws-mono">{a.slug}</p>
+                    <p className="ws-card__meta">
+                      {a.project_slug ? <>linked to <code>{a.project_slug}</code></> : "freestanding"}
+                    </p>
+                    <p className="ws-card__meta ws-agent-card__when">
+                      {when && <><Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{when}</>}
+                    </p>
+                  </Card>
+                </Link>
+              </li>
+            );
+          })}
         </CardGrid>
       )}
-
-      <ConfirmDialog
-        open={confirmPause}
-        onCancel={() => setConfirmPause(false)}
-        onConfirm={() => setPaused(true)}
-        title="Pause the supervisor?"
-        body="All autonomous Data-agent ticks stop until you resume. In-flight work finishes; nothing new is picked up. Build agents are unaffected (they only run when you message them)."
-        confirmLabel="Pause supervisor"
-        busy={busy}
-      />
 
       <NewBuilderModal
         open={spawning}

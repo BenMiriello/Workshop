@@ -76,6 +76,10 @@ async def list_agents(request: Request):
             "name": a.get("name"),
             "kind": "data",
             "created_at": a.get("created_at"),
+            # Last activity drives the Agents-tab recency sort + timestamp. Letta
+            # exposes updated_at (last touched); fall back to created_at so a
+            # never-run agent still sorts and labels sensibly.
+            "last_active": a.get("updated_at") or a.get("created_at"),
             "memory_blocks": [b.get("label") for b in a.get("memory", {}).get("blocks", [])],
         }
         for a in data
