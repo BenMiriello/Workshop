@@ -27,6 +27,7 @@ export function createAviary(opts) {
   const GW = 20, GH = 20;           // square lawn (bigger)
   const TW = 17, TH = 8.5, ZH = 14; // iso tile half-width/height, altitude scale
   const SC = 0.36;                  // bird display scale (smaller on a bigger yard)
+  const PROP_SC = SC * 2;           // trees/props render 2x the birds (operator: keep birds small, scenery big)
   const MAX = 12;
   let OX = 0, OY = 0, sceneW = 0, sceneH = 0;
 
@@ -142,10 +143,10 @@ export function createAviary(opts) {
         const b0=p.cubes[0].box, bl=V.proj([(b0[0]+b0[3])/2,(b0[1]+b0[4])/2,0]);
         p.baseRel=[bl[0]-rd.minX, bl[1]-rd.minY];   // trunk/base centre, relative to viewBox origin
         p.el=document.createElement('div'); p.el.className='bird'; p.el.style.cursor='default';
-        p.el.innerHTML=`<svg width="${rd.w*SC}" height="${rd.h*SC}" viewBox="${rd.minX} ${rd.minY} ${rd.w} ${rd.h}" style="position:absolute">${rd.svg}</svg>`;
+        p.el.innerHTML=`<svg width="${rd.w*PROP_SC}" height="${rd.h*PROP_SC}" viewBox="${rd.minX} ${rd.minY} ${rd.w} ${rd.h}" style="position:absolute">${rd.svg}</svg>`;
         field.appendChild(p.el); }
       const s=w2s(p.gx,p.gy,0);
-      p.el.style.transform=`translate(${s[0]-p.baseRel[0]*SC}px,${s[1]-p.baseRel[1]*SC}px)`;
+      p.el.style.transform=`translate(${s[0]-p.baseRel[0]*PROP_SC}px,${s[1]-p.baseRel[1]*PROP_SC}px)`;
       p.el.style.zIndex=Math.round(s[1]);
     });
     birds.forEach(placeBird);
@@ -369,7 +370,9 @@ export function createAviary(opts) {
     // mount effect double-invokes, and a discarded first engine can leave orphaned
     // bird/shadow nodes in the shared field that no live bird tracks (so they never
     // animate or leave). Sweep them so the rendered field always matches birds[].
+    // Props (trees) also use class 'bird' but live in PROPS, not birds[] — spare them.
     const own=new Set(); birds.forEach(b=>{ own.add(b.el); own.add(b.shadow); });
+    PROPS.forEach(p=>{ if(p.el) own.add(p.el); });
     field.querySelectorAll('.bird,.shadow').forEach(n=>{ if(!own.has(n)) n.remove(); });
   }
   function destroy(){
