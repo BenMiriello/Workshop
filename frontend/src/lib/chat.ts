@@ -15,6 +15,9 @@ export type ChatMsg = {
   meta?: {
     notes?: string[];
     error?: boolean;
+    // The turn hit its wall-clock limit and was stopped (vs a hard error) —
+    // rendered as a calm "stopped, continue" note rather than a red error.
+    timeout?: boolean;
     // Ordered text/tool segments (assistant turns). Absent on plain messages.
     segments?: ChatSegment[];
     // True while the turn is still streaming; turn_id lets a reload reconnect

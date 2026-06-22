@@ -200,9 +200,13 @@ def finalize_streaming_assistant(
     segments: list[dict],
     content: str,
     error: bool = False,
+    timed_out: bool = False,
 ) -> dict | None:
     """Mark the live turn complete (streaming=False) with its final segments.
-    If the placeholder message is missing, append a finished one instead."""
+    If the placeholder message is missing, append a finished one instead.
+
+    `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
+    the UI can render a calm "stopped — continue" note instead of a red error."""
     thread = get_thread(thread_id)
     if thread is None:
         return None
@@ -211,6 +215,8 @@ def finalize_streaming_assistant(
         meta = {"segments": segments} if segments else {}
         if error:
             meta["error"] = True
+        if timed_out:
+            meta["timeout"] = True
         return append_message(thread_id, "assistant", content, meta=meta or None)
     m["content"] = content
     meta = m.setdefault("meta", {})
@@ -218,6 +224,8 @@ def finalize_streaming_assistant(
     meta["streaming"] = False
     if error:
         meta["error"] = True
+    if timed_out:
+        meta["timeout"] = True
     save_thread(thread)
     return m
 

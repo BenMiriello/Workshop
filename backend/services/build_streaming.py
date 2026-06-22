@@ -274,12 +274,40 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     turn.complete = True
 
     # Finalize the streaming assistant message (segments + text, streaming off).
-    # Even on non-zero exit, salvage any text emitted (matches call_cloud).
-    text = turn.final_text or ("(model exited without text)" if rc != 0 else "")
-    is_error = bool(turn.error) or (rc != 0 and not turn.final_text)
+    # Even on non-zero exit, salvage any text emitted (matches call_cloud). When
+    # nothing salvageable came back, say WHY in plain language instead of the old
+    # opaque "(model exited without text)":
+    #   - timeout: the turn hit its wall-clock limit and was stopped. Its file
+    #     changes are already on disk, so a follow-up continues the work.
+    #   - clean exit, no text: the model finished its tool work without a closing
+    #     summary (common) — the steps above are the result.
+    #   - non-zero exit, no text: a real failure.
+    timed_out = bool(turn.error) and turn.error.startswith("timeout")
+    minutes = max(1, round(timeout_s / 60))
+    if turn.final_text:
+        text = turn.final_text
+        is_error = False
+    elif timed_out:
+        text = (
+            f"This turn was stopped after reaching the {minutes}-minute time limit. "
+            "Any files it changed are already saved — send a follow-up (e.g. "
+            "\"continue\") to pick up where it left off."
+        )
+        is_error = False
+    elif rc == 0:
+        text = (
+            "The turn finished without a closing message — the steps above are the "
+            "result. Send a follow-up if you want a summary or the next change."
+        )
+        is_error = False
+    else:
+        detail = f": {turn.error}" if turn.error else ""
+        text = f"The turn ended unexpectedly (exit {rc}){detail}. Try sending it again."
+        is_error = True
     try:
         chat_store.finalize_streaming_assistant(
-            turn.thread_id, turn.id, turn.segments, text, error=is_error
+            turn.thread_id, turn.id, turn.segments, text,
+            error=is_error, timed_out=timed_out,
         )
     except Exception as e:
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)

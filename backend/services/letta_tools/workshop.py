@@ -51,25 +51,41 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
     Returns:
         Confirmation string with the line that was added.
     """
+    import fcntl
     from pathlib import Path
     todo_path = Path("/home/clawd-a/workshop/TODO.md")
+    lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
     if not task_text or len(task_text.strip()) < 5:
         return "ERROR: task_text too short"
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
     line = f"[ ] {task_text.strip()} — proposed by overseer ({urgency})"
-    content = todo_path.read_text()
-    if urgency == "high":
-        lines = content.splitlines()
-        for i, l in enumerate(lines):
+    # Single-flight: serialize the read-modify-write so concurrent overseer ticks
+    # (and any other automated writer) can't clobber each other's append.
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as _lk:
+        fcntl.flock(_lk, fcntl.LOCK_EX)
+        content = todo_path.read_text()
+        # Dedupe: skip if an equivalent open task already exists (normalized,
+        # ignoring the "— proposed by …" suffix). Stops the TODO from filling
+        # with near-identical proposals.
+        norm = " ".join(task_text.strip().lower().split())
+        for l in content.splitlines():
             if l.startswith("[ ] "):
-                lines.insert(i, line)
-                break
+                body = l[4:].split(" — proposed by")[0]
+                if " ".join(body.lower().split()) == norm:
+                    return f"skipped (duplicate of existing open task): {task_text.strip()}"
+        if urgency == "high":
+            lines = content.splitlines()
+            for i, l in enumerate(lines):
+                if l.startswith("[ ] "):
+                    lines.insert(i, line)
+                    break
+            else:
+                lines.append(line)
+            todo_path.write_text("\n".join(lines) + "\n")
         else:
-            lines.append(line)
-        todo_path.write_text("\n".join(lines) + "\n")
-    else:
-        todo_path.write_text(content.rstrip() + "\n" + line + "\n")
+            todo_path.write_text(content.rstrip() + "\n" + line + "\n")
     return f"added: {line}"
 
 
@@ -84,20 +100,25 @@ def wkshp_write_log(entry: str, agent_name: str = "agent") -> str:
     Returns:
         The full line that was written.
     """
+    import fcntl
     import re
     from pathlib import Path
     from datetime import datetime, timezone
     todo_path = Path("/home/clawd-a/workshop/TODO.md")
+    lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
     line = f"[{ts}] [{agent_name}] {entry.strip()}"
-    content = todo_path.read_text()
-    if "## Log" in content:
-        new = re.sub(r"(## Log\n(?:<!--[^\n]*-->\n?)*)", lambda m: m.group(1) + line + "\n", content, count=1)
-        todo_path.write_text(new)
-    else:
-        todo_path.write_text(content.rstrip() + f"\n\n## Log\n{line}\n")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as _lk:
+        fcntl.flock(_lk, fcntl.LOCK_EX)
+        content = todo_path.read_text()
+        if "## Log" in content:
+            new = re.sub(r"(## Log\n(?:<!--[^\n]*-->\n?)*)", lambda m: m.group(1) + line + "\n", content, count=1)
+            todo_path.write_text(new)
+        else:
+            todo_path.write_text(content.rstrip() + f"\n\n## Log\n{line}\n")
     return line
 
 
@@ -112,19 +133,24 @@ def wkshp_mark_blocked(task_substring: str, reason: str) -> str:
     Returns:
         Confirmation with the rewritten line, or an error if no/multiple matches.
     """
+    import fcntl
     from pathlib import Path
     todo_path = Path("/home/clawd-a/workshop/TODO.md")
+    lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
-    lines = todo_path.read_text().splitlines()
-    matches = [(i, l) for i, l in enumerate(lines) if l.startswith("[ ] ") and task_substring.lower() in l.lower()]
-    if not matches:
-        return f"ERROR: no [ ] task matched substring {task_substring!r}"
-    if len(matches) > 1:
-        return f"ERROR: substring {task_substring!r} matched {len(matches)} tasks; be more specific"
-    i, l = matches[0]
-    body = l[4:]
-    new_line = f"[~] {body} — BLOCKED: {reason}"
-    lines[i] = new_line
-    todo_path.write_text("\n".join(lines) + "\n")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w") as _lk:
+        fcntl.flock(_lk, fcntl.LOCK_EX)
+        lines = todo_path.read_text().splitlines()
+        matches = [(i, l) for i, l in enumerate(lines) if l.startswith("[ ] ") and task_substring.lower() in l.lower()]
+        if not matches:
+            return f"ERROR: no [ ] task matched substring {task_substring!r}"
+        if len(matches) > 1:
+            return f"ERROR: substring {task_substring!r} matched {len(matches)} tasks; be more specific"
+        i, l = matches[0]
+        body = l[4:]
+        new_line = f"[~] {body} — BLOCKED: {reason}"
+        lines[i] = new_line
+        todo_path.write_text("\n".join(lines) + "\n")
     return f"marked blocked: {new_line}"

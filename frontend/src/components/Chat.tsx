@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
-  WifiOff, ChevronRight, X, ListTodo,
+  WifiOff, ChevronRight, X, ListTodo, Clock, Slash,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
@@ -276,6 +276,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
+  const [slashSel, setSlashSel] = useState(0);
   const slug = buildSlug(contextKey);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -596,6 +597,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [input, effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Slash-command menu owns the arrow/enter/tab/escape keys while it's open.
+    if (showSlash) {
+      const sel = Math.min(slashSel, slashMatches.length - 1);
+      if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((i) => Math.min(i + 1, slashMatches.length - 1)); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((i) => Math.max(i - 1, 0)); return; }
+      if (e.key === "Escape") { e.preventDefault(); setInput(""); setSlashSel(0); return; }
+      if (e.key === "Tab") { e.preventDefault(); setInput(`/${slashMatches[sel].name}`); return; }
+      if (e.key === "Enter") { e.preventDefault(); runSlash(slashMatches[sel]); return; }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       send();
@@ -606,6 +616,33 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const back = () => {
     if (window.history.length > 1) navigate(-1);
     else navigate("/agents");
+  };
+
+  // ---- Slash commands ------------------------------------------------------
+  // A small client-side registry mapping "/<name>" to a Workshop chat action.
+  // Only commands that fully work today are listed; more land as their backends
+  // do (e.g. /compact, /rollback). Typing "/" opens an autocomplete popover; the
+  // slash button in the composer opens the same menu.
+  type SlashCommand = { name: string; desc: string; available: boolean; run: () => void };
+  const slashCommands: SlashCommand[] = [
+    { name: "new", desc: "Start a new chat", available: true, run: () => newChat() },
+    { name: "delete", desc: "Delete the current chat", available: !!activeId, run: () => { if (activeId) setConfirmDeleteId(activeId); } },
+    { name: "tasks", desc: "Toggle the task list", available: !!slug, run: () => setTasksOpen((o) => !o) },
+    { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, run: () => popOut() },
+    { name: "help", desc: "Show available commands", available: true, run: () => { setInput("/"); inputRef.current?.focus(); } },
+  ];
+  // Visible only when the input is a single "/"-prefixed token (a command being
+  // typed), filtered to available commands matching the typed prefix.
+  const slashActive = input.startsWith("/") && !input.includes("\n");
+  const slashQuery = slashActive ? input.slice(1).toLowerCase().trimStart().split(" ")[0] : "";
+  const slashMatches = slashActive
+    ? slashCommands.filter((c) => c.available && c.name.startsWith(slashQuery))
+    : [];
+  const showSlash = slashActive && slashMatches.length > 0;
+  const runSlash = (c: SlashCommand) => {
+    setInput("");
+    setSlashSel(0);
+    c.run();
   };
 
   const inFlight = effectiveMode === "build" ? streaming : busy;
@@ -791,9 +828,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       )}
       {messages.map((m, i) => (
         <div key={i} className={`chat-msg ${m.role}`}>
-          <div className={`chat-bubble ${m.meta?.error ? "error" : ""}`}>
+          <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
             {m.role === "assistant" ? (
-              renderAssistant(m, idle && i === lastAssistantIdx)
+              <>
+                {m.meta?.timeout && (
+                  <div className="chat-timeout-tag">
+                    <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
+                  </div>
+                )}
+                {renderAssistant(m, idle && i === lastAssistantIdx)}
+              </>
             ) : (
               <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
             )}
@@ -833,6 +877,27 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const streamingBuild = effectiveMode === "build" && streaming;
   const composer = (
     <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}`}>
+      {showSlash && (
+        <ul className="chat-slash-menu" role="listbox" aria-label="Slash commands">
+          {slashMatches.map((c, i) => {
+            const active = i === Math.min(slashSel, slashMatches.length - 1);
+            return (
+              <li
+                key={c.name}
+                role="option"
+                aria-selected={active}
+                className={`chat-slash-item${active ? " is-active" : ""}`}
+                onMouseEnter={() => setSlashSel(i)}
+                // onMouseDown (not onClick) so it fires before the textarea blur.
+                onMouseDown={(e) => { e.preventDefault(); runSlash(c); }}
+              >
+                <span className="chat-slash-name">/{c.name}</span>
+                <span className="chat-slash-desc">{c.desc}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <textarea
         ref={inputRef}
         className="chat-input"
@@ -843,6 +908,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onKeyDown={onKey}
       />
       <div className="chat-actions">
+        {!streamingBuild && (
+          <button
+            className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
+            onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
+            aria-label="Slash commands"
+            title="Slash commands"
+          >
+            <Slash size={16} aria-hidden />
+          </button>
+        )}
         {/* While a build turn streams, Send (queues the next message) sits to the
             left of Stop. Otherwise just Send. */}
         <button className="chat-send" onClick={send} disabled={!input.trim() || (effectiveMode !== "build" && busy)} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>

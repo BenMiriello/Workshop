@@ -24,11 +24,37 @@ Driven by operator review (2026-06-22). Work the plan in `TODO.md` under
 - Focused full chat (`/chat/:key`) drops the global SectionNav and slims the topnav —
   the chat owns its chrome (Back + compact toolbar).
 
-## Phase 2 (planned, not yet built — net-new chat subsystems)
-Slash commands (registry + autocomplete + slash button), per-chat to-do/done list
-surfaced from the task store and prompted into the agent, context/compaction UI,
-conversation rollback (needs message ids + a truncate endpoint). Designed in the
-TODO before building; no stubs land.
+## Phase 2 — chat features
+Shipped this tick:
+- **Timeout handling.** Build turns hit a 900s wall-clock limit; on timeout the
+  proc is killed and the bubble used to collapse to the opaque
+  "(model exited without text)". Now `build_streaming` distinguishes timeout vs
+  clean-no-text vs error and writes a plain message ("stopped at the N-minute
+  limit — files saved, send a follow-up to continue"), tags `meta.timeout`, and
+  the frontend renders it as a calm warn note (Clock tag, `--warn` tint) instead
+  of a red error. Limit unchanged — only the handling.
+- **Overlap handling (minimal, no overhaul).** The real overlap surface was the
+  Letta TODO/PROJECT tools (`letta_tools/workshop.py`) doing unlocked
+  read-modify-write with no dedupe — that's why TODO.md filled with near-identical
+  overseer lines. Added an inline `flock` advisory lock (single-flight via
+  `.runtime/TODO.lock`) around each writer, and normalized dedupe in
+  `wkshp_propose_task` so identical proposals are skipped. Cleaned the existing
+  vacuous-duplicate pile out of TODO.md.
+- **Slash commands.** Composer command registry + "/"-triggered autocomplete
+  popover (arrow/enter/tab/esc) + a slash button. Wired to actions that work
+  today: `/new`, `/delete`, `/tasks`, `/expand`, `/help`. `/compact` + `/rollback`
+  land with their backends below (not stubbed).
+
+Still to build (each needs more backend; no stubs):
+- Per-chat to-do/done list surfaced from the task store and prompted into the agent.
+- Context view + compaction (summarize older turns; show context size) → `/compact`.
+- Conversation rollback (message ids + truncate endpoint + "revert to here") → `/rollback`.
+
+## Overlap / concurrency note
+Two writers touched shared docs at once earlier (the overseer planner + a builder),
+not two coders. The fix is scoped to the high-frequency automated writers (flock +
+dedupe on the Letta doc tools); a builder's freehand Edit is rare and operator-driven,
+so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
 
 ## Log
 - 2026-06-22 — Phase 1 SHIPPED (Workshop builder 2): Agents tab — autonomy toggle

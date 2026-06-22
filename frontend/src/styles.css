@@ -621,6 +621,14 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .chat-bubble.error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--fg); }
+/* Timeout: a calm warn treatment (not the red error), with a small lead tag so
+   even a partial-then-stopped turn reads as "stopped at the limit, continue". */
+.chat-bubble--timeout { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--fg); }
+.chat-timeout-tag {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  margin-bottom: 0.35rem; font-size: 0.72rem; font-weight: var(--fw-semi);
+  color: var(--warn-solid); text-transform: uppercase; letter-spacing: 0.03em;
+}
 .chat-typing { display: inline-block; color: var(--muted); letter-spacing: 0.15em; animation: chat-typing-pulse 1.2s ease-in-out infinite; }
 @keyframes chat-typing-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .chat-typing { animation: none; } }
@@ -712,7 +720,7 @@ input[type="range"].grad::-moz-range-thumb {
      (then it scrolls internally). Keep --chat-input-max in sync with the JS cap. */
   min-height: 2.6rem;
   max-height: 6rem;
-  padding: 0.55rem 3.1rem 0.55rem 0.75rem;   /* right room for the send button */
+  padding: 0.55rem 5.6rem 0.55rem 0.75rem;   /* right room for the slash + send buttons */
   /* 16px minimum: stops iOS auto-zoom on focus */
   font-size: 1rem; line-height: 1.45; font-family: inherit;
   background: var(--bg); color: var(--fg);
@@ -741,6 +749,31 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-send:disabled { opacity: 0.4; }
 .chat-stop { background: var(--bg-inset); color: var(--fg); border: 1px solid var(--border); }
 .chat-stop:hover { background: var(--card-hover); }
+
+/* ---- Slash commands: composer button + autocomplete popover ---- */
+.chat-slash-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.1rem; height: 2.1rem; padding: 0;
+  border-radius: var(--radius-md); cursor: pointer;
+  background: var(--bg-inset); color: var(--muted); border: 1px solid var(--border);
+}
+.chat-slash-btn:hover { color: var(--fg); background: var(--card-hover); }
+.chat-slash-btn.is-active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.chat-slash-menu {
+  position: absolute; left: var(--space-3); right: var(--space-3);
+  bottom: calc(100% - var(--space-1));
+  margin: 0; padding: var(--space-1); list-style: none; z-index: 5;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  max-height: 14rem; overflow-y: auto;
+}
+.chat-slash-item {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: 0.35rem 0.5rem; border-radius: var(--radius-sm); cursor: pointer;
+}
+.chat-slash-item.is-active { background: var(--accent-soft); }
+.chat-slash-name { font-family: var(--font-mono); font-weight: var(--fw-semi); color: var(--accent); font-size: 0.82rem; }
+.chat-slash-desc { color: var(--muted); font-size: 0.78rem; }
 /* Queued user messages (typed while a turn is streaming). */
 .chat-bubble--queued { opacity: 0.55; }
 
