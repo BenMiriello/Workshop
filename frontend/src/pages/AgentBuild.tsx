@@ -313,16 +313,23 @@ export default function AgentBuild() {
   const [paneTab, setPaneTab] = useState<PaneTab>("editor");
   const [docTab, setDocTab] = useState<DocTab>("system-prompt");
 
-  // IDE-style pane focus, persisted across reloads.
-  const [focus, setFocus] = useState<FocusRegion>(() => {
-    if (typeof localStorage === "undefined") return "all";
-    const v = localStorage.getItem(FOCUS_KEY) as FocusRegion | null;
-    return v === "files" || v === "center" || v === "chat" || v === "all" ? v : "all";
-  });
+  // IDE-style pane focus, persisted PER AGENT across reloads. Entering a builder
+  // you want the chat — so the default is chat-focused, not the 3-up. The focus
+  // toggle in each region header expands/restores; the choice is remembered per
+  // agent in the browser.
+  const focusKey = `${FOCUS_KEY}:${slug}`;
+  const readFocus = (): FocusRegion => {
+    if (typeof localStorage === "undefined") return "chat";
+    const v = localStorage.getItem(focusKey) as FocusRegion | null;
+    return v === "files" || v === "center" || v === "chat" || v === "all" ? v : "chat";
+  };
+  const [focus, setFocus] = useState<FocusRegion>(readFocus);
   const changeFocus = useCallback((next: FocusRegion) => {
     setFocus(next);
-    try { localStorage.setItem(FOCUS_KEY, next); } catch { /* ignore */ }
-  }, []);
+    try { localStorage.setItem(focusKey, next); } catch { /* ignore */ }
+  }, [focusKey]);
+  // Re-load the persisted focus when switching agents without a full remount.
+  useEffect(() => { setFocus(readFocus()); }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // System prompt (file is PROJECT.md; the label is what's "system prompt"-y).
   const [systemPrompt, setSystemPrompt] = useState<string>("");

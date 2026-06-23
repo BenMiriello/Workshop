@@ -708,27 +708,33 @@ a.ws-btn { text-decoration: none; }
   .ws-agent-build[data-focus="all"] > .ws-agent-build__chat { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
-  /* Stacked, page-scrolling. Chat first (primary driver), then center, files. */
+  /* Bound the builder to the viewport so a region scrolls INTERNALLY — the chat
+     must never render its full history full-length and stretch the page. */
   .ws-agent-build {
     display: flex;
     flex-direction: column;
-    height: auto;
-    min-height: 0;
+    height: calc(100dvh - 150px);
+    min-height: 420px;
   }
-  /* On mobile we stack everything; a persisted desktop focus must not hide a
-   * region here. Re-show all, then order them chat-first. */
-  .ws-agent-build[data-focus] > .ws-agent-build__region { display: flex; }
-  .ws-agent-build > .ws-agent-build__chat   { order: 0; min-height: 60vh; }
-  .ws-agent-build > .ws-agent-build__main   { order: 1; }
-  .ws-agent-build > .ws-agent-build__files  { order: 2; }
-  .ws-agent-build .ws-agent-build__region-body { overflow: visible; }
-  .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; overflow: auto; }
-  /* The per-region "expand full width" toggle is the desktop 3-pane focus model;
-     stacked on mobile it does nothing useful and reads as a stray second expand
-     button next to the chat's own full-screen control — hide it. */
-  .ws-region-head__focus { display: none; }
-  /* The chat region's own body must let its panel size + scroll internally. */
-  .ws-agent-build__chat .ws-agent-build__region-body { min-height: 0; }
+  /* Respect focus on mobile too (same as desktop): a focused region is the only
+     one shown and fills the bounded height. The region-header focus toggle is the
+     single expand/contract control — it stays visible so "enter the chat" / "show
+     the panels" is always one tap away. (The chat's own pop-out is suppressed via
+     hideExpand, so this is not a duplicate.) */
+  .ws-agent-build[data-focus="files"]  > :not(.ws-agent-build__files),
+  .ws-agent-build[data-focus="center"] > :not(.ws-agent-build__main),
+  .ws-agent-build[data-focus="chat"]   > :not(.ws-agent-build__chat) { display: none; }
+  .ws-agent-build[data-focus="chat"]   > .ws-agent-build__chat,
+  .ws-agent-build[data-focus="files"]  > .ws-agent-build__files,
+  .ws-agent-build[data-focus="center"] > .ws-agent-build__main { flex: 1; min-height: 0; }
+
+  /* "all" → stacked, chat first and capped so it scrolls internally; the panels
+     below are reached by scrolling the builder container, not by the chat growing. */
+  .ws-agent-build[data-focus="all"] { overflow-y: auto; }
+  .ws-agent-build[data-focus="all"] > .ws-agent-build__chat  { order: 0; flex: 0 0 auto; height: 62vh; }
+  .ws-agent-build[data-focus="all"] > .ws-agent-build__main  { order: 1; flex: 0 0 auto; }
+  .ws-agent-build[data-focus="all"] > .ws-agent-build__files { order: 2; flex: 0 0 auto; }
+  .ws-agent-build[data-focus="all"] .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; }
 }
 
 .ws-agent-build__status {
