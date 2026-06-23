@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
-# Restart the Workshop backend (nohup uvicorn on :8000, no systemd, no --reload).
-# Carries the CURRENTLY-RUNNING process's environment over to the new one, so
-# secrets that were passed at launch (WORKSHOP_511_API_KEY, HEALTH_USER,
-# OWNTRACKS_USER, BIRDNET_* ...) are preserved without anyone re-typing them.
-# Nothing is printed from the environment. Run it from your own shell.
+# Restart the Workshop backend.
+#
+# Preferred path: the systemd --user service installed by
+# scripts/install_service.sh (`systemctl --user restart workshop-backend`).
+# This is the canonical setup — it auto-starts on boot and auto-restarts on
+# crash. If the unit is not installed (e.g. a minimal/dev box without systemd),
+# this falls back to the legacy nohup launch on :8000.
 set -euo pipefail
+
+SERVICE=workshop-backend.service
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+have_unit() {
+  command -v systemctl >/dev/null 2>&1 \
+    && systemctl --user cat "$SERVICE" >/dev/null 2>&1
+}
 
 # Deferred mode: schedule the restart DETACHED and after a short delay, then exit
 # immediately. A builder agent editing the Workshop runs `restart_backend.sh
@@ -21,34 +31,51 @@ if [ "${1:-}" = "--deferred" ]; then
   exit 0
 fi
 
-cd /home/clawd-a/workshop/backend
-
-pid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
-if [ -z "${pid:-}" ]; then
-  echo "No running backend found on :8000."
-  echo "Start it with your usual command (it needs WORKSHOP_511_API_KEY etc.)."
-  exit 1
+# --- Preferred: systemd --user service -------------------------------------
+if have_unit; then
+  systemctl --user restart "$SERVICE"
+  sleep 2
+  if systemctl --user is-active --quiet "$SERVICE"; then
+    echo "Backend restarted via systemd ($SERVICE active)."
+  else
+    echo "systemd restart did not come up active. Recent logs:" >&2
+    journalctl --user -u "$SERVICE" --no-pager -n 20 >&2 || true
+    exit 1
+  fi
+  exit 0
 fi
 
-# Snapshot the live env (NUL-delimited), dropping any empty trailing entry, then
-# stop the old process and relaunch with exactly that environment.
-envv=()
-while IFS= read -r -d '' line; do
-  [ -n "$line" ] && envv+=("$line")
-done < "/proc/$pid/environ"
+# --- Fallback: legacy nohup launch -----------------------------------------
+# No systemd unit installed. Snapshot the env of any running backend (to preserve
+# secrets passed at launch), overlay auth.env so the OAuth token + 511 key can't
+# drift blank, then relaunch. If nothing is running, launch from auth.env +
+# secrets.env directly. Consider running scripts/install_service.sh instead.
+echo "No systemd unit found; using legacy nohup path. (Run scripts/install_service.sh to adopt systemd.)" >&2
+cd "$REPO_ROOT/backend"
 
-# Overlay auth.env LAST so its values win over the live snapshot. A prior restart
-# can carry a BLANK WORKSHOP_511_API_KEY forward (the recurring "commute went dumb,
-# 511 feeds need_key" gotcha); sourcing auth.env here repopulates the key (and the
-# OAuth token) every restart so it cannot drift blank again. In `env -i K=a K=b`,
-# the LAST K wins, so appending these after the snapshot makes them authoritative.
-AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/clawdbot/auth.env}"
-if [ -f "$AUTH_ENV" ]; then
+envv=()
+pid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
+if [ -n "${pid:-}" ]; then
+  while IFS= read -r -d '' line; do
+    [ -n "$line" ] && envv+=("$line")
+  done < "/proc/$pid/environ"
+fi
+
+# Overlay auth/secrets files LAST so their values win over any stale snapshot.
+for f in "${WORKSHOP_AUTH_ENV:-$HOME/.config/clawdbot/auth.env}" "$HOME/.config/workshop/secrets.env"; do
+  [ -f "$f" ] || continue
   while IFS= read -r line; do
     line="${line#export }"
     case "$line" in ''|\#*) continue;; *=*) envv+=("$line");; esac
-  done < "$AUTH_ENV"
-fi
+  done < "$f"
+done
+# Defaults the unit would otherwise provide.
+envv+=("LETTA_URL=${LETTA_URL:-http://127.0.0.1:8283}")
+envv+=("LETTA_SERVER_PASS=${LETTA_SERVER_PASS:-workshop-local}")
+envv+=("WORKSHOP_PROJECTS_ROOT=${WORKSHOP_PROJECTS_ROOT:-$HOME}")
+envv+=("WORKSHOP_ROOT=${WORKSHOP_ROOT:-$REPO_ROOT}")
+envv+=("HOME=$HOME" "PATH=$PATH")
+
 pkill -f 'uvicorn main:app.*8000' || true
 sleep 1
 env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 \
@@ -56,4 +83,4 @@ env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 
 disown || true
 sleep 2
 newpid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
-echo "Backend restarted (old pid $pid -> new pid ${newpid:-unknown}). Log: /tmp/workshop-backend.log"
+echo "Backend restarted via nohup (new pid ${newpid:-unknown}). Log: /tmp/workshop-backend.log"

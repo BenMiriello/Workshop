@@ -10,7 +10,9 @@ workshop/
 ├── cron_agent.sh          # one-shot claude -p loop (installed by supervisor session)
 ├── infra/
 │   ├── letta/             # docker compose: pgvector + Letta server (127.0.0.1:8283)
-│   └── open-wearables/    # docker compose (Phase 2)
+│   ├── open-wearables/    # docker compose (Phase 2)
+│   └── systemd/           # workshop-backend.service template + secrets.env.example
+│                          #   (installed by scripts/install_service.sh)
 ├── backend/               # FastAPI: /agents, /projects, /finance, /plaid/webhook
 ├── frontend/              # Vite + React + TS: Agents, Agent config, Projects, Apps
 ├── mobile/                # Expo + React Native scaffold
@@ -34,9 +36,11 @@ python3 -m venv .venv
 LETTA_URL=http://127.0.0.1:8283 LETTA_SERVER_PASS=workshop-local \
   .venv/bin/python ../scripts/migrate_memory.py
 
-# 3. Start backend
-systemctl --user daemon-reload
-systemctl --user enable --now workshop-backend
+# 3. Install + start backend as a systemd --user service.
+# Renders infra/systemd/workshop-backend.service for THIS checkout, enables
+# linger (so it auto-starts on boot without a login session), and starts it.
+# Idempotent — safe to re-run after a pull. Restart with: scripts/restart_backend.sh
+bash scripts/install_service.sh
 journalctl --user -u workshop-backend -f
 
 # 4. Start frontend (dev)

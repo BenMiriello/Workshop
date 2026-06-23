@@ -1,0 +1,31 @@
+# Workshop FastAPI backend — systemd --user unit (template).
+#
+# Do NOT copy this file into ~/.config/systemd/user/ by hand: the
+# @WORKSHOP_ROOT@ token below is a placeholder. Run
+#   bash scripts/install_service.sh
+# which substitutes the real checkout path and installs/enables the unit.
+#
+# Portable by design: %h resolves to the invoking user's home, so this works
+# for any user/clone location, not just the original clawd-a setup.
+
+[Unit]
+Description=Workshop FastAPI backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKSHOP_ROOT@/backend
+# Optional secrets (Plaid, 511, Discord, etc.). The leading "-" makes it
+# non-fatal when the file is absent. See infra/systemd/secrets.env.example.
+EnvironmentFile=-%h/.config/workshop/secrets.env
+Environment=WORKSHOP_ROOT=@WORKSHOP_ROOT@
+Environment=WORKSHOP_PROJECTS_ROOT=%h
+Environment=LETTA_URL=http://127.0.0.1:8283
+Environment=LETTA_SERVER_PASS=workshop-local
+ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
