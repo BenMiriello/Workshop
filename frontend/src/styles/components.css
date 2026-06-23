@@ -208,11 +208,21 @@ a.ws-btn { text-decoration: none; }
    lines clamp to one line with an ellipsis so nothing wraps a card taller than
    its neighbours. grid-auto-rows:1fr + height:100% make a row's cards equal. */
 .ws-agents-grid { grid-auto-rows: 1fr; }
-.ws-agents-grid > li { display: flex; }
+/* min-width:0 down the whole chain (li → Link <a> → Card): without it a long
+   nowrap title sets each flex item's min-content width and the card overflows
+   its 1fr track, giving uneven widths and no ellipsis. Bounded here, tracks stay
+   uniform and the title ellipsizes. */
+.ws-agents-grid > li { display: flex; min-width: 0; }
+.ws-agents-grid > li > * { flex: 1 1 auto; min-width: 0; }
 .ws-agent-card { width: 100%; display: flex; flex-direction: column; }
 .ws-agent-card .ws-card__title {
-  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  flex: 1 1 0; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* The kind tag must never shrink — otherwise the flexbox clips "assistant" to
+   "ass" on cards where the title competes for width. Title absorbs all shrink
+   (above) and ellipsizes; the tag stays whole. */
+.ws-agent-card .ws-row--between > .ws-tag { flex: 0 0 auto; }
 .ws-agent-card .ws-card__meta {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -708,13 +718,20 @@ a.ws-btn { text-decoration: none; }
   .ws-agent-build[data-focus="all"] > .ws-agent-build__chat { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
-  /* Bound the builder to the viewport so a region scrolls INTERNALLY — the chat
-     must never render its full history full-length and stretch the page. */
+  /* Make the build-agent page a viewport-tall flex column so the builder fills
+     the space left under the page header + status bar EXACTLY — no guessed offset,
+     so the chat composer is never pushed below the fold. (.ws-app--wide is used
+     only by /agents/build/:slug, so this is safe to scope here.) */
+  .ws-app--wide { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+  .ws-app--wide > main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .ws-agent-build-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* The builder takes the remaining height under the header/status (flex:1), and
+     each region scrolls INTERNALLY — the chat never renders full-length. */
   .ws-agent-build {
     display: flex;
     flex-direction: column;
-    height: calc(100dvh - 150px);
-    min-height: 420px;
+    flex: 1;
+    min-height: 0;
   }
   /* Respect focus on mobile too (same as desktop): a focused region is the only
      one shown and fills the bounded height. The region-header focus toggle is the

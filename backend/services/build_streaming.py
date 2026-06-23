@@ -24,6 +24,12 @@ log = logging.getLogger("workshop.build_streaming")
 
 CLAUDE_CLI = llm_router.CLAUDE_CLI
 
+# Max bytes for a single stdout line (one stream-json event) before asyncio's
+# StreamReader raises LimitOverrunError. Default is 64 KiB — far too small for
+# events carrying file contents / large tool results. 64 MiB is generous and
+# still memory-bounded.
+STREAM_LINE_LIMIT = 64 * 1024 * 1024
+
 
 @dataclass
 class TurnEvent:
@@ -184,6 +190,12 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
             *cmd, cwd=cwd, env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # Each stream-json event is ONE line. asyncio's default StreamReader
+            # buffer is 64 KiB, so a single large event (a big tool result, a file
+            # read, a wide diff) overran it and aborted the turn with
+            # "Separator is found, but chunk is longer than limit". Give the reader
+            # plenty of headroom so realistic events never trip it.
+            limit=STREAM_LINE_LIMIT,
         )
     except FileNotFoundError as e:
         turn.error = f"claude CLI not found: {e}"

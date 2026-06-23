@@ -66,10 +66,27 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
     with open(lock_path, "w") as _lk:
         fcntl.flock(_lk, fcntl.LOCK_EX)
         content = todo_path.read_text()
-        # Dedupe: skip if an equivalent open task already exists (normalized,
-        # ignoring the "— proposed by …" suffix). Stops the TODO from filling
-        # with near-identical proposals.
         norm = " ".join(task_text.strip().lower().split())
+        # Reject vacuous, self-referential meta-tasks. The overseer kept
+        # proposing reworded "review/prioritize/address the top N open todos"
+        # lines — those aren't deliverables (reviewing the list IS the overseer's
+        # job, not a task), and they slip past exact-dedupe because each is worded
+        # slightly differently. Concrete tasks (onboard X, review notify lines,
+        # finalize doc Y) don't match these markers.
+        vacuous_markers = (
+            "prioritize the top", "prioritize the first", "prioritize the current",
+            "address the top", "address the first", "address the remaining",
+            "from the todo list", "open todos", "oldest open todos", "open tasks",
+            "tbd from todo", "begin processing the oldest", "categorize the first",
+            "streamline progress", "streamline workflow", "reduce the backlog",
+            "reduce backlog", "either complete or delegate", "address immediate",
+            "address critical item", "most urgent open", "most urgent todo",
+        )
+        if any(m in norm for m in vacuous_markers):
+            return ("skipped (vacuous self-referential task — just do the work, "
+                    f"don't propose reviewing the list): {task_text.strip()}")
+        # Dedupe: skip if an equivalent open task already exists (normalized,
+        # ignoring the "— proposed by …" suffix).
         for l in content.splitlines():
             if l.startswith("[ ] "):
                 body = l[4:].split(" — proposed by")[0]
