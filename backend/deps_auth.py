@@ -77,8 +77,22 @@ async def require_token(request: Request) -> None:
     peer = request.client.host if request.client else ""
     if _is_trusted_peer(peer):
         return
+    # The operator's own logged-in session (product-auth JWT) is a trusted caller
+    # for the single-owner routers — this is how the operator reaches finance /
+    # location etc. off-tailnet from the mobile app. A non-operator user JWT does
+    # NOT satisfy this gate; their data is partitioned per-user elsewhere.
+    if _operator_jwt_present(request):
+        return
     if not _TOKEN:
         return
     if request.headers.get("authorization", "") == f"Bearer {_TOKEN}":
         return
     raise HTTPException(status_code=401, detail="service token required")
+
+
+def _operator_jwt_present(request: Request) -> bool:
+    # Imported lazily to avoid an import cycle (deps_user -> services.jwt_tokens).
+    from deps_user import user_from_request
+
+    user = user_from_request(request)
+    return bool(user and user.get("is_operator"))
