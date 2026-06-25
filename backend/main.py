@@ -8,7 +8,6 @@ from deps_user import (
     require_user,
     require_operator,
     require_domain_owner,
-    require_user_or_service,
 )
 
 from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth
