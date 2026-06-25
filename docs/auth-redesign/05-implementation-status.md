@@ -1,9 +1,11 @@
 # Implementation status — IMPLEMENTED + live-verified 2026-06-25
 
 Phases 0–4 are built, tested, and running live on the tailnet backend. Phase 5
-(public deployment) artifacts are built and locally verified but NOT cut over —
-that is the operator's one step. See `04-critique-and-refinements.md` for the
-design deltas this implements.
+(public deployment) is deployed on this box — the public edge is enabled and
+running on :8002, registration is closed, the cloudflared ingress is configured —
+and the only remaining action is the operator running one egress-blocked DNS
+command to publish `workshop.benmiriello.com` (see "The one step left" below).
+See `04-critique-and-refinements.md` for the design deltas this implements.
 
 ## What is live now (tailnet backend :8000, restarted onto the new code)
 
@@ -40,29 +42,48 @@ design deltas this implements.
 The committed suite `backend/tests/test_ownership.py` (14 checks) encodes all of
 the above; full backend suite: **123 passing**.
 
-## Phase 5 — built, locally verified, NOT cut over
+## Phase 5 — public edge DEPLOYED on this box (2026-06-25), tunnel pending DNS
 
-- `backend/workshop_public_app.py` (:8002): static SPA + cookie-forwarding proxy.
-  Proxies only the personal+auth surface; **blocks (404)** the internal/ingest
-  paths so a public visitor can't inherit the proxy's loopback trust. Verified
-  locally: SPA serves, personal API 401 unauth / 403 cross-user / 200 with cookie
-  end-to-end through the proxy, all blocked paths 404.
-- `infra/systemd/workshop-public.service`, `infra/systemd/cloudflared.service`,
-  `scripts/install_public_service.sh`, `scripts/build_workshop_public.sh`,
-  `frontend/dist` (built).
+Done and running locally; the only thing left is the one egress-blocked DNS
+command (operator-only).
 
-## Operator steps to go public (only these are yours)
+- `workshop-public.service` is **enabled + active on :8002**, serving a freshly
+  rebuilt `frontend/dist` (rebuilt because the bundle predated the final
+  `auth.ts` rewrite — the old bundle would have shipped the dead localStorage-JWT
+  client). `backend/workshop_public_app.py` = static SPA + cookie-forwarding
+  proxy; proxies only the personal+auth surface and **404s** every internal/ingest
+  path so a public visitor can't inherit the proxy's loopback trust.
+- Verified **through the public proxy on :8002**: SPA root + deep-link fallback
+  200; `/api/auth/me` and personal APIs 401 unauth; all 10 blocked internal/ingest
+  paths 404; a fresh account registered through the proxy got a working
+  `workshop_session` cookie, read its own empty partition (200), and was **403 on
+  the operator's `/api/budget`** (full segmentation proven at the edge). Probe
+  account purged afterward; only the operator partition (`users/6`) remains.
+- **Registration closed** (`WORKSHOP_REGISTRATION_OPEN=0` in `secrets.env`,
+  backend restarted) — `POST /api/auth/register` → 403 "registration is closed";
+  login unaffected. Matches the plan's public-origin posture.
+- `cloudflared.service` unit installed and `workshop.benmiriello.com → :8002`
+  ingress added to `~/.cloudflared/config.yml` (backup at `config.yml.bak`), above
+  the 404 catch-all, leaving the existing `birds.benmiriello.com → :8001` rule
+  intact. The tunnel is **not started** — see below.
 
-1. `bash scripts/install_public_service.sh` (installs units + adds the
-   `workshop.benmiriello.com → :8002` ingress to `~/.cloudflared/config.yml`).
-2. `cloudflared tunnel route dns eca1421d-9e82-4bbd-a131-3960065cf953 workshop.benmiriello.com`
-   (the egress guard blocks this Cloudflare API call from an agent shell).
-3. `systemctl --user enable --now workshop-public.service cloudflared.service`.
-4. Optional hardening for the public origin: set `WORKSHOP_REGISTRATION_OPEN=0`
-   in `~/.config/workshop/secrets.env`, then
-   `systemctl --user restart workshop-backend.service`. (Safe to leave open —
-   new accounts get empty partitions and can never read your data — but closed is
-   the conservative default for a public signup form.)
+## The one step left (operator-only — egress guard blocks it from the agent shell)
+
+```
+cloudflared tunnel route dns eca1421d-9e82-4bbd-a131-3960065cf953 workshop.benmiriello.com
+systemctl --user enable --now cloudflared.service
+```
+
+The first command creates the public DNS CNAME (Cloudflare API call — blocked by
+the egress guard, and not worked around). The second starts the tunnel; the
+moment it connects, `https://workshop.benmiriello.com` is live against the
+already-running :8002 edge.
+
+Heads-up: that same tunnel config also serves `birds.benmiriello.com → :8001`,
+and the birds app on :8001 is currently **down**, so starting the tunnel will make
+`birds.benmiriello.com` return 502 until that app is started again (separate from
+Workshop). That is why the tunnel was left for the operator rather than started
+automatically.
 
 ## Notes / follow-ups
 
