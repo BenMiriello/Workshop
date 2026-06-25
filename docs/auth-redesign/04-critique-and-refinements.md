@@ -126,6 +126,24 @@ no-credential → 401; second member sees empty/own-only and cannot widen via `?
 service token used out of scope → 403; and a static assert that `WORKSHOP_OPERATOR_EMAIL` is
 read at no request-time path.
 
+## R11 — Ownership via a FAIL-CLOSED owner contextvar (not owner_id threaded everywhere)
+
+The personal stores have many internal callers deep in the commute layer (`scoring`,
+`journeys`, `places`, `alerter`) plus the categorizer and build-streaming loops. Threading an
+`owner_id` parameter through every signature is large, churny, and easy to get wrong. Instead,
+generalize the proven birds `_viewer_ctx` pattern into one `services/ownership.py`:
+`set_current_owner(uid)` / `current_owner()` / `clear_current_owner()`. The store modules
+resolve their per-owner directory from `current_owner()`. **The crucial inversion from birds:
+when the contextvar is UNSET, `current_owner()` RAISES (`OwnerUnset`), it does not default to
+the operator.** That makes a forgotten set-point a crash (fail-closed), never a cross-owner
+leak. It is set in exactly three kinds of place, all explicit and auditable:
+1. the `current_user` FastAPI dependency (every personal request, from the authenticated id);
+2. the top of each background loop in `main.py` (prewarm/categorize/env/atlas) → operator id;
+3. tests, as needed.
+The birds viewer contextvar is driven from the same owner so birds visibility matches. This is
+the single ownership mechanism for all file-based stores (location/health/budget/chat/push/
+finance-cache/commute-runtime).
+
 ## Build scope decision
 
 Build Phases 0–4 fully and run the committed red-team. Then build ALL of Phase 5's artifacts

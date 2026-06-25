@@ -19,7 +19,7 @@ Phase 2 — chat features:
 [x] Overlap handling: flock single-flight + near-duplicate dedupe (topic-signature containment) + vacuous-task filter on the Letta TODO writers, so reworded overseer spam is rejected at the source; new tasks land before the Log. (reviewer-approved)
 [x] Chat slash commands: registry + "/" autocomplete popover + slash button (/new, /delete, /tasks, /expand, /help). /compact + /rollback land with their backends. (reviewer-approved)
 [ ] Per-chat to-do/done list surfaced from the task store and prompted into the agent (Claude task-list bridge).
-[ ] Chat context view + compaction action (summarize older turns; show context size) → wires `/compact`.
+[~] DROPPED: build a chat `/compact`. Build agents run `claude -p --resume`, and Claude Code auto-compacts the session context itself — building our own is redundant. (The UI chat thread is a display log, not the model's context.) An optional read-only context-size indicator could be a future nicety; no compaction engine needed.
 [ ] Conversation rollback/undo: message ids + truncate endpoint + "revert to here" UI → wires `/rollback`.
 [ ] Resilience: graceful recovery when a build-agent turn is interrupted/derailed mid-task — checkpoint in-progress work + resume from PROJECT.md/notes instead of ending flat. (operator 2026-06-22)
 

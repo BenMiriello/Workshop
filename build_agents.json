@@ -8,8 +8,8 @@
       "project_slug": null,
       "state": "running",
       "created": "2026-06-13T18:16:47+00:00",
-      "last_active": "2026-06-25T15:30:39+00:00",
-      "claude_session": "11300055-59d5-430a-aba7-f443a2fc7734"
+      "last_active": "2026-06-25T15:33:27+00:00",
+      "claude_session": "923fef72-3a6c-419b-8fe5-24ac50307d02"
     },
     "probe-linked": {
       "name": "Probe Linked",
@@ -172,7 +172,7 @@
       "branch_slug": null,
       "state": "running",
       "created": "2026-06-22T19:59:15+00:00",
-      "last_active": "2026-06-23T03:19:00+00:00",
+      "last_active": "2026-06-25T15:33:22+00:00",
       "claude_session": "b2fc6ca9-fcd7-418d-a7c6-04d7d44ce40c"
     }
   }
