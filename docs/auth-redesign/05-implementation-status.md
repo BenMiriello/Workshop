@@ -39,6 +39,35 @@ See `04-critique-and-refinements.md` for the design deltas this implements.
 | Non-owner service token → operator domain | **403** |
 | `WORKSHOP_OPERATOR_EMAIL` in request-time code | **none** (grep) |
 
+## Post-deploy security audit (2026-06-25) — one real gap found + fixed
+
+Audited the running code against the plan (every `include_router` + dep, both
+per-endpoint-gated routers, store namespacing, scope enforcement, session expiry,
+the `permissions.py` usage). Findings:
+
+- **Gap (fixed): main-backend birds reads defaulted to see-all.** The birds
+  visibility viewer was only pinned by `springer_app`; on the workshop backend the
+  viewer contextvar stayed unset and `_resolve_viewer(None)` returned `None` =
+  unrestricted, so a second authenticated account could read the operator's
+  detections. The documented "birds viewer bridge" (`ownership.owner_or_none`) was
+  scaffolded but never connected. Fixed: `_resolve_viewer` now falls back to the
+  `current_user`-pinned owner, which wins over any client `?viewer_id`. All
+  `/birds/*` reads return 401 unauth and are owner-scoped when authed. Red-team
+  test `test_birds_viewer_is_pinned_to_owner_not_see_all` added (suite now 124).
+- **Verified clean:** every router module is mounted and gated; `health`/`owntracks`
+  GET ingest endpoints return only static hints (no data, no auth needed) while
+  every POST enforces Basic + binds the owner partition; service-token scope is
+  exact-match enforced (out-of-scope → 403); sessions expire (30d, configurable)
+  and are revocable; `permissions.py` is the app-capability framework (not the dead
+  `resolve_identity` path) and only builds model-context, it grants no data access.
+- **Accounts surface completed:** password change, sign-out, sign-out-everywhere
+  were already wired; added a self-hiding Devices panel (list + revoke active
+  native device tokens) to Settings → Account.
+
+Intentionally deferred (documented, not gaps): a per-user Plaid link flow (a
+second account gets 403 on finance, never the operator's data); the mobile
+`/birds/analyze` remote-ingest path (needs the Mac build + `require_user_or_internal`).
+
 The committed suite `backend/tests/test_ownership.py` (14 checks) encodes all of
 the above; full backend suite: **123 passing**.
 
