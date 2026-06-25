@@ -2446,10 +2446,20 @@ def set_request_viewer(user_id: int | None) -> None:
 
 
 def _resolve_viewer(explicit: int | None) -> int | None:
-    """The effective viewer: the request-scoped one wins (so a logged-in friend
-    cannot pass ?viewer_id=1 to widen access); else the explicit arg; else None."""
+    """The effective viewer, server-pinned first so a client cannot widen scope:
+      1. the springer request-scoped viewer (`set_request_viewer`), if set;
+      2. else the main-backend data owner pinned by `current_user`
+         (`ownership.owner_or_none()`) — this is what scopes `/birds/*` reads on
+         the workshop backend to the authenticated user, instead of defaulting to
+         see-all. It wins over `explicit` so `?viewer_id=` cannot override it;
+      3. else the explicit arg (public springer pre-auth, background loops that
+         set no owner) — and finally None (unrestricted)."""
     cv = _viewer_ctx.get()
-    return cv if cv is not None else explicit
+    if cv is not None:
+        return cv
+    from services import ownership  # lazy: match this module's import-cycle policy
+    owner = ownership.owner_or_none()
+    return owner if owner is not None else explicit
 
 
 def _is_admin(viewer_id: int | None = None) -> bool:

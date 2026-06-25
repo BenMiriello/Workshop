@@ -388,7 +388,76 @@ function AccountSection() {
           </Button>
         </span>
       </Row>
+      <DeviceTokens />
     </Section>
+  );
+}
+
+// Active native device tokens for this account (minted inside the iOS shell so
+// background producers can authenticate outside the WebView cookie). Lets the
+// operator revoke a lost or stolen device's credential. Self-hides when the
+// account has none — the common case before the iOS build — so it adds no noise.
+// Backend: GET/DELETE /auth/devices (backend/routes/auth.py).
+type DeviceToken = { id: string; label?: string | null; created_at?: string; last_seen?: string | null };
+
+function DeviceTokens() {
+  const [devices, setDevices] = useState<DeviceToken[] | null>(null);
+  const [revoking, setRevoking] = useState<DeviceToken | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await fetch("/api/auth/devices");
+      const j = r.ok ? await r.json() : { devices: [] };
+      setDevices(Array.isArray(j.devices) ? j.devices : []);
+    } catch {
+      setDevices([]);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // No-cruft: render nothing until at least one device exists.
+  if (!devices || devices.length === 0) return null;
+
+  const onRevoke = async () => {
+    if (!revoking) return;
+    setBusy(true);
+    try {
+      await fetch(`/api/auth/devices/${revoking.id}`, { method: "DELETE" });
+      await load();
+    } finally {
+      setBusy(false);
+      setRevoking(null);
+    }
+  };
+
+  return (
+    <Row label="devices">
+      <span style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
+        {devices.map((d) => (
+          <span key={d.id} style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+            <Smartphone size={14} strokeWidth={1.8} aria-hidden />
+            <span>{d.label || "device"}</span>
+            <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>
+              {d.id}{d.last_seen ? ` · seen ${fmtAge(d.last_seen)}` : ""}
+            </span>
+            <Button size="sm" variant="danger-ghost" onClick={() => setRevoking(d)}>
+              <Trash2 size={14} strokeWidth={1.8} aria-hidden /> Revoke
+            </Button>
+          </span>
+        ))}
+      </span>
+      <ConfirmDialog
+        open={!!revoking}
+        onCancel={() => setRevoking(null)}
+        onConfirm={onRevoke}
+        title="Revoke this device?"
+        body={`The background tasks on "${revoking?.label || "device"}" stop authenticating until it signs in again. This can't be undone.`}
+        confirmLabel="Revoke device"
+        busy={busy}
+      />
+    </Row>
   );
 }
 
