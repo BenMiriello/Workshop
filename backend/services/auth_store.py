@@ -1,16 +1,24 @@
-"""User + refresh-token store for the Workshop product-auth layer.
+"""User store + opaque credentials for the Workshop auth layer.
 
-Workshop is being repositioned as a real, deployable product app (operator
-decision 2026-06-24), so it grows proper accounts: this module owns the `users`
-and `refresh_tokens` tables in a SQLite DB. Passwords are hashed with the stdlib
-scrypt KDF (memory-hard, no compiled dependency to ship to a production host).
+Workshop is a deployable product app (operator decision 2026-06-24) and is being
+hardened for public exposure (auth redesign 2026-06-25, docs/auth-redesign/).
+Authentication is by IDENTITY, never network position, and data is owned per
+user. This module owns the `users` table plus three opaque-credential tables in
+a SQLite DB:
 
-Scope note: the system stays single-owner for now (data is partitioned per-user
-incrementally, app by app). The *operator* is a distinguished user — the first
-account created, or the one whose email matches WORKSHOP_OPERATOR_EMAIL — and
-only the operator reaches the existing single-owner routers (finance, location,
-etc.). New accounts get a valid session but no operator data until an app is
-migrated to per-user ownership.
+  * sessions       — browser / WebView login cookies (HttpOnly, revocable)
+  * device_tokens  — native background producers (location/audio), revocable
+  * service_tokens — machine callers (cron, ingest webhooks, the Letta sandbox),
+                     each bound to a user AND a scope (least privilege)
+
+Only the SHA-256 of each token is stored, so a DB read never yields a usable
+credential; the raw token is returned once, at mint time. Passwords use the
+stdlib scrypt KDF (memory-hard, no compiled dependency to ship to a host).
+
+Ownership is data, not configuration: the operator account is just the user
+flagged `is_operator` (set ONCE by the bootstrap migration, never at request
+time). `is_operator` governs platform/infra access only; it grants NO access to
+another user's personal data.
 """
 from __future__ import annotations
 
@@ -19,7 +27,7 @@ import hmac
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -37,6 +45,8 @@ _SCRYPT_N = 2**15
 _SCRYPT_R = 8
 _SCRYPT_P = 1
 _SCRYPT_DKLEN = 32
+
+SESSION_TTL_DAYS = int(os.environ.get("WORKSHOP_SESSION_TTL_DAYS", "30"))
 
 
 def _scrypt_maxmem(n: int, r: int, p: int) -> int:
@@ -59,6 +69,11 @@ def _scrypt(password: str, salt: bytes, n: int, r: int, p: int, dklen: int) -> b
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _hash_token(raw: str) -> str:
+    """SHA-256 hex of an opaque token. We store only this, never the raw token."""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _connect() -> sqlite3.Connection:
@@ -86,18 +101,44 @@ def init_db() -> None:
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS refresh_tokens (
-                jti        TEXT PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
                 user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                issued_at  TEXT NOT NULL,
+                created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
+                user_agent TEXT,
                 revoked    INTEGER NOT NULL DEFAULT 0
             )
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id)"
+            """
+            CREATE TABLE IF NOT EXISTS device_tokens (
+                token_hash TEXT PRIMARY KEY,
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                label      TEXT,
+                created_at TEXT NOT NULL,
+                last_seen  TEXT,
+                revoked    INTEGER NOT NULL DEFAULT 0
+            )
+            """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS service_tokens (
+                token_hash TEXT PRIMARY KEY,
+                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                scope      TEXT NOT NULL,
+                label      TEXT,
+                created_at TEXT NOT NULL,
+                revoked    INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        for tbl in ("sessions", "device_tokens", "service_tokens"):
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{tbl}_user ON {tbl}(user_id)"
+            )
 
 
 # ---------------------------------------------------------------- passwords
@@ -171,13 +212,35 @@ def get_by_id(user_id: int) -> Optional[dict[str, Any]]:
         return _row_to_user(row)
 
 
+def operator_id() -> Optional[int]:
+    """The id of the operator account, or None if bootstrap hasn't run. This is a
+    DATA lookup, not a privilege check — used by automation set-points and the
+    one-time migration. No request path branches on it to grant data access."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM users WHERE is_operator = 1 ORDER BY id LIMIT 1"
+        ).fetchone()
+        return int(row["id"]) if row else None
+
+
+def set_operator(user_id: int) -> None:
+    """Flag exactly one account as operator (the rest demoted). Called ONLY by
+    the bootstrap migration — never from a request handler."""
+    init_db()
+    with _connect() as conn:
+        conn.execute("UPDATE users SET is_operator = 0")
+        conn.execute("UPDATE users SET is_operator = 1 WHERE id = ?", (user_id,))
+
+
 class EmailTaken(Exception):
     """Raised when registering an email that already has an account."""
 
 
 def create_user(email: str, password: str, name: Optional[str] = None) -> dict[str, Any]:
-    """Create a user. The first account, or one matching WORKSHOP_OPERATOR_EMAIL,
-    is flagged as the operator."""
+    """Create a plain member account. Registration NEVER confers operator status:
+    `is_operator` is set only by the bootstrap migration (set_operator). This is
+    what stops 'anyone who registers the operator's email gets their setup'."""
     init_db()
     email = email.strip()
     if not email or "@" not in email:
@@ -185,21 +248,12 @@ def create_user(email: str, password: str, name: Optional[str] = None) -> dict[s
     if len(password) < 8:
         raise ValueError("password must be at least 8 characters")
 
-    operator_email = os.environ.get("WORKSHOP_OPERATOR_EMAIL", "").strip().lower()
     with _connect() as conn:
-        existing_ops = conn.execute(
-            "SELECT COUNT(*) AS c FROM users WHERE is_operator = 1"
-        ).fetchone()["c"]
-        # Operator = explicit env match, or (when none configured) the first user.
-        if operator_email:
-            is_operator = email.lower() == operator_email
-        else:
-            is_operator = existing_ops == 0
         try:
             cur = conn.execute(
                 "INSERT INTO users (email, name, pw_hash, is_operator, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (email, name, hash_password(password), 1 if is_operator else 0, _now()),
+                "VALUES (?, ?, ?, 0, ?)",
+                (email, name, hash_password(password), _now()),
             )
         except sqlite3.IntegrityError as exc:
             raise EmailTaken(email) from exc
@@ -235,42 +289,159 @@ def verify_credentials(email: str, password: str) -> Optional[dict[str, Any]]:
     return _row_to_user(row)
 
 
-# ---------------------------------------------------------------- refresh tokens
+# ---------------------------------------------------------------- sessions (cookie)
 
 
-def store_refresh(jti: str, user_id: int, expires_at: str) -> None:
+def create_session(user_id: int, user_agent: Optional[str] = None,
+                   ttl_days: int = SESSION_TTL_DAYS) -> str:
+    """Mint an opaque session token (the browser/WebView cookie value). Returns
+    the raw token; only its hash is persisted."""
     init_db()
+    raw = secrets.token_urlsafe(32)
+    expires = (datetime.now(timezone.utc) + timedelta(days=ttl_days)).isoformat()
     with _connect() as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO refresh_tokens (jti, user_id, issued_at, expires_at, revoked) "
-            "VALUES (?, ?, ?, ?, 0)",
-            (jti, user_id, _now(), expires_at),
+            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, user_agent, revoked) "
+            "VALUES (?, ?, ?, ?, ?, 0)",
+            (_hash_token(raw), user_id, _now(), expires, (user_agent or "")[:300]),
         )
+    return raw
 
 
-def refresh_is_valid(jti: str) -> bool:
+def session_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
+    """Resolve a session cookie to its live, unexpired, unrevoked user, or None."""
+    if not raw_token:
+        return None
     init_db()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT expires_at, revoked FROM refresh_tokens WHERE jti = ?", (jti,)
+            "SELECT user_id, expires_at, revoked FROM sessions WHERE token_hash = ?",
+            (_hash_token(raw_token),),
         ).fetchone()
-    if row is None or row["revoked"]:
-        return False
-    try:
-        return datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
-    except ValueError:
-        return False
+        if row is None or row["revoked"]:
+            return None
+        try:
+            if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+                return None
+        except ValueError:
+            return None
+        urow = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+    return _row_to_user(urow)
 
 
-def revoke_refresh(jti: str) -> None:
-    init_db()
-    with _connect() as conn:
-        conn.execute("UPDATE refresh_tokens SET revoked = 1 WHERE jti = ?", (jti,))
-
-
-def revoke_all_for_user(user_id: int) -> None:
+def revoke_session(raw_token: Optional[str]) -> None:
+    if not raw_token:
+        return
     init_db()
     with _connect() as conn:
         conn.execute(
-            "UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?", (user_id,)
+            "UPDATE sessions SET revoked = 1 WHERE token_hash = ?", (_hash_token(raw_token),)
         )
+
+
+# ---------------------------------------------------------------- device tokens (native)
+
+
+def create_device_token(user_id: int, label: Optional[str] = None) -> str:
+    """Mint an opaque per-device bearer token for native background producers."""
+    init_db()
+    raw = secrets.token_urlsafe(32)
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO device_tokens (token_hash, user_id, label, created_at, last_seen, revoked) "
+            "VALUES (?, ?, ?, ?, ?, 0)",
+            (_hash_token(raw), user_id, (label or "device")[:120], _now(), _now()),
+        )
+    return raw
+
+
+def device_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
+    """Resolve a device token to its user (touching last_seen), or None."""
+    if not raw_token:
+        return None
+    init_db()
+    th = _hash_token(raw_token)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id, revoked FROM device_tokens WHERE token_hash = ?", (th,)
+        ).fetchone()
+        if row is None or row["revoked"]:
+            return None
+        conn.execute("UPDATE device_tokens SET last_seen = ? WHERE token_hash = ?", (_now(), th))
+        urow = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+    return _row_to_user(urow)
+
+
+def list_devices(user_id: int) -> list[dict[str, Any]]:
+    init_db()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT token_hash, label, created_at, last_seen FROM device_tokens "
+            "WHERE user_id = ? AND revoked = 0 ORDER BY created_at",
+            (user_id,),
+        ).fetchall()
+    return [
+        {"id": r["token_hash"][:12], "label": r["label"], "created_at": r["created_at"],
+         "last_seen": r["last_seen"]}
+        for r in rows
+    ]
+
+
+def revoke_device_by_prefix(user_id: int, id_prefix: str) -> int:
+    """Revoke a device the user owns, identified by the short id from list_devices."""
+    init_db()
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE device_tokens SET revoked = 1 "
+            "WHERE user_id = ? AND substr(token_hash,1,12) = ? AND revoked = 0",
+            (user_id, id_prefix),
+        )
+        return cur.rowcount
+
+
+# ---------------------------------------------------------------- service tokens (machines)
+
+
+def create_service_token(user_id: int, scope: str, label: Optional[str] = None) -> str:
+    """Mint an opaque service token bound to a user AND a scope (e.g.
+    'ingest:location', 'automation:commute'). Returns the raw token once."""
+    if not scope:
+        raise ValueError("a service token requires a scope")
+    init_db()
+    raw = secrets.token_urlsafe(32)
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO service_tokens (token_hash, user_id, scope, label, created_at, revoked) "
+            "VALUES (?, ?, ?, ?, ?, 0)",
+            (_hash_token(raw), user_id, scope, (label or scope)[:120], _now()),
+        )
+    return raw
+
+
+def service_identity(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
+    """Resolve a service token to {user, scope}, or None. The caller checks scope."""
+    if not raw_token:
+        return None
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT user_id, scope, revoked FROM service_tokens WHERE token_hash = ?",
+            (_hash_token(raw_token),),
+        ).fetchone()
+        if row is None or row["revoked"]:
+            return None
+        urow = conn.execute("SELECT * FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+    user = _row_to_user(urow)
+    if user is None:
+        return None
+    return {"user": user, "scope": row["scope"]}
+
+
+def revoke_all_for_user(user_id: int) -> None:
+    """Sign out everywhere: revoke every session AND device token. Service tokens
+    are infrastructure (cron/ingest) and are managed separately, so they are not
+    swept here."""
+    init_db()
+    with _connect() as conn:
+        conn.execute("UPDATE sessions SET revoked = 1 WHERE user_id = ?", (user_id,))
+        conn.execute("UPDATE device_tokens SET revoked = 1 WHERE user_id = ?", (user_id,))
