@@ -484,16 +484,44 @@ a.ws-btn { text-decoration: none; }
 .ws-dock-fab:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
 .ws-dock-fab:focus-visible { box-shadow: var(--focus-ring); }
 
-/* ---- APP SHELL + NAV ----------------------------------------------------- */
-.ws-app { max-width: 980px; margin: 0 auto; padding: var(--space-6) var(--space-5) var(--space-8); }
-/* Workbench / IDE routes (e.g. the build page) need the full viewport, not the
-   reading-width cap. Wider so the three panes have real room; still bounded so
-   it does not sprawl on ultra-wide displays. */
+/* ---- APP SHELL + NAV -----------------------------------------------------
+   The shell is a viewport-tall column: a fixed-height topnav band on top, then a
+   single scrolling <main> below it. The topnav is `flex: 0 0 auto`, so it is
+   ALWAYS exactly its own content height and can NEVER overlap page content —
+   there is no sticky positioning, no negative margins, and no offset that has to
+   be kept in sync with the app's padding. Content scrolls inside <main>, not the
+   body, so the nav stays visible without sticking. */
+.ws-app {
+  max-width: 980px;
+  margin: 0 auto;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  /* Clear the device notch when installed/standalone (viewport-fit=cover).
+     Resolves to 0 in a normal browser, so it changes nothing there. */
+  padding-top: env(safe-area-inset-top);
+}
+/* Workbench / IDE routes (e.g. the build page) need the full viewport width. */
 .ws-app--wide { max-width: 1680px; }
-/* Launcher / dashboard grids: roomier than reading width so they do not sit in a
-   narrow column with large empty margins on wide displays. */
+/* Launcher / dashboard grids: roomier than reading width. */
 .ws-app--roomy { max-width: 1280px; }
-.ws-topnav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-bottom: var(--space-6); }
+
+.ws-topnav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.ws-app > main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-6) var(--space-5) var(--space-8);
+}
 .ws-brand { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg); text-decoration: none; }
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .ws-nav a {
@@ -832,23 +860,22 @@ a.ws-btn { text-decoration: none; }
   height: var(--app-vh, 100dvh);
   margin: 0;
   max-width: none;
-  padding-bottom: 0;
+  padding: 0;
   display: flex; flex-direction: column;
   overflow: hidden;
 }
 .ws-app.ws-app--chatfull > main {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
+  padding: 0; overflow: hidden;
 }
 /* Focused chat owns its own chrome (the compact chat-toolbar with Back). The
    global topnav above it must not add a tall band + a space-6 gap that pushes
    the chat down and eats the viewport. Collapse it to a slim breadcrumb row and
    drop the section-nav links (the chat toolbar already has Back + pickers). */
 .ws-app.ws-app--chatfull > .ws-topnav {
-  margin-bottom: 0;
-  padding: var(--space-2) 0;
+  padding: var(--space-2) var(--space-4);
   flex-wrap: nowrap;
-  flex: 0 0 auto;
 }
 .ws-app.ws-app--chatfull > .ws-topnav .ws-sectionnav-inline,
 .ws-app.ws-app--chatfull > .ws-topnav .ws-sectionnav-menu { display: none; }
@@ -970,10 +997,11 @@ a.ws-btn { text-decoration: none; }
     max-height: 85vh;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   }
-  /* Bottom inset so the last of a scrolling page clears the home indicator
-     (viewport-fit=cover). The chat-full surface manages its own bottom edge. */
-  .ws-app:not(.ws-app--chatfull) { padding: var(--space-4); padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }
-  .ws-topnav { flex-wrap: wrap; gap: var(--space-3); }
+  /* Tighter chrome on phones. The scroller is <main>, so its bottom padding adds
+     the home-indicator inset (viewport-fit=cover); the chat-full surface manages
+     its own edges. The topnav stays one row (never wraps → never grows taller). */
+  .ws-topnav { padding: var(--space-3) var(--space-4); gap: var(--space-3); }
+  .ws-app > main { padding: var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom)); }
 }
 
 /* Auth / login screen — a single centered card on a full-height surface. */

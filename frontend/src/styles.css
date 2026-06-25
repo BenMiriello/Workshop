@@ -49,31 +49,8 @@ body {
 .ws-bc__measure { position: absolute; left: -9999px; top: 0; visibility: hidden; pointer-events: none; white-space: nowrap; }
 @media (max-width: 640px) { .ws-bc__sep { margin: 0 0.3rem; } }
 
-/* Sticky toolbar — always visible at the top while the page scrolls. Bleeds
-   over the .ws-app horizontal padding so content scrolling underneath is
-   covered edge-to-edge (then re-pads so its own content stays aligned). */
-.ws-topnav {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
-  background: var(--bg);
-  border-bottom: 1px solid var(--border);
-  /* Pull up over .ws-app's top + side padding so the bar is truly flush to the
-     viewport top — identical spacing whether resting or stuck (otherwise the
-     app's padding-top sits above it at rest, then vanishes when stuck). The
-     bar's own padding sets the vertical rhythm; margin-bottom is the only gap
-     to page content. */
-  padding: var(--space-3) var(--space-5);
-  margin: calc(-1 * var(--space-6)) calc(-1 * var(--space-5)) var(--space-3);
-}
-@media (max-width: 640px) {
-  .ws-topnav {
-    padding: var(--space-3) var(--space-4);
-    margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-3);
-    /* breadcrumb + overflow button fit one row; no wrap needed anymore */
-    flex-wrap: nowrap;
-  }
-}
+/* The topnav shell (fixed-height band, no sticky / no negative margins) lives in
+   components.css under APP SHELL + NAV. */
 
 /* Section nav: inline links on desktop, overflow-menu button on mobile. */
 .ws-sectionnav-menu { display: none; position: relative; flex: 0 0 auto; }
