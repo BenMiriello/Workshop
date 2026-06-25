@@ -202,7 +202,7 @@ app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencie
 app.include_router(commute.router, dependencies=[Depends(require_domain_owner("commute"))])
 
 # Per-user personal data — owner-scoped to the authenticated user.
-app.include_router(chat.router, dependencies=_USER)
+app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_USER)
 app.include_router(location.router, dependencies=_USER)
 app.include_router(push.router, dependencies=_USER)
 app.include_router(environment.router, dependencies=_USER)
