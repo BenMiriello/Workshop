@@ -22,6 +22,7 @@ import {
   StatusPill,
   Tabs,
   Textarea,
+  useMediaQuery,
   type SegmentedOption,
   type StatusKind,
   type TabItem,
@@ -51,6 +52,13 @@ type DocTab = "system-prompt" | "interventions";
 // Which region is expanded full-width (IDE-style focus). "all" = the 3-up layout.
 type FocusRegion = "all" | "files" | "center" | "chat";
 const FOCUS_KEY = "ws-agent-build-focus";
+
+// Mobile region switcher options (one region visible at a time).
+const REGION_SWITCH: SegmentedOption<Exclude<FocusRegion, "all">>[] = [
+  { value: "chat", label: "Chat" },
+  { value: "center", label: "Center" },
+  { value: "files", label: "Files" },
+];
 
 type Worktree = {
   branch_slug: string;
@@ -313,15 +321,21 @@ export default function AgentBuild() {
   const [paneTab, setPaneTab] = useState<PaneTab>("editor");
   const [docTab, setDocTab] = useState<DocTab>("system-prompt");
 
-  // IDE-style pane focus, persisted PER AGENT across reloads. Entering a builder
-  // you want the chat — so the default is chat-focused, not the 3-up. The focus
-  // toggle in each region header expands/restores; the choice is remembered per
-  // agent in the browser.
+  // Mobile can't show the 3-pane IDE — it switches between one region at a time
+  // via a Segmented control. Desktop shows all three and expands/restores a pane
+  // via the per-region toggle. ONE `focus` state, but the default and the way it
+  // renders differ by surface (see effFocus below + the mobile CSS).
+  const mobile = useMediaQuery("(max-width: 720px)");
+
+  // Pane focus, persisted PER AGENT across reloads. Default is surface-aware:
+  // desktop opens the full 3-up workbench ("all"); mobile opens the chat (the
+  // primary driver) as a single region. Stored choice wins when present.
   const focusKey = `${FOCUS_KEY}:${slug}`;
   const readFocus = (): FocusRegion => {
-    if (typeof localStorage === "undefined") return "chat";
+    const fallback: FocusRegion = mobile ? "chat" : "all";
+    if (typeof localStorage === "undefined") return fallback;
     const v = localStorage.getItem(focusKey) as FocusRegion | null;
-    return v === "files" || v === "center" || v === "chat" || v === "all" ? v : "chat";
+    return v === "files" || v === "center" || v === "chat" || v === "all" ? v : fallback;
   };
   const [focus, setFocus] = useState<FocusRegion>(readFocus);
   const changeFocus = useCallback((next: FocusRegion) => {
@@ -330,6 +344,11 @@ export default function AgentBuild() {
   }, [focusKey]);
   // Re-load the persisted focus when switching agents without a full remount.
   useEffect(() => { setFocus(readFocus()); }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "all" is a desktop-only layout. On mobile, collapse it to a single region
+  // (chat) so we always render exactly one pane — never the broken stack.
+  const effFocus: FocusRegion = mobile && focus === "all" ? "chat" : focus;
+  const mobileRegion: Exclude<FocusRegion, "all"> = effFocus === "all" ? "chat" : effFocus;
 
   // System prompt (file is PROJECT.md; the label is what's "system prompt"-y).
   const [systemPrompt, setSystemPrompt] = useState<string>("");
@@ -605,7 +624,7 @@ export default function AgentBuild() {
     : "Preview · stopped";
 
   return (
-    <div>
+    <div className="ws-agent-build-page">
       <PageHeader
         title={agent.name}
         sub={
@@ -673,7 +692,18 @@ export default function AgentBuild() {
         </Row>
       </Card>
 
-      <div className="ws-agent-build" data-focus={focus}>
+      {/* Mobile region switcher — one region at a time (the desktop 3-pane and
+          per-region expand toggle don't fit a phone). Hidden on desktop via CSS. */}
+      <div className="ws-agent-build__switch">
+        <Segmented
+          options={REGION_SWITCH}
+          value={mobileRegion}
+          onChange={changeFocus}
+          ariaLabel="Builder region"
+        />
+      </div>
+
+      <div className="ws-agent-build" data-focus={effFocus}>
         {/* --- Files tree --- */}
         <Card className="ws-agent-build__files ws-agent-build__region" style={{ padding: "var(--space-3)" }}>
           <RegionHead
