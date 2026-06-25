@@ -489,7 +489,9 @@ function WaterfallHero({ data, scale, periodLabel, onSaved }: { data: Budget; sc
           if (basis < 0.5) return null;
           return (
             <span key={w.key} style={{ flex: `0 0 ${basis}%`, background: SEG_COLORS[w.key] }} title={`${w.label}: ${usd(w.amount * scale)}`}>
-              {basis > 9 ? usd(amt) : ""}
+              {/* Only label a segment wide enough to hold the amount on a phone
+                  (~16% of ~358px); narrower slices are covered by the legend below. */}
+              {basis > 16 ? usd(amt) : ""}
             </span>
           );
         })}

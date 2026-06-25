@@ -255,7 +255,8 @@ function StatusTab({ brief, onPollNow, polling }: {
                   key={i}
                   style={{
                     display: "flex",
-                    gap: "0.6rem",
+                    flexWrap: "wrap",
+                    gap: "0.3rem 0.6rem",
                     alignItems: "baseline",
                     padding: "0.4rem 0.6rem",
                     borderRadius: "6px",
@@ -271,7 +272,9 @@ function StatusTab({ brief, onPollNow, polling }: {
                   <span style={{ color: "var(--muted)", flexShrink: 0, fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
                     {leg.depart_local} → {leg.arrive_local}
                   </span>
-                  <span>
+                  {/* Grows to fill the row; wraps to its own line on a phone instead of
+                      pushing the realtime tag off-screen. */}
+                  <span style={{ flex: "1 1 10rem", minWidth: 0 }}>
                     {leg.mode}{route && route !== leg.mode ? ` (${route})` : ""}{" "}
                     <span style={{ color: "var(--muted)", fontWeight: 400 }}>{leg.from} → {leg.to}</span>
                   </span>
@@ -516,8 +519,8 @@ function ScheduleTab() {
                       display: "inline-flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      width: "34px",
-                      height: "34px",
+                      width: "40px",
+                      height: "40px",
                       padding: 0,
                       lineHeight: 1,
                       boxSizing: "border-box",
@@ -777,7 +780,7 @@ function AlertsTab() {
                   : "—";
                 return (
                   <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
-                    <td className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem", whiteSpace: "nowrap" }}>{a.ts}</td>
+                    <td className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem", whiteSpace: "nowrap" }}>{new Date(a.ts).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
                     <td style={{ fontSize: "0.85rem" }}>
                       {a.kind ?? (a.late_risk ? "late-risk" : "brief")}
                       {a.checkpoint ? ` · ${a.checkpoint}` : ""}
