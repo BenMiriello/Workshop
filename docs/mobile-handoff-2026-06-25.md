@@ -1,7 +1,8 @@
 # Mobile app handoff — continue on Mac (2026-06-25)
 
 Temporary handoff doc for the agent picking up the Workshop iOS app on the operator's
-Mac. Branch: **`birds-redesign`** (all the work below is committed here). Delete this
+Mac. Branch: **`mobile-app-rebuild`** (forked from `birds-redesign` at this point; all the
+work below is committed here). Delete this
 file once the Mac bring-up is done.
 
 ## What this is
@@ -15,7 +16,7 @@ $99 push phase is a designed-but-off seam.
 Full background: `docs/mobile-app-proposal.md` (why + cost), `docs/mobile-app-implementation-plan.md`
 (the build blueprint, kept current), `mobile/README.md` (the shell + the one Xcode step).
 
-## State as of this handoff (all committed on `birds-redesign`, all green)
+## State as of this handoff (all committed on `mobile-app-rebuild`, all green)
 
 Verified before handoff: `mobile/` tsc 0, `frontend/` tsc 0, design gate clean, backend
 **107 tests pass**. Frontend mobile widths checked headless at 390px (no horizontal overflow
@@ -57,7 +58,7 @@ Built and working (software side):
 The Linux box runs the backend (systemd `workshop-backend.service` on :8000, exposed via
 Tailscale Serve). The Mac only builds/runs the iOS client.
 
-1. `git pull` on `birds-redesign`.
+1. `git checkout mobile-app-rebuild && git pull`.
 2. Point the app at the tailnet (edit `mobile/app.json` → `expo.extra`), replacing the LAN
    IPs currently there:
    - `webUrl`: `https://debian.tail38e62e.ts.net:8443`  (the SPA, via Tailscale Serve → vite)
@@ -89,10 +90,11 @@ Tailscale Serve). The Mac only builds/runs the iOS client.
   (`scripts/restart_backend.sh`, preserves secret env). The Mac builds only the client.
 - **Auth is owned by the web app.** The shell does NOT bake a token. Login happens in the
   WebView; tokens persist to the iOS Keychain via the secureStore bridge.
-- **Branch is shared.** `birds-redesign` also carries active birds + autonomy work. Some
-  birds files (e.g. `frontend/src/pages/apps/birds/LiveFeed.tsx`) had uncommitted WIP on the
-  Linux box that is NOT on this branch — don't expect it. Stage only your own files; keep
-  commits isolated.
+- **Branch.** `mobile-app-rebuild` was forked from `birds-redesign`, so it carries that
+  branch's birds + autonomy history as its base; do mobile work here, not on
+  `birds-redesign` (which other agents still use for birds). Some birds files (e.g.
+  `frontend/src/pages/apps/birds/LiveFeed.tsx`) had uncommitted WIP on the Linux box that is
+  NOT on this branch. Stage only your own files; keep commits isolated.
 - **Design system is law** for any `frontend/` or `mobile/` change: `frontend/CLAUDE.md`
   (primitives in `src/ui`, tokens, lucide icons not emoji, no em-dashes, run
   `scripts/check_design.sh` + `tsc --noEmit`).
