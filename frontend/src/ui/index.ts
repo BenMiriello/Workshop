@@ -24,7 +24,6 @@ export {
   type TabItem,
 } from "./controls";
 export { Segmented, type SegmentedOption } from "./Segmented";
-export { useMediaQuery } from "./useMediaQuery";
 export { Stepper } from "./Stepper";
 export { Modal, ConfirmDialog } from "./Modal";
 export { StateBlock, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";

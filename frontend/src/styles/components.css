@@ -673,8 +673,6 @@ a.ws-btn { text-decoration: none; }
   height: calc(100vh - 220px);
   min-height: 520px;
 }
-/* Mobile-only region switcher (Segmented). Hidden on the desktop 3-pane IDE. */
-.ws-agent-build__switch { display: none; }
 /* Each region fills the grid cell and scrolls internally, not the page. */
 .ws-agent-build__region {
   display: flex;
@@ -720,33 +718,27 @@ a.ws-btn { text-decoration: none; }
   .ws-agent-build[data-focus="all"] > .ws-agent-build__chat { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
-  /* Make the build-agent page a viewport-tall flex column so the builder fills
-     the space left under the page header + status bar EXACTLY — no guessed offset,
-     so the chat composer is never pushed below the fold. (.ws-app--wide is used
-     only by /agents/build/:slug, so this is safe to scope here.) */
-  .ws-app--wide { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-  .ws-app--wide > main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .ws-agent-build-page { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  /* The builder takes the remaining height under the header/status (flex:1), and
-     each region scrolls INTERNALLY — the chat never renders full-length. */
+  /* Stacked, page-scrolling. Chat first (the primary driver), then center, files.
+     The chat carries its OWN expand-to-fullscreen control (toolbar Maximize →
+     /chat/:key) — that is how you take the chat full-screen on a phone. The
+     per-region "expand full width" toggle is the desktop 3-pane model and reads
+     as a stray second expand button here, so it is hidden on mobile. */
   .ws-agent-build {
     display: flex;
     flex-direction: column;
-    flex: 1;
+    height: auto;
     min-height: 0;
   }
-  /* The Segmented switcher replaces the desktop per-region expand toggle: it sits
-     above the panes and selects exactly one region. The React layer guarantees
-     `data-focus` is a single region on mobile (never "all"), so the focused pane
-     fills the bounded height and scrolls INTERNALLY — composer always on screen. */
-  .ws-agent-build__switch { display: block; flex: 0 0 auto; margin-bottom: var(--space-3); }
+  /* A persisted desktop focus must not hide a region on mobile — re-show all. */
+  .ws-agent-build[data-focus] > .ws-agent-build__region { display: flex; }
+  .ws-agent-build > .ws-agent-build__chat   { order: 0; min-height: 60vh; }
+  .ws-agent-build > .ws-agent-build__main   { order: 1; }
+  .ws-agent-build > .ws-agent-build__files  { order: 2; }
+  .ws-agent-build .ws-agent-build__region-body { overflow: visible; }
+  .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; overflow: auto; }
   .ws-region-head__focus { display: none; }
-  .ws-agent-build[data-focus="files"]  > :not(.ws-agent-build__files),
-  .ws-agent-build[data-focus="center"] > :not(.ws-agent-build__main),
-  .ws-agent-build[data-focus="chat"]   > :not(.ws-agent-build__chat) { display: none; }
-  .ws-agent-build[data-focus="chat"]   > .ws-agent-build__chat,
-  .ws-agent-build[data-focus="files"]  > .ws-agent-build__files,
-  .ws-agent-build[data-focus="center"] > .ws-agent-build__main { flex: 1; min-height: 0; }
+  /* The chat region's own body must let its panel size + scroll internally. */
+  .ws-agent-build__chat .ws-agent-build__region-body { min-height: 0; }
 }
 
 .ws-agent-build__status {
@@ -757,16 +749,18 @@ a.ws-btn { text-decoration: none; }
 }
 .ws-agent-build__status > * { min-height: var(--control-h); }
 
-/* The center region's view body sits below the Editor/Preview/Diff switch. */
+/* The center region's view body sits below the Editor/Preview/Diff switch.
+   NB: no `min-height: 0` here. With the docs section (system-prompt) stacked
+   below in the same scroll area, min-height:0 let this view be crushed shorter
+   than its content, and the editor empty-state then SPILLED over the docs tabs.
+   Letting it keep its content height makes the region body scroll instead. */
 .ws-agent-build__center-view {
   flex: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 .ws-agent-build__center-view > .ws-card {
   flex: 1;
-  min-height: 0;
   display: flex;
   flex-direction: column;
 }
