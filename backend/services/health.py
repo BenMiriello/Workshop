@@ -24,15 +24,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import ownership
+
 AUTH_ENV_PATH = Path(
     os.environ.get("HEALTH_AUTH_ENV", "/home/clawd-a/.config/clawdbot/health-auth.env")
 )
-RUNTIME_DIR = Path(os.environ.get(
-    "WORKSHOP_HEALTH_RUNTIME",
-    "/home/clawd-a/workshop/.runtime",
-))
-HISTORY_PATH = RUNTIME_DIR / "health.jsonl"
-LATEST_PATH = RUNTIME_DIR / "health-latest.json"
+
+# Health history is partitioned per owner: `.runtime/users/<owner_id>/health.*`.
+
+
+def _history_path():
+    return ownership.user_runtime_dir() / "health.jsonl"
+
+
+def _latest_path():
+    return ownership.user_runtime_dir() / "health-latest.json"
+
 
 _loaded: dict[str, str] = {}
 
@@ -74,7 +81,7 @@ def _now_iso() -> str:
 
 
 def _ensure_dir() -> None:
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    ownership.user_runtime_dir()
 
 
 def ingest(payload: dict[str, Any]) -> dict[str, Any]:
@@ -90,7 +97,7 @@ def ingest(payload: dict[str, Any]) -> dict[str, Any]:
     """
     _ensure_dir()
     rec = {"ts": _now_iso(), "payload": payload}
-    with HISTORY_PATH.open("a", encoding="utf-8") as fh:
+    with _history_path().open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
 
     # Update per-metric latest index. Read current → merge → atomic write.
@@ -115,17 +122,17 @@ def ingest(payload: dict[str, Any]) -> dict[str, Any]:
             "qty": newest.get("qty") if "qty" in newest else newest,
             "units": m.get("units"),
         }
-    tmp = LATEST_PATH.with_suffix(".json.tmp")
+    tmp = _latest_path().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(latest, indent=2), encoding="utf-8")
-    os.replace(tmp, LATEST_PATH)
+    os.replace(tmp, _latest_path())
     return {"stored": True, "metrics_seen": len(metrics)}
 
 
 def _read_latest() -> dict[str, Any]:
-    if not LATEST_PATH.exists():
+    if not _latest_path().exists():
         return {}
     try:
-        return json.loads(LATEST_PATH.read_text(encoding="utf-8"))
+        return json.loads(_latest_path().read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -137,11 +144,11 @@ def latest() -> dict[str, Any]:
 
 def history(limit: int = 25, offset: int = 0) -> dict[str, Any]:
     """Return last `limit` ingest records, newest-first."""
-    if not HISTORY_PATH.exists():
+    if not _history_path().exists():
         return {"records": [], "total": 0, "has_more": False}
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
-    with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+    with _history_path().open("r", encoding="utf-8") as fh:
         lines = [ln for ln in fh.readlines() if ln.strip()]
     total = len(lines)
     rev = list(reversed(lines))
@@ -156,13 +163,13 @@ def history(limit: int = 25, offset: int = 0) -> dict[str, Any]:
 
 def clear() -> dict[str, int]:
     n = 0
-    if HISTORY_PATH.exists():
+    if _history_path().exists():
         try:
-            with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+            with _history_path().open("r", encoding="utf-8") as fh:
                 n = sum(1 for line in fh if line.strip())
         except Exception:
             n = 0
-        HISTORY_PATH.unlink()
-    if LATEST_PATH.exists():
-        LATEST_PATH.unlink()
+        _history_path().unlink()
+    if _latest_path().exists():
+        _latest_path().unlink()
     return {"cleared": n}

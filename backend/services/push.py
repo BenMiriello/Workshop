@@ -16,8 +16,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", "/home/clawd-a/workshop/.runtime"))
-TOKENS_FILE = RUNTIME / "push-tokens.json"
+from . import ownership
+
+# Push tokens are partitioned per owner: `.runtime/users/<owner_id>/push-tokens.json`.
+
+
+def _tokens_file():
+    return ownership.user_runtime_dir() / "push-tokens.json"
 
 APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
 APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
@@ -37,14 +42,14 @@ def is_enabled() -> bool:
 
 def _read() -> dict[str, Any]:
     try:
-        return json.loads(TOKENS_FILE.read_text())
+        return json.loads(_tokens_file().read_text())
     except (OSError, json.JSONDecodeError):
         return {"tokens": []}
 
 
 def _write(data: dict[str, Any]) -> None:
-    TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TOKENS_FILE.write_text(json.dumps(data, indent=2))
+    _tokens_file().parent.mkdir(parents=True, exist_ok=True)
+    _tokens_file().write_text(json.dumps(data, indent=2))
 
 
 def register_token(token: str, platform: str = "ios") -> dict[str, Any]:

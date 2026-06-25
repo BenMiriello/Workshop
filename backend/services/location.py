@@ -29,19 +29,25 @@ from __future__ import annotations
 import json
 import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-RUNTIME_DIR = Path(os.environ.get(
-    "WORKSHOP_LOCATION_RUNTIME",
-    "/home/clawd-a/workshop/.runtime",
-))
-HISTORY_PATH = RUNTIME_DIR / "location.jsonl"
-LATEST_PATH = RUNTIME_DIR / "location-latest.json"
+from . import ownership
+
+# Storage is partitioned per owner: `.runtime/users/<owner_id>/location.*`. The
+# owner is pinned by the auth dependency (request) or set_current_owner (cron),
+# and the paths resolve from it. There is no shared file across owners.
+
+
+def _history_path():
+    return ownership.user_runtime_dir() / "location.jsonl"
+
+
+def _latest_path():
+    return ownership.user_runtime_dir() / "location-latest.json"
 
 
 def _ensure_dir() -> None:
-    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    ownership.user_runtime_dir()  # creates `.runtime/users/<owner_id>/`
 
 
 def _now_iso() -> str:
@@ -84,21 +90,21 @@ def record(payload: dict[str, Any]) -> dict[str, Any]:
 
     _ensure_dir()
     # Append to history.
-    with HISTORY_PATH.open("a", encoding="utf-8") as fh:
+    with _history_path().open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
     # Overwrite latest cache (atomic-ish — write tmp + rename).
-    tmp = LATEST_PATH.with_suffix(".json.tmp")
+    tmp = _latest_path().with_suffix(".json.tmp")
     tmp.write_text(json.dumps(rec, indent=2), encoding="utf-8")
-    os.replace(tmp, LATEST_PATH)
+    os.replace(tmp, _latest_path())
     return rec
 
 
 def latest() -> dict[str, Any] | None:
     """Return the most-recent recorded position, or None if never recorded."""
-    if not LATEST_PATH.exists():
+    if not _latest_path().exists():
         return None
     try:
-        return json.loads(LATEST_PATH.read_text(encoding="utf-8"))
+        return json.loads(_latest_path().read_text(encoding="utf-8"))
     except Exception:
         return None
 
@@ -108,12 +114,12 @@ def history(limit: int = 100, offset: int = 0) -> dict[str, Any]:
 
     Returns {"records": [...], "total": int, "has_more": bool} so the UI can
     do "Load more" pagination without re-counting the file."""
-    if not HISTORY_PATH.exists():
+    if not _history_path().exists():
         return {"records": [], "total": 0, "has_more": False}
     limit = max(1, min(limit, 5000))
     offset = max(0, offset)
     # Whole-file read is fine at our scale (~tens of KB/day, kept indefinitely).
-    with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+    with _history_path().open("r", encoding="utf-8") as fh:
         lines = [ln for ln in fh.readlines() if ln.strip()]
     total = len(lines)
     # newest-first: take from the end, then page within that slice
@@ -136,10 +142,10 @@ def recent_records(max_n: int = 20000) -> list[dict[str, Any]]:
     """Return up to `max_n` most-recent records in CHRONOLOGICAL order (oldest
     first) — the shape the commute segmenter/place-learner want. Read straight
     from the history file."""
-    if not HISTORY_PATH.exists():
+    if not _history_path().exists():
         return []
     max_n = max(1, min(max_n, 200000))
-    with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+    with _history_path().open("r", encoding="utf-8") as fh:
         lines = [ln for ln in fh if ln.strip()]
     out: list[dict[str, Any]] = []
     for line in lines[-max_n:]:
@@ -175,12 +181,12 @@ def records_between(start_iso: str, end_iso: str) -> list[dict[str, Any]]:
 def clear() -> dict[str, int]:
     """Erase history + latest. Returns counts cleared."""
     n = 0
-    if HISTORY_PATH.exists():
+    if _history_path().exists():
         try:
-            with HISTORY_PATH.open("r", encoding="utf-8") as fh:
+            with _history_path().open("r", encoding="utf-8") as fh:
                 n = sum(1 for line in fh if line.strip())
         except Exception:
             n = -1
-        HISTORY_PATH.unlink(missing_ok=True)
-    LATEST_PATH.unlink(missing_ok=True)
+        _history_path().unlink(missing_ok=True)
+    _latest_path().unlink(missing_ok=True)
     return {"cleared": n}
