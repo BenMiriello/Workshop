@@ -209,7 +209,10 @@ app.include_router(push.router, dependencies=_USER)
 app.include_router(environment.router, dependencies=_USER)
 # Birds: yard detections are already published publicly, so reads need any
 # authenticated user; the BirdNET-Go ingest uses an ingest:birds service token.
-app.include_router(birds.router, dependencies=[Depends(require_user_or_service("ingest:birds"))])
+app.include_router(birds.router, dependencies=_USER)
+# Birds ingest (BirdNET-Go webhook + yard-mic analyze/live) — loopback/LAN only,
+# carries its own device token in-body, never proxied to the public origin.
+app.include_router(birds.ingest_router, dependencies=[Depends(require_internal_caller)])
 
 # Ingest webhooks — their own credential, bound to an owner inside the handler.
 app.include_router(owntracks.router)   # HTTP Basic -> owner (in handler)

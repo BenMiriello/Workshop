@@ -27,6 +27,12 @@ from services import birds_store, birds_analyze
 from services.birds_store import DatabaseMissing
 
 router = APIRouter(prefix="/birds", tags=["birds"])
+# Ingest endpoints (BirdNET-Go webhook, the yard-mic analyze/live-publish) run
+# from loopback / the local network and carry their own device token in the
+# body. They are mounted separately (main.py) behind require_internal_caller, and
+# are NOT proxied to the public origin — unlike the read endpoints on `router`,
+# which require an authenticated user.
+ingest_router = APIRouter(prefix="/birds", tags=["birds-ingest"])
 log = logging.getLogger("workshop.birds")
 
 
@@ -36,7 +42,7 @@ class LiveBody(BaseModel):
     hearing: list = []   # current "now hearing" detections (same shape the UI uses)
 
 
-@router.post("/live/publish")
+@ingest_router.post("/live/publish")
 async def live_publish(body: LiveBody):
     """A shared, listening device pushes its live spectrogram + detections here."""
     return birds_analyze.publish_live(body.token, body.cols, body.hearing)
@@ -132,7 +138,7 @@ def _opt_float(v: str) -> float | None:
         return None
 
 
-@router.post("/analyze")
+@ingest_router.post("/analyze")
 async def analyze(audio: UploadFile, station: str = Form(""),
                   token: str = Form(""), min_conf: float = Form(0.25),
                   device_name: str = Form(""), mode: str = Form("adaptive"),
@@ -616,7 +622,7 @@ async def home_set(source: str = Form(...)):
 # Event bridge: BirdNET-Go -> Workshop event bus -> OpenClaw agents
 # --------------------------------------------------------------------------
 
-@router.post("/webhook")
+@ingest_router.post("/webhook")
 async def detection_webhook(request: Request):
     """Receive one detection from BirdNET-Go, enrich with first-seen, fan out to
     subscribed agents. Body shape is brain/webhook-template.json."""

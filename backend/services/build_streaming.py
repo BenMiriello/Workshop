@@ -136,8 +136,14 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         return ("meta", ev)
     if t == "user":
         # Tool result reply (we don't need to surface tool results to the UI
-        # in detail; just count them).
-        return ("tool_result", {"tool_use_id": ev.get("message", {}).get("content", [{}])[0].get("tool_use_id")})
+        # in detail; just count them). Content is usually a list of blocks, but
+        # some events (e.g. /compact's synthetic user turns) carry a plain string
+        # — guard so a non-dict block can't crash the stream reader.
+        content = ev.get("message", {}).get("content")
+        tool_use_id = None
+        if isinstance(content, list) and content and isinstance(content[0], dict):
+            tool_use_id = content[0].get("tool_use_id")
+        return ("tool_result", {"tool_use_id": tool_use_id})
     if t == "result":
         return ("result", {
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
