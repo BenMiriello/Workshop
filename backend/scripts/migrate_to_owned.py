@@ -40,7 +40,6 @@ _DOMAINS = ["finance", "commute", "location", "health"]
 # Operator-owned machine credentials: (env var name, scope).
 _TOKENS = [
     ("WORKSHOP_SVC_COMMUTE", "automation:commute"),
-    ("WORKSHOP_INGEST_BIRDS", "ingest:birds"),
 ]
 
 
