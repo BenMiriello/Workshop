@@ -3,13 +3,12 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from deps_auth import require_loopback
+from deps_auth import require_loopback, require_internal_caller
 from deps_user import (
     require_user,
     require_operator,
     require_domain_owner,
     require_user_or_service,
-    require_service,
 )
 
 from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth
@@ -222,8 +221,9 @@ app.include_router(relay.router, dependencies=_LOOPBACK)
 app.include_router(services.router, dependencies=_LOOPBACK)
 app.include_router(events.router, dependencies=_LOOPBACK)
 app.include_router(auto_pr.router, dependencies=_LOOPBACK)
-# Letta tool sandbox runs off-loopback (Docker bridge) -> scoped service token.
-app.include_router(tools.router, dependencies=[Depends(require_service("automation:tools"))])
+# Letta tool sandbox runs off-loopback (Docker bridge); internal-only, no
+# personal data, never proxied to the public origin.
+app.include_router(tools.router, dependencies=[Depends(require_internal_caller)])
 
 # Public auth entry (register/login/logout/me) — no gate; it establishes identity.
 app.include_router(auth.router)

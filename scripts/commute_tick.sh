@@ -16,6 +16,11 @@
 set -u
 
 BACKEND=${WORKSHOP_BACKEND:-http://127.0.0.1:8000}
+# Commute endpoints require identity (auth redesign): load the operator-owned
+# commute service token and send it as a bearer on every /commute call.
+SECRETS_ENV="${WORKSHOP_SECRETS_ENV:-$HOME/.config/workshop/secrets.env}"
+[ -f "$SECRETS_ENV" ] && { set -a; . "$SECRETS_ENV"; set +a; }
+COMMUTE_AUTH=(-H "Authorization: Bearer ${WORKSHOP_SVC_COMMUTE:-}")
 LOG=/home/clawd-a/workshop/.runtime/commute/tick.log
 LOCK=/tmp/workshop-commute-tick.lock
 CHECKPOINT="${1:-during}"  # pre-1h | pre-30m | during | post (default: during)
@@ -65,19 +70,19 @@ fi
 echo "[$TS] tick checkpoint=$CHECKPOINT" >> "$LOG"
 
 # 1) poll fresh data
-POLL_RES=$(curl -s -X POST "$BACKEND/commute/poll" --max-time 30 || echo "{\"error\":\"poll http failure\"}")
+POLL_RES=$(curl -s "${COMMUTE_AUTH[@]}" -X POST "$BACKEND/commute/poll" --max-time 30 || echo "{\"error\":\"poll http failure\"}")
 echo "[$TS] poll: $(echo "$POLL_RES" | head -c 300)" >> "$LOG"
 
 # 1b) learn — refresh learned places + finalize any completed journey. Cheap +
 # idempotent; this is how the system adapts (places, modes, trains, transfers
 # are all derived from observed history, never hardcoded).
-LEARN_RES=$(curl -s -X POST "$BACKEND/commute/learn" --max-time 30 || echo "{\"error\":\"learn http failure\"}")
+LEARN_RES=$(curl -s "${COMMUTE_AUTH[@]}" -X POST "$BACKEND/commute/learn" --max-time 30 || echo "{\"error\":\"learn http failure\"}")
 echo "[$TS] learn: $(echo "$LEARN_RES" | head -c 200)" >> "$LOG"
 
 # 1c) StopMonitoring for the LEARNED boarding stops (best-effort, active windows
 # only — 1 request per stop, capped, to respect the 60-req/hr 511 budget).
 if [[ "$CHECKPOINT" != "post" ]]; then
-    SM_RES=$(curl -s -X POST "$BACKEND/commute/stopmon" --max-time 30 || echo "{\"error\":\"stopmon http failure\"}")
+    SM_RES=$(curl -s "${COMMUTE_AUTH[@]}" -X POST "$BACKEND/commute/stopmon" --max-time 30 || echo "{\"error\":\"stopmon http failure\"}")
     echo "[$TS] stopmon: $(echo "$SM_RES" | head -c 160)" >> "$LOG"
 fi
 
@@ -85,7 +90,7 @@ fi
 # patterns, stores it to the in-app Now feed, and dispatches to Discord per the
 # 'auto' policy (sends at the pre-* checkpoints and on any caution/urgent late
 # risk; dedup suppresses repeats). Replaces the old qwen-decide + template-brief.
-REASON_RES=$(curl -s -X POST "$BACKEND/commute/reason" \
+REASON_RES=$(curl -s "${COMMUTE_AUTH[@]}" -X POST "$BACKEND/commute/reason" \
     -H "Content-Type: application/json" \
     -d "{\"checkpoint\":\"$CHECKPOINT\",\"dispatch\":\"auto\"}" \
     --max-time 180 || echo "{\"error\":\"reason http failure\"}")

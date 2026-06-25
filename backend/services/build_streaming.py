@@ -245,6 +245,10 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
+    # Side-signals gathered while streaming (used to write a sensible final
+    # message for commands that emit no closing text, e.g. /compact).
+    state = {"compacted": False}
+
     async def _read_stdout() -> None:
         assert proc.stdout
         last_persist = 0.0
@@ -271,6 +275,8 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
                 elif kind == "tool":
                     _seg_tool(payload.get("name"), payload.get("input"))
                     saw_tool = True
+                elif kind == "meta" and payload.get("subtype") == "compact_boundary":
+                    state["compacted"] = True
                 _push(turn, kind, payload)
             # Persist on every tool call (so a reload mid-tool shows it) and at
             # most a few times a second for text, to bound disk churn.
@@ -315,6 +321,7 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     #     summary (common) — the steps above are the result.
     #   - non-zero exit, no text: a real failure.
     timed_out = bool(turn.error) and turn.error.startswith("timeout")
+    is_command = prompt.strip().startswith("/")
     minutes = max(1, round(timeout_s / 60))
     if turn.final_text:
         text = turn.final_text
@@ -325,6 +332,17 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
             "Any files it changed are already saved — send a follow-up (e.g. "
             "\"continue\") to pick up where it left off."
         )
+        is_error = False
+    elif state["compacted"]:
+        # /compact succeeds but emits no closing text — just a compact_boundary.
+        text = (
+            "Conversation compacted — earlier messages were summarized to free up "
+            "the context window. Continue where you left off."
+        )
+        is_error = False
+    elif rc == 0 and is_command:
+        # A slash command (e.g. /clear) that ran cleanly without printing output.
+        text = "Command ran."
         is_error = False
     elif rc == 0:
         text = (

@@ -13,6 +13,9 @@
 set -u
 
 BACKEND=${WORKSHOP_BACKEND:-http://127.0.0.1:8000}
+SECRETS_ENV="${WORKSHOP_SECRETS_ENV:-$HOME/.config/workshop/secrets.env}"
+[ -f "$SECRETS_ENV" ] && { set -a; . "$SECRETS_ENV"; set +a; }
+COMMUTE_AUTH=(-H "Authorization: Bearer ${WORKSHOP_SVC_COMMUTE:-}")
 NOTES_DIR=/home/clawd-a/workshop/commute/notes
 LOG=/home/clawd-a/workshop/.runtime/commute/tick.log
 TODAY=$(date +%Y-%m-%d)
@@ -31,10 +34,10 @@ workshop_pause_guard "$LOG" "commute_notes"
 echo "[$TS] commute-notes: generating $TODAY note" >> "$LOG"
 
 # --- 1. Gather today's data ---
-DECISIONS=$(curl -s "$BACKEND/commute/llm/recent?limit=50" --max-time 15 || echo "[]")
-ALERTS=$(curl -s "$BACKEND/commute/alerts/recent?limit=20" --max-time 15 || echo "[]")
-SCHEDULE=$(curl -s "$BACKEND/commute/schedule" --max-time 10 || echo "{}")
-TARGETS=$(curl -s "$BACKEND/commute/targets" --max-time 10 || echo "{}")
+DECISIONS=$(curl -s "${COMMUTE_AUTH[@]}" "$BACKEND/commute/llm/recent?limit=50" --max-time 15 || echo "[]")
+ALERTS=$(curl -s "${COMMUTE_AUTH[@]}" "$BACKEND/commute/alerts/recent?limit=20" --max-time 15 || echo "[]")
+SCHEDULE=$(curl -s "${COMMUTE_AUTH[@]}" "$BACKEND/commute/schedule" --max-time 10 || echo "{}")
+TARGETS=$(curl -s "${COMMUTE_AUTH[@]}" "$BACKEND/commute/targets" --max-time 10 || echo "{}")
 
 # --- 2. Build the prompt ---
 PROMPT=$(TODAY="$TODAY" DECISIONS="$DECISIONS" ALERTS="$ALERTS" \

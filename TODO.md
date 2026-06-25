@@ -24,13 +24,17 @@ Phase 2 — chat features:
 [ ] Resilience: graceful recovery when a build-agent turn is interrupted/derailed mid-task — checkpoint in-progress work + resume from PROJECT.md/notes instead of ending flat. (operator 2026-06-22)
 
 ## Overseer backlog (auto-generated)
-[ ] Onboard new banks for Plaid MCP as per project_plaid_mcp.md.
+[~] Onboard new banks for Plaid MCP as per project_plaid_mcp.md. — BLOCKED: Awaiting operator input on new bank onboarding
 [ ] Review recent notify lines for actionable items or anomalies.
 [ ] Review and update system documentation for clarity and completeness.
 [ ] Review and finalize the draft documentation for the latest feature release.
 [ ] Review and finalize feedback for tenant full separation.
 [ ] Review and finalize the draft for the upcoming project presentation. — proposed by overseer (normal)
 [ ] Refactor the logging module to reduce verbosity and improve performance. — proposed by overseer (normal)
+[ ] Investigate recent notifications for anomalies. — proposed by overseer (normal)
+[ ] Review recent notifications and address any critical issues. — proposed by overseer (normal)
+[ ] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal)
+[ ] Review recent notifications and update watchlist if necessary. — proposed by overseer (normal)
 
 ## Log
 [2026-06-23T15:30Z] [overseer] Proposed task to review recent notify lines for anomalies.
