@@ -20,6 +20,8 @@ import {
   Trash2,
   FolderGit2,
   Network,
+  UserRound,
+  LogOut,
 } from "lucide-react";
 import {
   Button,
@@ -30,9 +32,11 @@ import {
   Segmented,
   StatusDot,
   useTheme,
+  StatusPill,
   type SegmentedOption,
   type ThemeMode,
 } from "../ui";
+import { useAuth } from "../auth/AuthProvider";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -73,6 +77,7 @@ export default function Settings() {
   return (
     <div style={{ maxWidth: 760 }}>
       <PageHeader title="Settings" />
+      <AccountSection />
       <AppearanceSection />
       <BaseAppsSection />
       <PlatformSection />
@@ -156,6 +161,43 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span className="ws-field__label ws-muted">{label}</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Account — the signed-in user + sign out. Product-auth layer (see
+// backend/routes/auth.py). Operator accounts reach the single-owner apps; other
+// accounts get a session and per-user data as apps are partitioned.
+// ----------------------------------------------------------------------------
+function AccountSection() {
+  const { user, logout } = useAuth();
+  const [busy, setBusy] = useState(false);
+  if (!user) return null;
+  return (
+    <Section icon={UserRound} title="Account">
+      <Row label="signed in as">{user.name ? `${user.name} · ${user.email}` : user.email}</Row>
+      <Row label="role">
+        {user.is_operator ? (
+          <StatusPill status="ok">operator</StatusPill>
+        ) : (
+          <span className="ws-muted">member</span>
+        )}
+      </Row>
+      <Row label="session">
+        <Button
+          variant="danger-ghost"
+          size="sm"
+          loading={busy}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            await logout();
+          }}
+        >
+          <LogOut size={16} strokeWidth={1.8} aria-hidden /> Sign out
+        </Button>
+      </Row>
+    </Section>
   );
 }
 
