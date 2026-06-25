@@ -391,6 +391,11 @@ label {
 .bird-det-meta { display: flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
 .bird-det-ctl { display: inline-flex; align-items: center; gap: 0.25rem; margin-left: auto; }
 .bird-det-ctl .bird-act { width: 1.75rem; height: 1.75rem; }
+/* Bigger tap targets for the confirm/reject/play controls on touch screens. */
+@media (max-width: 640px) {
+  .bird-det-ctl { gap: 0.4rem; }
+  .bird-det-ctl .bird-act { width: 2.4rem; height: 2.4rem; }
+}
 .bird-chip { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.72rem;
   padding: 0.12rem 0.45rem; border-radius: 6px; border: 1px solid var(--border);
   background: var(--card); color: var(--muted); text-decoration: none; cursor: pointer;

@@ -146,9 +146,11 @@ function WeatherGutter({ days }: { days: Day[] }) {
         return (
           <div key={d.date} style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: ".1rem" }}>
             <c.Icon size={14} className="muted" />
-            <span className="muted" style={{ fontSize: ".68rem" }}>{d.weather.temp_hi_f ?? "-"}°/{d.weather.temp_lo_f ?? "-"}°</span>
+            {/* Font scales down with the column so the temp/precip don't clip
+                when 7 days share a ~358px phone width. */}
+            <span className="muted" style={{ fontSize: "clamp(.55rem, 2.4vw, .68rem)", whiteSpace: "nowrap" }}>{d.weather.temp_hi_f ?? "-"}°/{d.weather.temp_lo_f ?? "-"}°</span>
             {d.weather.precip_prob_max != null && (
-              <span className="muted" style={{ fontSize: ".66rem", display: "inline-flex", alignItems: "center", gap: "2px" }}>
+              <span className="muted" style={{ fontSize: "clamp(.54rem, 2.3vw, .66rem)", display: "inline-flex", alignItems: "center", gap: "2px" }}>
                 <Droplets size={9} /> {d.weather.precip_prob_max}%
               </span>
             )}

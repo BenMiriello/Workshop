@@ -67,7 +67,8 @@
   position: absolute; transform: translate(-50%, -100%); z-index: 25;
   background: var(--card); border: 1px solid var(--border);
   border-radius: 13px; box-shadow: var(--shadow-md);
-  padding: 9px 11px 10px; width: 206px;
+  /* Never wider than the phone viewport, or it clips at the scene edges. */
+  padding: 9px 11px 10px; width: min(206px, calc(100vw - 2rem));
 }
 .ws-aviary .callout::after {
   content: ""; position: absolute; left: 50%; bottom: -7px;
