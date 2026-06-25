@@ -13,7 +13,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env cloudflared tunnel --config %h/.cloudflared/config.yml run
+ExecStart=%h/bin/cloudflared tunnel --config %h/.cloudflared/config.yml run
 Restart=on-failure
 RestartSec=10
 
