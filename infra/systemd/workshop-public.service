@@ -1,0 +1,22 @@
+# Workshop public edge (SPA + cookie-forwarding proxy) — systemd --user unit
+# (template). Serves frontend/dist and proxies the personal+auth API surface to
+# the main backend on :8000. Sits behind the Cloudflare tunnel for
+# workshop.benmiriello.com. Install via scripts/install_public_service.sh
+# (substitutes @WORKSHOP_ROOT@).
+[Unit]
+Description=Workshop public edge (static SPA + API proxy)
+After=network-online.target workshop-backend.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKSHOP_ROOT@/backend
+EnvironmentFile=-%h/.config/workshop/secrets.env
+Environment=WORKSHOP_BACKEND=http://127.0.0.1:8000
+Environment=WORKSHOP_DIST=@WORKSHOP_ROOT@/frontend/dist
+ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn workshop_public_app:app --host 127.0.0.1 --port 8002
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
