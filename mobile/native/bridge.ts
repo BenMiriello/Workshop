@@ -38,6 +38,7 @@ const ROUTES: Record<Capability, Record<string, Handler>> = {
     cancel: notify.cancel,
     cancelAll: notify.cancelAll,
     permissionStatus: notify.permissionStatus,
+    requestPermission: notify.requestPermission,
   },
   liveActivity: {
     isSupported: liveActivity.isSupported,

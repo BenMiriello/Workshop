@@ -22,6 +22,7 @@ import {
   Network,
   UserRound,
   LogOut,
+  Smartphone,
 } from "lucide-react";
 import {
   Button,
@@ -37,6 +38,10 @@ import {
   type ThemeMode,
 } from "../ui";
 import { useAuth } from "../auth/AuthProvider";
+import { native } from "../native/bridge";
+import { useNative, useTrackingStatus } from "../native/useNative";
+import { startDeviceTracking, stopDeviceTracking } from "../native/location";
+import type { PermissionState } from "@shared/native-bridge";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -78,6 +83,7 @@ export default function Settings() {
     <div style={{ maxWidth: 760 }}>
       <PageHeader title="Settings" />
       <AccountSection />
+      <DeviceSection />
       <AppearanceSection />
       <BaseAppsSection />
       <PlatformSection />
@@ -161,6 +167,129 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <span className="ws-field__label ws-muted">{label}</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// This device — native capabilities, surfaced only inside the iOS shell (the
+// bridge is absent in a plain browser, so this whole section hides there).
+// Lets the operator control background location tracking, see the offline fix
+// queue, enable notifications, and check Live Activity readiness. See
+// shared/native-bridge.ts + frontend/src/native/*.
+// ----------------------------------------------------------------------------
+function DeviceSection() {
+  const { isShell, tier, has } = useNative();
+  const tracking = useTrackingStatus(4000);
+  const [busy, setBusy] = useState(false);
+  const [notifPerm, setNotifPerm] = useState<PermissionState | null>(null);
+  const [laSupported, setLaSupported] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const n = native();
+    if (!n) return;
+    if (n.has("localNotify")) n.localNotify.permissionStatus().then(setNotifPerm).catch(() => {});
+    if (n.has("liveActivity")) n.liveActivity.isSupported().then(setLaSupported).catch(() => {});
+  }, []);
+
+  if (!isShell) return null;
+
+  const isTracking = !!tracking?.tracking;
+
+  async function toggleTracking() {
+    setBusy(true);
+    try {
+      if (isTracking) await stopDeviceTracking();
+      else await startDeviceTracking({ mode: "significant" });
+    } catch {
+      /* permission denied etc. — the status row reflects it on next poll */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function enableNotifs() {
+    const n = native();
+    if (!n?.has("localNotify")) return;
+    try {
+      setNotifPerm(await n.localNotify.requestPermission());
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const inline = { display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" } as const;
+
+  return (
+    <Section icon={Smartphone} title="This device">
+      <Row label="app">
+        {tier === "paid" ? <StatusPill status="ok">paid</StatusPill> : <span className="ws-muted">free tier</span>}
+      </Row>
+
+      {has("location") && (
+        <>
+          <Row label="location tracking">
+            <span style={inline}>
+              {isTracking ? (
+                <StatusDot status="ok">on{tracking?.mode ? ` · ${tracking.mode}` : ""}</StatusDot>
+              ) : (
+                <StatusDot status="stopped">off</StatusDot>
+              )}
+              <Button
+                size="sm"
+                variant={isTracking ? "danger-ghost" : "ghost"}
+                loading={busy}
+                disabled={busy}
+                onClick={toggleTracking}
+              >
+                {isTracking ? "Stop" : "Start"}
+              </Button>
+            </span>
+          </Row>
+          {tracking?.permission && tracking.permission !== "granted" && (
+            <Row label="permission">
+              <StatusDot status="warn">{tracking.permission}</StatusDot>
+            </Row>
+          )}
+          {typeof tracking?.queued === "number" && tracking.queued > 0 && (
+            <Row label="offline queue">{tracking.queued} fixes waiting to send</Row>
+          )}
+          {tracking?.last?.lat != null && tracking?.last?.lng != null && (
+            <Row label="last fix">
+              <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>
+                {tracking.last.lat.toFixed(4)}, {tracking.last.lng.toFixed(4)}
+              </span>
+            </Row>
+          )}
+        </>
+      )}
+
+      {has("localNotify") && (
+        <Row label="notifications">
+          {notifPerm === "granted" ? (
+            <StatusDot status="ok">enabled</StatusDot>
+          ) : (
+            <span style={inline}>
+              <StatusDot status={notifPerm === "denied" ? "danger" : "warn"}>{notifPerm ?? "checking…"}</StatusDot>
+              {notifPerm !== "denied" && (
+                <Button size="sm" variant="ghost" onClick={enableNotifs}>
+                  Enable
+                </Button>
+              )}
+            </span>
+          )}
+        </Row>
+      )}
+
+      {has("liveActivity") && (
+        <Row label="live activity">
+          {laSupported ? (
+            <StatusDot status="ok">ready</StatusDot>
+          ) : (
+            <span className="ws-muted">needs the Widget extension build (see mobile/README)</span>
+          )}
+        </Row>
+      )}
+    </Section>
   );
 }
 

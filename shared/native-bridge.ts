@@ -27,7 +27,7 @@ export const RECV_FN = "__WORKSHOP_NATIVE_RECV__";
 export const CAP_METHODS = {
   location: ["getCurrent", "startBackgroundTracking", "stopBackgroundTracking", "trackingStatus"],
   audio: ["startCapture", "stopCapture"],
-  localNotify: ["schedule", "cancel", "cancelAll", "permissionStatus"],
+  localNotify: ["schedule", "cancel", "cancelAll", "permissionStatus", "requestPermission"],
   liveActivity: ["isSupported", "start", "update", "end"],
   secureStore: ["get", "set", "remove"],
 } as const;
@@ -156,6 +156,8 @@ export interface WorkshopNative {
     cancel(id: string): Promise<void>;
     cancelAll(): Promise<void>;
     permissionStatus(): Promise<PermissionState>;
+    /** Prompt for notification permission (once); resolves to the resulting state. */
+    requestPermission(): Promise<PermissionState>;
   };
 
   liveActivity: {

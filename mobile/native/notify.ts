@@ -35,6 +35,12 @@ export async function permissionStatus(): Promise<PermissionState> {
   return mapPermission(p.status);
 }
 
+/** Explicitly prompt for permission (the "Enable notifications" control). */
+export async function requestPermission(): Promise<PermissionState> {
+  await ensurePermission();
+  return permissionStatus();
+}
+
 export async function schedule(n: LocalNotification): Promise<void> {
   if (!(await ensurePermission())) throw new Error("notification permission denied");
 
