@@ -22,7 +22,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   login: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, name?: string) => Promise<void>;
-  logout: () => Promise<void>;
+  logout: (everywhere?: boolean) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -60,15 +61,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const logout = useCallback(async () => {
-    await auth.logout();
+  const logout = useCallback(async (everywhere = false) => {
+    await auth.logout(everywhere);
     setUser(null);
     setStatus("anon");
   }, []);
 
+  const changePassword = useCallback(async (current: string, next: string) => {
+    await auth.changePassword(current, next);
+  }, []);
+
   const value = useMemo(
-    () => ({ status, user, login, register, logout }),
-    [status, user, login, register, logout],
+    () => ({ status, user, login, register, logout, changePassword }),
+    [status, user, login, register, logout, changePassword],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

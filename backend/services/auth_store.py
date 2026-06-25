@@ -209,6 +209,17 @@ def create_user(email: str, password: str, name: Optional[str] = None) -> dict[s
     return created
 
 
+def update_password(user_id: int, new_password: str) -> None:
+    if len(new_password) < 8:
+        raise ValueError("password must be at least 8 characters")
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE users SET pw_hash = ? WHERE id = ?",
+            (hash_password(new_password), user_id),
+        )
+
+
 def verify_credentials(email: str, password: str) -> Optional[dict[str, Any]]:
     init_db()
     with _connect() as conn:

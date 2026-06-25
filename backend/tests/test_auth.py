@@ -167,6 +167,38 @@ def test_registration_closed(client, monkeypatch):
     assert r.status_code == 403
 
 
+def test_change_password(client):
+    reg = client.post("/auth/register", json={"email": "pw@example.com", "password": "password1"}).json()
+    access, old_refresh = reg["access_token"], reg["refresh_token"]
+    hdr = {"Authorization": f"Bearer {access}"}
+
+    # Wrong current password -> 401.
+    bad = client.post("/auth/password", json={"current_password": "WRONG", "new_password": "password2"}, headers=hdr)
+    assert bad.status_code == 401
+
+    ok = client.post("/auth/password", json={"current_password": "password1", "new_password": "password2"}, headers=hdr)
+    assert ok.status_code == 200
+    assert ok.json()["access_token"]
+
+    # Old password no longer works; new one does.
+    assert client.post("/auth/login", json={"email": "pw@example.com", "password": "password1"}).status_code == 401
+    assert client.post("/auth/login", json={"email": "pw@example.com", "password": "password2"}).status_code == 200
+    # Prior refresh tokens were revoked by the change.
+    assert client.post("/auth/refresh", json={"refresh_token": old_refresh}).status_code == 401
+
+
+def test_change_password_requires_auth(client):
+    assert client.post("/auth/password", json={"current_password": "x", "new_password": "password2"}).status_code == 401
+
+
+def test_logout_everywhere_revokes_all(client):
+    reg = client.post("/auth/register", json={"email": "all@example.com", "password": "password1"}).json()
+    access, refresh = reg["access_token"], reg["refresh_token"]
+    out = client.post("/auth/logout", json={"all_devices": True}, headers={"Authorization": f"Bearer {access}"})
+    assert out.status_code == 200 and out.json()["scope"] == "all"
+    assert client.post("/auth/refresh", json={"refresh_token": refresh}).status_code == 401
+
+
 def test_logout_revokes_refresh(client):
     reg = client.post("/auth/register", json={"email": "d@example.com", "password": "password1"}).json()
     access, refresh = reg["access_token"], reg["refresh_token"]

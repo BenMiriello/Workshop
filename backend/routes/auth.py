@@ -63,6 +63,11 @@ class LogoutBody(BaseModel):
     all_devices: bool = False
 
 
+class ChangePasswordBody(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
+
+
 def _issue(user: dict) -> dict:
     access = jwt_tokens.make_access(user)
     refresh, jti, expires_at = jwt_tokens.make_refresh(user)
@@ -126,6 +131,23 @@ async def logout(body: LogoutBody, user: dict = Depends(require_user)) -> dict:
         except jwt_tokens.TokenError:
             pass  # already invalid — nothing to revoke
     return {"ok": True, "scope": "session"}
+
+
+@router.post("/password")
+async def change_password(body: ChangePasswordBody, user: dict = Depends(require_user)) -> dict:
+    full = auth_store.get_by_id(user["id"])
+    if full is None:
+        raise HTTPException(status_code=401, detail="account no longer exists")
+    if auth_store.verify_credentials(full["email"], body.current_password) is None:
+        raise HTTPException(status_code=401, detail="current password is incorrect")
+    try:
+        auth_store.update_password(user["id"], body.new_password)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    # Invalidate every existing session for safety, then mint a fresh pair so the
+    # client that just changed the password stays signed in.
+    auth_store.revoke_all_for_user(user["id"])
+    return _issue(full)
 
 
 @router.get("/me")

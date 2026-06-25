@@ -260,15 +260,28 @@ export async function fetchMe(): Promise<AuthUser | null> {
   return null;
 }
 
-export async function logout(): Promise<void> {
+export async function logout(everywhere = false): Promise<void> {
   try {
     await fetch("/api/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: refreshToken }),
+      body: JSON.stringify(
+        everywhere ? { all_devices: true } : { refresh_token: refreshToken },
+      ),
     });
   } catch {
     /* best-effort server-side revoke; we clear locally regardless */
   }
   await clearSession();
+}
+
+export async function changePassword(current: string, next: string): Promise<void> {
+  const r = await fetch("/api/auth/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ current_password: current, new_password: next }),
+  });
+  if (!r.ok) throw new AuthError(await errorMessage(r, "Could not change password"));
+  // The server rotates the session on a password change; persist the new pair.
+  await persist(await r.json());
 }

@@ -34,6 +34,7 @@ import {
   StatusDot,
   useTheme,
   StatusPill,
+  Input,
   type SegmentedOption,
   type ThemeMode,
 } from "../ui";
@@ -299,9 +300,31 @@ function DeviceSection() {
 // accounts get a session and per-user data as apps are partitioned.
 // ----------------------------------------------------------------------------
 function AccountSection() {
-  const { user, logout } = useAuth();
+  const { user, logout, changePassword } = useAuth();
   const [busy, setBusy] = useState(false);
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [pwBusy, setPwBusy] = useState(false);
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
   if (!user) return null;
+
+  async function submitPw(e: React.FormEvent) {
+    e.preventDefault();
+    if (pwBusy) return;
+    setPwBusy(true);
+    setPwMsg(null);
+    try {
+      await changePassword(cur, next);
+      setCur("");
+      setNext("");
+      setPwMsg({ ok: true, text: "Password updated" });
+    } catch (err) {
+      setPwMsg({ ok: false, text: err instanceof Error ? err.message : "Could not change password" });
+    } finally {
+      setPwBusy(false);
+    }
+  }
+
   return (
     <Section icon={UserRound} title="Account">
       <Row label="signed in as">{user.name ? `${user.name} · ${user.email}` : user.email}</Row>
@@ -312,19 +335,58 @@ function AccountSection() {
           <span className="ws-muted">member</span>
         )}
       </Row>
+      <Row label="password">
+        <form onSubmit={submitPw} style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)", alignItems: "center" }}>
+          <Input
+            type="password"
+            value={cur}
+            onChange={(e) => setCur(e.target.value)}
+            placeholder="current"
+            autoComplete="current-password"
+            style={{ maxWidth: 150 }}
+          />
+          <Input
+            type="password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            placeholder="new (8+ chars)"
+            autoComplete="new-password"
+            style={{ maxWidth: 150 }}
+          />
+          <Button type="submit" size="sm" variant="ghost" loading={pwBusy} disabled={pwBusy || !cur || next.length < 8}>
+            Change
+          </Button>
+          {pwMsg && (
+            <span style={{ fontSize: "var(--fs-xs)", color: pwMsg.ok ? "var(--ok)" : "var(--danger)" }}>{pwMsg.text}</span>
+          )}
+        </form>
+      </Row>
       <Row label="session">
-        <Button
-          variant="danger-ghost"
-          size="sm"
-          loading={busy}
-          disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            await logout();
-          }}
-        >
-          <LogOut size={16} strokeWidth={1.8} aria-hidden /> Sign out
-        </Button>
+        <span style={{ display: "inline-flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <Button
+            variant="danger-ghost"
+            size="sm"
+            loading={busy}
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await logout();
+            }}
+          >
+            <LogOut size={16} strokeWidth={1.8} aria-hidden /> Sign out
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              await logout(true);
+            }}
+          >
+            Sign out everywhere
+          </Button>
+        </span>
       </Row>
     </Section>
   );
