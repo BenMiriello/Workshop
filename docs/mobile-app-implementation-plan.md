@@ -169,12 +169,30 @@ capability to its Expo module below.
 - `expo-av` record; `UIBackgroundModes:["audio"]`; capture clips POST to the birds ingest.
 - **Acceptance:** a backgrounded capture records and uploads a clip.
 
-### Phase 4 — Auth *(2–3 days)*
-- Real login screen (web side) → token in `expo-secure-store` via `secureStore` capability,
-  sent as bearer to the backend. Slots into `backend/services/permissions.py` (operator vs
-  guest), compatible with the tailnet auth gate (`project_workshop_tailnet_auth_gate`).
-  Generalized identity, single user in practice — **no multi-tenant guardrails**.
-- **Acceptance:** off-tailnet, the app authenticates and the backend authorizes by token.
+### Phase 4 — Auth — BUILT, repositioned as real product auth *(operator decision 2026-06-24)*
+
+The operator repositioned the app as a deployable product, so Phase 4 is now a real
+multi-user auth layer (a deliberate, scoped exception to the no-defensive-cruft rule —
+see memory `project_workshop_product_auth`), not the single-bearer fallback originally
+sketched here.
+
+- **Backend** (`backend/`): `services/auth_store.py` (SQLite users + refresh tokens, scrypt
+  password hashing), `services/jwt_tokens.py` (HS256 access + rotating refresh JWTs),
+  `deps_user.py` (`require_user`/`require_operator`), `routes/auth.py`
+  (register/login/refresh/logout/me). The operator (by `WORKSHOP_OPERATOR_EMAIL`) is the only
+  identity that reaches the single-owner routers; `deps_auth` accepts the operator's JWT so he
+  reaches finance/location off-tailnet. Data stays single-owner; per-app per-user partitioning
+  is incremental.
+- **Web** (`frontend/`): `lib/auth.ts` (token store via the `secureStore` capability on mobile /
+  localStorage in a browser, plus a `fetch` patch that attaches the Bearer and refreshes on
+  401), `auth/AuthProvider` + `auth/Guard` (login wall), `pages/Login.tsx`, an Account section
+  in Settings.
+- **Mobile** (`mobile/`): `native/auth.ts` reads the web-stored tokens from the Keychain (with
+  proactive refresh) so the background location/audio producers authenticate as the logged-in
+  user; `inject.ts` no longer bakes a static token (the web auth owns the header).
+- **Acceptance (met, verified via the live `/api` proxy):** register → me → 401-when-anon →
+  refresh rotation. Prod config: set `WORKSHOP_JWT_SECRET` (else a dev secret persists to
+  `.runtime/jwt-secret`) and `WORKSHOP_REGISTRATION_OPEN=0` to close signups.
 
 ## 4. Phase 5 — PAID, deferred (only on operator opt-in)
 

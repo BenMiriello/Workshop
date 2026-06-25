@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -15,7 +15,6 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { TIER, WEB_URL } from "../native/config";
 import { buildInjectedBridge } from "../native/inject";
 import { createDispatcher } from "../native/bridge";
-import { getToken } from "../native/auth";
 import { colors } from "../lib/api";
 
 // The whole product surface is the Workshop web app, hosted in this WebView.
@@ -31,18 +30,11 @@ export default function Shell() {
   const webRef = useRef<WebView>(null);
   const [loading, setLoading] = useState(true);
   const [errored, setErrored] = useState(false);
-  // undefined = still loading the stored token; null = none. We hold the WebView
-  // until this resolves so the injected fetch-patch is in place before any SPA
-  // request fires.
-  const [token, setTokenState] = useState<string | null | undefined>(undefined);
 
-  useEffect(() => {
-    getToken()
-      .then((t) => setTokenState(t))
-      .catch(() => setTokenState(null));
-  }, []);
-
-  const injected = useMemo(() => buildInjectedBridge(TIER, token ?? null), [token]);
+  // The bridge stub is installed before content loads; the web app's own auth
+  // layer (lib/auth.ts) handles sign-in and attaches the Bearer token, reading/
+  // writing the session through this bridge's secureStore. No token to preload.
+  const injected = useMemo(() => buildInjectedBridge(TIER), []);
   const dispatcher = useMemo(() => createDispatcher(() => webRef.current), []);
   const webOrigin = useMemo(() => originOf(WEB_URL), []);
 
@@ -74,11 +66,7 @@ export default function Shell() {
   return (
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <StatusBar style="light" />
-      {token === undefined ? (
-        <View style={styles.loading}>
-          <ActivityIndicator color={colors.accent} size="large" />
-        </View>
-      ) : errored ? (
+      {errored ? (
         <View style={styles.center}>
           <Text style={styles.title}>Can't reach the Workshop</Text>
           <Text style={styles.muted}>{WEB_URL}</Text>

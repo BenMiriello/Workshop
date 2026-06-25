@@ -9,12 +9,11 @@
 
 import { BRIDGE_VERSION, CAP_METHODS, NATIVE_GLOBAL, RECV_FN } from "@shared/native-bridge";
 
-export function buildInjectedBridge(tier: "free" | "paid", token?: string | null): string {
+export function buildInjectedBridge(tier: "free" | "paid"): string {
   const manifest = JSON.stringify(CAP_METHODS);
   const caps = JSON.stringify(Object.keys(CAP_METHODS));
   const global = JSON.stringify(NATIVE_GLOBAL);
   const recv = JSON.stringify(RECV_FN);
-  const tok = JSON.stringify(token ?? "");
 
   // NOTE: kept ES5-ish on purpose — runs in whatever the WebView's JS engine is.
   return `(function(){
@@ -23,7 +22,6 @@ export function buildInjectedBridge(tier: "free" | "paid", token?: string | null
     var RECV=${recv};
     var VERSION=${BRIDGE_VERSION};
     var TIER=${JSON.stringify(tier)};
-    var TOKEN=${tok};
     var CAPS=${caps};
     var MANIFEST=${manifest};
     var pending={}, seq=1, subs={};
@@ -67,19 +65,10 @@ export function buildInjectedBridge(tier: "free" | "paid", token?: string | null
       });
     });
     window[GLOBAL]=api;
-    // Off-tailnet fallback: attach the stored Bearer token to same-origin /api
-    // calls. On the tailnet the backend trusts the peer and ignores this.
-    if (TOKEN) {
-      var _fetch=window.fetch;
-      window.fetch=function(input, init){
-        init=init||{};
-        var url=(typeof input==="string")?input:((input&&input.url)||"");
-        if (url.charAt(0)==="/" || url.indexOf("/api")!==-1) {
-          init.headers=Object.assign({}, init.headers||{}, {Authorization:"Bearer "+TOKEN});
-        }
-        return _fetch.call(this, input, init);
-      };
-    }
+    // Auth is owned by the web app's auth layer (frontend/src/lib/auth.ts): it
+    // patches fetch to attach the product Bearer token and persists the session
+    // through this bridge's secureStore. The shell deliberately does NOT bake a
+    // token here — doing so would clobber that header.
     window.dispatchEvent(new Event("workshopnativeready"));
   })();
   true;`;
