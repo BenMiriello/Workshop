@@ -14,6 +14,7 @@ import type {
 } from "@shared/native-bridge";
 import { apiUrl } from "./config";
 import { authHeaders } from "./auth";
+import * as queue from "./locationQueue";
 
 export const LOCATION_TASK = "workshop-bg-location";
 
@@ -33,16 +34,19 @@ function toFix(loc: Location.LocationObject): LocationFix {
   };
 }
 
-async function postFix(fix: LocationFix): Promise<void> {
+// Returns whether the fix actually reached the backend. A network error or any
+// non-2xx is a failure, so the caller can persist the fix to the offline queue
+// instead of silently losing it.
+async function postFix(fix: LocationFix): Promise<boolean> {
   try {
-    await fetch(apiUrl("/location/update"), {
+    const res = await fetch(apiUrl("/location/update"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...(await authHeaders()) },
       body: JSON.stringify({ ...fix, source: "workshop-ios" }),
     });
+    return res.ok;
   } catch {
-    // Best-effort: a dropped fix is acceptable; the next one will land.
-    // (A durable offline queue can be added here later if needed.)
+    return false;
   }
 }
 
@@ -51,10 +55,19 @@ async function postFix(fix: LocationFix): Promise<void> {
 TaskManager.defineTask(LOCATION_TASK, async ({ data, error }) => {
   if (error) return;
   const locations = (data as { locations?: Location.LocationObject[] })?.locations ?? [];
+  // Drain any backlog first so re-sent fixes stay in chronological order. If the
+  // network is still down, `drained` is false and we append new fixes behind the
+  // backlog rather than posting them out of order.
+  const drained = await queue.flush(postFix);
   for (const loc of locations) {
     const fix = toFix(loc);
     lastFix = fix;
-    await postFix(fix);
+    if (drained) {
+      const ok = await postFix(fix);
+      if (!ok) await queue.enqueue(fix);
+    } else {
+      await queue.enqueue(fix);
+    }
   }
 });
 
@@ -123,5 +136,6 @@ export async function trackingStatus(): Promise<TrackingStatus> {
     mode: currentMode,
     last: lastFix,
     permission: mapPermission(perm.status),
+    queued: await queue.depth(),
   };
 }

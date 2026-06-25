@@ -67,6 +67,8 @@ export interface TrackingStatus {
   /** Last fix this session, if any. */
   last?: LocationFix;
   permission: PermissionState;
+  /** Fixes persisted to the offline backlog, awaiting re-send (0 when caught up). */
+  queued?: number;
 }
 
 export type PermissionState = "granted" | "denied" | "undetermined" | "restricted";

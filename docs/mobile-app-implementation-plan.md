@@ -139,7 +139,13 @@ capability to its Expo module below.
   `expo-location` plugin with `isIosBackgroundLocationEnabled:true`.
 - Background task POSTs each fix to `POST /location/update` `{source:"workshop-ios"}`.
 - Smart power: standard updates only while a commute is active; significant-change /
-  geofence otherwise (mirror OwnTracks "Significant" behavior). Queue + retry offline.
+  geofence otherwise (mirror OwnTracks "Significant" behavior).
+- **Queue + retry offline — BUILT** (`mobile/native/locationQueue.ts`): a fix that fails to
+  send (network blip, backend restart) is persisted to a flat JSON file in the app document
+  dir and re-sent oldest-first on the next background delivery, in chronological order;
+  capped at 500 (drops oldest). `trackingStatus().queued` surfaces the backlog depth for
+  on-device verification on the debug screen. So OwnTracks retirement no longer risks a
+  location gap during an outage.
 - **Acceptance:** with the app backgrounded, `/location/latest` updates as the phone moves;
   OwnTracks can be uninstalled. (See `project_commute_location_2026_06_06`.)
 
