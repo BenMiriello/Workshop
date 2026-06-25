@@ -35,7 +35,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let alive = true;
     (async () => {
-      await auth.hydrate();
       const me = await auth.fetchMe();
       if (!alive) return;
       setUser(me);
