@@ -17,6 +17,8 @@ export interface AuthUser {
   is_operator: boolean;
 }
 
+import { native } from "../native/bridge";
+
 export class AuthError extends Error {}
 
 const CSRF_HEADER = "X-Workshop-Client";
@@ -82,6 +84,30 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
 
 const JSON_HEADERS = { "Content-Type": "application/json", [CSRF_HEADER]: "1" };
 
+/**
+ * Inside the Expo shell, mint a revocable device token for the native background
+ * producers (location/audio) — they run outside the WebView and can't use the
+ * cookie. Hand it to native via the bridge's Keychain-backed secureStore. No-op
+ * in a plain browser. Best-effort and fire-and-forget.
+ */
+async function provisionDeviceToken(): Promise<void> {
+  const n = native();
+  if (!n?.has?.("secureStore")) return;
+  try {
+    const r = await rawFetch("/api/auth/device-token", {
+      method: "POST",
+      headers: JSON_HEADERS,
+      credentials: "include",
+      body: JSON.stringify({ label: "ios" }),
+    });
+    if (!r.ok) return;
+    const token = (await r.json())?.device_token;
+    if (token) await n.secureStore.set("ws-device-token", token);
+  } catch {
+    /* native producers stay unauthenticated until the next login attempt */
+  }
+}
+
 export async function login(email: string, password: string): Promise<AuthUser> {
   const r = await rawFetch("/api/auth/login", {
     method: "POST",
@@ -90,7 +116,9 @@ export async function login(email: string, password: string): Promise<AuthUser> 
     body: JSON.stringify({ email, password }),
   });
   if (!r.ok) throw new AuthError(await errorMessage(r, "Sign in failed"));
-  return (await r.json()).user as AuthUser;
+  const user = (await r.json()).user as AuthUser;
+  void provisionDeviceToken();
+  return user;
 }
 
 export async function register(
@@ -105,7 +133,9 @@ export async function register(
     body: JSON.stringify({ email, password, name: name || undefined }),
   });
   if (!r.ok) throw new AuthError(await errorMessage(r, "Could not create account"));
-  return (await r.json()).user as AuthUser;
+  const user = (await r.json()).user as AuthUser;
+  void provisionDeviceToken();
+  return user;
 }
 
 /** Resolve the current user from the session cookie, or null if not signed in. */

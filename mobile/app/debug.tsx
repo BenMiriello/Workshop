@@ -8,7 +8,7 @@ import { colors } from "../lib/api";
 import * as location from "../native/location";
 import * as notify from "../native/notify";
 import * as liveActivity from "../native/liveActivity";
-import { clearToken, setToken } from "../native/auth";
+import { clearToken, setDeviceToken } from "../native/auth";
 
 // On-device verification of each capability without the web app. Reach it from
 // the WebView error screen ("Diagnostics"), or route to /debug directly.
@@ -84,7 +84,7 @@ export default function Debug() {
         <Pressable
           style={styles.btn}
           onPress={() => {
-            void setToken(tokenInput.trim()).then(() => append("token saved (reload app)"));
+            void setDeviceToken(tokenInput.trim()).then(() => append("device token saved (reload app)"));
           }}
         >
           <Text style={styles.btnText}>Save</Text>
