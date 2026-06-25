@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from services import chat_store, chat_context
 from services import llm_router
 from services import build_streaming
+from services import chat_naming
 
 log = logging.getLogger("workshop.chat")
 router = APIRouter()
@@ -223,70 +224,6 @@ def _build_prompt(
     return "\n\n".join(parts)
 
 
-def _is_blank_title(title: str | None) -> bool:
-    """A thread title that should be auto-generated: empty/blank or the
-    placeholder. (chat_store seeds 'New chat'; append_message also seeds a
-    first-user-message snippet, so we treat that snippet as auto-nameable too
-    only when still the seed — see _maybe_autoname which checks msg count.)"""
-    return (title or "").strip() in ("", "New chat")
-
-
-def _autoname_blocking(thread_id: str, first_user: str, first_assistant: str) -> None:
-    """Generate a short (<=6 word) title from the first exchange via a cheap
-    Haiku, tools-off, single-turn call, then rename the thread. Runs in a
-    worker thread (call_cloud blocks). Best-effort: any failure leaves the
-    existing title untouched. Re-checks the title under the current state so we
-    never clobber a title the operator set in the meantime."""
-    cur = chat_store.get_thread(thread_id)
-    if cur is None or not _is_blank_title(cur.get("title")):
-        return
-    prompt = (
-        "Generate a concise chat title (at most 6 words, Title Case, no quotes, "
-        "no trailing punctuation, no emoji) summarizing this exchange. Output "
-        "ONLY the title.\n\n"
-        f"User: {first_user[:600]}\n\n"
-        f"Assistant: {first_assistant[:600]}"
-    )
-    try:
-        result = llm_router.call_cloud(
-            prompt,
-            model=llm_router.TIER_HAIKU,
-            tools_disabled=True,
-            max_turns=1,
-            timeout_s=60,
-        )
-    except Exception as e:
-        log.info("auto-name skipped (model call failed) for %s: %s", thread_id, e)
-        return
-    title = (result.get("text") or "").strip().strip('"').strip()
-    # First line only; guard against the model adding a preface.
-    title = title.splitlines()[0].strip() if title else ""
-    # Hard cap at 6 words.
-    words = title.split()
-    if len(words) > 6:
-        title = " ".join(words[:6])
-    if not title:
-        return
-    # Final guard: only rename if still blank (operator may have renamed).
-    cur = chat_store.get_thread(thread_id)
-    if cur is not None and _is_blank_title(cur.get("title")):
-        chat_store.rename_thread(thread_id, title)
-
-
-async def _maybe_autoname(thread_id: str, user_msg: str, assistant_msg: str) -> None:
-    """Fire-and-forget auto-naming after the first assistant reply lands in a
-    thread whose title is still the seed. Non-blocking: scheduled as a task so
-    it never delays the user-facing reply."""
-    t = chat_store.get_thread(thread_id)
-    if t is None or not _is_blank_title(t.get("title")):
-        return
-    # Only after the first exchange (1 user + 1 assistant message persisted).
-    msgs = t.get("messages", [])
-    if len([m for m in msgs if m.get("role") == "assistant"]) != 1:
-        return
-    await asyncio.to_thread(_autoname_blocking, thread_id, user_msg, assistant_msg)
-
-
 @router.post("/threads/{thread_id}/messages")
 async def send_message(thread_id: str, body: PostMessage):
     t = chat_store.get_thread(thread_id)
@@ -424,7 +361,7 @@ async def send_message(thread_id: str, body: PostMessage):
 
     # Auto-name the thread after the first exchange (non-blocking so it never
     # delays this reply; scheduled as a background task; the reply returns now).
-    asyncio.create_task(_maybe_autoname(thread_id, content, cleaned))
+    chat_naming.schedule(thread_id)
 
     return {"message": msg, "notes": notes}
 

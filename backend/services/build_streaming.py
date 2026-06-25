@@ -328,6 +328,16 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     except Exception:
         pass
 
+    # Name the thread from its first exchange (build chats stream their turns, so
+    # the data-path auto-namer never saw them — they kept the message snippet).
+    # Skip on a failed turn so we don't title a thread off an error message.
+    if not is_error:
+        try:
+            from services import chat_naming
+            chat_naming.schedule(turn.thread_id)
+        except Exception as e:  # pragma: no cover — best-effort
+            log.debug("turn %s: auto-name schedule failed: %s", turn.id, e)
+
     # Auto-checkpoint: commit the working tree so the builder's work is a
     # recoverable timeline (doc 05 history substrate). Best-effort, off-loop.
     # SKIP for the self/platform project — never auto-commit the live monorepo's
