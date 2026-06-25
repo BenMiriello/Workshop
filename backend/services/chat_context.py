@@ -495,6 +495,23 @@ class ContextProvider:
 
 _PATCH_BLOCK = re.compile(r"```plan-patch\s*\n(.*?)```", re.DOTALL)
 
+# Shared Plaid-lookup method heuristics (general, situation-free) appended to
+# every persona that has the transaction-lookup tools. Encodes METHOD only —
+# operator-specific facts live in the per-project memory store, not here. These
+# two are the exact gaps that once produced a ~$4.3k answer to a since-an-event
+# total that should have been ~$16k: no source-account provenance, no widened
+# lookback past the 90-day search default.
+_PLAID_LOOKUP_METHOD = (
+    "\n\nLOOKUP METHOD: (1) TRANSFER ATTRIBUTION — to attribute a transfer to a "
+    "person or entity, read the counterparty / source account number: an inflow "
+    "from an account that is not one of the operator's own accounts came from "
+    "someone else. Don't infer the source from amount or memo text alone. "
+    "(2) CUMULATIVE LOOKBACK — when reconstructing a total since an event (a debt "
+    "owed, deposits since a date), set the lookback window to span the entire "
+    "period; never rely on the 90-day search default — pass an explicit `days` "
+    "wide enough to cover from the event to today."
+)
+
 
 class BudgetContextProvider(ContextProvider):
     key = "budget"
@@ -556,6 +573,7 @@ class BudgetContextProvider(ContextProvider):
             "the plan edits and these Plaid lookups (e.g. 'check my emails for the Citi "
             "statement'), say plainly you can't and point the operator to where to find it. The "
             "authoritative capability statement is in the preamble above this persona."
+            + _PLAID_LOOKUP_METHOD
         )
 
     def live_context(self) -> str:
@@ -630,6 +648,7 @@ class FinanceContextProvider(ContextProvider):
             "anything on this page (no plan to mutate); for budget changes, the operator opens "
             "the Budget app. Be direct, brief. No emojis. If asked to do something that requires "
             "writes, say plainly that this view is read-only and point them at the right app."
+            + _PLAID_LOOKUP_METHOD
         )
 
     def live_context(self) -> str:

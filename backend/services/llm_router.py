@@ -230,6 +230,14 @@ def _claude_env() -> dict:
     """Build the env for subprocess `claude -p` — subscription auth only."""
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    # Plaid creds reach the MCP via server.js's dotenv load of plaid-auth.env,
+    # but dotenv won't override vars already set in the process env. uvicorn
+    # carries empty PLAID_CLIENT_ID/SECRET and a stale PLAID_ENV=sandbox, which
+    # shadow the file's production creds -> MISSING_FIELDS / "invalid client_id
+    # or secret". Strip all three so dotenv loads the real values. Mirrors
+    # plaid_bridge._STRIP_FROM_NODE_ENV (same bug, already fixed on that path).
+    for _k in ("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV"):
+        env.pop(_k, None)
     # Source auth.env into env
     if Path(AUTH_ENV).is_file():
         try:

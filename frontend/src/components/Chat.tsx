@@ -578,11 +578,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // can fire a queued turn without a render cycle.
   sendBuildRef.current = sendBuild;
 
-  const send = useCallback(async () => {
-    const text = input.trim();
+  // Submit a concrete string as a turn (used by send() and by slash passthrough).
+  const submitText = useCallback((raw: string) => {
+    const text = raw.trim();
     if (!text) return;
     setErr(null);
-    setInput("");
     // Build turn already streaming → queue this message; it sends when the
     // current turn finishes (a session can't run two turns at once).
     if (effectiveMode === "build" && streaming) {
@@ -594,7 +594,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setMessages((m) => [...m, userMsg]);
     if (effectiveMode === "build") sendBuild(text);
     else sendData(text);
-  }, [input, effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
+  }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
+
+  const send = useCallback(() => {
+    const text = input.trim();
+    if (!text) return;
+    setInput("");
+    submitText(text);
+  }, [input, submitText]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Slash-command menu owns the arrow/enter/tab/escape keys while it's open.
@@ -619,17 +626,37 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   };
 
   // ---- Slash commands ------------------------------------------------------
-  // A small client-side registry mapping "/<name>" to a Workshop chat action.
-  // Only commands that fully work today are listed; more land as their backends
-  // do (e.g. /compact, /rollback). Typing "/" opens an autocomplete popover; the
-  // slash button in the composer opens the same menu.
-  type SlashCommand = { name: string; desc: string; available: boolean; run: () => void };
+  // Two kinds:
+  //   • "local"       — a Workshop chat action handled here (new chat, etc.).
+  //   • "passthrough" — a Claude Code command (/compact, /cost, /context, …)
+  //                     forwarded RAW to the agent's claude session, where the CLI
+  //                     executes it natively. Build agents only (data/assistant
+  //                     agents are Letta-backed, not claude sessions). Any "/x"
+  //                     that isn't listed still passes through when sent, so the
+  //                     full Claude command set works even though we only surface
+  //                     the useful ones in the autocomplete.
+  // Typing "/" opens the autocomplete; the slash button opens the same menu.
+  type SlashCommand = { name: string; desc: string; available: boolean; kind: "local" | "passthrough"; run?: () => void };
+  const build = effectiveMode === "build";
   const slashCommands: SlashCommand[] = [
-    { name: "new", desc: "Start a new chat", available: true, run: () => newChat() },
-    { name: "delete", desc: "Delete the current chat", available: !!activeId, run: () => { if (activeId) setConfirmDeleteId(activeId); } },
-    { name: "tasks", desc: "Toggle the task list", available: !!slug, run: () => setTasksOpen((o) => !o) },
-    { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, run: () => popOut() },
-    { name: "help", desc: "Show available commands", available: true, run: () => { setInput("/"); inputRef.current?.focus(); } },
+    // Workshop chat actions.
+    { name: "new", desc: "Start a new chat", available: true, kind: "local", run: () => newChat() },
+    { name: "clear", desc: "Start a fresh chat (alias of new)", available: true, kind: "local", run: () => newChat() },
+    { name: "delete", desc: "Delete the current chat", available: !!activeId, kind: "local", run: () => { if (activeId) setConfirmDeleteId(activeId); } },
+    { name: "tasks", desc: "Toggle the task list", available: !!slug, kind: "local", run: () => setTasksOpen((o) => !o) },
+    { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, kind: "local", run: () => popOut() },
+    { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => { setInput("/"); inputRef.current?.focus(); } },
+    // Claude Code commands — forwarded to the agent's session (build agents only).
+    { name: "compact", desc: "Summarize + compact the conversation to free up context", available: build, kind: "passthrough" },
+    { name: "context", desc: "Show what's currently in the context window", available: build, kind: "passthrough" },
+    { name: "cost", desc: "Show token usage and plan limits", available: build, kind: "passthrough" },
+    { name: "model", desc: "Show or switch the model", available: build, kind: "passthrough" },
+    { name: "memory", desc: "Show the agent's memory (CLAUDE.md)", available: build, kind: "passthrough" },
+    { name: "init", desc: "Generate a CLAUDE.md for this project", available: build, kind: "passthrough" },
+    { name: "review", desc: "Review a pull request", available: build, kind: "passthrough" },
+    { name: "status", desc: "Show session + account status", available: build, kind: "passthrough" },
+    { name: "agents", desc: "List configured subagents", available: build, kind: "passthrough" },
+    { name: "mcp", desc: "Show connected MCP servers", available: build, kind: "passthrough" },
   ];
   // Visible only when the input is a single "/"-prefixed token (a command being
   // typed), filtered to available commands matching the typed prefix.
@@ -642,7 +669,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const runSlash = (c: SlashCommand) => {
     setInput("");
     setSlashSel(0);
-    c.run();
+    if (c.kind === "passthrough") { submitText(`/${c.name}`); return; }
+    c.run?.();
   };
 
   const inFlight = effectiveMode === "build" ? streaming : busy;

@@ -29,6 +29,8 @@ Phase 2 — chat features:
 [ ] Review and update system documentation for clarity and completeness.
 [ ] Review and finalize the draft documentation for the latest feature release.
 [ ] Review and finalize feedback for tenant full separation.
+[ ] Review and finalize the draft for the upcoming project presentation. — proposed by overseer (normal)
+[ ] Refactor the logging module to reduce verbosity and improve performance. — proposed by overseer (normal)
 
 ## Log
 [2026-06-23T15:30Z] [overseer] Proposed task to review recent notify lines for anomalies.

@@ -480,7 +480,15 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     # egress facts) + runtime briefing + persona + live context. Resumed turn:
     # the new user message, with the runtime briefing re-sent (the session
     # retains persona/history but the environment block must refresh every turn).
-    if sid and not is_new:
+    if content.startswith("/"):
+        # Claude Code slash command (/compact, /cost, /context, /review, …):
+        # forward it RAW so the CLI registers it as a command rather than a chat
+        # message. A wrapped "/compact" (briefing + preamble in front) would not
+        # register. Resume the live session when there is one so the command acts
+        # on THIS conversation's context.
+        prompt = content
+        resume_flag = bool(sid and not is_new)
+    elif sid and not is_new:
         briefing = chat_context.runtime_briefing(provider)
         prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
         resume_flag = True

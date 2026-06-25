@@ -59,6 +59,7 @@ EXEMPT = (
     "frontend/src/ui/Map.tsx",  # maplibre StyleSpecification needs literal colors; token() reads CSS vars w/ hex fallback
     "frontend/src/pages/apps/birds/recorder.tsx",
     "frontend/src/pages/apps/birds/Spectrogram.tsx",
+    "frontend/src/pages/apps/birds/LiveFeed.tsx",  # remote spectrogram canvas; literal colors like Spectrogram.tsx
 )
 HEX = re.compile(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b")
 NOT_ALLOWED = re.compile(r"not-allowed")
