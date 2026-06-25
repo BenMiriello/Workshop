@@ -52,6 +52,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         Confirmation string with the line that was added.
     """
     import fcntl
+    import re
     from pathlib import Path
     todo_path = Path("/home/clawd-a/workshop/TODO.md")
     lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
@@ -60,6 +61,26 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
     line = f"[ ] {task_text.strip()} — proposed by overseer ({urgency})"
+
+    # Topic signature = the significant words of a task, so two reworded versions
+    # of the same task ("Onboard new bank for Plaid MCP as per project_plaid_mcp.md"
+    # vs "Onboard a new bank into Plaid MCP.") collapse to the same set. Generic
+    # filler is dropped so it doesn't inflate the overlap.
+    _stop = {
+        "a", "an", "the", "for", "to", "of", "in", "into", "on", "onto", "with",
+        "as", "per", "and", "or", "any", "from", "new", "recent", "please",
+        "ensure", "also", "this", "that", "task", "tasks", "todo", "todos",
+        "list", "item", "items",
+    }
+    def _stem(w: str) -> str:
+        # Light plural fold so "bank"/"banks", "line"/"lines" match.
+        return w[:-1] if len(w) > 3 and w.endswith("s") else w
+    def _sig(text: str) -> frozenset:
+        return frozenset(
+            _stem(w) for w in re.findall(r"[a-z0-9]+", text.lower())
+            if w not in _stop and len(w) > 1
+        )
+
     # Single-flight: serialize the read-modify-write so concurrent overseer ticks
     # (and any other automated writer) can't clobber each other's append.
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -67,17 +88,15 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         fcntl.flock(_lk, fcntl.LOCK_EX)
         content = todo_path.read_text()
         norm = " ".join(task_text.strip().lower().split())
-        # Reject vacuous, self-referential meta-tasks. The overseer kept
-        # proposing reworded "review/prioritize/address the top N open todos"
-        # lines — those aren't deliverables (reviewing the list IS the overseer's
-        # job, not a task), and they slip past exact-dedupe because each is worded
-        # slightly differently. Concrete tasks (onboard X, review notify lines,
-        # finalize doc Y) don't match these markers.
+        # Reject vacuous, self-referential meta-tasks. Reviewing/prioritizing the
+        # list IS the overseer's job, not a deliverable; these slip past dedupe
+        # because each is worded slightly differently. Concrete tasks don't match.
         vacuous_markers = (
             "prioritize the top", "prioritize the first", "prioritize the current",
             "address the top", "address the first", "address the remaining",
-            "from the todo list", "open todos", "oldest open todos", "open tasks",
-            "tbd from todo", "begin processing the oldest", "categorize the first",
+            "from the todo list", "from todo list", "task from todo", "open todos",
+            "oldest open todos", "open tasks", "tbd from todo",
+            "begin processing the oldest", "categorize the first",
             "streamline progress", "streamline workflow", "reduce the backlog",
             "reduce backlog", "either complete or delegate", "address immediate",
             "address critical item", "most urgent open", "most urgent todo",
@@ -85,24 +104,39 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         if any(m in norm for m in vacuous_markers):
             return ("skipped (vacuous self-referential task — just do the work, "
                     f"don't propose reviewing the list): {task_text.strip()}")
-        # Dedupe: skip if an equivalent open task already exists (normalized,
-        # ignoring the "— proposed by …" suffix).
+        # Near-duplicate dedupe: skip if an open task shares most of its topic
+        # signature with this one (containment ≥ 0.7 of the smaller set, ≥ 2 words
+        # shared). Catches the reworded-same-task spam that exact-match misses.
+        new_sig = _sig(task_text)
         for l in content.splitlines():
-            if l.startswith("[ ] "):
-                body = l[4:].split(" — proposed by")[0]
-                if " ".join(body.lower().split()) == norm:
-                    return f"skipped (duplicate of existing open task): {task_text.strip()}"
+            if not l.startswith("[ ] "):
+                continue
+            ex = _sig(l[4:].split(" — proposed by")[0])
+            inter = len(new_sig & ex)
+            if inter >= 2 and inter / min(len(new_sig), len(ex)) >= 0.6:
+                return f"skipped (near-duplicate of an existing open task): {task_text.strip()}"
+
+        lines = content.splitlines()
         if urgency == "high":
-            lines = content.splitlines()
+            # Top of the open list.
             for i, l in enumerate(lines):
                 if l.startswith("[ ] "):
                     lines.insert(i, line)
                     break
             else:
                 lines.append(line)
-            todo_path.write_text("\n".join(lines) + "\n")
         else:
-            todo_path.write_text(content.rstrip() + "\n" + line + "\n")
+            # End of the task area — before the "## Log" section so proposals
+            # don't pile up after the log. Fall back to EOF if there's no Log.
+            log_idx = next((i for i, l in enumerate(lines) if l.strip() == "## Log"), None)
+            if log_idx is None:
+                lines.append(line)
+            else:
+                at = log_idx
+                while at > 0 and lines[at - 1].strip() == "":
+                    at -= 1
+                lines.insert(at, line)
+        todo_path.write_text("\n".join(lines).rstrip() + "\n")
     return f"added: {line}"
 
 

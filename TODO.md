@@ -16,7 +16,7 @@ Phase 1 — Agents tab + chat-UI bugs — DONE (commit 40dfd4a, reviewer-approve
 Phase 2 — chat features:
 [x] Chat timeout handling: clear "stopped at the limit — files saved, continue" message + calm warn render; was opaque "(model exited without text)". (reviewer-approved)
 [x] Chat stream-limit fix: bumped the build-agent stdout StreamReader limit to 64 MiB; a large stream-json event no longer aborts the turn with "Separator is found, but chunk is longer than limit". (reviewer-approved)
-[x] Overlap handling: flock single-flight + dedupe on the Letta TODO/PROJECT writers; plus a vacuous-task filter that rejects reworded "review/prioritize the top N todos" overseer spam at the source. (reviewer-approved)
+[x] Overlap handling: flock single-flight + near-duplicate dedupe (topic-signature containment) + vacuous-task filter on the Letta TODO writers, so reworded overseer spam is rejected at the source; new tasks land before the Log. (reviewer-approved)
 [x] Chat slash commands: registry + "/" autocomplete popover + slash button (/new, /delete, /tasks, /expand, /help). /compact + /rollback land with their backends. (reviewer-approved)
 [ ] Per-chat to-do/done list surfaced from the task store and prompted into the agent (Claude task-list bridge).
 [ ] Chat context view + compaction action (summarize older turns; show context size) → wires `/compact`.
@@ -31,4 +31,9 @@ Phase 2 — chat features:
 [ ] Review and finalize feedback for tenant full separation.
 
 ## Log
+[2026-06-23T15:30Z] [overseer] Proposed task to review recent notify lines for anomalies.
+[2026-06-23T11:52Z] [overseer] Proposed task to review and prioritize the top 3 open tasks.
+[2026-06-23T07:46Z] [overseer] Proposed task to review recent notify lines for anomalies.
+[2026-06-23T05:24Z] [overseer] Proposed task to review recent notify lines.
+[2026-06-23T04:08Z] [overseer] Proposed task to review recent notifications for anomalies.
 [2026-06-22T21:51Z] [overseer] Proposed task to review recent notify lines for anomalies.
