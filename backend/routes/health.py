@@ -14,11 +14,21 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
-from services import health
+from deps_user import require_user
+from services import health, auth_store, ownership
 
 router = APIRouter(prefix="/health", tags=["health"])
+
+
+def _pin_ingest_owner() -> None:
+    """Health ingest (Basic auth) writes to the recorded health-data owner's
+    partition. Fail closed if bootstrap hasn't assigned one."""
+    owner = auth_store.domain_owner("health")
+    if owner is None:
+        raise HTTPException(status_code=503, detail="health owner not provisioned")
+    ownership.set_current_owner(owner)
 
 
 @router.get("/ingest")
@@ -45,17 +55,19 @@ async def post_ingest(
         raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="expected object payload")
+    _pin_ingest_owner()
     result = health.ingest(payload)
     return {"ok": True, **result}
 
 
 @router.get("/latest")
-async def get_latest() -> dict[str, Any]:
+async def get_latest(user: dict = Depends(require_user)) -> dict[str, Any]:
     return {"metrics": health.latest()}
 
 
 @router.get("/history")
 async def get_history(
+    user: dict = Depends(require_user),
     limit: int = Query(25, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ) -> dict[str, Any]:
@@ -70,5 +82,5 @@ async def get_history(
 
 
 @router.delete("/history")
-async def delete_history() -> dict[str, Any]:
+async def delete_history(user: dict = Depends(require_user)) -> dict[str, Any]:
     return {"ok": True, **health.clear()}

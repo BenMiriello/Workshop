@@ -135,6 +135,14 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS domain_owners (
+                domain   TEXT PRIMARY KEY,
+                owner_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE
+            )
+            """
+        )
         for tbl in ("sessions", "device_tokens", "service_tokens"):
             conn.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{tbl}_user ON {tbl}(user_id)"
@@ -231,6 +239,29 @@ def set_operator(user_id: int) -> None:
     with _connect() as conn:
         conn.execute("UPDATE users SET is_operator = 0")
         conn.execute("UPDATE users SET is_operator = 1 WHERE id = ?", (user_id,))
+
+
+def domain_owner(domain: str) -> Optional[int]:
+    """Who owns a single-dataset domain (finance/budget/commute). This is DATA
+    ownership recorded by the bootstrap migration — distinct from the is_operator
+    role. A domain has exactly one owner; everyone else is denied that domain."""
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT owner_id FROM domain_owners WHERE domain = ?", (domain,)
+        ).fetchone()
+        return int(row["owner_id"]) if row else None
+
+
+def set_domain_owner(domain: str, owner_id: int) -> None:
+    """Assign a domain's data owner. Called by the bootstrap migration only."""
+    init_db()
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO domain_owners (domain, owner_id) VALUES (?, ?) "
+            "ON CONFLICT(domain) DO UPDATE SET owner_id = excluded.owner_id",
+            (domain, owner_id),
+        )
 
 
 class EmailTaken(Exception):

@@ -11,6 +11,7 @@ auto-reconnect can resume exactly via Last-Event-ID with no replay/drop.
 from __future__ import annotations
 
 import asyncio
+import glob
 import json
 import logging
 import os
@@ -29,6 +30,25 @@ CLAUDE_CLI = llm_router.CLAUDE_CLI
 # events carrying file contents / large tool results. 64 MiB is generous and
 # still memory-bounded.
 STREAM_LINE_LIMIT = 64 * 1024 * 1024
+
+
+def session_alive(session_id: str | None, cwd: str) -> bool:
+    """True if the claude CLI still has this session on disk. Claude stores a
+    session as ~/.claude/projects/<cwd-with-slashes-as-dashes>/<id>.jsonl. Old
+    agents (or anything from before a session was pruned) point at an id that no
+    longer exists, and `--resume` on it fails the whole turn with "No
+    conversation found with session ID". Checking the file lets callers start a
+    fresh session instead of failing."""
+    if not session_id:
+        return False
+    home = os.path.expanduser("~")
+    encoded = cwd.rstrip("/").replace("/", "-")
+    primary = os.path.join(home, ".claude", "projects", encoded, f"{session_id}.jsonl")
+    if os.path.exists(primary):
+        return True
+    # Encoding could shift across CLI versions; the id is a unique uuid, so a
+    # scoped glob across all projects is a safe fallback.
+    return bool(glob.glob(os.path.join(home, ".claude", "projects", "*", f"{session_id}.jsonl")))
 
 
 @dataclass

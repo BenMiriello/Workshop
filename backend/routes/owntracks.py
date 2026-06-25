@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
-from services import owntracks
+from services import owntracks, auth_store, ownership
 
 router = APIRouter(prefix="/location", tags=["location"])
 
@@ -46,6 +46,11 @@ async def post_owntracks(
         raise HTTPException(status_code=400, detail=f"invalid json: {exc}") from exc
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="expected object payload")
+    # Bind this ingest to the recorded location-data owner's partition.
+    owner = auth_store.domain_owner("location")
+    if owner is None:
+        raise HTTPException(status_code=503, detail="location owner not provisioned")
+    ownership.set_current_owner(owner)
     # Ingest; silently ignore non-location events (transitions, waypoints).
     owntracks.ingest(payload)
     # Owntracks expects a JSON array (commands/responses); empty = nothing to do.

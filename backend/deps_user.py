@@ -97,6 +97,46 @@ async def require_operator(request: Request) -> dict[str, Any]:
     return user
 
 
+def require_domain_owner(domain: str):
+    """Dependency factory for single-dataset domains (finance/budget/commute):
+    require an authenticated user who is the recorded DATA owner of `domain`.
+    Anyone else — including another is_operator account — gets 403. The owner is
+    set by the bootstrap migration (auth_store.domain_owners), never by role or
+    email. Pins the owner contextvar so the domain's per-owner reads resolve."""
+
+    async def _dep(request: Request) -> dict[str, Any]:
+        user = await current_user(request)
+        owner = auth_store.domain_owner(domain)
+        if owner is None or user["id"] != owner:
+            raise HTTPException(status_code=403, detail=f"not the {domain} owner")
+        ownership.set_current_owner(user["id"])
+        return user
+
+    return _dep
+
+
+def require_user_or_service(scope: str):
+    """Dependency factory: pass if there is a valid user (cookie/device) OR a
+    service token of `scope`. Used for low-sensitivity routers that mix
+    authenticated reads with a machine ingest path (e.g. birds: yard detections
+    are already public, but no access is anonymous). Pins the owner either way."""
+
+    async def _dep(request: Request) -> dict[str, Any]:
+        user, method, _ = _resolve(request)
+        if user is not None:
+            _csrf_guard(request, method)
+            ownership.set_current_owner(user["id"])
+            return user
+        tok = _bearer(request)
+        svc = auth_store.service_identity(tok) if tok else None
+        if svc is not None and svc["scope"] == scope:
+            ownership.set_current_owner(svc["user"]["id"])
+            return svc["user"]
+        raise HTTPException(status_code=401, detail="authentication required")
+
+    return _dep
+
+
 def require_service(scope: str):
     """Dependency factory: require a service token whose scope matches `scope`
     (machine callers — cron, ingest webhooks, the Letta sandbox). Pins the

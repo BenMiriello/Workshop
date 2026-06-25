@@ -413,6 +413,18 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     except KeyError:
         sid, is_new = None, True
 
+    # Stale-session guard: an existing id whose claude session no longer exists on
+    # disk (old agent, post-reboot prune, manual cleanup) would make `--resume`
+    # fail the whole turn with "No conversation found with session ID". Detect it
+    # up front and start a fresh session instead, so the turn just works.
+    if sid and not is_new and not build_streaming.session_alive(sid, str(provider.dir)):
+        log.info("agent %s: claude session %s is gone; starting fresh", provider.slug, sid)
+        _ba.reset_session(provider.slug)
+        try:
+            sid, is_new = _ba.ensure_session_id(provider.slug)
+        except KeyError:
+            sid, is_new = None, True
+
     # First turn: full prompt with the platform role preamble (capability +
     # egress facts) + runtime briefing + persona + live context. Resumed turn:
     # the new user message, with the runtime briefing re-sent (the session

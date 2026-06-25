@@ -3,7 +3,14 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from deps_auth import require_token
+from deps_auth import require_loopback
+from deps_user import (
+    require_user,
+    require_operator,
+    require_domain_owner,
+    require_user_or_service,
+    require_service,
+)
 
 from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth
 from services.supervisor import AgentSupervisor
@@ -169,40 +176,57 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Sensitive routers (finance data + agent control) gate off-host callers via
-# require_token; loopback (browser-via-Vite, cron, masini, self-calls) is trusted.
-_SECURE = [Depends(require_token)]
-app.include_router(agent_runs.router, dependencies=_SECURE)  # MUST be before agents router so /agents/runs wins over /agents/{agent_id}
-app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_SECURE)
-app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_SECURE)
-app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_SECURE)
-app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_SECURE)
-app.include_router(finance.router, prefix="/finance", tags=["finance"], dependencies=_SECURE)
-app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencies=_SECURE)
-app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_SECURE)
-# Birds read API is tailnet-private (full fidelity: audio, exact times). The
-# /birds/webhook ingest inside it is loopback-only in practice (BirdNET-Go posts
-# from 127.0.0.1, which require_token already trusts).
-app.include_router(birds.router, dependencies=_SECURE)
-app.include_router(environment.router, dependencies=_SECURE)
-app.include_router(plaid_webhook.router, prefix="/plaid/webhook", tags=["plaid-webhook"])
-app.include_router(relay.router)
-app.include_router(services.router)
-app.include_router(events.router)
-app.include_router(backlog.router, dependencies=_SECURE)
-app.include_router(auto_pr.router)
-app.include_router(commute.router)
-app.include_router(location.router)
-app.include_router(owntracks.router)
-app.include_router(push.router)
-# Product-auth: public entry (register/login/refresh) so a user can sign in from
-# off-host; protected sub-routes gate on the user JWT, not the service token.
+# Gating model (docs/auth-redesign/): identity, never network position.
+#   PLATFORM control      -> require_operator (the admin role)
+#   per-user personal data -> require_user (cookie / device token), owner-scoped
+#   single-dataset domains -> require_domain_owner("finance"|"commute") (owned data)
+#   low-sensitivity + ingest -> require_user_or_service(scope)
+#   internal machine infra  -> require_loopback (no personal data; not public)
+#   ingest webhooks         -> require_service(scope) / Basic bound to an owner
+_OPERATOR = [Depends(require_operator)]
+_USER = [Depends(require_user)]
+_LOOPBACK = [Depends(require_loopback)]
+
+# Platform / infra control surface — operator (admin) only.
+app.include_router(agent_runs.router, dependencies=_OPERATOR)  # before agents so /agents/runs wins over /agents/{agent_id}
+app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
+app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
+app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_OPERATOR)
+app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
+app.include_router(backlog.router, dependencies=_OPERATOR)
+app.include_router(autonomy.router, dependencies=_OPERATOR)
+app.include_router(redaction.router, dependencies=_OPERATOR)
+app.include_router(redaction.restore_router, dependencies=_OPERATOR)
+
+# Single-dataset personal domains — only the recorded data owner (operator today).
+app.include_router(finance.router, prefix="/finance", tags=["finance"], dependencies=[Depends(require_domain_owner("finance"))])
+app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencies=[Depends(require_domain_owner("finance"))])
+app.include_router(commute.router, dependencies=[Depends(require_domain_owner("commute"))])
+
+# Per-user personal data — owner-scoped to the authenticated user.
+app.include_router(chat.router, dependencies=_USER)
+app.include_router(location.router, dependencies=_USER)
+app.include_router(push.router, dependencies=_USER)
+app.include_router(environment.router, dependencies=_USER)
+# Birds: yard detections are already published publicly, so reads need any
+# authenticated user; the BirdNET-Go ingest uses an ingest:birds service token.
+app.include_router(birds.router, dependencies=[Depends(require_user_or_service("ingest:birds"))])
+
+# Ingest webhooks — their own credential, bound to an owner inside the handler.
+app.include_router(owntracks.router)   # HTTP Basic -> owner (in handler)
+app.include_router(health.router)      # /ingest: HTTP Basic -> owner; reads: require_user (per-endpoint)
+app.include_router(plaid_webhook.router, prefix="/plaid/webhook", tags=["plaid-webhook"])  # Plaid-signed
+
+# Internal machine-to-machine infra — loopback only, no personal data, not public.
+app.include_router(relay.router, dependencies=_LOOPBACK)
+app.include_router(services.router, dependencies=_LOOPBACK)
+app.include_router(events.router, dependencies=_LOOPBACK)
+app.include_router(auto_pr.router, dependencies=_LOOPBACK)
+# Letta tool sandbox runs off-loopback (Docker bridge) -> scoped service token.
+app.include_router(tools.router, dependencies=[Depends(require_service("automation:tools"))])
+
+# Public auth entry (register/login/logout/me) — no gate; it establishes identity.
 app.include_router(auth.router)
-app.include_router(health.router)
-app.include_router(redaction.router)
-app.include_router(redaction.restore_router)
-app.include_router(tools.router)
-app.include_router(autonomy.router, dependencies=_SECURE)
 
 
 @app.get("/")

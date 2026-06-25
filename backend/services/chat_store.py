@@ -9,15 +9,17 @@ write-temp-then-rename is all the safety this needs.
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-CHAT_DIR = Path(os.environ.get(
-    "WORKSHOP_CHAT_DIR",
-    "/home/clawd-a/workshop/.runtime/chat",
-))
+from . import ownership
+
+# Threads are partitioned per owner: `.runtime/users/<owner_id>/chat/<id>.json`.
+
+
+def _chat_dir() -> Path:
+    return ownership.user_runtime_dir() / "chat"
 
 
 def _now_iso() -> str:
@@ -29,11 +31,11 @@ def _path(thread_id: str) -> Path:
     # filesystem's path-traversal surface.
     if not thread_id or not all(c in "0123456789abcdef-" for c in thread_id):
         raise ValueError(f"bad thread id: {thread_id!r}")
-    return CHAT_DIR / f"{thread_id}.json"
+    return _chat_dir() / f"{thread_id}.json"
 
 
 def _write(thread: dict) -> dict:
-    CHAT_DIR.mkdir(parents=True, exist_ok=True)
+    _chat_dir().mkdir(parents=True, exist_ok=True)
     p = _path(thread["id"])
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(thread, indent=2) + "\n")
@@ -86,10 +88,10 @@ def get_thread(thread_id: str) -> dict | None:
 
 def list_threads(context_key: str | None = None) -> list[dict]:
     """Summaries (no message bodies), newest first."""
-    if not CHAT_DIR.exists():
+    if not _chat_dir().exists():
         return []
     out: list[dict] = []
-    for p in CHAT_DIR.glob("*.json"):
+    for p in _chat_dir().glob("*.json"):
         try:
             t = json.loads(p.read_text())
         except (json.JSONDecodeError, OSError):
