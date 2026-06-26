@@ -17,20 +17,23 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-PLAN_FILE = Path(os.environ.get(
-    "WORKSHOP_BUDGET_PLAN",
-    "/home/clawd-a/workshop/.runtime/budget.json",
-))
+from services import ownership
+
+# The budget plan + transaction overrides are personal data, partitioned per
+# owner: .runtime/users/<owner_id>/budget.json and .../txn-overrides.json. The
+# owner is the authenticated user (pinned in the ownership contextvar); a request
+# without one raises OwnerUnset (fail-closed). Each user has their own budget.
+def _plan_file() -> Path:
+    return ownership.user_runtime_dir() / "budget.json"
+
 
 # Per-transaction category overrides written by the daily Sonnet categorizer
 # (services/categorizer.py). The engine consults these BEFORE Plaid's PFC rules,
 # so a model judgement ("this Venmo is rent", "this is the late June utility")
 # sticks across reloads. Schema: { txn_id: {bucket, reason, ts, source} } where
 # `bucket` is a variable id, a necessity id, "necessities", or "exclude".
-OVERRIDES_FILE = Path(os.environ.get(
-    "WORKSHOP_BUDGET_OVERRIDES",
-    "/home/clawd-a/workshop/.runtime/txn-overrides.json",
-))
+def _overrides_file() -> Path:
+    return ownership.user_runtime_dir() / "txn-overrides.json"
 
 
 def _now_iso() -> str:
@@ -137,12 +140,13 @@ def default_plan() -> dict:
 
 
 def load_plan() -> dict:
-    if not PLAN_FILE.exists():
+    plan_file = _plan_file()
+    if not plan_file.exists():
         plan = default_plan()
         save_plan(plan)
         return plan
     try:
-        return json.loads(PLAN_FILE.read_text())
+        return json.loads(plan_file.read_text())
     except (json.JSONDecodeError, OSError):
         # Corrupt plan — reseed rather than 500 the whole app.
         plan = default_plan()
@@ -152,29 +156,32 @@ def load_plan() -> dict:
 
 def save_plan(plan: dict) -> dict:
     plan["updated_at"] = _now_iso()
-    PLAN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = PLAN_FILE.with_suffix(".json.tmp")
+    plan_file = _plan_file()
+    plan_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = plan_file.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(plan, indent=2) + "\n")
-    tmp.replace(PLAN_FILE)
+    tmp.replace(plan_file)
     return plan
 
 
 def load_overrides() -> dict:
     """Per-transaction category overrides. {} if none yet."""
-    if not OVERRIDES_FILE.exists():
+    overrides_file = _overrides_file()
+    if not overrides_file.exists():
         return {}
     try:
-        data = json.loads(OVERRIDES_FILE.read_text())
+        data = json.loads(overrides_file.read_text())
         return data if isinstance(data, dict) else {}
     except (json.JSONDecodeError, OSError):
         return {}
 
 
 def save_overrides(overrides: dict) -> dict:
-    OVERRIDES_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = OVERRIDES_FILE.with_suffix(".json.tmp")
+    overrides_file = _overrides_file()
+    overrides_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = overrides_file.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(overrides, indent=2) + "\n")
-    tmp.replace(OVERRIDES_FILE)
+    tmp.replace(overrides_file)
     return overrides
 
 

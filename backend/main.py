@@ -12,14 +12,14 @@ from deps_user import (
 
 from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth
 from services.supervisor import AgentSupervisor
-from services import global_memory, finance_cache, categorizer
+from services import global_memory, finance_cache, categorizer, ownership, auth_store
 from services import environment as environment_svc
 from services import birds_analyze
+from services import finance_plaid as plaid_bridge
 from letta_legacy_client import LettaClient
 import asyncio
 import logging
 import time
-import plaid_bridge
 
 log = logging.getLogger("workshop.main")
 
@@ -36,7 +36,14 @@ async def _prewarm_finance_cache(realtime: bool = False):
     """Pre-fetch balances + transactions so the next browser load is already hot.
     realtime=True uses accountsBalanceGet (live bank connection, ~4s). Used on
     startup so a fresh restart doesn't serve Plaid's own stale snapshot. The
-    periodic loop uses realtime=False (fast accountsGet). Background, best-effort."""
+    periodic loop uses realtime=False (fast accountsGet). Background, best-effort.
+
+    Finance is per-owner now, so prewarm the OPERATOR's cache (the box's primary
+    finance user). The owner must be pinned for the per-owner cache + Plaid store."""
+    oid = auth_store.operator_id()
+    if oid is None:
+        return
+    ownership.set_current_owner(oid)
     try:
         await finance_cache.get_or_fetch(
             "balances",
@@ -64,6 +71,10 @@ async def _categorize_loop():
         today = (lt.tm_year, lt.tm_yday)
         if lt.tm_hour >= _CATEGORIZE_HOUR_LOCAL and today != last_run_day:
             try:
+                oid = auth_store.operator_id()
+                if oid is None:
+                    continue
+                ownership.set_current_owner(oid)  # categorize the operator's txns
                 summary = await categorizer.run(days=30)
                 log.info("nightly categorizer: %s", summary)
             except Exception as e:
@@ -196,9 +207,12 @@ app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(redaction.router, dependencies=_OPERATOR)
 app.include_router(redaction.restore_router, dependencies=_OPERATOR)
 
-# Single-dataset personal domains — only the recorded data owner (operator today).
-app.include_router(finance.router, prefix="/finance", tags=["finance"], dependencies=[Depends(require_domain_owner("finance"))])
-app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencies=[Depends(require_domain_owner("finance"))])
+# Finance + budget are now PER-USER: each account links its own banks (Plaid) and
+# has its own budget plan, partitioned under .runtime/users/<owner_id>/. require_user
+# pins the owner; a user with no linked banks sees empty finance/budget.
+app.include_router(finance.router, prefix="/finance", tags=["finance"], dependencies=_USER)
+app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencies=_USER)
+# Commute remains a single operator dataset (location-derived) for now.
 app.include_router(commute.router, dependencies=[Depends(require_domain_owner("commute"))])
 
 # Per-user personal data — owner-scoped to the authenticated user.

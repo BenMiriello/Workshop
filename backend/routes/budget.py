@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query
 
-import plaid_bridge
 from services import finance_cache, budget_store, budget_engine, categorizer
+from services import finance_plaid as plaid_bridge
 
 router = APIRouter()
 

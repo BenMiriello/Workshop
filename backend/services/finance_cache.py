@@ -19,10 +19,18 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-CACHE_FILE = Path(os.environ.get(
-    "WORKSHOP_FINANCE_CACHE",
-    "/home/clawd-a/workshop/.runtime/finance-cache.json",
-))
+from services import ownership
+
+# Per-owner cache file: .runtime/users/<owner_id>/finance-cache.json. There is no
+# global finance cache — one owner's cached balances/transactions must never be
+# served to another. Resolved at call time from the pinned owner; None when no
+# owner is set (e.g. an unowned webhook invalidate), in which case cache ops are
+# no-ops and the TTL keeps data fresh.
+def _cache_file() -> Path | None:
+    oid = ownership.owner_or_none()
+    if oid is None:
+        return None
+    return ownership.user_runtime_dir(oid) / "finance-cache.json"
 DEFAULT_TTL_S = int(os.environ.get("WORKSHOP_FINANCE_TTL_S", "600"))  # 10 min fallback
 
 # Per-key TTL overrides. Balances move slowly (deposits/charges settle once a day
@@ -54,19 +62,31 @@ def _now() -> float:
 
 
 def _load() -> dict:
+    f = _cache_file()
+    if f is None:
+        return {}
     try:
-        return json.loads(CACHE_FILE.read_text())
+        return json.loads(f.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
 def _save(state: dict) -> None:
-    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    f = _cache_file()
+    if f is None:
+        return
+    f.parent.mkdir(parents=True, exist_ok=True)
     # Atomic write — finance-cache is read by multiple processes (UI polling
     # + cron consumer + webhook). Write to tmp + rename.
-    tmp = CACHE_FILE.with_suffix(".json.tmp")
+    tmp = f.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state))
-    tmp.replace(CACHE_FILE)
+    tmp.replace(f)
+
+
+def _ikey(key: str) -> str:
+    """In-flight dedupe key, namespaced by owner so two owners refreshing the
+    same logical key ('balances') never share a fetch task (cross-owner leak)."""
+    return f"{ownership.owner_or_none()}:{key}"
 
 
 async def _fetch_and_store(key: str, fetcher) -> dict:
@@ -83,13 +103,17 @@ async def _fetch_and_store(key: str, fetcher) -> dict:
 
 def _kick(key: str, fetcher) -> "asyncio.Future":
     """Start (or reuse) a background refresh for `key`. Concurrent callers share
-    the one in-flight task so we never fire duplicate Plaid roundtrips."""
-    existing = _inflight.get(key)
+    the one in-flight task so we never fire duplicate Plaid roundtrips. The
+    in-flight map is owner-namespaced. asyncio.ensure_future copies the current
+    context, so the task runs with this caller's pinned owner (correct file +
+    correct Plaid items)."""
+    ik = _ikey(key)
+    existing = _inflight.get(ik)
     if existing is not None and not existing.done():
         return existing
     task = asyncio.ensure_future(_fetch_and_store(key, fetcher))
-    _inflight[key] = task
-    task.add_done_callback(lambda t, k=key: _inflight.pop(k, None) if _inflight.get(k) is t else None)
+    _inflight[ik] = task
+    task.add_done_callback(lambda t, k=ik: _inflight.pop(k, None) if _inflight.get(k) is t else None)
     return task
 
 
@@ -162,8 +186,9 @@ def status() -> dict:
     """Diagnostic snapshot of what's cached and how stale."""
     state = _load()
     now = _now()
+    f = _cache_file()
     return {
-        "cache_file": str(CACHE_FILE),
+        "cache_file": str(f) if f else None,
         "ttl_s": DEFAULT_TTL_S,
         "ttl_overrides": PER_KEY_TTL_S,
         "entries": {

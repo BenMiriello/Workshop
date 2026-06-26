@@ -26,8 +26,8 @@ import json
 import logging
 import re
 
-import plaid_bridge
 from services import finance_cache, budget_store, budget_engine, llm_router
+from services import finance_plaid as plaid_bridge
 
 log = logging.getLogger("workshop.categorizer")
 

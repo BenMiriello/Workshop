@@ -66,12 +66,15 @@ def test_garbage_credentials_denied(env):
 # 3 — a second member never sees the operator's data and cannot widen scope.
 def test_member_cannot_read_operator_domains(env):
     member = _client_for("member@example.com", "password2")
-    # finance/budget/commute are the operator's single-dataset domains -> 403.
-    assert member.get("/finance/cache").status_code == 403
-    assert member.get("/budget/plan").status_code == 403
+    # commute is still the operator's single-dataset domain -> 403.
     assert member.get("/commute/schedule").status_code == 403
-    # Forged widening params do not help.
-    assert member.get("/finance/cache?owner_id=" + str(env["op"]["id"])).status_code == 403
+    # finance/budget are PER-USER now: the member reaches them (200) but sees
+    # ONLY their own empty partition — never the operator's linked banks.
+    items = member.get("/finance/items")
+    assert items.status_code == 200
+    assert items.json()["items"] == []          # zero banks; not the operator's 4
+    # Forged widening params cannot reveal the operator's finance.
+    assert member.get("/finance/items?owner_id=" + str(env["op"]["id"])).json()["items"] == []
 
 
 def test_per_user_stores_are_isolated(env):
@@ -83,8 +86,14 @@ def test_per_user_stores_are_isolated(env):
     assert op.get("/location/latest").json()["latest"]["lat"] == 37.44
     # The member sees only their own (empty) partition — never the operator's.
     assert member.get("/location/latest").json()["latest"] is None
-    # And cannot reach the operator's health/budget either.
     assert member.get("/health/latest").json() == {"metrics": {}}
+    # Budget is per-user: the operator edits THEIR plan; the member's plan is a
+    # separate default and never reflects the operator's edit.
+    op_plan = op.get("/budget/plan").json()
+    op_plan["_test_marker"] = "op-only"
+    assert op.put("/budget/plan", json=op_plan, headers=CSRF).status_code == 200
+    assert op.get("/budget/plan").json().get("_test_marker") == "op-only"
+    assert member.get("/budget/plan").json().get("_test_marker") is None
 
 
 # 7 — platform routers are admin-only; a non-admin member is refused.
