@@ -39,6 +39,7 @@ import {
   type ThemeMode,
 } from "../ui";
 import { useAuth } from "../auth/AuthProvider";
+import { BankConnections } from "../components/PlaidLink";
 import { native } from "../native/bridge";
 import { useNative, useTrackingStatus } from "../native/useNative";
 import { startDeviceTracking, stopDeviceTracking } from "../native/location";
@@ -914,6 +915,11 @@ function FinanceSection() {
 
   const entries = cache ? Object.entries(cache) : [];
   return (
+    <>
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <SectionLabel icon={<Banknote aria-hidden />}>Banks</SectionLabel>
+        <BankConnections />
+      </section>
     <Section icon={Banknote} title="Finance">
       <Row label="cache">
         {entries.length === 0 ? "no entries" : `${entries.length} key${entries.length === 1 ? "" : "s"}`}
@@ -932,6 +938,7 @@ function FinanceSection() {
         <Link to="/apps/finance" style={{ color: "var(--accent)" }}>view balances + transactions ↗</Link>
       </Row>
     </Section>
+    </>
   );
 }
 

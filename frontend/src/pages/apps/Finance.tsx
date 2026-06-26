@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
+import { ConnectBankButton } from "../../components/PlaidLink";
 import {
   Button,
   Card,
@@ -265,12 +266,24 @@ export default function Finance() {
         actions={
           <>
             <AppGroupNav />
+            <ConnectBankButton onLinked={() => doRefresh(true)} variant="ghost" label="Add bank" />
             <Button size="sm" onClick={() => doRefresh(true)} loading={refreshing}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
           </>
         }
       />
+
+      {/* Per-user empty state: no banks linked yet → guide to Plaid Link. */}
+      {items !== null && items.length === 0 && !isLoading && !fetchErr && (
+        <div style={{ marginBottom: "var(--space-5)" }}>
+          <StateBlock
+            title="No banks connected"
+            hint="Connect a bank to see your balances, net worth, and transactions. Your bank credentials go to Plaid, never to Workshop."
+            action={<ConnectBankButton onLinked={() => doRefresh(true)} label="Connect your first bank" />}
+          />
+        </div>
+      )}
 
       {/* Network / HTTP error — show alongside any data we have, not instead of it */}
       {fetchErr && (
