@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 router = APIRouter()
 log = logging.getLogger("workshop.plaid_webhook")
@@ -17,6 +17,18 @@ EVENTS_LOG = Path(os.environ.get("WORKSHOP_EVENTS_LOG", "/home/clawd-a/workshop/
 @router.post("")
 async def plaid_webhook(request: Request):
     body = await request.body()
+
+    # Verify the Plaid-Verification ES256 JWT (signature + body-sha256 + replay
+    # window) BEFORE acting. This endpoint is unauthenticated by design (Plaid
+    # calls it), but it fans payloads into the event feed (which can enqueue
+    # agent runs) and invalidates the finance cache — so an unsigned POST is an
+    # event-injection primitive. Fail closed on a missing/invalid signature.
+    from services.plaid_verify import verify as _verify_plaid_jwt
+    ok, reason = _verify_plaid_jwt(request.headers.get("plaid-verification", ""), body)
+    if not ok:
+        log.warning("plaid webhook rejected (unverified): %s", reason)
+        raise HTTPException(status_code=401, detail="invalid plaid webhook signature")
+
     try:
         payload = json.loads(body)
     except Exception:
