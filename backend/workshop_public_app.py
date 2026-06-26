@@ -21,6 +21,7 @@ depth for the network-trusted internal endpoints only.
 from __future__ import annotations
 
 import os
+import posixpath
 from pathlib import Path
 
 import httpx
@@ -30,17 +31,31 @@ from fastapi.staticfiles import StaticFiles
 
 BACKEND = os.environ.get("WORKSHOP_BACKEND", "http://127.0.0.1:8000")
 DIST = Path(os.environ.get("WORKSHOP_DIST", str(Path(__file__).resolve().parents[1] / "frontend" / "dist")))
+_DIST_ROOT = DIST.resolve()
 
 # Backend paths (AFTER the /api prefix is stripped) that must NEVER be reachable
-# from the public origin: they are loopback/internal-trusted or unauthenticated
-# ingest. Matched as path prefixes against the stripped path.
+# from the public origin: they are loopback/internal-trusted, unauthenticated
+# ingest, or the operator-only PLATFORM control plane (agents/projects/etc.).
+# The operator administers the platform over the tailnet (:8000), never the
+# public origin, so the edge proxies ONLY the personal + /auth surface. Matched
+# as path prefixes against the NORMALIZED stripped path.
 _BLOCKED_PREFIXES = (
-    "/tools", "/relay", "/services", "/events", "/auto", "/agents/supervisor",
+    # internal / loopback-trusted machine endpoints
+    "/tools", "/relay", "/services", "/events", "/auto",
+    # operator-only platform control plane (code-exec-adjacent; never public)
+    "/agents", "/projects", "/worktrees", "/base-apps", "/backlog",
+    "/autonomy", "/redaction", "/agent-runs", "/agent_runs",
+    # unauthenticated / Basic ingest webhooks
     "/plaid/webhook",
     "/location/owntracks",
     "/health/ingest",
-    "/birds/webhook", "/birds/analyze", "/birds/live/publish",
+    "/birds/webhook", "/birds/live/publish",
 )
+
+# Paths blocked EXACTLY (not as a prefix), so authed sibling routes still work.
+# `/birds/analyze` is the loopback ingest POST; `/birds/analyze/settings`,
+# `/birds/analyze/recompute`, etc. are require_user reads the SPA legitimately uses.
+_BLOCKED_EXACT = frozenset({"/birds/analyze"})
 
 # Hop-by-hop headers we must not forward verbatim.
 _DROP_REQ = {"host", "content-length", "connection", "keep-alive", "transfer-encoding"}
@@ -50,9 +65,21 @@ app = FastAPI(title="Workshop (public edge)")
 _client = httpx.AsyncClient(base_url=BACKEND, timeout=120.0)
 
 
+def _normalize(stripped_path: str) -> str:
+    """Collapse `.`/`..`/`//` so a crafted path can't slip past the blocklist
+    (e.g. `/finance/../tools`). posixpath.normpath also strips a trailing slash;
+    re-add a leading slash if normpath ate it."""
+    n = posixpath.normpath(stripped_path)
+    if not n.startswith("/"):
+        n = "/" + n
+    return n
+
+
 def _is_blocked(stripped_path: str) -> bool:
-    return any(stripped_path == p or stripped_path.startswith(p + "/") or stripped_path.startswith(p)
-               for p in _BLOCKED_PREFIXES)
+    p = _normalize(stripped_path)
+    if p in _BLOCKED_EXACT:
+        return True
+    return any(p == b or p.startswith(b + "/") for b in _BLOCKED_PREFIXES)
 
 
 async def _proxy(request: Request, backend_path: str) -> Response:
@@ -89,10 +116,17 @@ if DIST.is_dir():
     async def spa(full_path: str) -> Response:
         # Serve a real file if it exists (favicon, manifest, etc.), else the SPA
         # shell so client-side routes (/apps/budget, …) load index.html.
-        candidate = DIST / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(str(candidate))
-        index = DIST / "index.html"
+        #
+        # SECURITY: `full_path` is attacker-controlled and may contain `..` or
+        # percent-encoded `..` (uvicorn does not normalize dot-segments). Resolve
+        # the candidate and serve it ONLY if it stays inside DIST — otherwise a
+        # request like `/../../../home/clawd-a/.config/workshop/secrets.env` would
+        # exfiltrate secrets off disk. Containment check, then serve.
+        if full_path:
+            candidate = (DIST / full_path).resolve()
+            if candidate.is_file() and candidate.is_relative_to(_DIST_ROOT):
+                return FileResponse(str(candidate))
+        index = _DIST_ROOT / "index.html"
         if index.is_file():
             return FileResponse(str(index))
         return JSONResponse({"detail": "frontend not built"}, status_code=503)
