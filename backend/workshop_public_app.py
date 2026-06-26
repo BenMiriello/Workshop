@@ -39,12 +39,15 @@ _DIST_ROOT = DIST.resolve()
 # The operator administers the platform over the tailnet (:8000), never the
 # public origin, so the edge proxies ONLY the personal + /auth surface. Matched
 # as path prefixes against the NORMALIZED stripped path.
+# What stays blocked: endpoints that trust the NETWORK (loopback / internal /
+# unauthenticated ingest) and would otherwise inherit the proxy's loopback trust.
+# The platform routers (/agents, /projects, /worktrees, ...) are NOT blocked: they
+# are require_operator-authed, so identity gates them on either origin — blocking
+# them by origin would be the network-position anti-pattern this whole redesign
+# removed, and it broke the operator using those pages on the public web.
 _BLOCKED_PREFIXES = (
-    # internal / loopback-trusted machine endpoints
+    # internal / loopback-trusted machine endpoints (no user auth)
     "/tools", "/relay", "/services", "/events", "/auto",
-    # operator-only platform control plane (code-exec-adjacent; never public)
-    "/agents", "/projects", "/worktrees", "/base-apps", "/backlog",
-    "/autonomy", "/redaction", "/agent-runs", "/agent_runs",
     # unauthenticated / Basic ingest webhooks
     "/plaid/webhook",
     "/location/owntracks",

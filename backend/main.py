@@ -266,5 +266,7 @@ async def healthz():
 
 
 @app.get("/agents/supervisor/status")
-async def supervisor_status(request: Request):
+async def supervisor_status(request: Request, user: dict = Depends(require_operator)):
+    # Operator-gated (was unauthed): identity, not origin, controls access — so it
+    # is safe on the public origin and no edge block is needed.
     return request.app.state.supervisor.status()
