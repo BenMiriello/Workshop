@@ -1004,35 +1004,59 @@ def _commute_snapshot() -> str:
 
 
 def _location_snapshot() -> str:
-    """OwnTracks-fed latest position. Just the most recent ping + how stale."""
-    from datetime import datetime, timezone
-    from pathlib import Path
+    """Latest position with an explicit freshness verdict.
 
-    p = Path("/home/clawd-a/workshop/.runtime/location-latest.json")
-    if not p.exists():
-        return "LOCATION: (no location pings)"
+    The phone tracker (OwnTracks/Overland) can silently stop posting for hours,
+    so the presence of a 'latest' ping is NOT proof of current whereabouts. We
+    label anything older than the staleness window as stale and tell the model in
+    plain words not to treat a stale fix as the operator's current location.
+    """
+    from datetime import datetime, timezone
+
+    STALE_AFTER_MIN = 30  # matches commute LOCATION_STALE_AFTER_S and the UI
+
+    # Read the canonical, ownership-aware store — NOT a hardcoded path. (The old
+    # /home/.../.runtime/location-latest.json was moved to per-user runtime by the
+    # ownership migration; reading it directly returned "no pings" forever.)
     try:
-        d = json.loads(p.read_text())
-    except (json.JSONDecodeError, OSError):
-        return "LOCATION: (location file unreadable)"
+        from services import location as location_svc  # local import: avoid cycle
+        d = location_svc.latest()
+    except Exception:  # noqa: BLE001 — no owner pinned / unreadable => unknown
+        d = None
+    if not d:
+        return ("LOCATION: unknown — no recent location ping available. Do NOT "
+                "guess or imply where the operator is.")
+
     ts = d.get("ts")
-    age_str = ""
+    age_min: float | None = None
     if ts:
         try:
             t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             age_min = (datetime.now(timezone.utc) - t).total_seconds() / 60
-            if age_min < 60:
-                age_str = f" ({age_min:.0f} min ago)"
-            elif age_min < 1440:
-                age_str = f" ({age_min/60:.1f} h ago)"
-            else:
-                age_str = f" ({age_min/1440:.1f} d ago)"
         except (ValueError, TypeError):
-            pass
-    return (
-        f"LOCATION: lat {d.get('lat')}, lng {d.get('lng')}, "
-        f"src={d.get('source','?')} at {ts}{age_str}"
-    )
+            age_min = None
+
+    if age_min is None:
+        return (f"LOCATION: last ping at {ts}, age unknown — treat as possibly "
+                f"stale; do not assume it is the operator's current location.")
+
+    if age_min < 60:
+        age = f"{age_min:.0f} min ago"
+    elif age_min < 1440:
+        age = f"{age_min / 60:.1f} h ago"
+    else:
+        age = f"{age_min / 1440:.1f} d ago"
+
+    coords = f"lat {d.get('lat')}, lng {d.get('lng')}, src={d.get('source','?')}"
+    if age_min > STALE_AFTER_MIN:
+        return (
+            f"LOCATION (STALE — last KNOWN position from {age}, NOT necessarily "
+            f"where the operator is now): {coords}. The phone tracker may have "
+            f"stopped updating. Do NOT state or imply this is his current "
+            f"location — call it the last known fix from {age} and say live "
+            f"location is unavailable."
+        )
+    return f"LOCATION (live, {age}): {coords}."
 
 
 # ============================================================================

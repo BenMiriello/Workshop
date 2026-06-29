@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Play, Square } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
-import { Button, PageHeader } from "../../ui";
+import { Button, PageHeader, StatusDot } from "../../ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
 import { Map, type LngLat } from "../../ui/Map";
@@ -255,6 +255,12 @@ export default function Location() {
     [latest],
   );
 
+  // Freshness verdict — recomputed each render so the 10s tick keeps it current.
+  // >30min with no new ping means the tracker likely stalled (OwnTracks does this
+  // on iOS); show it as stale instead of implying it's the live position.
+  const latestStale =
+    latest?.ts != null && Date.now() - Date.parse(latest.ts) > 30 * 60 * 1000;
+
   return (
     <div>
       <PageHeader title="Location" actions={<AppGroupNav />} />
@@ -272,6 +278,14 @@ export default function Location() {
               fontSize: "0.92rem",
             }}
           >
+            <span className="muted">status</span>
+            <span>
+              {latestStale ? (
+                <StatusDot status="warn">stale — last known, may not be current</StatusDot>
+              ) : (
+                <StatusDot status="ok">live</StatusDot>
+              )}
+            </span>
             <span className="muted">when</span><span>{fmtAge(latest.ts)} <span className="muted">({latest.ts})</span></span>
             <span className="muted">coordinates</span><span style={{ fontFamily: "ui-monospace, monospace" }}>{latest.lat.toFixed(5)}, {latest.lng.toFixed(5)}</span>
             {latest.accuracy_m != null && (<><span className="muted">accuracy</span><span>{Math.round(latest.accuracy_m)} m</span></>)}
