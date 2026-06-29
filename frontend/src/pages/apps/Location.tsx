@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Play, Square } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
@@ -240,10 +240,20 @@ export default function Location() {
   // Breadcrumb segmented by time/teleport gaps so quiet stretches don't draw as
   // long straight lines. Use the dedicated larger track fetch; fall back to the
   // table page if empty.
-  const trackSrc = trackRecords.length ? trackRecords : records;
-  const segments = buildSegments(trackSrc);
-  const pointCount = segments.reduce((n, s) => n + s.length, 0);
-  const marker: LngLat | null = latest ? [latest.lng, latest.lat] : null;
+  // Memoize so the 10s/30s re-render ticks don't hand <Map> fresh array refs
+  // every render (which would refire its sync effect and yank the camera).
+  const segments = useMemo(
+    () => buildSegments(trackRecords.length ? trackRecords : records),
+    [trackRecords, records],
+  );
+  const pointCount = useMemo(
+    () => segments.reduce((n, s) => n + s.length, 0),
+    [segments],
+  );
+  const marker: LngLat | null = useMemo(
+    () => (latest ? [latest.lng, latest.lat] : null),
+    [latest],
+  );
 
   return (
     <div>

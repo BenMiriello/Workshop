@@ -69,6 +69,12 @@ export function Map({
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
+  // Camera is only positioned automatically ONCE — focus on the current location
+  // (or the track if there's no marker yet). After that we leave it alone so live
+  // polling (new track/marker refs every few seconds) can't keep yanking the view
+  // back to a wide fit-all while the operator is panning/zooming.
+  const didFocusRef = useRef(false);
+  const didInitRef = useRef(false);
   const [hasBasemap, setHasBasemap] = useState<boolean | null>(null);
   const [mapReady, setMapReady] = useState(false);
 
@@ -100,6 +106,9 @@ export function Map({
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
     mapRef.current = map;
+    // Fresh map => re-arm the one-time auto-focus.
+    didFocusRef.current = false;
+    didInitRef.current = false;
     setMapReady(true);
     return () => { map.remove(); mapRef.current = null; setMapReady(false); };
   }, [hasBasemap]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,13 +148,24 @@ export function Map({
           layout: { "line-cap": "round", "line-join": "round" },
           paint: { "line-color": accent, "line-width": 3, "line-opacity": 0.85 } });
       }
-      const pts = [...(track ?? []).flat()];
-      if (marker) pts.push(marker);
-      if (pts.length === 1) {
-        map.easeTo({ center: pts[0], zoom: 14 });
-      } else if (pts.length > 1) {
-        const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
-        map.fitBounds(b, { padding: 48, maxZoom: 15, duration: 0 });
+      // Position the camera at most once. Prefer the current location (marker);
+      // if it isn't available yet, fit the track so the view isn't empty, but
+      // don't lock focus — switch to the marker as soon as it arrives. After
+      // focusing, never move the camera again (operator stays in control).
+      if (marker && !didFocusRef.current) {
+        map.easeTo({ center: marker, zoom: 14, duration: 0 });
+        didFocusRef.current = true;
+        didInitRef.current = true;
+      } else if (!marker && !didInitRef.current) {
+        const pts = [...(track ?? []).flat()];
+        if (pts.length === 1) {
+          map.easeTo({ center: pts[0], zoom: 14, duration: 0 });
+          didInitRef.current = true;
+        } else if (pts.length > 1) {
+          const b = pts.reduce((acc, p) => acc.extend(p), new maplibregl.LngLatBounds(pts[0], pts[0]));
+          map.fitBounds(b, { padding: 48, maxZoom: 15, duration: 0 });
+          didInitRef.current = true;
+        }
       }
     };
     if (map.isStyleLoaded()) applyStyleBits();
