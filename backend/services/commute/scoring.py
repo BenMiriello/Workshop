@@ -15,6 +15,7 @@ layer in `llm.py` make the final "should I interject" call.
 """
 from __future__ import annotations
 
+import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -289,30 +290,37 @@ def _service_day_str(now: datetime | None = None) -> str:
     return local_now.strftime("%Y%m%d")
 
 
-def _worst_positive_delay_from_feed(
+def _representative_delay_from_feed(
     tu: dict[str, Any],
     service_day: str,
     route_ids: list[str] | None = None,
+    now: datetime | None = None,
 ) -> tuple[float, bool]:
-    """Scan one agency's trip_updates for the worst PLAUSIBLE positive delay
-    on the operator's actual route(s).
+    """The delay the operator would ACTUALLY experience on a route — not the
+    worst single vehicle.
 
-    Three filters, in order:
-      1. Service-day: trip.start_date must equal today's local service date.
-         Skips rolled-over / cross-midnight entries with full-day phantom
-         delays (the 86400s / 1440min bug, 2026-05-25).
-      2. Route: if `route_ids` is given, only trips on those routes count. The
-         feed carries every route the agency runs (642 SFMTA trips); without
-         this filter an unrelated route's 60-min delay leaks into a 12-min
-         leg's ETA. route_id matching is prefix-tolerant so "T" also matches a
-         "TBUS" rail-replacement-bus substitution.
-      3. Sanity ceiling: discard any per-stop delay > MAX_PLAUSIBLE_DELAY_MIN
-         as a feed artifact regardless of the above.
+    The old behaviour took the MAX positive delay across every stop of every
+    same-route trip all day. On a frequent line (Muni Metro, ~5-15 min headway)
+    that let a single stuck train dominate: the T's median train was on time
+    (-0.9 min) while one outlier sat at +58, and the ETA used the +58 — so a
+    15-min ride projected to 70 and the alerter kept harping about a train the
+    operator would never board. The operator catches the NEXT train, so a lone
+    outlier is noise.
 
-    Returns (worst_delay_min, matched_any). `matched_any` distinguishes "no
-    relevant same-day route data" from "route is on-time".
+    Instead, take the MEDIAN delay across UPCOMING departures on the route:
+      - Median is outlier-resistant: one stuck trip washes out, but a genuinely
+        backed-up line (most trains late) still reports a high median.
+      - "Upcoming" (stop time >= now - grace) keeps it time-relevant — only
+        trains the operator could still catch count, not this morning's history.
+      - On-time/early trains are INCLUDED in the sample (the old `if not raw`
+        dropped zeros, biasing the result upward).
+
+    Same service-day / route / sanity-ceiling filters as before. Returns
+    (delay_min >= 0, matched_any). Clamped at 0 — never promise an early arrival.
     """
     norm_routes = [r.upper() for r in (route_ids or [])]
+    now_epoch = (now or _now_utc()).timestamp()
+    GRACE_S = 120  # a just-missed (≤2 min ago) departure still informs the next
 
     def _route_matches(rid: str) -> bool:
         if not norm_routes:
@@ -322,7 +330,8 @@ def _worst_positive_delay_from_feed(
         return any(rid_u == r or rid_u.startswith(r) or r.startswith(rid_u)
                    for r in norm_routes if rid_u)
 
-    worst = 0.0
+    upcoming: list[float] = []
+    allday: list[float] = []
     matched = False
     for trip in tu.get("trips") or []:
         start_date = str(trip.get("start_date") or "")
@@ -334,22 +343,28 @@ def _worst_positive_delay_from_feed(
             raw = stop.get("arrival_delay")
             if raw is None:
                 raw = stop.get("departure_delay")
-            if not raw:
+            if raw is None:
                 continue
             delay_min = raw / 60.0
             if abs(delay_min) > MAX_PLAUSIBLE_DELAY_MIN:
                 continue
             matched = True
-            if delay_min > 0:
-                worst = max(worst, delay_min)
-    return worst, matched
+            allday.append(delay_min)
+            stop_t = stop.get("arrival_time") or stop.get("departure_time")
+            if stop_t and stop_t >= now_epoch - GRACE_S:
+                upcoming.append(delay_min)
+    pool = upcoming or allday
+    if not pool:
+        return 0.0, matched
+    return max(0.0, statistics.median(pool)), matched
 
 
-def leg_realtime(leg: dict[str, Any]) -> dict[str, Any]:
+def leg_realtime(leg: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     """Return realtime delay info for a single leg, or a 'no data' marker.
 
-    Reads the poller's per-agency trip_updates and picks the worst PLAUSIBLE
-    positive delay for the current service day on the leg's source_keys.
+    Reads the poller's per-agency trip_updates and picks the REPRESENTATIVE
+    (median-of-upcoming) delay for the current service day on the leg's
+    source_keys — see `_representative_delay_from_feed` for why median, not max.
     Returns:
         {"available": False, "reason": "no_source_keys"|"needs_key"|"no_match"|...}
         {"available": True, "delay_min": 3.2, "agency": "caltrain"}
@@ -370,14 +385,14 @@ def leg_realtime(leg: dict[str, Any]) -> dict[str, Any]:
         agency_for_leg = "caltrain"
         feeds = (state.get("caltrain") or {}).get("feeds") or {}
         tu = feeds.get("trip_updates") or {}
-        w, m = _worst_positive_delay_from_feed(tu, service_day, route_ids)
+        w, m = _representative_delay_from_feed(tu, service_day, route_ids, now)
         worst = max(worst, w)
         matched = matched or m
     if "sfmta.gtfs_rt" in src_keys:
         agency_for_leg = agency_for_leg or "sfmta"
         feeds = (state.get("sfmta") or {}).get("feeds") or {}
         tu = feeds.get("trip_updates") or {}
-        w, m = _worst_positive_delay_from_feed(tu, service_day, route_ids)
+        w, m = _representative_delay_from_feed(tu, service_day, route_ids, now)
         worst = max(worst, w)
         matched = matched or m
     if not matched:
@@ -412,7 +427,7 @@ def build_leg_timeline(sch: dict[str, Any], legs: list[dict[str, Any]],
     for leg in legs:
         depart_at = cursor
         dur = int(leg.get("default_minutes", 0))
-        rt = leg_realtime(leg)
+        rt = leg_realtime(leg, now)
         delay_min = rt.get("delay_min", 0) if rt.get("available") else 0
         arrive_at = depart_at + timedelta(minutes=dur + max(0, delay_min))
         # Determine status relative to now.
@@ -455,15 +470,15 @@ def build_leg_timeline(sch: dict[str, Any], legs: list[dict[str, Any]],
     return timeline
 
 
-def worst_rt_delay_min(legs: list[dict[str, Any]] | None = None) -> float:
-    """Scan the latest Caltrain + SFMTA trip_updates for the largest PLAUSIBLE
-    positive delay on the operator's actual routes for the current service day.
+def worst_rt_delay_min(legs: list[dict[str, Any]] | None = None,
+                       now: datetime | None = None) -> float:
+    """The representative realtime delay across the operator's routes — the
+    delay he'd actually face, taken as the max across LEGS of each leg's
+    median-of-upcoming delay (see `_representative_delay_from_feed`).
 
-    Applies the same service-day filter, route filter, and sanity ceiling as
-    `leg_realtime` (see `_worst_positive_delay_from_feed`) so neither stale
-    cross-midnight entries nor unrelated routes inject a phantom delay into the
-    ETA. When `legs` is given, only those legs' `route_ids` are considered per
-    agency; otherwise all routes on the agency feed are eligible (legacy).
+    Per agency we use the median (one stuck train can't dominate); across the
+    two agencies we take the max, because a real delay on EITHER the Caltrain
+    leg or the Muni leg adds to the end-to-end ETA. Name kept for callers.
 
     Returns delay in minutes (>=0). Returns 0 when no realtime data.
     """
@@ -489,10 +504,10 @@ def worst_rt_delay_min(legs: list[dict[str, Any]] | None = None) -> float:
 
     worst = 0.0
     ct_tu = ((state.get("caltrain") or {}).get("feeds") or {}).get("trip_updates") or {}
-    w, _ = _worst_positive_delay_from_feed(ct_tu, service_day, _routes_for("caltrain.gtfs_rt"))
+    w, _ = _representative_delay_from_feed(ct_tu, service_day, _routes_for("caltrain.gtfs_rt"), now)
     worst = max(worst, w)
     sf_tu = ((state.get("sfmta") or {}).get("feeds") or {}).get("trip_updates") or {}
-    w, _ = _worst_positive_delay_from_feed(sf_tu, service_day, _routes_for("sfmta.gtfs_rt"))
+    w, _ = _representative_delay_from_feed(sf_tu, service_day, _routes_for("sfmta.gtfs_rt"), now)
     worst = max(worst, w)
     return worst
 
@@ -534,7 +549,7 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
         }
     legs = config.get_legs_by_id(sch["legs_id"]) or []
     leg_i = expected_leg_index(sch, legs, now)
-    rt_delay = worst_rt_delay_min(legs)
+    rt_delay = worst_rt_delay_min(legs, now)
     rt_summary = realtime_status_summary()
     timeline = build_leg_timeline(sch, legs, now)
     # Projected arrive = last leg's arrive_at (already includes per-leg delay).

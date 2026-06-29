@@ -54,6 +54,15 @@ SYSTEM = (
     "punctuality suggest a risk (e.g. he routinely leaves a minute late and just "
     "misses a connection), name it. Do NOT use a fixed checklist.\n"
     "- Only escalate severity for genuine LATE risk; never nag when he's on-time/early.\n"
+    "- FREQUENT service (Muni Metro, headway ~5-15 min): a single late vehicle is "
+    "NOT a late risk — he simply boards the next one. Only flag a transit delay if "
+    "it is SYSTEMIC (most upcoming trains late) or it makes him miss an INFREQUENT "
+    "connection (e.g. a specific Caltrain, every 30-60 min). Never harp about one "
+    "delayed train on a high-frequency line.\n"
+    "- If data_quality.location.available is false, you do NOT know where he is or "
+    "whether he has left. Do NOT tell him to 'leave now' or assume he's at the "
+    "origin. Frame timing CONDITIONALLY ('if you haven't boarded yet…') and lead "
+    "with the fact that his location is unconfirmed.\n"
     "- kind 'insight' is for a post-commute observation; 'brief' for a pre/during "
     "status; 'alert' for an active late-risk; 'nudge' for a small actionable tip.\n"
     "Output JSON only."
@@ -236,8 +245,12 @@ def _deterministic(brief: dict[str, Any], evidence: dict[str, Any]) -> dict[str,
                 "headline": f"Running late → {dirn}: ~{int(brief.get('late_by_min', 0))}m past target",
                 "detail": f"Target {brief.get('target_arrive_local')}, projected {brief.get('projected_arrive_local')}.",
                 "reasoning": why,
-                "action": ("If you're already there, ignore — your location is stale and I can't confirm."
-                           if blind else "Consider an earlier train or trimming the first leg.")}
+                # Location-aware action: never assume he's still at the origin
+                # when we can't see him. Only suggest "earlier train" when a
+                # fresh fix confirms he hasn't departed.
+                "action": ("If you've already boarded you may be fine — I can't confirm your location "
+                           f"({loc.get('reason', 'unavailable')})."
+                           if not loc_ok else "Consider an earlier train or trimming the first leg.")}
 
     # Not flagged late. If we're blind (no realtime AND no fresh location) we
     # have no business claiming "On track" — absence of a late signal is not

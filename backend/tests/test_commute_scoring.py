@@ -390,16 +390,17 @@ class TestWorstRtDelayMin:
         with patch.object(scoring.poller, "read_state", return_value={}):
             assert scoring.worst_rt_delay_min() == 0.0
 
-    def test_picks_worst_caltrain_delay(self):
-        # worst_rt_delay_min gates on realtime availability, so the state must
-        # carry a fresh per-source status block or the gate zeroes the delay.
+    def test_uses_representative_median_not_worst(self):
+        # Changed 2026-06-29: the delay is now the MEDIAN across trips, not the
+        # max — one outlier no longer dominates. Two trips at 2 and 5 min → 3.5.
+        # gates on realtime availability, so carry a fresh per-source status.
         state = {
             "caltrain": {
                 "feeds": {
                     "trip_updates": {
                         "trips": [
                             {"stops": [{"arrival_delay": 120}]},  # 2 min
-                            {"stops": [{"arrival_delay": 300}]},  # 5 min — worst
+                            {"stops": [{"arrival_delay": 300}]},  # 5 min
                         ]
                     }
                 }
@@ -408,7 +409,7 @@ class TestWorstRtDelayMin:
         }
         with patch.object(scoring.poller, "read_state", return_value=state):
             result = scoring.worst_rt_delay_min()
-        assert result == pytest.approx(5.0)
+        assert result == pytest.approx(3.5)
 
     def test_ignores_negative_delays(self):
         state = {
@@ -577,3 +578,50 @@ class TestEvaluate:
             "late_by_min", "alerts", "location",
         }
         assert required_keys.issubset(result.keys())
+
+
+# ---------------------------------------------------------------------------
+# Representative (median-of-upcoming) realtime delay — the 2026-06-29 fix.
+# Taking max() across all trips let one stuck train (+58 min) dominate a line
+# whose median train was on time, projecting a 15-min ride to 70 min.
+# ---------------------------------------------------------------------------
+
+class TestRepresentativeDelay:
+    NOW = datetime(2026, 1, 5, 15, 30, tzinfo=timezone.utc)
+
+    def _tu(self, stops):
+        # stops: list of (delay_sec, stop_epoch)
+        return {"trips": [{"route_id": "T", "start_date": "",
+                           "stops": [{"arrival_delay": d, "arrival_time": t} for d, t in stops]}]}
+
+    def test_single_outlier_washes_out(self):
+        ep = self.NOW.timestamp()
+        # nine on-time upcoming trains + one stuck at +58 min
+        stops = [(0, ep + i * 300) for i in range(1, 10)] + [(58 * 60, ep + 600)]
+        delay, matched = scoring._representative_delay_from_feed(self._tu(stops), "", ["T"], self.NOW)
+        assert matched is True and delay < 2.0   # median ~0, outlier ignored
+
+    def test_systemic_delay_still_flags(self):
+        ep = self.NOW.timestamp()
+        stops = [(20 * 60, ep + i * 300) for i in range(1, 8)]   # most trains ~20 late
+        delay, _ = scoring._representative_delay_from_feed(self._tu(stops), "", ["T"], self.NOW)
+        assert delay >= 18.0
+
+    def test_only_upcoming_departures_count(self):
+        ep = self.NOW.timestamp()
+        # a past stuck train must not poison the ETA when upcoming trains are fine
+        stops = [(58 * 60, ep - 3600)] + [(0, ep + i * 300) for i in range(1, 6)]
+        delay, _ = scoring._representative_delay_from_feed(self._tu(stops), "", ["T"], self.NOW)
+        assert delay < 2.0
+
+    def test_sanity_ceiling_discards_phantom(self):
+        ep = self.NOW.timestamp()
+        stops = [(86400, ep + 300), (60, ep + 600)]   # 1440-min artifact dropped, 1-min kept
+        delay, matched = scoring._representative_delay_from_feed(self._tu(stops), "", ["T"], self.NOW)
+        assert matched is True and delay <= 1.5
+
+    def test_no_match_returns_zero(self):
+        ep = self.NOW.timestamp()
+        stops = [(600, ep + 300)]
+        delay, matched = scoring._representative_delay_from_feed(self._tu(stops), "", ["CALTRAIN"], self.NOW)
+        assert matched is False and delay == 0.0
