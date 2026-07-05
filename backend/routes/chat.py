@@ -24,6 +24,7 @@ from services import chat_store, chat_context
 from services import llm_router
 from services import build_streaming
 from services import chat_naming
+from services import draft_store
 
 log = logging.getLogger("workshop.chat")
 router = APIRouter()
@@ -113,6 +114,37 @@ async def providers(scope: str | None = None):
 @router.get("/threads")
 async def threads(context: str | None = None):
     return chat_store.list_threads(context_key=context)
+
+
+# ---- Composer drafts -------------------------------------------------------
+# The unsent text in a chat composer, persisted per owner + context_key so a
+# reload (or another device) doesn't lose it. The browser keeps the instant
+# local copy; this is the durable cross-device mirror. See services/draft_store.
+class DraftPut(BaseModel):
+    text: str = ""
+    ts: int = 0
+    client_id: str = ""
+
+
+@router.get("/drafts")
+async def list_drafts():
+    return draft_store.get_all()
+
+
+@router.get("/drafts/{key:path}")
+async def read_draft(key: str):
+    return draft_store.get_draft(key)
+
+
+@router.put("/drafts/{key:path}")
+async def write_draft(key: str, body: DraftPut):
+    return draft_store.put_draft(key, body.text, body.ts, body.client_id)
+
+
+@router.delete("/drafts/{key:path}")
+async def remove_draft(key: str):
+    draft_store.clear_draft(key)
+    return {"deleted": True}
 
 
 @router.post("/threads")
@@ -222,6 +254,59 @@ def _build_prompt(
         "change was requested) — no 'You:' prefix."
     )
     return "\n\n".join(parts)
+
+
+# Context-window windows per model (mirrors the frontend meter). Claude = 200k;
+# local models are smaller.
+_CONTEXT_WINDOW = {
+    "claude-opus-4-8": 200_000,
+    "claude-sonnet-4-6": 200_000,
+    "claude-haiku-4-5-20251001": 200_000,
+}
+
+
+def _window_for(model: str | None) -> int:
+    if model and model in _CONTEXT_WINDOW:
+        return _CONTEXT_WINDOW[model]
+    if model and model.startswith("claude"):
+        return 200_000
+    return 32_768 if model else 200_000
+
+
+@router.get("/threads/{thread_id}/context")
+async def thread_context(thread_id: str):
+    """Real context-window usage for the composer meter: assembles the SAME prompt
+    a turn would send (role preamble + persona + live app context + custom prompt +
+    the windowed transcript) and reports its size against the model's window. This
+    is far closer than counting visible messages, because it includes the persona
+    and the live app-context injection the client can't see. No local Claude
+    tokenizer, so ~4 chars/token; on resumed build sessions the true size lives in
+    the model session, so treat build chats as approximate."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    history = t.get("messages", [])
+    model = _resolve_model(None, t, provider)
+    tools_active, tool_summary = chat_context.capability_for(
+        provider, enable_chat_tools=ENABLE_CHAT_TOOLS
+    )
+    is_build_mode = chat_context.is_build_provider(provider)
+    preamble = chat_context.role_preamble(
+        tools_active=tools_active,
+        tool_summary=tool_summary,
+        cwd=(str(provider.dir) if is_build_mode else None),
+        is_build=is_build_mode,
+    )
+    prompt = _build_prompt(provider, history, "", preamble=preamble)
+    used = max(1, round(len(prompt) / 4))
+    window = _window_for(model)
+    return {
+        "used_tokens": used,
+        "window_tokens": window,
+        "pct": min(100, round(used / window * 100)),
+        "model": model,
+    }
 
 
 @router.post("/threads/{thread_id}/messages")

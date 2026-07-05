@@ -932,12 +932,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const streamingBuild = effectiveMode === "build" && streaming;
 
-  // Context usage below the composer: a thin bar + % of the model's window.
+  // Context usage below the composer. Prefer the backend's REAL count (it
+  // assembles the actual prompt — persona + live app context + windowed history),
+  // refetched when a turn settles; fall back to a client estimate if unavailable.
+  const [serverCtx, setServerCtx] = useState<{ used: number; window: number } | null>(null);
+  useEffect(() => {
+    if (!activeId || busy || streaming) return;
+    let cancelled = false;
+    chatApi
+      .threadContext(activeId)
+      .then((r) => { if (!cancelled) setServerCtx({ used: r.used_tokens, window: r.window_tokens }); })
+      .catch(() => { /* keep the client estimate */ });
+    return () => { cancelled = true; };
+  }, [activeId, messages.length, busy, streaming]);
+  useEffect(() => { setServerCtx(null); }, [activeId]); // drop stale count on thread switch
+
   const ctx = useMemo(() => {
+    if (serverCtx) {
+      // Real assembled-context count + the live (unsent) draft.
+      const used = serverCtx.used + Math.ceil(input.length / 4);
+      return { used, win: serverCtx.window, pct: Math.min(100, Math.round((used / serverCtx.window) * 100)) };
+    }
     const used = estimateContextTokens(messages, input);
     const win = contextWindowFor(selectedModel);
     return { pct: Math.min(100, Math.round((used / win) * 100)), used, win };
-  }, [messages, input, selectedModel]);
+  }, [serverCtx, messages, input, selectedModel]);
   // Circular ring (single accent tone, no threshold colors). The progress arc is
   // a dash on a rotated circle so it fills clockwise from 12 o'clock.
   const RING_R = 7;

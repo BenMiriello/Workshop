@@ -112,6 +112,13 @@ export const chatApi = {
       body: JSON.stringify(model ? { content, model } : { content }),
     }).then(j<{ message: ChatMsg; notes: string[] }>),
 
+  // Real context-window usage for the composer meter: the backend assembles the
+  // actual prompt (persona + live app context + windowed history) and counts it.
+  threadContext: (id: string) =>
+    fetch(`/api/chat/threads/${id}/context`).then(
+      j<{ used_tokens: number; window_tokens: number; pct: number; model: string }>,
+    ),
+
   // ---- Per-agent tasks (build agents only) ---------------------------------
   // `slug` is the part of a build contextKey after the "build:" prefix.
   listAgentTasks: (slug: string, includeDone = false) =>
