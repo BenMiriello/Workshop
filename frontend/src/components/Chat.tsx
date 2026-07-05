@@ -938,14 +938,23 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const win = contextWindowFor(selectedModel);
     return { pct: Math.min(100, Math.round((used / win) * 100)), used, win };
   }, [messages, input, selectedModel]);
+  // Circular ring (single accent tone, no threshold colors). The progress arc is
+  // a dash on a rotated circle so it fills clockwise from 12 o'clock.
+  const RING_R = 7;
+  const RING_C = 2 * Math.PI * RING_R;
   const contextMeter = (
     <div
-      className={`chat-context-meter${ctx.pct >= 90 ? " is-full" : ctx.pct >= 75 ? " is-high" : ""}`}
+      className="chat-context-meter"
       title={`~${ctx.used.toLocaleString()} of ${ctx.win.toLocaleString()} tokens used in this chat`}
     >
-      <div className="chat-context-meter__track">
-        <div className="chat-context-meter__fill" style={{ width: `${ctx.pct}%` }} />
-      </div>
+      <svg className="chat-context-meter__ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden>
+        <circle className="chat-context-meter__track" cx="9" cy="9" r={RING_R} />
+        <circle
+          className="chat-context-meter__arc"
+          cx="9" cy="9" r={RING_R}
+          style={{ strokeDasharray: `${(ctx.pct / 100) * RING_C} ${RING_C}` }}
+        />
+      </svg>
       <span className="chat-context-meter__pct">{ctx.pct}%</span>
     </div>
   );

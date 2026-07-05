@@ -730,37 +730,32 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-send:hover:not(:disabled) { background: var(--accent-hover); }
 .chat-send:disabled { opacity: 0.4; }
 
-/* Context-usage meter: a thin bar under the composer showing how full the chat's
-   context is, with the % to its right. Subtle by default; shifts to warn/danger
-   tokens as it fills. */
+/* Context-usage meter: a small circular ring under the composer showing how full
+   the chat's context is, with the % to its right. Single accent tone — it does
+   not shift to amber/red as it fills. */
 .chat-context-meter {
   display: flex; align-items: center; gap: var(--space-2);
   margin-top: var(--space-2);
   padding: 0 0.1rem;
 }
-.chat-context-meter__track {
-  flex: 1; height: 3px;
-  background: var(--border);
-  border-radius: 999px; overflow: hidden;
+.chat-context-meter__ring {
+  flex: 0 0 auto;
+  transform: rotate(-90deg);   /* start the arc at 12 o'clock */
 }
-.chat-context-meter__fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 999px;
-  transition: width 180ms ease, background 180ms ease;
+.chat-context-meter__ring .chat-context-meter__track {
+  fill: none; stroke: var(--border); stroke-width: 2;
 }
-.chat-context-meter.is-high .chat-context-meter__fill { background: var(--warn-solid); }
-.chat-context-meter.is-full .chat-context-meter__fill { background: var(--danger-solid); }
+.chat-context-meter__ring .chat-context-meter__arc {
+  fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round;
+  transition: stroke-dasharray 180ms ease;
+}
 .chat-context-meter__pct {
   flex: 0 0 auto;
-  min-width: 2.4rem; text-align: right;
   font-size: var(--fs-xs); font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
-.chat-context-meter.is-high .chat-context-meter__pct { color: var(--warn); }
-.chat-context-meter.is-full .chat-context-meter__pct { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
-  .chat-context-meter__fill { transition: none; }
+  .chat-context-meter__ring .chat-context-meter__arc { transition: none; }
 }
 .chat-stop { background: var(--bg-inset); color: var(--fg); border: 1px solid var(--border); }
 .chat-stop:hover { background: var(--card-hover); }
