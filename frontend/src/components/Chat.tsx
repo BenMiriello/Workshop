@@ -15,6 +15,7 @@ import {
   type AgentTask,
   type AgentTaskStatus,
 } from "../lib/chat";
+import { useDraft } from "../lib/draftSync";
 
 // Unified Chat component. Replaces ChatPanel + BuildChatPanel.
 //
@@ -88,6 +89,31 @@ const MODEL_DISPLAY: Record<string, ModelDisplay> = {
 };
 function modelDisplay(model?: string | null): ModelDisplay {
   return (model && MODEL_DISPLAY[model]) || MODEL_DISPLAY.default;
+}
+
+// Context-usage meter under the composer. The model doesn't hand back exact token
+// counts, so approximate: ~4 chars/token over the visible turns + the current
+// draft, against the model's context window (Claude = 200k; local models are
+// smaller). It's a "how full is this chat" indicator, not an exact accounting.
+const CONTEXT_WINDOW: Record<string, number> = {
+  "claude-opus-4-8": 200_000,
+  "claude-sonnet-4-6": 200_000,
+  "claude-haiku-4-5-20251001": 200_000,
+};
+function contextWindowFor(model: string): number {
+  if (CONTEXT_WINDOW[model]) return CONTEXT_WINDOW[model];
+  if (model.startsWith("claude")) return 200_000;
+  return model ? 32_768 : 200_000; // local/Ollama default; Claude fallback if unset
+}
+function estimateContextTokens(messages: ChatMsg[], draft: string): number {
+  let chars = draft.length;
+  for (const m of messages) {
+    chars += (m.content || "").length;
+    for (const s of m.meta?.segments || []) {
+      chars += s.t === "text" ? s.text.length : s.name.length + (s.input?.length || 0);
+    }
+  }
+  return Math.ceil(chars / 4);
 }
 
 const EGRESS_MARKERS = [
@@ -256,7 +282,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState("");
+  // Composer text is a persisted draft (survives reload, syncs across tabs /
+  // devices) keyed by this chat's contextKey — see lib/draftSync.
+  const [input, setInput] = useDraft(contextKey);
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -903,6 +931,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   ) : null;
 
   const streamingBuild = effectiveMode === "build" && streaming;
+
+  // Context usage below the composer: a thin bar + % of the model's window.
+  const ctx = useMemo(() => {
+    const used = estimateContextTokens(messages, input);
+    const win = contextWindowFor(selectedModel);
+    return { pct: Math.min(100, Math.round((used / win) * 100)), used, win };
+  }, [messages, input, selectedModel]);
+  const contextMeter = (
+    <div
+      className={`chat-context-meter${ctx.pct >= 90 ? " is-full" : ctx.pct >= 75 ? " is-high" : ""}`}
+      title={`~${ctx.used.toLocaleString()} of ${ctx.win.toLocaleString()} tokens used in this chat`}
+    >
+      <div className="chat-context-meter__track">
+        <div className="chat-context-meter__fill" style={{ width: `${ctx.pct}%` }} />
+      </div>
+      <span className="chat-context-meter__pct">{ctx.pct}%</span>
+    </div>
+  );
+
   const composer = (
     <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}`}>
       {showSlash && (
@@ -957,6 +1004,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           </button>
         )}
       </div>
+      {contextMeter}
     </div>
   );
 
