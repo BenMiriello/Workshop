@@ -1,0 +1,4 @@
+
+# local env overrides (backend URL etc.) — never commit
+.env.local
+.env*.local

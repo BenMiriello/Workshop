@@ -40,9 +40,7 @@
       "./plugins/withLiveActivity"
     ],
     "extra": {
-      "comment": "webUrl = the Workshop SPA the WebView loads (Tailscale Serve :8443 -> vite, which proxies /api to the backend so the cookie login is same-origin). apiBase = the backend for native producer posts (Tailscale Serve :8446 -> :8000; no /api suffix, the backend accepts both). Auth: the WebView logs in via cookie, then provisions a device token the native producers send as a Bearer. tier flips to 'paid' after Apple Developer Program enrolment. These require the iPhone on the operator's tailnet (Tailscale app).",
-      "webUrl": "https://debian.tail38e62e.ts.net:8443",
-      "apiBase": "https://debian.tail38e62e.ts.net:8446",
+      "comment": "The mobile app points at ONE Workshop backend origin (see native/config.ts). No host is committed here: it defaults to the operator's public deployment, and you override for dev via EXPO_PUBLIC_WORKSHOP_URL in mobile/.env.local (e.g. a tailnet URL) or by adding \"serverUrl\": \"https://...\" to this block. /api is proxied to the backend at every origin, so one URL serves the WebView + native producers. tier flips to 'paid' after Apple Developer Program enrolment.",
       "tier": "free"
     }
   }
