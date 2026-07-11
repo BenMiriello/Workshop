@@ -248,9 +248,10 @@ export interface Speaker {
 // sentence's audio while the current one plays.
 export class ServerSpeaker implements Speaker {
   private queue: string[] = [];
-  private idx = 0;
+  private idx = 0;              // sentence index currently playing
   private audio: HTMLAudioElement | null = null;
   private stopped = false;
+  private done = false;
   private ev: SpeakEvents = {};
   private voice?: string;
   private speed = 1.0;
@@ -277,11 +278,13 @@ export class ServerSpeaker implements Speaker {
     this.idx = 0;
     this.ev = ev;
     this.stopped = false;
+    this.done = false;
     this.speaking = true;
     this.playFrom(0);
   }
 
   private async playFrom(i: number) {
+    this.idx = i;
     if (this.stopped || i >= this.queue.length) {
       this.finish(i);
       return;
@@ -290,7 +293,7 @@ export class ServerSpeaker implements Speaker {
     try {
       url = await this.render(this.queue[i]);
     } catch {
-      this.finish(i);
+      this.playFrom(i + 1);
       return;
     }
     if (this.stopped) { URL.revokeObjectURL(url); this.finish(i); return; }
@@ -306,7 +309,11 @@ export class ServerSpeaker implements Speaker {
     a.play().catch(() => this.playFrom(i + 1));
   }
 
+  // `reached` = count of sentences fully heard before this point (== the index
+  // of the sentence in flight when interrupted).
   private finish(reached: number) {
+    if (this.done) return;
+    this.done = true;
     this.speaking = false;
     this.ev.onDone?.(reached);
   }
@@ -314,13 +321,15 @@ export class ServerSpeaker implements Speaker {
   stop() {
     this.stopped = true;
     if (this.audio) { try { this.audio.pause(); } catch { /* noop */ } this.audio = null; }
-    if (this.speaking) { this.speaking = false; this.ev.onDone?.(this.idx); }
+    this.finish(this.idx);
   }
 }
 
 // Browser TTS via SpeechSynthesis — one utterance per sentence.
 export class BrowserSpeaker implements Speaker {
   private stopped = false;
+  private done = false;
+  private idx = 0;
   private ev: SpeakEvents = {};
   private voiceName?: string;
   private rate = 1.0;
@@ -334,29 +343,39 @@ export class BrowserSpeaker implements Speaker {
   speak(sentences: string[], ev: SpeakEvents) {
     this.ev = ev;
     this.stopped = false;
+    this.done = false;
+    this.idx = 0;
     this.speaking = true;
     const synth = window.speechSynthesis;
     const voices = synth.getVoices();
     const v = this.voiceName ? voices.find((x) => x.name === this.voiceName) : undefined;
     let i = 0;
     const next = () => {
-      if (this.stopped || i >= sentences.length) { this.speaking = false; this.ev.onDone?.(i); return; }
+      this.idx = i;
+      if (this.stopped || i >= sentences.length) { this.finish(i); return; }
       const u = new SpeechSynthesisUtterance(sentences[i]);
       if (v) u.voice = v;
       u.rate = this.rate;
       const idx = i;
       u.onstart = () => this.ev.onSentenceStart?.(idx);
-      u.onend = () => { this.ev.onSentenceEnd?.(idx); i++; next(); };
-      u.onerror = () => { i++; next(); };
+      u.onend = () => { if (this.stopped) return; this.ev.onSentenceEnd?.(idx); i++; next(); };
+      u.onerror = () => { if (this.stopped) return; i++; next(); };
       synth.speak(u);
     };
     next();
   }
 
+  private finish(reached: number) {
+    if (this.done) return;
+    this.done = true;
+    this.speaking = false;
+    this.ev.onDone?.(reached);
+  }
+
   stop() {
     this.stopped = true;
     try { window.speechSynthesis.cancel(); } catch { /* noop */ }
-    if (this.speaking) { this.speaking = false; this.ev.onDone?.(0); }
+    this.finish(this.idx);
   }
 }
 
