@@ -695,14 +695,26 @@ a.ws-btn { text-decoration: none; }
  * `data-focus` on the root drives an IDE-style focus: any one region can expand
  * to full width while the others collapse. `all` is the default 3-up layout.
  * Each region is a flex column with a region header (title + focus toggle). */
+/* The build page fills <main> exactly and never lets the page scroll on desktop:
+   PageHeader + status bar are fixed-height, the workbench grid flexes to fill the
+   rest, and the bottom of the grid (where the chat composer lives) pins to main's
+   content box — so the composer can never spill below the viewport. This replaces
+   a fragile `height: calc(100vh - <magic>)` that underestimated the chrome height
+   and pushed the chat input off the bottom of the screen. */
+.ws-agent-build-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .ws-agent-build {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr) 400px;
   gap: var(--space-4);
   align-items: stretch;
-  /* Tall, comfortable panes — the operator's core complaint was cramped size. */
-  height: calc(100vh - 220px);
-  min-height: 520px;
+  /* Flex to fill the height left under the header/status bar (no magic constant). */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 /* Each region fills the grid cell and scrolls internally, not the page. */
 .ws-agent-build__region {
@@ -749,6 +761,9 @@ a.ws-btn { text-decoration: none; }
   .ws-agent-build[data-focus="all"] > .ws-agent-build__chat { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
+  /* Stacked + page-scrolling: the page grows with its content and <main> scrolls,
+     rather than the desktop "fill the viewport, scroll inside each region" model. */
+  .ws-agent-build-page { display: block; height: auto; }
   /* Stacked, page-scrolling. Chat first (the primary driver), then center, files.
      The chat carries its OWN expand-to-fullscreen control (toolbar Maximize →
      /chat/:key) — that is how you take the chat full-screen on a phone. The
@@ -1022,4 +1037,174 @@ a.ws-btn { text-decoration: none; }
   color: var(--fg);
   font-weight: var(--fw-semi);
   font-size: var(--fs-lg);
+}
+
+/* ── Voice mode ─────────────────────────────────────────────────────────────
+   Full-screen spoken-conversation surface. See components/VoiceMode.tsx and
+   docs/voice-mode/. Orb reacts to mic level via the --vlevel custom prop. */
+.ws-voice {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding: var(--space-4);
+  gap: var(--space-3);
+  overflow: hidden;
+}
+.ws-voice-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.ws-voice-top-mid {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+.ws-voice-ctx {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40vw;
+}
+.ws-voice-top-right { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+.ws-voice-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.ws-voice-setting { display: flex; flex-direction: column; gap: var(--space-1); min-width: 140px; }
+.ws-voice-setting--row { flex-direction: row; align-items: center; gap: var(--space-2); }
+.ws-range { accent-color: var(--accent); width: 160px; }
+
+.ws-voice-err { max-width: 520px; margin: 0 auto; width: 100%; }
+
+.ws-voice-stage {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 0;
+}
+.ws-voice-orb {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: var(--radius-pill);
+  border: none;
+  cursor: pointer;
+  background: radial-gradient(circle at 50% 45%, var(--accent-soft), var(--card) 70%);
+  box-shadow: 0 0 0 1px var(--border), var(--shadow-md);
+  display: grid;
+  place-items: center;
+  transform: scale(calc(0.9 + (var(--vlevel, 0.15) * 0.18)));
+  transition: transform 90ms var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.ws-voice-orb-core {
+  width: 92px;
+  height: 92px;
+  border-radius: var(--radius-pill);
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+}
+.ws-voice-orb.is-listening {
+  box-shadow: 0 0 0 1px var(--running), 0 0 calc(18px + var(--vlevel, 0) * 40px) var(--running-soft), var(--shadow-md);
+}
+.ws-voice-orb.is-listening .ws-voice-orb-core { color: var(--running); }
+.ws-voice-orb.is-speaking {
+  box-shadow: 0 0 0 1px var(--ok), 0 0 24px var(--ok-soft), var(--shadow-md);
+}
+.ws-voice-orb.is-speaking .ws-voice-orb-core { color: var(--ok); }
+.ws-voice-orb.is-thinking .ws-voice-orb-core,
+.ws-voice-orb.is-connecting .ws-voice-orb-core { color: var(--muted); }
+.ws-voice-orb:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring), var(--shadow-md); }
+
+.ws-voice-hint {
+  color: var(--muted);
+  font-size: var(--fs-md);
+  text-align: center;
+  max-width: 560px;
+  min-height: 1.4em;
+  padding: 0 var(--space-3);
+}
+
+.ws-voice-transcript {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 34vh;
+  overflow-y: auto;
+}
+.ws-voice-line { display: flex; gap: var(--space-2); font-size: var(--fs-md); line-height: var(--lh-base); }
+.ws-voice-who {
+  flex: 0 0 auto;
+  font-size: var(--fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  padding-top: 3px;
+  width: 44px;
+}
+.ws-voice-line--you { color: var(--fg); }
+.ws-sent-heard { color: var(--fg); }
+.ws-sent-now { color: var(--accent); font-weight: var(--fw-medium); }
+.ws-sent-pending { color: var(--muted); }
+
+.ws-voice-queue {
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ws-voice-threads { display: flex; flex-direction: column; gap: var(--space-1); }
+.ws-voice-thread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.ws-voice-thread-topic { font-size: var(--fs-sm); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-voice-thread-actions { display: inline-flex; gap: var(--space-1); flex: 0 0 auto; }
+
+.ws-voice-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  color: var(--faint);
+  font-size: var(--fs-xs);
+}
+.ws-voice-provider { font-family: var(--font-mono); }
+
+.ws-spin { animation: ws-spin 1s linear infinite; }
+@keyframes ws-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-voice-orb { transform: none !important; transition: none; }
+  .ws-spin { animation-duration: 2.4s; }
 }

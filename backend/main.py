@@ -10,7 +10,7 @@ from deps_user import (
     require_domain_owner,
 )
 
-from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth
+from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth, voice
 from services.supervisor import AgentSupervisor
 from services import global_memory, finance_cache, categorizer, ownership, auth_store
 from services import environment as environment_svc
@@ -217,6 +217,8 @@ app.include_router(commute.router, dependencies=[Depends(require_domain_owner("c
 
 # Per-user personal data — owner-scoped to the authenticated user.
 app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_USER)
+# Voice mode — local STT/TTS for the chat surface, per-owner prefs.
+app.include_router(voice.router, tags=["voice"], dependencies=_USER)
 app.include_router(location.router, dependencies=_USER)
 app.include_router(push.router, dependencies=_USER)
 app.include_router(environment.router, dependencies=_USER)

@@ -30,6 +30,7 @@ import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
 import FocusedChat from "./pages/FocusedChat";
+import VoiceMode from "./components/VoiceMode";
 import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
 
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
@@ -117,6 +118,7 @@ export default function App() {
           </Route>
           <Route path="/apps/commute" element={<CommuteApp />} />
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
+          <Route path="/voice/:contextKey" element={<VoiceMode />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />
