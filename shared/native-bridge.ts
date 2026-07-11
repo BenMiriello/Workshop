@@ -27,6 +27,9 @@ export const RECV_FN = "__WORKSHOP_NATIVE_RECV__";
 export const CAP_METHODS = {
   location: ["getCurrent", "startBackgroundTracking", "stopBackgroundTracking", "trackingStatus"],
   audio: ["startCapture", "stopCapture"],
+  // On-device speech: iOS SFSpeechRecognizer (STT) + AVSpeechSynthesizer (TTS).
+  // Powers voice mode's "native" provider tier — private, offline, no server.
+  speech: ["available", "transcribe", "speak", "stop"],
   localNotify: ["schedule", "cancel", "cancelAll", "permissionStatus", "requestPermission"],
   liveActivity: ["isSupported", "start", "update", "end"],
   secureStore: ["get", "set", "remove"],
@@ -96,6 +99,32 @@ export interface AudioCaptureResult {
   uploaded?: boolean;
 }
 
+export interface SpeechAvailability {
+  /** On-device speech recognition usable (permission + locale installed). */
+  stt: boolean;
+  /** Speech synthesis usable. */
+  tts: boolean;
+}
+
+export interface SpeechTranscribeOptions {
+  /** BCP-47 locale, e.g. "en-US". */
+  locale?: string;
+  /** Prefer on-device recognition (no audio leaves the phone). Default true. */
+  onDevice?: boolean;
+}
+
+export interface SpeechResult {
+  text: string;
+}
+
+export interface SpeechSpeakOptions {
+  /** Named platform voice id, if the caller picked one. */
+  voice?: string;
+  /** 0.5..2.0, 1.0 = normal. */
+  rate?: number;
+  pitch?: number;
+}
+
 /** Status kinds mirror the web design system's five status kinds. */
 export type ActivityStatus = "ok" | "info" | "caution" | "urgent";
 
@@ -149,6 +178,17 @@ export interface WorkshopNative {
   audio: {
     startCapture(opts: AudioCaptureOptions): Promise<void>;
     stopCapture(): Promise<AudioCaptureResult>;
+  };
+
+  speech: {
+    available(): Promise<SpeechAvailability>;
+    /** Start on-device recognition; resolves with the final transcript when the
+     *  recognizer endpoints (the user stops speaking). */
+    transcribe(opts?: SpeechTranscribeOptions): Promise<SpeechResult>;
+    /** Speak one utterance; resolves when it finishes (so callers can chain). */
+    speak(text: string, opts?: SpeechSpeakOptions): Promise<void>;
+    /** Stop any in-flight synthesis and abort recognition. */
+    stop(): Promise<void>;
   };
 
   localNotify: {

@@ -21,10 +21,14 @@ import {
   MicStream,
   ServerSpeaker,
   BrowserSpeaker,
+  NativeSpeaker,
   recognizeOnce,
   transcribeBlob,
+  nativeTranscribe,
   speakFiller,
   detectCaps,
+  splitSentences,
+  cleanForSpeech,
   type EngineCaps,
   type Speaker,
   type SttProvider,
@@ -81,18 +85,6 @@ export type VoiceConfig = {
 };
 
 const ASIDE_RE = /[⟦\[]{1,2}\s*aside:\s*([^⟧\]]+)[⟧\]]{1,2}/gi;
-
-function splitSentencesJS(text: string): string[] {
-  const parts = (text.match(/[^.!?…\n]+[.!?…]*/g) || [])
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const out: string[] = [];
-  for (const p of parts) {
-    if (out.length && p.length < 24) out[out.length - 1] = `${out[out.length - 1]} ${p}`;
-    else out.push(p);
-  }
-  return out.length ? out : [text.trim()].filter(Boolean);
-}
 
 let _tid = 0;
 
@@ -172,9 +164,14 @@ export class VoiceSession {
       });
       this.mic.setSensitivity(this.cfg.prefs.barge_sensitivity);
     } catch (e) {
-      this.error = `mic: ${String(e)}`;
-      this.set("idle");
-      return;
+      // The VAD mic drives capture + hands-free barge-in for the SERVER path.
+      // Browser and native STT capture themselves and interrupt via tap, so a
+      // mic failure there is non-fatal — proceed without VAD.
+      if (this.sttProvider === "server") {
+        this.error = `mic: ${String(e)}`;
+        this.set("idle");
+        return;
+      }
     }
     this.armListen();
   }
@@ -207,7 +204,21 @@ export class VoiceSession {
     this.partial = "";
     this.set("listening");
     if (this.sttProvider === "browser") this.armBrowserListen();
-    else this.armServerListen(); // server + native fall back to recorder for now
+    else if (this.sttProvider === "native") this.armNativeListen();
+    else this.armServerListen();
+  }
+
+  private armNativeListen() {
+    nativeTranscribe()
+      .then((text) => this.onUtterance(text))
+      .catch((e) => {
+        this.error = `stt: ${String(e)}`;
+        this.emit();
+        // fall back if native STT is unusable
+        this.sttProvider = this.caps?.server?.stt.available ? "server"
+          : this.caps?.browserStt ? "browser" : this.sttProvider;
+        if (this.sttProvider !== "native") this.armListen();
+      });
   }
 
   private armServerListen() {
@@ -240,8 +251,9 @@ export class VoiceSession {
   }
 
   private async onSpeechEnd() {
-    // Only the server (recorder) path acts on VAD end; browser STT self-endpoints.
-    if (this.state !== "listening" || this.sttProvider === "browser") return;
+    // Only the server (recorder) path acts on VAD end; browser + native STT
+    // self-endpoint.
+    if (this.state !== "listening" || this.sttProvider !== "server") return;
     if (!this.capturing) return;
     this.capturing = false;
     const blob = await this.mic.stopRecording();
@@ -292,7 +304,7 @@ export class VoiceSession {
   private speakReply(reply: string) {
     const { body, asides } = this.extractAsides(reply);
     if (asides.length) this.queue = [...this.queue, ...asides];
-    const sents = splitSentencesJS(body);
+    const sents = splitSentences(cleanForSpeech(body));
     this.sentences = sents.map((t) => ({ text: t, status: "pending" as SentenceStatus }));
     this.spokenCount = 0;
     if (!sents.length || !this.ttsProvider) {
@@ -304,6 +316,11 @@ export class VoiceSession {
     }
     this.set("speaking");
     this.speaker = this.makeSpeaker();
+    // Echo-aware barge-in: feed the mic the TTS output envelope (server speaker
+    // only) and raise the interrupt bar while speaking.
+    const sp = this.speaker;
+    this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
+    this.mic.setBargeMode(true);
     this.speaker.speak(sents, {
       onSentenceStart: (i) => {
         this.sentences[i] = { ...this.sentences[i], status: "speaking" };
@@ -322,6 +339,7 @@ export class VoiceSession {
   private makeSpeaker(): Speaker {
     const p = this.cfg.prefs;
     if (this.ttsProvider === "server") return new ServerSpeaker({ voice: p.voice, speed: p.speed });
+    if (this.ttsProvider === "native") return new NativeSpeaker({ speed: p.speed });
     return new BrowserSpeaker({ voiceName: undefined, rate: p.speed });
   }
 
@@ -337,6 +355,9 @@ export class VoiceSession {
     const interrupted = this._interrupted;
     this._interrupted = false;
     this.speaker = null;
+    // Leave barge mode; normal-sensitivity VAD for the next user utterance.
+    this.mic.setBargeMode(false);
+    this.mic.setOutputProbe(() => 0);
     // Everything up to `reached` was heard; the rest is the un-said remainder.
     const heard = Math.max(0, Math.min(reached, this.sentences.length));
     if (interrupted && heard < this.sentences.length) {
@@ -348,8 +369,9 @@ export class VoiceSession {
       }
     }
     this.cfg.onPrefsSignal?.(this.turnCount ? this.interrupts / this.turnCount : 0);
-    // After a barge-in the user is already talking → capture that utterance.
-    if (interrupted && this.sttProvider !== "browser") {
+    // After a barge-in on the server path the user is already talking → start
+    // capturing that utterance immediately. Browser/native STT re-arm normally.
+    if (interrupted && this.sttProvider === "server") {
       this.mic.startRecording();
       this.capturing = true;
       this.set("listening");

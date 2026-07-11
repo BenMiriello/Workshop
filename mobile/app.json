@@ -13,7 +13,8 @@
         "UIBackgroundModes": ["location", "audio", "fetch"],
         "NSLocationWhenInUseUsageDescription": "Workshop uses your location for the Location and Commute apps.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Workshop tracks your location in the background to power commute alerts and the location history, replacing OwnTracks.",
-        "NSMicrophoneUsageDescription": "Workshop records audio for the Birds app.",
+        "NSMicrophoneUsageDescription": "Workshop records audio for the Birds app and for talking to your assistant in voice mode.",
+        "NSSpeechRecognitionUsageDescription": "Workshop transcribes your speech on-device so you can talk to your assistant in voice mode.",
         "NSSupportsLiveActivities": true,
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -31,6 +32,13 @@
       [
         "expo-av",
         { "microphonePermission": "Workshop records audio for the Birds app." }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Workshop records audio so you can talk to your assistant in voice mode.",
+          "speechRecognitionPermission": "Workshop transcribes your speech on-device for voice mode."
+        }
       ],
       "expo-notifications",
       [

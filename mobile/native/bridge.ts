@@ -18,6 +18,7 @@ import * as liveActivity from "./liveActivity";
 import * as location from "./location";
 import * as notify from "./notify";
 import * as secureStore from "./secureStore";
+import * as speech from "./speech";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler = (...args: any[]) => Promise<unknown> | unknown;
@@ -32,6 +33,12 @@ const ROUTES: Record<Capability, Record<string, Handler>> = {
   audio: {
     startCapture: audio.startCapture,
     stopCapture: audio.stopCapture,
+  },
+  speech: {
+    available: speech.available,
+    transcribe: speech.transcribe,
+    speak: speech.speak,
+    stop: speech.stop,
   },
   localNotify: {
     schedule: notify.schedule,
