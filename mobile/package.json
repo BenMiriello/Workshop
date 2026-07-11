@@ -19,6 +19,7 @@
     "expo-constants": "~16.0.0",
     "expo-dev-client": "~4.0.28",
     "expo-file-system": "~17.0.1",
+    "expo-font": "~12.0.10",
     "expo-linking": "~6.3.0",
     "expo-location": "~17.0.1",
     "expo-modules-core": "~1.12.26",
@@ -36,5 +37,9 @@
   "devDependencies": {
     "@types/react": "~18.2.79",
     "typescript": "~5.3.3"
+  },
+  "comment:overrides": "expo-font pinned to the SDK-51 version: @expo/vector-icons declares 'expo-font: *', which let npm hoist the latest (55.x) to the top of node_modules, and the native build linked that against SDK-51's expo-modules-core (1.12.x) causing a Swift compile error (Color not conforming to AnyArgument). Forcing 12.0.10 keeps the hoisted copy compatible.",
+  "overrides": {
+    "expo-font": "~12.0.10"
   }
 }
