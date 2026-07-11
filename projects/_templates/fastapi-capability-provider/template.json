@@ -1,0 +1,5 @@
+{
+  "label": "FastAPI capability provider",
+  "hint": "A backend service that declares capabilities it provides and exposes them as FastAPI routes, run by the Workshop app runner.",
+  "substitutions": ["slug", "title", "purpose"]
+}

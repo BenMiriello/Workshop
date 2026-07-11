@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { MessagesSquare } from "lucide-react";
 import {
   Button,
   Card,
   Field,
   Input,
+  Markdown,
   PageHeader,
+  Row,
+  SectionLabel,
   Segmented,
   Select,
+  Skeleton,
   StateBlock,
   Textarea,
   type SegmentedOption,
@@ -16,29 +21,11 @@ import type { ProjectSensitivity } from "@shared/types";
 
 // New-project flow. Single form. Submits to POST /api/projects/ which
 // scaffolds from the chosen template, writes the brief into PROJECT.md,
-// auto-git-inits, registers, and returns the project.
+// auto-git-inits, registers, and returns the project. Templates render purely
+// from GET /api/projects/templates — the backend is the single source of
+// truth for which templates exist and what they're labeled/hinted.
 
 type TemplateInfo = { slug: string; label: string; hint: string };
-
-const TEMPLATE_HINTS: Record<string, string> = {
-  "blank": "Empty scaffold with PROJECT.md, TODO.md, AGENTS.md, .claude/",
-  "static-site": "Single-page HTML/CSS + light-dark color-scheme",
-  "integrated-sub-app": "Mounts under /apps/<slug> in workshop",
-  "standalone-sub-app": "Same package, own origin via TS Serve",
-  "fastapi-capability-provider": "Backend service declaring provides:[…]",
-  "agent-tool": "Letta tool registration",
-  "data-import-and-view": "Ingest routine + viewer page",
-};
-
-const TEMPLATE_LABELS: Record<string, string> = {
-  "blank": "Blank",
-  "static-site": "Static site",
-  "integrated-sub-app": "Integrated sub-app",
-  "standalone-sub-app": "Standalone sub-app",
-  "fastapi-capability-provider": "FastAPI provider",
-  "agent-tool": "Agent tool",
-  "data-import-and-view": "Data import + view",
-};
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "private", label: "Private" },
@@ -49,15 +36,30 @@ const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 
+// Best-effort preview of the PROJECT.md the backend will write, mirroring
+// _scaffold_blank / _scaffold_from_template in backend/routes/projects.py:
+// "blank" lets a supplied brief stand on its own and falls back to a
+// Goal/Constraints/Open-questions skeleton when empty; real templates keep
+// their own PROJECT.md scaffold and merge the brief under a "## Brief" section.
+function previewProjectMd(template: string, title: string, purpose: string, brief: string): string {
+  const heading = `# ${title.trim() || "Untitled project"}\n\n> ${purpose.trim() || "(one-sentence purpose)"}\n\n`;
+  if (template === "blank") {
+    const b = brief.trim();
+    return b
+      ? `${heading}${b}\n`
+      : `${heading}## Goal\n\n## Constraints\n\n- (fill in)\n\n## Open questions\n\n- (fill in)\n`;
+  }
+  return `${heading}(this template's own PROJECT.md scaffold)\n\n## Brief\n\n${brief.trim() || "(brief goes here)"}\n`;
+}
+
 export default function ProjectNew() {
   const nav = useNavigate();
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("");
   const [purpose, setPurpose] = useState("");
   const [template, setTemplate] = useState<string>("blank");
-  const [templates, setTemplates] = useState<TemplateInfo[]>([
-    { slug: "blank", label: "Blank", hint: TEMPLATE_HINTS["blank"] || "" },
-  ]);
+  const [templates, setTemplates] = useState<TemplateInfo[] | null>(null);
+  const [templatesErr, setTemplatesErr] = useState<string | null>(null);
   const [sensitivity, setSensitivity] = useState<ProjectSensitivity>("shareable");
   const [brief, setBrief] = useState("");
   const [busy, setBusy] = useState(false);
@@ -69,19 +71,29 @@ export default function ProjectNew() {
     [slug, slugTouched, title],
   );
 
-  useEffect(() => {
+  const loadTemplates = useCallback(() => {
+    setTemplates(null);
+    setTemplatesErr(null);
     fetch("/api/projects/templates")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((items: { slug: string; label?: string; hint?: string }[]) => {
-        const mapped = items.map((t) => ({
-          slug: t.slug,
-          label: TEMPLATE_LABELS[t.slug] || t.label || t.slug,
-          hint: TEMPLATE_HINTS[t.slug] || t.hint || "",
-        }));
-        if (mapped.length) setTemplates(mapped);
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        return r.json();
       })
-      .catch(() => { /* keep default blank */ });
+      .then((items: TemplateInfo[]) => {
+        setTemplates(items.length ? items : [{ slug: "blank", label: "Blank", hint: "" }]);
+      })
+      .catch((e) => {
+        setTemplatesErr(String(e));
+        setTemplates([]);
+      });
   }, []);
+
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+
+  const selectedTemplate = useMemo(
+    () => templates?.find((t) => t.slug === template) ?? null,
+    [templates, template],
+  );
 
   const submit = async () => {
     setBusy(true);
@@ -112,80 +124,115 @@ export default function ProjectNew() {
   const canSubmit = !!effectiveSlug && !!title.trim() && !busy;
 
   return (
-    <div style={{ maxWidth: 760 }}>
-      <PageHeader title="New project" sub="Scaffold + auto-git + open vibe session" />
-      <Card style={{ padding: "var(--space-5)" }}>
-        <Field label="Title" required>
-          <Input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Noetic landing page"
-            autoFocus
-          />
-        </Field>
-        <Field
-          label="Slug"
-          help="kebab-case · used as the directory name + route segment"
-        >
-          <Input
-            value={effectiveSlug}
-            onChange={(e) => { setSlug(slugify(e.target.value)); setSlugTouched(true); }}
-            placeholder={slugify(title) || "my-project"}
-            spellCheck={false}
-          />
-        </Field>
-        <Field label="Purpose" help="One sentence. Becomes the manifest purpose + first line of PROJECT.md.">
-          <Input
-            value={purpose}
-            onChange={(e) => setPurpose(e.target.value)}
-            placeholder="Public marketing site for Noetic"
-          />
-        </Field>
-        <Field label="Template">
-          <Select
-            value={template}
-            onChange={(e) => setTemplate(e.target.value)}
-          >
-            {templates.map((t) => (
-              <option key={t.slug} value={t.slug}>
-                {t.label}{t.hint ? ` — ${t.hint}` : ""}
-              </option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Sensitivity">
-          <Segmented
-            options={SENS_OPTIONS}
-            value={sensitivity}
-            onChange={setSensitivity}
-            ariaLabel="Sensitivity"
-          />
-        </Field>
-        <Field
-          label="Initial brief"
-          help="Goes into PROJECT.md as the agent's source of truth. Goals, constraints, open questions."
-        >
-          <Textarea
-            value={brief}
-            onChange={(e) => setBrief(e.target.value)}
-            rows={8}
-            placeholder={
-              "Goal:\n- ...\n\nConstraints:\n- ...\n\nOpen questions:\n- ..."
-            }
-          />
-        </Field>
-        {err && (
-          <div style={{ marginTop: "var(--space-3)" }}>
-            <StateBlock variant="error" title="Couldn't create project" hint={<code>{err}</code>} />
-          </div>
-        )}
-        <div style={{ marginTop: "var(--space-4)", display: "flex", gap: "var(--space-3)", justifyContent: "flex-end" }}>
-          <Button variant="ghost" onClick={() => nav("/projects")} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={submit} disabled={!canSubmit} loading={busy}>
-            Scaffold project
+    <div style={{ maxWidth: 1040 }}>
+      <PageHeader title="New project" sub="Scaffold, git-init, and open it" />
+
+      <Row wrap style={{ marginBottom: "var(--space-4)" }}>
+        <Link to="/chat/new-project" style={{ textDecoration: "none" }}>
+          <Button variant="ghost" size="sm">
+            <MessagesSquare aria-hidden /> Prefer to talk it through first? Build with chat
           </Button>
+        </Link>
+      </Row>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-5)", alignItems: "flex-start" }}>
+        <Card style={{ padding: "var(--space-5)", flex: "1 1 420px", minWidth: 0 }}>
+          <Field label="Title" required>
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="What are you building?"
+              autoFocus
+            />
+          </Field>
+          <Field
+            label="Slug"
+            help="kebab-case · used as the directory name + route segment"
+          >
+            <Input
+              value={effectiveSlug}
+              onChange={(e) => { setSlug(slugify(e.target.value)); setSlugTouched(true); }}
+              placeholder={slugify(title) || "my-project"}
+              spellCheck={false}
+            />
+          </Field>
+          <Field label="Purpose" help="Becomes the manifest purpose + first line of PROJECT.md.">
+            <Input
+              value={purpose}
+              onChange={(e) => setPurpose(e.target.value)}
+              placeholder="One sentence: what this is and who it is for"
+            />
+          </Field>
+          <Field label="Template">
+            {templates === null ? (
+              <Skeleton width="60%" />
+            ) : templatesErr ? (
+              <StateBlock
+                variant="error"
+                title="Couldn't load templates"
+                hint={<code>GET /api/projects/templates — {templatesErr}</code>}
+                action={<Button size="sm" onClick={loadTemplates}>Retry</Button>}
+              />
+            ) : (
+              <Select
+                value={template}
+                onChange={(e) => setTemplate(e.target.value)}
+              >
+                {templates.map((t) => (
+                  <option key={t.slug} value={t.slug}>
+                    {t.label}{t.hint ? ` — ${t.hint}` : ""}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <Field label="Sensitivity">
+            <Segmented
+              options={SENS_OPTIONS}
+              value={sensitivity}
+              onChange={setSensitivity}
+              ariaLabel="Sensitivity"
+            />
+          </Field>
+          <Field
+            label="Initial brief"
+            help="Goes into PROJECT.md as the agent's source of truth. Goals, constraints, open questions."
+          >
+            <Textarea
+              value={brief}
+              onChange={(e) => setBrief(e.target.value)}
+              rows={8}
+              placeholder={
+                "Goal:\n- ...\n\nConstraints:\n- ...\n\nOpen questions:\n- ..."
+              }
+            />
+          </Field>
+          {err && (
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <StateBlock variant="error" title="Couldn't create project" hint={<code>{err}</code>} />
+            </div>
+          )}
+          <div style={{ marginTop: "var(--space-4)", display: "flex", gap: "var(--space-3)", justifyContent: "flex-end" }}>
+            <Button variant="ghost" onClick={() => nav("/projects")} disabled={busy}>Cancel</Button>
+            <Button variant="primary" onClick={submit} disabled={!canSubmit} loading={busy}>
+              Create project
+            </Button>
+          </div>
+        </Card>
+
+        <div style={{ flex: "1 1 320px", minWidth: 0 }}>
+          <SectionLabel>Preview</SectionLabel>
+          <Card style={{ padding: "var(--space-5)" }}>
+            {selectedTemplate?.hint && (
+              <p className="ws-muted" style={{ marginTop: 0 }}>{selectedTemplate.hint}</p>
+            )}
+            <span className="ws-card__meta ws-mono" style={{ display: "block", margin: "var(--space-3) 0 var(--space-2)" }}>
+              PROJECT.md
+            </span>
+            <Markdown>{previewProjectMd(template, title, purpose, brief)}</Markdown>
+          </Card>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

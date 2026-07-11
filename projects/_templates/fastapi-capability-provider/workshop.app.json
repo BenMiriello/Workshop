@@ -1,0 +1,17 @@
+{
+  "name": "{{slug}}",
+  "services": [
+    {
+      "name": "api",
+      "cwd": ".",
+      "build": "pip install -r requirements.txt",
+      "start": "uvicorn app.main:app --host 127.0.0.1 --port $PORT",
+      "port_env": "PORT",
+      "health": "/health",
+      "expose": true,
+      "enabled": true,
+      "env": {}
+    }
+  ],
+  "env_requirements": []
+}

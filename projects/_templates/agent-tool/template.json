@@ -1,0 +1,5 @@
+{
+  "label": "Agent tool (Letta)",
+  "hint": "A Letta tool registration skeleton: Python functions with Google-style docstrings, a TOOL_REGISTRY, and a register script.",
+  "substitutions": ["slug", "title", "purpose"]
+}

@@ -62,6 +62,49 @@ def normalize_model(value: str | None) -> str | None:
     )
 
 
+# ---------------------------------------------------------------- ui-card protocol
+# Provider-agnostic contract for the general interactive in-chat UI primitive
+# (phase-1 spec Part A). ANY provider's model can emit a ```ui-card fenced block;
+# the chat frontend renders it as an editable widget (fields + buttons) using the
+# design system. It is NOT auto-applied server-side: the backend passes ui-card
+# blocks through verbatim (the only apply/strip step is BudgetContextProvider's
+# ```plan-patch regex, which does not match this tag), and nothing happens until
+# the operator edits the fields and clicks a registered client action. This string
+# is appended platform-wide via role_preamble so every provider knows the FORMAT;
+# each per-provider persona decides WHEN (and which `kind`) to emit.
+UI_CARD_PROTOCOL = (
+    "=== INTERACTIVE UI CARDS (ui-card) ===\n"
+    "You can render an interactive widget inline in your reply by emitting a "
+    "fenced block tagged `ui-card` whose body is JSON. The client renders it as "
+    "an editable form (fields + buttons) using the app design system; it is NOT "
+    "shown as a code block and is NOT auto-applied. Nothing happens until the "
+    "operator edits the fields and clicks an action button. Format:\n\n"
+    "```ui-card\n"
+    "{\n"
+    '  "id": "<stable-slug-or-nonce>",\n'
+    '  "kind": "<card-kind>",\n'
+    '  "title": "<short heading>",\n'
+    '  "fields": [\n'
+    '    {"name": "<key>", "label": "<label>", "type": "text", "value": "<prefill>",\n'
+    '     "options": [{"value": "...", "label": "..."}], "help": "<optional hint>"}\n'
+    "  ],\n"
+    '  "actions": [\n'
+    '    {"id": "<registered-handler>", "label": "<button text>", "variant": "primary"}\n'
+    "  ]\n"
+    "}\n"
+    "```\n"
+    "Field `type` is one of: text | slug | textarea | template | sensitivity | "
+    "select. `select` carries `options` as a list of {value,label}; `template` "
+    "and `sensitivity` render the standard project controls and need no options. "
+    "`help` is an optional one-line hint. `actions[].id` names a handler the "
+    "client already knows for that card `kind` (e.g. createProject / dismiss); "
+    "`variant` is primary | ghost | danger. Emit a card ONLY when the operator is "
+    "actually ready to take the action it represents, never unprompted and never "
+    "as decoration. Explain the action in plain words next to the card, and emit "
+    "at most one card per reply."
+)
+
+
 # ---------------------------------------------------------------- role preamble
 
 
@@ -90,6 +133,7 @@ def role_preamble(
             "you will do something or that you did it. Answer from the provided "
             "context only; if an action is needed, tell the operator the exact "
             "steps to take or offer to draft the text for them."
+            + "\n\n" + UI_CARD_PROTOCOL
         )
     where = cwd or "the working directory"
     tools = tool_summary or (
@@ -128,6 +172,7 @@ def role_preamble(
         f"You have {tools}, operating in {where}. You can read and edit files, "
         "run commands, and search the project.\n\n"
         + egress
+        + "\n\n" + UI_CARD_PROTOCOL
     )
 
 
@@ -693,6 +738,73 @@ class LocationContextProvider(ContextProvider):
 
     def live_context(self) -> str:
         return _location_snapshot()
+
+
+# ---------------------------------------------------------------- new-project provider
+# Data-mode, text-only assistant for the "build with chat" flow: shape a project
+# idea in conversation, then (only when the operator is ready) emit ONE ui-card of
+# kind project-proposal prefilled from the discussion. The ui-card FORMAT comes
+# from UI_CARD_PROTOCOL in the role preamble; this persona supplies the WHEN plus
+# the field semantics (real template slugs, sensitivity default). No tools, no
+# apply_actions override, so the emitted card reaches the client verbatim.
+
+
+class NewProjectContextProvider(ContextProvider):
+    key = "new-project"
+    label = "New project"
+    role = "assistant"
+    # Text-only: no MCP tools, single-turn text path (like `general`).
+    allowed_tools: list[str] = []
+    mcp_servers: list[str] = []
+    # Shaping a project + producing a clean, prefilled proposal card benefits from
+    # stronger reasoning than the default fast tier; operator can drop to haiku.
+    default_model = _llm.TIER_SONNET
+
+    def persona(self) -> str:
+        try:
+            from routes.projects import load_templates
+            tpls = load_templates()
+        except Exception as e:  # never let the template read break the chat path
+            log.warning("new-project persona: template load failed: %s", e)
+            tpls = [{"slug": "blank", "label": "Blank", "hint": ""}]
+        tpl_lines = "\n".join(
+            f"  - {t['slug']}: {t.get('label') or t['slug']}"
+            + (f" ({t['hint']})" if t.get("hint") else "")
+            for t in tpls
+        )
+        return (
+            "You are Clawd, the operator's assistant inside the Workshop app, "
+            "helping shape a NEW project before it is created. The operator is "
+            "benmiriello, a senior engineer who dislikes padding. Be direct and "
+            "brief. No emojis.\n\n"
+            "Your job in this chat is to turn an idea into a concrete project. "
+            "Draw out and converge on:\n"
+            "  - a short title,\n"
+            "  - a one-sentence purpose (what it is and who it is for),\n"
+            "  - a template chosen from the real templates below,\n"
+            "  - an initial brief: goals, constraints, and open questions.\n\n"
+            "Available templates (use the SLUG as the template field value):\n"
+            f"{tpl_lines}\n\n"
+            "Sensitivity defaults to 'shareable' unless the operator asks for "
+            "'private' or 'public'.\n\n"
+            "When the operator says they are ready (or asks you to create it), "
+            "emit exactly one `ui-card` of kind 'project-proposal', prefilled "
+            "from the discussion, with these fields: title (text), slug (slug, a "
+            "kebab-case version of the title), purpose (text), template "
+            "(template), sensitivity (sensitivity), and brief (textarea, the "
+            "goals/constraints/open-questions written as markdown). Use actions "
+            '[{"id": "createProject", "label": "Create project", "variant": '
+            '"primary"}, {"id": "dismiss", "label": "Dismiss", "variant": '
+            '"ghost"}]. Do NOT emit the card unprompted; keep shaping the idea '
+            "in plain conversation until the operator is actually ready to create "
+            "the project."
+        )
+
+    def live_context(self) -> str:
+        # No live app snapshot for an as-yet-uncreated project; the persona plus
+        # the conversation carry everything. (Overrides the base finance/commute/
+        # location snapshot, which is irrelevant here.)
+        return ""
 
 
 # ============================================================================
@@ -1295,6 +1407,7 @@ PROVIDERS: dict[str, ContextProvider] = {
     "finance": FinanceContextProvider(),
     "commute": CommuteContextProvider(),
     "location": LocationContextProvider(),
+    "new-project": NewProjectContextProvider(),
 }
 
 

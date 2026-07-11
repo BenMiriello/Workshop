@@ -1,0 +1,5 @@
+{
+  "label": "Integrated sub-app",
+  "hint": "A React page that mounts under /apps/<slug> in the Workshop frontend, built from the design system.",
+  "substitutions": ["slug", "title", "purpose"]
+}

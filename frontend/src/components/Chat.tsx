@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
-  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines,
+  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines, Volume2, VolumeX,
 } from "lucide-react";
 import { useDictation } from "../lib/useDictation";
+import { useReplySpeaker } from "../lib/useReplySpeaker";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
   chatApi,
@@ -17,6 +18,8 @@ import {
   type AgentTaskStatus,
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
+import { UiCard, splitUiCards, hasUiCard } from "./chat/UiCard";
+import { type UiCardCtx } from "./chat/uiCardActions";
 
 // Unified Chat component. Replaces ChatPanel + BuildChatPanel.
 //
@@ -207,6 +210,36 @@ function ElidedContent({
   );
 }
 
+// The answer body of an assistant turn. When it contains no ```ui-card block it
+// behaves exactly as before (elided markdown). When it does, the text is split
+// on the fenced blocks: surrounding markdown renders normally and each block
+// renders as an interactive <UiCard/>, interleaved in order. A ui-card message
+// is intentionally interactive, so its markdown runs are not elided (the card
+// must stay fully visible). Works identically for a live-streamed answer and a
+// stored message on reload, because both flow through here.
+function AnswerBody({
+  source, cfg, expanded, cardCtx,
+}: {
+  source: string;
+  cfg: ModelDisplay;
+  expanded?: boolean;
+  cardCtx: UiCardCtx;
+}) {
+  if (!hasUiCard(source)) {
+    return <ElidedContent source={source} cfg={cfg} expanded={expanded} render={(s) => <Markdown>{s}</Markdown>} />;
+  }
+  const parts = splitUiCards(source);
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.t === "md"
+          ? (p.text.trim() ? <Markdown key={i}>{p.text}</Markdown> : null)
+          : <UiCard key={i} spec={p.spec} raw={p.raw} ctx={cardCtx} />,
+      )}
+    </>
+  );
+}
+
 // The "work" of an assistant turn — its tool calls + interim text. On the most
 // recent turn the latest few steps stay inline and older ones fold into a
 // re-openable accordion; on older turns all of it folds away (just the answer
@@ -246,7 +279,7 @@ function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boo
 // An assistant turn: split the trailing run of text (the answer) from the work
 // (tools + interim thinking). The answer renders fully on the most recent turn
 // and is elided on older ones; the work collapses per WorkSteps.
-function AssistantTurn({ segments, isLatest, model }: { segments: ChatSegment[]; isLatest: boolean; model?: string }) {
+function AssistantTurn({ segments, isLatest, model, cardCtx }: { segments: ChatSegment[]; isLatest: boolean; model?: string; cardCtx: UiCardCtx }) {
   const cfg = modelDisplay(model);
   let cut = segments.length;
   while (cut > 0 && segments[cut - 1].t === "text") cut--;
@@ -257,13 +290,7 @@ function AssistantTurn({ segments, isLatest, model }: { segments: ChatSegment[];
       {work.length > 0 && <WorkSteps work={work} isLatest={isLatest} cfg={cfg} />}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (
-          <ElidedContent
-            key={i}
-            source={s.text}
-            cfg={cfg}
-            expanded={isLatest}
-            render={(src) => <Markdown>{src}</Markdown>}
-          />
+          <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} />
         ) : null,
       )}
     </>
@@ -327,6 +354,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     dictation.toggle();
     inputRef.current?.focus();
   }, [dictation, input]);
+
+  // "Speak replies" toggle: reads each freshly-arrived assistant message aloud.
+  // speakNextRef is armed when we send a turn so we only speak turns we started,
+  // never messages loaded from history when switching threads.
+  const replySpeaker = useReplySpeaker();
+  const speakNextRef = useRef(false);
 
   // Provider list (scoped to this app, or the full cross-context list).
   useEffect(() => {
@@ -634,11 +667,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       return;
     }
     if (effectiveMode !== "build" && busy) return;
+    // Arm reply-speaking for the turn we're about to start; stop any reply still
+    // being read so a new question cuts off the old answer.
+    speakNextRef.current = true;
+    replySpeaker.stop();
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     if (effectiveMode === "build") sendBuild(text);
     else sendData(text);
-  }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
+  }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue, replySpeaker]);
+
+  // Speak a freshly-arrived assistant reply when the toggle is on (both modes).
+  useEffect(() => {
+    if (!speakNextRef.current) return;
+    const last = messages[messages.length - 1];
+    if (last && last.role === "assistant" && !last.meta?.error) {
+      speakNextRef.current = false;
+      replySpeaker.speak(last.content);
+    }
+  }, [messages, replySpeaker]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -866,20 +913,20 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }
   const threadCfg = modelDisplay(selectedModel);
 
+  // Context passed to any in-chat ui-card: navigation, the current context key,
+  // the active thread id, and the rescope wrapper (Move-chat-into-project).
+  const cardCtx = useMemo<UiCardCtx>(
+    () => ({ navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread }),
+    [navigate, contextKey, activeId],
+  );
+
   const renderAssistant = (m: ChatMsg, isLatest: boolean) => {
     if (m.meta?.error) return m.content;
     const model = m.meta?.model ?? selectedModel;
     if (m.meta?.segments && m.meta.segments.length) {
-      return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} />;
+      return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx} />;
     }
-    return (
-      <ElidedContent
-        source={m.content}
-        cfg={modelDisplay(model)}
-        expanded={isLatest}
-        render={(s) => <Markdown>{s}</Markdown>}
-      />
-    );
+    return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
   };
 
   const log = (
@@ -923,7 +970,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         <div className="chat-msg assistant">
           <div className="chat-bubble">
             {pendingSegments.length > 0 && (
-              <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} />
+              <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} cardCtx={cardCtx} />
             )}
             {(streaming || busy) && <span className="chat-typing" aria-label="working">•••</span>}
           </div>
@@ -1043,6 +1090,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             title={dictation.recording ? "Stop dictation" : "Dictate (speech to text)"}
           >
             <Mic size={16} aria-hidden />
+          </button>
+        )}
+        {replySpeaker.available && (
+          <button
+            className={`chat-slash-btn${replySpeaker.on ? " is-active" : ""}`}
+            onClick={replySpeaker.toggle}
+            aria-label={replySpeaker.on ? "Stop speaking replies" : "Speak replies"}
+            title={replySpeaker.on ? "Speaking replies aloud (tap to mute)" : "Speak replies aloud"}
+          >
+            {replySpeaker.on ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
           </button>
         )}
         {!streamingBuild && (

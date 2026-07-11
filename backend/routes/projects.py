@@ -120,16 +120,35 @@ class FileWriteIn(BaseModel):
 
 # ---- Templates --------------------------------------------------------------
 
-@router.get("/templates")
-async def list_templates() -> list[dict]:
-    """List available templates. 'blank' is always available (programmatic
-    scaffold); the rest are detected from `_templates/<name>/` directories."""
+def load_templates() -> list[dict]:
+    """The template catalog as `{slug, label, hint}`. Single source of truth for
+    both the /templates route and chat_context's new-project persona.
+
+    'blank' is always first (programmatic scaffold, no on-disk dir). Each on-disk
+    `_templates/<name>/` reads its `template.json` for `label`/`hint`; a template
+    with no (or a malformed) manifest falls back to the dir name + empty hint."""
     items = [{"slug": "blank", "label": "Blank", "hint": "Empty scaffold with the standard files"}]
     if TEMPLATES_ROOT.exists():
         for entry in sorted(TEMPLATES_ROOT.iterdir()):
-            if entry.is_dir() and not entry.name.startswith("."):
-                items.append({"slug": entry.name, "label": entry.name, "hint": ""})
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            label, hint = entry.name, ""
+            manifest = entry / "template.json"
+            if manifest.exists():
+                try:
+                    meta = json.loads(manifest.read_text())
+                    label = str(meta.get("label") or entry.name)
+                    hint = str(meta.get("hint") or "")
+                except (json.JSONDecodeError, OSError):
+                    pass
+            items.append({"slug": entry.name, "label": label, "hint": hint})
     return items
+
+
+@router.get("/templates")
+async def list_templates() -> list[dict]:
+    """List available templates ({slug,label,hint}). See load_templates."""
+    return load_templates()
 
 
 # ---- List / get -------------------------------------------------------------
@@ -155,10 +174,14 @@ def _scaffold_blank(target: Path, slug: str, title: str, purpose: str, brief: st
     target.mkdir(parents=True, exist_ok=False)
     (target / "src").mkdir()
     _write_text(target / ".gitignore", "node_modules/\ndist/\nINTERVENTIONS.md\n.DS_Store\n")
-    _write_text(
-        target / "PROJECT.md",
-        f"# {title}\n\n> {purpose}\n\n## Goal\n\n{brief}\n\n## Constraints\n\n- (fill in)\n\n## Open questions\n\n- (fill in)\n",
-    )
+    # A supplied brief stands on its own (the operator or the new-project chat
+    # already structures it). Only fall back to the Goal/Constraints/Open
+    # questions skeleton when no brief was given, so we never duplicate headings.
+    if brief.strip():
+        project_md = f"# {title}\n\n> {purpose}\n\n{brief.strip()}\n"
+    else:
+        project_md = f"# {title}\n\n> {purpose}\n\n## Goal\n\n## Constraints\n\n- (fill in)\n\n## Open questions\n\n- (fill in)\n"
+    _write_text(target / "PROJECT.md", project_md)
     _write_text(target / "TODO.md", "# TODO\n\n- [ ] First task\n")
     _write_text(target / "AGENTS.md",
         "# Agent rules for this project\n\n"
@@ -188,6 +211,11 @@ def _scaffold_from_template(target: Path, template: str, slug: str, title: str, 
         _scaffold_blank(target, slug, title, purpose, brief)
         return
     shutil.copytree(tpl_dir, target)
+    # template.json is template metadata (label/hint for the picker), not project
+    # content, so drop it from the scaffolded project rather than ship it as cruft.
+    tpl_manifest = target / "template.json"
+    if tpl_manifest.exists():
+        tpl_manifest.unlink()
     # Token substitution in text files.
     for path in target.rglob("*"):
         if not path.is_file():
@@ -202,10 +230,16 @@ def _scaffold_from_template(target: Path, template: str, slug: str, title: str, 
                .replace("{{purpose}}", purpose))
         if new != text:
             path.write_text(new)
-    # PROJECT.md gets the operator-supplied brief overlaid.
+    # Merge the operator-supplied brief under a `## Brief` section rather than
+    # overwriting the template's richer PROJECT.md (which carries the template's
+    # own goal/constraints/open-questions scaffold). Append so the template's
+    # structure is preserved and the brief is additive.
     brief_path = target / "PROJECT.md"
     if brief.strip():
-        brief_path.write_text(f"# {title}\n\n> {purpose}\n\n## Goal\n\n{brief}\n")
+        existing = brief_path.read_text() if brief_path.exists() else f"# {title}\n\n> {purpose}\n"
+        if not existing.endswith("\n"):
+            existing += "\n"
+        brief_path.write_text(existing + f"\n## Brief\n\n{brief.strip()}\n")
 
 
 def _git_init(target: Path) -> None:

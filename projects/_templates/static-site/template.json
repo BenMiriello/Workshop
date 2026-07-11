@@ -1,0 +1,5 @@
+{
+  "label": "Static site",
+  "hint": "Single-page HTML/CSS/JS site, no build step. Add Vite + TS later if it grows.",
+  "substitutions": ["slug", "title", "purpose"]
+}

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -28,6 +29,10 @@ from services import draft_store
 
 log = logging.getLogger("workshop.chat")
 router = APIRouter()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 # Default chat model — haiku is plenty fast and good enough for the chat surface.
 # Budget chat opts up to sonnet via PROVIDER_MODELS when a per-app override is
@@ -80,6 +85,10 @@ class PostMessage(BaseModel):
 
 class RenameThread(BaseModel):
     title: str
+
+
+class RescopeThread(BaseModel):
+    context_key: str
 
 
 def _resolve_model(
@@ -188,6 +197,55 @@ async def rename(thread_id: str, body: RenameThread):
 @router.delete("/threads/{thread_id}")
 async def remove(thread_id: str):
     return {"deleted": chat_store.delete_thread(thread_id)}
+
+
+@router.post("/threads/{thread_id}/rescope")
+async def rescope_thread(thread_id: str, body: RescopeThread):
+    """Re-key a thread to a new scope (the Move-chat-into-project conversion).
+
+    Thread identity is its id + message history, which are unchanged: only the
+    context_key field moves (e.g. `new-project` -> `project:<slug>`), so the next
+    turn layers the new provider's context on top of the same conversation.
+    Multiple threads may share a context_key (the store filters by key, it never
+    assumes uniqueness), so no collision handling is needed. Provenance is recorded
+    in converted_from + converted_at."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+
+    new_key = (body.context_key or "").strip()
+    if not new_key:
+        raise HTTPException(400, "context_key required")
+
+    # Validate the target resolves to a REAL provider. get_provider constructs a
+    # provider for any project:/build: key and returns the matching-key provider
+    # for a registered static key, but falls back to `general` for an unknown
+    # static key, so a resolved key that doesn't equal the request is bogus.
+    provider = chat_context.get_provider(new_key)
+    if provider.key != new_key:
+        raise HTTPException(400, f"unknown context_key: {new_key}")
+
+    old_key = t.get("context_key")
+    if new_key != old_key:
+        t["converted_from"] = old_key
+        t["converted_at"] = _now_iso()
+    t["context_key"] = new_key
+    chat_store.save_thread(t)
+
+    msgs = t.get("messages", [])
+    return {
+        "id": t["id"],
+        "context_key": new_key,
+        "converted_from": t.get("converted_from"),
+        "converted_at": t.get("converted_at"),
+        "agent_id": t.get("agent_id"),
+        "model": t.get("model"),
+        "title": t.get("title", "New chat"),
+        "created_at": t.get("created_at"),
+        "updated_at": t.get("updated_at"),
+        "message_count": len(msgs),
+        "last_message": (msgs[-1]["content"][:120] if msgs else ""),
+    }
 
 
 def _build_prompt(

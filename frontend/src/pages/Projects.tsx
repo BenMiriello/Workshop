@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Download, Plus, FolderGit2 } from "lucide-react";
+import { Download, MessagesSquare, Plus, FolderGit2 } from "lucide-react";
 import type { Project, ProjectSensitivity, ProjectState } from "@shared/types";
 import {
   Button,
@@ -187,6 +187,11 @@ export default function Projects() {
             <Link to="/projects/new">
               <Button variant="primary" size="sm">
                 <Plus aria-hidden /> New project
+              </Button>
+            </Link>
+            <Link to="/chat/new-project">
+              <Button variant="ghost" size="sm">
+                <MessagesSquare aria-hidden /> Build with chat
               </Button>
             </Link>
             <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>

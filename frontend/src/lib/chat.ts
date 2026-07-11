@@ -102,6 +102,17 @@ export const chatApi = {
 
   getThread: (id: string) => fetch(`/api/chat/threads/${id}`).then(j<Thread>),
 
+  // Re-key a thread onto a new context/provider (used by a ui-card's
+  // Move-chat-into-project action). The thread id + history are unchanged; only
+  // its context_key moves. Backend validates the key resolves to a real provider
+  // (unknown -> 400). Same /api/chat/threads base path as the other calls.
+  rescopeThread: (id: string, contextKey: string) =>
+    fetch(`/api/chat/threads/${id}/rescope`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context_key: contextKey }),
+    }).then(j<ThreadSummary>),
+
   deleteThread: (id: string) =>
     fetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then(j<{ deleted: boolean }>),
 
