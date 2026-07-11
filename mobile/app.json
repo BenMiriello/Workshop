@@ -37,7 +37,8 @@
         "expo-build-properties",
         { "ios": { "deploymentTarget": "16.2" } }
       ],
-      "./plugins/withLiveActivity"
+      "./plugins/withLiveActivity",
+      "./plugins/withoutRemotePush"
     ],
     "extra": {
       "comment": "The mobile app points at ONE Workshop backend origin (see native/config.ts). No host is committed here: it defaults to the operator's public deployment, and you override for dev via EXPO_PUBLIC_WORKSHOP_URL in mobile/.env.local (e.g. a tailnet URL) or by adding \"serverUrl\": \"https://...\" to this block. /api is proxied to the backend at every origin, so one URL serves the WebView + native producers. tier flips to 'paid' after Apple Developer Program enrolment.",
