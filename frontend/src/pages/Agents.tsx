@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain, Clock } from "lucide-react";
+import { Plus, Bot, Brain, Clock, PanelsTopLeft } from "lucide-react";
 import type { Agent, BuildAgent, Project } from "@shared/types";
 import {
   Button,
@@ -416,8 +416,12 @@ export default function Agents() {
             }
             const a = r.agent;
             return (
-              <li key={`build:${a.slug}`}>
-                <Link to={`/agents/build/${a.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
+              <li key={`build:${a.slug}`} className="ws-agent-card-cell">
+                {/* Card body opens the agent's CHAT directly; the corner button
+                    opens the full builder workbench (files/editor/preview/diff).
+                    The button is a sibling of the Link (not nested) so it stays
+                    valid HTML and its click doesn't trigger the card navigation. */}
+                <Link to={`/chat/${encodeURIComponent(`build:${a.slug}`)}`} style={{ textDecoration: "none", color: "inherit" }}>
                   <Card interactive className="ws-agent-card">
                     <Row between>
                       <h2 className="ws-card__title">
@@ -435,6 +439,15 @@ export default function Agents() {
                     </p>
                   </Card>
                 </Link>
+                <button
+                  type="button"
+                  className="ws-agent-card__workbench"
+                  onClick={() => nav(`/agents/build/${a.slug}`)}
+                  title="Open builder workbench (files · editor · preview · diff)"
+                  aria-label="Open builder workbench"
+                >
+                  <PanelsTopLeft size={16} aria-hidden />
+                </button>
               </li>
             );
           })}

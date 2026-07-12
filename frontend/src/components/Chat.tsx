@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines, Volume2, VolumeX,
+  PanelsTopLeft,
 } from "lucide-react";
 import { useDictation } from "../lib/useDictation";
 import { useReplySpeaker } from "../lib/useReplySpeaker";
@@ -939,6 +940,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {variant === "full" && (
         <button className="chat-tb__btn" onClick={back} title="Back" aria-label="Back">
           <ChevronLeft size={16} aria-hidden />
+        </button>
+      )}
+      {/* Build agents: from the focused chat, open the full workbench (files /
+          editor / preview / diff). Only in the full chat — inside the workbench
+          itself the chat is already embedded, so the button would be redundant. */}
+      {effectiveMode === "build" && slug && variant === "full" && (
+        <button
+          className="chat-tb__btn"
+          onClick={() => navigate(`/agents/build/${slug}`)}
+          title="Open builder workbench (files · editor · preview · diff)"
+          aria-label="Open builder workbench"
+        >
+          <PanelsTopLeft size={16} aria-hidden />
         </button>
       )}
       {showProviderPicker && providers.length > 0 && effectiveMode === "data" && (

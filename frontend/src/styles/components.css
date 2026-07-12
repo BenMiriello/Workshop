@@ -230,6 +230,26 @@ a.ws-btn { text-decoration: none; }
    empty meta line. */
 .ws-agent-card__when { margin-top: auto; padding-top: var(--space-2); min-height: 1.2em; }
 
+/* Build-agent card cell: the card body links to the chat; a corner button opens
+   the full workbench. The button is a sibling of the card link (valid HTML), so
+   the cell is the positioning context and reserves room so the button never sits
+   on the timestamp. */
+.ws-agent-card-cell { position: relative; }
+.ws-agent-card-cell .ws-agent-card__when { padding-right: 2.2rem; }
+.ws-agent-card__workbench {
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-3);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.9rem; height: 1.9rem; padding: 0;
+  border-radius: var(--radius-md); cursor: pointer;
+  background: var(--bg-inset); color: var(--muted); border: 1px solid var(--border);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+.ws-agent-card__workbench:hover { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.ws-agent-card__workbench svg { width: 16px; height: 16px; stroke-width: 1.8; }
+
 /* ---- FIELD / INPUT / SELECT / TEXTAREA ----------------------------------- */
 .ws-field { display: flex; flex-direction: column; gap: var(--space-2); }
 .ws-field__label { font-size: var(--fs-sm); font-weight: var(--fw-medium); color: var(--fg); }
@@ -784,14 +804,19 @@ a.ws-btn { text-decoration: none; }
   }
   /* A persisted desktop focus must not hide a region on mobile — re-show all. */
   .ws-agent-build[data-focus] > .ws-agent-build__region { display: flex; }
-  .ws-agent-build > .ws-agent-build__chat   { order: 0; min-height: 60vh; }
+  /* The embedded chat is BOUNDED — never full page length. A definite height,
+     comfortably under a phone's viewport, caps it and lets the log scroll INSIDE
+     rather than growing the page. (Full-screen is the toolbar workbench/expand
+     button, not this inline panel.) */
+  .ws-agent-build > .ws-agent-build__chat   { order: 0; height: 70vh; }
   .ws-agent-build > .ws-agent-build__main   { order: 1; }
   .ws-agent-build > .ws-agent-build__files  { order: 2; }
   .ws-agent-build .ws-agent-build__region-body { overflow: visible; }
   .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; overflow: auto; }
   .ws-region-head__focus { display: none; }
-  /* The chat region's own body must let its panel size + scroll internally. */
-  .ws-agent-build__chat .ws-agent-build__region-body { min-height: 0; }
+  /* The chat region's own body bounds its panel and scrolls internally, so the
+     conversation can never run the full length of the page. */
+  .ws-agent-build__chat .ws-agent-build__region-body { min-height: 0; overflow: hidden; }
 }
 
 .ws-agent-build__status {
