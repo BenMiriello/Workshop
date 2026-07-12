@@ -186,7 +186,19 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
   skill: `shared/skills/frontend-design-system`. Verified: unit tests (store + loader + non-clobber linking),
   full API round-trip, and a LIVE end-to-end chat turn where the assistant loaded the skill and its reply
   reflected the skill body (primitives / no-hex / edit-mode / the exact check commands).
-- **Phase 6:** voice modality toggle. Builder voice parked.
+- **Phase 6 (SATISFIED 2026-07-12 by the parallel voice work — supersedes this spec):** voice as a
+  per-thread modality toggle. This is DONE and shipped, more completely than the narrower plan below.
+  The shared chat composer (`frontend/src/components/Chat.tsx`, rendered by every chat surface:
+  ChatDock / ChatPanel / BuildChatPanel / FocusedChat / AgentBuild) carries a single `AudioLines`
+  "Voice mode" toggle that opens `/voice/:contextKey?thread=<id>` (VoiceMode + useVoiceSession, the same
+  data-mode /messages path). It is the sole voice entry point (no duplicates), present on ALL chats.
+  Divergence from the original spec, and it is the RIGHT call — keep it: (1) the toggle NAVIGATES to a
+  full-screen voice surface rather than mounting in place, and (2) voice is enabled for BUILD chats too
+  ("voice-driven building", commit 9fcd57a) instead of being disabled/parked. The plan's "mount in place,
+  data-mode only, builder parked" is therefore obsolete. Verified 2026-07-12: the toggle renders + is
+  visible in the composer across surfaces. Do NOT build a second/competing toggle — that would duplicate a
+  live, actively-maintained system. Original (now-obsolete) spec: "promote /voice/:key to a mic toggle in
+  the chat toolbar that mounts VoiceSession in place, gated to data-mode keys; builder voice parked."
 
 Ordering: 1 delivers the motivating UX; 2+3 build the knowledge/context core the notes app needs
 before it is written; 4 pays down the Ralph gap; 5+6 additive, can interleave.
