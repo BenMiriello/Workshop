@@ -52,6 +52,9 @@ export type ChatProps = {
   // owns a single expand control for the chat (e.g. AgentBuild's region focus),
   // so there aren't two maximize buttons doing near-identical things.
   hideExpand?: boolean;
+  // Open a SPECIFIC thread on mount (e.g. resuming a draft project chat from a
+  // link) instead of the most-recent one for this scope.
+  initialThreadId?: string;
 };
 
 function deriveMode(contextKey: string): ChatMode {
@@ -312,7 +315,7 @@ function AssistantTurn({ segments, isLatest, model, cardCtx, streaming }: { segm
   );
 }
 
-export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand }: ChatProps) {
+export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand, initialThreadId }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
 
@@ -602,7 +605,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (cancelled) return;
         setThreads(list);
         if (list.length) {
-          const t = await chatApi.getThread(list[0].id);
+          // Prefer an explicitly-requested thread (resuming a draft via link),
+          // else the most recent one for this scope.
+          const target = (initialThreadId && list.some((x) => x.id === initialThreadId))
+            ? initialThreadId : list[0].id;
+          const t = await chatApi.getThread(target);
           if (cancelled) return;
           setActiveId(t.id);
           if (t.model) setSelectedModel(t.model);

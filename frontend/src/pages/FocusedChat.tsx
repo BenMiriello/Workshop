@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import Chat from "../components/Chat";
 
 // Focused-chat route. Mounts Chat in "full" variant: a centred, viewport-tall
@@ -9,6 +9,10 @@ import Chat from "../components/Chat";
 export default function FocusedChat() {
   const { contextKey: raw = "" } = useParams();
   const contextKey = decodeURIComponent(raw);
+  // `?thread=<id>` resumes a specific conversation (e.g. a draft project chat
+  // reopened from the Projects page) rather than the most recent one.
+  const [search] = useSearchParams();
+  const initialThreadId = search.get("thread") || undefined;
 
   // Pin the full-screen shell to the *visual* viewport so the composer sits
   // right above the keyboard and the messages above it stay put.
@@ -48,5 +52,5 @@ export default function FocusedChat() {
     };
   }, []);
 
-  return <Chat contextKey={contextKey} variant="full" />;
+  return <Chat contextKey={contextKey} variant="full" initialThreadId={initialThreadId} />;
 }
