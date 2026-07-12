@@ -47,9 +47,16 @@ export type VoicePrefs = {
   speed: number;
   tts_provider: "auto" | "server" | "browser" | "off";
   stt_provider: "auto" | "server" | "browser";
+  // Input lane. When false, the mic is off and the composer is the only input.
+  mic_enabled: boolean;
   // Voice-output lane. When false, replies render as captions only (marked
   // heard immediately) — this is the mute, decoupled from the engine choice.
   speak_replies: boolean;
+  // Typing holds my turn: while typing, the voice endpoint is deferred.
+  typing_hold: boolean;
+  typing_hold_ms: number;
+  // Enter sends and interrupts ongoing speech (vs. queueing the send).
+  enter_interrupts: boolean;
   // Trailing silence (ms) before we take a turn — "Pause before reply".
   endpoint_silence_ms: number;
   // Speculative endpointing: think during an early pause; speak on confirmation.
@@ -65,7 +72,11 @@ export const DEFAULT_PREFS: VoicePrefs = {
   speed: 1.0,
   tts_provider: "auto",
   stt_provider: "auto",
+  mic_enabled: true,
   speak_replies: true,
+  typing_hold: true,
+  typing_hold_ms: 3000,
+  enter_interrupts: true,
   endpoint_silence_ms: 900,
   eager_endpoint: true,
   eager_silence_ms: 400,
@@ -89,6 +100,11 @@ export type VoiceSnapshot = {
   interruptRate: number;
   // Endpoint -> first-audio latency of the last turn (ms), for the footer readout.
   lastTurnMs: number | null;
+  // In-progress voice transcript (segments captured but not yet sent) — shown as
+  // ghost text above the composer so nothing is sent unseen.
+  pendingUser: string;
+  // A typed send is queued until the assistant finishes speaking.
+  queuedSend: boolean;
 };
 
 export type ReplyHandle = {
@@ -161,6 +177,12 @@ export class VoiceSession {
   private resumedSinceCut = false;    // user resumed speaking after the last cut
   private held = false;               // a speculative draft is streaming, held silent
   private draftText = "";             // text the current draft was fired with
+  // Mixed input/output state.
+  private micOff = false;             // mic lane disabled (composer-only input)
+  private typing = false;             // composer currently has text
+  private lastKeystroke = 0;
+  private pendingSend: string | null = null;  // typed turn queued while speaking
+  private typingTimer: ReturnType<typeof setTimeout> | null = null;
   private listeners = new Set<() => void>();
   // Cached immutable snapshot. Rebuilt only when state mutates (emit invalidates
   // it). useSyncExternalStore compares with Object.is, so returning a stable
@@ -198,6 +220,8 @@ export class VoiceSession {
       error: this.error,
       interruptRate: this.turnCount ? this.interrupts / this.turnCount : 0,
       lastTurnMs: this.lastTurnMs,
+      pendingUser: this.segs.join(" ").trim(),
+      queuedSend: this.pendingSend !== null,
     };
     return this._snapshot;
   }
@@ -213,6 +237,8 @@ export class VoiceSession {
     // Eager endpointing only makes sense on the server STT path (browser/native
     // self-endpoint, so there is no mid-utterance pause for us to act on).
     this.mic.setEager(p.eager_endpoint && this.sttProvider === "server", p.eager_silence_ms);
+    // Live mic-lane toggle once a session is running.
+    if (this.state !== "idle" && this.state !== "connecting") this.setMicEnabled(p.mic_enabled);
   }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -222,6 +248,15 @@ export class VoiceSession {
     this.error = null;
     this.caps = await detectCaps();
     this.resolveProviders();
+    this.micOff = !this.cfg.prefs.mic_enabled;
+    if (!this.micOff) {
+      const ok = await this.startMic();
+      if (!ok && this.sttProvider === "server") { this.set("idle"); return; }
+    }
+    this.armListen();
+  }
+
+  private async startMic(): Promise<boolean> {
     try {
       await this.mic.start({
         onLevel: (v) => { this.level = v; this.emit(); },
@@ -231,17 +266,27 @@ export class VoiceSession {
       });
       this.mic.setSensitivity(this.cfg.prefs.barge_sensitivity);
       this.mic.setEager(this.cfg.prefs.eager_endpoint && this.sttProvider === "server", this.cfg.prefs.eager_silence_ms);
+      return true;
     } catch (e) {
       // The VAD mic drives capture + hands-free barge-in for the SERVER path.
-      // Browser and native STT capture themselves and interrupt via tap, so a
-      // mic failure there is non-fatal — proceed without VAD.
-      if (this.sttProvider === "server") {
-        this.error = `mic: ${String(e)}`;
-        this.set("idle");
-        return;
-      }
+      // Browser and native STT capture themselves, so a mic failure there is
+      // non-fatal — proceed without VAD.
+      if (this.sttProvider === "server") { this.error = `mic: ${String(e)}`; return false; }
+      return true;
     }
-    this.armListen();
+  }
+
+  // Toggle the mic lane live without ending the session (composer stays usable).
+  setMicEnabled(on: boolean) {
+    if (on === !this.micOff) return;
+    this.micOff = !on;
+    if (!on) {
+      this.mic.stop();
+      this.capturing = false;
+      this.emit();
+    } else if (this.state !== "idle" && this.state !== "connecting") {
+      this.startMic().then((ok) => { if (ok) this.armListen(); });
+    }
   }
 
   stop() {
@@ -273,7 +318,16 @@ export class VoiceSession {
   // ---- listening -----------------------------------------------------------
   private armListen() {
     this.partial = "";
+    // If a typed send was queued while speaking, fire it instead of listening.
+    if (this.pendingSend !== null) {
+      const t = this.pendingSend;
+      this.pendingSend = null;
+      this.set("listening");
+      this.startTurn(t);
+      return;
+    }
     this.set("listening");
+    if (this.micOff) return;   // composer-only: no mic capture
     if (this.sttProvider === "browser") this.armBrowserListen();
     else if (this.sttProvider === "native") this.armNativeListen();
     else this.armServerListen();
@@ -341,6 +395,14 @@ export class VoiceSession {
       try { const t = await transcribeBlob(blob); if (t) this.segs.push(t); }
       catch { /* keep whatever segments we have */ }
     }
+    // The user is typing — hold this turn open (defer the endpoint) and keep
+    // capturing; onTypingReleased or an Enter-send will finalize it.
+    if (this.typingHoldActive()) {
+      if (this.held) this.supersedeDraft();
+      this.armServerListen();
+      this.emit();
+      return;
+    }
     const final = this.segs.join(" ").trim();
     if (!final) {
       if (this.held) this.supersedeDraft();
@@ -372,6 +434,7 @@ export class VoiceSession {
     if (this.state !== "listening" || this.sttProvider !== "server") return;
     if (!this.cfg.prefs.eager_endpoint || !this.ttsProvider) return;
     if (this.held || !this.capturing) return;
+    if (this.typingHoldActive()) return;   // the user is typing — wait for them
     if (this.eagerFires >= 2) return;
     this.eagerFires += 1;
     this.resumedSinceCut = false;
@@ -443,6 +506,11 @@ export class VoiceSession {
     const text = (raw || "").trim();
     this.partial = "";
     if (!text) { this.armListen(); return; }
+    this.startTurn(text);
+  }
+
+  // Kick off a (non-speculative) reply turn for a finished utterance.
+  private startTurn(text: string) {
     this.lastUser = text;
     this.turnCount += 1;
     this.tEndpoint = performance.now();
@@ -450,6 +518,56 @@ export class VoiceSession {
     // Cold-start filler so there's no dead air while a server session warms up.
     if (this.turnCount === 1 && this.ttsProvider === "server") speakFiller("One moment.");
     this.beginReply(text);
+  }
+
+  // ---- typed input (mixed modes) ------------------------------------------
+  // Send a typed message. Merges any pending voice segments captured this turn,
+  // so "type over" what you were saying sends both, transcript first.
+  submitText(raw: string) {
+    const typed = (raw || "").trim();
+    const merged = [this.segs.join(" ").trim(), typed].filter(Boolean).join(" ").trim();
+    this.resetSegs();
+    this.typing = false;
+    if (!merged) return;
+    if (this.state === "speaking") {
+      if (this.cfg.prefs.enter_interrupts) {
+        this.bargeIn();               // stop speech, queue remainder, then send
+      } else {
+        this.pendingSend = merged;    // hold until speaking finishes
+        this.emit();
+        return;
+      }
+    }
+    if (this.held) this.supersedeDraft();
+    this.startTurn(merged);
+  }
+
+  // Typing is a soft turn-hold: while the composer has text (or a keystroke
+  // landed recently) the voice endpoint is deferred, as if the user is still
+  // "speaking". Called by the composer on every change.
+  setTyping(active: boolean) {
+    this.typing = active;
+    this.lastKeystroke = performance.now();
+    if (this.typingTimer) clearTimeout(this.typingTimer);
+    if (!active) {
+      this.typingTimer = setTimeout(() => this.onTypingReleased(), this.cfg.prefs.typing_hold_ms);
+    }
+  }
+
+  private typingHoldActive(): boolean {
+    if (!this.cfg.prefs.typing_hold) return false;
+    return this.typing || (performance.now() - this.lastKeystroke < this.cfg.prefs.typing_hold_ms);
+  }
+
+  // When the typing hold lapses with the composer empty, finalize any voice
+  // segments that were deferred (the endpoint we held off on).
+  private onTypingReleased() {
+    if (this.typingHoldActive()) return;
+    if (!this.typing && this.segs.length && this.state === "listening") {
+      const t = this.segs.join(" ").trim();
+      this.resetSegs();
+      if (t) this.startTurn(t);
+    }
   }
 
   // ---- streaming reply -----------------------------------------------------

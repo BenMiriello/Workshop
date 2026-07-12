@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
-  ArrowLeft, Mic, Square, Play, X, Settings2, Loader, MessageSquare, AudioLines,
+  ArrowLeft, Mic, MicOff, Square, Play, X, Settings2, Loader, MessageSquare,
+  AudioLines, SendHorizontal, Volume2, VolumeX,
 } from "lucide-react";
-import { Button, StatusPill, SectionLabel, Select, Toggle, Segmented, StateBlock } from "../ui";
+import { Button, StatusPill, SectionLabel, Select, Toggle, Segmented, StateBlock, Textarea, Badge } from "../ui";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { voiceApi } from "../lib/voiceApi";
 import { detectCaps, type EngineCaps } from "../lib/voice";
@@ -45,7 +46,23 @@ export default function VoiceMode() {
   const [showSettings, setShowSettings] = useState(false);
   const [voices, setVoices] = useState<string[]>([]);
   const [mountCaps, setMountCaps] = useState<EngineCaps | null>(null);
+  const [input, setInput] = useState("");
   const startedRef = useRef(false);
+
+  const onComposerChange = (v: string) => {
+    setInput(v);
+    session.setTyping(v.trim().length > 0);
+  };
+  const sendText = () => {
+    const t = input.trim();
+    if (!t && !snapshot.pendingUser) return;
+    session.submitText(t);
+    setInput("");
+    session.setTyping(false);
+  };
+  const onComposerKey = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendText(); }
+  };
 
   useEffect(() => {
     voiceApi.voices().then((r) => setVoices(r.voices || [])).catch(() => {});
@@ -217,6 +234,25 @@ export default function VoiceMode() {
               onChange={(e) => updatePrefs({ barge_sensitivity: Number(e.target.value) })}
             />
           </label>
+          <label className="ws-voice-setting ws-voice-setting--row">
+            <SectionLabel>Enter interrupts speech</SectionLabel>
+            <Toggle checked={prefs.enter_interrupts} onChange={(v) => updatePrefs({ enter_interrupts: v })} />
+          </label>
+          <label className="ws-voice-setting ws-voice-setting--row">
+            <SectionLabel>Typing holds my turn</SectionLabel>
+            <Toggle checked={prefs.typing_hold} onChange={(v) => updatePrefs({ typing_hold: v })} />
+          </label>
+          {prefs.typing_hold && (
+            <label className="ws-voice-setting">
+              <SectionLabel>Hold window {(prefs.typing_hold_ms / 1000).toFixed(1)}s</SectionLabel>
+              <input
+                className="ws-range"
+                type="range" min={1000} max={10000} step={500}
+                value={prefs.typing_hold_ms}
+                onChange={(e) => updatePrefs({ typing_hold_ms: Number(e.target.value) })}
+              />
+            </label>
+          )}
         </div>
       )}
 
@@ -304,6 +340,43 @@ export default function VoiceMode() {
           </div>
         </div>
       )}
+
+      <div className="ws-voice-composer">
+        {snapshot.pendingUser && (
+          <div className="ws-voice-ghost" aria-label="Pending transcript">{snapshot.pendingUser}</div>
+        )}
+        <div className="ws-voice-composer-row">
+          <button
+            className={`ws-voice-mode${prefs.mic_enabled ? " is-active" : ""}`}
+            onClick={() => updatePrefs({ mic_enabled: !prefs.mic_enabled })}
+            aria-pressed={prefs.mic_enabled}
+            aria-label={prefs.mic_enabled ? "Mic on" : "Mic off"}
+            title="Microphone input"
+          >
+            {prefs.mic_enabled ? <Mic size={16} aria-hidden /> : <MicOff size={16} aria-hidden />}
+          </button>
+          <Textarea
+            className="ws-voice-input"
+            rows={1}
+            value={input}
+            placeholder="Type a message, or talk"
+            onChange={(e) => onComposerChange(e.target.value)}
+            onKeyDown={onComposerKey}
+          />
+          <button
+            className={`ws-voice-mode${prefs.speak_replies ? " is-active" : ""}`}
+            onClick={() => updatePrefs({ speak_replies: !prefs.speak_replies })}
+            aria-pressed={prefs.speak_replies}
+            aria-label={prefs.speak_replies ? "Speaking replies" : "Replies muted"}
+            title="Speak replies aloud"
+          >
+            {prefs.speak_replies ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
+          </button>
+          <Button variant="primary" size="sm" onClick={sendText} aria-label="Send message">
+            {snapshot.queuedSend ? <Badge>queued</Badge> : <SendHorizontal size={16} aria-hidden />}
+          </Button>
+        </div>
+      </div>
 
       {active && (
         <div className="ws-voice-footer">

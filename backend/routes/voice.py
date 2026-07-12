@@ -32,7 +32,11 @@ _PREFS_DEFAULTS = {
     "voice": voice_engine.DEFAULT_VOICE,
     "speed": 1.0,
     "verbosity": "normal",    # terse | normal
+    "mic_enabled": True,      # input lane; off = composer-only
     "speak_replies": True,    # voice-output lane; replaces the old tts "off" mute
+    "typing_hold": True,      # typing defers the voice endpoint
+    "typing_hold_ms": 3000,
+    "enter_interrupts": True,  # Enter sends and interrupts ongoing speech
     "endpoint_silence_ms": 900,  # trailing silence that ends an utterance (server VAD)
     "eager_endpoint": True,   # speculative endpointing: think during an early pause
     "eager_silence_ms": 400,  # the early-pause threshold (< endpoint_silence_ms)
@@ -152,7 +156,11 @@ class PrefsBody(BaseModel):
     voice: str | None = None
     speed: float | None = None
     verbosity: str | None = None
+    mic_enabled: bool | None = None
     speak_replies: bool | None = None
+    typing_hold: bool | None = None
+    typing_hold_ms: int | None = None
+    enter_interrupts: bool | None = None
     endpoint_silence_ms: int | None = None
     eager_endpoint: bool | None = None
     eager_silence_ms: int | None = None

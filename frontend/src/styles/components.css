@@ -1208,6 +1208,24 @@ a.ws-btn { text-decoration: none; }
 }
 .ws-voice-provider { font-family: var(--font-mono); }
 
+/* Composer: type instead of (or alongside) talking. */
+.ws-voice-composer { display: flex; flex-direction: column; gap: var(--space-1); }
+.ws-voice-ghost {
+  font-size: var(--fs-sm); color: var(--muted); font-style: italic;
+  padding: 0 var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-voice-composer-row { display: flex; align-items: flex-end; gap: var(--space-2); }
+.ws-voice-input { flex: 1; min-height: 38px; max-height: 140px; resize: none; }
+.ws-voice-mode {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; flex: none;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--field-bg); color: var(--muted); cursor: pointer;
+}
+.ws-voice-mode:hover { color: var(--fg); }
+.ws-voice-mode:focus-visible { box-shadow: var(--focus-ring); }
+.ws-voice-mode.is-active { color: var(--accent); border-color: var(--accent); }
+
 .ws-spin { animation: ws-spin 1s linear infinite; }
 @keyframes ws-spin { to { transform: rotate(360deg); } }
 
