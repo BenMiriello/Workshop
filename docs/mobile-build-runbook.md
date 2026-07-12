@@ -5,6 +5,20 @@ physical iPhone. This is the durable record of how to build it, every
 compatibility fix baked into the repo and why, and the routine you repeat.
 First brought up 2026-07-11 on the operator's Mac (Xcode 26.6, iOS 26.5 device).
 
+## One-command deploy
+
+`scripts/mobile-deploy.sh` (run on the Mac, phone attached + unlocked) does the
+whole thing: pull, reinstall JS deps only if `mobile/package*` changed, build
+Release, install + launch on the device. It also re-signs, so the same command
+covers a code update and the weekly 7-day re-sign:
+```bash
+~/Development/Workshop/scripts/mobile-deploy.sh            # code update / re-sign
+~/Development/Workshop/scripts/mobile-deploy.sh --prebuild # only if native config changed
+```
+`--prebuild` wipes the signing Team; set `WORKSHOP_TEAM_ID` (10-char Apple Team
+ID) so it re-signs non-interactively, or open Xcode once to re-pick the Team.
+The manual routine below is the same thing by hand.
+
 ## The routine (what you actually do)
 
 **Day-to-day (JS/TS changes only, the common case):**
