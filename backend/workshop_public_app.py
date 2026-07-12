@@ -65,7 +65,34 @@ _DROP_REQ = {"host", "content-length", "connection", "keep-alive", "transfer-enc
 _DROP_RESP = {"content-length", "connection", "keep-alive", "transfer-encoding", "content-encoding"}
 
 app = FastAPI(title="Workshop (public edge)")
-_client = httpx.AsyncClient(base_url=BACKEND, timeout=120.0)
+
+# SECURITY: use a raw transport, NOT httpx.AsyncClient. An AsyncClient keeps a
+# persistent cookie jar: it auto-stores every upstream `Set-Cookie` and replays
+# matching cookies on its NEXT request. Because ONE shared client served every
+# visitor, the first successful login through the proxy cached that session in
+# the shared jar, and every later visitor (cookie-less or not) silently
+# inherited it — anyone could load the app fully authenticated with no login.
+# httpx.AsyncHTTPTransport has no cookie jar and no per-caller state: each proxied
+# request carries ONLY the cookies the visitor themselves forwarded. NEVER
+# reintroduce a shared AsyncClient here. (Incident 2026-07-12.)
+_transport = httpx.AsyncHTTPTransport()
+
+
+def _build_upstream_request(
+    request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool
+) -> httpx.Request:
+    # Per-request, no client, no cookie jar. Query params are carried explicitly
+    # (multi_items preserves repeated keys). Timeout rides in request.extensions
+    # since the transport, unlike a client, has no configured timeout of its own.
+    timeout = httpx.Timeout(30.0, read=None) if stream else httpx.Timeout(120.0)
+    return httpx.Request(
+        request.method,
+        BACKEND + backend_path,
+        params=list(request.query_params.multi_items()),
+        headers=headers,
+        content=body,
+        extensions={"timeout": timeout.as_dict()},
+    )
 
 
 def _normalize(stripped_path: str) -> str:
@@ -103,23 +130,21 @@ async def _proxy(request: Request, backend_path: str) -> Response:
     if backend_path.endswith("/stream") or "text/event-stream" in request.headers.get("accept", ""):
         return await _proxy_stream(request, backend_path, headers, body)
 
-    upstream = await _client.request(
-        request.method, backend_path, headers=headers, content=body,
-        params=request.query_params,
-    )
+    req = _build_upstream_request(request, backend_path, headers, body, stream=False)
+    upstream = await _transport.handle_async_request(req)
+    try:
+        content = await upstream.aread()
+    finally:
+        await upstream.aclose()
     resp_headers = [(k, v) for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP]
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=dict(resp_headers))
+    return Response(content=content, status_code=upstream.status_code, headers=dict(resp_headers))
 
 
 async def _proxy_stream(request: Request, backend_path: str, headers: dict, body: bytes) -> Response:
     """Reverse-proxy a streaming (SSE) response chunk-by-chunk, keeping the
     upstream connection open for the life of the turn (no read timeout)."""
-    req = _client.build_request(
-        request.method, backend_path, headers=headers, content=body,
-        params=request.query_params,
-        timeout=httpx.Timeout(30.0, read=None),  # long-lived: never read-timeout
-    )
-    upstream = await _client.send(req, stream=True)
+    req = _build_upstream_request(request, backend_path, headers, body, stream=True)
+    upstream = await _transport.handle_async_request(req)  # unread stream; no read-timeout
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
     resp_headers["cache-control"] = "no-cache, no-transform"
     resp_headers["x-accel-buffering"] = "no"  # defeat any buffering proxy in front
