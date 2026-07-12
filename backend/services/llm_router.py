@@ -41,8 +41,15 @@ log = logging.getLogger("workshop.llm_router")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:32b")
-CLAUDE_CLI = os.environ.get("CLAUDE_CLI", "/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude")
-AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", "/home/clawd-a/.config/clawdbot/auth.env")
+# Cloud chat shells out to the `claude` CLI. Per-deployment and portable: honor
+# an explicit CLAUDE_CLI, else resolve `claude` on PATH, else bare "claude".
+# Under systemd --user the PATH can be minimal (no ~/.local/bin), so a local
+# build should set CLAUDE_CLI explicitly on its service. See
+# docs/simonsays-local-instance.md.
+CLAUDE_CLI = os.environ.get("CLAUDE_CLI") or shutil.which("claude") or "claude"
+# Optional extra env for the subprocess (e.g. an API key). Missing file is fine —
+# a CLI already logged in (its own ~/.claude creds) needs nothing here.
+AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", str(Path.home() / ".config" / "workshop" / "auth.env"))
 
 # Tier model handles (claude -p --model arg)
 TIER_HAIKU = "claude-haiku-4-5-20251001"
@@ -316,11 +323,14 @@ _MCP_BLOCK_STARTUP_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
 # entry must match the {"command","args"} stdio launch the parent uses (see
 # ~/.claude.json). Only servers needed by some provider's allowed_tools live
 # here — everything else stays out so the subprocess never spawns it.
+# NOTE (main/clawd-a): apps are still hardcoded on this instance, so the plaid
+# MCP stays registered here. When the pluggable-app migration lands (queue
+# f963c8e), installed apps register their own MCP servers and this goes empty.
 _MCP_SERVER_SPECS: dict[str, dict] = {
     "plaid": {
         "type": "stdio",
         "command": "node",
-        "args": ["/home/clawd-a/clawdbot/plaid-mcp/server.js"],
+        "args": [os.environ.get("WORKSHOP_PLAID_MCP", "/home/clawd-a/clawdbot/plaid-mcp/server.js")],
     },
 }
 
@@ -331,7 +341,7 @@ def call_cloud(
     model: str = TIER_HAIKU,
     max_turns: int = 6,
     timeout_s: float = 600,
-    cwd: str = "/home/clawd-a/workshop",
+    cwd: str = os.environ.get("WORKSHOP_CHAT_CWD", str(Path.home())),
     tools_disabled: bool = False,
     allowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
