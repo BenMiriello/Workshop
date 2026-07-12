@@ -155,10 +155,13 @@ export function useVoiceSession(contextKey: string, model?: string, initialThrea
     [startReply, persistSignal],
   );
 
-  // Prewarm the resident worker on mount (best-effort).
+  // Prewarm the resident worker on mount — but ONLY when we're continuing an
+  // existing thread. Voice is just another interface to the SAME chat; opening it
+  // must never fabricate a parallel thread. With no thread to bind, we defer: the
+  // thread is created lazily on the first spoken turn (see startReply).
   useEffect(() => {
-    ensureSession().catch(() => {});
-  }, [ensureSession]);
+    if (initialThreadId) ensureSession().catch(() => {});
+  }, [initialThreadId, ensureSession]);
 
   // Load persisted prefs once and push them into the live session.
   useEffect(() => {

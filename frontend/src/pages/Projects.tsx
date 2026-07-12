@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Download, MessagesSquare, Plus, FolderGit2 } from "lucide-react";
 import type { BuildAgent, Project, ProjectSensitivity, ProjectState } from "@shared/types";
 import { createBlankBuilder } from "../lib/blankBuilder";
+import { chatApi, type ThreadSummary } from "../lib/chat";
 import {
   Button,
   Card,
@@ -172,6 +173,10 @@ export default function Projects() {
   // real builder that lives permanently in the Agents list. Surfaced here too so a
   // half-shaped blank project is one tap away from the Projects page it belongs to.
   const [blankBuilders, setBlankBuilders] = useState<BuildAgent[]>([]);
+  // Older "build with chat" planning conversations (context_key "new-project",
+  // before the flow spawned a real builder). These have no agent record, so the
+  // ONLY way back to them is this list — never drop it or they vanish.
+  const [draftChats, setDraftChats] = useState<ThreadSummary[]>([]);
   const [chatBusy, setChatBusy] = useState(false);
   const nav = useNavigate();
 
@@ -194,6 +199,13 @@ export default function Projects() {
         ),
       )
       .catch(() => { /* non-essential — the button still spawns a fresh builder */ });
+  }, []);
+
+  useEffect(() => {
+    chatApi
+      .listThreads("new-project")
+      .then((ts) => setDraftChats(ts.filter((t) => t.message_count > 0)))
+      .catch(() => { /* non-essential — older chats just won't list */ });
   }, []);
 
   const startWithChat = useCallback(async () => {
@@ -236,6 +248,35 @@ export default function Projects() {
           </Row>
         }
       />
+
+      {draftChats.length > 0 && (
+        <div style={{ marginBottom: "var(--space-5)" }}>
+          <SectionLabel>Continue a project chat</SectionLabel>
+          <CardGrid>
+            {draftChats.map((d) => (
+              <Link
+                key={d.id}
+                to={`/chat/new-project?thread=${encodeURIComponent(d.id)}`}
+                style={{ textDecoration: "none" }}
+              >
+                <Card interactive style={{ padding: "var(--space-3)" }}>
+                  <Row between style={{ gap: "var(--space-2)" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
+                      <MessagesSquare size={15} aria-hidden />
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {d.title || "Untitled project chat"}
+                      </span>
+                    </span>
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: "0 0 auto" }}>
+                      {whenLabel(d.updated_at)}
+                    </span>
+                  </Row>
+                </Card>
+              </Link>
+            ))}
+          </CardGrid>
+        </div>
+      )}
 
       {blankBuilders.length > 0 && (
         <div style={{ marginBottom: "var(--space-5)" }}>

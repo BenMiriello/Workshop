@@ -39,7 +39,12 @@ log = logging.getLogger("workshop.voice_worker")
 
 CLAUDE_CLI = llm_router.CLAUDE_CLI
 STREAM_LINE_LIMIT = 64 * 1024 * 1024
-IDLE_S = 600.0            # reap a worker after this long with no turn
+IDLE_S = 600.0            # reap a conversational worker after this long with no turn
+# Build workers hold the AGENT'S shared Claude session (so voice continues the
+# text chat). Release them promptly once idle so a text-chat turn can resume that
+# same session without two live processes writing the session file. Rapid
+# back-to-back voice turns keep it warm; a pause frees it.
+BUILD_IDLE_S = 30.0
 TURN_TIMEOUT_S = 60.0     # a conversational voice reply slower than this is a failure
 # A voice BUILD turn runs real tools (edits, commands, tests) and legitimately
 # takes minutes — mirror the text build path's generous ceiling, not the 60s
@@ -295,13 +300,32 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
         # and `--resume` finds the session under that cwd); conversational workers
         # stay in the stable VOICE_CWD sandbox.
         cwd = str(provider.dir) if is_build else VOICE_CWD
+        # Voice is another INTERFACE to the same chat, not a parallel one. For a
+        # build-agent chat, share the agent's own Claude session so talking
+        # continues the exact conversation you were typing — same memory, same
+        # working tree — instead of a fresh brain. Resume it if it already exists
+        # on disk. (Projects have no per-agent session record, so they still get a
+        # fresh session.) The idle reaper releases this worker quickly (see
+        # _reaper) so the text path can resume the same session without two live
+        # processes fighting over the session file.
+        session_id = str(uuid.uuid4())
+        resume = False
+        if context_key.startswith("build:"):
+            try:
+                from services import build_agents as _ba
+                sid, is_new = _ba.ensure_session_id(context_key.split(":", 1)[1])
+                session_id = sid
+                resume = (not is_new) and session_alive(sid, cwd)
+            except Exception:  # agent gone / registry hiccup — fall back to fresh session
+                session_id = str(uuid.uuid4())
+                resume = False
         worker = VoiceWorker(
             session_key=key, thread_id=thread_id,
-            session_id=str(uuid.uuid4()), model=resolved_model,
+            session_id=session_id, model=resolved_model,
             context_key=context_key, cwd=cwd, is_build=is_build,
         )
         WORKERS[key] = worker
-        await _spawn_proc(worker, resume=False)
+        await _spawn_proc(worker, resume=resume)
     else:
         # Respawn a dead/reaped worker, resuming its session for memory.
         worker.model = resolved_model
@@ -494,10 +518,11 @@ def _ensure_reaper() -> None:
 
 async def _reaper() -> None:
     while True:
-        await asyncio.sleep(60)
+        await asyncio.sleep(20)
         now = time.time()
         for key, worker in list(WORKERS.items()):
-            if now - worker.last_activity > IDLE_S and (worker.current is None):
+            idle_limit = BUILD_IDLE_S if worker.is_build else IDLE_S
+            if now - worker.last_activity > idle_limit and (worker.current is None):
                 log.info("voice worker %s idle-reaped", key)
                 if worker.pump_task:
                     worker.pump_task.cancel()
