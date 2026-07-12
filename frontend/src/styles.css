@@ -696,10 +696,15 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-ellipsis { color: rgba(255, 255, 255, 0.85); }
 .chat-msg.user .chat-ellipsis::after { border-color: rgba(255, 255, 255, 0.4); }
 .chat-msg.user .chat-ellipsis:hover { color: #fff; }
-.chat-work { margin: 0.1rem 0 0.35rem; }
+/* Deterministic spacing for the work section (the "Show N earlier steps" toggle
+   + step list). No stacked margins: the container owns ONE internal gap and ONE
+   bottom margin that exists ONLY when an answer follows — so a message whose
+   bubble ends on the toggle sits flush, never with dead space below it. */
+.chat-work { margin: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.chat-work:not(:last-child) { margin-bottom: var(--space-2); }
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
-  background: none; border: none; padding: 0.15rem 0; margin: 0.05rem 0 0.25rem;
+  background: none; border: none; padding: 0.15rem 0; margin: 0;
   color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-work__toggle:hover { color: var(--fg); }
