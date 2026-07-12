@@ -625,10 +625,11 @@ class BudgetContextProvider(ContextProvider):
             "(mcp__plaid__list_transactions). Use them ONLY for questions the injected 30-day "
             "rollup and balances above can't answer (e.g. 'what did I spend at Whole Foods last "
             "month', 'find Comcast bills in the last 90 days'). Prefer the context that's already "
-            "in front of you; reach for a lookup only when the answer truly isn't there. You have "
-            "NO other tools — no Read, Bash, Gmail, web, file edits. If asked for something outside "
-            "the plan edits and these Plaid lookups (e.g. 'check my emails for the Citi "
-            "statement'), say plainly you can't and point the operator to where to find it. The "
+            "in front of you; reach for a lookup only when the answer truly isn't there. You also "
+            "have web search + fetch for quick external lookups (a merchant, a current rate, a "
+            "definition). You do NOT have Read, Bash, Gmail, or file edits. If asked for something "
+            "outside plan edits, these Plaid lookups, and web search (e.g. 'check my emails for the "
+            "Citi statement'), say plainly you can't and point the operator to where to find it. The "
             "authoritative capability statement is in the preamble above this persona."
             + _PLAID_LOOKUP_METHOD
         )
@@ -1419,12 +1420,13 @@ class BuildAgentContextProvider(ContextProvider):
 
 # ---------------------------------------------------------------- registry
 
-# The general "Clawd" assistant gets web access (lookups / research) on top of
-# its account snapshots. Set on the INSTANCE so the shared base default stays
-# text-only for the domain assistants (commute/location) that inherit it — the
-# money assistants (budget/finance) are deliberately scoped to Plaid tools only.
+# EVERY data/assistant provider gets web access — the route + capability_for add
+# WebSearch/WebFetch centrally via effective_allowed_tools(), so providers no
+# longer need to opt in per-instance. (budget/finance keep their Plaid tools and
+# gain web; commute/location gain web; build/project agents run the full toolset.)
+# The only per-instance tweak left is a roomier turn budget for the open-ended
+# general assistant so a research answer isn't cut short.
 _general = ContextProvider()
-_general.allowed_tools = ["WebSearch", "WebFetch"]
 _general.max_turns = 8
 
 PROVIDERS: dict[str, ContextProvider] = {
@@ -1462,6 +1464,19 @@ def is_build_provider(provider: ContextProvider) -> bool:
     return isinstance(provider, (ProjectContextProvider, BuildAgentContextProvider))
 
 
+# Built-in web tools every data/assistant chat gets (no MCP server needed).
+# Operator rule: ALL agents can search + fetch the web, on top of whatever MCP
+# tools the provider declares. Build/project agents already run the full toolset.
+WEB_TOOLS = ["WebSearch", "WebFetch"]
+
+
+def effective_allowed_tools(provider: ContextProvider) -> list[str]:
+    """A data provider's declared MCP tools + the shared web tools, de-duped and
+    order-stable. This is the SINGLE place that grants web, so the route and
+    capability_for can't drift. Not used for build providers (full toolset)."""
+    return list(dict.fromkeys([*provider.allowed_tools, *WEB_TOOLS]))
+
+
 def capability_for(
     provider: ContextProvider, *, enable_chat_tools: bool
 ) -> tuple[bool, str]:
@@ -1482,10 +1497,10 @@ def capability_for(
             "full Claude Code tool access (Read, Write, Edit, Bash, Grep, Glob, "
             "MultiEdit, and the rest)"
         )
-    if enable_chat_tools and provider.allowed_tools:
-        return True, (
-            "a narrow read-only tool set: " + ", ".join(provider.allowed_tools)
-        )
+    if enable_chat_tools:
+        # Every data/assistant agent is tools-active: web search + fetch, plus any
+        # MCP tools it declares (e.g. Plaid for budget/finance).
+        return True, ("a read-only tool set: " + ", ".join(effective_allowed_tools(provider)))
     return False, ""
 
 

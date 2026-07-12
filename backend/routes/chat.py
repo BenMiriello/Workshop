@@ -446,12 +446,15 @@ async def send_message(thread_id: str, body: PostMessage):
         if is_resumed_turn:
             briefing = chat_context.runtime_briefing(provider)
             prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
-    elif ENABLE_CHAT_TOOLS and provider.allowed_tools:
-        # Narrow-tool path: read-only MCP, no built-ins.
+    elif ENABLE_CHAT_TOOLS:
+        # Every data/assistant agent gets web access (built-in WebSearch/WebFetch)
+        # plus whatever MCP tools it declares — web tools need no MCP server. See
+        # chat_context.effective_allowed_tools (single source of truth, mirrored
+        # by capability_for so the preamble can't drift).
         call_kwargs = {
-            "allowed_tools": list(provider.allowed_tools),
+            "allowed_tools": chat_context.effective_allowed_tools(provider),
             "mcp_servers": list(provider.mcp_servers),
-            "max_turns": provider.max_turns,
+            "max_turns": max(provider.max_turns, 6),
         }
         call_timeout = CHAT_TIMEOUT_S
     else:
