@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines, Volume2, VolumeX,
+  LoaderCircle,
 } from "lucide-react";
 import { useDictation } from "../lib/useDictation";
 import { useReplySpeaker } from "../lib/useReplySpeaker";
@@ -76,6 +77,14 @@ const MODEL_LABELS: Record<string, string> = {
 };
 function modelLabel(id: string): string {
   return MODEL_LABELS[id] ?? id;
+}
+
+// "12s" under a minute, "1m 05s" beyond — for the live working indicator.
+function formatElapsed(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return `${m}m ${r.toString().padStart(2, "0")}s`;
 }
 
 // ---- Per-model display handling -------------------------------------------
@@ -321,6 +330,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [input, setInput] = useDraft(contextKey);
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState(false);
+  // A build turn's SSE dropped and we're re-attaching to the still-running turn
+  // (proxy/idle timeouts mid-turn are normal on long turns) — the working
+  // indicator stays up and says "reconnecting" instead of the turn going dead.
+  const [reconnecting, setReconnecting] = useState(false);
+  // Seconds elapsed on the live turn — drives the "Working… 12s" indicator.
+  const [elapsed, setElapsed] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
 
@@ -345,6 +360,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sseRef = useRef<EventSource | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const finishingRef = useRef(false);
+  // Stream resilience: count consecutive reconnect attempts (reset on any event
+  // received, so a healthy long turn never trips the cap), and self-reference
+  // attachStream so a drop handler can re-attach without a render cycle.
+  const reconnectsRef = useRef(0);
+  const turnStartRef = useRef(0);
+  const attachStreamRef = useRef<(turnId: string, threadId: string, isFirst: boolean) => void>(() => {});
 
   // Push-to-talk dictation into the composer. Interim results stream in live;
   // the final transcript is committed so a second dictation appends to it.
@@ -455,16 +476,30 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const es = new EventSource(`/api/chat/turns/${turnId}/stream`);
       sseRef.current = es;
 
+      // Any inbound frame means the stream is healthy: clear the reconnect
+      // budget + the "reconnecting" flag, so one long turn with the odd proxy
+      // drop never exhausts the cap.
+      const markAlive = () => {
+        reconnectsRef.current = 0;
+        setReconnecting(false);
+      };
+
       es.addEventListener("text", (e) => {
+        markAlive();
         try { pushText(JSON.parse((e as MessageEvent).data).payload?.content || ""); } catch { /* ignore */ }
       });
       es.addEventListener("tool", (e) => {
+        markAlive();
         try {
           const p = JSON.parse((e as MessageEvent).data).payload || {};
           setPendingSegments((s) => [...s, { t: "tool", name: p.name || "?", input: p.input || "" }]);
         } catch { /* ignore */ }
       });
+      es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm
       es.addEventListener("error", (e) => {
+        // An in-band error EVENT (carries data) — surface its detail. This is a
+        // turn-level error from the server, NOT a connection drop (that's
+        // es.onerror below, which has no data).
         try {
           const d = JSON.parse((e as MessageEvent).data || "{}");
           if (d.payload?.detail) setErr(String(d.payload.detail));
@@ -477,6 +512,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         es.close();
         sseRef.current = null;
         setStreaming(false);
+        setReconnecting(false);
+        reconnectsRef.current = 0;
+        turnStartRef.current = 0;
         try {
           const t = await chatApi.getThread(threadId);
           setMessages(t.messages);
@@ -490,14 +528,41 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       };
       es.addEventListener("done", finish);
       es.addEventListener("end", finish);
+
+      // Connection dropped (proxy idle-timeout, network blip, backend hiccup).
+      // Do NOT finalize blindly — that is what made turns look like they "just
+      // stopped". Check whether the turn actually completed server-side; if it's
+      // still running, re-attach (the server replays the turn's events from the
+      // start), keeping the working indicator up. Give up only after
+      // MAX_RECONNECTS consecutive no-progress attempts, or once the turn is
+      // gone / finished.
+      const MAX_RECONNECTS = 8;
+      const handleDrop = async () => {
+        if (finishingRef.current) return;
+        es.close();
+        if (sseRef.current === es) sseRef.current = null;
+        try {
+          const t = await chatApi.getThread(threadId);
+          const last = t.messages[t.messages.length - 1];
+          const stillRunning = !!(last && last.role === "assistant" && last.meta?.streaming);
+          if (!stillRunning) { void finish(); return; } // turn really ended — sync + stop
+        } catch { /* network error — assume the turn is still running and retry */ }
+        if (reconnectsRef.current >= MAX_RECONNECTS) { void finish(); return; }
+        reconnectsRef.current += 1;
+        setReconnecting(true);
+        window.setTimeout(() => {
+          if (!finishingRef.current) attachStreamRef.current(turnId, threadId, isFirst);
+        }, 1200);
+      };
       es.onerror = () => {
-        // CLOSED = server ended/failed (incl. a 404 for a turn that's already
-        // gone). Sync from the persisted thread and unlock the composer.
-        if (es.readyState === EventSource.CLOSED) void finish();
+        // Only a CLOSED socket is terminal; CONNECTING means the browser is
+        // already auto-retrying (with Last-Event-ID) — let it.
+        if (es.readyState === EventSource.CLOSED) void handleDrop();
       };
     },
     [refreshThreads, scheduleAutoNameRefetch, dispatchNext],
   );
+  attachStreamRef.current = attachStream;
 
   // Render a thread's messages, reconnecting to a still-streaming last turn.
   const hydrate = useCallback(
@@ -553,6 +618,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages, pendingSegments, queued, busy, streaming]);
+
+  // Elapsed-time ticker for the working indicator. The clock starts when a turn
+  // begins streaming and keeps running across reconnects (streaming stays true),
+  // so "Working… 45s" reflects the real turn duration, not the last reconnect.
+  useEffect(() => {
+    if (!(streaming || busy)) { setElapsed(0); turnStartRef.current = 0; return; }
+    if (!turnStartRef.current) turnStartRef.current = Date.now();
+    const tick = () => setElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [streaming, busy]);
 
   // Auto-grow the composer: 2.5 lines tall by default, grows with content.
   const autosize = useCallback(() => {
@@ -978,7 +1055,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             {pendingSegments.length > 0 && (
               <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} cardCtx={cardCtx} streaming />
             )}
-            {(streaming || busy) && <span className="chat-typing" aria-label="working">•••</span>}
+            {(streaming || busy) && (
+              <div className="chat-working" role="status" aria-live="polite">
+                <LoaderCircle size={15} className="chat-working__spin" aria-hidden />
+                <span className="chat-working__label">
+                  {reconnecting ? "Reconnecting…" : "Working…"}
+                </span>
+                {streaming && elapsed > 0 && (
+                  <span className="chat-working__time">{formatElapsed(elapsed)}</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

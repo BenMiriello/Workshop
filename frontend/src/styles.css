@@ -615,6 +615,20 @@ input[type="range"].grad::-moz-range-thumb {
 @keyframes chat-typing-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .chat-typing { animation: none; } }
 
+/* Live "working" indicator — a spinner + label (+ elapsed) shown for the whole
+   duration of a running turn (build stream or data reply), so it's always clear
+   whether the agent is working. Stays up across SSE reconnects; the label flips
+   to "Reconnecting…" while re-attaching to a still-running turn. */
+.chat-working {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-2);
+  color: var(--muted); font-size: var(--fs-sm);
+}
+.chat-working__spin { flex: 0 0 auto; color: var(--accent); animation: ws-spin 0.9s linear infinite; }
+.chat-working__label { font-weight: var(--fw-medium); }
+.chat-working__time { font-variant-numeric: tabular-nums; opacity: 0.8; }
+@media (prefers-reduced-motion: reduce) { .chat-working__spin { animation: none; } }
+
 /* ---- Progressive disclosure: Show more/less + collapsed work history ---- */
 .chat-more {
   display: inline-block; margin: 0.15rem 0;
