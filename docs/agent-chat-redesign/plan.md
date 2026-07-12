@@ -152,11 +152,12 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
   projects/_templates/*.
 - **Phase 2:** knowledge scopes + notes baseline + Letta-per-scope sync + `recall` + knowledge
   interface + knowledge.read/write grants. (What the future notes app plugs into.)
-- **Phase 3:** context engine for assistants (cache reorder + threshold compaction + distillation).
-  Only the distillation write-path depends on Phase 2; the cache reorder + threshold compaction are
-  independent and are the direct token-cost payoff (the live_context-mid-prompt and sliding-window
-  bugs burn cache on every turn today), so they may ship before or alongside Phase 2 if ordering
-  pressure appears.
+- **Phase 3 (BUILT + verified 2026-07-11, commit 13dbb34):** context engine for data-mode assistants
+  in routes/chat.py. Cache-stable ordering (LIVE CONTEXT moved to the volatile tail), threshold
+  compaction (append-only + fold oldest half into a running summary on the cheap tier, raw messages
+  retained), and distillation (durable facts from folded turns merged into the scope `chat-distilled`
+  note, recallable). Build mode untouched. Threshold: _COMPACT_TOKEN_THRESHOLD=6000 tokens of
+  uncompacted tail. Distillation is ON by default; to quiet it, gate _distill or skip it per scope.
 - **Phase 4:** per-project autonomy (generalized Ralph). Independent, can follow Phase 1.
 - **Phase 5:** skills (SKILL.md dirs, builder auto-discovery, assistant loader).
 - **Phase 6:** voice modality toggle. Builder voice parked.
