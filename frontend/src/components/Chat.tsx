@@ -571,6 +571,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const msgs = t.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
+        // Anchor the elapsed clock to the turn's REAL start (the streaming
+        // message's server timestamp), so a reload mid-turn shows the true
+        // elapsed time instead of restarting from zero.
+        const startedMs = last.ts ? Date.parse(last.ts) : NaN;
+        turnStartRef.current = Number.isFinite(startedMs) ? startedMs : Date.now();
         setMessages(msgs.slice(0, -1));
         attachStream(last.meta.turn_id, t.id, false);
       } else {
@@ -712,6 +717,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sendBuild = useCallback(async (text: string) => {
     setStreaming(true);
     setPendingSegments([]);
+    turnStartRef.current = Date.now(); // fresh turn — anchor the elapsed clock now
     const isFirst = messages.length <= 1;
     try {
       let id = activeId;
