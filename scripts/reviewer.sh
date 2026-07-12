@@ -30,6 +30,11 @@
 set -u
 
 WORKSHOP=/home/clawd-a/workshop
+# ROOT is the tree to inspect (git repo + stub scan). Defaults to the workshop
+# install, but a per-project Ralph run points it at projects/<slug> via
+# REVIEWER_ROOT so the reviewer gates the PROJECT's own git repo. WORKSHOP stays
+# the tooling home (venv mypy, tsc, check_design.sh).
+ROOT=${REVIEWER_ROOT:-$WORKSHOP}
 BASELINE=${1:-HEAD}
 LOG=$WORKSHOP/.runtime/reviewer.log
 STRICT=${REVIEWER_STRICT:-0}
@@ -37,7 +42,7 @@ STRICT=${REVIEWER_STRICT:-0}
 mkdir -p "$(dirname "$LOG")"
 ts() { date -Iseconds; }
 
-cd "$WORKSHOP" 2>/dev/null || { echo '{"complete":false,"reasons":["workshop_unreachable"]}'; exit 0; }
+cd "$ROOT" 2>/dev/null || { echo '{"complete":false,"reasons":["root_unreachable"]}'; exit 0; }
 
 # 1. Collect changed files vs baseline. Include staged + unstaged + untracked.
 CHANGED_TRACKED=$(git diff --name-only "$BASELINE" 2>/dev/null || true)
@@ -53,7 +58,7 @@ DIFF_FILES=$(printf '%s\n' "$CHANGED_ALL" | sed '/^$/d' | wc -l)
 STUB_HITS_JSON='[]'
 STUB_COUNT=0
 if [[ -n "$CHANGED_ALL" ]]; then
-  STUB_HITS_JSON=$(python3 - <<'PYEOF' "$WORKSHOP" "$CHANGED_ALL"
+  STUB_HITS_JSON=$(python3 - <<'PYEOF' "$ROOT" "$CHANGED_ALL"
 import json, os, re, sys
 
 workshop, changed_blob = sys.argv[1], sys.argv[2]

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import {
   Bot,
@@ -8,7 +8,6 @@ import {
   FileText,
   ListTodo,
   StickyNote,
-  Rocket,
   Plus,
   Pencil,
   RefreshCw,
@@ -43,11 +42,11 @@ import {
   catFor,
   type StatusKind,
 } from "../ui";
-import { Badge } from "../ui";
 import { useEditMode } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 import AppServicesPanel from "../components/AppServicesPanel";
+import AutonomyPanel from "../components/AutonomyPanel";
 import EnvironmentPanel from "../components/EnvironmentPanel";
 
 // Project detail = the project's hub (the "workbench"). NOT the coding UI — that
@@ -313,31 +312,6 @@ export default function ProjectDetail() {
   const [publishErr, setPublishErr] = useState<string | null>(null);
   const [published, setPublished] = useState<RegistryItem | null>(null);
 
-  // Standalone deploy (LocalRunner): start/stop a scoped subprocess on a port.
-  const [deploy, setDeploy] = useState<{ running: boolean; port?: number; url?: string } | null>(null);
-  const [deployBusy, setDeployBusy] = useState(false);
-  const [deployErr, setDeployErr] = useState<string | null>(null);
-  const loadDeploy = useCallback(async () => {
-    try {
-      const r = await fetch(`/api/base-apps/deploy/${slug}/status`);
-      if (r.ok) setDeploy(await r.json());
-    } catch { /* non-essential */ }
-  }, [slug]);
-  useEffect(() => { loadDeploy(); }, [loadDeploy]);
-  const toggleDeploy = useCallback(async (start: boolean) => {
-    setDeployBusy(true);
-    setDeployErr(null);
-    try {
-      const r = await fetch(`/api/base-apps/deploy/${slug}/${start ? "start" : "stop"}`, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setDeploy(await r.json());
-    } catch (e) {
-      setDeployErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setDeployBusy(false);
-    }
-  }, [slug]);
-
   useCrumbLabel(project?.title || null);
 
   // ---- Loaders --------------------------------------------------------------
@@ -588,6 +562,11 @@ export default function ProjectDetail() {
           <StateBlock
             title="No build agents yet"
             hint="Spawn one to open a coding session against this project."
+            action={
+              <Button variant="primary" size="sm" onClick={() => setSpawning(true)}>
+                <Bot aria-hidden /> Start building
+              </Button>
+            }
           />
         ) : (
           <CardGrid>
@@ -866,92 +845,54 @@ export default function ProjectDetail() {
       {/* --- App (multi-service runner) --- */}
       <AppServicesPanel slug={slug} />
 
+      {/* --- Autonomy (per-project Ralph loop) --- */}
+      <AutonomyPanel slug={slug} />
+
       {/* --- Environment / secrets registry --- */}
       <EnvironmentPanel slug={slug} />
 
-      {/* --- Deployments (was Surfaces) --- */}
+      {/* --- Share (publish to the local marketplace) --- */}
+      {/* Running the project lives in "Run & Deploy" above (the app runner). This
+          section is only about sharing a snapshot with the rest of this workshop:
+          it cuts a local release and lists it in the marketplace, where anyone can
+          install (fork) it. No duplicate "standalone/integrated" run concepts. */}
       <section style={{ marginBottom: "var(--space-6)" }}>
-        <SectionLabel icon={<Rocket aria-hidden />}>Deployments</SectionLabel>
+        <SectionLabel icon={<Store aria-hidden />}>Share</SectionLabel>
         <Card>
-          <Stack>
-            <DeploymentRow
-              name="Integrated"
-              desc="A route mounted inside Workshop."
-              active={project.surfaces.integrated != null}
-              value={project.surfaces.integrated}
-              activeAction={
-                <Link to={project.surfaces.integrated || "#"} style={{ textDecoration: "none" }}>
-                  <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
-                </Link>
-              }
-              idleLabel="Mount"
-            />
-            <DeploymentRow
-              name="Standalone"
-              desc="Its own origin and port."
-              active={deploy?.running ?? false}
-              value={deploy?.running && deploy.port ? `:${deploy.port}` : null}
-              activeAction={
-                <Row wrap>
-                  {deploy?.url && (
-                    <a href={deploy.url} target="_blank" rel="noreferrer">
-                      <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
-                    </a>
-                  )}
-                  <Button size="sm" variant="danger-ghost" loading={deployBusy} onClick={() => toggleDeploy(false)}>
-                    Stop
-                  </Button>
-                </Row>
-              }
-              idleAction={
-                <Button size="sm" variant="primary" loading={deployBusy} onClick={() => toggleDeploy(true)}>
-                  <Rocket aria-hidden /> Start
-                </Button>
-              }
-            />
-            <DeploymentRow
-              name="Public"
-              desc="Shared / marketplace listing."
-              active={project.surfaces.public != null}
-              value={project.surfaces.public ?? (published ? `v${published.version}` : null)}
-              activeAction={
-                <Link to={project.surfaces.public || "#"} style={{ textDecoration: "none" }}>
-                  <Button size="sm" variant="ghost"><ExternalLink aria-hidden /> Open</Button>
-                </Link>
-              }
-              idleLabel="Publish"
-              // Publishing IS wired (the local marketplace registry). Once
-              // published, show the release version + a link to the listing;
-              // until then, a real Publish button gated by a confirm dialog.
-              idleAction={
-                published ? (
-                  <Row style={{ gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-                    <Badge>v{published.version}</Badge>
-                    <Link to="/marketplace" style={{ textDecoration: "none" }}>
-                      <Button size="sm" variant="ghost"><Store aria-hidden /> View in marketplace</Button>
-                    </Link>
-                  </Row>
+          <Row between wrap style={{ alignItems: "center" }}>
+            <div style={{ flex: "1 1 18rem" }}>
+              <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                <span style={{ fontWeight: "var(--fw-semi)" }}>Marketplace</span>
+                {published || project.surfaces.public != null ? (
+                  <StatusDot status="ok">published{published ? ` · v${published.version}` : ""}</StatusDot>
                 ) : (
-                  <Button size="sm" variant="primary" onClick={() => { setPublishErr(null); setConfirmPublish(true); }}>
-                    <Upload aria-hidden /> Publish
-                  </Button>
-                )
-              }
-            />
-          </Stack>
+                  <StatusDot status="stopped">not published</StatusDot>
+                )}
+              </Row>
+              <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-xs)" }}>
+                Cut a local release and list it in the marketplace, where anyone on this workshop can install (fork) it.
+              </p>
+            </div>
+            {published || project.surfaces.public != null ? (
+              <Row wrap style={{ gap: "var(--space-2)" }}>
+                <Link to="/marketplace" style={{ textDecoration: "none" }}>
+                  <Button size="sm" variant="ghost"><Store aria-hidden /> View in marketplace</Button>
+                </Link>
+                <Button size="sm" variant="ghost" onClick={() => { setPublishErr(null); setConfirmPublish(true); }}>
+                  <Upload aria-hidden /> Publish update
+                </Button>
+              </Row>
+            ) : (
+              <Button size="sm" variant="primary" onClick={() => { setPublishErr(null); setConfirmPublish(true); }}>
+                <Upload aria-hidden /> Publish
+              </Button>
+            )}
+          </Row>
           {publishErr && (
             <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: "var(--space-2) 0 0" }}>
               POST /api/base-apps/registry/publish: {publishErr}
             </p>
           )}
-          {deployErr && (
-            <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: "var(--space-2) 0 0" }}>
-              Deploy: {deployErr}
-            </p>
-          )}
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-3)" }}>
-            Publish cuts a local release and lists it in the marketplace. One-click mount + guest tokens land with the deployment runner (app-platform manifests + grants, Phase 4).
-          </p>
         </Card>
       </section>
 
@@ -1041,48 +982,3 @@ export default function ProjectDetail() {
   );
 }
 
-// One deployment surface row: state + an action affordance. Where there is no
-// backend yet, the control is disabled (dimmed, not cursor-blocked) with a clear
-// label — no fake behavior.
-function DeploymentRow({
-  name,
-  desc,
-  active,
-  value,
-  activeAction,
-  idleLabel,
-  idleAction,
-}: {
-  name: string;
-  desc: string;
-  active: boolean;
-  value: string | null;
-  activeAction: ReactNode;
-  // A wired idleAction replaces the default disabled idle button (Standalone
-  // Start and Public Publish are wired). Rows without either stay disabled with
-  // idleLabel until their runner lands, no fake behavior.
-  idleLabel?: string;
-  idleAction?: ReactNode;
-}) {
-  return (
-    <Row wrap style={{ alignItems: "center", paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--border)" }}>
-      <div style={{ flex: "1 1 16rem" }}>
-        <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
-          <span style={{ fontWeight: "var(--fw-semi)" }}>{name}</span>
-          {active ? (
-            <StatusDot status="ok">live</StatusDot>
-          ) : (
-            <StatusDot status="stopped">not deployed</StatusDot>
-          )}
-          {value && <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{value}</span>}
-        </Row>
-        <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-xs)" }}>{desc}</p>
-      </div>
-      {active ? activeAction : idleAction ?? (
-        <Button size="sm" variant="ghost" disabled title="Lands with the deployment runner (Phase 4)">
-          {idleLabel}
-        </Button>
-      )}
-    </Row>
-  );
-}

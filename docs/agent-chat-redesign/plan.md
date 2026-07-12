@@ -158,7 +158,19 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
   retained), and distillation (durable facts from folded turns merged into the scope `chat-distilled`
   note, recallable). Build mode untouched. Threshold: _COMPACT_TOKEN_THRESHOLD=6000 tokens of
   uncompacted tail. Distillation is ON by default; to quiet it, gate _distill or skip it per scope.
-- **Phase 4:** per-project autonomy (generalized Ralph). Independent, can follow Phase 1.
+- **Phase 4 (BUILT + verified 2026-07-12):** per-project autonomy (generalized Ralph). `scripts/ralph.sh`
+  gained `--dir <tree>` (default = workshop root) and scopes the reviewer to that tree via
+  `REVIEWER_ROOT`; `scripts/reviewer.sh` inspects `REVIEWER_ROOT` (defaults to workshop) so it gates a
+  PROJECT's own git repo. New `scripts/project_ralph.sh <slug>` = the per-project conductor: resolves the
+  project dir + `autonomy.mode` from the registry, drives each open task (through the structured store via
+  `scripts/project_tasks.py`, so `.tasks.json`/`TODO.md` never drift) with cwd INSIDE the project tree, so
+  PROJECT.md/AGENTS.md/TODO.md finally reach the loop. Registry gains a per-project `autonomy` object
+  (`mode` = off|manual|continuous). Backend `routes/projects.py`: GET/PUT `/{slug}/autonomy`, POST
+  `/{slug}/autonomy/run` (manual runs pass `--force` to bypass the global cron off-switch; `off` still
+  refuses; 409 if a sweep is already running), GET `/{slug}/autonomy/log`. Frontend `AutonomyPanel.tsx` on
+  the project detail page (mode segmented, Run now, live status pill, last-sweep summary, sweep log modal).
+  Verified end to end: a real sweep created a file per its task, the project-scoped reviewer passed, and the
+  task was marked done in the store.
 - **Phase 5:** skills (SKILL.md dirs, builder auto-discovery, assistant loader).
 - **Phase 6:** voice modality toggle. Builder voice parked.
 

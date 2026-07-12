@@ -30,17 +30,14 @@ set -u
 WORKSHOP=/home/clawd-a/workshop
 CLAUDE=/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude
 AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
-LOG=$WORKSHOP/.runtime/ralph.log
 REVIEWER=$WORKSHOP/scripts/reviewer.sh
 
-mkdir -p "$(dirname "$LOG")"
-
 ts() { date -Iseconds; }
-log() { echo "[$(ts)] [ralph] $*" >> "$LOG"; echo "[ralph] $*"; }
 
 # Parse args.
 TASK=""
 BASELINE=""
+DIR="$WORKSHOP"          # working tree to drive (default = workshop root)
 MAX_ITER=10
 MAX_WALL=1500   # 25 minutes
 MAX_TURNS_PER_ITER=6
@@ -48,11 +45,18 @@ MAX_TURNS_PER_ITER=6
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --baseline-rev) BASELINE="$2"; shift 2 ;;
+    --dir)          DIR="$2"; shift 2 ;;
     --max-iter)     MAX_ITER="$2"; shift 2 ;;
     --max-wall)     MAX_WALL="$2"; shift 2 ;;
     *)              TASK="$1"; shift ;;
   esac
 done
+
+# Per-tree log + reviewer scoping. A project run (DIR != WORKSHOP) logs into the
+# project's own .runtime and reviews the project's git repo via REVIEWER_ROOT.
+LOG=$DIR/.runtime/ralph.log
+mkdir -p "$(dirname "$LOG")"
+log() { echo "[$(ts)] [ralph] $*" >> "$LOG"; echo "[ralph] $*"; }
 
 if [[ -z "$TASK" ]]; then
   echo "usage: ralph.sh \"<task description>\" [--baseline-rev rev] [--max-iter N] [--max-wall sec]" >&2
@@ -65,13 +69,19 @@ if [[ -r "$AUTH_ENV" ]]; then
 fi
 unset ANTHROPIC_API_KEY
 
-cd "$WORKSHOP" || { log "cannot cd to $WORKSHOP"; exit 4; }
+cd "$DIR" || { log "cannot cd to $DIR"; exit 4; }
 
-# Lock with same key as cron_agent so they don't race.
-LOCK=/tmp/workshop-ralph.lock
+# Per-tree lock: the workshop-root run keeps the shared key (so it and cron_agent
+# never race); a per-project run gets its own key so it can run concurrently with
+# the root loop but never twice against the same project tree.
+if [[ "$DIR" == "$WORKSHOP" ]]; then
+  LOCK=/tmp/workshop-ralph.lock
+else
+  LOCK=/tmp/workshop-ralph-$(echo "$DIR" | md5sum | cut -c1-12).lock
+fi
 exec 9>"$LOCK"
 if ! flock -n 9; then
-  log "another ralph is running; aborting"
+  log "another ralph is running against $DIR; aborting"
   exit 4
 fi
 
@@ -121,6 +131,21 @@ Rules of the loop:
 The task follows below.
 PROMPT
 )
+
+# Scope the reviewer command the model should run to the tree it is driving.
+if [[ "$DIR" == "$WORKSHOP" ]]; then
+  REVIEWER_CMD="~/workshop/scripts/reviewer.sh"
+else
+  REVIEWER_CMD="REVIEWER_ROOT=$DIR ~/workshop/scripts/reviewer.sh"
+  RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+
+## Environment for THIS run
+You are driving a single project: $DIR
+- Your working directory IS the project root. Read PROJECT.md / AGENTS.md / TODO.md
+  there for the brief and constraints. Do the work inside this tree only.
+- Run the completion gate with the project scope:  $REVIEWER_CMD
+  (it inspects THIS project's git repo, not the workshop root)."
+fi
 
 iter=0
 exit_code=1
@@ -202,7 +227,7 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
 
   # Run reviewer regardless of sentinel — sentinel is necessary but not sufficient.
   set +e
-  REVIEWER_JSON=$("$REVIEWER" "$BASELINE" 2>>"$LOG")
+  REVIEWER_JSON=$(REVIEWER_ROOT="$DIR" "$REVIEWER" "$BASELINE" 2>>"$LOG")
   REVIEWER_EXIT=$?
   set -e
   last_reviewer_json="$REVIEWER_JSON"

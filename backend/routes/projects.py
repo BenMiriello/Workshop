@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -430,6 +431,116 @@ def _touch(slug: str) -> None:
     if slug in (data.get("projects") or {}):
         data["projects"][slug]["last_touched"] = _now()
         _save_registry(data)
+
+
+# ---- Per-project autonomy (generalized Ralph) -------------------------------
+# A project can run its OWN Ralph loop over its OWN TODO.md + git repo, so a
+# PROJECT.md brief actually reaches an autonomous worker. `autonomy.mode`:
+#   off        — never runs (default)
+#   manual     — only operator-triggered "Run now" sweeps
+#   continuous — also eligible for background sweeps by the autonomy cron
+# The heavy lifting is scripts/project_ralph.sh; this router owns config + spawn.
+
+AUTONOMY_MODES = {"off", "manual", "continuous"}
+SCRIPTS_ROOT = PROJECTS_ROOT.parent / "scripts"
+
+
+class AutonomyIn(BaseModel):
+    mode: str = Field(pattern="^(off|manual|continuous)$")
+
+
+def _run_status_path(slug: str) -> Path:
+    return _project_dir(slug) / ".runtime" / "ralph-run.json"
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except (OSError, TypeError):
+        return False
+    return True
+
+
+def _read_run_status(slug: str) -> dict | None:
+    p = _run_status_path(slug)
+    if not p.exists():
+        return None
+    try:
+        rec = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+    # A "running" record whose pid is gone means the sweep died; report it as
+    # crashed rather than perpetually-running.
+    if rec.get("status") == "running" and not _pid_alive(rec.get("pid", -1)):
+        rec = {**rec, "status": "crashed"}
+    return rec
+
+
+def _is_running(slug: str) -> bool:
+    rec = _read_run_status(slug)
+    return bool(rec and rec.get("status") == "running")
+
+
+def _autonomy_config(slug: str) -> dict:
+    raw = _ensure_project(slug)
+    cfg = raw.get("autonomy") or {}
+    return {"mode": cfg.get("mode", "off"), "updated": cfg.get("updated")}
+
+
+@router.get("/{slug}/autonomy")
+async def get_autonomy(slug: str) -> dict:
+    cfg = _autonomy_config(slug)
+    return {**cfg, "running": _is_running(slug), "last_run": _read_run_status(slug)}
+
+
+@router.put("/{slug}/autonomy")
+async def put_autonomy(slug: str, body: AutonomyIn) -> dict:
+    if body.mode not in AUTONOMY_MODES:
+        raise HTTPException(400, f"mode must be one of {sorted(AUTONOMY_MODES)}")
+    data = _load_registry()
+    proj = (data.get("projects") or {}).get(slug)
+    if not proj:
+        raise HTTPException(404, f"project not found: {slug}")
+    proj["autonomy"] = {"mode": body.mode, "updated": _now()}
+    _save_registry(data)
+    return {"mode": body.mode, "updated": proj["autonomy"]["updated"], "running": _is_running(slug)}
+
+
+@router.post("/{slug}/autonomy/run")
+async def run_autonomy(slug: str) -> dict:
+    """Fire a project Ralph sweep in the background. Manual (operator-clicked)
+    runs use --force so the global cron off-switch does not block a deliberate
+    action; the project's own `off` mode still refuses."""
+    cfg = _autonomy_config(slug)
+    if cfg["mode"] == "off":
+        raise HTTPException(409, "project autonomy is off; set mode to manual or continuous first")
+    if _is_running(slug):
+        raise HTTPException(409, "a sweep is already running for this project")
+    script = SCRIPTS_ROOT / "project_ralph.sh"
+    if not script.exists():
+        raise HTTPException(500, f"driver missing: {script}")
+    log_dir = _project_dir(slug) / ".runtime"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    logf = open(log_dir / "ralph.log", "a")  # noqa: SIM115 (handed to child)
+    proc = subprocess.Popen(
+        ["bash", str(script), slug, "--force"],
+        cwd=str(PROJECTS_ROOT.parent),
+        stdout=logf,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    _touch(slug)
+    return {"started": True, "pid": proc.pid, "slug": slug}
+
+
+@router.get("/{slug}/autonomy/log")
+async def get_autonomy_log(slug: str, tail: int = 200) -> dict:
+    p = _project_dir(slug) / ".runtime" / "ralph.log"
+    if not p.exists():
+        return {"log": "", "running": _is_running(slug)}
+    tail = max(1, min(tail, 2000))
+    lines = p.read_text(errors="replace").splitlines()
+    return {"log": "\n".join(lines[-tail:]), "running": _is_running(slug)}
 
 
 # ---- File tree --------------------------------------------------------------
