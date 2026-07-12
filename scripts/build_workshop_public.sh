@@ -19,5 +19,17 @@ if systemctl --user cat workshop-public.service >/dev/null 2>&1; then
     && echo "public edge active on :8002" \
     || { echo "public edge failed to come up"; journalctl --user -u workshop-public.service -n 20 --no-pager; exit 1; }
 else
-  echo "workshop-public.service not installed yet — run scripts/install_public_service.sh first."
+  # No systemd unit: launch the edge directly. Port is configurable; the edge's
+  # backend target and dist dir come from WORKSHOP_BACKEND / WORKSHOP_DIST (see
+  # workshop_public_app.py), inherited from this shell's environment.
+  PORT="${WORKSHOP_PUBLIC_PORT:-8002}"
+  echo "workshop-public.service not installed; launching edge via nohup on :${PORT} ..."
+  cd "$REPO_ROOT/backend"
+  pkill -f "uvicorn workshop_public_app:app.*${PORT}" || true
+  sleep 1
+  nohup .venv/bin/uvicorn workshop_public_app:app --host 0.0.0.0 --port "${PORT}" \
+    >>/tmp/workshop-public.log 2>&1 &
+  disown || true
+  sleep 2
+  echo "public edge (nohup) on :${PORT}. Log: /tmp/workshop-public.log"
 fi

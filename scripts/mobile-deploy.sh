@@ -24,9 +24,9 @@ set -euo pipefail
 
 REPO="${WORKSHOP_REPO:-$HOME/Development/Workshop}"
 MOBILE="$REPO/mobile"
-SCHEME="Workshop"
 CONFIG="Release"
-BUNDLE_ID="com.benmiriello.workshop"
+# SCHEME and BUNDLE_ID are resolved from the (possibly env-overridden) Expo
+# config below, so this script works for whatever app identity it was built with.
 
 DO_PREBUILD=0
 [ "${1:-}" = "--prebuild" ] && DO_PREBUILD=1
@@ -63,6 +63,18 @@ if [ ! -f ios/.xcode.env.local ]; then
   echo "export NODE_BINARY=$(command -v node)" > ios/.xcode.env.local
 fi
 
+# Resolve the app identity from the (possibly env-overridden) Expo config so the
+# build/install works regardless of the app name / bundle id.
+echo "==> Resolving app identity"
+CFG="$(npx expo config --json 2>/dev/null)"
+SCHEME="$(node -e 'const c=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write(c.name||"")' <<<"$CFG")"
+BUNDLE_ID="$(node -e 'const c=JSON.parse(require("fs").readFileSync(0,"utf8"));process.stdout.write((c.ios||{}).bundleIdentifier||"")' <<<"$CFG")"
+if [ -z "$SCHEME" ] || [ -z "$BUNDLE_ID" ]; then
+  echo "!! Could not resolve app name / bundle id from expo config." >&2
+  exit 1
+fi
+echo "    app: $SCHEME ($BUNDLE_ID)"
+
 echo "==> Locating attached iPhone"
 UDID=$(xcrun xctrace list devices 2>&1 \
   | grep -v Simulator \
@@ -83,7 +95,7 @@ fi
 
 echo "==> Building ($CONFIG) — this re-signs, refreshing the 7-day profile"
 xcrun xcodebuild \
-  -workspace ios/Workshop.xcworkspace \
+  -workspace "ios/$SCHEME.xcworkspace" \
   -scheme "$SCHEME" \
   -configuration "$CONFIG" \
   -destination "id=$UDID" \

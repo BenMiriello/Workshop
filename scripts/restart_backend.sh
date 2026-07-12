@@ -10,6 +10,7 @@ set -euo pipefail
 
 SERVICE=workshop-backend.service
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PORT="${WORKSHOP_BACKEND_PORT:-8000}"
 
 have_unit() {
   command -v systemctl >/dev/null 2>&1 \
@@ -54,7 +55,7 @@ echo "No systemd unit found; using legacy nohup path. (Run scripts/install_servi
 cd "$REPO_ROOT/backend"
 
 envv=()
-pid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
+pid="$(pgrep -f "uvicorn main:app.*${PORT}" | head -1 || true)"
 if [ -n "${pid:-}" ]; then
   while IFS= read -r -d '' line; do
     [ -n "$line" ] && envv+=("$line")
@@ -76,11 +77,11 @@ envv+=("WORKSHOP_PROJECTS_ROOT=${WORKSHOP_PROJECTS_ROOT:-$HOME}")
 envv+=("WORKSHOP_ROOT=${WORKSHOP_ROOT:-$REPO_ROOT}")
 envv+=("HOME=$HOME" "PATH=$PATH")
 
-pkill -f 'uvicorn main:app.*8000' || true
+pkill -f "uvicorn main:app.*${PORT}" || true
 sleep 1
-env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 \
+env -i "${envv[@]}" nohup .venv/bin/uvicorn main:app --host 0.0.0.0 --port "${PORT}" \
   >>/tmp/workshop-backend.log 2>&1 &
 disown || true
 sleep 2
-newpid="$(pgrep -f 'uvicorn main:app.*8000' | head -1 || true)"
+newpid="$(pgrep -f "uvicorn main:app.*${PORT}" | head -1 || true)"
 echo "Backend restarted via nohup (new pid ${newpid:-unknown}). Log: /tmp/workshop-backend.log"
