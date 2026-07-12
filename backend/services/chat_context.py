@@ -106,6 +106,22 @@ UI_CARD_PROTOCOL = (
     "card per reply."
 )
 
+# Skill loader protocol (Phase 5). Data-mode assistants see the available skill
+# names + descriptions ambiently (in the cache-stable prefix); to pull a skill's
+# FULL instructions they emit this fenced block and the backend feeds the body
+# back for one more turn. Builders never see this — they discover skills natively
+# from their cwd `.claude/skills/`.
+USE_SKILL_PROTOCOL = (
+    "To load a skill's full instructions, emit a fenced block tagged `use_skill` "
+    "whose only content is the skill name:\n\n"
+    "```use_skill\n"
+    "<skill-name>\n"
+    "```\n"
+    "The skill's instructions will be provided and you continue the same reply. "
+    "Request a skill ONLY when the current task matches its description; otherwise "
+    "just reply normally. Emit at most one use_skill block per reply."
+)
+
 # Platform-wide reply style. The operator's standing rule: no em-dashes and no
 # emojis anywhere, including chat replies. Appended to every assistant preamble.
 _STYLE_RULE = (

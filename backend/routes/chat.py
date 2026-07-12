@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
@@ -23,6 +24,7 @@ from pydantic import BaseModel
 
 from services import chat_store, chat_context
 from services import knowledge
+from services import skills
 from services import llm_router
 from services import build_streaming
 from services import chat_naming
@@ -304,6 +306,20 @@ def _build_prompt(
         kindex = ""
     if kindex:
         parts.append(f"=== KNOWLEDGE (in scope: {kscope}) ===\n{kindex}")
+    # Ambient skills (Phase 5): available skill names + descriptions in the stable
+    # prefix so a data-mode assistant knows what it can invoke; full bodies load on
+    # demand via the use_skill action (see _expand_use_skill). Builders discover
+    # skills natively from their cwd .claude/skills, so this is data-mode only.
+    if not chat_context.is_build_provider(provider):
+        try:
+            sblock = skills.descriptions_block(provider.knowledge_scope())
+        except Exception as e:
+            log.warning("chat skills block failed for %s: %s", provider.key, e)
+            sblock = ""
+        if sblock:
+            parts.append(
+                "=== SKILLS (available) ===\n" + sblock + "\n\n" + chat_context.USE_SKILL_PROTOCOL
+            )
     # Operator-set custom instructions are stable (rarely change), so they stay in
     # the cache-stable prefix alongside persona/capability/knowledge index.
     try:
@@ -344,6 +360,50 @@ def _build_prompt(
         "change was requested) — no 'You:' prefix."
     )
     return "\n\n".join(parts)
+
+
+# --- Phase 5: skill loader (use_skill one-hop expansion) ---------------------
+# A data-mode assistant sees skill descriptions ambiently and can request a
+# skill's full body by emitting a ```use_skill\n<name>``` block. When it does, we
+# feed that skill's instructions back and let it finish the SAME reply — bounded
+# to a single expansion so a turn can't loop.
+_USE_SKILL_RE = re.compile(r"```use_skill\s*\n\s*([a-z0-9][a-z0-9-]{0,63})\s*\n```", re.IGNORECASE)
+
+
+def _expand_use_skill_sync(prompt: str, reply: str, scope_key: str, model: str,
+                           timeout_s: float, call_kwargs: dict) -> tuple[str, str | None]:
+    m = _USE_SKILL_RE.search(reply)
+    if not m:
+        return reply, None
+    name = m.group(1).strip()
+    sk = skills.get_skill(scope_key, name)
+    if not sk:
+        # Requested a skill that doesn't exist in scope: strip the block so the
+        # operator doesn't see raw protocol, keep whatever prose the model wrote.
+        return _USE_SKILL_RE.sub("", reply).strip() or reply, None
+    expanded = (
+        prompt
+        + f"\n\n=== SKILL LOADED: {name} ===\n{sk['body']}\n\n"
+        "=== CONTINUE ===\nThe skill you requested is now in context above. Complete your "
+        "reply to the operator following its instructions. Do NOT emit another use_skill block."
+    )
+    res = llm_router.call_cloud(expanded, model=model, timeout_s=timeout_s, **call_kwargs)
+    final = (res.get("text") or "").strip()
+    # Guard against a runaway second use_skill; strip any that slipped through.
+    final = _USE_SKILL_RE.sub("", final).strip()
+    return (final or reply), name
+
+
+def _link_build_skills(provider) -> None:
+    """Symlink the builder's in-scope skills into its cwd `.claude/skills/` so the
+    Claude Code CLI discovers them natively. Idempotent, best-effort — never
+    blocks a build turn."""
+    try:
+        linked = skills.link_into_cwd(str(provider.dir), provider.knowledge_scope())
+        if linked:
+            log.info("linked skills into %s: %s", provider.dir, linked)
+    except Exception as e:
+        log.info("skill link skipped for %s: %s", getattr(provider, "key", "?"), e)
 
 
 # --- Phase 3: threshold compaction -------------------------------------------
@@ -563,6 +623,7 @@ async def send_message(thread_id: str, body: PostMessage):
     # The narrow-tool / tools_disabled branches don't apply — those are for
     # Data-mode surfaces.
     if is_build_mode:
+        _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
         call_kwargs = {
             "max_turns": provider.max_turns,
             "cwd": str(provider.dir),
@@ -631,6 +692,19 @@ async def send_message(thread_id: str, body: PostMessage):
                 "chat completion recovered (provider=%s) after exit=%d stop_reason=%s",
                 provider.key, result.get("exit_code"), result.get("stop_reason"),
             )
+        # Phase 5: if a data-mode assistant asked for a skill, feed the body back
+        # and let it finish this reply (one bounded hop). Build mode is skipped —
+        # builders open skills natively from their cwd.
+        if not is_build_mode and "use_skill" in reply:
+            try:
+                reply, used_skill = await asyncio.to_thread(
+                    _expand_use_skill_sync, prompt, reply,
+                    provider.knowledge_scope(), model, call_timeout, call_kwargs,
+                )
+                if used_skill:
+                    log.info("chat used skill '%s' (scope=%s)", used_skill, provider.knowledge_scope())
+            except Exception as e:
+                log.warning("use_skill expansion failed: %s", e)
     except Exception as e:
         # Surface the actual error detail to the operator — bare "CloudCallFailed"
         # is opaque and leaves them guessing whether it's a transient blip, an
@@ -753,6 +827,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         prompt = _build_prompt(provider, history, content, preamble=preamble)
         resume_flag = False
 
+    _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
     turn = await build_streaming.start_turn(
         thread_id=thread_id,
         agent_slug=provider.slug,

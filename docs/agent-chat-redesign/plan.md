@@ -171,7 +171,21 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
   the project detail page (mode segmented, Run now, live status pill, last-sweep summary, sweep log modal).
   Verified end to end: a real sweep created a file per its task, the project-scoped reviewer passed, and the
   task was marked done in the store.
-- **Phase 5:** skills (SKILL.md dirs, builder auto-discovery, assistant loader).
+- **Phase 5 (BUILT + verified 2026-07-12):** skills (SKILL.md standard). `services/skills.py` = the store:
+  per-scope `skills/` dirs (shared/skills, projects/<slug>/skills, apps/<name>/skills,
+  .runtime/agents/<id>/skills) mirroring the knowledge scopes; `parse_skill_md` (frontmatter name/description
+  + body, no YAML dep); `list/get/put/delete`; `available_for_scope` = own scope + workshop baseline
+  (own wins on name collision); `descriptions_block` for the prompt prefix; `link_into_cwd` symlinks in-scope
+  skills into `<cwd>/.claude/skills/<name>` (idempotent, never clobbers a hand-placed skill). Builder
+  auto-discovery: `_link_build_skills(provider)` runs before every build turn (both the non-streaming and
+  SSE paths in routes/chat.py) so Claude Code finds them natively (free). Assistant loader: data-mode prompts
+  get a `=== SKILLS (available) ===` block + `USE_SKILL_PROTOCOL` in the cache-stable prefix (build mode is
+  skipped); a `use_skill` fenced block triggers a single bounded expansion (`_expand_use_skill_sync` feeds
+  the body back for one more model turn). API `routes/skills.py` (operator-gated, /api/skills): GET
+  /{scope}/skills, GET /{scope}/available, GET/PUT/DELETE /{scope}/skills/{name}. Seeded a real workshop
+  skill: `shared/skills/frontend-design-system`. Verified: unit tests (store + loader + non-clobber linking),
+  full API round-trip, and a LIVE end-to-end chat turn where the assistant loaded the skill and its reply
+  reflected the skill body (primitives / no-hex / edit-mode / the exact check commands).
 - **Phase 6:** voice modality toggle. Builder voice parked.
 
 Ordering: 1 delivers the motivating UX; 2+3 build the knowledge/context core the notes app needs
