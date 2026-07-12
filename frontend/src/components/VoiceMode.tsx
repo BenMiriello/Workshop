@@ -6,7 +6,15 @@ import {
 import { Button, StatusPill, SectionLabel, Select, Toggle, Segmented, StateBlock } from "../ui";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { voiceApi } from "../lib/voiceApi";
+import { detectCaps, type EngineCaps } from "../lib/voice";
 import type { VoiceState } from "../lib/voiceSession";
+
+// Human label for a resolved engine tier, used in the "Auto (X)" hints.
+const ENGINE_LABEL: Record<string, string> = {
+  server: "Local",
+  browser: "Browser",
+  native: "Device",
+};
 
 // The full-screen voice conversation surface. A spoken exchange treated as a
 // conversation: an orb that reacts to your voice, a live caption of what is being
@@ -36,11 +44,19 @@ export default function VoiceMode() {
   const { session, snapshot, prefs, updatePrefs } = useVoiceSession(contextKey);
   const [showSettings, setShowSettings] = useState(false);
   const [voices, setVoices] = useState<string[]>([]);
+  const [mountCaps, setMountCaps] = useState<EngineCaps | null>(null);
   const startedRef = useRef(false);
 
   useEffect(() => {
     voiceApi.voices().then((r) => setVoices(r.voices || [])).catch(() => {});
   }, []);
+
+  // Probe engine capabilities on mount (and again when the settings sheet opens)
+  // so provider controls reflect the truth before the session ever starts —
+  // otherwise caps are null until start() and everything looks disabled.
+  useEffect(() => {
+    detectCaps().then(setMountCaps).catch(() => {});
+  }, [showSettings]);
 
   // Lock the page to the visual viewport (same trick as FocusedChat).
   useEffect(() => {
@@ -50,7 +66,16 @@ export default function VoiceMode() {
   }, []);
 
   const { state, level, partial, lastUser, sentences, queue, caps } = snapshot;
-  const serverTts = caps?.server?.tts.available;
+  // Prefer live session caps once started; fall back to the mount-time probe.
+  const cap = caps ?? mountCaps;
+  const ttsServerOk = !!cap?.server?.tts.available;
+  const sttServerOk = !!cap?.server?.stt.available;
+  const browserTtsOk = !!cap?.browserTts;
+  const browserSttOk = !!cap?.browserStt;
+  const serverTts = ttsServerOk;
+  const autoTtsLabel = cap?.tts ? `Auto (${ENGINE_LABEL[cap.tts] ?? cap.tts})` : "Auto";
+  const autoSttLabel = cap?.stt ? `Auto (${ENGINE_LABEL[cap.stt] ?? cap.stt})` : "Auto";
+  const engineHint = cap && !cap.server ? "Voice server offline" : undefined;
   const active = state !== "idle" && state !== "connecting";
 
   const primaryAction = () => {
@@ -102,22 +127,68 @@ export default function VoiceMode() {
               onChange={(e) => updatePrefs({ speed: Number(e.target.value) })}
             />
           </label>
+          <label className="ws-voice-setting ws-voice-setting--row">
+            <SectionLabel>Speak replies</SectionLabel>
+            <Toggle checked={prefs.speak_replies} onChange={(v) => updatePrefs({ speak_replies: v })} />
+          </label>
           <label className="ws-voice-setting">
-            <SectionLabel>Speech</SectionLabel>
+            <SectionLabel>Speech engine</SectionLabel>
             <Segmented<typeof prefs.tts_provider>
-              value={prefs.tts_provider}
+              value={prefs.tts_provider === "off" ? "auto" : prefs.tts_provider}
               onChange={(v) => updatePrefs({ tts_provider: v })}
+              hint={engineHint}
               options={[
-                { value: "auto", label: "Auto" },
-                { value: "server", label: serverTts ? "Local" : "Local (off)" },
-                { value: "browser", label: "Browser" },
-                { value: "off", label: "Muted" },
+                { value: "auto", label: autoTtsLabel },
+                { value: "server", label: "Local", disabled: !ttsServerOk },
+                { value: "browser", label: "Browser", disabled: !browserTtsOk },
+              ]}
+            />
+          </label>
+          <label className="ws-voice-setting">
+            <SectionLabel>Hearing engine</SectionLabel>
+            <Segmented<typeof prefs.stt_provider>
+              value={prefs.stt_provider}
+              onChange={(v) => updatePrefs({ stt_provider: v })}
+              hint={engineHint}
+              options={[
+                { value: "auto", label: autoSttLabel },
+                { value: "server", label: "Local", disabled: !sttServerOk },
+                { value: "browser", label: "Browser", disabled: !browserSttOk },
+              ]}
+            />
+          </label>
+          <label className="ws-voice-setting">
+            <SectionLabel>Pause before reply {(prefs.endpoint_silence_ms / 1000).toFixed(2)}s</SectionLabel>
+            <input
+              className="ws-range"
+              type="range" min={300} max={2000} step={50}
+              value={prefs.endpoint_silence_ms}
+              onChange={(e) => updatePrefs({ endpoint_silence_ms: Number(e.target.value) })}
+            />
+          </label>
+          <label className="ws-voice-setting">
+            <SectionLabel>Reply length</SectionLabel>
+            <Segmented<typeof prefs.verbosity>
+              value={prefs.verbosity}
+              onChange={(v) => updatePrefs({ verbosity: v })}
+              options={[
+                { value: "terse", label: "Terse" },
+                { value: "normal", label: "Normal" },
               ]}
             />
           </label>
           <label className="ws-voice-setting ws-voice-setting--row">
             <SectionLabel>Let me interrupt</SectionLabel>
             <Toggle checked={prefs.barge_in} onChange={(v) => updatePrefs({ barge_in: v })} />
+          </label>
+          <label className="ws-voice-setting">
+            <SectionLabel>Interrupt sensitivity</SectionLabel>
+            <input
+              className="ws-range"
+              type="range" min={0} max={1} step={0.05}
+              value={prefs.barge_sensitivity}
+              onChange={(e) => updatePrefs({ barge_sensitivity: Number(e.target.value) })}
+            />
           </label>
         </div>
       )}

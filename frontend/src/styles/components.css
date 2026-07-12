@@ -555,6 +555,13 @@ a.ws-btn { text-decoration: none; }
 .ws-segmented:not(.has-thumb) button[aria-pressed="true"] { background: var(--card); box-shadow: var(--shadow-sm); }
 .ws-segmented button:focus-visible { box-shadow: var(--focus-ring); }
 .ws-segmented button:active { transform: scale(0.97); }
+/* Dimmed, non-interactive option (e.g. an engine currently offline). Cursor
+   stays default per DS rule 10 (never not-allowed). */
+.ws-segmented button.is-disabled { color: var(--muted); opacity: 0.5; cursor: default; }
+.ws-segmented button.is-disabled:hover { color: var(--muted); }
+.ws-segmented button.is-disabled:active { transform: none; }
+.ws-segmented-field { display: inline-flex; flex-direction: column; gap: var(--space-1); }
+.ws-segmented__hint { font-size: var(--fs-xs); color: var(--muted); }
 
 /* ---- CHECKBOX ------------------------------------------------------------ */
 .ws-check { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; font-size: var(--fs-base); }

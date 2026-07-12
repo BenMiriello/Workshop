@@ -47,6 +47,11 @@ export type VoicePrefs = {
   speed: number;
   tts_provider: "auto" | "server" | "browser" | "off";
   stt_provider: "auto" | "server" | "browser";
+  // Voice-output lane. When false, replies render as captions only (marked
+  // heard immediately) — this is the mute, decoupled from the engine choice.
+  speak_replies: boolean;
+  // Trailing silence (ms) before we take a turn — "Pause before reply".
+  endpoint_silence_ms: number;
   barge_in: boolean;
   barge_sensitivity: number;
   verbosity: "terse" | "normal";
@@ -57,6 +62,8 @@ export const DEFAULT_PREFS: VoicePrefs = {
   speed: 1.0,
   tts_provider: "auto",
   stt_provider: "auto",
+  speak_replies: true,
+  endpoint_silence_ms: 900,
   barge_in: true,
   barge_sensitivity: 0.5,
   verbosity: "normal",
@@ -156,6 +163,7 @@ export class VoiceSession {
   setPrefs(p: VoicePrefs) {
     this.cfg.prefs = p;
     this.mic.setSensitivity(p.barge_sensitivity);
+    this.mic.setEndSilence(p.endpoint_silence_ms);
   }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -202,7 +210,7 @@ export class VoiceSession {
     else if (p.stt_provider === "browser" && c.browserStt) this.sttProvider = "browser";
     else this.sttProvider = c.stt; // auto
     // TTS
-    if (p.tts_provider === "off") this.ttsProvider = null;
+    if (!p.speak_replies || p.tts_provider === "off") this.ttsProvider = null;
     else if (p.tts_provider === "server" && c.server?.tts.available) this.ttsProvider = "server";
     else if (p.tts_provider === "browser" && c.browserTts) this.ttsProvider = "browser";
     else this.ttsProvider = c.tts; // auto

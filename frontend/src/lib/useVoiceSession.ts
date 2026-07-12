@@ -55,6 +55,8 @@ export function useVoiceSession(contextKey: string, model?: string) {
           speed: p.speed ?? DEFAULT_PREFS.speed,
           tts_provider: (p.tts_provider as VoicePrefs["tts_provider"]) ?? DEFAULT_PREFS.tts_provider,
           stt_provider: (p.stt_provider as VoicePrefs["stt_provider"]) ?? DEFAULT_PREFS.stt_provider,
+          speak_replies: p.speak_replies ?? DEFAULT_PREFS.speak_replies,
+          endpoint_silence_ms: p.endpoint_silence_ms ?? DEFAULT_PREFS.endpoint_silence_ms,
           barge_in: p.barge_in ?? DEFAULT_PREFS.barge_in,
           barge_sensitivity: p.barge_sensitivity ?? DEFAULT_PREFS.barge_sensitivity,
           verbosity: (p.verbosity as VoicePrefs["verbosity"]) ?? DEFAULT_PREFS.verbosity,

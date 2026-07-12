@@ -120,6 +120,12 @@ export class MicStream {
     this.startThreshold = 0.12 - Math.max(0, Math.min(1, v)) * 0.1;
   }
 
+  // Trailing silence (ms) that ends an utterance on the server VAD path.
+  // Operator-configurable ("Pause before reply"); clamped to a sane range.
+  setEndSilence(ms: number) {
+    this.endSilenceMs = Math.max(300, Math.min(2000, Math.round(ms)));
+  }
+
   // Provide a live 0..1 estimate of the TTS output level (server speaker only —
   // SpeechSynthesis can't be measured, so it stays 0 and we lean on the mic's
   // own echoCancellation + the elevated barge threshold).
