@@ -1105,10 +1105,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             )}
             {(streaming || busy) && (
               <div className="chat-working" role="status" aria-live="polite">
-                <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
                 <span className="chat-working__label">
-                  {reconnecting ? "Reconnecting…" : "Working…"}
+                  {reconnecting ? "Reconnecting" : "Working"}
                 </span>
+                <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
                 {streaming && elapsed > 0 && (
                   <span className="chat-working__time">{formatElapsed(elapsed)}</span>
                 )}
@@ -1235,6 +1235,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {dictation.available && (
           <button
             className={`chat-slash-btn${dictation.recording ? " is-active" : ""}`}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={onMic}
             aria-label={dictation.recording ? "Stop dictation" : "Dictate"}
             title={dictation.recording ? "Stop dictation" : "Dictate (speech to text)"}
@@ -1255,6 +1256,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {!streamingBuild && (
           <button
             className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
             aria-label="Slash commands"
             title="Slash commands"
@@ -1264,11 +1266,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         )}
         {/* While a build turn streams, Send (queues the next message) sits to the
             left of Stop. Otherwise just Send. */}
-        <button className="chat-send" onClick={send} disabled={!input.trim() || (effectiveMode !== "build" && busy)} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>
+        {/* onMouseDown preventDefault: don't let tapping an action button blur the
+            textarea — on mobile that closes the keyboard, the layout jumps, and the
+            tap lands where the button no longer is (the "send needs two taps" bug). */}
+        <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim() || (effectiveMode !== "build" && busy)} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>
           <CornerDownLeft size={16} aria-hidden />
         </button>
         {streamingBuild && (
-          <button className="chat-stop" onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
+          <button className="chat-stop" onMouseDown={(e) => e.preventDefault()} onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
             <Square size={16} aria-hidden />
           </button>
         )}
