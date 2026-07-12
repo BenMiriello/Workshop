@@ -2,11 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
-  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines, Volume2, VolumeX,
+  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines,
   PanelsTopLeft,
 } from "lucide-react";
 import { useDictation } from "../lib/useDictation";
-import { useReplySpeaker } from "../lib/useReplySpeaker";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
   chatApi,
@@ -391,12 +390,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     dictation.toggle();
     inputRef.current?.focus();
   }, [dictation, input]);
-
-  // "Speak replies" toggle: reads each freshly-arrived assistant message aloud.
-  // speakNextRef is armed when we send a turn so we only speak turns we started,
-  // never messages loaded from history when switching threads.
-  const replySpeaker = useReplySpeaker();
-  const speakNextRef = useRef(false);
 
   // Provider list (scoped to this app, or the full cross-context list).
   useEffect(() => {
@@ -799,25 +792,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       return;
     }
     if (effectiveMode !== "build" && busy) return;
-    // Arm reply-speaking for the turn we're about to start; stop any reply still
-    // being read so a new question cuts off the old answer.
-    speakNextRef.current = true;
-    replySpeaker.stop();
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     if (effectiveMode === "build") sendBuild(text);
     else sendData(text);
-  }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue, replySpeaker]);
-
-  // Speak a freshly-arrived assistant reply when the toggle is on (both modes).
-  useEffect(() => {
-    if (!speakNextRef.current) return;
-    const last = messages[messages.length - 1];
-    if (last && last.role === "assistant" && !last.meta?.error) {
-      speakNextRef.current = false;
-      replySpeaker.speak(last.content);
-    }
-  }, [messages, replySpeaker]);
+  }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -1230,54 +1209,48 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onFocus={() => setInputFocused(true)}
         onBlur={() => setInputFocused(false)}
       />
+      {dictation.error && (
+        <div className="chat-dictation-error" role="status">{dictation.error}</div>
+      )}
       <div className="chat-actions">
         {contextMeter}
         <span className="chat-actions__spacer" />
-        <button
-          className={`chat-slash-btn${build ? " is-disabled" : ""}`}
-          onClick={() => {
-            if (build) return;
-            const q = activeId ? `?thread=${encodeURIComponent(activeId)}` : "";
-            navigate(`/voice/${encodeURIComponent(contextKey)}${q}`);
-          }}
-          aria-disabled={build || undefined}
-          aria-label="Voice mode"
-          title={build ? "Voice is available in assistant chats" : "Voice mode — talk instead of type"}
-        >
-          <AudioLines size={16} aria-hidden />
-        </button>
+        {/* Voice mode is only a real thing on assistant/data chats. On build
+            chats it's unsupported, so we DON'T render a dead greyed button —
+            hiding it is clearer than showing something that can't be used. */}
+        {!build && (
+          <button
+            className="chat-slash-btn"
+            onClick={() => {
+              const q = activeId ? `?thread=${encodeURIComponent(activeId)}` : "";
+              navigate(`/voice/${encodeURIComponent(contextKey)}${q}`);
+            }}
+            aria-label="Voice mode"
+            title="Voice mode — talk instead of type"
+          >
+            <AudioLines size={16} aria-hidden />
+          </button>
+        )}
         {dictation.available && (
           <button
             className={`chat-slash-btn${dictation.recording ? " is-active" : ""}`}
             onMouseDown={(e) => e.preventDefault()}
             onClick={onMic}
             aria-label={dictation.recording ? "Stop dictation" : "Dictate"}
-            title={dictation.recording ? "Stop dictation" : "Dictate (speech to text)"}
+            title={dictation.recording ? "Stop dictation — tap when you're done speaking" : "Dictate — tap, speak, tap again"}
           >
             <Mic size={16} aria-hidden />
           </button>
         )}
-        {replySpeaker.available && (
-          <button
-            className={`chat-slash-btn${replySpeaker.on ? " is-active" : ""}`}
-            onClick={replySpeaker.toggle}
-            aria-label={replySpeaker.on ? "Stop speaking replies" : "Speak replies"}
-            title={replySpeaker.on ? "Speaking replies aloud (tap to mute)" : "Speak replies aloud"}
-          >
-            {replySpeaker.on ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
-          </button>
-        )}
-        {!streamingBuild && (
-          <button
-            className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
-            aria-label="Slash commands"
-            title="Slash commands"
-          >
-            <Slash size={16} aria-hidden />
-          </button>
-        )}
+        <button
+          className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
+          aria-label="Slash commands"
+          title="Slash commands"
+        >
+          <Slash size={16} aria-hidden />
+        </button>
         {/* While a build turn streams, Send (queues the next message) sits to the
             left of Stop. Otherwise just Send. */}
         {/* onMouseDown preventDefault: don't let tapping an action button blur the

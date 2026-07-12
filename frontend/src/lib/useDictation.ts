@@ -11,10 +11,24 @@ import {
   probeServer,
 } from "./voice";
 
+// Map a raw SpeechRecognition / getUserMedia error to a short, human line so a
+// failed dictation explains itself instead of silently doing nothing.
+function humanDictationError(raw: unknown): string {
+  const s = String((raw as { message?: string })?.message ?? raw ?? "").toLowerCase();
+  if (s.includes("not-allowed") || s.includes("denied") || s.includes("notallowed"))
+    return "Microphone blocked — allow mic access for this site.";
+  if (s.includes("no-speech")) return "Didn't catch that — try again.";
+  if (s.includes("audio-capture") || s.includes("notfound")) return "No microphone found.";
+  if (s.includes("network")) return "Speech service unreachable.";
+  if (s.includes("no speechrecognition")) return "Dictation isn't supported in this browser.";
+  return "Dictation failed — try again.";
+}
+
 export function useDictation(onText: (text: string, partial: boolean) => void) {
   const [available, setAvailable] = useState<boolean>(browserSttAvailable());
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<(() => void) | null>(null);
   const recRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -50,13 +64,14 @@ export function useDictation(onText: (text: string, partial: boolean) => void) {
   }, [onText]);
 
   const start = useCallback(async () => {
+    setError(null);
     if (browserSttAvailable()) {
       const { promise, abort } = recognizeOnce((t) => onText(t, true));
       abortRef.current = abort;
       setRecording(true);
       promise
         .then((final) => { if (final) onText(final, false); })
-        .catch(() => {})
+        .catch((e) => setError(humanDictationError(e)))
         .finally(() => { setRecording(false); abortRef.current = null; });
       return;
     }
@@ -72,8 +87,9 @@ export function useDictation(onText: (text: string, partial: boolean) => void) {
       recRef.current = rec;
       rec.start();
       setRecording(true);
-    } catch {
+    } catch (e) {
       setRecording(false);
+      setError(humanDictationError(e));
     }
   }, [onText]);
 
@@ -89,5 +105,5 @@ export function useDictation(onText: (text: string, partial: boolean) => void) {
     streamRef.current?.getTracks().forEach((t) => t.stop());
   }, []);
 
-  return { available, recording, busy, toggle };
+  return { available, recording, busy, error, toggle };
 }

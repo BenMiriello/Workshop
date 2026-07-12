@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { MessagesSquare } from "lucide-react";
+import { createBlankBuilder } from "../lib/blankBuilder";
 import {
   Button,
   Card,
@@ -60,6 +61,20 @@ export default function ProjectNew() {
   const [templatesErr, setTemplatesErr] = useState<string | null>(null);
   const [sensitivity, setSensitivity] = useState<ProjectSensitivity>("shareable");
   const [brief, setBrief] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatErr, setChatErr] = useState<string | null>(null);
+
+  const startWithChat = useCallback(async () => {
+    setChatBusy(true);
+    setChatErr(null);
+    try {
+      const a = await createBlankBuilder();
+      nav(`/chat/${encodeURIComponent(`build:${a.slug}`)}`);
+    } catch (e) {
+      setChatErr(String(e));
+      setChatBusy(false);
+    }
+  }, [nav]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [slugTouched, setSlugTouched] = useState(false);
@@ -126,12 +141,15 @@ export default function ProjectNew() {
       <PageHeader title="New project" sub="Scaffold, git-init, and open it" />
 
       <Row wrap style={{ marginBottom: "var(--space-4)" }}>
-        <Link to="/chat/new-project" style={{ textDecoration: "none" }}>
-          <Button variant="ghost" size="sm">
-            <MessagesSquare aria-hidden /> Prefer to talk it through first? Build with chat
-          </Button>
-        </Link>
+        <Button variant="ghost" size="sm" onClick={startWithChat} loading={chatBusy}>
+          <MessagesSquare aria-hidden /> Prefer to talk it through first? Build with chat
+        </Button>
       </Row>
+      {chatErr && (
+        <div style={{ marginBottom: "var(--space-4)" }}>
+          <StateBlock variant="error" title="Couldn't start a chat builder" hint={<code>{chatErr}</code>} />
+        </div>
+      )}
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-5)", alignItems: "flex-start" }}>
         <Card style={{ padding: "var(--space-5)", flex: "1 1 420px", minWidth: 0 }}>

@@ -3,7 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import {
   File, Folder, FolderOpen, GitCommit, Play, RefreshCw, RotateCcw, Save, Square,
   Trash2, ExternalLink, Plus, Maximize2, Minimize2, FileCode, MonitorPlay,
-  GitCompare, MessageSquare, FolderTree,
+  GitCompare, MessageSquare, FolderTree, Pencil,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { BuildAgent } from "@shared/types";
@@ -18,6 +18,7 @@ import {
   Row,
   Segmented,
   Select,
+  Stack,
   StateBlock,
   StatusPill,
   Tabs,
@@ -360,8 +361,42 @@ export default function AgentBuild() {
   const [worktrees, setWorktrees] = useState<Worktree[] | null>(null);
   const [branchSlug, setBranchSlug] = useState<string>("");
   const [newBranchOpen, setNewBranchOpen] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameName, setRenameName] = useState("");
+  const [renamePurpose, setRenamePurpose] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameErr, setRenameErr] = useState<string | null>(null);
 
   useCrumbLabel(agent?.name || null);
+
+  const openRename = useCallback(() => {
+    if (!agent) return;
+    setRenameName(agent.name);
+    setRenamePurpose(agent.purpose || "");
+    setRenameErr(null);
+    setRenameOpen(true);
+  }, [agent]);
+
+  const submitRename = useCallback(async () => {
+    if (!agent || !renameName.trim()) return;
+    setRenameBusy(true);
+    setRenameErr(null);
+    try {
+      const r = await fetch(`/api/agents/build/${agent.slug}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: renameName.trim(), purpose: renamePurpose.trim() }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const updated: BuildAgent = await r.json();
+      setAgent(updated);
+      setRenameOpen(false);
+    } catch (e) {
+      setRenameErr(String(e));
+    } finally {
+      setRenameBusy(false);
+    }
+  }, [agent, renameName, renamePurpose]);
 
   const loadAll = useCallback(async () => {
     try {
@@ -617,6 +652,9 @@ export default function AgentBuild() {
         }
         actions={
           <Row wrap>
+            <Button size="sm" variant="ghost" onClick={openRename}>
+              <Pencil aria-hidden /> Rename
+            </Button>
             <Button size="sm" variant="ghost" onClick={loadAll}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
@@ -1036,6 +1074,35 @@ export default function AgentBuild() {
           }}
         />
       )}
+
+      <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename builder">
+        <Stack>
+          <p className="ws-muted">
+            The name and purpose are what you see across Workshop. The slug{" "}
+            (<code className="ws-mono">{agent.slug}</code>) stays fixed so the working
+            tree and session don't move.
+          </p>
+          <Field label="Name" required>
+            <Input value={renameName} onChange={(e) => setRenameName(e.target.value)} autoFocus />
+          </Field>
+          <Field label="Purpose" help="One sentence: what this is and who it is for.">
+            <Textarea
+              value={renamePurpose}
+              onChange={(e) => setRenamePurpose(e.target.value)}
+              rows={2}
+            />
+          </Field>
+          {renameErr && (
+            <StateBlock variant="error" title="Couldn't rename" hint={<code>{renameErr}</code>} />
+          )}
+          <Row end>
+            <Button variant="ghost" onClick={() => setRenameOpen(false)} disabled={renameBusy}>Cancel</Button>
+            <Button variant="primary" onClick={submitRename} loading={renameBusy} disabled={!renameName.trim()}>
+              Save
+            </Button>
+          </Row>
+        </Stack>
+      </Modal>
     </div>
   );
 }
