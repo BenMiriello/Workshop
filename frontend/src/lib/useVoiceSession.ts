@@ -39,7 +39,7 @@ export function useVoiceSession(contextKey: string, model?: string) {
   // handle cancels generation (barge-in). Falls back to the blocking /messages
   // path if streaming can't start and no tokens have arrived yet.
   const startReply = useCallback(
-    (text: string, handlers: ReplyHandlers): ReplyHandle => {
+    (text: string, handlers: ReplyHandlers, opts?: { speculative?: boolean }): ReplyHandle => {
       const ac = new AbortController();
       let turnId: string | null = null;
       let full = "";
@@ -52,6 +52,9 @@ export function useVoiceSession(contextKey: string, model?: string) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ reason, heard, heard_text: heardText }),
         }).catch(() => {});
+      };
+      const commitTurn = (id: string) => {
+        fetch(`/api/voice/turns/${id}/commit`, { method: "POST" }).catch(() => {});
       };
 
       const fallback = async () => {
@@ -90,7 +93,7 @@ export function useVoiceSession(contextKey: string, model?: string) {
           const tr = await fetch(`/api/voice/session/${thread}/turns`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ context_key: contextKey, text, model }),
+            body: JSON.stringify({ context_key: contextKey, text, model, speculative: !!opts?.speculative }),
           });
           if (!tr.ok) throw new Error(`turn ${tr.status}`);
           turnId = (await tr.json()).turn_id as string;
@@ -132,7 +135,10 @@ export function useVoiceSession(contextKey: string, model?: string) {
         cancel: (info) => {
           settled = true;
           ac.abort();
-          if (turnId) cancelTurn(turnId, "barge", info?.heard, info?.heardText);
+          if (turnId) cancelTurn(turnId, info?.reason ?? "barge", info?.heard, info?.heardText);
+        },
+        commit: () => {
+          if (turnId) commitTurn(turnId);
         },
       };
     },
@@ -168,6 +174,8 @@ export function useVoiceSession(contextKey: string, model?: string) {
           stt_provider: (p.stt_provider as VoicePrefs["stt_provider"]) ?? DEFAULT_PREFS.stt_provider,
           speak_replies: p.speak_replies ?? DEFAULT_PREFS.speak_replies,
           endpoint_silence_ms: p.endpoint_silence_ms ?? DEFAULT_PREFS.endpoint_silence_ms,
+          eager_endpoint: p.eager_endpoint ?? DEFAULT_PREFS.eager_endpoint,
+          eager_silence_ms: p.eager_silence_ms ?? DEFAULT_PREFS.eager_silence_ms,
           barge_in: p.barge_in ?? DEFAULT_PREFS.barge_in,
           barge_sensitivity: p.barge_sensitivity ?? DEFAULT_PREFS.barge_sensitivity,
           verbosity: (p.verbosity as VoicePrefs["verbosity"]) ?? DEFAULT_PREFS.verbosity,

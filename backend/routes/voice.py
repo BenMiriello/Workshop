@@ -34,6 +34,8 @@ _PREFS_DEFAULTS = {
     "verbosity": "normal",    # terse | normal
     "speak_replies": True,    # voice-output lane; replaces the old tts "off" mute
     "endpoint_silence_ms": 900,  # trailing silence that ends an utterance (server VAD)
+    "eager_endpoint": True,   # speculative endpointing: think during an early pause
+    "eager_silence_ms": 400,  # the early-pause threshold (< endpoint_silence_ms)
     "barge_in": True,
     "barge_sensitivity": 0.5,  # 0..1 VAD threshold knob (client-side)
     # rolling adaptation signal — updated by the client per session
@@ -152,6 +154,8 @@ class PrefsBody(BaseModel):
     verbosity: str | None = None
     speak_replies: bool | None = None
     endpoint_silence_ms: int | None = None
+    eager_endpoint: bool | None = None
+    eager_silence_ms: int | None = None
     barge_in: bool | None = None
     barge_sensitivity: float | None = None
     interrupt_rate: float | None = None

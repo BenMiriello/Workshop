@@ -81,6 +81,7 @@ class VoiceTurn:
     complete: bool = False
     committed: bool = False
     cancelled: bool = False
+    persisted: bool = False
     error: str | None = None
     heard_count: int | None = None
     started: float = field(default_factory=time.time)
@@ -307,7 +308,11 @@ def _with_context(worker: VoiceWorker, text: str) -> str:
 
 def _persist_turn(turn: VoiceTurn) -> None:
     """Append the user + assistant messages to the thread. Assistant meta carries
-    heard/total so the transcript records what was actually spoken."""
+    heard/total so the transcript records what was actually spoken. Idempotent:
+    _run_turn's tail and commit_turn can both reach here for a committed draft."""
+    if turn.persisted:
+        return
+    turn.persisted = True
     try:
         chat_store.append_message(turn.thread_id, "user", turn.user_text)
         meta: dict = {"voice": True}

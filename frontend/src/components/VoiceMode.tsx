@@ -178,6 +178,21 @@ export default function VoiceMode() {
               onChange={(e) => updatePrefs({ endpoint_silence_ms: Number(e.target.value) })}
             />
           </label>
+          <label className="ws-voice-setting ws-voice-setting--row">
+            <SectionLabel>Think during pauses</SectionLabel>
+            <Toggle checked={prefs.eager_endpoint} onChange={(v) => updatePrefs({ eager_endpoint: v })} />
+          </label>
+          {prefs.eager_endpoint && (
+            <label className="ws-voice-setting">
+              <SectionLabel>Eager pause {(prefs.eager_silence_ms / 1000).toFixed(2)}s</SectionLabel>
+              <input
+                className="ws-range"
+                type="range" min={200} max={800} step={50}
+                value={prefs.eager_silence_ms}
+                onChange={(e) => updatePrefs({ eager_silence_ms: Math.min(Number(e.target.value), prefs.endpoint_silence_ms - 200) })}
+              />
+            </label>
+          )}
           <label className="ws-voice-setting">
             <SectionLabel>Reply length</SectionLabel>
             <Segmented<typeof prefs.verbosity>

@@ -88,6 +88,9 @@ export type MicEvents = {
   onLevel?: (rms: number) => void;      // 0..1, ~60fps
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
+  // An earlier, lower-confidence pause (< endSilenceMs). Fires once per silence
+  // gap when eager endpointing is on; the session may speculate on it.
+  onEagerPause?: () => void;
 };
 
 export class MicStream {
@@ -124,6 +127,16 @@ export class MicStream {
   // Operator-configurable ("Pause before reply"); clamped to a sane range.
   setEndSilence(ms: number) {
     this.endSilenceMs = Math.max(300, Math.min(2000, Math.round(ms)));
+  }
+
+  // Eager pause: an earlier silence tick for speculative endpointing. Kept safely
+  // below the real endpoint so the two never collide.
+  private eagerSilenceMs = 400;
+  private eagerEnabled = false;
+  private eagerFired = false;   // once per silence gap
+  setEager(enabled: boolean, ms: number) {
+    this.eagerEnabled = enabled;
+    this.eagerSilenceMs = Math.max(200, Math.min(this.endSilenceMs - 100, Math.round(ms)));
   }
 
   // Provide a live 0..1 estimate of the TTS output level (server speaker only —
@@ -178,14 +191,24 @@ export class MicStream {
         }
       }
       this.silenceSince = 0;
+      this.eagerFired = false;
     } else {
       this.onsetSince = 0;
       if (this.speaking) {
         if (!this.silenceSince) this.silenceSince = now;
-        else if (now - this.silenceSince > this.endSilenceMs) {
-          this.speaking = false;
-          this.silenceSince = 0;
-          this.events.onSpeechEnd?.();
+        else {
+          const gap = now - this.silenceSince;
+          if (this.eagerEnabled && !this.eagerFired && !this.bargeMode &&
+              gap > this.eagerSilenceMs && this.eagerSilenceMs < this.endSilenceMs) {
+            this.eagerFired = true;
+            this.events.onEagerPause?.();
+          }
+          if (gap > this.endSilenceMs) {
+            this.speaking = false;
+            this.silenceSince = 0;
+            this.eagerFired = false;
+            this.events.onSpeechEnd?.();
+          }
         }
       }
     }
@@ -212,6 +235,15 @@ export class MicStream {
       rec.stop();
       this.recorder = null;
     });
+  }
+
+  // Close the current segment and immediately start a new one — used to cut an
+  // utterance at a pause (eager or endpoint) without dropping the audio that
+  // follows. The seam always falls inside real silence, so no mid-word cut.
+  async cutSegment(): Promise<Blob | null> {
+    const blob = await this.stopRecording();
+    this.startRecording();
+    return blob;
   }
 
   stop() {
@@ -295,6 +327,9 @@ export interface Speaker {
   begin?(ev: SpeakEvents): void;
   enqueue?(sentence: string): void;
   end?(): void;
+  // Held: render/queue ahead but do not start playback until released. Used for
+  // speculative drafts. Absent on speakers that cannot hold.
+  setHeld?(on: boolean): void;
   stop(): void;             // returns via onDone(reached)
   readonly speaking: boolean;
   outputLevel?(): number;   // live 0..1 TTS envelope, when measurable
@@ -369,6 +404,7 @@ export class ServerSpeaker implements Speaker {
   private renders: (Promise<string | null>)[] = [];
   private ended = false;
   private playing = false;
+  private held = false;
 
   begin(ev: SpeakEvents) {
     this.queue = [];
@@ -380,6 +416,14 @@ export class ServerSpeaker implements Speaker {
     this.ended = false;
     this.playing = false;
     this.speaking = true;
+  }
+
+  // Held: keep rendering ahead (audio is fetched at enqueue) but do not start
+  // playback until released. Used for speculative drafts (generate + pre-render
+  // during the pause, speak only once the turn is confirmed).
+  setHeld(on: boolean) {
+    this.held = on;
+    if (!on) void this.pump();
   }
 
   enqueue(sentence: string) {
@@ -401,7 +445,7 @@ export class ServerSpeaker implements Speaker {
   }
 
   private async pump() {
-    if (this.playing || this.stopped) return;
+    if (this.playing || this.stopped || this.held) return;
     const i = this.idx;
     if (i >= this.queue.length) {
       if (this.ended) this.finish(i);
@@ -442,11 +486,15 @@ export class ServerSpeaker implements Speaker {
   }
 }
 
-// Browser TTS via SpeechSynthesis — one utterance per sentence.
+// Browser TTS via SpeechSynthesis — a holdable, streaming sentence queue.
 export class BrowserSpeaker implements Speaker {
   private stopped = false;
   private done = false;
   private idx = 0;
+  private queue: string[] = [];
+  private ended = false;
+  private held = false;
+  private busy = false;
   private ev: SpeakEvents = {};
   private voiceName?: string;
   private rate = 1.0;
@@ -457,29 +505,45 @@ export class BrowserSpeaker implements Speaker {
     this.rate = opts.rate ?? 1.0;
   }
 
-  speak(sentences: string[], ev: SpeakEvents) {
+  begin(ev: SpeakEvents) {
     this.ev = ev;
     this.stopped = false;
     this.done = false;
     this.idx = 0;
+    this.queue = [];
+    this.ended = false;
+    this.held = false;
+    this.busy = false;
     this.speaking = true;
-    const synth = window.speechSynthesis;
-    const voices = synth.getVoices();
+  }
+  enqueue(sentence: string) {
+    if (this.stopped || this.ended) return;
+    this.queue.push(sentence);
+    this.tick();
+  }
+  end() { this.ended = true; this.tick(); }
+  setHeld(on: boolean) { this.held = on; if (!on) this.tick(); }
+
+  speak(sentences: string[], ev: SpeakEvents) {
+    this.begin(ev);
+    for (const s of sentences) this.enqueue(s);
+    this.end();
+  }
+
+  private tick() {
+    if (this.busy || this.stopped || this.held) return;
+    const i = this.idx;
+    if (i >= this.queue.length) { if (this.ended) this.finish(i); return; }
+    const u = new SpeechSynthesisUtterance(this.queue[i]);
+    const voices = window.speechSynthesis.getVoices();
     const v = this.voiceName ? voices.find((x) => x.name === this.voiceName) : undefined;
-    let i = 0;
-    const next = () => {
-      this.idx = i;
-      if (this.stopped || i >= sentences.length) { this.finish(i); return; }
-      const u = new SpeechSynthesisUtterance(sentences[i]);
-      if (v) u.voice = v;
-      u.rate = this.rate;
-      const idx = i;
-      u.onstart = () => this.ev.onSentenceStart?.(idx);
-      u.onend = () => { if (this.stopped) return; this.ev.onSentenceEnd?.(idx); i++; next(); };
-      u.onerror = () => { if (this.stopped) return; i++; next(); };
-      synth.speak(u);
-    };
-    next();
+    if (v) u.voice = v;
+    u.rate = this.rate;
+    this.busy = true;
+    u.onstart = () => this.ev.onSentenceStart?.(i);
+    u.onend = () => { if (this.stopped) return; this.ev.onSentenceEnd?.(i); this.busy = false; this.idx = i + 1; this.tick(); };
+    u.onerror = () => { if (this.stopped) return; this.busy = false; this.idx = i + 1; this.tick(); };
+    window.speechSynthesis.speak(u);
   }
 
   private finish(reached: number) {
@@ -509,7 +573,12 @@ export function speakFiller(text = "One moment.") {
 // Native TTS via the shell's AVSpeechSynthesizer bridge, one sentence per call.
 export class NativeSpeaker implements Speaker {
   private done = false;
+  private stopped = false;
   private idx = 0;
+  private queue: string[] = [];
+  private ended = false;
+  private held = false;
+  private busy = false;
   private ev: SpeakEvents = {};
   private rate = 1.0;
   private voice?: string;
@@ -520,24 +589,43 @@ export class NativeSpeaker implements Speaker {
     this.rate = opts.speed ?? 1.0;
   }
 
-  speak(sentences: string[], ev: SpeakEvents) {
+  begin(ev: SpeakEvents) {
     this.ev = ev;
     this.done = false;
+    this.stopped = false;
     this.idx = 0;
+    this.queue = [];
+    this.ended = false;
+    this.held = false;
+    this.busy = false;
     this.speaking = true;
+  }
+  enqueue(sentence: string) {
+    if (this.stopped || this.ended) return;
+    this.queue.push(sentence);
+    this.tick();
+  }
+  end() { this.ended = true; this.tick(); }
+  setHeld(on: boolean) { this.held = on; if (!on) this.tick(); }
+
+  speak(sentences: string[], ev: SpeakEvents) {
+    this.begin(ev);
+    for (const s of sentences) this.enqueue(s);
+    this.end();
+  }
+
+  private tick() {
+    if (this.busy || this.stopped || this.held) return;
+    const i = this.idx;
+    if (i >= this.queue.length) { if (this.ended) this.finish(i); return; }
     const n = native();
-    if (!n || !n.has("speech")) { this.finish(0); return; }
-    let i = 0;
-    const next = () => {
-      this.idx = i;
-      if (this.done || i >= sentences.length) { this.finish(i); return; }
-      this.ev.onSentenceStart?.(i);
-      n.speech
-        .speak(sentences[i], { rate: this.rate, voice: this.voice })
-        .then(() => { if (this.done) return; this.ev.onSentenceEnd?.(i); i++; next(); })
-        .catch(() => { i++; next(); });
-    };
-    next();
+    if (!n || !n.has("speech")) { this.finish(i); return; }
+    this.busy = true;
+    this.ev.onSentenceStart?.(i);
+    n.speech
+      .speak(this.queue[i], { rate: this.rate, voice: this.voice })
+      .then(() => { if (this.stopped) return; this.ev.onSentenceEnd?.(i); this.busy = false; this.idx = i + 1; this.tick(); })
+      .catch(() => { if (this.stopped) return; this.busy = false; this.idx = i + 1; this.tick(); });
   }
 
   private finish(reached: number) {
@@ -548,6 +636,7 @@ export class NativeSpeaker implements Speaker {
   }
 
   stop() {
+    this.stopped = true;
     native()?.speech.stop().catch(() => {});
     this.finish(this.idx);
   }

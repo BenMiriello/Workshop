@@ -52,6 +52,9 @@ export type VoicePrefs = {
   speak_replies: boolean;
   // Trailing silence (ms) before we take a turn — "Pause before reply".
   endpoint_silence_ms: number;
+  // Speculative endpointing: think during an early pause; speak on confirmation.
+  eager_endpoint: boolean;
+  eager_silence_ms: number;
   barge_in: boolean;
   barge_sensitivity: number;
   verbosity: "terse" | "normal";
@@ -64,6 +67,8 @@ export const DEFAULT_PREFS: VoicePrefs = {
   stt_provider: "auto",
   speak_replies: true,
   endpoint_silence_ms: 900,
+  eager_endpoint: true,
+  eager_silence_ms: 400,
   barge_in: true,
   barge_sensitivity: 0.5,
   verbosity: "normal",
@@ -87,9 +92,12 @@ export type VoiceSnapshot = {
 };
 
 export type ReplyHandle = {
-  // Cancel the in-flight generation. On barge-in, pass what the user actually
-  // heard so the model can be told on the next turn (the truncate analogue).
-  cancel: (info?: { heard?: number; heardText?: string }) => void;
+  // Cancel the in-flight generation (barge-in, or superseding a speculative
+  // draft). On barge, pass what the user actually heard so the model can be told
+  // on the next turn (the truncate analogue); reason distinguishes the two.
+  cancel: (info?: { heard?: number; heardText?: string; reason?: string }) => void;
+  // Promote a speculative draft to a real turn (flush its deferred persistence).
+  commit: () => void;
 };
 
 export type ReplyHandlers = {
@@ -101,14 +109,23 @@ export type ReplyHandlers = {
 
 export type VoiceConfig = {
   // Start a streaming reply turn. Deltas stream in via handlers; the returned
-  // handle cancels the in-flight generation (barge-in / supersede). The binding
-  // (useVoiceSession) owns transport + any fallback to a blocking call.
-  startReply: (text: string, handlers: ReplyHandlers) => ReplyHandle;
+  // handle cancels/commits the turn. `speculative` starts a draft with deferred
+  // persistence. The binding (useVoiceSession) owns transport + blocking fallback.
+  startReply: (text: string, handlers: ReplyHandlers, opts?: { speculative?: boolean }) => ReplyHandle;
   prefs: VoicePrefs;
   onPrefsSignal?: (interruptRate: number) => void;
 };
 
 const ASIDE_RE = /[⟦\[]{1,2}\s*aside:\s*([^⟧\]]+)[⟧\]]{1,2}/gi;
+
+// Words that, when they end a partial utterance, signal it is not finished — so
+// the completeness gate holds off firing a speculative draft on that fragment.
+const CONTINUATIONS = new Set([
+  "and", "but", "or", "so", "because", "although", "though", "which", "that",
+  "if", "when", "while", "the", "a", "an", "to", "of", "for", "with", "as",
+  "um", "uh", "er", "like", "then", "my", "your", "is", "are", "was", "were",
+  "i", "we", "at", "in", "on", "by", "from", "into", "about",
+]);
 
 let _tid = 0;
 
@@ -138,6 +155,12 @@ export class VoiceSession {
   private emitted = 0;              // sentences cut from the stream so far
   private tEndpoint = 0;            // mark: when we committed the turn
   private lastTurnMs: number | null = null;  // endpoint -> first audio (footer)
+  // Speculative endpointing state.
+  private segs: string[] = [];        // transcribed segments of the current utterance
+  private eagerFires = 0;             // eager pauses acted on this utterance (cap 2)
+  private resumedSinceCut = false;    // user resumed speaking after the last cut
+  private held = false;               // a speculative draft is streaming, held silent
+  private draftText = "";             // text the current draft was fired with
   private listeners = new Set<() => void>();
   // Cached immutable snapshot. Rebuilt only when state mutates (emit invalidates
   // it). useSyncExternalStore compares with Object.is, so returning a stable
@@ -187,6 +210,9 @@ export class VoiceSession {
     this.cfg.prefs = p;
     this.mic.setSensitivity(p.barge_sensitivity);
     this.mic.setEndSilence(p.endpoint_silence_ms);
+    // Eager endpointing only makes sense on the server STT path (browser/native
+    // self-endpoint, so there is no mid-utterance pause for us to act on).
+    this.mic.setEager(p.eager_endpoint && this.sttProvider === "server", p.eager_silence_ms);
   }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -201,8 +227,10 @@ export class VoiceSession {
         onLevel: (v) => { this.level = v; this.emit(); },
         onSpeechStart: () => this.onSpeechStart(),
         onSpeechEnd: () => this.onSpeechEnd(),
+        onEagerPause: () => this.onEagerPause(),
       });
       this.mic.setSensitivity(this.cfg.prefs.barge_sensitivity);
+      this.mic.setEager(this.cfg.prefs.eager_endpoint && this.sttProvider === "server", this.cfg.prefs.eager_silence_ms);
     } catch (e) {
       // The VAD mic drives capture + hands-free barge-in for the SERVER path.
       // Browser and native STT capture themselves and interrupt via tap, so a
@@ -290,6 +318,13 @@ export class VoiceSession {
     // Barge-in: talking over the assistant stops it mid-sentence.
     if (this.state === "speaking" && this.cfg.prefs.barge_in) {
       this.bargeIn();
+      return;
+    }
+    // Resume while listening: the user kept talking, so any speculative draft was
+    // answering a fragment. Drop it (superseded) and keep collecting the utterance.
+    if (this.state === "listening") {
+      this.resumedSinceCut = true;
+      if (this.held) this.supersedeDraft();
     }
   }
 
@@ -299,17 +334,108 @@ export class VoiceSession {
     if (this.state !== "listening" || this.sttProvider !== "server") return;
     if (!this.capturing) return;
     this.capturing = false;
-    const blob = await this.mic.stopRecording();
-    if (!blob || blob.size < 1200) { this.armServerListen(); return; }
-    this.set("thinking");
-    try {
-      const text = await transcribeBlob(blob);
-      this.onUtterance(text);
-    } catch (e) {
-      this.error = `stt: ${String(e)}`;
-      this.emit();
-      this.armListen();
+    // Cut the final segment and add it to any eager segments already transcribed.
+    let blob: Blob | null = null;
+    try { blob = await this.mic.stopRecording(); } catch { blob = null; }
+    if (blob && blob.size >= 1200) {
+      try { const t = await transcribeBlob(blob); if (t) this.segs.push(t); }
+      catch { /* keep whatever segments we have */ }
     }
+    const final = this.segs.join(" ").trim();
+    if (!final) {
+      if (this.held) this.supersedeDraft();
+      this.resetSegs();
+      this.armServerListen();
+      return;
+    }
+    if (this.held && this.draftText === final) {
+      // Confirmed: the draft answered the whole utterance. Release its audio.
+      this.commitDraft(final);
+      this.resetSegs();
+      return;
+    }
+    // No draft, or the utterance grew past what the draft answered: start fresh.
+    if (this.held) this.supersedeDraft();
+    this.resetSegs();
+    this.lastUser = final;
+    this.turnCount += 1;
+    this.tEndpoint = performance.now();
+    this.set("thinking");
+    if (this.turnCount === 1 && this.ttsProvider === "server") speakFiller("One moment.");
+    this.beginReply(final);
+  }
+
+  // Eager pause: a short silence mid-utterance. Cut a segment, transcribe it, and
+  // (if the utterance looks complete and the user has not resumed) fire a held
+  // speculative draft so a confirmed endpoint can speak with near-zero latency.
+  private async onEagerPause() {
+    if (this.state !== "listening" || this.sttProvider !== "server") return;
+    if (!this.cfg.prefs.eager_endpoint || !this.ttsProvider) return;
+    if (this.held || !this.capturing) return;
+    if (this.eagerFires >= 2) return;
+    this.eagerFires += 1;
+    this.resumedSinceCut = false;
+    let blob: Blob | null = null;
+    try { blob = await this.mic.cutSegment(); } catch { blob = null; }
+    if (!blob || blob.size < 1200) return;
+    let text = "";
+    try { text = await transcribeBlob(blob); } catch { return; }
+    if (text) this.segs.push(text);
+    if (this.resumedSinceCut) return;         // user resumed during STT — no draft
+    const joined = this.segs.join(" ").trim();
+    if (!joined || this.incomplete(joined)) return;  // completeness gate
+    this.draftText = joined;
+    this.lastUser = joined;
+    this.beginReply(joined, true);            // held speculative draft
+  }
+
+  // A pure-text completeness heuristic (no model): suppress speculation when the
+  // utterance clearly is not finished (trailing conjunction/filler/open bracket).
+  private incomplete(text: string): boolean {
+    const t = text.trim().toLowerCase();
+    if (/[,;:([{"'—-]$/.test(t)) return true;
+    const last = t.split(/\s+/).pop() || "";
+    return CONTINUATIONS.has(last);
+  }
+
+  private resetSegs() {
+    this.segs = [];
+    this.eagerFires = 0;
+    this.resumedSinceCut = false;
+  }
+
+  private commitDraft(_final: string) {
+    this.held = false;
+    this.replyHandle?.commit();
+    this.replyHandle = null;
+    if (this.ttsProvider && this.speaker) {
+      const sp = this.speaker;
+      this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
+      this.mic.setBargeMode(true);
+      this.tEndpoint = performance.now();
+      this.lastTurnMs = null;
+      this.turnCount += 1;
+      this.set("speaking");
+      if (sp.setHeld) sp.setHeld(false);   // start playing the pre-rendered audio
+    } else {
+      this.finishSpeaking(this.sentences.length, false);
+    }
+  }
+
+  private supersedeDraft() {
+    this._interrupted = true;
+    this.replyHandle?.cancel({ reason: "superseded" });
+    this.replyHandle = null;
+    this.speaker?.stop();
+    this.speaker = null;
+    this.held = false;
+    this.mic.setBargeMode(false);
+    this.mic.setOutputProbe(() => 0);
+    this.sentences = [];
+    this.spokenCount = 0;
+    this.emitted = 0;
+    this._interrupted = false;
+    this.emit();
   }
 
   // ---- a completed user utterance -----------------------------------------
@@ -337,19 +463,22 @@ export class VoiceSession {
     return { body, asides };
   }
 
-  private beginReply(text: string) {
+  // speculative: start a HELD draft during listening (generation streams and TTS
+  // renders ahead, but no audio plays and the state stays "listening" until the
+  // endpoint confirms and commitDraft() releases it).
+  private beginReply(text: string, speculative = false) {
     this.emitted = 0;
     this.sentences = [];
     this.spokenCount = 0;
     this._interrupted = false;
-    this.error = null;
+    this.held = speculative;
+    if (!speculative) this.error = null;
+    this.lastTurnMs = null;
     // Set up the speaker (streaming) unless muted. Muted replies still stream in
     // as captions, marked heard as they land.
     if (this.ttsProvider) {
       this.speaker = this.makeSpeaker();
       const sp = this.speaker;
-      this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
-      this.mic.setBargeMode(true);
       const ev = {
         onSentenceStart: (i: number) => {
           if (this.lastTurnMs === null) this.lastTurnMs = Math.round(performance.now() - this.tEndpoint);
@@ -365,13 +494,19 @@ export class VoiceSession {
         onDone: (reached: number) => this.finishSpeaking(reached, false),
       };
       if (sp.begin) sp.begin(ev); else sp.speak([], ev);  // begin streaming
+      if (speculative && sp.setHeld) {
+        sp.setHeld(true);   // render ahead, do not play until commit
+      } else {
+        // A real (or unheldable) turn is speaking now: arm echo-aware barge-in.
+        this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
+        this.mic.setBargeMode(true);
+      }
     }
-    this.lastTurnMs = null;
     this.replyHandle = this.cfg.startReply(text, {
       onDelta: (full) => this.onReplyDelta(full),
       onDone: (full) => this.onReplyDone(full),
       onError: (msg) => this.onReplyError(msg),
-    });
+    }, { speculative });
   }
 
   // Cut complete sentences from the growing buffer and hand them to the speaker.
@@ -386,10 +521,11 @@ export class VoiceSession {
       const i = this.sentences.length;
       this.sentences.push({ text: body, status: "pending" });
       if (this.ttsProvider && this.speaker) {
-        if (this.state !== "speaking") this.set("speaking");
+        // A held draft keeps rendering ahead but stays "listening" and silent.
+        if (!this.held && this.state !== "speaking") this.set("speaking");
         if (this.speaker.enqueue) this.speaker.enqueue(body);
         else this.speaker.speak([body], {});  // non-streaming speaker fallback
-      } else {
+      } else if (!this.held) {
         // Muted: caption only, heard immediately.
         this.sentences[i] = { ...this.sentences[i], status: "heard" };
         this.spokenCount = i + 1;
@@ -404,21 +540,25 @@ export class VoiceSession {
   }
 
   private onReplyDone(full: string) {
-    this.replyHandle = null;
     if (this._interrupted) return;
+    // Keep the handle for a held draft so commit/supersede can still reach it.
+    if (!this.held) this.replyHandle = null;
     this.pushSentences(full, true);
     if (this.ttsProvider && this.speaker) {
       if (this.speaker.end) this.speaker.end();
-      // onDone(reached) from the speaker drives finishSpeaking once playback ends.
-    } else {
+      // onDone(reached) from the speaker drives finishSpeaking once playback ends
+      // (for a held draft, playback only begins after commitDraft releases it).
+    } else if (!this.held) {
       // Muted path: nothing to play, go straight back to listening.
       this.finishSpeaking(this.sentences.length, false);
     }
   }
 
   private onReplyError(msg: string) {
-    this.replyHandle = null;
     if (this._interrupted) return;
+    // A failed draft is silently abandoned; the endpoint will start a real turn.
+    if (this.held) { this.supersedeDraft(); return; }
+    this.replyHandle = null;
     this.speaker?.stop();
     this.speaker = null;
     this.mic.setBargeMode(false);
@@ -453,6 +593,8 @@ export class VoiceSession {
   private finishSpeaking(reached: number, _normal: boolean) {
     const interrupted = this._interrupted;
     this._interrupted = false;
+    this.replyHandle = null;
+    this.held = false;
     this.speaker = null;
     // Leave barge mode; normal-sensitivity VAD for the next user utterance.
     this.mic.setBargeMode(false);
