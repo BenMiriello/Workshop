@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines, Volume2, VolumeX,
-  LoaderCircle,
 } from "lucide-react";
 import { useDictation } from "../lib/useDictation";
 import { useReplySpeaker } from "../lib/useReplySpeaker";
@@ -17,6 +16,7 @@ import {
   type Provider,
   type AgentTask,
   type AgentTaskStatus,
+  shortHttpError,
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
@@ -336,6 +336,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [reconnecting, setReconnecting] = useState(false);
   // Seconds elapsed on the live turn — drives the "Working… 12s" indicator.
   const [elapsed, setElapsed] = useState(0);
+  // Composer focus: drives mobile keyboard chrome (drop the bottom padding so
+  // there's no dead row between the buttons and the keyboard) + scroll pinning.
+  const [inputFocused, setInputFocused] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
 
@@ -360,6 +363,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sseRef = useRef<EventSource | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const finishingRef = useRef(false);
+  // Whether the log is scrolled to (near) the bottom — so focus/keyboard/viewport
+  // changes only re-pin when the user was already following the latest messages.
+  const atBottomRef = useRef(true);
   // Stream resilience: count consecutive reconnect attempts (reset on any event
   // received, so a healthy long turn never trips the cap), and self-reference
   // attachStream so a drop handler can re-attach without a render cycle.
@@ -620,9 +626,38 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight });
+  }, []);
+  const onLogScroll = useCallback(() => {
+    const el = scrollRef.current;
+    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, pendingSegments, queued, busy, streaming]);
+    scrollToBottom();
+    atBottomRef.current = true;
+  }, [messages, pendingSegments, queued, busy, streaming, scrollToBottom]);
+
+  // Keep the log pinned to the bottom when the composer is focused and the mobile
+  // keyboard opens/closes (which resizes the visual viewport) or the textarea
+  // grows as you type. Without this the scroller keeps its pixel scrollTop while
+  // the viewport shrinks, so you end up staring at older messages. Only re-pin
+  // when the user was already at the bottom (atBottomRef), so scrolling up to
+  // read history isn't yanked back down.
+  useEffect(() => {
+    if (!inputFocused) return;
+    scrollToBottom();
+    const vv = window.visualViewport;
+    const onResize = () => { if (atBottomRef.current) scrollToBottom(); };
+    vv?.addEventListener("resize", onResize);
+    return () => vv?.removeEventListener("resize", onResize);
+  }, [inputFocused, scrollToBottom]);
+
+  useEffect(() => {
+    if (inputFocused && atBottomRef.current) scrollToBottom();
+  }, [input, inputFocused, scrollToBottom]);
 
   // Elapsed-time ticker for the working indicator. The clock starts when a turn
   // begins streaming and keeps running across reconnects (streaming stays true),
@@ -731,7 +766,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(selectedModel ? { content: text, model: selectedModel } : { content: text }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const { turn_id } = await r.json();
       attachStream(turn_id, id, isFirst);
     } catch (e) {
@@ -1019,11 +1054,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   };
 
   const log = (
-    <div className="chat-log" ref={scrollRef}>
+    <div className="chat-log" ref={scrollRef} onScroll={onLogScroll}>
       {loadingThreads && messages.length === 0 ? (
         <div className="chat-empty">Loading...</div>
       ) : err && messages.length === 0 ? (
-        <div className="chat-empty chat-empty--err">Couldn't load threads. {err}</div>
+        <div className="chat-empty chat-empty--err">Couldn't load threads. {String(err).slice(0, 240)}</div>
       ) : messages.length === 0 && !inFlight ? (
         <div className="chat-empty">
           {effectiveMode === "build" ? "Tell the agent what to build..." : "Ask anything, or tell me to change the plan."}
@@ -1063,7 +1098,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             )}
             {(streaming || busy) && (
               <div className="chat-working" role="status" aria-live="polite">
-                <LoaderCircle size={15} className="chat-working__spin" aria-hidden />
+                <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
                 <span className="chat-working__label">
                   {reconnecting ? "Reconnecting…" : "Working…"}
                 </span>
@@ -1141,7 +1176,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   );
 
   const composer = (
-    <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}`}>
+    <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
       {showSlash && (
         <ul className="chat-slash-menu" role="listbox" aria-label="Slash commands">
           {slashMatches.map((c, i) => {
@@ -1171,6 +1206,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         placeholder={placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message Clawd...")}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={onKey}
+        onFocus={() => setInputFocused(true)}
+        onBlur={() => setInputFocused(false)}
       />
       <div className="chat-actions">
         {contextMeter}
@@ -1233,7 +1270,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {taskPanel}
       {log}
       {egressBanner}
-      {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{err}</div>}
+      {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
       {deleteDialog}
     </div>

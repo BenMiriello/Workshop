@@ -620,14 +620,24 @@ input[type="range"].grad::-moz-range-thumb {
    whether the agent is working. Stays up across SSE reconnects; the label flips
    to "Reconnecting…" while re-attaching to a still-running turn. */
 .chat-working {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  margin-top: var(--space-2);
-  color: var(--muted); font-size: var(--fs-sm);
+  display: flex; align-items: center; gap: var(--space-2);
+  color: var(--muted); font-size: var(--fs-sm); line-height: 1;
 }
-.chat-working__spin { flex: 0 0 auto; color: var(--accent); animation: ws-spin 0.9s linear infinite; }
+/* Spacing above only when it FOLLOWS streamed work; when it's the sole content
+   of the bubble it stays vertically centered by the bubble's own padding. */
+.chat-working:not(:first-child) { margin-top: var(--space-2); }
+/* Three sequentially-pulsing dots — a "typing/working" motif, not a loader. */
+.chat-working__dots { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
+.chat-working__dots i {
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  animation: chat-working-dot 1.2s ease-in-out infinite;
+}
+.chat-working__dots i:nth-child(2) { animation-delay: 0.2s; }
+.chat-working__dots i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes chat-working-dot { 0%, 60%, 100% { opacity: 0.3; } 30% { opacity: 1; } }
 .chat-working__label { font-weight: var(--fw-medium); }
 .chat-working__time { font-variant-numeric: tabular-nums; opacity: 0.8; }
-@media (prefers-reduced-motion: reduce) { .chat-working__spin { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .chat-working__dots i { animation: none; opacity: 0.6; } }
 
 /* ---- Progressive disclosure: Show more/less + collapsed work history ---- */
 .chat-more {
@@ -726,6 +736,13 @@ input[type="range"].grad::-moz-range-thumb {
   border: 1px solid var(--border); border-radius: var(--radius-lg);
 }
 .chat-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+/* On a phone, once the input is focused the on-screen keyboard sits directly
+   below the composer and covers the home-indicator inset, so the bottom padding
+   becomes a dead row between the buttons and the keyboard. Collapse it while
+   focused; the small resting gap stays when unfocused. */
+@media (max-width: 640px) {
+  .chat-composer.is-focused { padding-bottom: var(--space-1); }
+}
 /* Actions sit in their own row beneath the textarea: the context meter on the
    left, the action buttons pushed to the right by a flexible spacer. This keeps
    the growing set of buttons (voice / dictate / speak / slash / send / stop) off

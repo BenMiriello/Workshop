@@ -43,8 +43,19 @@ export type ThreadSummary = {
 export type Thread = ThreadSummary & { messages: ChatMsg[] };
 
 async function j<T>(r: Response): Promise<T> {
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
   return r.json() as Promise<T>;
+}
+
+// Build a short, human error line from an HTTP failure. A gateway/CDN 5xx (e.g.
+// a Cloudflare 502 while the origin restarts) returns a full HTML page as the
+// body; never surface that — it renders as a giant red wall taking over the UI.
+export function shortHttpError(status: number, statusText: string, body: string): string {
+  const b = (body || "").trim();
+  const looksHtml = b.startsWith("<") || b.toLowerCase().includes("<!doctype");
+  if (status >= 502 && status <= 504) return `Server unavailable (${status}) — retrying…`;
+  const detail = !looksHtml && b && b.length <= 200 ? b : "";
+  return detail ? `${status} ${detail}` : (`${status} ${statusText || "request failed"}`).trim();
 }
 
 export type ProviderRole = "assistant" | "builder";

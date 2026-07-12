@@ -26,7 +26,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 BACKEND = os.environ.get("WORKSHOP_BACKEND", "http://127.0.0.1:8000")
@@ -93,12 +93,50 @@ async def _proxy(request: Request, backend_path: str) -> Response:
 
     headers = {k: v for k, v in request.headers.items() if k.lower() not in _DROP_REQ}
     body = await request.body()
+
+    # Server-Sent Events (the build-agent turn stream) MUST pass through
+    # incrementally. Buffering the whole body — `await _client.request(...)` then
+    # `upstream.content` — never returns for a long-lived stream (it blocks until
+    # the turn ends or the read timeout fires), so on the public edge the chat
+    # never streamed and kept "reconnecting". Stream these through with no read
+    # timeout, and disable proxy buffering.
+    if backend_path.endswith("/stream") or "text/event-stream" in request.headers.get("accept", ""):
+        return await _proxy_stream(request, backend_path, headers, body)
+
     upstream = await _client.request(
         request.method, backend_path, headers=headers, content=body,
         params=request.query_params,
     )
     resp_headers = [(k, v) for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP]
     return Response(content=upstream.content, status_code=upstream.status_code, headers=dict(resp_headers))
+
+
+async def _proxy_stream(request: Request, backend_path: str, headers: dict, body: bytes) -> Response:
+    """Reverse-proxy a streaming (SSE) response chunk-by-chunk, keeping the
+    upstream connection open for the life of the turn (no read timeout)."""
+    req = _client.build_request(
+        request.method, backend_path, headers=headers, content=body,
+        params=request.query_params,
+        timeout=httpx.Timeout(30.0, read=None),  # long-lived: never read-timeout
+    )
+    upstream = await _client.send(req, stream=True)
+    resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
+    resp_headers["cache-control"] = "no-cache, no-transform"
+    resp_headers["x-accel-buffering"] = "no"  # defeat any buffering proxy in front
+
+    async def body_iter():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(
+        body_iter(),
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        media_type=upstream.headers.get("content-type", "text/event-stream"),
+    )
 
 
 @app.get("/healthz")
