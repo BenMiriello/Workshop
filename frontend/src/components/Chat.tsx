@@ -1080,6 +1080,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onKeyDown={onKey}
       />
       <div className="chat-actions">
+        {contextMeter}
+        <span className="chat-actions__spacer" />
         <button
           className="chat-slash-btn"
           onClick={() => navigate(`/voice/${encodeURIComponent(contextKey)}`)}
@@ -1129,7 +1131,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           </button>
         )}
       </div>
-      {contextMeter}
     </div>
   );
 
