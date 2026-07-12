@@ -1,6 +1,34 @@
 # Voice Mode v2 — design
 
-Status: **design, ready to build** (2026-07-11). Successor to `00-overview.md` (v1 concept)
+Status: **BUILT — Phases 0-5 shipped 2026-07-11** (Phase 6 and the eager_speak
+level-2 knob intentionally deferred, see Phase plan). Original design date 2026-07-11.
+
+Build notes (what actually shipped vs this design):
+- Phase 0: endpointing-delay slider + honest engine caps (Segmented per-option
+  disabled + hint, mount-time probe, Auto-(X) labels, speak_replies replaces Muted).
+- Phase 1: resident `claude -p` worker (services/voice_worker.py) + SSE streaming
+  routes + appendable ServerSpeaker with real render-ahead. Verified: warm turn
+  ~1.25s first-delta (from 5-20s), memory across turns, token streaming.
+- Phase 2: barge-in reports heard-count; interruption note injected on the next
+  turn (truncate analogue); Esc interrupts.
+- Phase 3: speculative endpointing — second VAD timer, segment cuts, held-audio
+  drafts, completeness gate, 2-fires cap, deferred/commit/supersede persistence
+  (idempotent). eager_speak level-2 deferred (needs false-start handling) rather
+  than shipped as a dead pref.
+- Phase 4: mixed modes — composer + Mic/Speak toggles, typing soft-hold, Enter/
+  Esc grammar, merged voice+typed send.
+- Phase 5: chat button continues the current thread (?thread=) and is disabled in
+  builder mode.
+- Phase 6 (learned endpointing): NOT built by design — gated on Phase 3 metrics
+  showing the heuristic gate is insufficient.
+
+The turn plumbing was kept self-contained in voice_worker.py rather than
+factoring turn_stream.py out of build_streaming.py, to avoid regressing the Build
+chat path; that refactor remains available as a future cleanup.
+
+---
+
+Status (original): **design, ready to build** (2026-07-11). Successor to `00-overview.md` (v1 concept)
 and `next-gen-brief.md` (the starter brief; goals and diagnosis live there, not restated).
 Every recommendation below is grounded in the current code with file:line refs, and in the
 researched known-good patterns (section 9, with sources).
