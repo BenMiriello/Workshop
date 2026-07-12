@@ -15,6 +15,7 @@ import {
   ExternalLink,
   Upload,
   Store,
+  MessagesSquare,
 } from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
@@ -44,6 +45,7 @@ import {
 } from "../ui";
 import { useEditMode } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
+import { chatApi, type ThreadSummary } from "../lib/chat";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 import AppServicesPanel from "../components/AppServicesPanel";
 import AutonomyPanel from "../components/AutonomyPanel";
@@ -266,6 +268,10 @@ export default function ProjectDetail() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // The project's own chat threads (context_key `project:<slug>`), including any
+  // that were rescoped in from a new-project planning chat. Without this section
+  // a rescoped chat is unreachable — it looks like it vanished.
+  const [chats, setChats] = useState<ThreadSummary[] | null>(null);
 
   // Brief (PROJECT.md)
   const [brief, setBrief] = useState("");
@@ -315,6 +321,15 @@ export default function ProjectDetail() {
   useCrumbLabel(project?.title || null);
 
   // ---- Loaders --------------------------------------------------------------
+  const loadChats = useCallback(async () => {
+    try {
+      const ts = await chatApi.listThreads(`project:${slug}`);
+      setChats(ts.filter((t) => t.message_count > 0));
+    } catch {
+      setChats([]);
+    }
+  }, [slug]);
+
   const loadWorktrees = useCallback(async () => {
     setWorktreesLoading(true);
     setWorktreesErr(null);
@@ -376,6 +391,7 @@ export default function ProjectDetail() {
   useEffect(() => { loadWorktrees(); }, [loadWorktrees]);
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => { loadNotes(); }, [loadNotes]);
+  useEffect(() => { loadChats(); }, [loadChats]);
   useEffect(() => { loadAll(); }, [loadAll]);
 
   // ---- Task mutations -------------------------------------------------------
@@ -541,12 +557,59 @@ export default function ProjectDetail() {
         actions={
           <Row wrap>
             <StatusPill status={stateKind(project.state)}>{project.state}</StatusPill>
-            <Button size="sm" variant="ghost" onClick={() => { loadAll(); loadTasks(); loadNotes(); loadWorktrees(); }}>
+            <Button size="sm" variant="primary" onClick={() => nav(`/chat/${encodeURIComponent(`project:${slug}`)}`)}>
+              <MessagesSquare aria-hidden /> Open chat
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => { loadAll(); loadTasks(); loadNotes(); loadWorktrees(); loadChats(); }}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
           </Row>
         }
       />
+
+      {/* --- Project chat (incl. rescoped planning chats) --- */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<MessagesSquare aria-hidden />}>Chat</SectionLabel>
+          <Button variant="ghost" size="sm" onClick={() => nav(`/chat/${encodeURIComponent(`project:${slug}`)}`)}>
+            <Plus aria-hidden /> New chat
+          </Button>
+        </Row>
+        {chats === null ? (
+          <Card><Skeleton width="40%" /></Card>
+        ) : chats.length === 0 ? (
+          <StateBlock
+            title="No project chat yet"
+            hint="Open a chat to plan or drive this project. Planning chats you convert into this project also land here."
+            action={
+              <Button variant="primary" size="sm" onClick={() => nav(`/chat/${encodeURIComponent(`project:${slug}`)}`)}>
+                <MessagesSquare aria-hidden /> Open chat
+              </Button>
+            }
+          />
+        ) : (
+          <CardGrid>
+            {chats.map((c) => (
+              <li key={c.id}>
+                <Link
+                  to={`/chat/${encodeURIComponent(`project:${slug}`)}?thread=${encodeURIComponent(c.id)}`}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                >
+                  <Card interactive>
+                    <Row between style={{ gap: "var(--space-2)" }}>
+                      <h3 className="ws-card__title" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <MessagesSquare size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                        {c.title || "Untitled chat"}
+                      </h3>
+                      <span className="ws-card__meta" style={{ flex: "0 0 auto" }}>{c.message_count} msg</span>
+                    </Row>
+                  </Card>
+                </Link>
+              </li>
+            ))}
+          </CardGrid>
+        )}
+      </section>
 
       {/* --- Build agents on this project --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
