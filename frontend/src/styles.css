@@ -606,6 +606,26 @@ input[type="range"].grad::-moz-range-thumb {
 /* Timeout: a calm warn treatment (not the red error), with a small lead tag so
    even a partial-then-stopped turn reads as "stopped at the limit, continue". */
 .chat-bubble--timeout { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--fg); }
+
+/* Assistant replies are MARKDOWN, which controls its own wrapping + spacing.
+   The bubble's pre-wrap (needed for the user's plain text) would otherwise
+   preserve the markdown source's newlines ON TOP OF the paragraph margins,
+   making replies tall and loosely spaced — the recurring "fix the bubble
+   height/spacing" complaint. Let markdown lay itself out, and tighten it to
+   chat density (denser than a doc): match the bubble's type size and a snugger
+   line-height + paragraph rhythm. */
+.chat-msg.assistant .chat-bubble { white-space: normal; }
+.chat-bubble .ws-md { font-size: 0.9rem; line-height: 1.45; }
+.chat-bubble .ws-md p { margin: 0 0 var(--space-2); }
+.chat-bubble .ws-md ul,
+.chat-bubble .ws-md ol { margin: 0 0 var(--space-2); }
+.chat-bubble .ws-md li { margin-bottom: 0.1rem; }
+.chat-bubble .ws-md h1,
+.chat-bubble .ws-md h2,
+.chat-bubble .ws-md h3,
+.chat-bubble .ws-md h4 { margin: var(--space-2) 0 var(--space-1); }
+.chat-bubble .ws-md pre { margin: 0 0 var(--space-2); }
+.chat-bubble .ws-md > :last-child { margin-bottom: 0; }
 .chat-timeout-tag {
   display: inline-flex; align-items: center; gap: 0.3rem;
   margin-bottom: 0.35rem; font-size: 0.72rem; font-weight: var(--fw-semi);
