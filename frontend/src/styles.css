@@ -639,15 +639,6 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-working__time { font-variant-numeric: tabular-nums; opacity: 0.8; }
 @media (prefers-reduced-motion: reduce) { .chat-working__dots i { animation: none; opacity: 0.6; } }
 
-/* Dictation failure note — a plain, short line under the textarea so a mic tap
-   that fails explains itself instead of silently doing nothing. */
-.chat-dictation-error {
-  color: var(--warn);
-  font-size: var(--fs-sm);
-  line-height: 1.3;
-  padding: var(--space-1) 0 0;
-}
-
 /* ---- Progressive disclosure: Show more/less + collapsed work history ---- */
 .chat-more {
   display: inline-block; margin: 0.15rem 0;

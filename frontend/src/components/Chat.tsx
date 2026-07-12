@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
-  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, Mic, AudioLines,
+  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, AudioLines,
   PanelsTopLeft,
 } from "lucide-react";
-import { useDictation } from "../lib/useDictation";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
   chatApi,
@@ -376,20 +375,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const turnStartRef = useRef(0);
   const attachStreamRef = useRef<(turnId: string, threadId: string, isFirst: boolean) => void>(() => {});
 
-  // Push-to-talk dictation into the composer. Interim results stream in live;
-  // the final transcript is committed so a second dictation appends to it.
-  const dictBaseRef = useRef("");
-  const dictation = useDictation((text, partial) => {
-    const base = dictBaseRef.current;
-    const joined = base ? `${base} ${text}` : text;
-    setInput(joined);
-    if (!partial) dictBaseRef.current = joined;
-  });
-  const onMic = useCallback(() => {
-    if (!dictation.recording) dictBaseRef.current = input.trim();
-    dictation.toggle();
-    inputRef.current?.focus();
-  }, [dictation, input]);
 
   // Provider list (scoped to this app, or the full cross-context list).
   useEffect(() => {
@@ -1209,9 +1194,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onFocus={() => setInputFocused(true)}
         onBlur={() => setInputFocused(false)}
       />
-      {dictation.error && (
-        <div className="chat-dictation-error" role="status">{dictation.error}</div>
-      )}
       <div className="chat-actions">
         {contextMeter}
         <span className="chat-actions__spacer" />
@@ -1229,17 +1211,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             title="Voice mode — talk instead of type"
           >
             <AudioLines size={16} aria-hidden />
-          </button>
-        )}
-        {dictation.available && (
-          <button
-            className={`chat-slash-btn${dictation.recording ? " is-active" : ""}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onMic}
-            aria-label={dictation.recording ? "Stop dictation" : "Dictate"}
-            title={dictation.recording ? "Stop dictation — tap when you're done speaking" : "Dictate — tap, speak, tap again"}
-          >
-            <Mic size={16} aria-hidden />
           </button>
         )}
         <button
