@@ -15,11 +15,14 @@ import glob
 import json
 import logging
 import os
+import shutil
+import signal
 import time
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from services import build_agents, chat_store, llm_router
+from services import build_agents, chat_store, llm_router, ownership
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -171,63 +174,174 @@ def _summarize_tool_input(inp: dict) -> str:
     return f"({keys})"
 
 
+# ==========================================================================
+# Crash/restart resilience — detached, journal-backed turns.
+#
+# A build turn's claude subprocess is DETACHED (start_new_session) and streams
+# its stdout STRAIGHT TO A FILE, not an in-process pipe. So a backend restart
+# (which kills uvicorn but not the detached child) never interrupts the build:
+# the child keeps running and keeps writing its journal. We read events by
+# TAILING that file — identical whether we just spawned the process or are
+# re-attaching to one that outlived us. On startup, reattach_running_turns()
+# resumes any journal still marked "running": tails a live process to completion,
+# or finalizes a dead one from whatever it wrote (so the chat is never stuck).
+# ==========================================================================
+
+TURNS_DIR = Path(__file__).resolve().parents[2] / ".runtime" / "turns"
+
+
+def _journal_dir(turn_id: str) -> Path:
+    return TURNS_DIR / turn_id
+
+
+def _write_meta(meta: dict) -> None:
+    d = _journal_dir(meta["turn_id"])
+    d.mkdir(parents=True, exist_ok=True)
+    tmp = d / "meta.json.tmp"
+    tmp.write_text(json.dumps(meta))
+    tmp.replace(d / "meta.json")
+
+
+def _read_meta(d: Path) -> dict | None:
+    try:
+        return json.loads((d / "meta.json").read_text())
+    except Exception:
+        return None
+
+
+def _mark_meta(meta: dict, status: str) -> None:
+    meta["status"] = status
+    try:
+        _write_meta(meta)
+    except Exception:
+        pass
+
+
+def _proc_alive(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _kill_turn_proc(pid: int | None, proc=None) -> None:
+    try:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            return
+        if pid:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+    except Exception:
+        pass
+
+
 async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str,
                      cwd: str, session_id: str | None, resume: bool,
                      max_turns: int = 60, timeout_s: float = 900) -> Turn:
-    """Kick off a streaming claude subprocess for this turn. Returns the Turn
-    record immediately; the subprocess runs in a background task that pushes
-    events to it."""
+    """Kick off a build turn. The claude subprocess is detached and streams to a
+    disk journal so it survives a backend restart; the returned Turn is driven by
+    tailing that journal. Returns immediately."""
     turn = _make_turn(thread_id, agent_slug)
-    asyncio.create_task(
-        _run_turn(turn, prompt=prompt, model=model, cwd=cwd,
-                  session_id=session_id, resume=resume,
-                  max_turns=max_turns, timeout_s=timeout_s)
-    )
+    try:
+        owner_id = ownership.current_owner()
+    except Exception:
+        owner_id = None
+    meta = {
+        "turn_id": turn.id, "thread_id": thread_id, "agent_slug": agent_slug,
+        "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
+        "owner_id": owner_id, "prompt": prompt, "max_turns": max_turns,
+        "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
+    }
+    _write_meta(meta)
+    asyncio.create_task(_spawn_and_drive(turn, meta))
     return turn
 
 
-async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
-                    session_id: str | None, resume: bool,
-                    max_turns: int, timeout_s: float) -> None:
+async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     cmd: list[str] = [
-        CLAUDE_CLI, "-p", prompt,
-        "--model", model,
+        CLAUDE_CLI, "-p", meta["prompt"],
+        "--model", meta["model"],
         "--output-format", "stream-json",
         "--verbose",
-        "--max-turns", str(max_turns),
+        "--max-turns", str(meta["max_turns"]),
+        # A build turn is headless — there is no interactive approver to grant
+        # Write/Edit/Bash. Without this the model asks "may I write this file?" and
+        # stalls, so builders (esp. freestanding blank projects, whose cwd has no
+        # allow-list settings) can't actually DO anything. Same rationale + mode as
+        # the voice-build worker and llm_router's data path. The auto-checkpoint +
+        # git history are the safety net (every turn is revertable).
+        "--permission-mode", "bypassPermissions",
     ]
-    if session_id and resume:
-        cmd.extend(["--resume", session_id])
-    elif session_id:
-        cmd.extend(["--session-id", session_id])
+    if meta["session_id"] and meta["resume"]:
+        cmd.extend(["--resume", meta["session_id"]])
+    elif meta["session_id"]:
+        cmd.extend(["--session-id", meta["session_id"]])
 
-    env = llm_router._claude_env()
-    _push(turn, "started", {"cwd": cwd, "model": model, "resume": resume})
-
+    _push(turn, "started", {"cwd": meta["cwd"], "model": meta["model"], "resume": meta["resume"]})
     # Persist an empty assistant placeholder bound to this turn. As the turn
     # streams we update its segments; a reload sees partial content + reconnects.
     try:
-        chat_store.append_streaming_assistant(turn.thread_id, turn.id, model=model)
+        chat_store.append_streaming_assistant(turn.thread_id, turn.id, model=meta["model"])
     except Exception as e:  # pragma: no cover — defensive
         log.warning("turn %s: could not seed streaming message: %s", turn.id, e)
 
+    jd = _journal_dir(turn.id)
+    jd.mkdir(parents=True, exist_ok=True)
+    env = llm_router._claude_env()
+    # stdout/stderr go STRAIGHT to files (not pipes) so the detached child keeps
+    # writing even after the parent backend exits. The child dup's these fds at
+    # exec, so the parent closes its own copies right after spawn.
+    try:
+        out_f = open(jd / "stream.jsonl", "ab")
+        err_f = open(jd / "stream.err", "ab")
+    except OSError as e:
+        turn.error = f"journal open failed: {e}"
+        turn.complete = True
+        _push(turn, "error", {"detail": turn.error})
+        _mark_meta(meta, "done")
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, cwd=cwd, env=env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            # Each stream-json event is ONE line. asyncio's default StreamReader
-            # buffer is 64 KiB, so a single large event (a big tool result, a file
-            # read, a wide diff) overran it and aborted the turn with
-            # "Separator is found, but chunk is longer than limit". Give the reader
-            # plenty of headroom so realistic events never trip it.
-            limit=STREAM_LINE_LIMIT,
+            *cmd, cwd=meta["cwd"], env=env,
+            stdout=out_f, stderr=err_f,
+            start_new_session=True,  # detach: survive a backend restart / pkill uvicorn
         )
     except FileNotFoundError as e:
+        out_f.close(); err_f.close()
         turn.error = f"claude CLI not found: {e}"
         turn.complete = True
         _push(turn, "error", {"detail": turn.error})
+        _mark_meta(meta, "done")
         return
+    out_f.close(); err_f.close()
+    meta["pid"] = proc.pid
+    _write_meta(meta)
+    await _drive_turn(turn, meta, proc=proc)
+
+
+async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
+    """Tail the turn's journal, translating stream-json lines into events +
+    persisted segments, until the turn completes (a `result` line) or its process
+    dies. Works for a freshly-spawned proc and for a re-attached one (proc=None,
+    liveness checked by pid)."""
+    # Persist under the turn's owner even on the re-attach path (no request ctx).
+    if meta.get("owner_id") is not None:
+        try:
+            ownership.set_current_owner(int(meta["owner_id"]))
+        except Exception:
+            pass
+
+    path = _journal_dir(turn.id) / "stream.jsonl"
+    deadline = (meta.get("started") or time.time()) + float(meta.get("timeout_s", 900))
+    state = {"compacted": False, "saw_result": False}
+    buf = ""
+    offset = 0
+    last_persist = 0.0
 
     def _seg_text(s: str) -> None:
         if not s:
@@ -237,7 +351,7 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
         else:
             turn.segments.append({"t": "text", "text": s})
 
-    def _seg_tool(name: str, inp: str) -> None:
+    def _seg_tool(name, inp) -> None:
         turn.segments.append({"t": "tool", "name": name or "?", "input": inp or ""})
 
     def _content() -> str:
@@ -245,88 +359,98 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
 
     def _persist() -> None:
         try:
-            chat_store.update_streaming_assistant(
-                turn.thread_id, turn.id, turn.segments, _content()
-            )
+            chat_store.update_streaming_assistant(turn.thread_id, turn.id, turn.segments, _content())
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
-    # Side-signals gathered while streaming (used to write a sensible final
-    # message for commands that emit no closing text, e.g. /compact).
-    state = {"compacted": False}
+    def _ingest(line: str) -> bool:
+        parsed = _parse_stream_event(line)
+        if not parsed:
+            return False
+        kind, payload = parsed
+        saw_tool = False
+        if kind == "_multi":
+            for k2, p2 in payload.get("events", []):
+                if k2 == "text":
+                    _seg_text(p2.get("content", ""))
+                elif k2 == "tool":
+                    _seg_tool(p2.get("name"), p2.get("input")); saw_tool = True
+                _push(turn, k2, p2)
+        elif kind == "result":
+            state["saw_result"] = True
+            _push(turn, "result", payload)
+        else:
+            if kind == "text":
+                _seg_text(payload.get("content", ""))
+            elif kind == "tool":
+                _seg_tool(payload.get("name"), payload.get("input")); saw_tool = True
+            elif kind == "meta" and payload.get("subtype") == "compact_boundary":
+                state["compacted"] = True
+            _push(turn, kind, payload)
+        return saw_tool
 
-    async def _read_stdout() -> None:
-        assert proc.stdout
-        last_persist = 0.0
-        async for raw in proc.stdout:
-            line = raw.decode(errors="replace").rstrip()
-            if not line:
-                continue
-            parsed = _parse_stream_event(line)
-            if not parsed:
-                continue
-            kind, payload = parsed
-            saw_tool = False
-            if kind == "_multi":
-                for k2, p2 in payload.get("events", []):
-                    if k2 == "text":
-                        _seg_text(p2.get("content", ""))
-                    elif k2 == "tool":
-                        _seg_tool(p2.get("name"), p2.get("input"))
-                        saw_tool = True
-                    _push(turn, k2, p2)
-            else:
-                if kind == "text":
-                    _seg_text(payload.get("content", ""))
-                elif kind == "tool":
-                    _seg_tool(payload.get("name"), payload.get("input"))
-                    saw_tool = True
-                elif kind == "meta" and payload.get("subtype") == "compact_boundary":
-                    state["compacted"] = True
-                _push(turn, kind, payload)
-            # Persist on every tool call (so a reload mid-tool shows it) and at
-            # most a few times a second for text, to bound disk churn.
-            now = time.time()
-            if saw_tool or now - last_persist > 0.4:
-                _persist()
-                last_persist = now
-        turn.final_text = _content()
+    def _drain(final: bool = False) -> bool:
+        nonlocal buf, offset
+        try:
+            with open(path, "r", errors="replace") as f:
+                f.seek(offset)
+                chunk = f.read()
+                offset = f.tell()
+        except FileNotFoundError:
+            chunk = ""
+        if not chunk and not (final and buf.strip()):
+            return False
+        buf += chunk
+        saw_tool = False
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            if line.strip():
+                saw_tool = _ingest(line) or saw_tool
+        if final and buf.strip():
+            # No trailing newline on the last event (process died mid-flush).
+            saw_tool = _ingest(buf) or saw_tool
+            buf = ""
+        return saw_tool
 
-    async def _read_stderr() -> None:
-        assert proc.stderr
-        async for raw in proc.stderr:
-            line = raw.decode(errors="replace").rstrip()
-            if line:
-                _push(turn, "stderr", {"line": line[:500]})
+    timed_out = False
+    while True:
+        saw_tool = _drain()
+        now = time.time()
+        if saw_tool or (turn.segments and now - last_persist > 0.4):
+            _persist(); last_persist = now
+        if state["saw_result"]:
+            break
+        alive = (proc.returncode is None) if proc is not None else _proc_alive(meta.get("pid"))
+        if not alive:
+            _drain(final=True)
+            _persist()
+            break
+        if time.time() > deadline:
+            timed_out = True
+            _kill_turn_proc(meta.get("pid"), proc)
+            _drain(final=True)
+            break
+        await asyncio.sleep(0.15)
 
-    try:
-        await asyncio.wait_for(
-            asyncio.gather(_read_stdout(), _read_stderr(), proc.wait()),
-            timeout=timeout_s,
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        turn.error = f"timeout after {timeout_s}s"
-        _push(turn, "error", {"detail": turn.error})
-    except Exception as e:  # pragma: no cover — defensive
-        turn.error = str(e)
-        _push(turn, "error", {"detail": turn.error})
+    turn.final_text = _content()
+    if proc is not None:
+        rc = proc.returncode if proc.returncode is not None else -1
+    else:
+        rc = 0 if state["saw_result"] else -1
+    await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"])
 
-    rc = proc.returncode if proc.returncode is not None else -1
+
+async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool) -> None:
+    prompt = meta.get("prompt", "") or ""
+    cwd = meta.get("cwd", "") or ""
+    timeout_s = float(meta.get("timeout_s", 900))
     _push(turn, "done", {"exit_code": rc, "text_len": len(turn.final_text)})
     turn.complete = True
+    if timed_out:
+        turn.error = turn.error or f"timeout after {int(timeout_s)}s"
 
-    # Finalize the streaming assistant message (segments + text, streaming off).
-    # Even on non-zero exit, salvage any text emitted (matches call_cloud). When
-    # nothing salvageable came back, say WHY in plain language instead of the old
-    # opaque "(model exited without text)":
-    #   - timeout: the turn hit its wall-clock limit and was stopped. Its file
-    #     changes are already on disk, so a follow-up continues the work.
-    #   - clean exit, no text: the model finished its tool work without a closing
-    #     summary (common) — the steps above are the result.
-    #   - non-zero exit, no text: a real failure.
-    timed_out = bool(turn.error) and turn.error.startswith("timeout")
+    # Same plain-language finalize as the original path: salvage any text; when
+    # nothing came back, say WHY (timeout / compact / clean-no-summary / failure).
     is_command = prompt.strip().startswith("/")
     minutes = max(1, round(timeout_s / 60))
     if turn.final_text:
@@ -339,15 +463,13 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
             "\"continue\") to pick up where it left off."
         )
         is_error = False
-    elif state["compacted"]:
-        # /compact succeeds but emits no closing text — just a compact_boundary.
+    elif compacted:
         text = (
             "Conversation compacted — earlier messages were summarized to free up "
             "the context window. Continue where you left off."
         )
         is_error = False
     elif rc == 0 and is_command:
-        # A slash command (e.g. /clear) that ran cleanly without printing output.
         text = "Command ran."
         is_error = False
     elif rc == 0:
@@ -372,9 +494,6 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
     except Exception:
         pass
 
-    # Name the thread from its first exchange (build chats stream their turns, so
-    # the data-path auto-namer never saw them — they kept the message snippet).
-    # Skip on a failed turn so we don't title a thread off an error message.
     if not is_error:
         try:
             from services import chat_naming
@@ -382,24 +501,16 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
         except Exception as e:  # pragma: no cover — best-effort
             log.debug("turn %s: auto-name schedule failed: %s", turn.id, e)
 
-    # Auto-checkpoint: commit the working tree so the builder's work is a
-    # recoverable timeline (doc 05 history substrate). Best-effort, off-loop.
-    # SKIP for the self/platform project — never auto-commit the live monorepo's
-    # working tree (it would sweep in the operator's unrelated WIP every turn).
+    # Auto-checkpoint the working tree (skip the self/platform monorepo).
     try:
         from services import checkpoints, app_runner
-        if not app_runner.is_self_dir(cwd):
+        if cwd and not app_runner.is_self_dir(cwd):
             sha = await asyncio.to_thread(checkpoints.checkpoint, cwd, f"{turn.agent_slug} turn")
             if sha:
                 _push(turn, "checkpoint", {"sha": sha})
     except Exception as e:
         log.info("turn %s: checkpoint skipped: %s", turn.id, e)
 
-    # Auto-name the thread after the first streamed exchange completes (mirrors
-    # the sync /messages path). Reuses the same cheap-Haiku namer in routes.chat
-    # so naming behavior can't drift between the two paths. Lazy import avoids an
-    # import cycle (routes.chat imports build_streaming at module load). Runs off
-    # the event loop; failures are swallowed (best-effort, never blocks the turn).
     try:
         first_user = _first_user_text(turn.thread_id)
         if first_user and text and not text.startswith("(model exited"):
@@ -407,6 +518,53 @@ async def _run_turn(turn: Turn, *, prompt: str, model: str, cwd: str,
             await _maybe_autoname_stream(_chat, turn.thread_id, first_user, text)
     except Exception as e:
         log.info("turn %s: auto-name skipped: %s", turn.id, e)
+
+    # The thread now holds the final message; the journal is no longer needed.
+    _mark_meta(meta, "done")
+    try:
+        shutil.rmtree(_journal_dir(turn.id), ignore_errors=True)
+    except Exception:
+        pass
+
+
+def reattach_running_turns() -> None:
+    """Startup hook: resume any build turn whose journal says it was still running
+    when the backend went down. A live detached process is tailed to completion; a
+    dead one is finalized from whatever it wrote so the chat is never stuck.
+    Idempotent and best-effort — never raise into app startup."""
+    try:
+        if not TURNS_DIR.exists():
+            return
+        for d in sorted(TURNS_DIR.iterdir()):
+            if not d.is_dir():
+                continue
+            meta = _read_meta(d)
+            if not meta or meta.get("status") == "done":
+                continue
+            tid = meta.get("turn_id")
+            if not tid or tid in TURNS:
+                continue
+            owner_id = meta.get("owner_id")
+            if owner_id is None:
+                # Can't safely persist without an owner — drop the orphan; the
+                # thread self-heals its stuck streaming flag on next fetch.
+                shutil.rmtree(d, ignore_errors=True)
+                continue
+            try:
+                ownership.set_current_owner(int(owner_id))
+                if not chat_store.get_thread(meta.get("thread_id") or ""):
+                    shutil.rmtree(d, ignore_errors=True)
+                    continue
+            except Exception:
+                continue
+            turn = Turn(id=tid, thread_id=meta["thread_id"], agent_slug=meta.get("agent_slug", ""))
+            turn.started = meta.get("started", time.time())
+            TURNS[tid] = turn
+            alive = _proc_alive(meta.get("pid"))
+            log.info("re-attaching build turn %s (pid=%s alive=%s)", tid, meta.get("pid"), alive)
+            asyncio.create_task(_drive_turn(turn, meta, proc=None))
+    except Exception as e:  # pragma: no cover — never block startup
+        log.warning("reattach_running_turns failed: %s", e)
 
 
 def _first_user_text(thread_id: str) -> str:
