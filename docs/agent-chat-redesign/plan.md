@@ -163,3 +163,23 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
 
 Ordering: 1 delivers the motivating UX; 2+3 build the knowledge/context core the notes app needs
 before it is written; 4 pays down the Ralph gap; 5+6 additive, can interleave.
+
+## Phase 2 feasibility notes (Letta capability probe, 2026-07-11)
+
+Verified against the running Letta server (v0.16.8) before building Phase 2:
+- **Archives + passage search ARE supported.** `GET /v1/archives/` -> 200 (org-level archives are a
+  first-class, attachable resource). `GET /v1/passages/search` -> 405 (path exists, wants POST), so
+  the semantic-search surface exists. Per-scope archives + `recall` via search is therefore feasible.
+- **Use the REST API, not the SDK.** `from letta_client import Letta` resolves to the LOCAL
+  `backend/letta_client.py` (a httpx wrapper with no `Letta`), which shadows the installed
+  `letta-client` 1.11.0 SDK on sys.path. The whole backend already talks to Letta over raw httpx
+  `/v1` (global_memory.py, supervisor.py, letta_legacy_client.py); Phase 2 should do the same for
+  archives/passages and NOT depend on the shadowed SDK. (Optionally rename the local module later to
+  unshadow the SDK, but that is a separate cleanup, not a Phase 2 dependency.)
+- **Open item to resolve first:** `POST /v1/passages/search` timed out at 15s in the probe. Before
+  building recall, confirm why (embedding config on the server / empty-store cold start / needs an
+  archive with passages first) and that a real search returns in reasonable time. This is the one
+  yellow flag; everything else is green.
+- Today: archival memory is per-agent, write/read only, NO search wired; memory-tree.yaml
+  `archival_namespaces` are cosmetic labels with no Letta backing. Phase 2 gives them real backing
+  (one archive per scope) and adds the search/recall path.
