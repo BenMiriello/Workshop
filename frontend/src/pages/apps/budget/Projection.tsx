@@ -170,7 +170,7 @@ export default function Projection({ budget }: { budget: Budget }) {
       gapStart: scenario === "gap" || (scenario === "custom" && gapLength > 0) ? gapStart : -1,
       gapLength: scenario === "gap" || scenario === "custom" ? gapLength : 0,
       saveMult, burn, startCash, startInvest, cashContrib, investContrib,
-      debts: budget.debts.map((d) => ({ bal: d.balance, payment: d.planned_monthly })),
+      debts: budget.debts.map((d) => ({ bal: d.balance, payment: d.monthly_equivalent })),
     };
   }, [budget, months, incomeGrowth, gapStart, gapLength, saveMult, scenario, startInvest]);
 
@@ -182,7 +182,7 @@ export default function Projection({ budget }: { budget: Budget }) {
     const citiDebt = budget.debts.find((d) => d.id === "citi");
     const citiIdx = (() => {
       // re-run citi alone for clear-month (debt series is the sum; fine to use total hitting <= other debts)
-      let bal = citiDebt?.balance ?? 0; const pay = citiDebt?.planned_monthly ?? 0;
+      let bal = citiDebt?.balance ?? 0; const pay = citiDebt?.monthly_equivalent ?? 0;
       if (pay <= 0) return null;
       for (let m = 0; m <= params.months; m++) { if (bal <= 0) return m; bal -= pay; }
       return null;

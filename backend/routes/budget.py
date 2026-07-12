@@ -12,7 +12,8 @@ router = APIRouter()
 _PATCH_FIELDS = {
     "income": {"monthly", "per_paycheck", "paychecks_per_month", "source"},
     "necessities": {"name", "monthly", "note"},
-    "debts": {"name", "balance", "planned_monthly", "apr", "promo_until", "strategy", "priority", "note", "account_mask"},
+    "debts": {"name", "balance", "planned_monthly", "planned_per_period", "cadence", "strategy",
+              "target_date", "apr", "promo_until", "priority", "note", "account_mask"},
     "savings": {"name", "target", "current", "planned_monthly", "target_date", "term", "priority", "note", "account_mask"},
     # Variable categories: target is the primary editable; note added for parity.
     "variable": {"name", "target", "note"},

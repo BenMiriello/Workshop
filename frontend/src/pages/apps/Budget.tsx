@@ -15,8 +15,10 @@ import AppChatDock from "../../components/AppChatDock";
 // ---- types (mirror backend budget_engine.compute output) ----
 type Debt = {
   id: string; name: string; priority: number; balance: number; apr: number | null;
-  promo_until: string | null; strategy: string; planned_monthly: number;
-  required_monthly: number | null; months_remaining: number | null; on_pace: boolean | null;
+  cadence: string; strategy: string; target_date: string | null; promo_until: string | null;
+  planned_per_period: number; planned_monthly: number; monthly_equivalent: number;
+  required_monthly: number | null; months_remaining: number | null;
+  amount_source: string; on_pace: boolean | null;
   note: string; account_mask: string | null;
 };
 type Saving = {
@@ -552,102 +554,83 @@ function NecessitiesSection({ necessities, scale, onSaved }: { necessities: Nece
   );
 }
 
-// ---- Debts: payoff focus, Citi 0% countdown ----
-function DebtsSection({ debts, scale, onSaved }: { debts: Debt[]; scale: number; onSaved: () => void }) {
+const CADENCE_UNIT: Record<string, string> = {
+  daily: "day", weekly: "week", biweekly: "two weeks",
+  monthly: "month", quarterly: "quarter", yearly: "year",
+};
+
+function payoffSummary(d: Debt): string {
+  const unit = CADENCE_UNIT[d.cadence] ?? "month";
+  if (d.strategy === "pay_in_full") {
+    if (d.amount_source === "live_balance") return `Pay in full each ${unit} · ${usd(d.planned_per_period, true)} live balance`;
+    if (d.amount_source === "trailing_avg") return `Pay in full each ${unit} · ~${usd(d.planned_per_period, true)} trailing avg`;
+    return `Pay in full each ${unit}`;
+  }
+  if (d.strategy === "payoff_by_date") {
+    const amt = d.planned_per_period > 0 ? ` · ~${usd(d.planned_per_period, true)}/${unit}` : "";
+    const left = d.months_remaining != null ? ` · ${Math.ceil(d.months_remaining)} mo left` : "";
+    return `Pay off by ${d.target_date ?? "—"}${amt}${left}`;
+  }
+  // fixed_amount
+  const amt = d.planned_per_period > 0 ? `${usd(d.planned_per_period)} per ${unit}` : "no payment set";
+  const left = d.months_remaining != null ? ` · clears in ~${Math.ceil(d.months_remaining)} mo` : "";
+  return `${amt}${left}`;
+}
+
+// ---- Payoffs: cadence + strategy-aware display ----
+function DebtsSection({ debts, onSaved }: { debts: Debt[]; scale: number; onSaved: () => void }) {
   if (!debts.length) return null;
-  const paychecks = scale === 1 ? 2 : Math.round(1 / scale);
   return (
     <section style={{ marginBottom: "1.5rem" }}>
       <h3 className="sec-h">Payoffs</h3>
       <div style={{ display: "grid", gap: "0.75rem" }}>
-        {debts.map((d) => {
-          const cover = d.required_monthly ? Math.min(d.planned_monthly / d.required_monthly, 1) : (d.planned_monthly > 0 ? 1 : 0);
-          const payoffMonths = d.planned_monthly > 0 ? d.balance / d.planned_monthly : null;
-          return (
-            <div key={d.id} className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem", flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0 }}>
-                  <span style={{ fontWeight: 600 }}>
-                    <InlineText
-                      value={d.name}
-                      target={{ section: "debts", id: d.id, field: "name" }}
-                      onSaved={onSaved}
-                      ariaLabel={`rename ${d.name}`}
-                    />
-                  </span>
-                  {d.account_mask && <span className="muted" style={{ fontSize: "0.8rem" }}> ··{d.account_mask}</span>}
-                </div>
-                <span style={{ fontSize: "1.15rem", fontWeight: 600 }}>
-                  <InlineNumber
-                    value={d.balance}
-                    target={{ section: "debts", id: d.id, field: "balance" }}
-                    onSaved={onSaved}
-                    display={(v) => usd(v, true)}
-                    ariaLabel={`edit ${d.name} balance`}
-                  />
-                </span>
-              </div>
-
-              {(d.promo_until || d.apr != null) && (
-                <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-                  {d.apr === 0 ? "0% promo" : (
-                    <>
-                      <InlineNumber
-                        value={d.apr ?? 0}
-                        target={{ section: "debts", id: d.id, field: "apr" }}
-                        onSaved={onSaved}
-                        display={(v) => `${v}%`}
-                        ariaLabel="edit APR"
-                      />
-                    </>
-                  )}
-                  {" until "}
+        {debts.map((d) => (
+          <div key={d.id} className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.5rem", flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontWeight: 600 }}>
                   <InlineText
-                    value={d.promo_until}
-                    target={{ section: "debts", id: d.id, field: "promo_until" }}
+                    value={d.name}
+                    target={{ section: "debts", id: d.id, field: "name" }}
                     onSaved={onSaved}
-                    nullable
-                    placeholder="YYYY-MM-DD"
-                    ariaLabel="edit promo expiry"
+                    ariaLabel={`rename ${d.name}`}
                   />
-                  {d.months_remaining != null && ` · ${d.months_remaining} mo left`}
-                </p>
-              )}
-
-              <div className="bar" style={{ marginTop: "0.6rem", ["--pct" as string]: cover, ["--c" as string]: d.on_pace === false ? "var(--danger-solid)" : "var(--ok-solid)" }}>
-                <i />
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.45rem", gap: "0.5rem", flexWrap: "wrap" }}>
-                <span className="muted" style={{ fontSize: "0.8rem" }}>
-                  Paying{" "}
-                  <ScaledInlineNumber
-                    monthlyValue={d.planned_monthly}
-                    scale={scale}
-                    paychecks={paychecks}
-                    target={{ section: "debts", id: d.id, field: "planned_monthly" }}
-                    onSaved={onSaved}
-                    format={(v) => usd(v)}
-                    ariaLabel={`edit ${d.name} payment`}
-                    placeholder="set payment"
-                  />
-                  {d.required_monthly != null && ` of ${usd(d.required_monthly * scale)} needed`}
-                  {payoffMonths != null && ` · clears in ~${Math.ceil(payoffMonths)} mo`}
                 </span>
-                <Pace ok={d.on_pace} behindLabel={d.required_monthly ? `+${usd((d.required_monthly - d.planned_monthly) * scale)}/mo` : "behind"} />
+                {d.account_mask && <span className="muted" style={{ fontSize: "0.8rem" }}> ··{d.account_mask}</span>}
               </div>
-              <p className="muted" style={{ margin: "0.4rem 0 0", fontSize: "0.78rem", opacity: 0.85 }}>
-                <InlineText
-                  value={d.note || ""}
-                  target={{ section: "debts", id: d.id, field: "note" }}
+              <span style={{ fontSize: "1.15rem", fontWeight: 600 }}>
+                <InlineNumber
+                  value={d.balance}
+                  target={{ section: "debts", id: d.id, field: "balance" }}
                   onSaved={onSaved}
-                  nullable
-                  placeholder="add note"
-                  ariaLabel={`edit ${d.name} note`}
+                  display={(v) => usd(v, true)}
+                  ariaLabel={`edit ${d.name} balance`}
                 />
-              </p>
+              </span>
             </div>
-          );
-        })}
+            <p className="muted" style={{ margin: "0.35rem 0 0", fontSize: "0.82rem" }}>
+              {payoffSummary(d)}
+            </p>
+            {d.apr != null && (
+              <p className="muted" style={{ margin: "0.2rem 0 0", fontSize: "0.78rem" }}>
+                {d.apr === 0 ? "0% promo" : (
+                  <><InlineNumber value={d.apr} target={{ section: "debts", id: d.id, field: "apr" }} onSaved={onSaved} display={(v) => `${v}%`} ariaLabel="edit APR" /> APR</>
+                )}
+                {d.promo_until && ` until ${d.promo_until}`}
+              </p>
+            )}
+            <p className="muted" style={{ margin: "0.4rem 0 0", fontSize: "0.78rem", opacity: 0.85 }}>
+              <InlineText
+                value={d.note || ""}
+                target={{ section: "debts", id: d.id, field: "note" }}
+                onSaved={onSaved}
+                nullable
+                placeholder="add note"
+                ariaLabel={`edit ${d.name} note`}
+              />
+            </p>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -917,23 +900,28 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
       ))}
       <button className="ef-add" onClick={() => mutate((p) => p.necessities.push({ id: newId(), name: "", monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add necessity</button>
 
-      {/* Debts */}
-      <p className="sec-h" style={{ marginTop: "1.2rem" }}>Debts to pay off</p>
+      {/* Payoffs */}
+      <p className="sec-h" style={{ marginTop: "1.2rem" }}>Payoffs</p>
       {plan.debts.map((d: any, i: number) => (
         <div className="ef-row" key={d.id}>
           <div className="ef-grid">
             <EfText label="Name" value={d.name} onChange={(v) => mutate((p) => { p.debts[i].name = v; })} />
+            <EfSelect label="Cadence" value={d.cadence || "monthly"} options={[["daily","Daily"],["weekly","Weekly"],["biweekly","Biweekly"],["monthly","Monthly"],["quarterly","Quarterly"],["yearly","Yearly"]]} onChange={(v) => mutate((p) => { p.debts[i].cadence = v; })} />
+            <EfSelect label="Strategy" value={d.strategy || "fixed_amount"} options={[["fixed_amount","Fixed amount"],["pay_in_full","Pay in full"],["payoff_by_date","Pay off by date"]]} onChange={(v) => mutate((p) => { p.debts[i].strategy = v; })} />
+            {d.strategy === "fixed_amount" && (
+              <EfNum label="Amount / period" value={d.planned_per_period ?? d.planned_monthly ?? 0} onChange={(v) => mutate((p) => { p.debts[i].planned_per_period = v; p.debts[i].planned_monthly = v; })} />
+            )}
+            {d.strategy === "payoff_by_date" && (
+              <EfText label="Target date" placeholder="YYYY-MM-DD" value={d.target_date || d.promo_until || ""} onChange={(v) => mutate((p) => { p.debts[i].target_date = v || null; p.debts[i].promo_until = v || null; })} />
+            )}
             <EfNum label="Balance" value={d.balance} onChange={(v) => mutate((p) => { p.debts[i].balance = v; })} />
-            <EfNum label="Paying / month" value={d.planned_monthly} onChange={(v) => mutate((p) => { p.debts[i].planned_monthly = v; })} />
             <EfNum label="APR %" prefix="" value={d.apr ?? 0} onChange={(v) => mutate((p) => { p.debts[i].apr = v; })} />
-            <EfSelect label="Strategy" value={d.strategy || "fixed"} options={[["fixed", "Fixed monthly"], ["clear_by_promo", "Clear by date"]]} onChange={(v) => mutate((p) => { p.debts[i].strategy = v; })} />
-            <EfText label="Clear-by date" placeholder="YYYY-MM-DD" value={d.promo_until} onChange={(v) => mutate((p) => { p.debts[i].promo_until = v || null; })} />
             <EfNum label="Priority" prefix="#" value={d.priority} onChange={(v) => mutate((p) => { p.debts[i].priority = v; })} />
           </div>
           <DelBtn onClick={() => mutate((p) => p.debts.splice(i, 1))} />
         </div>
       ))}
-      <button className="ef-add" onClick={() => mutate((p) => p.debts.push({ id: newId(), name: "", priority: nextPriority(p.debts), balance: 0, account_mask: null, apr: 0, promo_until: null, strategy: "fixed", planned_monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add debt</button>
+      <button className="ef-add" onClick={() => mutate((p) => p.debts.push({ id: newId(), name: "", priority: nextPriority(p.debts), balance: 0, account_mask: null, apr: 0, promo_until: null, cadence: "monthly", strategy: "fixed_amount", target_date: null, planned_per_period: 0, planned_monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add payoff</button>
 
       {/* Savings & goals */}
       <p className="sec-h" style={{ marginTop: "1.2rem" }}>Savings & goals</p>

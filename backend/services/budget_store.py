@@ -65,28 +65,36 @@ def default_plan() -> dict:
             {"id": "phone", "name": "Phone", "monthly": 0, "note": ""},
             {"id": "insurance", "name": "Insurance", "monthly": 0, "note": ""},
         ],
-        # Debts to pay off, in priority order. clear_by_promo derives the
-        # required monthly from balance / months-until-promo-expiry.
+        # Payoffs (formerly "debts"). Each line has cadence + strategy:
+        #   fixed_amount  — typed planned_per_period, no deadline
+        #   pay_in_full   — outflow = live balance each period (Chase revolving)
+        #   payoff_by_date — amount = balance / periods_remaining, requires target_date
         "debts": [
             {
                 "id": "citi", "name": "Citi Simplicity (0%)", "priority": 1,
                 "balance": 8722, "account_mask": "6821",
-                "apr": 0, "promo_until": "2027-05-01", "strategy": "clear_by_promo",
-                "planned_monthly": 800,
+                "apr": 0, "promo_until": "2027-05-01",
+                "cadence": "monthly", "strategy": "payoff_by_date",
+                "target_date": "2027-05-01",
+                "planned_per_period": 800, "planned_monthly": 800,
                 "note": "0% promo — clear before it expires or rate jumps to ~25%",
             },
             {
                 "id": "chase_9899", "name": "Chase card ··9899", "priority": 2,
                 "balance": 0, "account_mask": "9899",
-                "apr": None, "promo_until": None, "strategy": "fixed",
-                "planned_monthly": 0,
-                "note": "revolving (not 0%) — carries interest; balance merged live from ··9899",
+                "apr": None, "promo_until": None,
+                "cadence": "monthly", "strategy": "pay_in_full",
+                "target_date": None,
+                "planned_per_period": 0, "planned_monthly": 0,
+                "note": "revolving — paid in full each month; outflow tracks live ··9899 balance",
             },
             {
                 "id": "dad", "name": "Repay Dad (joint)", "priority": 3,
                 "balance": 0, "account_mask": None,
-                "apr": 0, "promo_until": None, "strategy": "fixed",
-                "planned_monthly": 0,
+                "apr": 0, "promo_until": None,
+                "cadence": "monthly", "strategy": "fixed_amount",
+                "target_date": None,
+                "planned_per_period": 0, "planned_monthly": 0,
                 "note": "reconstruct total owed from joint-account ··8202 history",
             },
         ],
@@ -139,6 +147,29 @@ def default_plan() -> dict:
     }
 
 
+_STRATEGY_MIGRATE = {"fixed": "fixed_amount", "clear_by_promo": "payoff_by_date"}
+_VALID_CADENCES = {"daily", "weekly", "biweekly", "monthly", "quarterly", "yearly"}
+
+
+def _migrate_plan(plan: dict) -> bool:
+    """Backfill payoff-scheduling fields on legacy debt rows. Idempotent; returns
+    True if the plan was mutated (caller should re-persist)."""
+    changed = False
+    for d in plan.get("debts", []) or []:
+        if d.get("cadence") not in _VALID_CADENCES:
+            d["cadence"] = "monthly"; changed = True
+        old_strategy = d.get("strategy")
+        if old_strategy in _STRATEGY_MIGRATE:
+            d["strategy"] = _STRATEGY_MIGRATE[old_strategy]; changed = True
+        if not d.get("strategy"):
+            d["strategy"] = "fixed_amount"; changed = True
+        if "planned_per_period" not in d:
+            d["planned_per_period"] = d.get("planned_monthly", 0) or 0; changed = True
+        if "target_date" not in d:
+            d["target_date"] = d.get("promo_until"); changed = True
+    return changed
+
+
 def load_plan() -> dict:
     plan_file = _plan_file()
     if not plan_file.exists():
@@ -146,12 +177,15 @@ def load_plan() -> dict:
         save_plan(plan)
         return plan
     try:
-        return json.loads(plan_file.read_text())
+        plan = json.loads(plan_file.read_text())
     except (json.JSONDecodeError, OSError):
         # Corrupt plan — reseed rather than 500 the whole app.
         plan = default_plan()
         save_plan(plan)
         return plan
+    if _migrate_plan(plan):
+        save_plan(plan)
+    return plan
 
 
 def save_plan(plan: dict) -> dict:

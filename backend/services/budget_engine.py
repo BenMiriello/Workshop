@@ -58,6 +58,46 @@ def _is_excluded(cat: str) -> bool:
     return any(cat.startswith(p) for p in _EXCLUDED_PREFIXES)
 
 
+# Normalizes any per-period planned amount to a monthly equivalent.
+# periods-per-month: daily≈30.4, weekly≈4.33, biweekly≈2.17, monthly=1,
+# quarterly≈0.33, yearly≈0.083.
+_PERIODS_PER_MONTH: dict[str, float] = {
+    "daily": 365.0 / 12,
+    "weekly": 52.0 / 12,
+    "biweekly": 26.0 / 12,
+    "monthly": 1.0,
+    "quarterly": 1.0 / 3,
+    "yearly": 1.0 / 12,
+}
+
+
+def _ppm(cadence: str | None) -> float:
+    return _PERIODS_PER_MONTH.get(cadence or "monthly", 1.0)
+
+
+def _trailing_monthly_by_mask(
+    balances: dict, txns: list[dict], window_days: int
+) -> dict[str, float]:
+    """Avg monthly outflow per account mask over the window.
+    Used as the pay_in_full fallback when a live credit balance isn't available."""
+    id_to_mask: dict[str, str] = {}
+    for item in balances.get("items", []) or []:
+        for acct in item.get("accounts", []) or []:
+            aid, mask = acct.get("account_id"), acct.get("mask")
+            if aid and mask:
+                id_to_mask[aid] = str(mask)
+    sums: dict[str, float] = {}
+    for t in txns:
+        amt = t.get("amount")
+        if amt is None or amt <= 0:
+            continue
+        mask = id_to_mask.get(t.get("account_id", ""))
+        if mask:
+            sums[mask] = sums.get(mask, 0.0) + amt
+    months = max(window_days / (365.0 / 12), 0.5)
+    return {m: v / months for m, v in sums.items()}
+
+
 def _spend_by_category(
     plan: dict, txns: list[dict], overrides: dict | None = None
 ) -> tuple[dict[str, float], float, float]:
@@ -113,31 +153,66 @@ def _spend_by_category(
     return buckets, necessities_actual, unclassified
 
 
-def _debt_view(plan: dict, mask_cur: dict[str, float]) -> list[dict]:
+def _payoff_view(
+    plan: dict,
+    mask_cur: dict[str, float],
+    trailing: dict[str, float],
+) -> list[dict]:
     out = []
     for d in plan.get("debts", []):
-        bal = d.get("balance", 0) or 0
         mask = d.get("account_mask")
+        bal = d.get("balance", 0) or 0
         if mask and str(mask) in mask_cur:
             bal = mask_cur[str(mask)]
-        planned = d.get("planned_monthly", 0) or 0
-        required = None
+
+        cadence = d.get("cadence") or "monthly"
+        ppm = _ppm(cadence)
+        strategy = d.get("strategy") or "fixed_amount"
+        per_period = float(d.get("planned_per_period", d.get("planned_monthly", 0)) or 0)
+        target_date = d.get("target_date") or d.get("promo_until")
+        amount_source = "typed"
         months = None
-        if d.get("strategy") == "clear_by_promo":
-            months = _months_until(d.get("promo_until"))
+
+        if strategy == "pay_in_full":
+            live = mask_cur.get(str(mask)) if mask else None
+            if live is not None:
+                per_period = round(live, 2)
+                amount_source = "live_balance"
+            elif mask and str(mask) in trailing:
+                per_period = round(trailing[str(mask)] / ppm, 2)
+                amount_source = "trailing_avg"
+            else:
+                amount_source = "typed_fallback"
+            monthly_equivalent = per_period * ppm
+        elif strategy == "payoff_by_date":
+            months = _months_until(target_date)
             if months:
-                required = round(bal / months, 2)
-        on_pace = None
-        if required is not None:
-            on_pace = planned >= required
+                periods_remaining = max(months * ppm, 1.0)
+                per_period = round(bal / periods_remaining, 2)
+                monthly_equivalent = bal / months
+                amount_source = "computed"
+            else:
+                monthly_equivalent = per_period * ppm
+        else:  # fixed_amount
+            monthly_equivalent = per_period * ppm
+            if per_period > 0 and ppm > 0:
+                months = (bal / per_period) / ppm
+
         out.append({
             "id": d["id"], "name": d["name"], "priority": d.get("priority", 99),
             "balance": round(bal, 2), "apr": d.get("apr"),
-            "promo_until": d.get("promo_until"), "strategy": d.get("strategy"),
-            "planned_monthly": planned, "required_monthly": required,
+            "cadence": cadence, "strategy": strategy,
+            "target_date": target_date, "promo_until": d.get("promo_until"),
+            "planned_per_period": round(per_period, 2),
+            # planned_monthly is now the monthly-equivalent so existing callers
+            # (Projection, chat_context) see the correct normalized value.
+            "planned_monthly": round(monthly_equivalent, 2),
+            "monthly_equivalent": round(monthly_equivalent, 2),
+            "required_monthly": None,
             "months_remaining": round(months, 1) if months else None,
-            "on_pace": on_pace, "note": d.get("note", ""),
-            "account_mask": mask,
+            "amount_source": amount_source,
+            "on_pace": None if strategy == "fixed_amount" else True,
+            "note": d.get("note", ""), "account_mask": mask,
         })
     out.sort(key=lambda x: x["priority"])
     return out
@@ -177,14 +252,15 @@ def _savings_view(plan: dict, mask_cur: dict[str, float]) -> list[dict]:
 def compute(plan: dict, balances: dict, txns_resp: dict, window_days: int = 30, overrides: dict | None = None) -> dict:
     mask_cur = _mask_to_current(balances)
     txns = txns_resp.get("transactions", []) or []
+    trailing = _trailing_monthly_by_mask(balances, txns, window_days)
 
-    debts = _debt_view(plan, mask_cur)
+    debts = _payoff_view(plan, mask_cur, trailing)
     savings = _savings_view(plan, mask_cur)
     spend, necessities_actual, unclassified = _spend_by_category(plan, txns, overrides)
 
     income = float(plan.get("income", {}).get("monthly", 0) or 0)
     necessities_planned = sum(float(n.get("monthly", 0) or 0) for n in plan.get("necessities", []))
-    debt_planned = sum(d["planned_monthly"] for d in debts)
+    debt_planned = sum(d["monthly_equivalent"] for d in debts)
     savings_planned = sum(s["planned_monthly"] for s in savings)
     # Aggregate goal pacing: the total monthly contribution needed across every
     # goal that has a deadline, to hit each on time. This is the "how much do I
