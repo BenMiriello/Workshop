@@ -33,15 +33,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services import chat_context, chat_store, llm_router
-from services.build_streaming import session_alive
+from services.build_streaming import session_alive, _summarize_tool_input
 
 log = logging.getLogger("workshop.voice_worker")
 
 CLAUDE_CLI = llm_router.CLAUDE_CLI
 STREAM_LINE_LIMIT = 64 * 1024 * 1024
 IDLE_S = 600.0            # reap a worker after this long with no turn
-TURN_TIMEOUT_S = 60.0     # a voice reply slower than this is a failure
-# Stable cwd so `--resume` can find the session on disk across respawns.
+TURN_TIMEOUT_S = 60.0     # a conversational voice reply slower than this is a failure
+# A voice BUILD turn runs real tools (edits, commands, tests) and legitimately
+# takes minutes — mirror the text build path's generous ceiling, not the 60s
+# conversational one.
+BUILD_TURN_TIMEOUT_S = 900.0
+# Stable cwd so `--resume` can find the session on disk across respawns. Used for
+# conversational (no-tool) workers; build workers use the agent's own cwd.
 VOICE_CWD = str(Path(__file__).resolve().parents[2])
 
 _VOICE_SYSTEM = (
@@ -55,14 +60,39 @@ _VOICE_SYSTEM = (
     "actual request."
 )
 
+# Build-by-voice: the model has the full toolset and is actually editing the
+# project, but the operator is LISTENING, not reading a transcript. The whole UX
+# hinges on the model narrating as it works so there's never a long silent gap
+# while tools run. This is the "smart phrasing for long turns" — the model speaks
+# the plan and progress out loud instead of us bolting on synthetic filler.
+_BUILD_VOICE_SYSTEM = (
+    "You are pair-building with the operator by VOICE while you actually edit this "
+    "project with your tools. The operator is LISTENING, not reading — so narrate, "
+    "don't dump.\n"
+    "- Speak in short, plain spoken sentences. Never read code, file contents, "
+    "paths, or command syntax aloud; describe them in words a person would say.\n"
+    "- Before a meaningful step, say in ONE sentence what you're about to do "
+    "(\"Okay, I'll add a config file and wire it into startup\"). This keeps the "
+    "line alive while the tool runs.\n"
+    "- Work in small steps. After finishing, give a one or two sentence spoken "
+    "summary of what changed and what you'd do next — not a list.\n"
+    "- If a request is ambiguous or risky, ask one short spoken question before "
+    "acting.\n"
+    "- No markdown, no bullet lists, no emoji in what you say.\n"
+    "Some user messages are prefixed with a bracketed system note ([note: ...], "
+    "[correction: ...], or [context update]); treat those as guidance about the "
+    "conversation state, not spoken words."
+)
 
-def _voice_system(provider) -> str:
+
+def _voice_system(provider, is_build: bool = False) -> str:
     base = ""
     try:
         base = provider.persona() or ""
     except Exception:
         base = ""
-    return (base + "\n\n" + _VOICE_SYSTEM).strip()
+    speak_rules = _BUILD_VOICE_SYSTEM if is_build else _VOICE_SYSTEM
+    return (base + "\n\n" + speak_rules).strip()
 
 
 # ---------------------------------------------------------------- turn record
@@ -107,6 +137,10 @@ class VoiceWorker:
     session_id: str
     model: str
     context_key: str
+    # Build workers run the full toolset in the agent's working tree; conversational
+    # workers are no-tool and run in VOICE_CWD. Resolved once at creation.
+    cwd: str = VOICE_CWD
+    is_build: bool = False
     proc: asyncio.subprocess.Process | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     current: VoiceTurn | None = None
@@ -142,17 +176,27 @@ async def _spawn_proc(worker: VoiceWorker, resume: bool) -> None:
         "--include-partial-messages",
         "--verbose",
         "--model", worker.model,
-        "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
-        "--disallowed-tools", "*",
-        "--append-system-prompt", _voice_system(provider),
     ]
-    if resume and session_alive(worker.session_id, VOICE_CWD):
+    if worker.is_build:
+        # Voice-driven building: full agentic toolset in the agent's working tree,
+        # exactly like the text build path, so the model can actually read / write /
+        # run. bypassPermissions because a headless voice turn has no interactive
+        # approver (same rationale as the data-tool path in llm_router).
+        cmd += ["--permission-mode", "bypassPermissions"]
+    else:
+        # Conversational voice: no tools, isolated cwd.
+        cmd += [
+            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+            "--disallowed-tools", "*",
+        ]
+    cmd += ["--append-system-prompt", _voice_system(provider, worker.is_build)]
+    if resume and session_alive(worker.session_id, worker.cwd):
         cmd.extend(["--resume", worker.session_id])
     else:
         cmd.extend(["--session-id", worker.session_id])
     env = llm_router._claude_env()
     worker.proc = await asyncio.create_subprocess_exec(
-        *cmd, cwd=VOICE_CWD, env=env,
+        *cmd, cwd=worker.cwd, env=env,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -192,15 +236,29 @@ async def _pump(worker: VoiceWorker) -> None:
                                 turn.first_delta_at = time.time()
                             turn.text += chunk
                             turn.push("text", {"content": chunk})
+                elif e.get("type") == "content_block_start":
+                    # Build turns run tools. Surface each tool as it starts (name
+                    # only — input arrives with the full assistant message) so the
+                    # UI can show "what it's doing" while the model narrates aloud.
+                    blk = e.get("content_block", {})
+                    if blk.get("type") == "tool_use":
+                        turn.push("tool", {"name": blk.get("name", "tool"), "input": ""})
             elif t == "result":
                 _finish_turn(turn, error=None)
             elif t == "assistant":
-                # Fallback: if no deltas arrived (partials disabled/edge), salvage
-                # the complete assistant text.
-                if not turn.text:
-                    for b in ev.get("message", {}).get("content", []) or []:
-                        if isinstance(b, dict) and b.get("type") == "text":
-                            turn.text += b.get("text", "")
+                for b in ev.get("message", {}).get("content", []) or []:
+                    if not isinstance(b, dict):
+                        continue
+                    # Fallback: if no deltas arrived (partials disabled/edge),
+                    # salvage the complete assistant text.
+                    if b.get("type") == "text" and not turn.text:
+                        turn.text += b.get("text", "")
+                    elif b.get("type") == "tool_use":
+                        # Enrich the tool chip with a one-line input summary.
+                        turn.push("tool", {
+                            "name": b.get("name", "tool"),
+                            "input": _summarize_tool_input(b.get("input", {}) or {}),
+                        })
     except Exception as e:  # pragma: no cover — defensive
         log.warning("voice pump %s died: %s", worker.session_key, e)
     # stdout closed -> process gone.
@@ -226,15 +284,21 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
     _ensure_reaper()
     key = thread_id
     worker = WORKERS.get(key)
-    resolved_model = model or chat_context.get_provider(context_key).default_model
+    provider = chat_context.get_provider(context_key)
+    resolved_model = model or provider.default_model
     if worker and not worker.dead and worker.proc and worker.proc.returncode is None:
         worker.touch()
         return worker
     if worker is None:
+        is_build = chat_context.is_build_provider(provider)
+        # Build workers run in the agent's own tree (so edits land in the project
+        # and `--resume` finds the session under that cwd); conversational workers
+        # stay in the stable VOICE_CWD sandbox.
+        cwd = str(provider.dir) if is_build else VOICE_CWD
         worker = VoiceWorker(
             session_key=key, thread_id=thread_id,
             session_id=str(uuid.uuid4()), model=resolved_model,
-            context_key=context_key,
+            context_key=context_key, cwd=cwd, is_build=is_build,
         )
         WORKERS[key] = worker
         await _spawn_proc(worker, resume=False)
@@ -278,11 +342,12 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
             _finish_turn(turn, error=f"write failed: {e}")
             worker.dead = True
             return
+        timeout_s = BUILD_TURN_TIMEOUT_S if worker.is_build else TURN_TIMEOUT_S
         try:
-            await asyncio.wait_for(turn.done_event.wait(), timeout=TURN_TIMEOUT_S)
+            await asyncio.wait_for(turn.done_event.wait(), timeout=timeout_s)
         except asyncio.TimeoutError:
             await _interrupt(worker)
-            _finish_turn(turn, error=f"timeout after {int(TURN_TIMEOUT_S)}s")
+            _finish_turn(turn, error=f"timeout after {int(timeout_s)}s")
         worker.current = None
         worker.touch()
     # Persist outside the lock (unless deferred for a speculative draft).

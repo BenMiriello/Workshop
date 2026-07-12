@@ -1197,22 +1197,20 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       <div className="chat-actions">
         {contextMeter}
         <span className="chat-actions__spacer" />
-        {/* Voice mode is only a real thing on assistant/data chats. On build
-            chats it's unsupported, so we DON'T render a dead greyed button —
-            hiding it is clearer than showing something that can't be used. */}
-        {!build && (
-          <button
-            className="chat-slash-btn"
-            onClick={() => {
-              const q = activeId ? `?thread=${encodeURIComponent(activeId)}` : "";
-              navigate(`/voice/${encodeURIComponent(contextKey)}${q}`);
-            }}
-            aria-label="Voice mode"
-            title="Voice mode — talk instead of type"
-          >
-            <AudioLines size={16} aria-hidden />
-          </button>
-        )}
+        {/* Voice mode works on every chat now: conversational for assistant
+            chats, and voice-driven BUILDING for build chats (full toolset in the
+            agent's tree; the model narrates aloud as it edits). */}
+        <button
+          className="chat-slash-btn"
+          onClick={() => {
+            const q = activeId ? `?thread=${encodeURIComponent(activeId)}` : "";
+            navigate(`/voice/${encodeURIComponent(contextKey)}${q}`);
+          }}
+          aria-label="Voice mode"
+          title={build ? "Voice mode — build by talking" : "Voice mode — talk instead of type"}
+        >
+          <AudioLines size={16} aria-hidden />
+        </button>
         <button
           className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
           onMouseDown={(e) => e.preventDefault()}
