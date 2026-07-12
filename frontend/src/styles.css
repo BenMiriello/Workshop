@@ -540,7 +540,10 @@ input[type="range"].grad::-moz-range-thumb {
    ============================================================ */
 
 /* Panel fills its host; the log scrolls, toolbar + composer pin. */
-.chat-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; height: 100%; }
+.chat-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
+/* Full-variant wrapper (builder / focused chat). Bound its width to the parent so
+   a wide message can never push the whole chat sideways. */
+.ws-chat-full { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; max-width: 100%; overflow-x: hidden; }
 
 /* ---- Toolbar: a single row of compact controls ---- */
 .chat-toolbar {
@@ -580,8 +583,12 @@ input[type="range"].grad::-moz-range-thumb {
 
 /* ---- Log + messages ---- */
 .chat-log {
-  flex: 1 1 auto; min-height: 0;
+  flex: 1 1 auto; min-height: 0; min-width: 0;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
+  /* Clip horizontal overflow HERE: a wide reply (long code line, unbroken URL,
+     table) must scroll INSIDE its own block (pre/table have overflow:auto), never
+     push the whole chat sideways into blank space. */
+  overflow-x: hidden;
   /* Keep a touch swipe inside the log; don't chain it to the page. */
   overscroll-behavior: contain;
   padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem;
@@ -590,7 +597,7 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-empty--err { color: var(--danger); }
 .chat-empty--note { font-size: var(--fs-xs); margin: 0 0 0.4rem; }
 
-.chat-msg { display: flex; flex-direction: column; max-width: 88%; }
+.chat-msg { display: flex; flex-direction: column; max-width: 88%; min-width: 0; }
 .chat-msg.user { align-self: flex-end; align-items: flex-end; }
 .chat-msg.assistant { align-self: flex-start; align-items: flex-start; max-width: 94%; }
 .chat-bubble {
@@ -626,6 +633,11 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-bubble .ws-md h4 { margin: var(--space-2) 0 var(--space-1); }
 .chat-bubble .ws-md pre { margin: 0 0 var(--space-2); }
 .chat-bubble .ws-md > :last-child { margin-bottom: 0; }
+/* Wide content stays INSIDE the bubble: code/tables scroll within their own
+   block, long unbroken tokens/URLs wrap. Nothing escapes to widen the chat. */
+.chat-bubble .ws-md pre,
+.chat-bubble .ws-md table { max-width: 100%; }
+.chat-bubble .ws-md { overflow-wrap: anywhere; }
 .chat-timeout-tag {
   display: inline-flex; align-items: center; gap: 0.3rem;
   margin-bottom: 0.35rem; font-size: 0.72rem; font-weight: var(--fw-semi);
