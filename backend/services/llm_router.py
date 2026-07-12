@@ -396,13 +396,23 @@ def call_cloud(
             for name in (mcp_servers or [])
             if name in _MCP_SERVER_SPECS
         }
+        # allowed_tools may mix MCP tools ("mcp__plaid__…") with built-in tools
+        # ("WebSearch", "WebFetch"). MCP names are gated via --allowedTools; the
+        # built-in names must ALSO be enabled in the built-in set via --tools
+        # (default is "" = all built-ins off). So a data-mode assistant can be
+        # granted web access without opening the full agentic toolset.
+        builtin_tools = [t for t in allowed_tools if not t.startswith("mcp__")]
         cmd.extend([
             "--output-format", "stream-json",
             "--verbose",
             "--max-turns", str(max_turns),
             "--strict-mcp-config",
             "--mcp-config", json.dumps({"mcpServers": servers_subset}),
-            "--tools", "",                     # built-ins still off
+        ])
+        # "" keeps built-ins off (MCP-only surfaces); a list enables exactly the
+        # named built-ins (e.g. web tools) and nothing else (no Bash/Edit/Read).
+        cmd.extend(["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
+        cmd.extend([
             "--allowedTools", *allowed_tools,
             "--permission-mode", "bypassPermissions",
         ])

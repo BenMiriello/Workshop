@@ -765,9 +765,15 @@ class NewProjectContextProvider(ContextProvider):
     key = "new-project"
     label = "New project"
     role = "assistant"
-    # Text-only: no MCP tools, single-turn text path (like `general`).
-    allowed_tools: list[str] = []
+    # Web-enabled: this assistant helps SHAPE a project, so it can research the
+    # web (compare libraries, check current versions/APIs, pull references) while
+    # converging on the proposal. Built-in web tools only — no file/shell access
+    # (there is no project directory yet; the spawned build agent gets the full
+    # toolset once the project is created).
+    allowed_tools: list[str] = ["WebSearch", "WebFetch"]
     mcp_servers: list[str] = []
+    # Room for a few searches + a fetch + synthesis in one turn.
+    max_turns = 8
     # Shaping a project + producing a clean, prefilled proposal card benefits from
     # stronger reasoning than the default fast tier; operator can drop to haiku.
     default_model = _llm.TIER_SONNET
@@ -1413,8 +1419,16 @@ class BuildAgentContextProvider(ContextProvider):
 
 # ---------------------------------------------------------------- registry
 
+# The general "Clawd" assistant gets web access (lookups / research) on top of
+# its account snapshots. Set on the INSTANCE so the shared base default stays
+# text-only for the domain assistants (commute/location) that inherit it — the
+# money assistants (budget/finance) are deliberately scoped to Plaid tools only.
+_general = ContextProvider()
+_general.allowed_tools = ["WebSearch", "WebFetch"]
+_general.max_turns = 8
+
 PROVIDERS: dict[str, ContextProvider] = {
-    "general": ContextProvider(),
+    "general": _general,
     "budget": BudgetContextProvider(),
     "finance": FinanceContextProvider(),
     "commute": CommuteContextProvider(),
