@@ -40,15 +40,14 @@
           "speechRecognitionPermission": "Workshop transcribes your speech on-device for voice mode."
         }
       ],
-      "expo-notifications",
       [
         "expo-build-properties",
         { "ios": { "deploymentTarget": "16.2" } }
       ],
-      "./plugins/withLiveActivity",
-      "./plugins/withoutRemotePush"
+      "./plugins/withLiveActivity"
     ],
     "extra": {
+      "comment:notifications": "Remote push is disabled on the free tier: the expo-notifications CONFIG PLUGIN was removed from plugins[] because it injects the 'aps-environment' entitlement, which a free Apple Personal Team cannot sign (and forces the Push Notifications capability to reappear on every prebuild). The expo-notifications PACKAGE stays installed, so LOCAL notifications still work. To enable remote push after Apple Developer Program enrolment: add \"expo-notifications\" back into plugins[], set tier to 'paid', prebuild, and add the Push Notifications capability in Xcode signing.",
       "comment": "The mobile app points at ONE Workshop backend origin (see native/config.ts). No host is committed here: it defaults to the operator's public deployment, and you override for dev via EXPO_PUBLIC_WORKSHOP_URL in mobile/.env.local (e.g. a tailnet URL) or by adding \"serverUrl\": \"https://...\" to this block. /api is proxied to the backend at every origin, so one URL serves the WebView + native producers. tier flips to 'paid' after Apple Developer Program enrolment.",
       "tier": "free"
     }
