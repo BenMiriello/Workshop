@@ -86,7 +86,11 @@ export type VoiceSnapshot = {
   lastTurnMs: number | null;
 };
 
-export type ReplyHandle = { cancel: () => void };
+export type ReplyHandle = {
+  // Cancel the in-flight generation. On barge-in, pass what the user actually
+  // heard so the model can be told on the next turn (the truncate analogue).
+  cancel: (info?: { heard?: number; heardText?: string }) => void;
+};
 
 export type ReplyHandlers = {
   // Called with the FULL accumulated reply text so far on each token delta.
@@ -438,7 +442,9 @@ export class VoiceSession {
     // generated-but-unspoken remainder. The not-yet-generated tail is cancelled
     // server-side so it never becomes garbage in the queue.
     this._interrupted = true;
-    this.replyHandle?.cancel();
+    const heard = this.spokenCount;
+    const heardText = heard > 0 ? this.sentences[heard - 1]?.text : undefined;
+    this.replyHandle?.cancel({ heard, heardText });
     this.replyHandle = null;
     this.speaker?.stop();
   }

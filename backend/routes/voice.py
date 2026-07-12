@@ -241,11 +241,14 @@ async def voice_stream_turn(turn_id: str, request: Request):
 class CancelBody(BaseModel):
     reason: str = "superseded"
     heard: int | None = None
+    heard_text: str | None = None
 
 
 @router.post("/voice/turns/{turn_id}/cancel")
 async def voice_cancel_turn(turn_id: str, body: CancelBody):
-    ok = await voice_worker.cancel_turn(turn_id, reason=body.reason, heard=body.heard)
+    ok = await voice_worker.cancel_turn(
+        turn_id, reason=body.reason, heard=body.heard, heard_text=body.heard_text,
+    )
     if not ok:
         raise HTTPException(404, "turn not found")
     return {"ok": True}

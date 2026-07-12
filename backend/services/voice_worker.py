@@ -112,6 +112,9 @@ class VoiceWorker:
     dead: bool = False
     last_activity: float = field(default_factory=time.time)
     context_hash: str = ""
+    # Interruption note to prepend to the next turn (truncate analogue): tells the
+    # model what the user actually heard before barging in.
+    pending_note: str = ""
     pump_task: asyncio.Task | None = None
 
     def touch(self) -> None:
@@ -287,6 +290,10 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
 
 
 def _with_context(worker: VoiceWorker, text: str) -> str:
+    prefix = ""
+    if worker.pending_note:
+        prefix += worker.pending_note + "\n"
+        worker.pending_note = ""
     try:
         ctx = chat_context.get_provider(worker.context_key).live_context() or ""
     except Exception:
@@ -294,8 +301,8 @@ def _with_context(worker: VoiceWorker, text: str) -> str:
     h = hashlib.sha1(ctx.encode()).hexdigest()
     if ctx and h != worker.context_hash:
         worker.context_hash = h
-        return f"[context update]\n{ctx}\n\n{text}"
-    return text
+        prefix += f"[context update]\n{ctx}\n\n"
+    return prefix + text if prefix else text
 
 
 def _persist_turn(turn: VoiceTurn) -> None:
@@ -333,7 +340,7 @@ async def _interrupt(worker: VoiceWorker) -> None:
 
 
 async def cancel_turn(turn_id: str, *, reason: str = "superseded",
-                      heard: int | None = None) -> bool:
+                      heard: int | None = None, heard_text: str | None = None) -> bool:
     """Cancel an in-flight turn (barge-in or speculative supersede). Interrupts the
     worker's generation and finishes the turn. Persistence for a committed turn is
     handled by commit; a superseded speculative draft is dropped."""
@@ -345,16 +352,18 @@ async def cancel_turn(turn_id: str, *, reason: str = "superseded",
     worker = WORKERS.get(turn.session_key)
     if worker:
         await _interrupt(worker)
+        # Barge-in on a real (spoken) turn: tell the model what actually landed so
+        # its memory matches what the user heard (OpenAI Realtime truncate analogue).
+        if reason == "barge" and heard_text:
+            worker.pending_note = (
+                "[note: you were interrupted; the last sentence I heard was: "
+                f"\"{heard_text.strip()}\". Anything after that was not spoken, so "
+                "do not assume I heard it.]"
+            )
     turn.cancelled = True
     if not turn.complete:
         _finish_turn(turn, error=None)
         turn.push("cancelled", {"reason": reason})
-    # A non-speculative (already-committed) barge-in still records what was heard.
-    if reason != "superseded" and not turn.deferred_persist:
-        # persistence already ran in _run_turn's tail once done_event fired; the
-        # heard_count was captured above before finish, so update meta on the last
-        # assistant message is unnecessary here (kept simple for phase 1).
-        pass
     return True
 
 

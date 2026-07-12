@@ -46,11 +46,11 @@ export function useVoiceSession(contextKey: string, model?: string) {
       let gotDelta = false;
       let settled = false;
 
-      const cancelTurn = (id: string, reason: string) => {
+      const cancelTurn = (id: string, reason: string, heard?: number, heardText?: string) => {
         fetch(`/api/voice/turns/${id}/cancel`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason }),
+          body: JSON.stringify({ reason, heard, heard_text: heardText }),
         }).catch(() => {});
       };
 
@@ -129,10 +129,10 @@ export function useVoiceSession(contextKey: string, model?: string) {
       })();
 
       return {
-        cancel: () => {
+        cancel: (info) => {
           settled = true;
           ac.abort();
-          if (turnId) cancelTurn(turnId, "barge");
+          if (turnId) cancelTurn(turnId, "barge", info?.heard, info?.heardText);
         },
       };
     },

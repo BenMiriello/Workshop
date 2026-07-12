@@ -58,6 +58,18 @@ export default function VoiceMode() {
     detectCaps().then(setMountCaps).catch(() => {});
   }, [showSettings]);
 
+  // Esc interrupts the assistant while it is speaking (closing the settings sheet
+  // takes precedence when it is open).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (showSettings) { setShowSettings(false); return; }
+      session.interrupt();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [session, showSettings]);
+
   // Lock the page to the visual viewport (same trick as FocusedChat).
   useEffect(() => {
     const prev = document.body.style.overflow;
