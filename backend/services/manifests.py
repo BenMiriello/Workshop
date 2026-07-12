@@ -27,51 +27,11 @@ MANIFESTS_PATH = Path(os.environ.get(
 
 DEFAULT_KIT = "@workshop/ui@^1"
 
-# Seed used when apps.json is missing. Mirrors the committed apps.json so a fresh
-# checkout (or a deployment that lost the file) still has the known built-ins.
-# Values consistent with app-platform-plan.md section 3.1.
-SEED: dict[str, dict[str, Any]] = {
-    "finance": {
-        "title": "Finance",
-        "sensitivity": "private",
-        "api_prefixes": ["/finance", "/budget", "/plaid"],
-        "provides": ["finance.read"],
-        "needs": [],
-        "kit": DEFAULT_KIT,
-    },
-    "budget": {
-        "title": "Budget",
-        "sensitivity": "private",
-        "api_prefixes": ["/budget", "/plaid"],
-        "provides": [],
-        "needs": ["finance.read"],
-        "kit": DEFAULT_KIT,
-    },
-    "birds": {
-        "title": "Yard Birds",
-        "sensitivity": "shareable",
-        "api_prefixes": ["/birds"],
-        "provides": ["birds.read"],
-        "needs": [],
-        "kit": DEFAULT_KIT,
-    },
-    "location": {
-        "title": "Location",
-        "sensitivity": "private",
-        "api_prefixes": ["/location"],
-        "provides": ["location.read"],
-        "needs": [],
-        "kit": DEFAULT_KIT,
-    },
-    "commute": {
-        "title": "Commute",
-        "sensitivity": "private",
-        "api_prefixes": ["/commute"],
-        "provides": [],
-        "needs": ["location.read"],
-        "kit": DEFAULT_KIT,
-    },
-}
+# apps.json is instance state, not platform code: a fresh clone ships NO apps, so
+# the seed is empty. Identity manifests for installed apps are created on demand
+# from the built-in catalog (services/app_registry.ensure_identity_manifests),
+# and an operator or the Marketplace can add more. See docs/apps-are-pluggable.md.
+SEED: dict[str, dict[str, Any]] = {}
 
 _SENSITIVITIES = {"private", "shareable", "public"}
 _ACTION_POLICIES = {"read", "confirm", "allow"}
@@ -192,6 +152,37 @@ def set_app_ui(app_id: str, ui: dict[str, Any]) -> dict[str, Any] | None:
     os.replace(tmp, MANIFESTS_PATH)
 
     return _normalize_entry(app_id, entry)
+
+
+def upsert_manifest(app_id: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Create or update an app's identity manifest, preserving any `ui` overrides.
+
+    Used to seed identity manifests for installed built-in apps from the catalog
+    (services/app_registry). Merges the given identity fields over the existing
+    entry but keeps the on-disk `ui` block (e.g. the operator's agent_button
+    toggle) intact. Atomically rewrites apps.json and returns the normalized entry.
+    """
+    try:
+        data = json.loads(MANIFESTS_PATH.read_text(encoding="utf-8"))
+        apps = data.get("apps") if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        apps = None
+    if not isinstance(apps, dict):
+        apps = {}
+
+    prev = apps.get(app_id) if isinstance(apps.get(app_id), dict) else {}
+    merged = {**prev, **entry}
+    if isinstance(prev.get("ui"), dict):
+        merged["ui"] = prev["ui"]  # never clobber operator UI overrides
+    apps[app_id] = merged
+
+    MANIFESTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"apps": apps}, indent=2) + "\n"
+    tmp = MANIFESTS_PATH.with_suffix(MANIFESTS_PATH.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, MANIFESTS_PATH)
+
+    return _normalize_entry(app_id, merged)
 
 
 def resolve_app_for_path(path: str, manifests: dict[str, dict[str, Any]] | None = None) -> str | None:

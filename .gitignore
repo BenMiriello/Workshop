@@ -59,11 +59,25 @@ registry-bundles/
 
 # Per-project working trees, build-agent scratch dirs, and worktrees.
 # Each is its own git repo / ephemeral working state — not Workshop source.
-# The registries (projects.json, build_agents.json) and scaffold templates ARE tracked.
+# Only scaffold templates are tracked.
 /projects/*
 !/projects/_templates/
 /build-agents/
 /branches/
+
+# Per-instance state — NEVER tracked. Workshop is a container: which apps are
+# installed, the project/build-agent registries, the app identity manifests, and
+# the operator's commute data are all instance state that lives in .runtime/ (or,
+# for these legacy locations, is gitignored here) so a fresh clone starts blank
+# and inherits no operator's apps or data. See docs/apps-are-pluggable.md.
+/projects.json
+/build_agents.json
+/backend/apps.json
+/commute/schedule.json
+/commute/legs.json
+/commute/targets.json
+/commute/sources/registry.json
+/commute/notes/
 
 # Ephemeral working files — NEVER committed. Put smoke tests, scratch scripts,
 # throwaway probes, and ad-hoc working notes in one of these folders (anywhere in

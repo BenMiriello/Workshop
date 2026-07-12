@@ -26,9 +26,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
+# Per-instance operator state — lives in .runtime/ (gitignored), never in the
+# tracked tree. See routes/projects.py for the matching rationale.
 REGISTRY = Path(os.environ.get(
     "WORKSHOP_BUILD_AGENTS_JSON",
-    str(Path.home() / "workshop" / "build_agents.json"),
+    str(Path.home() / "workshop" / ".runtime" / "build_agents.json"),
 ))
 SCRATCH_ROOT = Path(os.environ.get(
     "WORKSHOP_BUILD_AGENTS_SCRATCH",
@@ -38,7 +40,10 @@ PROJECTS_ROOT = Path(os.environ.get(
     "WORKSHOP_PROJECTS_ROOT_NEW",
     str(Path.home() / "workshop" / "projects"),
 ))
-PROJECTS_REGISTRY = PROJECTS_ROOT.parent / "projects.json"
+PROJECTS_REGISTRY = Path(os.environ.get(
+    "WORKSHOP_PROJECTS_REGISTRY",
+    str(PROJECTS_ROOT.parent / ".runtime" / "projects.json"),
+))
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 

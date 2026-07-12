@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Wrench,
   FolderPlus,
+  LayoutGrid,
   type LucideProps,
 } from "lucide-react";
 import {
@@ -89,6 +90,38 @@ type AppCard = {
   external?: boolean; // true => render an ExternalLink hint; we still navigate same-tab
 };
 
+// A launcher card as declared by the backend for an installed app. The launcher
+// is manifest-driven (GET /api/base-apps/launcher): which apps appear, their
+// order, titles, icons, and routes all come from the installed-app catalog, not
+// from a hardcoded list here. A fresh instance installs nothing => empty roster.
+type LauncherApp = {
+  id: string;
+  title: string;
+  tagline: string;
+  icon: string;
+  route?: string;
+  href?: string;
+  external?: boolean;
+  probe?: string; // service-probe name for external apps (health dot)
+};
+
+// Icon-name -> lucide component. The backend sends a stable icon name; the shell
+// owns the actual glyph. Unknown names fall back to a generic app icon.
+const ICONS: Record<string, ComponentType<LucideProps>> = {
+  Banknote,
+  PiggyBank,
+  TrainFront,
+  Watch,
+  Bird,
+  MapPin,
+};
+const iconFor = (name: string): ComponentType<LucideProps> => ICONS[name] ?? LayoutGrid;
+
+type LauncherState =
+  | { kind: "loading" }
+  | { kind: "loaded"; apps: LauncherApp[] }
+  | { kind: "error"; message: string };
+
 // View | Manage. View = the plain launcher grid (cards are launch links).
 // Manage = cards expand to reveal per-app details + the workbench bridge.
 type ViewMode = "view" | "manage";
@@ -137,10 +170,6 @@ function CardBody({ card }: { card: AppCard }) {
     </div>
   );
 }
-
-// Per-port HTTPS via Tailscale Serve for apps that remain their own origin.
-// (Commute is now in-workshop at /apps/commute; Wearables stays external.)
-const OW_URL = "https://debian.tail38e62e.ts.net:8445/";
 
 // The destination an app launches to, for display in the manage panel.
 const cardRoute = (card: AppCard): string => card.to ?? card.href ?? "(none)";
@@ -353,10 +382,26 @@ export default function Apps() {
   const [birdStatus, setBirdStatus] = useState<{ species: number; today: number; available: boolean } | null>(null);
   const [locationStatus, setLocationStatus] = useState<{ ageS: number | null; available: boolean } | null>(null);
 
+  const [launcher, setLauncher] = useState<LauncherState>({ kind: "loading" });
   const [mode, setMode] = useState<ViewMode>("view");
   const [expanded, setExpanded] = useState<string | null>(null); // one card open at a time
   const [projects, setProjects] = useState<ProjectsState>({ kind: "idle" });
   const [bridgeBusy, setBridgeBusy] = useState<string | null>(null); // app key mid open/create
+
+  // The installed-app roster drives every card here. A fresh instance installs
+  // nothing and this returns an empty list — the launcher then shows its empty
+  // state rather than a hardcoded app set.
+  const loadLauncher = useCallback(async () => {
+    setLauncher({ kind: "loading" });
+    try {
+      const r = await fetch("/api/base-apps/launcher");
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const j = (await r.json()) as { apps?: LauncherApp[] };
+      setLauncher({ kind: "loaded", apps: j.apps || [] });
+    } catch (e) {
+      setLauncher({ kind: "error", message: e instanceof Error ? e.message : String(e) });
+    }
+  }, []);
 
   // Lazily load the project list, only when Manage is first turned on, and
   // only once (re-runs on retry via an explicit reset to "idle").
@@ -465,60 +510,38 @@ export default function Apps() {
   }, []);
 
   useEffect(() => {
+    loadLauncher();
     loadFinance();
     loadServices();
     loadBirds();
     loadLocation();
-  }, [loadFinance, loadServices, loadBirds, loadLocation]);
+  }, [loadLauncher, loadFinance, loadServices, loadBirds, loadLocation]);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 
-  const cards: AppCard[] = [
-    {
-      key: "finance",
-      Icon: Banknote,
-      title: "Finance",
-      tagline: "Balances, accounts, recent transactions",
-      to: "/apps/finance",
-      status:
-        financeStatus == null
+  // Live status for one launcher card, derived from the per-app probes above and
+  // keyed by app id. Unknown ids get no status line (the card still launches).
+  const statusFor = (app: LauncherApp): AppCard["status"] => {
+    switch (app.id) {
+      case "finance":
+        return financeStatus == null
           ? { text: "loading…", tone: "muted" }
           : financeStatus.accountCount == null
             ? { text: "unavailable", tone: "err" }
             : {
                 text: `${financeStatus.accountCount} account${financeStatus.accountCount === 1 ? "" : "s"} · ${financeStatus.ageS != null ? `updated ${fmtAge(financeStatus.ageS)}` : "no data yet"}`,
                 tone: "muted",
-              },
-    },
-    {
-      key: "budget",
-      Icon: PiggyBank,
-      title: "Budget",
-      tagline: "Payoff plan, savings goals, projections",
-      to: "/apps/budget",
-      status: { text: "plan & simulate", tone: "muted" },
-    },
-    {
-      key: "birds",
-      Icon: Bird,
-      title: "Birds",
-      tagline: "Backyard bird-song detections, live",
-      to: "/apps/birds",
-      status:
-        birdStatus == null
+              };
+      case "budget":
+        return { text: "plan & simulate", tone: "muted" };
+      case "birds":
+        return birdStatus == null
           ? { text: "loading…", tone: "muted" }
           : !birdStatus.available
             ? { text: "no detections yet", tone: "muted" }
-            : { text: `${birdStatus.species} species · ${birdStatus.today} today`, tone: "ok" },
-    },
-    {
-      key: "location",
-      Icon: MapPin,
-      title: "Location",
-      tagline: "Live position + history from OwnTracks",
-      to: "/apps/location",
-      status:
-        locationStatus == null
+            : { text: `${birdStatus.species} species · ${birdStatus.today} today`, tone: "ok" };
+      case "location":
+        return locationStatus == null
           ? { text: "loading…", tone: "muted" }
           : !locationStatus.available
             ? { text: "no pings yet", tone: "muted" }
@@ -528,33 +551,37 @@ export default function Apps() {
                 // normal. Green only when genuinely recent; otherwise neutral.
                 text: `last ping ${fmtAge(locationStatus.ageS ?? 0)}`,
                 tone: (locationStatus.ageS ?? Infinity) < 3600 ? "ok" : "muted",
-              },
-    },
-    {
-      key: "commute",
-      Icon: TrainFront,
-      title: "Commute",
-      tagline: "Day-of departures + transit status",
-      to: "/apps/commute",
-      status: { text: "schedule & live status", tone: "muted" },
-    },
-    {
-      key: "wearables",
-      Icon: Watch,
-      title: "Open Wearables",
-      tagline: "Wearables data UI",
-      href: OW_URL,
-      external: true,
-      status: (() => {
-        const probe = findService("open-wearables-backend");
-        if (services === null) return { text: "probing…", tone: "muted" } as const;
-        if (!probe) return { text: "no probe configured", tone: "muted" } as const;
-        return probe.status === "up"
-          ? ({ text: `up · ${probe.http_status} · ${probe.latency_ms}ms`, tone: "ok" } as const)
-          : ({ text: probe.notes ? `down: ${probe.notes}` : probe.http_status ? `down: HTTP ${probe.http_status}` : "down", tone: "err" } as const);
-      })(),
-    },
-  ];
+              };
+      case "commute":
+        return { text: "schedule & live status", tone: "muted" };
+      default:
+        break;
+    }
+    // External apps declare a service probe; render its health as the status.
+    if (app.probe) {
+      const probe = findService(app.probe);
+      if (services === null) return { text: "probing…", tone: "muted" };
+      if (!probe) return { text: "no probe configured", tone: "muted" };
+      return probe.status === "up"
+        ? { text: `up · ${probe.http_status} · ${probe.latency_ms}ms`, tone: "ok" }
+        : { text: probe.notes ? `down: ${probe.notes}` : probe.http_status ? `down: HTTP ${probe.http_status}` : "down", tone: "err" };
+    }
+    return null;
+  };
+
+  const cards: AppCard[] =
+    launcher.kind === "loaded"
+      ? launcher.apps.map((app) => ({
+          key: app.id,
+          Icon: iconFor(app.icon),
+          title: app.title,
+          tagline: app.tagline,
+          to: app.external ? undefined : app.route,
+          href: app.external ? app.href : undefined,
+          external: app.external,
+          status: statusFor(app),
+        }))
+      : [];
 
   const manage = mode === "manage";
 
@@ -562,7 +589,7 @@ export default function Apps() {
     <div>
       <PageHeader
         title="Apps"
-        sub={`${cards.length} app${cards.length === 1 ? "" : "s"}`}
+        sub={launcher.kind === "loaded" ? `${cards.length} app${cards.length === 1 ? "" : "s"}` : "installed apps"}
         actions={
           <Segmented
             options={VIEW_OPTIONS}
@@ -578,8 +605,48 @@ export default function Apps() {
           />
         }
       />
-      <CardGrid>
-        {cards.map((card) => {
+      {launcher.kind === "loading" ? (
+        <CardGrid>
+          {[0, 1, 2, 3].map((i) => (
+            <li key={i}>
+              <Card pad0>
+                <div style={{ padding: "var(--space-5)" }}>
+                  <Skeleton width="9rem" style={{ height: "var(--space-6)", marginBottom: "var(--space-2)" }} />
+                  <Skeleton width="13rem" style={{ height: "var(--space-5)" }} />
+                </div>
+              </Card>
+            </li>
+          ))}
+        </CardGrid>
+      ) : launcher.kind === "error" ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load installed apps"
+          hint={
+            <>
+              <code>GET /api/base-apps/launcher</code>: {launcher.message}
+            </>
+          }
+          action={
+            <Button variant="ghost" size="sm" onClick={() => void loadLauncher()}>
+              Retry
+            </Button>
+          }
+        />
+      ) : cards.length === 0 ? (
+        <StateBlock
+          title="No apps installed"
+          hint={
+            <>
+              Install an app to see it here — add its id to this instance's installed-apps registry
+              (<code>.runtime/installed-apps.json</code>), or build one from{" "}
+              <Link to="/projects/new">Projects</Link>.
+            </>
+          }
+        />
+      ) : (
+        <CardGrid>
+          {cards.map((card) => {
           const isOpen = manage && expanded === card.key;
           // View mode: the card face is the launch link, unchanged. Manage mode:
           // the face is a toggle that expands the details panel below it.
@@ -649,8 +716,9 @@ export default function Apps() {
               </Card>
             </li>
           );
-        })}
-      </CardGrid>
+          })}
+        </CardGrid>
+      )}
     </div>
   );
 }

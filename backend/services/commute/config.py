@@ -1,6 +1,7 @@
 """Read commute configuration from disk.
 
-All four files live under ~/workshop/commute/:
+All four files are per-operator data (real home/work locations, live-data
+source credentials) and live under .runtime/, never the tracked tree:
     schedule.json     — operator's daily schedule (home, work, AM/PM blocks)
     legs.json         — discrete legs of each direction
     targets.json      — arrival targets + 15-min flex + alert policy
@@ -18,12 +19,12 @@ from typing import Any
 
 COMMUTE_ROOT = Path(os.environ.get(
     "WORKSHOP_COMMUTE_ROOT",
-    "/home/clawd-a/workshop/commute",
+    str(Path.home() / "workshop" / ".runtime" / "commute-config"),
 ))
 
 RUNTIME_ROOT = Path(os.environ.get(
     "WORKSHOP_COMMUTE_RUNTIME",
-    "/home/clawd-a/workshop/.runtime/commute",
+    str(Path.home() / "workshop" / ".runtime" / "commute"),
 ))
 
 

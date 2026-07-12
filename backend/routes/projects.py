@@ -34,7 +34,13 @@ PROJECTS_ROOT = Path(os.environ.get(
     "WORKSHOP_PROJECTS_ROOT_NEW",
     str(Path.home() / "workshop" / "projects"),
 ))
-REGISTRY = PROJECTS_ROOT.parent / "projects.json"
+# Per-instance operator state — lives in .runtime/ (gitignored), never in the
+# tracked tree, so a fresh clone starts with an empty registry instead of
+# inheriting whichever operator committed it last. Overridable for tests.
+REGISTRY = Path(os.environ.get(
+    "WORKSHOP_PROJECTS_REGISTRY",
+    str(PROJECTS_ROOT.parent / ".runtime" / "projects.json"),
+))
 TEMPLATES_ROOT = PROJECTS_ROOT / "_templates"
 
 # Slug discipline: kebab-case, alphanumeric + dashes, max 48 chars. A leading

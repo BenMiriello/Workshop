@@ -16,8 +16,9 @@ BACKEND=${WORKSHOP_BACKEND:-http://127.0.0.1:8000}
 SECRETS_ENV="${WORKSHOP_SECRETS_ENV:-$HOME/.config/workshop/secrets.env}"
 [ -f "$SECRETS_ENV" ] && { set -a; . "$SECRETS_ENV"; set +a; }
 COMMUTE_AUTH=(-H "Authorization: Bearer ${WORKSHOP_SVC_COMMUTE:-}")
-NOTES_DIR=/home/clawd-a/workshop/commute/notes
-LOG=/home/clawd-a/workshop/.runtime/commute/tick.log
+WORKSHOP_DIR="${WORKSHOP_DIR:-$HOME/workshop}"
+NOTES_DIR="${WORKSHOP_COMMUTE_NOTES_DIR:-$WORKSHOP_DIR/.runtime/commute-notes}"
+LOG="$WORKSHOP_DIR/.runtime/commute/tick.log"
 TODAY=$(date +%Y-%m-%d)
 OUTFILE="$NOTES_DIR/$TODAY.md"
 
@@ -28,7 +29,7 @@ TS=$(date -Iseconds)
 
 # Pause-until guard: skip silently if autonomy is paused until a future PT
 # date (self-clearing). See scripts/pause_guard.sh.
-source /home/clawd-a/workshop/scripts/pause_guard.sh
+source "$WORKSHOP_DIR/scripts/pause_guard.sh"
 workshop_pause_guard "$LOG" "commute_notes"
 
 echo "[$TS] commute-notes: generating $TODAY note" >> "$LOG"

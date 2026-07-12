@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from services import app_overlay, app_runner, gc, local_runner, manifests, permissions, port_registry, registry
+from services import app_overlay, app_registry, app_runner, gc, local_runner, manifests, permissions, port_registry, registry
 
 router = APIRouter()
 
@@ -57,6 +57,17 @@ async def list_base_apps():
 # Read-only view of the per-app manifest store (backend/apps.json). See
 # services/manifests.py and docs/app-platform-plan.md section 3. These endpoints
 # expose the declared manifests; nothing here enforces scope or grants.
+
+
+@router.get("/launcher")
+async def get_launcher():
+    """Launcher cards for the apps installed on THIS instance, in installed order.
+
+    Drives frontend/src/pages/Apps.tsx: the launcher, its breadcrumbs, and the
+    switcher all derive from this data, so an installed app appears and a removed
+    one disappears with no frontend edit. A fresh instance (nothing installed)
+    returns an empty list — the correct blank-container state."""
+    return {"apps": app_registry.launcher_cards()}
 
 
 @router.get("/manifests")

@@ -7,120 +7,20 @@ from deps_auth import require_loopback, require_internal_caller
 from deps_user import (
     require_user,
     require_operator,
-    require_domain_owner,
 )
 
-from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth, voice, knowledge, skills
+# Platform-core routers only — the shell. App routers (finance/budget/commute/
+# location/birds/health/…) are NOT imported here; they mount from the installed-
+# app catalog (services/app_registry) so adding/removing an app never edits this
+# file. See docs/apps-are-pluggable.md.
+from routes import agents, projects, base_apps, relay, services, events, agent_runs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills
 from services.supervisor import AgentSupervisor
-from services import global_memory, finance_cache, categorizer, ownership, auth_store
-from services import environment as environment_svc
-from services import birds_analyze
-from services import finance_plaid as plaid_bridge
+from services import global_memory, app_registry, installed_apps
 from letta_legacy_client import LettaClient
 import asyncio
 import logging
-import time
 
 log = logging.getLogger("workshop.main")
-
-# Keep the finance cache warm so a human visit basically always hits warm cache
-# and stale-while-revalidate serves recent (not hours-old) numbers. Under the
-# 10-min balances TTL so the served data is never meaningfully stale.
-_PREWARM_INTERVAL_S = 9 * 60
-# Run the Sonnet categorizer once a day (end of day, Pacific). The loop checks
-# every ~30 min and fires when it's past the hour and hasn't run yet today.
-_CATEGORIZE_HOUR_LOCAL = 23
-
-
-async def _prewarm_finance_cache(realtime: bool = False):
-    """Pre-fetch balances + transactions so the next browser load is already hot.
-    realtime=True uses accountsBalanceGet (live bank connection, ~4s). Used on
-    startup so a fresh restart doesn't serve Plaid's own stale snapshot. The
-    periodic loop uses realtime=False (fast accountsGet). Background, best-effort.
-
-    Finance is per-owner now, so prewarm the OPERATOR's cache (the box's primary
-    finance user). The owner must be pinned for the per-owner cache + Plaid store."""
-    oid = auth_store.operator_id()
-    if oid is None:
-        return
-    ownership.set_current_owner(oid)
-    try:
-        await finance_cache.get_or_fetch(
-            "balances",
-            lambda: plaid_bridge.balances(realtime=realtime),
-            force_refresh=realtime,
-        )
-        await finance_cache.get_or_fetch("transactions:30", lambda: plaid_bridge.transactions(days=30))
-    except Exception:
-        pass
-
-
-async def _prewarm_loop():
-    """Periodically re-prewarm so the cache never goes cold between visits."""
-    while True:
-        await asyncio.sleep(_PREWARM_INTERVAL_S)
-        await _prewarm_finance_cache(realtime=False)
-
-
-async def _categorize_loop():
-    """Once-a-day Sonnet categorization of uncategorized/transfer transactions."""
-    last_run_day = None
-    while True:
-        await asyncio.sleep(30 * 60)
-        lt = time.localtime()
-        today = (lt.tm_year, lt.tm_yday)
-        if lt.tm_hour >= _CATEGORIZE_HOUR_LOCAL and today != last_run_day:
-            try:
-                oid = auth_store.operator_id()
-                if oid is None:
-                    continue
-                ownership.set_current_owner(oid)  # categorize the operator's txns
-                summary = await categorizer.run(days=30)
-                log.info("nightly categorizer: %s", summary)
-            except Exception as e:
-                log.warning("nightly categorizer failed: %s", e)
-            last_run_day = today
-
-
-async def _env_refresh_loop():
-    """Keep the Birds weather/astro spine fresh: stdlib sun/moon + Open-Meteo
-    (recent actuals + near-future forecast). Refreshes on startup then every
-    6h. Off-thread (sync sqlite/httpx) and best-effort — never blocks the loop
-    or startup, degrades to a no-op if egress is unavailable."""
-    while True:
-        try:
-            n = await asyncio.to_thread(environment_svc.refresh)
-            log.info("env refresh: %s", "egress blocked" if n == -1 else f"{n} rows")
-        except Exception as e:
-            log.warning("env refresh failed: %s", e)
-        # Score any forecast predictions whose hour has passed (the self-measuring
-        # loop). Best-effort; never blocks the refresh cadence.
-        try:
-            from services import birds_forecast
-            graded = await asyncio.to_thread(birds_forecast.score_due)
-            if graded:
-                log.info("forecast calibration: graded %s hours", graded)
-        except Exception as e:
-            log.warning("forecast scoring failed: %s", e)
-        await asyncio.sleep(6 * 60 * 60)
-
-
-async def _atlas_rebuild_loop():
-    """Keep the Soundscape Atlas current: embeddings are captured live as detections
-    are stored, but the UMAP/HDBSCAN projection only refreshes on a build. Run that
-    build nightly, gated on enough new embeddings to be worth the cost (the gate
-    lives in birds_analyze.maybe_auto_rebuild). Heavy ML runs detached in the
-    analyzer venv; this just triggers it. Best-effort, off-thread, never blocks."""
-    await asyncio.sleep(5 * 60)  # let startup settle before the first check
-    while True:
-        try:
-            res = await asyncio.to_thread(birds_analyze.maybe_auto_rebuild)
-            if res.get("triggered"):
-                log.info("atlas auto-rebuild: triggered (%s embedded, %s new)",
-                         res.get("embedded"), res.get("new"))
-        except Exception as e:
-            log.warning("atlas auto-rebuild check failed: %s", e)
-        await asyncio.sleep(24 * 60 * 60)
 
 
 @asynccontextmanager
@@ -134,17 +34,18 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     await app.state.supervisor.start()
-    # Re-prewarm after any cache invalidate (webhook OR manual /cache/invalidate)
-    # so the next browser request hits warm cache. Registered here to avoid a
-    # circular import (finance_cache shouldn't reach back into plaid_bridge).
-    finance_cache.set_invalidate_hook(_prewarm_finance_cache)
-    # Fire-and-forget cache prewarm so startup isn't blocked on Plaid latency,
-    # plus background loops to keep it warm and categorize nightly.
-    asyncio.create_task(_prewarm_finance_cache(realtime=True))
-    app.state._bg_prewarm = asyncio.create_task(_prewarm_loop())
-    app.state._bg_categorize = asyncio.create_task(_categorize_loop())
-    app.state._bg_env = asyncio.create_task(_env_refresh_loop())
-    app.state._bg_atlas = asyncio.create_task(_atlas_rebuild_loop())
+    # Installed apps: run each installed app's startup hooks + background loops
+    # (finance prewarm/categorize, birds env-refresh/atlas). A fresh instance with
+    # no apps installed starts none of these. Adding an app never edits this file.
+    app.state._app_bg = []
+    for spec in app_registry.installed_specs():
+        for init in spec.on_startup:
+            try:
+                await init(app)
+            except Exception as e:
+                log.warning("app %s startup hook failed: %s", spec.id, e)
+        for loop in spec.background:
+            app.state._app_bg.append(asyncio.create_task(loop()))
     # App platform: keep desired-running multi-service apps alive (restart crashed
     # services with backoff) and reconcile the port registry each pass.
     from services import app_monitor
@@ -159,7 +60,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     yield
-    for t in (getattr(app.state, "_bg_prewarm", None), getattr(app.state, "_bg_categorize", None), getattr(app.state, "_bg_env", None), getattr(app.state, "_bg_atlas", None), getattr(app.state, "_bg_app_monitor", None)):
+    for t in [*getattr(app.state, "_app_bg", []), getattr(app.state, "_bg_app_monitor", None)]:
         if t:
             t.cancel()
     await app.state.supervisor.stop()
@@ -218,32 +119,28 @@ app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(redaction.router, dependencies=_OPERATOR)
 app.include_router(redaction.restore_router, dependencies=_OPERATOR)
 
-# Finance + budget are now PER-USER: each account links its own banks (Plaid) and
-# has its own budget plan, partitioned under .runtime/users/<owner_id>/. require_user
-# pins the owner; a user with no linked banks sees empty finance/budget.
-app.include_router(finance.router, prefix="/finance", tags=["finance"], dependencies=_USER)
-app.include_router(budget.router, prefix="/budget", tags=["budget"], dependencies=_USER)
-# Commute remains a single operator dataset (location-derived) for now.
-app.include_router(commute.router, dependencies=[Depends(require_domain_owner("commute"))])
-
-# Per-user personal data — owner-scoped to the authenticated user.
+# Platform per-user primitives — owner-scoped to the authenticated user. These
+# are the shell (chat, voice, push), NOT apps: apps build on them, so they mount
+# unconditionally.
 app.include_router(chat.router, prefix="/chat", tags=["chat"], dependencies=_USER)
 # Voice mode — local STT/TTS for the chat surface, per-owner prefs.
 app.include_router(voice.router, tags=["voice"], dependencies=_USER)
-app.include_router(location.router, dependencies=_USER)
 app.include_router(push.router, dependencies=_USER)
-app.include_router(environment.router, dependencies=_USER)
-# Birds: yard detections are already published publicly, so reads need any
-# authenticated user; the BirdNET-Go ingest uses an ingest:birds service token.
-app.include_router(birds.router, dependencies=_USER)
-# Birds ingest (BirdNET-Go webhook + yard-mic analyze/live) — loopback/LAN only,
-# carries its own device token in-body, never proxied to the public origin.
-app.include_router(birds.ingest_router, dependencies=[Depends(require_internal_caller)])
 
-# Ingest webhooks — their own credential, bound to an owner inside the handler.
-app.include_router(owntracks.router)   # HTTP Basic -> owner (in handler)
-app.include_router(health.router)      # /ingest: HTTP Basic -> owner; reads: require_user (per-endpoint)
-app.include_router(plaid_webhook.router, prefix="/plaid/webhook", tags=["plaid-webhook"])  # Plaid-signed
+# Installed apps — finance/budget/commute/location/birds/health/… mount from the
+# built-in catalog (services/app_registry), gated by this instance's installed-app
+# registry. A fresh clone installs nothing and mounts none of these; each app
+# carries its own auth (declared in its AppSpec). Adding/removing an app is an
+# installed-apps edit, never a change to this file. See docs/apps-are-pluggable.md.
+app_registry.ensure_identity_manifests()
+for _spec in app_registry.installed_specs():
+    for _m in _spec.mounts:
+        app.include_router(
+            _m.router,
+            prefix=_m.prefix,
+            tags=list(_m.tags) or None,
+            dependencies=list(_m.deps),
+        )
 
 # Internal machine-to-machine infra — loopback only, no personal data, not public.
 app.include_router(relay.router, dependencies=_LOOPBACK)

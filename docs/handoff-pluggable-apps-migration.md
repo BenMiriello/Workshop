@@ -1,9 +1,37 @@
 # Handoff: migrate hardcoded apps/projects to the pluggable installed-app model
 
-**Status: UNADDRESSED on `main`.** Deferred during the 2026-07-12 upstream merge
-from `simonsays-local` (queue item `f963c8e`, tagged "needs migration"). This doc
-hands the real work to a dedicated agent. It is a fundamental architecture flaw,
-not a cleanup nicety.
+**Status: DONE on `main` (2026-07-12).** Implemented as a built-in app *catalog*
+(`backend/services/app_registry.py`) driven by a per-instance *install list*
+(`.runtime/installed-apps.json`, `services/installed_apps.py`), keeping all seven
+apps working on clawd-a while making a fresh clone boot blank. Design +
+per-instance data map: [`apps-are-pluggable.md`](apps-are-pluggable.md). The
+original handoff follows for reference.
+
+What was done:
+- Router mounts, MCP specs, launcher cards, and app startup loops are all
+  registry-driven; `main.py` / `llm_router.py` / `Apps.tsx` no longer hardcode any
+  app. Adding/removing an app is an `installed-apps.json` edit + restart.
+- Plaid MCP moved from `llm_router._MCP_SERVER_SPECS` into the finance/budget
+  AppSpec; available to chat only when that app is installed.
+- Personal data untracked and moved to `.runtime/`: `projects.json`,
+  `build_agents.json`, `backend/apps.json`, and `commute/{schedule,legs,targets,
+  sources}` → `.runtime/commute-config/`, notes → `.runtime/commute-notes/`.
+  `commute/README.md` scrubbed of the real name/addresses/channel id. Paths
+  de-hardcoded off `/home/clawd-a`.
+- Verified: fresh install list → zero app routes/cards/MCP, shell intact;
+  clawd-a's roster → all seven apps mount and serve (401-gated) as before.
+
+Remaining (intentionally deferred, see the doc's "one deferred seam"):
+integrated in-shell frontend route injection; and git-history scrubbing of the
+already-committed personal data (a separate force-push operation).
+
+---
+
+_Original handoff (the flaw and the target model):_
+
+Deferred during the 2026-07-12 upstream merge from `simonsays-local` (queue item
+`f963c8e`, tagged "needs migration"). It is a fundamental architecture flaw, not a
+cleanup nicety.
 
 ## The flaw
 

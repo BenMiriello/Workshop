@@ -312,17 +312,15 @@ _TOOLS_OFF_SYSTEM_NUDGE = (
 # existing latency profile.
 _MCP_BLOCK_STARTUP_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
 
-# Registry of MCP server launch specs available to chat subprocesses. Each
-# entry must match the {"command","args"} stdio launch the parent uses (see
-# ~/.claude.json). Only servers needed by some provider's allowed_tools live
-# here — everything else stays out so the subprocess never spawns it.
-_MCP_SERVER_SPECS: dict[str, dict] = {
-    "plaid": {
-        "type": "stdio",
-        "command": "node",
-        "args": ["/home/clawd-a/clawdbot/plaid-mcp/server.js"],
-    },
-}
+# MCP server launch specs available to chat subprocesses are no longer hardcoded
+# here: each is registered by the app that needs it (e.g. the plaid server by the
+# finance/budget apps) and is available only when that app is installed. See
+# services/app_registry.installed_mcp_servers. A server appears only if some
+# provider's allowed_tools needs it AND its app is installed.
+def _mcp_server_specs() -> dict[str, dict]:
+    # Lazy import breaks the app_registry <-> llm_router module cycle.
+    from services import app_registry
+    return app_registry.installed_mcp_servers()
 
 
 def call_cloud(
@@ -331,7 +329,7 @@ def call_cloud(
     model: str = TIER_HAIKU,
     max_turns: int = 6,
     timeout_s: float = 600,
-    cwd: str = "/home/clawd-a/workshop",
+    cwd: str = str(Path.home() / "workshop"),
     tools_disabled: bool = False,
     allowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
@@ -391,10 +389,11 @@ def call_cloud(
         # to preserve partial-text recovery if the model hits max_turns mid-
         # synthesis. bypassPermissions is safe here — there's no interactive
         # operator to confirm prompts, and the allowlist IS the gate.
+        _specs = _mcp_server_specs()
         servers_subset = {
-            name: _MCP_SERVER_SPECS[name]
+            name: _specs[name]
             for name in (mcp_servers or [])
-            if name in _MCP_SERVER_SPECS
+            if name in _specs
         }
         # allowed_tools may mix MCP tools ("mcp__plaid__…") with built-in tools
         # ("WebSearch", "WebFetch"). MCP names are gated via --allowedTools; the
