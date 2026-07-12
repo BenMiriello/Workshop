@@ -4,7 +4,7 @@ import {
   ArrowLeft, Mic, MicOff, Square, Play, X, Settings2, Loader, MessageSquare,
   AudioLines, SendHorizontal, Volume2, VolumeX,
 } from "lucide-react";
-import { Button, StatusPill, SectionLabel, Select, Toggle, Segmented, StateBlock, Textarea, Badge } from "../ui";
+import { Button, StatusPill, SectionLabel, Select, Toggle, Segmented, StateBlock, Textarea, Badge, Modal } from "../ui";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { voiceApi } from "../lib/voiceApi";
 import { detectCaps, type EngineCaps } from "../lib/voice";
@@ -135,8 +135,13 @@ export default function VoiceMode() {
         </div>
       </div>
 
-      {showSettings && (
+      <Modal open={showSettings} onClose={() => setShowSettings(false)} title="Voice settings">
         <div className="ws-voice-settings">
+          <div className="ws-voice-settings-group">Voice</div>
+          <label className="ws-voice-setting ws-voice-setting--row">
+            <SectionLabel>Speak replies</SectionLabel>
+            <Toggle checked={prefs.speak_replies} onChange={(v) => updatePrefs({ speak_replies: v })} />
+          </label>
           <label className="ws-voice-setting">
             <SectionLabel>Voice</SectionLabel>
             <Select
@@ -158,10 +163,7 @@ export default function VoiceMode() {
               onChange={(e) => updatePrefs({ speed: Number(e.target.value) })}
             />
           </label>
-          <label className="ws-voice-setting ws-voice-setting--row">
-            <SectionLabel>Speak replies</SectionLabel>
-            <Toggle checked={prefs.speak_replies} onChange={(v) => updatePrefs({ speak_replies: v })} />
-          </label>
+          <div className="ws-voice-settings-group">Engines</div>
           <label className="ws-voice-setting">
             <SectionLabel>Speech engine</SectionLabel>
             <Segmented<typeof prefs.tts_provider>
@@ -188,6 +190,7 @@ export default function VoiceMode() {
               ]}
             />
           </label>
+          <div className="ws-voice-settings-group">Turn-taking</div>
           <label className="ws-voice-setting">
             <SectionLabel>Pause before reply {(prefs.endpoint_silence_ms / 1000).toFixed(2)}s</SectionLabel>
             <input
@@ -196,6 +199,7 @@ export default function VoiceMode() {
               value={prefs.endpoint_silence_ms}
               onChange={(e) => updatePrefs({ endpoint_silence_ms: Number(e.target.value) })}
             />
+            <span className="ws-voice-hintline">How long a silence before I take my turn.</span>
           </label>
           <label className="ws-voice-setting ws-voice-setting--row">
             <SectionLabel>Think during pauses</SectionLabel>
@@ -224,18 +228,23 @@ export default function VoiceMode() {
             />
           </label>
           <label className="ws-voice-setting ws-voice-setting--row">
-            <SectionLabel>Let me interrupt</SectionLabel>
+            <SectionLabel>Let me talk over you</SectionLabel>
             <Toggle checked={prefs.barge_in} onChange={(v) => updatePrefs({ barge_in: v })} />
           </label>
-          <label className="ws-voice-setting">
-            <SectionLabel>Interrupt sensitivity</SectionLabel>
-            <input
-              className="ws-range"
-              type="range" min={0} max={1} step={0.05}
-              value={prefs.barge_sensitivity}
-              onChange={(e) => updatePrefs({ barge_sensitivity: Number(e.target.value) })}
-            />
-          </label>
+          {prefs.barge_in && (
+            <label className="ws-voice-setting">
+              <SectionLabel>How easily I cut in</SectionLabel>
+              <input
+                className="ws-range"
+                type="range" min={0} max={1} step={0.05}
+                value={prefs.barge_sensitivity}
+                onChange={(e) => updatePrefs({ barge_sensitivity: Number(e.target.value) })}
+              />
+              <div className="ws-voice-rangeends"><span>Have to speak up</span><span>Hair trigger</span></div>
+              <span className="ws-voice-hintline">How loud you must talk over me to stop me mid-sentence.</span>
+            </label>
+          )}
+          <div className="ws-voice-settings-group">Typing &amp; input</div>
           <label className="ws-voice-setting ws-voice-setting--row">
             <SectionLabel>Enter interrupts speech</SectionLabel>
             <Toggle checked={prefs.enter_interrupts} onChange={(v) => updatePrefs({ enter_interrupts: v })} />
@@ -256,7 +265,7 @@ export default function VoiceMode() {
             </label>
           )}
         </div>
-      )}
+      </Modal>
 
       {snapshot.error && (
         <div className="ws-voice-err">
