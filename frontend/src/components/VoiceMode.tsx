@@ -284,6 +284,7 @@ export default function VoiceMode() {
             End session
           </Button>
           <span className="ws-voice-provider">
+            {snapshot.lastTurnMs !== null && `last turn: ${(snapshot.lastTurnMs / 1000).toFixed(1)}s to speech · `}
             {snapshot.sttProvider ? `hear: ${snapshot.sttProvider}` : "no mic"} · {snapshot.ttsProvider ? `speak: ${snapshot.ttsProvider}` : "muted"}
           </span>
         </div>

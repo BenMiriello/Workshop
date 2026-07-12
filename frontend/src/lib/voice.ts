@@ -288,6 +288,13 @@ export type SpeakEvents = {
 
 export interface Speaker {
   speak(sentences: string[], ev: SpeakEvents): void;
+  // Streaming API: begin a turn, append sentences as the reply generates, end
+  // when the reply is complete. Sentences render ahead of playback so there is
+  // no dead air between them. Implemented by ServerSpeaker; optional elsewhere
+  // (callers fall back to speak() when begin is absent).
+  begin?(ev: SpeakEvents): void;
+  enqueue?(sentence: string): void;
+  end?(): void;
   stop(): void;             // returns via onDone(reached)
   readonly speaking: boolean;
   outputLevel?(): number;   // live 0..1 TTS envelope, when measurable
@@ -356,41 +363,67 @@ export class ServerSpeaker implements Speaker {
     return URL.createObjectURL(blob);
   }
 
-  speak(sentences: string[], ev: SpeakEvents) {
-    this.queue = sentences;
+  // Render promise per queued sentence — started at enqueue time, so audio for
+  // sentence i+1 is already in flight while i plays (no per-sentence round-trip
+  // of dead air). `ended` marks that no more sentences will be appended.
+  private renders: (Promise<string | null>)[] = [];
+  private ended = false;
+  private playing = false;
+
+  begin(ev: SpeakEvents) {
+    this.queue = [];
+    this.renders = [];
     this.idx = 0;
     this.ev = ev;
     this.stopped = false;
     this.done = false;
+    this.ended = false;
+    this.playing = false;
     this.speaking = true;
-    this.playFrom(0);
   }
 
-  private async playFrom(i: number) {
-    this.idx = i;
-    if (this.stopped || i >= this.queue.length) {
-      this.finish(i);
+  enqueue(sentence: string) {
+    if (this.stopped || this.ended) return;
+    this.queue.push(sentence);
+    this.renders.push(this.render(sentence).catch(() => null));
+    void this.pump();
+  }
+
+  end() {
+    this.ended = true;
+    void this.pump();
+  }
+
+  speak(sentences: string[], ev: SpeakEvents) {
+    this.begin(ev);
+    for (const s of sentences) this.enqueue(s);
+    this.end();
+  }
+
+  private async pump() {
+    if (this.playing || this.stopped) return;
+    const i = this.idx;
+    if (i >= this.queue.length) {
+      if (this.ended) this.finish(i);
       return;
     }
-    let url: string;
-    try {
-      url = await this.render(this.queue[i]);
-    } catch {
-      this.playFrom(i + 1);
-      return;
-    }
-    if (this.stopped) { URL.revokeObjectURL(url); this.finish(i); return; }
+    this.playing = true;
+    const url = await this.renders[i];
+    if (this.stopped) { if (url) URL.revokeObjectURL(url); this.playing = false; this.finish(i); return; }
+    if (!url) { this.playing = false; this.idx = i + 1; void this.pump(); return; }
     const a = new Audio(url);
     this.audio = a;
     this.wireGraph(a);
     this.ev.onSentenceStart?.(i);
-    a.onended = () => {
+    const advance = () => {
       URL.revokeObjectURL(url);
-      this.ev.onSentenceEnd?.(i);
-      this.playFrom(i + 1);
+      this.playing = false;
+      this.idx = i + 1;
+      void this.pump();
     };
-    a.onerror = () => { URL.revokeObjectURL(url); this.playFrom(i + 1); };
-    a.play().catch(() => this.playFrom(i + 1));
+    a.onended = () => { this.ev.onSentenceEnd?.(i); advance(); };
+    a.onerror = () => advance();
+    a.play().catch(() => advance());
   }
 
   // `reached` = count of sentences fully heard before this point (== the index

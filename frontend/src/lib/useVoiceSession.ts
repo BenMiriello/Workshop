@@ -1,6 +1,7 @@
 // React binding for VoiceSession. Owns one session per contextKey, wires the
-// reply path to the existing chat backend (data-mode /messages), loads + persists
-// per-owner prefs, and exposes a live snapshot via useSyncExternalStore.
+// streaming reply path to the resident voice worker (/api/voice/session +
+// /turns + SSE), loads + persists per-owner prefs, and exposes a live snapshot
+// via useSyncExternalStore.
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 
 import { chatApi } from "./chat";
@@ -10,6 +11,8 @@ import {
   DEFAULT_PREFS,
   type VoicePrefs,
   type VoiceSnapshot,
+  type ReplyHandle,
+  type ReplyHandlers,
 } from "./voiceSession";
 
 export function useVoiceSession(contextKey: string, model?: string) {
@@ -17,20 +20,123 @@ export function useVoiceSession(contextKey: string, model?: string) {
   const prefsRef = useRef<VoicePrefs>({ ...DEFAULT_PREFS });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // sendTurn: ensure a thread for this context, post the utterance, return the
-  // assistant's reply text. Same path the typed chat uses.
-  const sendTurn = useCallback(
-    async (text: string): Promise<string> => {
-      let id = threadRef.current;
-      if (!id) {
-        const t = await chatApi.createThread(contextKey);
-        id = t.id;
-        threadRef.current = id;
-      }
-      const { message } = await chatApi.sendMessage(id, text, model);
-      return message.content || "";
+  // Ensure the resident worker + thread exist; returns the thread id. Prewarmed
+  // on mount so the process is up before the first utterance finishes.
+  const ensureSession = useCallback(async (): Promise<string> => {
+    if (threadRef.current) return threadRef.current;
+    const r = await fetch("/api/voice/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ context_key: contextKey }),
+    });
+    if (!r.ok) throw new Error(`session ${r.status}`);
+    const id = (await r.json()).thread_id as string;
+    threadRef.current = id;
+    return id;
+  }, [contextKey]);
+
+  // startReply: begin a streaming turn. Deltas arrive over SSE; the returned
+  // handle cancels generation (barge-in). Falls back to the blocking /messages
+  // path if streaming can't start and no tokens have arrived yet.
+  const startReply = useCallback(
+    (text: string, handlers: ReplyHandlers): ReplyHandle => {
+      const ac = new AbortController();
+      let turnId: string | null = null;
+      let full = "";
+      let gotDelta = false;
+      let settled = false;
+
+      const cancelTurn = (id: string, reason: string) => {
+        fetch(`/api/voice/turns/${id}/cancel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        }).catch(() => {});
+      };
+
+      const fallback = async () => {
+        try {
+          const id = await ensureSession();
+          const { message } = await chatApi.sendMessage(id, text, model);
+          if (!settled) { settled = true; handlers.onDone(message.content || ""); }
+        } catch (e) {
+          if (!settled) { settled = true; handlers.onError(String(e)); }
+        }
+      };
+
+      const handleEvent = (name: string, data: string) => {
+        if (settled) return;
+        if (name === "text") {
+          try {
+            const d = JSON.parse(data);
+            full += d.payload?.content || "";
+            gotDelta = true;
+            handlers.onDelta(full);
+          } catch { /* ignore malformed frame */ }
+        } else if (name === "done" || name === "end") {
+          settled = true;
+          handlers.onDone(full);
+        } else if (name === "error") {
+          let detail = "reply error";
+          try { detail = JSON.parse(data).payload?.detail || detail; } catch { /* noop */ }
+          settled = true;
+          handlers.onError(detail);
+        }
+      };
+
+      (async () => {
+        try {
+          const thread = await ensureSession();
+          const tr = await fetch(`/api/voice/session/${thread}/turns`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ context_key: contextKey, text, model }),
+          });
+          if (!tr.ok) throw new Error(`turn ${tr.status}`);
+          turnId = (await tr.json()).turn_id as string;
+          const resp = await fetch(`/api/voice/turns/${turnId}/stream`, {
+            headers: { Accept: "text/event-stream" },
+            signal: ac.signal,
+          });
+          if (!resp.ok || !resp.body) throw new Error(`stream ${resp.status}`);
+          const reader = resp.body.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let idx: number;
+            while ((idx = buf.indexOf("\n\n")) >= 0) {
+              const frame = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              let evName = "message";
+              let data = "";
+              for (const line of frame.split("\n")) {
+                if (line.startsWith("event:")) evName = line.slice(6).trim();
+                else if (line.startsWith("data:")) data += line.slice(5).trim();
+              }
+              handleEvent(evName, data);
+            }
+            if (settled) { reader.cancel().catch(() => {}); break; }
+          }
+          if (!settled) { settled = true; handlers.onDone(full); }
+        } catch (e) {
+          if (ac.signal.aborted) return;         // cancelled by barge-in
+          if (!gotDelta) { fallback(); return; }  // never started: blocking fallback
+          if (!settled) { settled = true; handlers.onError(String(e)); }
+        }
+      })();
+
+      return {
+        cancel: () => {
+          settled = true;
+          ac.abort();
+          if (turnId) cancelTurn(turnId, "barge");
+        },
+      };
     },
-    [contextKey, model],
+    [contextKey, model, ensureSession],
   );
 
   const persistSignal = useCallback((rate: number) => {
@@ -38,9 +144,14 @@ export function useVoiceSession(contextKey: string, model?: string) {
   }, []);
 
   const session = useMemo(
-    () => new VoiceSession({ sendTurn, prefs: prefsRef.current, onPrefsSignal: persistSignal }),
-    [sendTurn, persistSignal],
+    () => new VoiceSession({ startReply, prefs: prefsRef.current, onPrefsSignal: persistSignal }),
+    [startReply, persistSignal],
   );
+
+  // Prewarm the resident worker on mount (best-effort).
+  useEffect(() => {
+    ensureSession().catch(() => {});
+  }, [ensureSession]);
 
   // Load persisted prefs once and push them into the live session.
   useEffect(() => {

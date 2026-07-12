@@ -12,11 +12,13 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, Form, HTTPException, Response, UploadFile
+import asyncio
+
+from fastapi import APIRouter, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services import voice_engine
+from services import chat_store, voice_engine, voice_worker
 from services.gpu_warmhold import VOICE_HOLD
 from services.ownership import user_runtime_dir
 
@@ -159,3 +161,105 @@ class PrefsBody(BaseModel):
 async def voice_put_prefs(body: PrefsBody):
     patch = {k: v for k, v in body.model_dump().items() if v is not None}
     return _save_prefs(patch)
+
+
+# ------------------------------------------------------------------ resident
+# worker turns (voice-mode v2, docs/voice-mode/design.md section 3). Streaming
+# replies over a long-lived `claude -p` process, one per voice session.
+
+class SessionBody(BaseModel):
+    context_key: str = "general"
+    thread_id: str | None = None
+    model: str | None = None
+
+
+@router.post("/voice/session")
+async def voice_session(body: SessionBody):
+    """Prewarm/bind the resident worker for a voice session. Called on surface
+    mount so the process is up before the first utterance finishes."""
+    thread_id = body.thread_id
+    if not thread_id or not chat_store.get_thread(thread_id):
+        thread = chat_store.create_thread(context_key=body.context_key, title="Voice")
+        thread_id = thread["id"]
+    await voice_worker.ensure_worker(body.context_key, thread_id, body.model)
+    return {"session_key": thread_id, "thread_id": thread_id}
+
+
+class TurnBody(BaseModel):
+    context_key: str = "general"
+    text: str
+    model: str | None = None
+    speculative: bool = False
+
+
+@router.post("/voice/session/{thread_id}/turns")
+async def voice_start_turn(thread_id: str, body: TurnBody):
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "empty utterance")
+    turn = await voice_worker.start_turn(
+        context_key=body.context_key, thread_id=thread_id, text=text,
+        model=body.model, speculative=body.speculative,
+    )
+    return {"turn_id": turn.id, "thread_id": thread_id}
+
+
+@router.get("/voice/turns/{turn_id}/stream")
+async def voice_stream_turn(turn_id: str, request: Request):
+    turn = voice_worker.get_turn(turn_id)
+    if not turn:
+        raise HTTPException(404, "turn not found")
+    last_event_id = request.headers.get("Last-Event-ID") or "0"
+    try:
+        after = max(0, int(last_event_id))
+    except ValueError:
+        after = 0
+
+    async def gen():
+        try:
+            async for offset, ev in voice_worker.iter_events(turn, after=after):
+                if await request.is_disconnected():
+                    return
+                kind = ev["kind"]
+                payload = json.dumps({"kind": kind, "payload": ev["payload"], "ts": ev["ts"]})
+                yield f"id: {offset}\nevent: {kind}\ndata: {payload}\n\n"
+            yield "event: end\ndata: {}\n\n"
+        except asyncio.CancelledError:
+            return
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+class CancelBody(BaseModel):
+    reason: str = "superseded"
+    heard: int | None = None
+
+
+@router.post("/voice/turns/{turn_id}/cancel")
+async def voice_cancel_turn(turn_id: str, body: CancelBody):
+    ok = await voice_worker.cancel_turn(turn_id, reason=body.reason, heard=body.heard)
+    if not ok:
+        raise HTTPException(404, "turn not found")
+    return {"ok": True}
+
+
+@router.post("/voice/turns/{turn_id}/commit")
+async def voice_commit_turn(turn_id: str):
+    ok = await voice_worker.commit_turn(turn_id)
+    if not ok:
+        raise HTTPException(404, "turn not found")
+    return {"ok": True}
+
+
+@router.delete("/voice/session/{thread_id}")
+async def voice_stop_session(thread_id: str):
+    await voice_worker.stop_session(thread_id)
+    return {"ok": True}

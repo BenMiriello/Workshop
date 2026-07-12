@@ -82,11 +82,24 @@ export type VoiceSnapshot = {
   ttsProvider: TtsProvider | null;
   error: string | null;
   interruptRate: number;
+  // Endpoint -> first-audio latency of the last turn (ms), for the footer readout.
+  lastTurnMs: number | null;
+};
+
+export type ReplyHandle = { cancel: () => void };
+
+export type ReplyHandlers = {
+  // Called with the FULL accumulated reply text so far on each token delta.
+  onDelta: (fullText: string) => void;
+  onDone: (fullText: string) => void;
+  onError: (message: string) => void;
 };
 
 export type VoiceConfig = {
-  // Send a user utterance through the chat backend, resolve with the reply text.
-  sendTurn: (text: string) => Promise<string>;
+  // Start a streaming reply turn. Deltas stream in via handlers; the returned
+  // handle cancels the in-flight generation (barge-in / supersede). The binding
+  // (useVoiceSession) owns transport + any fallback to a blocking call.
+  startReply: (text: string, handlers: ReplyHandlers) => ReplyHandle;
   prefs: VoicePrefs;
   onPrefsSignal?: (interruptRate: number) => void;
 };
@@ -116,6 +129,11 @@ export class VoiceSession {
   private turnCount = 0;
   private interrupts = 0;
   private capturing = false;
+  // Streaming reply state.
+  private replyHandle: ReplyHandle | null = null;
+  private emitted = 0;              // sentences cut from the stream so far
+  private tEndpoint = 0;            // mark: when we committed the turn
+  private lastTurnMs: number | null = null;  // endpoint -> first audio (footer)
   private listeners = new Set<() => void>();
   // Cached immutable snapshot. Rebuilt only when state mutates (emit invalidates
   // it). useSyncExternalStore compares with Object.is, so returning a stable
@@ -152,6 +170,7 @@ export class VoiceSession {
       ttsProvider: this.ttsProvider,
       error: this.error,
       interruptRate: this.turnCount ? this.interrupts / this.turnCount : 0,
+      lastTurnMs: this.lastTurnMs,
     };
     return this._snapshot;
   }
@@ -194,6 +213,9 @@ export class VoiceSession {
   }
 
   stop() {
+    this._interrupted = true;
+    this.replyHandle?.cancel();
+    this.replyHandle = null;
     this.speaker?.stop();
     this.browserAbort?.();
     this.mic.stop();
@@ -287,28 +309,21 @@ export class VoiceSession {
   }
 
   // ---- a completed user utterance -----------------------------------------
-  private async onUtterance(raw: string) {
+  private onUtterance(raw: string) {
     const text = (raw || "").trim();
     this.partial = "";
     if (!text) { this.armListen(); return; }
     this.lastUser = text;
     this.turnCount += 1;
+    this.tEndpoint = performance.now();
     this.set("thinking");
     // Cold-start filler so there's no dead air while a server session warms up.
     if (this.turnCount === 1 && this.ttsProvider === "server") speakFiller("One moment.");
-    let reply = "";
-    try {
-      reply = await this.cfg.sendTurn(text);
-    } catch (e) {
-      this.error = `reply: ${String(e)}`;
-      this.emit();
-      this.armListen();
-      return;
-    }
-    this.speakReply(reply);
+    this.beginReply(text);
   }
 
-  // ---- speaking ------------------------------------------------------------
+  // ---- streaming reply -----------------------------------------------------
+  // Extract ⟦aside:…⟧ markers from a single sentence before it is spoken/queued.
   private extractAsides(reply: string): { body: string; asides: QueuedThread[] } {
     const asides: QueuedThread[] = [];
     const body = reply.replace(ASIDE_RE, (_m, topic) => {
@@ -318,39 +333,95 @@ export class VoiceSession {
     return { body, asides };
   }
 
-  private speakReply(reply: string) {
-    const { body, asides } = this.extractAsides(reply);
-    if (asides.length) this.queue = [...this.queue, ...asides];
-    const sents = splitSentences(cleanForSpeech(body));
-    this.sentences = sents.map((t) => ({ text: t, status: "pending" as SentenceStatus }));
+  private beginReply(text: string) {
+    this.emitted = 0;
+    this.sentences = [];
     this.spokenCount = 0;
-    if (!sents.length || !this.ttsProvider) {
-      // No TTS (muted) — treat as immediately "heard", go back to listening.
-      this.sentences = this.sentences.map((s) => ({ ...s, status: "heard" }));
-      this.spokenCount = this.sentences.length;
-      this.armListen();
-      return;
+    this._interrupted = false;
+    this.error = null;
+    // Set up the speaker (streaming) unless muted. Muted replies still stream in
+    // as captions, marked heard as they land.
+    if (this.ttsProvider) {
+      this.speaker = this.makeSpeaker();
+      const sp = this.speaker;
+      this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
+      this.mic.setBargeMode(true);
+      const ev = {
+        onSentenceStart: (i: number) => {
+          if (this.lastTurnMs === null) this.lastTurnMs = Math.round(performance.now() - this.tEndpoint);
+          this.sentences[i] = { ...this.sentences[i], status: "speaking" };
+          this.spokenCount = i;
+          this.emit();
+        },
+        onSentenceEnd: (i: number) => {
+          this.sentences[i] = { ...this.sentences[i], status: "heard" };
+          this.spokenCount = i + 1;
+          this.emit();
+        },
+        onDone: (reached: number) => this.finishSpeaking(reached, false),
+      };
+      if (sp.begin) sp.begin(ev); else sp.speak([], ev);  // begin streaming
     }
-    this.set("speaking");
-    this.speaker = this.makeSpeaker();
-    // Echo-aware barge-in: feed the mic the TTS output envelope (server speaker
-    // only) and raise the interrupt bar while speaking.
-    const sp = this.speaker;
-    this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
-    this.mic.setBargeMode(true);
-    this.speaker.speak(sents, {
-      onSentenceStart: (i) => {
-        this.sentences[i] = { ...this.sentences[i], status: "speaking" };
-        this.spokenCount = i;
-        this.emit();
-      },
-      onSentenceEnd: (i) => {
+    this.lastTurnMs = null;
+    this.replyHandle = this.cfg.startReply(text, {
+      onDelta: (full) => this.onReplyDelta(full),
+      onDone: (full) => this.onReplyDone(full),
+      onError: (msg) => this.onReplyError(msg),
+    });
+  }
+
+  // Cut complete sentences from the growing buffer and hand them to the speaker.
+  // The trailing fragment is held back (it may still be growing) until `final`.
+  private pushSentences(full: string, final: boolean) {
+    const sents = splitSentences(cleanForSpeech(full));
+    const upto = final ? sents.length : Math.max(0, sents.length - 1);
+    for (; this.emitted < upto; this.emitted++) {
+      const { body, asides } = this.extractAsides(sents[this.emitted]);
+      if (asides.length) this.queue = [...this.queue, ...asides];
+      if (!body) continue;
+      const i = this.sentences.length;
+      this.sentences.push({ text: body, status: "pending" });
+      if (this.ttsProvider && this.speaker) {
+        if (this.state !== "speaking") this.set("speaking");
+        if (this.speaker.enqueue) this.speaker.enqueue(body);
+        else this.speaker.speak([body], {});  // non-streaming speaker fallback
+      } else {
+        // Muted: caption only, heard immediately.
         this.sentences[i] = { ...this.sentences[i], status: "heard" };
         this.spokenCount = i + 1;
-        this.emit();
-      },
-      onDone: (reached) => this.finishSpeaking(reached, false),
-    });
+      }
+    }
+    this.emit();
+  }
+
+  private onReplyDelta(full: string) {
+    if (this._interrupted) return;
+    this.pushSentences(full, false);
+  }
+
+  private onReplyDone(full: string) {
+    this.replyHandle = null;
+    if (this._interrupted) return;
+    this.pushSentences(full, true);
+    if (this.ttsProvider && this.speaker) {
+      if (this.speaker.end) this.speaker.end();
+      // onDone(reached) from the speaker drives finishSpeaking once playback ends.
+    } else {
+      // Muted path: nothing to play, go straight back to listening.
+      this.finishSpeaking(this.sentences.length, false);
+    }
+  }
+
+  private onReplyError(msg: string) {
+    this.replyHandle = null;
+    if (this._interrupted) return;
+    this.speaker?.stop();
+    this.speaker = null;
+    this.mic.setBargeMode(false);
+    this.mic.setOutputProbe(() => 0);
+    this.error = `reply: ${msg}`;
+    this.emit();
+    this.armListen();
   }
 
   private makeSpeaker(): Speaker {
@@ -362,8 +433,13 @@ export class VoiceSession {
 
   private bargeIn() {
     this.interrupts += 1;
-    // Speaker.stop() calls onDone(reached) → finishSpeaking(interrupted=true).
+    // Stop generation at the worker, then stop playback. Speaker.stop() calls
+    // onDone(reached) → finishSpeaking(interrupted=true), which queues the
+    // generated-but-unspoken remainder. The not-yet-generated tail is cancelled
+    // server-side so it never becomes garbage in the queue.
     this._interrupted = true;
+    this.replyHandle?.cancel();
+    this.replyHandle = null;
     this.speaker?.stop();
   }
   private _interrupted = false;
@@ -402,9 +478,48 @@ export class VoiceSession {
     const t = this.queue.find((q) => q.id === id);
     if (!t) return;
     this.queue = this.queue.filter((q) => q.id !== id);
+    this._interrupted = true;
+    this.replyHandle?.cancel();
+    this.replyHandle = null;
     this.speaker?.stop();
     this.browserAbort?.();
-    this.speakReply(t.text);
+    this.speakLocal(t.text);
+  }
+
+  // Speak an already-known piece of text (a resumed background thread) without a
+  // network turn — reuses the streaming speaker path by feeding it all at once.
+  private speakLocal(text: string) {
+    this.emitted = 0;
+    this.sentences = [];
+    this.spokenCount = 0;
+    this._interrupted = false;
+    this.tEndpoint = performance.now();
+    this.lastTurnMs = null;
+    if (!this.ttsProvider) {
+      this.set("thinking");
+      this.pushSentences(text, true);
+      this.finishSpeaking(this.sentences.length, false);
+      return;
+    }
+    this.speaker = this.makeSpeaker();
+    const sp = this.speaker;
+    this.mic.setOutputProbe(() => (sp.outputLevel ? sp.outputLevel() : 0));
+    this.mic.setBargeMode(true);
+    const ev = {
+      onSentenceStart: (i: number) => {
+        if (this.lastTurnMs === null) this.lastTurnMs = Math.round(performance.now() - this.tEndpoint);
+        this.sentences[i] = { ...this.sentences[i], status: "speaking" as SentenceStatus };
+        this.spokenCount = i; this.emit();
+      },
+      onSentenceEnd: (i: number) => {
+        this.sentences[i] = { ...this.sentences[i], status: "heard" as SentenceStatus };
+        this.spokenCount = i + 1; this.emit();
+      },
+      onDone: (reached: number) => this.finishSpeaking(reached, false),
+    };
+    if (sp.begin) sp.begin(ev); else sp.speak([], ev);
+    this.pushSentences(text, true);
+    if (sp.end) sp.end();
   }
   dismissThread(id: string) {
     this.queue = this.queue.filter((q) => q.id !== id);
