@@ -451,6 +451,13 @@ class ContextProvider:
     # the fast tier; builders override to a strong tier (see subclasses).
     default_model: str = _llm.TIER_HAIKU
 
+    def knowledge_scope(self) -> str:
+        """The knowledge scope_key this provider reads/writes (workshop /
+        project:<slug> / app:<name> / agent:<id>). Derived from the provider key;
+        project/build providers override to point at their project scope."""
+        from services import knowledge
+        return knowledge.scope_for_context(self.key)
+
     def persona(self) -> str:
         return (
             "You are Clawd, the operator's personal assistant inside the Workshop app. "

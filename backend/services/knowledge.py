@@ -254,6 +254,23 @@ def _mtime_iso(f: Path) -> str | None:
     return datetime.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
 
 
+def index_block(scope_key: str) -> str:
+    """A compact ambient index of the scope's notes for the chat prompt, or ""
+    when the scope has no notes. Titles + hooks only (the bodies load on recall),
+    so it stays small and cache-stable."""
+    try:
+        notes = list_notes(scope_key)
+    except Exception:
+        return ""
+    if not notes:
+        return ""
+    lines = []
+    for n in notes:
+        hook = f": {n['hook']}" if n.get("hook") else ""
+        lines.append(f"- {n['title']} ({n['id']}){hook}")
+    return "\n".join(lines)
+
+
 def get_note(scope_key: str, note_id: str) -> str | None:
     """The body of `<note-id>.md`, or None if absent."""
     _parse_scope(scope_key)

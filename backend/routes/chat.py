@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_store, chat_context
+from services import knowledge
 from services import llm_router
 from services import build_streaming
 from services import chat_naming
@@ -259,6 +260,7 @@ def _build_prompt(
     user_msg: str,
     *,
     preamble: str = "",
+    recalled: str = "",
 ) -> str:
     # Layered prompt (see docs 01 §3):
     #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — first, and
@@ -290,6 +292,17 @@ def _build_prompt(
         cap_note = ""
     if cap_note:
         parts.append(cap_note)
+    # Ambient in-scope knowledge index (Phase 2): the note titles for this scope so
+    # the model knows what it can recall. Small + cache-stable (bodies arrive via
+    # retrieval in the reply region, not here). Best-effort; never blocks the reply.
+    try:
+        kscope = provider.knowledge_scope()
+        kindex = knowledge.index_block(kscope)
+    except Exception as e:
+        log.warning("chat knowledge index failed for %s: %s", provider.key, e)
+        kindex = ""
+    if kindex:
+        parts.append(f"=== KNOWLEDGE (in scope: {kscope}) ===\n{kindex}")
     ctx = ""
     try:
         ctx = provider.live_context()
@@ -310,6 +323,10 @@ def _build_prompt(
             who = "Operator" if m["role"] == "user" else "You"
             convo.append(f"{who}: {m['content']}")
         parts.append("=== CONVERSATION SO FAR ===\n" + "\n\n".join(convo))
+    # Retrieved notes for THIS message (Phase 2 auto-recall): volatile, so it goes
+    # at the tail (near the user turn), never in the cache-stable prefix above.
+    if recalled:
+        parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append(
         "=== NOW REPLY ===\n"
         f"Operator: {user_msg}\n\n"
@@ -403,7 +420,19 @@ async def send_message(thread_id: str, body: PostMessage):
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
     )
-    prompt = _build_prompt(provider, history, content, preamble=preamble)
+    # Auto-recall (Phase 2): for data-mode assistants, retrieve notes relevant to
+    # this message from the provider's knowledge scope and inject them into the
+    # reply tail. Build providers read files directly, so skip them. Best-effort.
+    recalled = ""
+    if not is_build_mode and len(content.strip()) >= 8:
+        try:
+            kscope = provider.knowledge_scope()
+            hits = await knowledge.search(kscope, content, limit=3)
+            blocks = [f"[{h.get('note_id') or 'note'}] {(h.get('text') or '').strip()}" for h in hits]
+            recalled = "\n\n".join(blocks)[:2000]
+        except Exception as e:
+            log.warning("chat auto-recall failed for %s: %s", provider.key, e)
+    prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled)
 
     # Persist the user's message first so it isn't lost if the model call fails.
     chat_store.append_message(thread_id, "user", content)
