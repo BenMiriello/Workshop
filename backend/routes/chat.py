@@ -261,6 +261,7 @@ def _build_prompt(
     *,
     preamble: str = "",
     recalled: str = "",
+    summary: str = "",
 ) -> str:
     # Layered prompt (see docs 01 §3):
     #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — first, and
@@ -303,13 +304,8 @@ def _build_prompt(
         kindex = ""
     if kindex:
         parts.append(f"=== KNOWLEDGE (in scope: {kscope}) ===\n{kindex}")
-    ctx = ""
-    try:
-        ctx = provider.live_context()
-    except Exception as e:  # context is best-effort — never block the reply
-        log.warning("chat context build failed for %s: %s", provider.key, e)
-    if ctx:
-        parts.append("=== LIVE CONTEXT (current app state) ===\n" + ctx)
+    # Operator-set custom instructions are stable (rarely change), so they stay in
+    # the cache-stable prefix alongside persona/capability/knowledge index.
     try:
         custom = provider.custom_prompt()
     except Exception as e:
@@ -317,14 +313,28 @@ def _build_prompt(
         custom = ""
     if custom:
         parts.append("=== CUSTOM INSTRUCTIONS (operator-set) ===\n" + custom)
+    # A prior-conversation summary (Phase 3 compaction) is comparatively stable: it
+    # only changes when a compaction runs, not every turn, so it sits just before
+    # the recent verbatim turns.
+    if summary:
+        parts.append("=== EARLIER CONVERSATION (summary) ===\n" + summary)
     if history:
         convo = []
         for m in history[-MAX_HISTORY:]:
             who = "Operator" if m["role"] == "user" else "You"
             convo.append(f"{who}: {m['content']}")
         parts.append("=== CONVERSATION SO FAR ===\n" + "\n\n".join(convo))
-    # Retrieved notes for THIS message (Phase 2 auto-recall): volatile, so it goes
-    # at the tail (near the user turn), never in the cache-stable prefix above.
+    # --- VOLATILE TAIL (Phase 3 cache-stable ordering) ---------------------------
+    # Everything that changes every turn goes AFTER the conversation so it never
+    # invalidates the cached prefix above: live app state, then retrieved notes,
+    # then the user turn.
+    try:
+        ctx = provider.live_context()
+    except Exception as e:  # context is best-effort — never block the reply
+        log.warning("chat context build failed for %s: %s", provider.key, e)
+        ctx = ""
+    if ctx:
+        parts.append("=== LIVE CONTEXT (current app state) ===\n" + ctx)
     if recalled:
         parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append(
@@ -334,6 +344,109 @@ def _build_prompt(
         "change was requested) — no 'You:' prefix."
     )
     return "\n\n".join(parts)
+
+
+# --- Phase 3: threshold compaction -------------------------------------------
+# Instead of a sliding window (which shifts the cached prefix every turn), keep
+# the transcript append-only and, when the uncompacted tail exceeds a token
+# budget, fold its oldest half into a running summary in ONE pass. One cache
+# invalidation per compaction instead of one per turn; raw messages stay in the
+# thread JSON so it is always reversible.
+_COMPACT_TOKEN_THRESHOLD = 6000  # tokens of uncompacted tail before folding
+_CHARS_PER_TOKEN = 4
+
+
+def _est_tokens(msgs: list[dict]) -> int:
+    return sum(len(m.get("content", "")) for m in msgs) // _CHARS_PER_TOKEN
+
+
+def _fmt_turns(msgs: list[dict]) -> str:
+    out = []
+    for m in msgs:
+        who = "Operator" if m.get("role") == "user" else "Assistant"
+        out.append(f"{who}: {m.get('content', '')}")
+    return "\n\n".join(out)
+
+
+def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
+    prompt = (
+        "You are compacting a chat transcript to save context. Produce a concise running "
+        "summary that preserves decisions made, facts established, the operator's stated "
+        "preferences, and any open threads or unfinished tasks. Drop pleasantries and "
+        "redundant back-and-forth. Write plainly. No em-dashes, no emojis.\n\n"
+        + (f"=== EXISTING SUMMARY ===\n{prev_summary}\n\n" if prev_summary else "")
+        + f"=== NEW TURNS TO FOLD IN ===\n{_fmt_turns(to_fold)}\n\n"
+        "=== OUTPUT ===\nThe updated summary only, no preamble."
+    )
+    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU)
+    return (res.get("text") or "").strip()
+
+
+def _distill_sync(to_fold: list[dict]) -> list[str]:
+    prompt = (
+        "From the following chat turns, extract only DURABLE facts worth remembering long "
+        "term: the operator's stated preferences, decisions, commitments, and stable facts "
+        "about their projects or life. Ignore transient chit-chat and anything trivial. "
+        "Output each fact as one short plain line, no bullet characters, no em-dashes, no "
+        "emojis. If there is nothing durable, output nothing.\n\n"
+        f"=== TURNS ===\n{_fmt_turns(to_fold)}\n\n=== FACTS (one per line) ===\n"
+    )
+    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU)
+    lines = [ln.strip("-*• \t") for ln in (res.get("text") or "").splitlines()]
+    return [ln for ln in lines if ln and len(ln) > 8][:5]
+
+
+async def _distill(to_fold: list[dict], scope_key: str) -> None:
+    """Distillation (Phase 3): pull durable facts out of the turns being compacted
+    away and into the scope's `chat-distilled` note, so knowledge that would other
+    wise scroll out of context is retained and recallable. Best-effort, deduped,
+    size-capped. Never raises into the reply path."""
+    try:
+        facts = await asyncio.to_thread(_distill_sync, to_fold)
+        if not facts:
+            return
+        existing = knowledge.get_note(scope_key, "chat-distilled") or ""
+        have = {ln.strip().lstrip("- ").strip().lower() for ln in existing.splitlines() if ln.strip()}
+        fresh = [f for f in facts if f.strip().lower() not in have]
+        if not fresh:
+            return
+        prefix = existing.rstrip() + "\n" if existing.strip() else ""
+        body = (prefix + "\n".join(f"- {f}" for f in fresh))[-8000:]
+        await knowledge.put_note(scope_key, "chat-distilled", "Distilled from chats", body,
+                                 hook="facts auto-captured from chat compaction")
+    except Exception as e:
+        log.warning("chat distillation failed for %s: %s", scope_key, e)
+
+
+async def _maybe_compact(thread: dict, scope_key: str = "") -> tuple[str, list[dict]]:
+    """Append-until-threshold + one compaction pass. Returns (summary, recent
+    verbatim turns). Best-effort: any failure leaves the thread untouched and
+    returns the current (summary, tail), so a compaction hiccup never blocks a
+    reply or loses messages. On a successful fold it also distills durable facts
+    from the folded turns into the scope's knowledge (Phase 3)."""
+    msgs = thread.get("messages", [])
+    summary = thread.get("summary", "") or ""
+    ct = int(thread.get("compacted_through", 0) or 0)
+    if ct < 0 or ct > len(msgs):
+        ct = 0
+    tail = msgs[ct:]
+    if len(tail) < 6 or _est_tokens(tail) < _COMPACT_TOKEN_THRESHOLD:
+        return summary, tail
+    fold_n = len(tail) // 2
+    to_fold, keep = tail[:fold_n], tail[fold_n:]
+    try:
+        new_summary = await asyncio.to_thread(_summarize_sync, summary, to_fold)
+    except Exception as e:
+        log.warning("chat compaction failed for %s: %s", thread.get("id"), e)
+        return summary, tail
+    if not new_summary:
+        return summary, tail
+    thread["summary"] = new_summary
+    thread["compacted_through"] = ct + fold_n
+    chat_store.save_thread(thread)
+    if scope_key:
+        await _distill(to_fold, scope_key)
+    return new_summary, keep
 
 
 # Context-window windows per model (mirrors the frontend meter). Claude = 200k;
@@ -432,7 +545,13 @@ async def send_message(thread_id: str, body: PostMessage):
             recalled = "\n\n".join(blocks)[:2000]
         except Exception as e:
             log.warning("chat auto-recall failed for %s: %s", provider.key, e)
-    prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled)
+    # Threshold compaction (Phase 3): fold the oldest half of a long transcript
+    # into a running summary so the cached prefix stays stable and the window does
+    # not overflow. Data mode only (build agents keep their own session history).
+    summary = ""
+    if not is_build_mode:
+        summary, history = await _maybe_compact(t, provider.knowledge_scope())
+    prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled, summary=summary)
 
     # Persist the user's message first so it isn't lost if the model call fails.
     chat_store.append_message(thread_id, "user", content)
