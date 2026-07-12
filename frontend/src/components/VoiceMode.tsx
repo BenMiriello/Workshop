@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft, Mic, MicOff, Square, Play, X, Settings2, Loader, MessageSquare,
   AudioLines, SendHorizontal, Volume2, VolumeX,
@@ -42,7 +42,9 @@ export default function VoiceMode() {
   const { contextKey: raw = "" } = useParams();
   const contextKey = decodeURIComponent(raw);
   const navigate = useNavigate();
-  const { session, snapshot, prefs, updatePrefs } = useVoiceSession(contextKey);
+  const [searchParams] = useSearchParams();
+  const threadParam = searchParams.get("thread") || undefined;
+  const { session, snapshot, prefs, updatePrefs } = useVoiceSession(contextKey, undefined, threadParam);
   const [showSettings, setShowSettings] = useState(false);
   const [voices, setVoices] = useState<string[]>([]);
   const [mountCaps, setMountCaps] = useState<EngineCaps | null>(null);

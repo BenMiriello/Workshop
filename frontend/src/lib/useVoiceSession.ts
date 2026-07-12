@@ -15,25 +15,26 @@ import {
   type ReplyHandlers,
 } from "./voiceSession";
 
-export function useVoiceSession(contextKey: string, model?: string) {
+export function useVoiceSession(contextKey: string, model?: string, initialThreadId?: string) {
   const threadRef = useRef<string | null>(null);
   const prefsRef = useRef<VoicePrefs>({ ...DEFAULT_PREFS });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Ensure the resident worker + thread exist; returns the thread id. Prewarmed
-  // on mount so the process is up before the first utterance finishes.
+  // Ensure the resident worker + thread exist; returns the thread id. Binds an
+  // existing thread when launched from a chat (so the conversation continues),
+  // else the backend creates one. Prewarmed on mount.
   const ensureSession = useCallback(async (): Promise<string> => {
     if (threadRef.current) return threadRef.current;
     const r = await fetch("/api/voice/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_key: contextKey }),
+      body: JSON.stringify({ context_key: contextKey, thread_id: initialThreadId }),
     });
     if (!r.ok) throw new Error(`session ${r.status}`);
     const id = (await r.json()).thread_id as string;
     threadRef.current = id;
     return id;
-  }, [contextKey]);
+  }, [contextKey, initialThreadId]);
 
   // startReply: begin a streaming turn. Deltas arrive over SSE; the returned
   // handle cancels generation (barge-in). Falls back to the blocking /messages

@@ -1220,10 +1220,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {contextMeter}
         <span className="chat-actions__spacer" />
         <button
-          className="chat-slash-btn"
-          onClick={() => navigate(`/voice/${encodeURIComponent(contextKey)}`)}
+          className={`chat-slash-btn${build ? " is-disabled" : ""}`}
+          onClick={() => {
+            if (build) return;
+            const q = activeId ? `?thread=${encodeURIComponent(activeId)}` : "";
+            navigate(`/voice/${encodeURIComponent(contextKey)}${q}`);
+          }}
+          aria-disabled={build || undefined}
           aria-label="Voice mode"
-          title="Voice mode — talk instead of type"
+          title={build ? "Voice is available in assistant chats" : "Voice mode — talk instead of type"}
         >
           <AudioLines size={16} aria-hidden />
         </button>

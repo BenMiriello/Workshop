@@ -798,6 +798,8 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-slash-btn:hover { color: var(--fg); background: var(--card-hover); }
 .chat-slash-btn.is-active { color: var(--accent); background: var(--accent-soft); border-color: var(--accent); }
+.chat-slash-btn.is-disabled { opacity: 0.4; cursor: default; }
+.chat-slash-btn.is-disabled:hover { color: var(--muted); background: var(--bg-inset); }
 .chat-slash-menu {
   position: absolute; left: var(--space-3); right: var(--space-3);
   bottom: calc(100% - var(--space-1));
