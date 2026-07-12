@@ -110,6 +110,10 @@ export class VoiceSession {
   private interrupts = 0;
   private capturing = false;
   private listeners = new Set<() => void>();
+  // Cached immutable snapshot. Rebuilt only when state mutates (emit invalidates
+  // it). useSyncExternalStore compares with Object.is, so returning a stable
+  // reference between mutations is what keeps it from looping forever.
+  private _snapshot: VoiceSnapshot | null = null;
 
   constructor(cfg: VoiceConfig) {
     this.cfg = cfg;
@@ -121,10 +125,14 @@ export class VoiceSession {
     return () => this.listeners.delete(fn);
   }
   private emit() {
+    // Invalidate the cached snapshot so the next read rebuilds from live state,
+    // then notify. Between notifications snapshot() returns the same reference.
+    this._snapshot = null;
     for (const fn of this.listeners) fn();
   }
   snapshot(): VoiceSnapshot {
-    return {
+    if (this._snapshot) return this._snapshot;
+    this._snapshot = {
       state: this.state,
       level: this.level,
       partial: this.partial,
@@ -138,6 +146,7 @@ export class VoiceSession {
       error: this.error,
       interruptRate: this.turnCount ? this.interrupts / this.turnCount : 0,
     };
+    return this._snapshot;
   }
   private set(s: VoiceState) {
     this.state = s;
