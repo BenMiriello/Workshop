@@ -20,7 +20,7 @@ Binding for every change under `frontend/` (and `mobile/`). Full law: `frontend/
 4. **Categorical (agents, sources, series) uses `Tag` + `catFor(key)`**, not status colors.
 5. **lucide icons only, never emoji** (14px in labels/meta, 16px in buttons). `check_design.sh` fails on emoji.
 6. **Hierarchy from position/scale/weight/color, not borders.** One `PageHeader` per screen; group under
-   `SectionLabel`. 4px spacing grid (`--space-1..8`) — never invent `13px`.
+   `SectionLabel`. 4px spacing grid (`--space-1..8`), never invent `13px`.
 7. **Edit-mode for writes.** Config/money commit on an explicit Save via `useEditMode` + a sticky
    `ActionBar`. View prefs (theme, filters, source `<select>`, segmented view switch) commit on change.
 8. **Destructive actions get `ConfirmDialog`** naming the consequence. Never bare red text or one-tap delete.

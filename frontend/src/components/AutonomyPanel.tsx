@@ -127,7 +127,7 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
     try {
       const r = await fetch(`/api/projects/${slug}/autonomy/log?tail=300`);
       const d = await r.json();
-      setLogText(d.log || "(no output yet — run a sweep to populate)");
+      setLogText(d.log || "(no output yet. Run a sweep to populate.)");
     } catch (e) {
       setLogText(String(e));
     }
@@ -173,7 +173,7 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
           <StateBlock
             variant="error"
             title="Couldn't load autonomy config"
-            hint={<code>GET /api/projects/{slug}/autonomy — {err}</code>}
+            hint={<code>GET /api/projects/{slug}/autonomy: {err}</code>}
             action={<Button size="sm" onClick={load}>Retry</Button>}
           />
         ) : (
