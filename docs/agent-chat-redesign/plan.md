@@ -176,10 +176,12 @@ Verified against the running Letta server (v0.16.8) before building Phase 2:
   `/v1` (global_memory.py, supervisor.py, letta_legacy_client.py); Phase 2 should do the same for
   archives/passages and NOT depend on the shadowed SDK. (Optionally rename the local module later to
   unshadow the SDK, but that is a separate cleanup, not a Phase 2 dependency.)
-- **Open item to resolve first:** `POST /v1/passages/search` timed out at 15s in the probe. Before
-  building recall, confirm why (embedding config on the server / empty-store cold start / needs an
-  archive with passages first) and that a real search returns in reasonable time. This is the one
-  yellow flag; everything else is green.
+- **RESOLVED (2026-07-11):** the search-timeout was ONLY org-wide search (no archive_id), which our
+  design never uses. Scope-scoped search (`archive_id` set) returns in ~2s including local embedding.
+  The other gotcha: an archive MUST be created WITH an `embedding_config` or its passages are never
+  embedded and search returns []. The server embeds via a LOCAL model (Ollama `nomic-embed-text`,
+  768-dim) reachable from the Letta container, so real vectors need no external API. Full contract in
+  phase-2-spec.md; write->embed->semantic-search loop verified end to end.
 - Today: archival memory is per-agent, write/read only, NO search wired; memory-tree.yaml
   `archival_namespaces` are cosmetic labels with no Letta backing. Phase 2 gives them real backing
   (one archive per scope) and adds the search/recall path.

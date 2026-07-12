@@ -10,7 +10,7 @@ from deps_user import (
     require_domain_owner,
 )
 
-from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth, voice
+from routes import agents, projects, base_apps, finance, budget, plaid_webhook, relay, services, events, agent_runs, backlog, auto_pr, commute, location, owntracks, push, redaction, tools, health, autonomy, chat, birds, environment, worktrees, auth, voice, knowledge
 from services.supervisor import AgentSupervisor
 from services import global_memory, finance_cache, categorizer, ownership, auth_store
 from services import environment as environment_svc
@@ -200,6 +200,7 @@ _LOOPBACK = [Depends(require_loopback)]
 app.include_router(agent_runs.router, dependencies=_OPERATOR)  # before agents so /agents/runs wins over /agents/{agent_id}
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
+app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], dependencies=_OPERATOR)
 app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_OPERATOR)
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
 app.include_router(backlog.router, dependencies=_OPERATOR)

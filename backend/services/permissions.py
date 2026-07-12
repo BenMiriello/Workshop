@@ -463,3 +463,54 @@ def assistant_capabilities(app_id: str, identity: Any = OPERATOR) -> dict[str, A
         "actions": resolved,
         "reachable_apps": reachable_apps(ident, app_id, doc=doc),
     }
+
+
+# ---------------------------------------------------------------- knowledge scopes
+
+def _scope_sensitivity(scope_key: str) -> str:
+    """Sensitivity of a knowledge scope: private | shareable | public.
+
+    project:<slug> reads the project's registry sensitivity; workshop and
+    app:<name> default shareable; agent:<id> defaults private. Any parse/read
+    failure falls back to the safe-but-usable `shareable`."""
+    if scope_key == "workshop":
+        return "shareable"
+    kind, _, slug = scope_key.partition(":")
+    if kind == "project" and slug:
+        try:
+            root = Path(os.environ.get(
+                "WORKSHOP_PROJECTS_ROOT_NEW", str(Path.home() / "workshop" / "projects")))
+            reg = root.parent / "projects.json"
+            data = json.loads(reg.read_text())
+            rec = (data.get("projects") or {}).get(slug) or {}
+            return rec.get("sensitivity") or "shareable"
+        except Exception:
+            return "shareable"
+    if kind == "app":
+        return "shareable"
+    if kind == "agent":
+        return "private"
+    return "private"
+
+
+def can_recall(from_scope: str, target_scope: str) -> bool:
+    """Whether a chat in `from_scope` may auto-pull knowledge from `target_scope`.
+
+    This is context hygiene, NOT a security wall (the operator can always read any
+    scope directly through the knowledge API). It limits what one scope's chat
+    silently reaches into: same scope always; a public target always; a shareable
+    target only with a grants.json row {from, to, capability: "knowledge.read"};
+    a private target never (auto)."""
+    if from_scope == target_scope:
+        return True
+    sens = _scope_sensitivity(target_scope)
+    if sens == "public":
+        return True
+    if sens == "private":
+        return False
+    doc = load_grants()
+    for row in doc.get("grants") or []:
+        if (row.get("to") == target_scope and row.get("from") == from_scope
+                and row.get("capability") == "knowledge.read"):
+            return True
+    return False
