@@ -167,7 +167,14 @@ if DIST.is_dir():
             candidate = (DIST / full_path).resolve()
             if candidate.is_file() and candidate.is_relative_to(_DIST_ROOT):
                 return FileResponse(str(candidate))
+        # The SPA shell MUST always revalidate. Its <script> points at a
+        # content-hashed bundle; if a browser (or Cloudflare) heuristically caches
+        # this HTML, a deploy never reaches the client — they keep loading an old
+        # bundle. `no-cache` = "revalidate every time"; the ETag makes that a cheap
+        # 304 when unchanged. The hashed /assets are immutable by filename, so they
+        # stay long-cacheable and are untouched by this. This is the fix for the
+        # recurring "you deployed but I still see the old version".
         index = _DIST_ROOT / "index.html"
         if index.is_file():
-            return FileResponse(str(index))
+            return FileResponse(str(index), headers={"Cache-Control": "no-cache"})
         return JSONResponse({"detail": "frontend not built"}, status_code=503)
