@@ -421,14 +421,24 @@ a.ws-btn { text-decoration: none; }
 }
 .ws-modal {
   position: relative; z-index: var(--z-modal);
+  /* border-box so the max-height cap includes our padding — the modal is
+     portalled to <body>, outside `.ws-root`, so it doesn't inherit that reset. */
+  box-sizing: border-box;
+  display: flex; flex-direction: column;
   width: 100%; max-width: 30rem;
+  max-height: calc(100vh - var(--space-4) * 2);
+  max-height: calc(100dvh - var(--space-4) * 2);
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg); padding: var(--space-5);
   animation: ws-pop var(--dur-base) var(--ease-out);
 }
-.ws-modal__title { margin: 0 0 var(--space-2); font-size: var(--fs-lg); font-weight: var(--fw-semi); }
-.ws-modal__body { margin: 0 0 var(--space-5); color: var(--muted); font-size: var(--fs-base); line-height: var(--lh-base); }
-.ws-modal__actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.ws-modal--lg { max-width: 42rem; }
+.ws-modal__title { flex: 0 0 auto; margin: 0 0 var(--space-2); font-size: var(--fs-lg); font-weight: var(--fw-semi); }
+.ws-modal__body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin: 0 0 var(--space-5); color: var(--muted); font-size: var(--fs-base); line-height: var(--lh-base);
+}
+.ws-modal__actions { flex: 0 0 auto; display: flex; justify-content: flex-end; gap: var(--space-2); }
 .ws-modal--danger .ws-modal__title { color: var(--danger); }
 @keyframes ws-fade { from { opacity: 0; } }
 @keyframes ws-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
@@ -436,7 +446,11 @@ a.ws-btn { text-decoration: none; }
 /* mobile: sheet from bottom */
 @media (max-width: 560px) {
   .ws-overlay { align-items: flex-end; padding: 0; }
-  .ws-modal { max-width: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
+  .ws-modal, .ws-modal--lg {
+    max-width: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    max-height: calc(100vh - var(--space-6));
+    max-height: calc(100dvh - var(--space-6));
+  }
 }
 
 /* ---- STATE BLOCKS: loading / empty / error ------------------------------- */
@@ -916,16 +930,15 @@ a.ws-btn { text-decoration: none; }
   display: flex; flex-direction: column;
   padding: 0; overflow: hidden;
 }
-/* Focused chat owns its own chrome (the compact chat-toolbar with Back). The
-   global topnav above it must not add a tall band + a space-6 gap that pushes
-   the chat down and eats the viewport. Collapse it to a slim breadcrumb row and
-   drop the section-nav links (the chat toolbar already has Back + pickers). */
+/* Focused chat keeps the SAME top nav as every other page — breadcrumb + section
+   nav (inline links on desktop, hamburger on mobile) — so it never reads as a
+   different, chromeless surface. We only slim the vertical band + force one row
+   so it doesn't eat the chat's viewport; the nav itself (incl. the hamburger)
+   stays put. */
 .ws-app.ws-app--chatfull > .ws-topnav {
   padding: var(--space-2) var(--space-4);
   flex-wrap: nowrap;
 }
-.ws-app.ws-app--chatfull > .ws-topnav .ws-sectionnav-inline,
-.ws-app.ws-app--chatfull > .ws-topnav .ws-sectionnav-menu { display: none; }
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */
 /* Rendered markdown (Brief, Notes, assistant chat). Tight + calm: tokens only,
@@ -1072,47 +1085,11 @@ a.ws-btn { text-decoration: none; }
 }
 
 /* ── Voice mode ─────────────────────────────────────────────────────────────
-   Full-screen spoken-conversation surface. See components/VoiceMode.tsx and
-   docs/voice-mode/. Orb reacts to mic level via the --vlevel custom prop. */
-.ws-voice {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--bg);
-  padding: var(--space-4);
-  gap: var(--space-3);
-  overflow: hidden;
-}
-.ws-voice-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-.ws-voice-top-mid {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  min-width: 0;
-}
-.ws-voice-ctx {
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40vw;
-}
-.ws-voice-top-right { display: inline-flex; align-items: center; gap: var(--space-2); }
-
-.ws-voice-settings {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: min(84vw, 380px);
-}
+   Voice is a MODE of the chat (components/Chat.tsx), not a separate screen. What
+   remains here is the voice-settings sheet (rendered in the shared Modal) plus
+   the inline composer affordances: a compact state "orb" and the heard / speaking
+   / pending caption cues shown inside a normal assistant bubble. */
+.ws-voice-settings { display: flex; flex-direction: column; gap: var(--space-2); }
 .ws-voice-settings-group {
   font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--muted); font-weight: var(--fw-semi);
@@ -1124,144 +1101,45 @@ a.ws-btn { text-decoration: none; }
 .ws-voice-setting--row { flex-direction: row; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .ws-voice-hintline { font-size: var(--fs-xs); color: var(--muted); }
 .ws-voice-rangeends { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--faint); }
-.ws-range { accent-color: var(--accent); width: 160px; }
-.ws-voice-setting .ws-range { width: 100%; }
+.ws-range { accent-color: var(--accent); width: 100%; }
 
-.ws-voice-err { max-width: 520px; margin: 0 auto; width: 100%; }
-
-.ws-voice-stage {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  min-height: 0;
-}
-.ws-voice-orb {
+/* Inline composer state orb: same footprint as the other action buttons, round,
+   its ring reacting to mic level (--vlevel) and turn state. */
+.chat-voice-orb {
   position: relative;
-  width: 168px;
-  height: 168px;
-  border-radius: var(--radius-pill);
-  border: none;
-  cursor: pointer;
-  background: radial-gradient(circle at 50% 45%, var(--accent-soft), var(--card) 70%);
-  box-shadow: 0 0 0 1px var(--border), var(--shadow-md);
-  display: grid;
-  place-items: center;
-  transform: scale(calc(0.9 + (var(--vlevel, 0.15) * 0.18)));
-  transition: transform 90ms var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
-}
-.ws-voice-orb-core {
-  width: 92px;
-  height: 92px;
-  border-radius: var(--radius-pill);
-  display: grid;
-  place-items: center;
-  background: var(--card);
-  color: var(--accent);
-  box-shadow: var(--shadow-sm);
-}
-.ws-voice-orb.is-listening {
-  box-shadow: 0 0 0 1px var(--running), 0 0 calc(18px + var(--vlevel, 0) * 40px) var(--running-soft), var(--shadow-md);
-}
-.ws-voice-orb.is-listening .ws-voice-orb-core { color: var(--running); }
-.ws-voice-orb.is-speaking {
-  box-shadow: 0 0 0 1px var(--ok), 0 0 24px var(--ok-soft), var(--shadow-md);
-}
-.ws-voice-orb.is-speaking .ws-voice-orb-core { color: var(--ok); }
-.ws-voice-orb.is-thinking .ws-voice-orb-core,
-.ws-voice-orb.is-connecting .ws-voice-orb-core { color: var(--muted); }
-.ws-voice-orb:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring), var(--shadow-md); }
-
-.ws-voice-hint {
-  color: var(--muted);
-  font-size: var(--fs-md);
-  text-align: center;
-  max-width: 560px;
-  min-height: 1.4em;
-  padding: 0 var(--space-3);
-}
-
-.ws-voice-transcript {
-  width: 100%;
-  max-width: 680px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  max-height: 34vh;
-  overflow-y: auto;
-}
-.ws-voice-line { display: flex; gap: var(--space-2); font-size: var(--fs-md); line-height: var(--lh-base); }
-.ws-voice-who {
-  flex: 0 0 auto;
-  font-size: var(--fs-xs);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--faint);
-  padding-top: 3px;
-  width: 44px;
-}
-.ws-voice-line--you { color: var(--fg); }
-.ws-sent-heard { color: var(--fg); }
-.ws-sent-now { color: var(--accent); font-weight: var(--fw-medium); }
-.ws-sent-pending { color: var(--muted); }
-
-.ws-voice-queue {
-  width: 100%;
-  max-width: 680px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.ws-voice-threads { display: flex; flex-direction: column; gap: var(--space-1); }
-.ws-voice-thread {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-}
-.ws-voice-thread-topic { font-size: var(--fs-sm); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-voice-thread-actions { display: inline-flex; gap: var(--space-1); flex: 0 0 auto; }
-
-.ws-voice-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  color: var(--faint);
-  font-size: var(--fs-xs);
-}
-.ws-voice-provider { font-family: var(--font-mono); }
-
-/* Composer: type instead of (or alongside) talking. */
-.ws-voice-composer { display: flex; flex-direction: column; gap: var(--space-1); }
-.ws-voice-ghost {
-  font-size: var(--fs-sm); color: var(--muted); font-style: italic;
-  padding: 0 var(--space-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ws-voice-composer-row { display: flex; align-items: flex-end; gap: var(--space-2); }
-.ws-voice-input { flex: 1; min-height: 38px; max-height: 140px; resize: none; }
-.ws-voice-mode {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 38px; height: 38px; flex: none;
-  border: 1px solid var(--border); border-radius: var(--radius-md);
-  background: var(--field-bg); color: var(--muted); cursor: pointer;
+  width: 2.1rem; height: 2.1rem; padding: 0; flex: none;
+  border-radius: var(--radius-pill); cursor: pointer;
+  background: var(--bg-inset); color: var(--muted); border: 1px solid var(--border);
+  transition: box-shadow 90ms var(--ease-out), color var(--dur-base) var(--ease-out);
 }
-.ws-voice-mode:hover { color: var(--fg); }
-.ws-voice-mode:focus-visible { box-shadow: var(--focus-ring); }
-.ws-voice-mode.is-active { color: var(--accent); border-color: var(--accent); }
+.chat-voice-orb:hover { color: var(--fg); }
+.chat-voice-orb:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.chat-voice-orb.is-listening {
+  color: var(--running); border-color: var(--running);
+  box-shadow: 0 0 0 1px var(--running), 0 0 calc(3px + var(--vlevel, 0) * 14px) var(--running-soft);
+}
+.chat-voice-orb.is-speaking { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
+.chat-voice-orb.is-thinking,
+.chat-voice-orb.is-connecting { color: var(--muted); }
+
+/* Live spoken-turn caption cues, inside a normal assistant bubble. */
+.chat-voice-live { display: inline; }
+.chat-voice-heard { color: inherit; }
+.chat-voice-now { color: var(--accent); font-weight: var(--fw-medium); }
+.chat-voice-pending { color: var(--muted); }
+
+/* Partial transcript ghost above the composer while listening. */
+.chat-voice-ghost {
+  font-size: var(--fs-sm); color: var(--muted); font-style: italic;
+  padding: 0 var(--space-1) var(--space-1);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .ws-spin { animation: ws-spin 1s linear infinite; }
 @keyframes ws-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
-  .ws-voice-orb { transform: none !important; transition: none; }
+  .chat-voice-orb { transition: none; }
   .ws-spin { animation-duration: 2.4s; }
 }
