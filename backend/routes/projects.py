@@ -36,8 +36,10 @@ PROJECTS_ROOT = Path(os.environ.get(
 REGISTRY = PROJECTS_ROOT.parent / "projects.json"
 TEMPLATES_ROOT = PROJECTS_ROOT / "_templates"
 
-# Slug discipline: kebab-case, alphanumeric + dashes, max 48 chars.
-SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
+# Slug discipline: kebab-case, alphanumeric + dashes, max 48 chars. A leading
+# digit is fine ("3d-printer"): the frontend slugify produces it and it is valid
+# as a directory name and a route segment.
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 
 State = Literal["sketch", "wip", "mounted", "shared", "published", "parked", "retired"]
 Sensitivity = Literal["private", "shareable", "public"]

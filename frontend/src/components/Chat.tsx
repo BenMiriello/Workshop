@@ -18,7 +18,7 @@ import {
   type AgentTaskStatus,
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
-import { UiCard, splitUiCards, hasUiCard } from "./chat/UiCard";
+import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
 
 // Unified Chat component. Replaces ChatPanel + BuildChatPanel.
@@ -216,14 +216,18 @@ function ElidedContent({
 // renders as an interactive <UiCard/>, interleaved in order. A ui-card message
 // is intentionally interactive, so its markdown runs are not elided (the card
 // must stay fully visible). Works identically for a live-streamed answer and a
-// stored message on reload, because both flow through here.
+// stored message on reload, because both flow through here. While the answer
+// is still streaming, a not-yet-closed ```ui-card fence renders as a skeleton
+// placeholder instead of flashing the half-written JSON; once the stream ends
+// (or on a stored message) an unclosed fence falls back to plain markdown.
 function AnswerBody({
-  source, cfg, expanded, cardCtx,
+  source, cfg, expanded, cardCtx, streaming,
 }: {
   source: string;
   cfg: ModelDisplay;
   expanded?: boolean;
   cardCtx: UiCardCtx;
+  streaming?: boolean;
 }) {
   if (!hasUiCard(source)) {
     return <ElidedContent source={source} cfg={cfg} expanded={expanded} render={(s) => <Markdown>{s}</Markdown>} />;
@@ -231,11 +235,13 @@ function AnswerBody({
   const parts = splitUiCards(source);
   return (
     <>
-      {parts.map((p, i) =>
-        p.t === "md"
-          ? (p.text.trim() ? <Markdown key={i}>{p.text}</Markdown> : null)
-          : <UiCard key={i} spec={p.spec} raw={p.raw} ctx={cardCtx} />,
-      )}
+      {parts.map((p, i) => {
+        if (p.t === "md") return p.text.trim() ? <Markdown key={i}>{p.text}</Markdown> : null;
+        if (p.t === "open") {
+          return streaming ? <UiCardPending key={i} /> : <Markdown key={i}>{p.text}</Markdown>;
+        }
+        return <UiCard key={i} spec={p.spec} raw={p.raw} ctx={cardCtx} />;
+      })}
     </>
   );
 }
@@ -279,7 +285,7 @@ function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boo
 // An assistant turn: split the trailing run of text (the answer) from the work
 // (tools + interim thinking). The answer renders fully on the most recent turn
 // and is elided on older ones; the work collapses per WorkSteps.
-function AssistantTurn({ segments, isLatest, model, cardCtx }: { segments: ChatSegment[]; isLatest: boolean; model?: string; cardCtx: UiCardCtx }) {
+function AssistantTurn({ segments, isLatest, model, cardCtx, streaming }: { segments: ChatSegment[]; isLatest: boolean; model?: string; cardCtx: UiCardCtx; streaming?: boolean }) {
   const cfg = modelDisplay(model);
   let cut = segments.length;
   while (cut > 0 && segments[cut - 1].t === "text") cut--;
@@ -290,7 +296,7 @@ function AssistantTurn({ segments, isLatest, model, cardCtx }: { segments: ChatS
       {work.length > 0 && <WorkSteps work={work} isLatest={isLatest} cfg={cfg} />}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (
-          <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} />
+          <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} streaming={streaming} />
         ) : null,
       )}
     </>
@@ -970,7 +976,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         <div className="chat-msg assistant">
           <div className="chat-bubble">
             {pendingSegments.length > 0 && (
-              <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} cardCtx={cardCtx} />
+              <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} cardCtx={cardCtx} streaming />
             )}
             {(streaming || busy) && <span className="chat-typing" aria-label="working">•••</span>}
           </div>

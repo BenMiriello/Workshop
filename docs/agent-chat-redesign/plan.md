@@ -145,7 +145,7 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
 
 ## Phased plan
 
-- **Phase 1 (start here):** general interactive in-chat UI primitive layer; apply it to project
+- **Phase 1 (BUILT + verified 2026-07-11, commit 37f1e39 on branch agent-chat-phase-1):** general interactive in-chat UI primitive layer; apply it to project
   creation as an editable card; build-with-chat general-blank-project mode; builder page cleanup
   (placeholders, template unification, copy fix); re-key conversion as a small add-on. Files:
   chat_context.py, ProjectNew.tsx, routes/projects.py, ChatPanel/Chat message renderer,
@@ -153,7 +153,10 @@ exist -> suffix the thread id, not the key. Minor path, only on explicit ask.
 - **Phase 2:** knowledge scopes + notes baseline + Letta-per-scope sync + `recall` + knowledge
   interface + knowledge.read/write grants. (What the future notes app plugs into.)
 - **Phase 3:** context engine for assistants (cache reorder + threshold compaction + distillation).
-  Depends on Phase 2.
+  Only the distillation write-path depends on Phase 2; the cache reorder + threshold compaction are
+  independent and are the direct token-cost payoff (the live_context-mid-prompt and sliding-window
+  bugs burn cache on every turn today), so they may ship before or alongside Phase 2 if ordering
+  pressure appears.
 - **Phase 4:** per-project autonomy (generalized Ralph). Independent, can follow Phase 1.
 - **Phase 5:** skills (SKILL.md dirs, builder auto-discovery, assistant loader).
 - **Phase 6:** voice modality toggle. Builder voice parked.

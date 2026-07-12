@@ -98,10 +98,20 @@ UI_CARD_PROTOCOL = (
     "and `sensitivity` render the standard project controls and need no options. "
     "`help` is an optional one-line hint. `actions[].id` names a handler the "
     "client already knows for that card `kind` (e.g. createProject / dismiss); "
-    "`variant` is primary | ghost | danger. Emit a card ONLY when the operator is "
-    "actually ready to take the action it represents, never unprompted and never "
-    "as decoration. Explain the action in plain words next to the card, and emit "
-    "at most one card per reply."
+    "`variant` is primary | ghost | danger. Only use a card `kind` your "
+    "instructions describe; do not invent kinds (an unknown kind renders as a "
+    "dead read-only card). Emit a card ONLY when the operator is actually ready "
+    "to take the action it represents, never unprompted and never as decoration. "
+    "Explain the action in plain words next to the card, and emit at most one "
+    "card per reply."
+)
+
+# Platform-wide reply style. The operator's standing rule: no em-dashes and no
+# emojis anywhere, including chat replies. Appended to every assistant preamble.
+_STYLE_RULE = (
+    "=== STYLE ===\n"
+    "Write plainly and directly. Never use em-dashes (rephrase with a comma, "
+    "period, colon, or parentheses) and never use emojis, in any reply."
 )
 
 
@@ -134,6 +144,7 @@ def role_preamble(
             "context only; if an action is needed, tell the operator the exact "
             "steps to take or offer to draft the text for them."
             + "\n\n" + UI_CARD_PROTOCOL
+            + "\n\n" + _STYLE_RULE
         )
     where = cwd or "the working directory"
     tools = tool_summary or (
@@ -173,6 +184,7 @@ def role_preamble(
         "run commands, and search the project.\n\n"
         + egress
         + "\n\n" + UI_CARD_PROTOCOL
+        + "\n\n" + _STYLE_RULE
     )
 
 

@@ -224,6 +224,11 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     provider = chat_context.get_provider(new_key)
     if provider.key != new_key:
         raise HTTPException(400, f"unknown context_key: {new_key}")
+    # A project: key constructs a provider for ANY slug, so also require the
+    # project to actually exist on disk; otherwise the re-keyed thread would be
+    # a builder chat over a nonexistent cwd that fails on its next turn.
+    if isinstance(provider, chat_context.ProjectContextProvider) and not provider.dir.exists():
+        raise HTTPException(400, f"unknown project: {new_key.split(':', 1)[1]}")
 
     old_key = t.get("context_key")
     if new_key != old_key:

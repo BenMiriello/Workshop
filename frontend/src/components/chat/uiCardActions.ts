@@ -31,6 +31,7 @@ export type UiCardField = {
   type?: UiCardFieldType;
   value?: string;
   options?: UiCardSelectOption[];
+  help?: string; // optional one-line hint, rendered under the control
 };
 
 export type UiCardActionVariant =
@@ -79,12 +80,14 @@ export type CardResult =
 
 export type UiCardHandler = (state: CardState, ctx: UiCardCtx) => Promise<CardResult>;
 
-// Shared kebab slugify — the same rule ProjectNew uses for directory/route
-// slugs, kept in one place so the card and the builder page can't drift.
+// Shared kebab slugify (ProjectNew imports this too, so the card and the
+// builder page can't drift). Collapses runs of separators to one dash; the
+// backend accepts `[a-z0-9][a-z0-9-]*` up to 48 chars.
 export const slugify = (s: string): string =>
   s
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48);
 
@@ -119,14 +122,18 @@ const createProject: UiCardHandler = async (state) => {
     };
   }
   if (r.status === 409) {
-    // Slug already exists — treat as an idempotent success so a re-submit after
-    // reload does not error. Offer Open only (nothing was newly created).
+    // Slug already exists: treat as an idempotent success so a re-submit after
+    // reload does not error. The common 409 is exactly that resubmit, so offer
+    // the same follow-ups as a fresh create (Open + Move chat).
     return {
       status: "success",
       slug,
       title,
       note: "Project already exists.",
-      actions: [{ id: "openProject", label: "Open project", variant: "primary" }],
+      actions: [
+        { id: "openProject", label: "Open project", variant: "primary" },
+        { id: "moveChatToProject", label: "Move chat into project", variant: "default" },
+      ],
     };
   }
   return { status: "error", message: `${r.status} ${await r.text()}` };

@@ -18,11 +18,12 @@ import {
   type SegmentedOption,
 } from "../ui";
 import type { ProjectSensitivity } from "@shared/types";
+import { slugify } from "../components/chat/uiCardActions";
 
 // New-project flow. Single form. Submits to POST /api/projects/ which
 // scaffolds from the chosen template, writes the brief into PROJECT.md,
 // auto-git-inits, registers, and returns the project. Templates render purely
-// from GET /api/projects/templates — the backend is the single source of
+// from GET /api/projects/templates: the backend is the single source of
 // truth for which templates exist and what they're labeled/hinted.
 
 type TemplateInfo = { slug: string; label: string; hint: string };
@@ -32,9 +33,6 @@ const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "shareable", label: "Shareable" },
   { value: "public", label: "Public" },
 ];
-
-const slugify = (s: string) =>
-  s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 
 // Best-effort preview of the PROJECT.md the backend will write, mirroring
 // _scaffold_blank / _scaffold_from_template in backend/routes/projects.py:
@@ -170,7 +168,7 @@ export default function ProjectNew() {
               <StateBlock
                 variant="error"
                 title="Couldn't load templates"
-                hint={<code>GET /api/projects/templates — {templatesErr}</code>}
+                hint={<code>GET /api/projects/templates: {templatesErr}</code>}
                 action={<Button size="sm" onClick={loadTemplates}>Retry</Button>}
               />
             ) : (
@@ -180,7 +178,7 @@ export default function ProjectNew() {
               >
                 {templates.map((t) => (
                   <option key={t.slug} value={t.slug}>
-                    {t.label}{t.hint ? ` — ${t.hint}` : ""}
+                    {t.label}{t.hint ? ` · ${t.hint}` : ""}
                   </option>
                 ))}
               </Select>

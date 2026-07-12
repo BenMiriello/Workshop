@@ -1,4 +1,4 @@
-// UiCard — the interactive in-chat UI primitive.
+// UiCard: the interactive in-chat UI primitive.
 //
 // A provider's model can emit a ```ui-card fenced JSON block inside its reply.
 // The chat renderer (Chat.tsx) extracts each block and renders it here as an
@@ -44,9 +44,14 @@ import {
 // A parsed answer is an ordered list of markdown runs and ui-card blocks. A
 // card whose JSON fails to parse keeps `spec: null` and its `raw` body so the
 // renderer can show an inert fallback without losing the original content.
+// An `open` part is a trailing ```ui-card fence with no closing fence yet:
+// while an answer is still streaming the renderer shows a placeholder instead
+// of flashing the half-written JSON; on a stored (finished) message it renders
+// as plain markdown so a cut-off reply loses nothing.
 export type AnswerPart =
   | { t: "md"; text: string }
-  | { t: "card"; spec: UiCardSpec | null; raw: string };
+  | { t: "card"; spec: UiCardSpec | null; raw: string }
+  | { t: "open"; text: string };
 
 const UI_CARD_FENCE = /```ui-card[^\n]*\r?\n([\s\S]*?)```/g;
 
@@ -72,9 +77,33 @@ export function splitUiCards(text: string): AnswerPart[] {
     parts.push({ t: "card", spec, raw: m[1] });
     last = m.index + m[0].length;
   }
-  if (last < text.length) parts.push({ t: "md", text: text.slice(last) });
+  if (last < text.length) {
+    // Every closed block was consumed above, so any ```ui-card left in the
+    // tail is an unclosed fence (mid-stream, or a cut-off reply).
+    const rest = text.slice(last);
+    const open = rest.indexOf("```ui-card");
+    if (open !== -1) {
+      if (open > 0) parts.push({ t: "md", text: rest.slice(0, open) });
+      parts.push({ t: "open", text: rest.slice(open) });
+    } else {
+      parts.push({ t: "md", text: rest });
+    }
+  }
   if (parts.length === 0) parts.push({ t: "md", text });
   return parts;
+}
+
+// Placeholder for a card whose fenced block is still streaming in.
+export function UiCardPending() {
+  return (
+    <Card>
+      <Stack gap="sm">
+        <Skeleton width="32%" />
+        <Skeleton width="100%" />
+        <Skeleton width="58%" />
+      </Stack>
+    </Card>
+  );
 }
 
 // ---- Template field: its own fetch + four states ---------------------------
@@ -116,13 +145,9 @@ function TemplateField({
         <StateBlock
           variant="error"
           title="Couldn't load templates."
-          hint={
-            <Stack gap="sm">
-              <span className="ws-mono">GET /api/projects/templates</span>
-              <Row>
-                <Button size="sm" variant="ghost" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>
-              </Row>
-            </Stack>
+          hint={<span className="ws-mono">GET /api/projects/templates</span>}
+          action={
+            <Button size="sm" variant="ghost" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>
           }
         />
       </Field>
@@ -136,11 +161,11 @@ function TemplateField({
     );
   }
   return (
-    <Field label={label}>
+    <Field label={label} help={field.help}>
       <Select value={value} onChange={(e) => onChange(e.target.value)}>
         {templates.map((t) => (
           <option key={t.slug} value={t.slug}>
-            {t.label}{t.hint ? ` — ${t.hint}` : ""}
+            {t.label}{t.hint ? ` · ${t.hint}` : ""}
           </option>
         ))}
       </Select>
@@ -165,16 +190,17 @@ function CardField({
   onChange: (v: string) => void;
 }) {
   const label = field.label || field.name;
+  const help = field.help;
   switch (field.type) {
     case "textarea":
       return (
-        <Field label={label}>
+        <Field label={label} help={help}>
           <Textarea value={value} rows={6} onChange={(e) => onChange(e.target.value)} />
         </Field>
       );
     case "slug":
       return (
-        <Field label={label} help="kebab-case · used as the directory name + route segment">
+        <Field label={label} help={help || "kebab-case · used as the directory name + route segment"}>
           <Input value={value} spellCheck={false} onChange={(e) => onChange(slugify(e.target.value))} />
         </Field>
       );
@@ -182,7 +208,7 @@ function CardField({
       return <TemplateField field={field} value={value} onChange={onChange} />;
     case "sensitivity":
       return (
-        <Field label={label}>
+        <Field label={label} help={help}>
           <Segmented
             options={SENSITIVITY_OPTIONS}
             value={value || "shareable"}
@@ -193,7 +219,7 @@ function CardField({
       );
     case "select":
       return (
-        <Field label={label}>
+        <Field label={label} help={help}>
           <Select value={value} onChange={(e) => onChange(e.target.value)}>
             {(field.options || []).map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -203,7 +229,7 @@ function CardField({
       );
     default:
       return (
-        <Field label={label}>
+        <Field label={label} help={help}>
           <Input value={value} onChange={(e) => onChange(e.target.value)} />
         </Field>
       );

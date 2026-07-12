@@ -1,5 +1,10 @@
 # Phase 1 build spec — general in-chat UI primitives + project creation + builder cleanup
 
+Status: BUILT + verified 2026-07-11 (commit 37f1e39, branch agent-chat-phase-1), then a design-review
+refinement pass the same day. The spec below is the build contract as written; the "As built"
+section at the end records where the implementation deliberately diverges and what the refinement
+pass changed. Read both before extending Phase 1 code.
+
 Authoritative implementation spec for Phase 1 of the agent/chat/knowledge/builder redesign
 (`plan.md`). Complete and specific enough to hand to implementation subagents. Grounded in the real
 code as of 2026-07-11.
@@ -269,3 +274,37 @@ new `frontend/src/components/chat/UiCard.tsx` and a small registry module.
 - Browser (Playwright): new-project chat conversation -> card -> create -> open; /projects/new at 3
   widths with real content, create from a template, land on detail with Start building.
 - Design gate: `bash scripts/check_design.sh` clean; `cd frontend && npx tsc --noEmit` clean.
+
+---
+
+## As built (deviations from the spec above + the review-pass refinements)
+
+Deliberate divergences made during the build:
+- **Blank scaffold brief stands alone.** Spec E.2 said keep the brief under `## Goal` for `blank`;
+  as built, a supplied brief becomes the PROJECT.md body on its own (the new-project chat already
+  writes a structured Goals/Constraints/Open-questions brief, so forcing the skeleton duplicated
+  headings). The skeleton is only written when no brief is given.
+- **Field schema has an optional `help`** (one-line hint rendered under the control). The A.1 table
+  omits it; `UI_CARD_PROTOCOL` and `UiCardField` both carry it.
+- **`UI_CARD_PROTOCOL` is appended to BOTH role preambles** (data-mode and builder), so builder chats
+  can also emit cards. Any provider without card guidance in its persona is told never to emit
+  unprompted and never to invent a `kind` (unknown kinds render as an inert read-only card).
+- **`template.json` carries a `substitutions` key.** Informational only: the scaffold always
+  substitutes all three tokens. The manifest file itself is deleted from the scaffolded copy.
+- **`new-project` defaults to the sonnet tier** (proposal shaping wants the reasoning), selectable
+  down to haiku in the composer.
+- **Rescope response** returns a full thread summary (id, keys, provenance, counts), duplicating the
+  chat_store summary shape rather than reusing it (candidate refactor, see report).
+
+Review-pass refinements (2026-07-11, after 37f1e39):
+- **Streaming placeholder:** a not-yet-closed ```ui-card fence in a streaming answer renders as a
+  skeleton card (`UiCardPending`) instead of flashing the half-written JSON; on a stored message an
+  unclosed fence falls back to plain markdown so nothing is hidden.
+- **409 parity:** `createProject` on 409 offers the same follow-ups as a fresh create (Open + Move
+  chat), since the common 409 is a resubmit-after-reload of a card that already created the project.
+- **Slug rules:** shared `slugify` (uiCardActions.ts, imported by ProjectNew so the two can't drift)
+  collapses runs of separators; backend `SLUG_RE` accepts a leading digit (`3d-printer`).
+- **Rescope validation:** `project:<slug>` targets must exist on disk (400 otherwise); a provider is
+  constructible for any slug, so provider resolution alone was not enough.
+- **`help` rendered** in every card field; template option labels use `·` separators (no em-dashes in
+  UI copy).
