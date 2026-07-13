@@ -70,6 +70,14 @@ npx expo prebuild -p ios --clean
 # 4. Node path for the Release JS bundler (nvm node isn't on Xcode's build PATH).
 echo "export NODE_BINARY=$(command -v node)" > ios/.xcode.env.local
 
+# 4b. Force the Run action to Release so the Xcode-GUI path also embeds the JS
+#     bundle. A fresh Expo prebuild defaults Run to Debug, which produces the
+#     "No bundle URL present" error on device (it expects a Metro packager). We
+#     want standalone Release either way.
+for scheme in ios/*.xcodeproj/xcshareddata/xcschemes/*.xcscheme; do
+  [ -f "$scheme" ] && sed -i '' 's/buildConfiguration = "Debug"/buildConfiguration = "Release"/g' "$scheme"
+done
+
 # 5. Resolve the generated workspace + scheme (their names track the app name).
 WS=$(ls -d ios/*.xcworkspace | head -1)
 SCHEME=$(basename "$WS" .xcworkspace)
