@@ -33,18 +33,51 @@ from fastapi import Depends, FastAPI
 
 from deps_auth import require_internal_caller
 from deps_user import require_user, require_domain_owner
-from routes import (
-    birds,
-    budget,
-    commute,
-    environment,
-    finance,
-    health,
-    location,
-    owntracks,
-    plaid_webhook,
-)
+import importlib
+
 from services import installed_apps
+
+
+# The catalog is the platform's built-in app LIBRARY — but Workshop is a
+# container, and a given instance may not ship every built-in app's route module
+# (a slimmed build, or a downstream that removed apps it doesn't use). So import
+# each app module TOLERANTLY: a missing one must not break the whole catalog.
+# Missing modules get a placeholder so the catalog literal below still
+# constructs; the affected apps are then dropped from BUILTIN_APPS (see the
+# filter after the literal), so nothing can install, mount, or list them.
+class _MissingApp:
+    """Stand-in for an app route module this instance does not ship. Attribute
+    access returns an empty router so the catalog literal constructs; the app is
+    dropped from the catalog immediately after, so this is never mounted."""
+
+    def __getattr__(self, _name: str):
+        from fastapi import APIRouter
+        return APIRouter()
+
+
+def _app_module(name: str):
+    try:
+        return importlib.import_module(f"routes.{name}")
+    except ModuleNotFoundError:
+        return None
+
+
+_APP_MODULE_NAMES = (
+    "birds", "budget", "commute", "environment", "finance",
+    "health", "location", "owntracks", "plaid_webhook",
+)
+# Real module, or None when this instance doesn't ship it.
+_MODS = {name: _app_module(name) for name in _APP_MODULE_NAMES}
+# Names bound for the catalog literal below; missing => harmless placeholder.
+birds = _MODS["birds"] or _MissingApp()
+budget = _MODS["budget"] or _MissingApp()
+commute = _MODS["commute"] or _MissingApp()
+environment = _MODS["environment"] or _MissingApp()
+finance = _MODS["finance"] or _MissingApp()
+health = _MODS["health"] or _MissingApp()
+location = _MODS["location"] or _MissingApp()
+owntracks = _MODS["owntracks"] or _MissingApp()
+plaid_webhook = _MODS["plaid_webhook"] or _MissingApp()
 
 log = logging.getLogger("workshop.apps")
 
@@ -328,6 +361,26 @@ BUILTIN_APPS: dict[str, AppSpec] = {
             "needs": [],
         },
     ),
+}
+
+
+# Drop any built-in whose required route module(s) this instance doesn't ship, so
+# nothing downstream (identity manifests, launcher, install) can reference an app
+# that isn't actually here. A built-in with no route module (e.g. an external app)
+# has no requirement and always stays. This is what makes the catalog degrade
+# gracefully instead of the module failing to import on a slimmed/downstream build.
+_REQUIRED_MODULES: dict[str, tuple[str, ...]] = {
+    "finance": ("finance", "plaid_webhook"),
+    "budget": ("budget",),
+    "commute": ("commute",),
+    "location": ("location", "owntracks"),
+    "birds": ("birds", "environment"),
+    "health": ("health",),
+}
+BUILTIN_APPS = {
+    _aid: _spec
+    for _aid, _spec in BUILTIN_APPS.items()
+    if all(_MODS.get(_m) is not None for _m in _REQUIRED_MODULES.get(_aid, ()))
 }
 
 
