@@ -41,8 +41,15 @@ log = logging.getLogger("workshop.llm_router")
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:32b")
-CLAUDE_CLI = os.environ.get("CLAUDE_CLI", "/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude")
-AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", "/home/clawd-a/.config/clawdbot/auth.env")
+# Cloud chat shells out to the `claude` CLI. Per-deployment and portable: honor
+# an explicit CLAUDE_CLI, else resolve `claude` on PATH, else bare "claude".
+# Under systemd --user the PATH can be minimal (no ~/.local/bin), so a local
+# build should set CLAUDE_CLI explicitly on its service. See
+# docs/simonsays-local-instance.md.
+CLAUDE_CLI = os.environ.get("CLAUDE_CLI") or shutil.which("claude") or "claude"
+# Optional extra env for the subprocess (e.g. an API key). Missing file is fine —
+# a CLI already logged in (its own ~/.claude creds) needs nothing here.
+AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", str(Path.home() / ".config" / "workshop" / "auth.env"))
 
 # Tier model handles (claude -p --model arg)
 TIER_HAIKU = "claude-haiku-4-5-20251001"
@@ -316,7 +323,8 @@ _MCP_BLOCK_STARTUP_ENV = {"MCP_CONNECTION_NONBLOCKING": "false"}
 # here: each is registered by the app that needs it (e.g. the plaid server by the
 # finance/budget apps) and is available only when that app is installed. See
 # services/app_registry.installed_mcp_servers. A server appears only if some
-# provider's allowed_tools needs it AND its app is installed.
+# provider's allowed_tools needs it AND its app is installed. (This landed the
+# migration the previous NOTE anticipated — queue f963c8e.)
 def _mcp_server_specs() -> dict[str, dict]:
     # Lazy import breaks the app_registry <-> llm_router module cycle.
     from services import app_registry
@@ -329,7 +337,7 @@ def call_cloud(
     model: str = TIER_HAIKU,
     max_turns: int = 6,
     timeout_s: float = 600,
-    cwd: str = str(Path.home() / "workshop"),
+    cwd: str = os.environ.get("WORKSHOP_CHAT_CWD", str(Path.home())),
     tools_disabled: bool = False,
     allowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,

@@ -19,6 +19,7 @@ from services import global_memory, app_registry, installed_apps
 from letta_legacy_client import LettaClient
 import asyncio
 import logging
+import os
 
 log = logging.getLogger("workshop.main")
 
@@ -155,19 +156,23 @@ app.include_router(tools.router, dependencies=[Depends(require_internal_caller)]
 app.include_router(auth.router)
 
 
-@app.get("/")
-async def root_redirect(request: Request):
-    """Tailscale Serve mounts the backend at :443/ so /api/* works for
-    Owntracks etc. The bare URL `https://debian.tail38e62e.ts.net/` (no
-    port) just redirects to Workshop at :8443 — each app lives at its
-    own port like a normal self-hosted service.
+# Browser-facing origin for the Workshop SPA (e.g. a Tailscale Serve HTTPS URL).
+# Per-deployment; empty by default so a fresh clone never bounces callers to
+# another instance's hostname. clawd-a sets WORKSHOP_CANONICAL_ORIGIN on its
+# service to preserve the existing tailnet redirect.
+CANONICAL_ORIGIN = os.environ.get("WORKSHOP_CANONICAL_ORIGIN", "").rstrip("/")
 
-    If someone hits us at the raw Tailscale IP over HTTP (insecure
-    context), bounce them to the canonical magicdns HTTPS URL first."""
-    host = request.headers.get("host", "")
-    if "tail38e62e.ts.net" not in host:
-        return RedirectResponse(url="https://debian.tail38e62e.ts.net:8443/", status_code=302)
-    return RedirectResponse(url="https://debian.tail38e62e.ts.net:8443/", status_code=302)
+
+@app.get("/")
+async def root_redirect():
+    """The backend can also be reached at a site root (e.g. mounted at :443/ by
+    Tailscale Serve so /api/* works for external callers). Bounce the bare root
+    to the browser-facing Workshop SPA origin when one is configured
+    (WORKSHOP_CANONICAL_ORIGIN); with none set there is nothing to redirect to,
+    so just report liveness."""
+    if CANONICAL_ORIGIN:
+        return RedirectResponse(url=CANONICAL_ORIGIN + "/", status_code=302)
+    return {"ok": True, "service": "workshop-backend"}
 
 
 @app.get("/healthz")

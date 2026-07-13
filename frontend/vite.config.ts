@@ -84,21 +84,30 @@ const serviceWorkerKillSwitchMiddleware = (): PluginOption => ({
   },
 });
 
-// HTTP-IP → HTTPS-magicdns redirect. iOS Safari refuses geolocation on
-// insecure origin (raw Tailscale IP over HTTP). Bounce stale bookmarks to
-// the canonical Tailscale Serve HTTPS port for Workshop (8443).
-const WORKSHOP_HTTPS_ORIGIN = "https://debian.tail38e62e.ts.net:8443";
+// Per-deployment origin config. Empty by default so a fresh clone runs locally
+// without bouncing to some other instance's hostname.
+//   WORKSHOP_CANONICAL_ORIGIN — browser-facing HTTPS origin (e.g. a Tailscale
+//     Serve URL like https://<host>.ts.net:8443) the dev server redirects to.
+//   WORKSHOP_TAILNET_HOST — the magicdns host that is already canonical, so
+//     requests arriving there (or on loopback) are not redirected.
+const CANONICAL_ORIGIN = (process.env.WORKSHOP_CANONICAL_ORIGIN || "").replace(/\/$/, "");
+const TAILNET_HOST = process.env.WORKSHOP_TAILNET_HOST || "";
 
+// HTTP-IP → HTTPS-magicdns redirect. iOS Safari refuses geolocation on an
+// insecure origin (raw Tailscale IP over HTTP), so bounce stale bookmarks to
+// the canonical HTTPS origin. No-op when no canonical origin is configured.
 const httpsRedirectMiddleware = (): PluginOption => ({
   name: "http-ip-to-https-magicdns-redirect",
   configureServer(server) {
     server.middlewares.use((req, res, next) => {
       const host = (req.headers["host"] || "") as string;
-      if (host.includes("tail38e62e.ts.net") || host.startsWith("localhost") || host.startsWith("127.0.0.1")) {
+      const isLocal = host.startsWith("localhost") || host.startsWith("127.0.0.1");
+      const isTailnet = TAILNET_HOST !== "" && host.includes(TAILNET_HOST);
+      if (!CANONICAL_ORIGIN || isLocal || isTailnet) {
         return next();
       }
       res.statusCode = 302;
-      res.setHeader("Location", WORKSHOP_HTTPS_ORIGIN + (req.url ?? "/"));
+      res.setHeader("Location", CANONICAL_ORIGIN + (req.url ?? "/"));
       res.end();
     });
   },
@@ -158,7 +167,7 @@ export default defineConfig({
     // which connects from loopback, so tailnet access is unaffected.
     host: "127.0.0.1",
     port: 5173,
-    allowedHosts: ["debian.tail38e62e.ts.net"],
+    allowedHosts: TAILNET_HOST ? [TAILNET_HOST] : [],
     // Allow serving the sibling sources we alias above (@shared).
     fs: { allow: [path.resolve(__dirname, "..")] },
     proxy: {

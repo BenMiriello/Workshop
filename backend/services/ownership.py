@@ -26,7 +26,14 @@ import contextvars
 import os
 from pathlib import Path
 
-_RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", "/home/clawd-a/workshop/.runtime"))
+# Per-deployment runtime root (per-user data lives under it). Portable default:
+# this checkout's own `.runtime/` (repo root = two dirs above services/). A
+# fresh clone therefore writes under its own tree, never another operator's
+# home. Overridable via WORKSHOP_RUNTIME.
+_RUNTIME = Path(os.environ.get(
+    "WORKSHOP_RUNTIME",
+    str(Path(__file__).resolve().parents[2] / ".runtime"),
+))
 
 _owner_ctx: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "workshop_data_owner", default=None
