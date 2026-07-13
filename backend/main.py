@@ -13,7 +13,7 @@ from deps_user import (
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, agent_runs, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills
+from routes import agents, projects, base_apps, relay, services, events, agent_runs, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants
 from services.supervisor import AgentSupervisor
 from services import global_memory, app_registry, installed_apps
 from letta_legacy_client import LettaClient
@@ -116,6 +116,10 @@ app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], de
 app.include_router(skills.router, prefix="/skills", tags=["skills"], dependencies=_OPERATOR)
 app.include_router(worktrees.router, prefix="/worktrees", tags=["worktrees"], dependencies=_OPERATOR)
 app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], dependencies=_OPERATOR)
+# Grants + Stores (Phase 4). /base-apps/grants stays as a thin alias in base_apps
+# until Phase 5; this is the real grants router (/grants, /grants/mint,
+# /grants/revoke, /stores).
+app.include_router(grants.router, dependencies=_OPERATOR)
 app.include_router(backlog.router, dependencies=_OPERATOR)
 app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(redaction.router, dependencies=_OPERATOR)

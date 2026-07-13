@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -42,6 +44,17 @@ GRANTS_PATH = Path(os.environ.get(
     "WORKSHOP_GRANTS_PATH",
     str(Path(__file__).resolve().parent.parent / "grants.json"),
 ))
+
+# Resource-scoped grants (Phase 4) live in a SEPARATE file so the app-level
+# grants.json loader path never sees the new shape (additive, no regression to
+# validate_grants / load_grants). Shape: {"grants": [<resource grant>, ...]}.
+RESOURCE_GRANTS_PATH = Path(os.environ.get(
+    "WORKSHOP_RESOURCE_GRANTS_PATH",
+    str(Path(__file__).resolve().parent.parent / "resource-grants.json"),
+))
+
+# The verbs a resource grant may carry, per Phase 4.
+_VERBS = ("read", "write", "append")
 
 OPERATOR = "operator"
 
@@ -514,3 +527,207 @@ def can_recall(from_scope: str, target_scope: str) -> bool:
                 and row.get("capability") == "knowledge.read"):
             return True
     return False
+
+
+# ============================================================================ #
+# Resource-scoped grants (Phase 4): per-invocation capability tokens over Stores
+# ============================================================================ #
+# A resource grant authorizes `to` to perform specific verbs against a Store URI
+# (or a subtree of URIs), optionally caveated (expiry, filter). Minting returns a
+# grant whose `id` IS the token; a provider calls `check(token, uri, verb)` per
+# invocation. This is the interop mechanism, not a per-action confirmation gate —
+# the operator is never re-prompted; the broker mints once and the token is then
+# checked mechanically. Stored separately from grants.json so the app-level
+# loader (load_grants/validate_grants) never handles the new shape.
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _coerce_resource_grant(row: Any) -> dict[str, Any] | None:
+    """Coerce one raw resource-grant row into canonical shape, or None if it is
+    unusable (missing id / store_uri)."""
+    if not isinstance(row, dict):
+        return None
+    gid = row.get("id")
+    store_uri = row.get("store_uri")
+    if not (isinstance(gid, str) and gid and isinstance(store_uri, str) and store_uri):
+        return None
+    verbs = [v for v in (row.get("verbs") or []) if v in _VERBS]
+    caveats = row.get("caveats") if isinstance(row.get("caveats"), dict) else {}
+    return {
+        "id": gid,
+        "from": str(row.get("from") or ""),
+        "to": str(row.get("to") or ""),
+        "store_uri": store_uri,      # exact URI, or a URI prefix when subtree=True
+        "subtree": bool(row.get("subtree")),
+        "verbs": verbs,
+        "caveats": caveats,
+        "created_at": str(row.get("created_at") or ""),
+    }
+
+
+def load_resource_grants() -> list[dict[str, Any]]:
+    """The resource-grant list. Auto-creates an empty file if missing; tolerant
+    of a corrupt file (returns [])."""
+    if not RESOURCE_GRANTS_PATH.exists():
+        try:
+            _write_resource_grants([])
+        except OSError:
+            pass
+        return []
+    try:
+        data = json.loads(RESOURCE_GRANTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    rows = data.get("grants") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        c = _coerce_resource_grant(row)
+        if c is not None:
+            out.append(c)
+    return out
+
+
+def _write_resource_grants(rows: list[dict[str, Any]]) -> None:
+    RESOURCE_GRANTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"grants": rows}, indent=2) + "\n"
+    tmp = RESOURCE_GRANTS_PATH.with_suffix(RESOURCE_GRANTS_PATH.suffix + ".tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, RESOURCE_GRANTS_PATH)
+
+
+def _resolve_grant(token_or_grant: Any) -> dict[str, Any] | None:
+    """Resolve a token (grant id string) or a grant dict to a canonical grant
+    record, or None. A dict is validated but NOT required to be persisted (a
+    caller may pass a freshly-minted grant object)."""
+    if isinstance(token_or_grant, dict):
+        return _coerce_resource_grant(token_or_grant)
+    if isinstance(token_or_grant, str):
+        for g in load_resource_grants():
+            if g["id"] == token_or_grant:
+                return g
+    return None
+
+
+def mint_grant(
+    *,
+    from_app: str,
+    to: str,
+    store_uri: str,
+    verbs: list[str],
+    caveats: dict[str, Any] | None = None,
+    subtree: bool = False,
+) -> dict[str, Any]:
+    """Mint a scoped grant over a Store (or subtree of Store URIs) and persist it.
+    Returns the grant record; its `id` is the capability token. Verbs are filtered
+    to the valid set; at least one valid verb is required."""
+    valid = [v for v in verbs if v in _VERBS]
+    if not valid:
+        raise ValueError(f"no valid verbs (allowed: {', '.join(_VERBS)})")
+    grant = {
+        "id": uuid.uuid4().hex,
+        "from": str(from_app or ""),
+        "to": str(to or ""),
+        "store_uri": str(store_uri),
+        "subtree": bool(subtree),
+        "verbs": valid,
+        "caveats": dict(caveats or {}),
+        "created_at": _now_iso(),
+    }
+    rows = load_resource_grants()
+    rows.append(grant)
+    _write_resource_grants(rows)
+    return grant
+
+
+def attenuate(
+    token_or_grant: Any,
+    *,
+    verbs: list[str] | None = None,
+    caveats: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Derive a NARROWER grant from an existing one and persist it. Verbs may only
+    be a subset of the parent's; caveats merge over the parent's. Returns the new
+    grant (a new id/token). Raises if the parent is unknown or the requested
+    verbs are not a subset."""
+    parent = _resolve_grant(token_or_grant)
+    if parent is None:
+        raise ValueError("cannot attenuate: unknown grant")
+    if verbs is None:
+        new_verbs = _filter_verbs(parent["verbs"])
+    else:
+        req = [v for v in verbs if v in _VERBS]
+        if not set(req).issubset(set(parent["verbs"])):
+            raise ValueError("attenuated verbs must be a subset of the parent grant")
+        new_verbs = req
+    if not new_verbs:
+        raise ValueError("attenuated grant must retain at least one verb")
+    merged_caveats = {**parent.get("caveats", {}), **(caveats or {})}
+    return mint_grant(
+        from_app=parent["from"],
+        to=parent["to"],
+        store_uri=parent["store_uri"],
+        verbs=new_verbs,
+        caveats=merged_caveats,
+        subtree=parent["subtree"],
+    )
+
+
+def revoke(token_or_grant: Any) -> bool:
+    """Revoke a grant by token (id) or record. Returns True if a grant was
+    removed. A revoked token fails every subsequent `check`."""
+    if isinstance(token_or_grant, dict):
+        gid = token_or_grant.get("id")
+    else:
+        gid = token_or_grant
+    if not isinstance(gid, str) or not gid:
+        return False
+    rows = load_resource_grants()
+    remaining = [g for g in rows if g["id"] != gid]
+    if len(remaining) == len(rows):
+        return False
+    _write_resource_grants(remaining)
+    return True
+
+
+def _caveat_expired(caveats: dict[str, Any]) -> bool:
+    exp = caveats.get("expiry")
+    if not exp:
+        return False
+    try:
+        when = datetime.fromisoformat(str(exp))
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False  # unparseable expiry does not expire the grant
+    return datetime.now(timezone.utc) > when
+
+
+def check(token_or_grant: Any, store_uri: str, verb: str) -> bool:
+    """Per-invocation enforcement: does this token authorize `verb` on `store_uri`?
+
+    A provider calls this on every store operation. Denies when the token is
+    unknown/revoked, the verb is not granted, the URI does not match (exact, or a
+    subtree prefix for a subtree grant), or an expiry caveat has passed. The
+    `filter` caveat is carried on the grant for the provider to apply; it is not a
+    gate here."""
+    grant = _resolve_grant(token_or_grant)
+    if grant is None:
+        return False
+    if verb not in grant.get("verbs", []):
+        return False
+    if _caveat_expired(grant.get("caveats", {})):
+        return False
+    guri = grant["store_uri"]
+    if grant.get("subtree"):
+        return store_uri == guri or store_uri.startswith(guri.rstrip("/") + "/")
+    return store_uri == guri
+
+
+def _filter_verbs(verbs: Any) -> list[str]:
+    """Copy of a verb list, filtered to the valid set (helper for attenuate)."""
+    return [v for v in (verbs or []) if v in _VERBS]

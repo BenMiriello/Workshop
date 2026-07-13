@@ -72,6 +72,14 @@ class AppSpec:
     identity: dict[str, Any] = field(default_factory=dict)
     mounts: tuple[RouterMount, ...] = ()
     mcp: dict[str, dict] = field(default_factory=dict)
+    # Provider interface for each MCP server this app registers (Phase 4). The
+    # `mcp` field carries the LAUNCH spec (type/command/args) consumed by the chat
+    # tool-use router; `mcp_provider` carries the PROVIDER-INTERFACE ops, kept
+    # separate so adding ops never perturbs the launch-spec path. Every provider
+    # MUST declare an `export` op naming the Store it dumps:
+    #   {"<server>": {"export": {"store_uri": "workshop://store/<app>/<name>"}}}
+    # See mcp_provider_export() below.
+    mcp_provider: dict[str, dict] = field(default_factory=dict)
     on_startup: tuple[Callable[[FastAPI], Awaitable[None]], ...] = ()
     background: tuple[Callable[[], Awaitable[None]], ...] = ()
     # Chat surface (services/chat_context, services/app_personas):
@@ -96,6 +104,16 @@ _PLAID_MCP = {
             "WORKSHOP_PLAID_MCP",
             str(Path.home() / "clawdbot" / "plaid-mcp" / "server.js"),
         )],
+    },
+}
+
+# Provider interface for the plaid MCP server (Phase 4). Every MCP provider must
+# declare an `export` op naming the Store it dumps; plaid exports the finance
+# plaid-items Store. This establishes the pattern (currently only plaid is wired)
+# without touching the launch spec above.
+_PLAID_MCP_PROVIDER = {
+    "plaid": {
+        "export": {"store_uri": "workshop://store/finance/plaid-items"},
     },
 }
 
@@ -235,6 +253,7 @@ def _finance_spec() -> AppSpec:
             RouterMount(plaid_webhook.router, prefix="/plaid/webhook", tags=("plaid-webhook",)),
         ),
         mcp=_PLAID_MCP,
+        mcp_provider=_PLAID_MCP_PROVIDER,
         on_startup=(_finance_on_startup,),
         background=(_prewarm_loop, _categorize_loop),
     )
@@ -263,6 +282,7 @@ def _budget_spec() -> AppSpec:
         ),
         # Budget chat shares the plaid MCP for transaction lookup.
         mcp=_PLAID_MCP,
+        mcp_provider=_PLAID_MCP_PROVIDER,
     )
 
 
@@ -448,6 +468,38 @@ def installed_mcp_servers() -> dict[str, dict]:
     for spec in installed_specs():
         merged.update(spec.mcp)
     return merged
+
+
+def installed_mcp_providers() -> dict[str, dict]:
+    """Merged PROVIDER-INTERFACE descriptors for installed apps' MCP servers — the
+    formalized provider surface (Phase 4). Each entry declares the server's ops,
+    including the required `export` op:
+        {"plaid": {"export": {"store_uri": "workshop://store/finance/plaid-items"}}}
+    Separate from installed_mcp_servers() (launch specs) so the provider interface
+    can grow without perturbing chat tool-use wiring."""
+    merged: dict[str, dict] = {}
+    for spec in installed_specs():
+        merged.update(spec.mcp_provider)
+    return merged
+
+
+def mcp_provider_export(server: str) -> str:
+    """Run an MCP provider's `export` op and return the portable artifact path.
+
+    Resolves the server's declared export Store and dumps it via services.stores.
+    Raises KeyError if the server is unknown or declares no export op. This is the
+    single generic entrypoint every provider's export flows through — establishing
+    the pattern on plaid without special-casing it."""
+    providers = installed_mcp_providers()
+    prov = providers.get(server)
+    if not prov or "export" not in prov:
+        raise KeyError(f"MCP provider has no export op: {server!r}")
+    store_uri = prov["export"].get("store_uri")
+    if not store_uri:
+        raise KeyError(f"MCP provider {server!r} export op declares no store_uri")
+    from services import stores
+    stores.register_all()
+    return stores.export(store_uri)
 
 
 def launcher_cards() -> list[dict[str, Any]]:

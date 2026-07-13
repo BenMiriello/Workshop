@@ -458,3 +458,52 @@ async def recall(from_scope: str, target_scope: str, query: str, limit: int = 5)
     if not _can_recall(from_scope, target_scope):
         return []
     return await search(target_scope, query, limit)
+
+
+# --- store registration (Phase 4, additive) ----------------------------------
+# Knowledge scopes are platform-owned Stores of type "Note", accessed through the
+# grant mechanics (services/stores + services/permissions). This is a REGISTRATION
+# WRAPPER: it declares each EXISTING scope directory as a Store, moving/rewriting
+# nothing and touching none of the search/note/Letta internals above. The plaintext
+# markdown dirs remain the source of truth exactly as before.
+def _scope_name(scope_key: str) -> str:
+    """A store-name-safe form of a scope key (':' is not allowed in a store name)."""
+    return scope_key.replace(":", "-")
+
+
+def register_knowledge_stores() -> None:
+    """Declare each existing knowledge scope as a Store of type "Note".
+
+    Enumerates the on-disk scope directories (never creating one) and registers a
+    Store per scope under owner_app "knowledge". Best-effort and idempotent."""
+    try:
+        from services import stores
+    except Exception:
+        return
+
+    root = _root()
+    found: list[tuple[str, Path]] = []
+
+    ws = root / "shared" / "knowledge"
+    if ws.exists():
+        found.append(("workshop", ws))
+
+    for kind, base in (("project", root / "projects"), ("app", root / "apps")):
+        if base.exists():
+            for child in sorted(base.iterdir()):
+                d = child / "knowledge"
+                if d.is_dir() and _SLUG_RE.fullmatch(child.name):
+                    found.append((f"{kind}:{child.name}", d))
+
+    agents_base = _runtime() / "agents"
+    if agents_base.exists():
+        for child in sorted(agents_base.iterdir()):
+            d = child / "knowledge"
+            if d.is_dir() and _SLUG_RE.fullmatch(child.name):
+                found.append((f"agent:{child.name}", d))
+
+    for scope_key, d in found:
+        try:
+            stores.declare("knowledge", _scope_name(scope_key), d, type="Note")
+        except Exception:
+            continue

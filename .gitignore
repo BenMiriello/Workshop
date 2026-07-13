@@ -73,6 +73,9 @@ registry-bundles/
 /projects.json
 /build_agents.json
 /backend/apps.json
+# Runtime-minted resource capability tokens (Store grants). Instance state, not
+# config; the app-level grants.json seed stays tracked, this does not.
+/backend/resource-grants.json
 /commute/schedule.json
 # User-scope agent definition files (declarative registry of record, but they
 # hold the operator's personas/config) are instance state. Project-scoped agent

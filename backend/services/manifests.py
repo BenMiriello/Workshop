@@ -64,16 +64,47 @@ def _normalize_entry(app_id: str, raw: Any) -> dict[str, Any]:
     raw_ui = raw.get("ui")
     raw_ui = raw_ui if isinstance(raw_ui, dict) else {}
     ui = {"agent_button": raw_ui.get("agent_button", True) is not False}
+    # `provides`/`needs` are lists of capability strings (backward compatible), but
+    # an entry MAY be an object `{"capability": <str>, "type": <str>}` — Phase 4:
+    # a provided capability can name the STORE TYPE it exposes, and a need can name
+    # the store type it wants resolved through the grant broker. We flatten the
+    # capability strings back into `provides`/`needs` (so every existing reader is
+    # unchanged) and capture the optional types in parallel maps.
+    provides, provide_types = _split_typed(raw.get("provides"))
+    needs, need_types = _split_typed(raw.get("needs"))
     return {
         "title": str(raw.get("title") or app_id),
         "sensitivity": sensitivity,
         "api_prefixes": [str(p) for p in (raw.get("api_prefixes") or []) if isinstance(p, str)],
-        "provides": [str(c) for c in (raw.get("provides") or []) if isinstance(c, str)],
-        "needs": [str(c) for c in (raw.get("needs") or []) if isinstance(c, str)],
+        "provides": provides,
+        "needs": needs,
+        "provide_types": provide_types,
+        "need_types": need_types,
         "actions": actions,
         "ui": ui,
         "kit": str(raw.get("kit") or DEFAULT_KIT),
     }
+
+
+def _split_typed(raw: Any) -> tuple[list[str], dict[str, str]]:
+    """Normalize a provides/needs list that may mix capability strings and typed
+    objects `{"capability": <str>, "type": <str>}`. Returns (capabilities, types)
+    where `capabilities` is the flat string list (backward compatible) and `types`
+    maps a capability -> its declared store type (only for the objects that carry
+    one)."""
+    caps: list[str] = []
+    types: dict[str, str] = {}
+    for entry in (raw or []):
+        if isinstance(entry, str):
+            caps.append(entry)
+        elif isinstance(entry, dict):
+            cap = entry.get("capability") or entry.get("name")
+            if isinstance(cap, str) and cap:
+                caps.append(cap)
+                t = entry.get("type")
+                if isinstance(t, str) and t:
+                    types[cap] = t
+    return caps, types
 
 
 def _write_seed() -> None:

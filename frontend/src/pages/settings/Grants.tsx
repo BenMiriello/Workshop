@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network } from "lucide-react";
+import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network, Database } from "lucide-react";
 import {
   ActionBar,
   Button,
   Card,
+  ConfirmDialog,
   PageHeader,
   Row,
   SectionLabel,
@@ -32,6 +33,19 @@ type Grant = { from: string; to: string; capability: string; mode: GrantMode };
 type Guest = { id: string; app: string; capabilities: string[] };
 type GrantsDoc = { grants: Grant[]; guests: Guest[] };
 
+// Phase-4 resource-scoped grants: per-invocation capability tokens over Stores.
+// Read-only here (minted through the GrantPicker broker); revoke is the one write.
+type ResourceGrant = {
+  id: string;
+  from: string;
+  to: string;
+  store_uri: string;
+  subtree?: boolean;
+  verbs: string[];
+  caveats?: Record<string, unknown>;
+  created_at?: string;
+};
+
 type Manifest = {
   title: string;
   sensitivity?: string;
@@ -45,18 +59,22 @@ const MAX_ROWS = 200; // overflow guard for the grants table
 export default function Grants() {
   const [doc, setDoc] = useState<GrantsDoc | null>(null);
   const [baseline, setBaseline] = useState<string>(""); // JSON of loaded doc, for dirty + revert
+  const [resourceGrants, setResourceGrants] = useState<ResourceGrant[]>([]);
   const [manifests, setManifests] = useState<Manifests | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
+  const [revoking, setRevoking] = useState<ResourceGrant | null>(null);
 
   const load = async () => {
     setErr(null);
     try {
+      // Prefer the new /api/grants router (returns app-level doc + resource
+      // grants). It supersedes the /base-apps/grants alias.
       const [g, m] = await Promise.all([
-        fetch("/api/base-apps/grants").then(async (r) => {
+        fetch("/api/grants").then(async (r) => {
           if (!r.ok) throw new Error(`grants: ${r.status} ${await r.text()}`);
-          return r.json() as Promise<GrantsDoc>;
+          return r.json() as Promise<GrantsDoc & { resource_grants?: ResourceGrant[] }>;
         }),
         fetch("/api/base-apps/manifests").then(async (r) => {
           if (!r.ok) throw new Error(`manifests: ${r.status} ${await r.text()}`);
@@ -69,9 +87,27 @@ export default function Grants() {
       };
       setDoc(normalized);
       setBaseline(JSON.stringify(normalized));
+      setResourceGrants(Array.isArray(g.resource_grants) ? g.resource_grants : []);
       setManifests(m.apps || {});
     } catch (e) {
       setErr(String(e));
+    }
+  };
+
+  const revokeResource = async (grant: ResourceGrant) => {
+    setErr(null);
+    try {
+      const r = await fetch("/api/grants/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: grant.id }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setResourceGrants((cur) => cur.filter((g) => g.id !== grant.id));
+    } catch (e) {
+      setErr(`Revoke failed: ${String(e)}`);
+    } finally {
+      setRevoking(null);
     }
   };
 
@@ -109,7 +145,7 @@ export default function Grants() {
     setSaving(true);
     setErr(null);
     try {
-      const r = await fetch("/api/base-apps/grants", {
+      const r = await fetch("/api/grants", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(doc),
@@ -200,7 +236,7 @@ export default function Grants() {
         <StateBlock
           variant="error"
           title="Couldn't load grants"
-          hint={<code>/api/base-apps/grants</code>}
+          hint={<code>/api/grants</code>}
           action={<Button onClick={load}>Retry</Button>}
         />
       </div>
@@ -443,6 +479,90 @@ export default function Grants() {
           )}
         </Card>
       </section>
+
+      {/* 4) Store-scoped grants (Phase 4) ----------------------------------- */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <SectionLabel icon={<Database size={14} strokeWidth={1.8} aria-hidden />}>
+          Store grants
+        </SectionLabel>
+        <Card>
+          {resourceGrants.length === 0 ? (
+            <StateBlock
+              title="No store grants"
+              hint="Store grants are scoped capability tokens minted through the broker (GrantPicker) when an app or agent binds to a Store. They appear here once minted; there is nothing to add by hand."
+            />
+          ) : resourceGrants.length > MAX_ROWS ? (
+            <StateBlock
+              title="Too many grants to list safely"
+              hint={`${resourceGrants.length} store grants exceeds the ${MAX_ROWS}-row cap.`}
+            />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+              {resourceGrants.map((g) => {
+                const caveatKeys = Object.keys(g.caveats || {});
+                return (
+                  <div
+                    key={g.id}
+                    style={{ paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--border)" }}
+                  >
+                    <Row between wrap style={{ alignItems: "center", gap: "var(--space-2)" }}>
+                      <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                        <span style={{ fontWeight: 600 }}>{g.to || "(anyone)"}</span>
+                        <ArrowRight size={14} strokeWidth={1.8} aria-hidden className="ws-muted" />
+                        <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{g.store_uri}</span>
+                        {g.subtree && <Tag hue={catFor("subtree")}>subtree</Tag>}
+                      </Row>
+                      <Button
+                        size="sm"
+                        variant="danger-ghost"
+                        icon
+                        aria-label="Revoke grant"
+                        onClick={() => setRevoking(g)}
+                      >
+                        <Trash2 aria-hidden />
+                      </Button>
+                    </Row>
+                    <Row wrap style={{ marginTop: "var(--space-2)", gap: "var(--space-2)", alignItems: "center" }}>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", minWidth: "4.5rem" }}>verbs</span>
+                      {g.verbs.length === 0 ? (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>none</span>
+                      ) : (
+                        g.verbs.map((v) => <Tag key={v} hue={catFor(v)}>{v}</Tag>)
+                      )}
+                      {caveatKeys.length > 0 && (
+                        <>
+                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", minWidth: "4.5rem" }}>caveats</span>
+                          {caveatKeys.map((k) => (
+                            <StatusDot key={k} status="warn">
+                              {k}: {String((g.caveats || {})[k])}
+                            </StatusDot>
+                          ))}
+                        </>
+                      )}
+                    </Row>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </section>
+
+      <ConfirmDialog
+        open={revoking != null}
+        onCancel={() => setRevoking(null)}
+        onConfirm={() => revoking && revokeResource(revoking)}
+        title="Revoke store grant?"
+        confirmLabel="Revoke"
+        danger
+        body={
+          <>
+            The token for <span className="ws-mono">{revoking?.to}</span> over{" "}
+            <span className="ws-mono">{revoking?.store_uri}</span> stops working
+            immediately. This can't be undone; a new grant must be minted to restore access.
+          </>
+        }
+      />
 
       <ActionBar flash={flash ? "Saved ✓" : dirty ? "unsaved changes" : undefined}>
         <Button variant="primary" onClick={save} loading={saving} disabled={!dirty}>
