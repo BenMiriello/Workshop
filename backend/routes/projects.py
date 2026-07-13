@@ -24,7 +24,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import tasks
+from services import tasks, jobs, triggers
 
 router = APIRouter()
 
@@ -441,112 +441,122 @@ def _touch(slug: str) -> None:
 
 # ---- Per-project autonomy (generalized Ralph) -------------------------------
 # A project can run its OWN Ralph loop over its OWN TODO.md + git repo, so a
-# PROJECT.md brief actually reaches an autonomous worker. `autonomy.mode`:
-#   off        — never runs (default)
-#   manual     — only operator-triggered "Run now" sweeps
-#   continuous — also eligible for background sweeps by the autonomy cron
+# PROJECT.md brief actually reaches an autonomous worker. As of the Phase 1
+# platform redesign the run-state is a Job (services.jobs), not a bespoke
+# ralph-run.json; the config surface is a unified trigger list (services.
+# triggers) that translates to/from the registry's `autonomy.mode`:
+#   off        — no automatic trigger (manual runs still available)
+#   manual     — one `manual` trigger; operator-triggered "Run now" only
+#   continuous — one `loop` trigger; also eligible for background sweeps
 # The heavy lifting is scripts/project_ralph.sh; this router owns config + spawn.
 
-AUTONOMY_MODES = {"off", "manual", "continuous"}
 SCRIPTS_ROOT = PROJECTS_ROOT.parent / "scripts"
 
-
-class AutonomyIn(BaseModel):
-    mode: str = Field(pattern="^(off|manual|continuous)$")
-
-
-def _run_status_path(slug: str) -> Path:
-    return _project_dir(slug) / ".runtime" / "ralph-run.json"
+# A Job left in `running` past this bound (e.g. a hard-killed sweep whose
+# finish() never ran) is reported as `crashed` rather than perpetually-running,
+# so a dead sweep never wedges the "already running" guard.
+RUNNING_STALE_S = 7200
 
 
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except (OSError, TypeError):
-        return False
-    return True
+class TriggersIn(BaseModel):
+    triggers: list[dict] = Field(default_factory=list)
 
 
-def _read_run_status(slug: str) -> dict | None:
-    p = _run_status_path(slug)
-    if not p.exists():
-        return None
-    try:
-        rec = json.loads(p.read_text())
-    except (OSError, ValueError):
-        return None
-    # A "running" record whose pid is gone means the sweep died; report it as
-    # crashed rather than perpetually-running.
-    if rec.get("status") == "running" and not _pid_alive(rec.get("pid", -1)):
-        rec = {**rec, "status": "crashed"}
-    return rec
+def _stored_triggers(autonomy: dict) -> list[dict]:
+    stored = autonomy.get("triggers")
+    if stored is not None:
+        return [triggers.normalize(t) for t in stored]
+    return triggers.project_triggers(autonomy)
 
 
-def _is_running(slug: str) -> bool:
-    rec = _read_run_status(slug)
-    return bool(rec and rec.get("status") == "running")
-
-
-def _autonomy_config(slug: str) -> dict:
-    raw = _ensure_project(slug)
-    cfg = raw.get("autonomy") or {}
-    return {"mode": cfg.get("mode", "off"), "updated": cfg.get("updated")}
+def _run_state(slug: str) -> tuple[bool, dict | None]:
+    """(running, last_job) for a project, derived from the Job store."""
+    recs = jobs.read(project_slug=slug, limit=1)
+    last = recs[0] if recs else None
+    running = False
+    if last and last.get("status") == "running":
+        started = last.get("started_at")
+        stale = False
+        if started:
+            try:
+                dt = datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+                stale = (datetime.now(timezone.utc) - dt).total_seconds() > RUNNING_STALE_S
+            except (ValueError, TypeError):
+                stale = False
+        if stale:
+            last = {**last, "status": "crashed"}
+        else:
+            running = True
+    return running, last
 
 
 @router.get("/{slug}/autonomy")
 async def get_autonomy(slug: str) -> dict:
-    cfg = _autonomy_config(slug)
-    return {**cfg, "running": _is_running(slug), "last_run": _read_run_status(slug)}
+    raw = _ensure_project(slug)
+    autonomy = raw.get("autonomy") or {}
+    trigs = _stored_triggers(autonomy)
+    running, last = _run_state(slug)
+    return {
+        "triggers": trigs,
+        "mode": triggers.project_mode_from_triggers(trigs),
+        "updated": autonomy.get("updated"),
+        "running": running,
+        "last_run": last,
+    }
 
 
 @router.put("/{slug}/autonomy")
-async def put_autonomy(slug: str, body: AutonomyIn) -> dict:
-    if body.mode not in AUTONOMY_MODES:
-        raise HTTPException(400, f"mode must be one of {sorted(AUTONOMY_MODES)}")
+async def put_autonomy(slug: str, body: TriggersIn) -> dict:
+    try:
+        norm = [triggers.normalize(t) for t in body.triggers]
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     data = _load_registry()
     proj = (data.get("projects") or {}).get(slug)
     if not proj:
         raise HTTPException(404, f"project not found: {slug}")
-    proj["autonomy"] = {"mode": body.mode, "updated": _now()}
+    mode = triggers.project_mode_from_triggers(norm)
+    proj["autonomy"] = {"mode": mode, "triggers": norm, "updated": _now()}
     _save_registry(data)
-    return {"mode": body.mode, "updated": proj["autonomy"]["updated"], "running": _is_running(slug)}
+    running, _ = _run_state(slug)
+    return {"triggers": norm, "mode": mode, "updated": proj["autonomy"]["updated"], "running": running}
 
 
 @router.post("/{slug}/autonomy/run")
 async def run_autonomy(slug: str) -> dict:
-    """Fire a project Ralph sweep in the background. Manual (operator-clicked)
-    runs use --force so the global cron off-switch does not block a deliberate
-    action; the project's own `off` mode still refuses."""
-    cfg = _autonomy_config(slug)
-    if cfg["mode"] == "off":
-        raise HTTPException(409, "project autonomy is off; set mode to manual or continuous first")
-    if _is_running(slug):
+    """Fire a project Ralph sweep in the background as a manual Job. Uses --force
+    so neither the global cron off-switch nor the per-project mode blocks a
+    deliberate operator action; project_ralph.sh adopts the Job we open here as
+    its run-state and finish()es it on exit."""
+    _ensure_project(slug)
+    running, _ = _run_state(slug)
+    if running:
         raise HTTPException(409, "a sweep is already running for this project")
     script = SCRIPTS_ROOT / "project_ralph.sh"
     if not script.exists():
         raise HTTPException(500, f"driver missing: {script}")
+    job = jobs.start(project_slug=slug, trigger="manual", status="running")
     log_dir = _project_dir(slug) / ".runtime"
     log_dir.mkdir(parents=True, exist_ok=True)
     logf = open(log_dir / "ralph.log", "a")  # noqa: SIM115 (handed to child)
     proc = subprocess.Popen(
-        ["bash", str(script), slug, "--force"],
+        ["bash", str(script), slug, "--force", "--job-id", job["id"]],
         cwd=str(PROJECTS_ROOT.parent),
         stdout=logf,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
     _touch(slug)
-    return {"started": True, "pid": proc.pid, "slug": slug}
+    return {"started": True, "pid": proc.pid, "slug": slug, "job_id": job["id"]}
 
 
 @router.get("/{slug}/autonomy/log")
-async def get_autonomy_log(slug: str, tail: int = 200) -> dict:
-    p = _project_dir(slug) / ".runtime" / "ralph.log"
-    if not p.exists():
-        return {"log": "", "running": _is_running(slug)}
-    tail = max(1, min(tail, 2000))
-    lines = p.read_text(errors="replace").splitlines()
-    return {"log": "\n".join(lines[-tail:]), "running": _is_running(slug)}
+async def get_autonomy_log(slug: str, limit: int = 50) -> dict:
+    """Recent Jobs for this project (the sweep history), newest first."""
+    _ensure_project(slug)
+    recs = jobs.read(project_slug=slug, limit=limit)
+    running, _ = _run_state(slug)
+    return {"jobs": recs, "count": len(recs), "running": running}
 
 
 # ---- File tree --------------------------------------------------------------

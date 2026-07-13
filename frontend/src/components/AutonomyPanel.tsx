@@ -1,51 +1,48 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Repeat, Play, RefreshCw, ScrollText } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill,
-  Segmented, Modal, Skeleton, type StatusKind,
+  Skeleton, Input, Field, ActionBar, Tag, catFor, useEditMode, type StatusKind,
 } from "../ui";
 
 // Per-project autonomy = a project's OWN Ralph loop over its OWN TODO.md + git
-// repo (scripts/project_ralph.sh). Backend: routes/projects.py /autonomy*. Mode
-// is the per-project switch; the global cron off-switch (Settings) is a separate
-// master kill. A manual "Run now" is a deliberate foreground sweep and bypasses
-// the master switch; `off` still refuses.
-//
-// Mode commits on change — it is a low-risk, reversible behavior switch (like an
-// enable/disable toggle), and the expensive action (a sweep) is its own explicit
-// button. The sweep drives each open task through Ralph until the reviewer gate
-// passes, marking tasks done in the project's structured store.
+// repo (scripts/project_ralph.sh). The config surface is now a unified trigger
+// list (services.triggers), not a single mode switch: the operator composes the
+// triggers that fire this project's work. `loop` carries an iteration cap so an
+// unattended loop is bounded. Writes go through PUT /{slug}/autonomy as a config
+// write: edit-mode + explicit Save (never commit-on-change). A manual "Run now"
+// is a deliberate foreground sweep and is a separate button.
 
-type Mode = "off" | "manual" | "continuous";
+type TriggerKind = "manual" | "cron" | "event" | "loop";
 
-type LastRun = {
+type Trigger = {
+  kind: TriggerKind;
+  cron_expression?: string;
+  event_sources?: string[];
+  max_iterations?: number;
+  budget?: { max_wall_s?: number };
+  completion_gate?: string;
+};
+
+type Job = {
+  id: string;
   status?: string;
-  updated?: string;
-  mode?: string;
-  reason?: string;
-  task_id?: string;
-  done?: number;
-  last?: { done: number; incomplete: number; blocked: number; failed: number; duration_s: number };
+  trigger?: string;
+  started_at?: string;
+  ended_at?: string;
+  tasks_done?: number;
+  tasks_failed?: number;
 } | null;
 
 type Autonomy = {
-  mode: Mode;
+  triggers: Trigger[];
+  mode: string;
   updated: string | null;
   running: boolean;
-  last_run: LastRun;
+  last_run: Job;
 };
 
-const MODE_OPTIONS: { value: Mode; label: string }[] = [
-  { value: "off", label: "Off" },
-  { value: "manual", label: "Manual" },
-  { value: "continuous", label: "Continuous" },
-];
-
-const MODE_HINT: Record<Mode, string> = {
-  off: "Never runs. Enable Manual or Continuous to let this project work its own queue.",
-  manual: "Runs only when you press Run now. Nothing happens on its own.",
-  continuous: "Runs on Run now, and is eligible for background sweeps by the autonomy cron.",
-};
+const KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "custom"];
 
 function fmtTs(ts?: string | null): string {
   if (!ts) return "";
@@ -53,13 +50,41 @@ function fmtTs(ts?: string | null): string {
   return isNaN(d.getTime()) ? "" : d.toLocaleString();
 }
 
+function jobKind(status?: string): StatusKind {
+  if (status === "running") return "running";
+  if (status === "done") return "ok";
+  if (status === "failed") return "danger";
+  if (status === "awaiting_input") return "warn";
+  return "stopped";
+}
+
+function newTrigger(kind: TriggerKind): Trigger {
+  if (kind === "cron") return { kind, cron_expression: "" };
+  if (kind === "event") return { kind, event_sources: [] };
+  if (kind === "loop") return { kind, max_iterations: 20, budget: { max_wall_s: 3000 }, completion_gate: "reviewer" };
+  return { kind };
+}
+
+function triggerIcon(kind: TriggerKind) {
+  if (kind === "cron") return <Clock aria-hidden />;
+  if (kind === "event") return <Zap aria-hidden />;
+  if (kind === "loop") return <RotateCw aria-hidden />;
+  return <Play aria-hidden />;
+}
+
+function triggerSummary(t: Trigger): string {
+  if (t.kind === "cron") return t.cron_expression ? `schedule ${t.cron_expression}` : "schedule (unset)";
+  if (t.kind === "event") return (t.event_sources && t.event_sources.length) ? `on ${t.event_sources.join(", ")}` : "on (no sources)";
+  if (t.kind === "loop") return `loop, cap ${t.max_iterations ?? 20} tasks`;
+  return "manual run only";
+}
+
 export default function AutonomyPanel({ slug }: { slug: string }) {
   const [cfg, setCfg] = useState<Autonomy | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [logOpen, setLogOpen] = useState(false);
-  const [logText, setLogText] = useState("");
   const timer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
@@ -77,8 +102,6 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Poll while a sweep is running so the live state is reflected without a
-  // manual refresh; back off to idle otherwise.
   const running = cfg?.running ?? false;
   useEffect(() => {
     if (timer.current) window.clearInterval(timer.current);
@@ -86,79 +109,76 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
     return () => { if (timer.current) window.clearInterval(timer.current); };
   }, [running, load]);
 
-  const setMode = useCallback(async (mode: Mode) => {
-    setBusy(true);
-    setErr(null);
-    try {
+  const edit = useEditMode<{ triggers: Trigger[] }>(
+    { triggers: cfg?.triggers ?? [] },
+    async (draft) => {
+      setSaveErr(null);
       const r = await fetch(`/api/projects/${slug}/autonomy`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode }),
+        body: JSON.stringify({ triggers: draft.triggers }),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) {
+        const msg = `${r.status} ${await r.text()}`;
+        setSaveErr(msg);
+        throw new Error(msg);
+      }
       await load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [slug, load]);
+    },
+  );
 
   const runNow = useCallback(async () => {
     setBusy(true);
-    setErr(null);
+    setSaveErr(null);
     try {
       const r = await fetch(`/api/projects/${slug}/autonomy/run`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      // A sweep kicks off background work; nudge a couple of refreshes so the
-      // running state appears promptly.
       setTimeout(load, 1200);
       setTimeout(load, 3500);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
+      setSaveErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }, [slug, load]);
 
-  const openLog = useCallback(async () => {
-    setLogOpen(true);
-    setLogText("Loading…");
-    try {
-      const r = await fetch(`/api/projects/${slug}/autonomy/log?tail=300`);
-      const d = await r.json();
-      setLogText(d.log || "(no output yet. Run a sweep to populate.)");
-    } catch (e) {
-      setLogText(String(e));
-    }
-  }, [slug]);
+  const triggers = edit.editing ? edit.draft.triggers : (cfg?.triggers ?? []);
 
-  const mode: Mode = cfg?.mode ?? "off";
+  const addTrigger = (kind: TriggerKind) => {
+    edit.set("triggers", [...edit.draft.triggers, newTrigger(kind)]);
+  };
+  const removeTrigger = (idx: number) => {
+    edit.set("triggers", edit.draft.triggers.filter((_, i) => i !== idx));
+  };
+  const patchTrigger = (idx: number, patch: Partial<Trigger>) => {
+    edit.set("triggers", edit.draft.triggers.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+  };
+
   const last = cfg?.last_run ?? null;
-
-  const runKind: StatusKind = useMemo(() => {
-    if (running) return "running";
-    const s = last?.status;
-    if (s === "crashed") return "danger";
-    if (s === "idle") return "ok";
-    return "stopped";
-  }, [running, last]);
-  const runLabel = running ? "running" : (last?.status === "idle" ? "idle" : (last?.status ?? "never run"));
 
   return (
     <section style={{ marginBottom: "var(--space-6)" }}>
       <Row between style={{ marginBottom: "var(--space-3)" }}>
         <SectionLabel icon={<Repeat aria-hidden />}>Autonomy</SectionLabel>
         <Row wrap style={{ gap: "var(--space-2)" }}>
-          {cfg && <StatusPill status={runKind}>{runLabel}</StatusPill>}
+          {cfg && (
+            <StatusPill status={running ? "running" : jobKind(last?.status)}>
+              {running ? "running" : (last?.status ?? "never run")}
+            </StatusPill>
+          )}
           <Button size="sm" variant="ghost" onClick={load}>
             <RefreshCw aria-hidden /> Refresh
           </Button>
+          {!edit.editing && (
+            <Button size="sm" variant="ghost" onClick={edit.begin} disabled={!cfg}>
+              Edit triggers
+            </Button>
+          )}
           <Button
             size="sm"
             variant="primary"
             loading={busy && !running}
-            disabled={busy || running || mode === "off"}
+            disabled={busy || running || edit.editing}
             onClick={runNow}
           >
             <Play aria-hidden /> Run now
@@ -179,72 +199,120 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
         ) : (
           <Stack>
             <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-              Let this project drive its own <span className="ws-mono">TODO.md</span> autonomously: each
-              open task runs through the Ralph loop against the project's own git repo until the reviewer
-              gate passes. The project brief (<span className="ws-mono">PROJECT.md</span>) and{" "}
-              <span className="ws-mono">AGENTS.md</span> are what the worker sees.
+              Triggers decide when this project works its own <span className="ws-mono">TODO.md</span> through the
+              Ralph loop against its git repo. With no triggers it only runs on <strong>Run now</strong>. A{" "}
+              <span className="ws-mono">loop</span> trigger makes it eligible for unattended background sweeps,
+              bounded by its iteration cap.
             </p>
 
-            <Segmented<Mode>
-              ariaLabel="Autonomy mode"
-              value={mode}
-              onChange={(m) => { if (m !== mode) setMode(m); }}
-              options={MODE_OPTIONS}
-              hint={MODE_HINT[mode]}
-            />
-
-            {err && cfg && (
-              <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{err}</p>
-            )}
-
-            <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
-              <Button size="sm" variant="ghost" onClick={openLog}>
-                <ScrollText aria-hidden /> Sweep log
-              </Button>
-              {cfg?.updated && (
-                <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                  Mode set {fmtTs(cfg.updated)}
-                </span>
-              )}
-            </Row>
-
-            {running && last?.task_id && (
+            {triggers.length === 0 && !edit.editing && (
               <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Working task <span className="ws-mono">{last.task_id.slice(0, 8)}</span>
-                {typeof last.done === "number" ? ` · ${last.done} done so far` : ""}.
+                No triggers. Manual runs only.
               </p>
             )}
 
-            {!running && last?.last && (
+            <Stack gap="sm">
+              {triggers.map((t, i) => (
+                <Row key={i} between wrap style={{ gap: "var(--space-2)", alignItems: "flex-start" }}>
+                  <Row style={{ gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                    <Tag hue={catFor(t.kind)}>{t.kind}</Tag>
+                    {!edit.editing && (
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{triggerSummary(t)}</span>
+                    )}
+                    {edit.editing && t.kind === "cron" && (
+                      <Field label="Cron expression" htmlFor={`cron-${i}`}>
+                        <Input
+                          id={`cron-${i}`}
+                          value={t.cron_expression ?? ""}
+                          placeholder="0 */6 * * *"
+                          onChange={(e) => patchTrigger(i, { cron_expression: e.target.value })}
+                        />
+                      </Field>
+                    )}
+                    {edit.editing && t.kind === "event" && (
+                      <Field label="Sources (comma separated)" htmlFor={`ev-${i}`} help={KNOWN_SOURCES.join(", ")}>
+                        <Input
+                          id={`ev-${i}`}
+                          value={(t.event_sources ?? []).join(", ")}
+                          placeholder="plaid, github"
+                          onChange={(e) => patchTrigger(i, {
+                            event_sources: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                          })}
+                        />
+                      </Field>
+                    )}
+                    {edit.editing && t.kind === "loop" && (
+                      <Field label="Iteration cap (tasks per sweep)" htmlFor={`loop-${i}`}>
+                        <Input
+                          id={`loop-${i}`}
+                          type="number"
+                          min={1}
+                          value={t.max_iterations ?? 20}
+                          onChange={(e) => patchTrigger(i, { max_iterations: Math.max(1, Number(e.target.value) || 1) })}
+                        />
+                      </Field>
+                    )}
+                  </Row>
+                  {edit.editing && (
+                    <Button size="sm" variant="ghost" onClick={() => removeTrigger(i)} aria-label={`Remove ${t.kind} trigger`}>
+                      <X aria-hidden /> Remove
+                    </Button>
+                  )}
+                </Row>
+              ))}
+            </Stack>
+
+            {edit.editing && (
+              <Row wrap style={{ gap: "var(--space-2)" }}>
+                <Button size="sm" variant="ghost" onClick={() => addTrigger("cron")}>
+                  {triggerIcon("cron")} Add cron
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => addTrigger("event")}>
+                  {triggerIcon("event")} Add event
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => addTrigger("loop")}>
+                  {triggerIcon("loop")} Add loop
+                </Button>
+              </Row>
+            )}
+
+            {saveErr && (
+              <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{saveErr}</p>
+            )}
+
+            {!edit.editing && cfg?.updated && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                Triggers set {fmtTs(cfg.updated)}
+              </span>
+            )}
+
+            {!edit.editing && running && last?.trigger && (
               <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Last sweep {fmtTs(last.updated)}: {last.last.done} done
-                {last.last.incomplete ? `, ${last.last.incomplete} incomplete` : ""}
-                {last.last.blocked ? `, ${last.last.blocked} blocked` : ""}
-                {last.last.failed ? `, ${last.last.failed} failed` : ""} in {last.last.duration_s}s.
+                Sweep running (trigger <span className="ws-mono">{last.trigger}</span>, started {fmtTs(last.started_at)}).
               </p>
             )}
 
-            {!running && last?.status === "crashed" && (
-              <p style={{ color: "var(--danger)", fontSize: "var(--fs-xs)", margin: 0 }}>
-                The last sweep exited without finishing cleanly. Check the sweep log.
+            {!edit.editing && !running && last && (
+              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                Last run {fmtTs(last.started_at)}: {last.status}
+                {typeof last.tasks_done === "number" ? `, ${last.tasks_done} done` : ""}
+                {typeof last.tasks_failed === "number" && last.tasks_failed > 0 ? `, ${last.tasks_failed} failed` : ""}.
               </p>
+            )}
+
+            {edit.editing && (
+              <ActionBar flash={edit.flash ? "Saved" : undefined}>
+                <Button size="sm" variant="primary" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => { setSaveErr(null); edit.cancel(); }}>
+                  Cancel
+                </Button>
+              </ActionBar>
             )}
           </Stack>
         )}
       </Card>
-
-      <Modal open={logOpen} onClose={() => setLogOpen(false)} title="Sweep log">
-        <pre className="ws-mono" style={{
-          maxHeight: "60vh", overflow: "auto", fontSize: "var(--fs-xs)",
-          background: "var(--surface-2)", padding: "var(--space-3)", borderRadius: "var(--radius-2)",
-          whiteSpace: "pre-wrap", margin: 0,
-        }}>
-          {logText}
-        </pre>
-        <Row end style={{ marginTop: "var(--space-3)" }}>
-          <Button size="sm" variant="ghost" onClick={openLog}><RefreshCw aria-hidden /> Reload</Button>
-        </Row>
-      </Modal>
     </section>
   );
 }

@@ -1,15 +1,15 @@
 import { useState } from "react";
 import Services from "./Services";
 import Events from "./Events";
-import Runs from "./Runs";
+import Jobs from "./Jobs";
 import { Tabs, type TabItem } from "../ui";
 
-type Tab = "services" | "events" | "runs";
+type Tab = "services" | "events" | "jobs";
 
 const TABS: TabItem<Tab>[] = [
   { value: "services", label: "Services" },
   { value: "events", label: "Events" },
-  { value: "runs", label: "Runs" },
+  { value: "jobs", label: "Jobs" },
 ];
 
 export default function Activity() {
@@ -30,7 +30,7 @@ export default function Activity() {
       <div style={{ marginTop: "var(--space-5)" }}>
         {tab === "services" && <Services />}
         {tab === "events" && <Events />}
-        {tab === "runs" && <Runs />}
+        {tab === "jobs" && <Jobs />}
       </div>
     </div>
   );

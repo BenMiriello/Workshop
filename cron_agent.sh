@@ -47,6 +47,25 @@ if [[ -r "$AUTH_ENV" ]]; then
 fi
 unset ANTHROPIC_API_KEY
 
+# Job store shim (services.jobs). Every bounded execution this tick drives — a
+# ralph worker task, a drained event — is recorded as a Job in .runtime/jobs.jsonl
+# (replacing the old agent-runs.jsonl aggregate + agent-runs-completed.jsonl).
+# Run from the repo root so `backend.services` imports regardless of cwd.
+jobs_py() { (cd "$WORKSHOP" && python3 -m backend.services.jobs "$@"); }
+job_start() {  # $1=trigger  $2=agent_id(optional) ; echoes new job id
+  local a=(start --trigger "$1" --status running)
+  [[ -n "${2:-}" ]] && a+=(--agent-id "$2")
+  jobs_py "${a[@]}" 2>/dev/null || true
+}
+job_finish() {  # $1=id $2=status $3=exit_code(optional) $4=tasks_done(optional) $5=tasks_failed(optional)
+  [[ -z "${1:-}" ]] && return 0
+  local a=(finish --id "$1" --status "$2")
+  [[ -n "${3:-}" ]] && a+=(--exit-code "$3")
+  [[ -n "${4:-}" ]] && a+=(--tasks-done "$4")
+  [[ -n "${5:-}" ]] && a+=(--tasks-failed "$5")
+  jobs_py "${a[@]}" >/dev/null 2>&1 || true
+}
+
 # Lock — prevent overlapping ticks.
 exec 9>"$LOCK"
 if ! flock -n 9; then
@@ -98,10 +117,12 @@ echo "[$(date -Iseconds)] pre-flight: graduated=$PRE_GRAD demoted=$PRE_VERIFY ge
 # Phase 1 — Event-consumer (Layer 4, unchanged behavior)
 # =============================================================================
 # Drain up to MAX_PENDING pending events. Same logic as v1: re-read events.jsonl
-# at offset, classify, dispatch local or cloud, write completed record.
+# at offset, classify, dispatch local or cloud. Each drained event is now a Job
+# (trigger=event) rather than an agent-runs-completed.jsonl append. The pending
+# QUEUE itself (agent-runs-pending.jsonl) is untouched: it is consumed here, not
+# a ledger.
 PENDING=$WORKSHOP/.runtime/agent-runs-pending.jsonl
 EVENTS_LOG=$WORKSHOP/.runtime/events.jsonl
-COMPLETED=$WORKSHOP/.runtime/agent-runs-completed.jsonl
 MAX_PENDING=5
 
 if [[ -s "$PENDING" ]]; then
@@ -124,7 +145,7 @@ if [[ -s "$PENDING" ]]; then
     SOURCE=$(echo "$LINE" | python3 -c "import json,sys; print(json.loads(sys.stdin.read()).get('source',''))" 2>/dev/null)
     EVT_OFFSET=$(echo "$LINE" | python3 -c "import json,sys; r=json.loads(sys.stdin.read()); er=r.get('event_ref') or {}; print(er.get('offset') if er.get('offset') is not None else '')" 2>/dev/null)
     if [[ -z "$AGENT_ID" || -z "$SOURCE" ]]; then
-      printf '{"ts":"%s","status":"skipped","reason":"malformed"}\n' "$(date -Iseconds)" >> "$COMPLETED"
+      echo "[$(date -Iseconds)] event-consumer: skipping malformed pending record" >> "$LOG"
       continue
     fi
 
@@ -133,7 +154,8 @@ if [[ -s "$PENDING" ]]; then
     BUDGET_OVER=$(echo "$BUDGET_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('over', False)))" 2>/dev/null || echo 0)
     if [[ "$BUDGET_OVER" == "1" ]]; then
       echo "[$(date -Iseconds)] event-consumer: agent=$AGENT_ID over budget — throttling" >> "$LOG"
-      printf '{"ts":"%s","agent_id":"%s","source":"%s","status":"throttled"}\n' "$(date -Iseconds)" "$AGENT_ID" "$SOURCE" >> "$COMPLETED"
+      THROTTLE_JOB=$(job_start event "$AGENT_ID")
+      job_finish "$THROTTLE_JOB" cancelled
       continue
     fi
 
@@ -176,6 +198,8 @@ except Exception:
       EVT_ROUTE=$(echo "$EVT_CLASSIFY_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('route','cloud'))" 2>/dev/null || echo "cloud")
     fi
 
+    # Open the event Job (run-state) before dispatching.
+    EVT_JOB=$(job_start event "$AGENT_ID")
     AGENT_RUN_TS=$(date -Iseconds)
     if [[ "$EVT_ROUTE" == "local" ]]; then
       LOCAL_RESP=$(curl -sS -m 300 -X POST http://127.0.0.1:8000/relay/local \
@@ -191,13 +215,10 @@ except Exception:
 
     [[ -x "$WORKSHOP/scripts/heartbeat.sh" ]] && "$WORKSHOP/scripts/heartbeat.sh" "$AGENT_ID" mode=event-driven source="$SOURCE" >/dev/null 2>&1 || true
 
-    if [[ $EVT_EXIT -eq 0 ]]; then STATUS="consumed";
-    elif [[ $EVT_EXIT -eq 124 ]]; then STATUS="timeout";
-    else STATUS="failed"; fi
-    python3 -c "
-import json, sys
-print(json.dumps({'ts': sys.argv[1], 'agent_id': sys.argv[2], 'source': sys.argv[3], 'status': sys.argv[4], 'exit_code': int(sys.argv[5]), 'relay_route': sys.argv[6]}))
-" "$AGENT_RUN_END" "$AGENT_ID" "$SOURCE" "$STATUS" "$EVT_EXIT" "$EVT_ROUTE" >> "$COMPLETED"
+    if [[ $EVT_EXIT -eq 0 ]]; then EVT_JOB_STATUS="done";
+    elif [[ $EVT_EXIT -eq 124 ]]; then EVT_JOB_STATUS="failed";
+    else EVT_JOB_STATUS="failed"; fi
+    job_finish "$EVT_JOB" "$EVT_JOB_STATUS" "$EVT_EXIT"
     CONSUMED_COUNT=$((CONSUMED_COUNT + 1))
   done < "$WORKING"
 
@@ -241,6 +262,10 @@ while true; do
   BASELINE=$(git rev-parse HEAD 2>/dev/null || echo "")
 
   echo "[$(date -Iseconds)] worker-loop: picking line=$TASK_LINE_NO task=\"$TASK_TRIM\"" >> "$LOG"
+
+  # One Job per dispatched task (trigger=cron: this worker fires on the cron
+  # schedule). Run-state is `running`; finished with the ralph outcome below.
+  TASK_JOB=$(job_start cron)
 
   # Fire Ralph against this task.
   set +e
@@ -289,6 +314,15 @@ while true; do
       ;;
   esac
 
+  # Close the task Job with the ralph outcome. 0=done, 3=classifier-block
+  # (cancelled), 1/2/other=failed (incomplete/failure, carried in tasks_failed).
+  case "$RALPH_EXIT" in
+    0)   TJ_STATUS=done;      TJ_DONE=1; TJ_FAIL=0 ;;
+    3)   TJ_STATUS=cancelled; TJ_DONE=0; TJ_FAIL=0 ;;
+    *)   TJ_STATUS=failed;    TJ_DONE=0; TJ_FAIL=1 ;;
+  esac
+  job_finish "$TASK_JOB" "$TJ_STATUS" "$RALPH_EXIT" "$TJ_DONE" "$TJ_FAIL"
+
   # Tiny gap so log writes interleave cleanly.
   sleep 1
 done
@@ -312,11 +346,9 @@ if (( TASKS_DONE > 0 || TASKS_TIMEOUT > 0 || TASKS_BLOCKED > 0 )); then
   fi
 fi
 
-# Structured run record (preserves prior log shape for UI).
-mkdir -p "$WORKSHOP/.runtime"
-python3 -c "
-import json, sys
-print(json.dumps({'ts':'$TICK_START_ISO','tasks_done':$TASKS_DONE,'tasks_failed':$TASKS_FAILED,'tasks_timeout':$TASKS_TIMEOUT,'tasks_blocked':$TASKS_BLOCKED,'queue_open':$OPEN_COUNT,'duration_s':$DURATION}))
-" >> "$WORKSHOP/.runtime/agent-runs.jsonl" 2>/dev/null || true
+# The per-tick aggregate that used to be appended to .runtime/agent-runs.jsonl
+# is retired: every dispatched task and drained event is now its own Job in
+# .runtime/jobs.jsonl (see job_start/job_finish above), which is the activity
+# source of record. No aggregate row is written.
 
 exit 0

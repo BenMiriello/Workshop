@@ -33,15 +33,32 @@ MAX_WALL=3000        # 50 min total for a project sweep
 MAX_TASKS=20         # cap tasks per sweep
 RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
 FORCE=0              # manual operator-triggered run bypasses the global off-switch
+JOB_ID=""            # adopt an already-open Job (manual run) instead of creating one
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --max-wall)  MAX_WALL="$2"; shift 2 ;;
     --max-tasks) MAX_TASKS="$2"; shift 2 ;;
+    --job-id)    JOB_ID="$2"; shift 2 ;;
     --force)     FORCE=1; shift ;;
     *)           SLUG="$1"; shift ;;
   esac
 done
+
+# Job store shim (services.jobs). Run from the repo root so `backend.services`
+# is importable regardless of this script's caller cwd. The run-state of a sweep
+# is a Job in `running` status; we finish() it on exit. Replaces the old
+# per-project .runtime/ralph-run.json.
+job_start() {  # $1 = trigger kind ; echoes the new job id
+  (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
+    --project-slug "$SLUG" --trigger "$1" --status running 2>/dev/null) || true
+}
+job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed
+  [[ -z "$1" ]] && return 0
+  (cd "$WORKSHOP" && python3 -m backend.services.jobs finish \
+    --id "$1" --status "$2" --tasks-done "${3:-0}" --tasks-failed "${4:-0}" \
+    >/dev/null 2>&1) || true
+}
 
 if [[ -z "$SLUG" ]]; then
   echo "usage: project_ralph.sh <slug> [--max-wall SEC] [--max-tasks N]" >&2
@@ -82,53 +99,25 @@ fi
 RUNTIME="$DIR/.runtime"
 mkdir -p "$RUNTIME"
 LOG="$RUNTIME/ralph.log"
-RUNSTATUS="$RUNTIME/ralph-run.json"
 
 ts() { date -Iseconds; }
 log() { echo "[$(ts)] [project_ralph] $*" >> "$LOG"; echo "[project_ralph] $*"; }
 
-SELF_PID=$$   # the project_ralph.sh shell — the process the backend liveness-checks
-
-# Status writer — the backend reads this file to report run state to the UI.
-write_status() {
-  # $1=status $2=extra-json-fragment (optional)
-  python3 - "$RUNSTATUS" "$SLUG" "$1" "${2:-}" "$SELF_PID" <<'PYEOF'
-import json, sys, time
-path, slug, status, extra, self_pid = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-rec = {"slug": slug, "status": status, "pid": int(self_pid), "updated": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
-if extra:
-    try:
-        rec.update(json.loads(extra))
-    except Exception:
-        pass
-# preserve started time across updates
-try:
-    prev = json.loads(open(path).read())
-    if "started" in prev and status != "starting":
-        rec["started"] = prev["started"]
-except Exception:
-    pass
-if status == "starting":
-    rec["started"] = rec["updated"]
-open(path, "w").write(json.dumps(rec) + "\n")
-PYEOF
-}
-
 # Global off-switch (same flag the workshop cron honors). A scheduled/continuous
 # sweep obeys it; a manual operator-triggered run (--force) is a deliberate
-# foreground action and bypasses it (the per-project `off` still blocks below).
+# foreground action and bypasses it, along with the per-project mode gate below.
 if [[ -f "$AUTONOMY_FLAG" && "$FORCE" -ne 1 ]]; then
   log "global autonomy off-switch present; not running"
-  write_status "skipped" '{"reason":"global-off-switch"}'
+  job_finish "$JOB_ID" cancelled 0 0
   exit 2
 fi
 
-# Per-project autonomy must be enabled (manual = operator-triggered runs count;
-# only "off" blocks). A manual Run-now still routes through here; the mode gate
-# just refuses to run a project the operator has turned off.
-if [[ "$MODE" == "off" ]]; then
+# Per-project mode gate. A background (non-force) sweep only runs for a project
+# whose mode is not "off". A manual --force run is always allowed (an operator
+# "run now" is a deliberate action; "off = manual only").
+if [[ "$MODE" == "off" && "$FORCE" -ne 1 ]]; then
   log "project autonomy is off for $SLUG; not running"
-  write_status "skipped" '{"reason":"autonomy-off"}'
+  job_finish "$JOB_ID" cancelled 0 0
   exit 2
 fi
 
@@ -137,12 +126,18 @@ LOCK=/tmp/workshop-project-ralph-$SLUG.lock
 exec 8>"$LOCK"
 if ! flock -n 8; then
   log "another sweep already running for $SLUG; aborting"
+  job_finish "$JOB_ID" cancelled 0 0
   exit 4
 fi
 
+# Adopt the caller's Job (manual run created one already) or open a loop Job for
+# this self-launched sweep. This is the run-state the backend reports.
+if [[ -z "$JOB_ID" ]]; then
+  JOB_ID=$(job_start loop)
+fi
+
 START_EPOCH=$(date +%s)
-write_status "running" "{\"mode\":\"$MODE\"}"
-log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS ==="
+log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS ==="
 
 DONE=0; FAILED=0; BLOCKED=0; TIMEOUT=0
 tick_remaining() { echo $(( MAX_WALL - ( $(date +%s) - START_EPOCH ) )); }
@@ -168,7 +163,6 @@ while (( n < MAX_TASKS )); do
   python3 "$PTASKS" set-status "$DIR" "$TASK_ID" doing >/dev/null 2>>"$LOG"
   BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
   log "task=$TASK_ID \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
-  write_status "running" "{\"mode\":\"$MODE\",\"task_id\":\"$TASK_ID\",\"done\":$DONE}"
 
   set +e
   "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" >> "$LOG" 2>&1
@@ -186,5 +180,7 @@ done
 
 DURATION=$(( $(date +%s) - START_EPOCH ))
 log "=== sweep end slug=$SLUG done=$DONE incomplete=$TIMEOUT blocked=$BLOCKED failed=$FAILED (${DURATION}s) ==="
-write_status "idle" "{\"mode\":\"$MODE\",\"last\":{\"done\":$DONE,\"incomplete\":$TIMEOUT,\"blocked\":$BLOCKED,\"failed\":$FAILED,\"duration_s\":$DURATION}}"
+# Close the run-state Job. A sweep that drained/hit-budget cleanly is `done`;
+# task-level failures are carried in tasks_failed, not the Job status.
+job_finish "$JOB_ID" done "$DONE" "$FAILED"
 exit 0

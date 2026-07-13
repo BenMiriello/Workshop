@@ -41,6 +41,8 @@ from typing import Any
 
 import httpx
 
+from services import jobs
+
 
 log = logging.getLogger("workshop.supervisor")
 
@@ -107,6 +109,25 @@ def _append_tick_log(record: dict) -> None:
     TICKS_LOG.parent.mkdir(parents=True, exist_ok=True)
     with TICKS_LOG.open("a") as f:
         f.write(json.dumps(record) + "\n")
+
+
+# Map a heartbeat tick outcome to a Job terminal status.
+_TICK_JOB_STATUS = {
+    "completed": "done",
+    "skipped": "cancelled",
+    "error": "failed",
+    "crashed": "failed",
+}
+
+
+def _finish_tick_job(job_id: str, tick_record: dict | None) -> None:
+    """Close the Job opened for a heartbeat cycle. Additive bookkeeping only."""
+    tick_status = (tick_record or {}).get("status")
+    status = _TICK_JOB_STATUS.get(tick_status, "done" if tick_record else "failed")
+    evidence = None
+    if tick_record:
+        evidence = tick_record.get("thought") or tick_record.get("reason")
+    jobs.finish(job_id, status=status, evidence=evidence)
 
 
 # ============================================================
@@ -465,8 +486,16 @@ async def _supervise_one(agent: dict) -> None:
     async with httpx.AsyncClient(base_url=LETTA_URL, timeout=60.0) as client:
         while True:
             try:
-                async with _agent_lock(aid):
-                    tick_record = await _do_tick(client, agent)
+                # Additive: each heartbeat work cycle is a bounded execution, so
+                # record it as a Job. This does NOT touch any Letta call inside
+                # _do_tick; the heartbeat file it writes is still the liveness
+                # source. The Job is the platform-uniform activity record.
+                job = jobs.start(agent_id=aid, trigger="loop", status="running")
+                try:
+                    async with _agent_lock(aid):
+                        tick_record = await _do_tick(client, agent)
+                finally:
+                    _finish_tick_job(job["id"], locals().get("tick_record"))
                 _append_tick_log(tick_record)
                 backoff = BACKOFF_INITIAL_S
             except asyncio.CancelledError:

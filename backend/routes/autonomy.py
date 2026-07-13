@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 
-from services import gpubroker_client
+from services import gpubroker_client, jobs
 
 
 router = APIRouter(tags=["autonomy"])
@@ -100,6 +100,23 @@ async def autonomy_status(request: Request):
             "disabled_at": flag_text,
             "flag_path": str(AUTONOMY_FLAG),
         },
+        "jobs": _jobs_summary(),
+    }
+
+
+def _jobs_summary(limit: int = 200) -> dict:
+    """Recent Job activity for the autonomy overview, sourced from the Job
+    store (replaces the old agent-runs.jsonl tick counts)."""
+    recent = jobs.read(limit=limit)
+    by_status: dict[str, int] = {}
+    for r in recent:
+        st = r.get("status") or "unknown"
+        by_status[st] = by_status.get(st, 0) + 1
+    return {
+        "recent_count": len(recent),
+        "by_status": by_status,
+        "running": by_status.get("running", 0),
+        "last": recent[0] if recent else None,
     }
 
 

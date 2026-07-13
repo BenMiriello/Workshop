@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
 from services.budget import budget_for
-from services import global_memory, per_channel_agents, build_agents, dev_servers
+from services import global_memory, per_channel_agents, build_agents, dev_servers, jobs, triggers
 
 router = APIRouter()
 
@@ -70,8 +70,10 @@ async def list_agents(request: Request):
         data = await request.app.state.letta.list_agents()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Letta unreachable: {e}")
-    return [
-        {
+    out = []
+    for a in data:
+        meta = a.get("metadata_") or a.get("metadata") or {}
+        out.append({
             "id": a.get("id"),
             "name": a.get("name"),
             "kind": "data",
@@ -81,9 +83,11 @@ async def list_agents(request: Request):
             # never-run agent still sorts and labels sensibly.
             "last_active": a.get("updated_at") or a.get("created_at"),
             "memory_blocks": [b.get("label") for b in a.get("memory", {}).get("blocks", [])],
-        }
-        for a in data
-    ]
+            # Unified trigger vocabulary, read from Letta autonomy metadata via
+            # the Phase-1 adapter (Phase 2 swaps the backing store; same shape).
+            "triggers": triggers.agent_triggers(meta),
+        })
+    return out
 
 
 @router.get("/tools")
@@ -601,9 +605,15 @@ async def agent_memory_effective(agent_id: str, request: Request):
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str, request: Request):
     try:
-        return await request.app.state.letta.get_agent(agent_id)
+        agent = await request.app.state.letta.get_agent(agent_id)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Letta unreachable: {e}")
+    # Read-side: surface the unified trigger list alongside the raw agent so the
+    # UI can move off the bare autonomy metadata. Metadata fields are unchanged.
+    meta = agent.get("metadata_") or agent.get("metadata") or {}
+    if isinstance(agent, dict):
+        agent["triggers"] = triggers.agent_triggers(meta)
+    return agent
 
 
 @router.post("/")
@@ -835,25 +845,10 @@ async def agent_runs(agent_id: str, limit: int = 50):
         except (json.JSONDecodeError, ValueError):
             pass
 
-    # Cron runs JSONL — filter by agent_id if records have it (cron_agent.sh
-    # doesn't currently tag runs with agent_id since it's a single global loop;
-    # future per-agent supervisor will. For now, return up to `limit` recent
-    # runs if requested agent matches anything tagged, else empty.)
-    runs = []
-    if RUNS_JSONL.exists():
-        for line in reversed(RUNS_JSONL.read_text().splitlines()):
-            if not line.strip():
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            # If the record is tagged with agent_id, filter; else include for masini-style global.
-            if "agent_id" in rec and rec["agent_id"] != agent_id:
-                continue
-            runs.append(rec)
-            if len(runs) >= limit:
-                break
+    # Recent Jobs for this agent, sourced from the unified Job store
+    # (.runtime/jobs.jsonl) rather than the retired agent-runs.jsonl. Same
+    # response shape; the frontend reads `runs`.
+    runs = jobs.read(agent_id=agent_id, limit=limit)
 
     return {
         "agent_id": agent_id,
