@@ -1,9 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Download, MessagesSquare, Plus, FolderGit2 } from "lucide-react";
-import type { BuildAgent, Project, ProjectSensitivity, ProjectState } from "@shared/types";
-import { createBlankBuilder } from "../lib/blankBuilder";
-import { chatApi, type ThreadSummary } from "../lib/chat";
+import { Download, Plus, FolderGit2 } from "lucide-react";
+import type { Project, ProjectSensitivity, ProjectState } from "@shared/types";
 import {
   Button,
   Card,
@@ -14,22 +12,11 @@ import {
   PageHeader,
   Row,
   Segmented,
-  SectionLabel,
   StateBlock,
   StatusPill,
   type SegmentedOption,
   type StatusKind,
 } from "../ui";
-// Relative "when" for the blank-builder list. Compact, no dependency.
-function whenLabel(iso: string): string {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return "";
-  const s = Math.max(0, Math.floor((Date.now() - t) / 1000));
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
-  return new Date(t).toLocaleDateString();
-}
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "private", label: "Private" },
@@ -169,15 +156,6 @@ export default function Projects() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  // Freestanding "Blank project N" builders — the "build with chat" flow spawns a
-  // real builder that lives permanently in the Agents list. Surfaced here too so a
-  // half-shaped blank project is one tap away from the Projects page it belongs to.
-  const [blankBuilders, setBlankBuilders] = useState<BuildAgent[]>([]);
-  // Older "build with chat" planning conversations (context_key "new-project",
-  // before the flow spawned a real builder). These have no agent record, so the
-  // ONLY way back to them is this list — never drop it or they vanish.
-  const [draftChats, setDraftChats] = useState<ThreadSummary[]>([]);
-  const [chatBusy, setChatBusy] = useState(false);
   const nav = useNavigate();
 
   useEffect(() => {
@@ -189,34 +167,6 @@ export default function Projects() {
       .then(setProjects)
       .catch((e) => setErr(String(e)));
   }, []);
-
-  useEffect(() => {
-    fetch("/api/agents/build")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((all: BuildAgent[]) =>
-        setBlankBuilders(
-          all.filter((a) => !a.project_slug && a.state !== "retired" && /^blank-project-\d+$/.test(a.slug)),
-        ),
-      )
-      .catch(() => { /* non-essential — the button still spawns a fresh builder */ });
-  }, []);
-
-  useEffect(() => {
-    chatApi
-      .listThreads("new-project")
-      .then((ts) => setDraftChats(ts.filter((t) => t.message_count > 0)))
-      .catch(() => { /* non-essential — older chats just won't list */ });
-  }, []);
-
-  const startWithChat = useCallback(async () => {
-    setChatBusy(true);
-    try {
-      const a = await createBlankBuilder();
-      nav(`/chat/${encodeURIComponent(`build:${a.slug}`)}`);
-    } catch {
-      setChatBusy(false);
-    }
-  }, [nav]);
 
   if (err) {
     return (
@@ -239,73 +189,12 @@ export default function Projects() {
                 <Plus aria-hidden /> New project
               </Button>
             </Link>
-            <Button variant="ghost" size="sm" onClick={startWithChat} loading={chatBusy}>
-              <MessagesSquare aria-hidden /> Build with chat
-            </Button>
             <Button variant="ghost" size="sm" onClick={() => setImportOpen(true)}>
               <Download aria-hidden /> Import from git
             </Button>
           </Row>
         }
       />
-
-      {draftChats.length > 0 && (
-        <div style={{ marginBottom: "var(--space-5)" }}>
-          <SectionLabel>Continue a project chat</SectionLabel>
-          <CardGrid>
-            {draftChats.map((d) => (
-              <Link
-                key={d.id}
-                to={`/chat/new-project?thread=${encodeURIComponent(d.id)}`}
-                style={{ textDecoration: "none" }}
-              >
-                <Card interactive style={{ padding: "var(--space-3)" }}>
-                  <Row between style={{ gap: "var(--space-2)" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
-                      <MessagesSquare size={15} aria-hidden />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {d.title || "Untitled project chat"}
-                      </span>
-                    </span>
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: "0 0 auto" }}>
-                      {whenLabel(d.updated_at)}
-                    </span>
-                  </Row>
-                </Card>
-              </Link>
-            ))}
-          </CardGrid>
-        </div>
-      )}
-
-      {blankBuilders.length > 0 && (
-        <div style={{ marginBottom: "var(--space-5)" }}>
-          <SectionLabel>Blank project builders</SectionLabel>
-          <CardGrid>
-            {blankBuilders.map((a) => (
-              <Link
-                key={a.slug}
-                to={`/chat/${encodeURIComponent(`build:${a.slug}`)}`}
-                style={{ textDecoration: "none" }}
-              >
-                <Card interactive style={{ padding: "var(--space-3)" }}>
-                  <Row between style={{ gap: "var(--space-2)" }}>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
-                      <MessagesSquare size={15} aria-hidden />
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {a.name}
-                      </span>
-                    </span>
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: "0 0 auto" }}>
-                      {whenLabel(a.last_active || a.created)}
-                    </span>
-                  </Row>
-                </Card>
-              </Link>
-            ))}
-          </CardGrid>
-        </div>
-      )}
 
       {!projects ? (
         <p className="ws-muted">Loading…</p>

@@ -2,6 +2,7 @@ import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-r
 import Agents from "./pages/Agents";
 import AgentDetail from "./pages/AgentDetail";
 import AgentBuild from "./pages/AgentBuild";
+import Chats from "./pages/Chats";
 import Projects from "./pages/Projects";
 import ProjectNew from "./pages/ProjectNew";
 import ProjectDetail from "./pages/ProjectDetail";
@@ -73,6 +74,7 @@ export default function App() {
       pathname === "/projects" ||
       pathname.startsWith("/projects/") ||
       pathname === "/agents" ||
+      pathname === "/chats" ||
       pathname === "/marketplace" ||
       pathname.startsWith("/apps/birds") ||
       pathname === "/activity" ||
@@ -96,6 +98,7 @@ export default function App() {
           <Route path="/agents/:slug/chat" element={<AgentBuild />} />
           <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />
           <Route path="/agents/:slug" element={<AgentDetail />} />
+          <Route path="/chats" element={<Chats />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectDetail />} />

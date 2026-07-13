@@ -8,7 +8,7 @@ A provider answers three questions for a given chat thread:
                         reply, mutate app state, and return human-readable notes
 
 This module is the PLATFORM chat plumbing: the ContextProvider base, the general
-+ new-project + project/build providers, the role preamble, and dispatch. It
++ project/build providers, the role preamble, and dispatch. It
 hardcodes NO app. A built-in app's own persona lives in `services/app_personas`
 and is registered through the app's AppSpec (`app_registry`: `chat_provider` /
 `chat_snapshot`), so a persona appears only when its app is installed and adding
@@ -583,79 +583,6 @@ class ContextProvider:
         return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- new-project provider
-# Data-mode, text-only assistant for the "build with chat" flow: shape a project
-# idea in conversation, then (only when the operator is ready) emit ONE ui-card of
-# kind project-proposal prefilled from the discussion. The ui-card FORMAT comes
-# from UI_CARD_PROTOCOL in the role preamble; this persona supplies the WHEN plus
-# the field semantics (real template slugs, sensitivity default). No tools, no
-# apply_actions override, so the emitted card reaches the client verbatim.
-
-
-class NewProjectContextProvider(ContextProvider):
-    key = "new-project"
-    label = "New project"
-    role = "assistant"
-    # Web-enabled: this assistant helps SHAPE a project, so it can research the
-    # web (compare libraries, check current versions/APIs, pull references) while
-    # converging on the proposal. Built-in web tools only — no file/shell access
-    # (there is no project directory yet; the spawned build agent gets the full
-    # toolset once the project is created).
-    allowed_tools: list[str] = ["WebSearch", "WebFetch"]
-    mcp_servers: list[str] = []
-    # Room for a few searches + a fetch + synthesis in one turn.
-    max_turns = 8
-    # Shaping a project + producing a clean, prefilled proposal card benefits from
-    # stronger reasoning than the default fast tier; operator can drop to haiku.
-    default_model = _llm.TIER_SONNET
-
-    def persona(self) -> str:
-        try:
-            from routes.projects import load_templates
-            tpls = load_templates()
-        except Exception as e:  # never let the template read break the chat path
-            log.warning("new-project persona: template load failed: %s", e)
-            tpls = [{"slug": "blank", "label": "Blank", "hint": ""}]
-        tpl_lines = "\n".join(
-            f"  - {t['slug']}: {t.get('label') or t['slug']}"
-            + (f" ({t['hint']})" if t.get("hint") else "")
-            for t in tpls
-        )
-        return (
-            "You are Clawd, the operator's assistant inside the Workshop app, "
-            "helping shape a NEW project before it is created. The operator is "
-            f"{operator_name()}, a senior engineer who dislikes padding. Be direct and "
-            "brief. No emojis.\n\n"
-            "Your job in this chat is to turn an idea into a concrete project. "
-            "Draw out and converge on:\n"
-            "  - a short title,\n"
-            "  - a one-sentence purpose (what it is and who it is for),\n"
-            "  - a template chosen from the real templates below,\n"
-            "  - an initial brief: goals, constraints, and open questions.\n\n"
-            "Available templates (use the SLUG as the template field value):\n"
-            f"{tpl_lines}\n\n"
-            "Sensitivity defaults to 'shareable' unless the operator asks for "
-            "'private' or 'public'.\n\n"
-            "When the operator says they are ready (or asks you to create it), "
-            "emit exactly one `ui-card` of kind 'project-proposal', prefilled "
-            "from the discussion, with these fields: title (text), slug (slug, a "
-            "kebab-case version of the title), purpose (text), template "
-            "(template), sensitivity (sensitivity), and brief (textarea, the "
-            "goals/constraints/open-questions written as markdown). Use actions "
-            '[{"id": "createProject", "label": "Create project", "variant": '
-            '"primary"}, {"id": "dismiss", "label": "Dismiss", "variant": '
-            '"ghost"}]. Do NOT emit the card unprompted; keep shaping the idea '
-            "in plain conversation until the operator is actually ready to create "
-            "the project."
-        )
-
-    def live_context(self) -> str:
-        # No live app snapshot for an as-yet-uncreated project; the persona plus
-        # the conversation carry everything. (Overrides the base finance/commute/
-        # location snapshot, which is irrelevant here.)
-        return ""
-
-
 # ---------------------------------------------------------------- project provider
 # Build-mode chat scoped to a Projects-hub project. The provider is parameterized
 # by the project slug; context_key looks like "project:<slug>". Reads PROJECT.md,
@@ -813,12 +740,13 @@ class BuildAgentContextProvider(ContextProvider):
 _general = ContextProvider()
 _general.max_turns = 8
 
-# Platform providers — always present, no app required: the general assistant
-# and the new-project ("build with chat") flow. App personas are NOT listed here;
-# they come from the installed apps' AppSpecs (see provider_map()).
+# Platform providers — always present, no app required: the general assistant.
+# App personas are NOT listed here; they come from the installed apps' AppSpecs
+# (see provider_map()). Chat and Project are loosely coupled: a general chat can
+# be rescoped to project:<slug> / app:<name> / agent:<slug> as a binding change,
+# there is no separate "new project" chat pipeline.
 _PLATFORM_PROVIDERS: dict[str, ContextProvider] = {
     "general": _general,
-    "new-project": NewProjectContextProvider(),
 }
 
 

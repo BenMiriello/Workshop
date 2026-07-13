@@ -180,33 +180,6 @@ def create_agent(
     return {"slug": slug, **record}
 
 
-def create_blank() -> dict:
-    """Mint a fresh, freestanding "Blank project N" build agent.
-
-    This is the "build with chat" entry point: instead of a text-only planning
-    chat, the operator gets a REAL builder — full Claude Code toolset scoped to a
-    scaffolded working tree — that can research the web, write files, and stand up
-    a starter environment from the first turn. It shows up in the Agents list like
-    any other builder; the operator renames it (see `rename`) once the project
-    takes shape. N increments from the highest existing blank-project-N so a new
-    one never collides with a retired one still in the registry.
-    """
-    data = _load()
-    existing = data.get("build_agents") or {}
-    n = 1
-    pat = re.compile(r"^blank-project-(\d+)$")
-    for s in existing:
-        m = pat.match(s)
-        if m:
-            n = max(n, int(m.group(1)) + 1)
-    slug = f"blank-project-{n}"
-    return create_agent(
-        slug=slug,
-        name=f"Blank project {n}",
-        purpose="Freestanding exploration — rename once it takes shape.",
-    )
-
-
 def rename(slug: str, *, name: str | None = None, purpose: str | None = None) -> dict:
     """Update a build agent's display name and/or purpose. The slug (and thus its
     cwd + session) is immutable — only the human-facing labels change, which is

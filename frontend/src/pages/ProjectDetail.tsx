@@ -269,8 +269,8 @@ export default function ProjectDetail() {
   const [project, setProject] = useState<Project | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // The project's own chat threads (context_key `project:<slug>`), including any
-  // that were rescoped in from a new-project planning chat. Without this section
-  // a rescoped chat is unreachable — it looks like it vanished.
+  // general chat that was later rescoped to this project. Without this section a
+  // rescoped chat is unreachable, it looks like it vanished.
   const [chats, setChats] = useState<ThreadSummary[] | null>(null);
 
   // Brief (PROJECT.md)

@@ -204,14 +204,14 @@ async def remove(thread_id: str):
 
 @router.post("/threads/{thread_id}/rescope")
 async def rescope_thread(thread_id: str, body: RescopeThread):
-    """Re-key a thread to a new scope (the Move-chat-into-project conversion).
+    """Re-bind a thread to a new scope. Chat and Project are loosely coupled:
+    this is a binding change, not a conversion or a promotion.
 
     Thread identity is its id + message history, which are unchanged: only the
-    context_key field moves (e.g. `new-project` -> `project:<slug>`), so the next
+    context_key field moves (e.g. `general` -> `project:<slug>`), so the next
     turn layers the new provider's context on top of the same conversation.
     Multiple threads may share a context_key (the store filters by key, it never
-    assumes uniqueness), so no collision handling is needed. Provenance is recorded
-    in converted_from + converted_at."""
+    assumes uniqueness), so no collision handling is needed."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
@@ -233,10 +233,6 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     if isinstance(provider, chat_context.ProjectContextProvider) and not provider.dir.exists():
         raise HTTPException(400, f"unknown project: {new_key.split(':', 1)[1]}")
 
-    old_key = t.get("context_key")
-    if new_key != old_key:
-        t["converted_from"] = old_key
-        t["converted_at"] = _now_iso()
     t["context_key"] = new_key
     chat_store.save_thread(t)
 
@@ -244,8 +240,6 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     return {
         "id": t["id"],
         "context_key": new_key,
-        "converted_from": t.get("converted_from"),
-        "converted_at": t.get("converted_at"),
         "agent_id": t.get("agent_id"),
         "model": t.get("model"),
         "title": t.get("title", "New chat"),

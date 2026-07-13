@@ -69,9 +69,9 @@ def test_chat_personas_are_install_gated():
     assembles its provider map from installed apps, hardcoding none."""
     from services import chat_context, app_registry
 
-    # Full roster: the four app personas plus the two platform providers.
+    # Full roster: the four app personas plus the general platform provider.
     full = chat_context.provider_map()
-    for key in ("general", "new-project", "finance", "budget", "commute", "location"):
+    for key in ("general", "finance", "budget", "commute", "location"):
         assert key in full, f"{key} persona missing from full provider map"
 
     # Simulate an instance with only 'budget' installed: only its persona (+
@@ -81,7 +81,7 @@ def test_chat_personas_are_install_gated():
     try:
         slim = chat_context.provider_map()
         assert "budget" in slim
-        assert "general" in slim and "new-project" in slim  # platform always present
+        assert "general" in slim  # platform provider always present
         for gone in ("finance", "commute", "location"):
             assert gone not in slim, f"{gone} persona leaked with its app uninstalled"
     finally:

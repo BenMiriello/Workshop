@@ -172,13 +172,6 @@ async def create_build_agent(body: BuildAgentCreate):
         raise HTTPException(400, str(e))
 
 
-@router.post("/build/blank")
-async def create_blank_build_agent():
-    """Spawn a fresh freestanding "Blank project N" builder for the build-with-chat
-    flow. Full toolset + scaffolded working tree; appears in the Agents list."""
-    return build_agents.create_blank()
-
-
 class BuildAgentRename(BaseModel):
     name: str | None = Field(default=None, max_length=64)
     purpose: str | None = Field(default=None, max_length=280)
