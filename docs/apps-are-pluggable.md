@@ -52,6 +52,14 @@ Workshop keeps a **catalog** of built-in apps (code, tracked) and a per-instance
    This is the platform's built-in *library*. Being in the catalog does **not**
    install an app.
 
+   The catalog is built **tolerantly**: each app is constructed by a factory that
+   imports its own route module(s), and an app whose modules this instance does
+   not ship is simply skipped — never entering the catalog, never crashing the
+   import. So a slimmed or downstream build can omit a built-in app's code
+   entirely and the platform still boots. (The catalog must never top-level
+   `from routes import <app>`; that hard-coupling is what the guard and
+   `tests/test_app_registry_tolerant.py` forbid.)
+
 2. **`.runtime/installed-apps.json`** (`services/installed_apps.py`) — the install
    list, this instance's state, gitignored. It is the source of truth for which
    apps are actually wired up:

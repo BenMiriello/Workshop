@@ -20,6 +20,7 @@ VIOL=()
 MAIN="backend/main.py"
 LLM="backend/services/llm_router.py"
 APPS_TSX="frontend/src/pages/Apps.tsx"
+REGISTRY="backend/services/app_registry.py"
 
 # App route modules — these belong to installed apps and must mount from
 # services/app_registry, never from main.py.
@@ -41,6 +42,21 @@ if [[ -f "$MAIN" ]]; then
   # The registry-driven mount loop must still be present.
   if ! grep -q "app_registry.installed_specs()" "$MAIN"; then
     VIOL+=("$MAIN no longer iterates app_registry.installed_specs() — the installed-app mount loop is gone.")
+  fi
+fi
+
+# 1b) The catalog must not HARD-import app route modules at load time. Workshop is
+#     a container; an instance may omit an app's module (slimmed/downstream build).
+#     A top-level `from routes import <app>` crashes the whole platform when that
+#     module is absent (base_apps/main/llm_router all import app_registry). Apps
+#     must be built by factories that import their own modules tolerantly.
+if [[ -f "$REGISTRY" ]]; then
+  # Flag a top-level (column-0) import of any app route module from `routes`.
+  if grep -nE "^(from routes import.*\b($APP_MODULES)\b|import routes\.($APP_MODULES)\b)" "$REGISTRY" >/dev/null; then
+    VIOL+=("$REGISTRY hard-imports an app route module at load time. Import each app's module inside its factory (see _build_catalog); a missing module must degrade the catalog, not crash it.")
+  fi
+  if ! grep -q "_build_catalog" "$REGISTRY"; then
+    VIOL+=("$REGISTRY no longer builds the catalog tolerantly via _build_catalog() — a slimmed instance (missing an app module) would crash on import.")
   fi
 fi
 

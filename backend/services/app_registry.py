@@ -29,24 +29,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+import importlib
+
 from fastapi import Depends, FastAPI
 
 from deps_auth import require_internal_caller
 from deps_user import require_user, require_domain_owner
-from routes import (
-    birds,
-    budget,
-    commute,
-    environment,
-    finance,
-    health,
-    location,
-    owntracks,
-    plaid_webhook,
-)
 from services import installed_apps
 
 log = logging.getLogger("workshop.apps")
+
+
+# Workshop is a container: the catalog is the built-in app LIBRARY, but a given
+# instance need not ship every app's route module (a slimmed build, or a
+# downstream that removed apps it doesn't use). So the catalog must NEVER
+# hard-import an app's route module at load time — doing so would crash the whole
+# platform (base_apps/main/llm_router all import this) the moment one app is
+# absent. Instead each app is built by a factory that imports its own module(s);
+# a factory whose modules aren't present is skipped and its app never enters the
+# catalog. See _build_catalog() below.
+def _has_module(name: str) -> bool:
+    try:
+        importlib.import_module(f"routes.{name}")
+        return True
+    except ModuleNotFoundError:
+        return False
 
 
 @dataclass(frozen=True)
@@ -79,7 +86,7 @@ _PLAID_MCP = {
         "type": "stdio",
         "command": "node",
         "args": [os.environ.get(
-            "WORKSHOP_PLAID_MCP_SERVER",
+            "WORKSHOP_PLAID_MCP",
             str(Path.home() / "clawdbot" / "plaid-mcp" / "server.js"),
         )],
     },
@@ -192,8 +199,13 @@ async def _atlas_rebuild_loop() -> None:
 # --------------------------------------------------------------------------- #
 # The built-in catalog. Auth mirrors the previous hardcoded main.py wiring.
 # --------------------------------------------------------------------------- #
-BUILTIN_APPS: dict[str, AppSpec] = {
-    "finance": AppSpec(
+# One factory per built-in app. A factory imports ITS OWN route module(s) at call
+# time (safe — the builder only calls it once those modules are confirmed present)
+# and returns the AppSpec. This is what keeps the catalog from hard-coupling to
+# every app module: an app whose modules aren't shipped is simply never built.
+def _finance_spec() -> AppSpec:
+    from routes import finance, plaid_webhook
+    return AppSpec(
         id="finance",
         card={
             "title": "Finance",
@@ -215,8 +227,12 @@ BUILTIN_APPS: dict[str, AppSpec] = {
         mcp=_PLAID_MCP,
         on_startup=(_finance_on_startup,),
         background=(_prewarm_loop, _categorize_loop),
-    ),
-    "budget": AppSpec(
+    )
+
+
+def _budget_spec() -> AppSpec:
+    from routes import budget
+    return AppSpec(
         id="budget",
         card={
             "title": "Budget",
@@ -235,8 +251,12 @@ BUILTIN_APPS: dict[str, AppSpec] = {
         ),
         # Budget chat shares the plaid MCP for transaction lookup.
         mcp=_PLAID_MCP,
-    ),
-    "commute": AppSpec(
+    )
+
+
+def _commute_spec() -> AppSpec:
+    from routes import commute
+    return AppSpec(
         id="commute",
         card={
             "title": "Commute",
@@ -253,8 +273,12 @@ BUILTIN_APPS: dict[str, AppSpec] = {
         mounts=(
             RouterMount(commute.router, deps=(Depends(require_domain_owner("commute")),)),
         ),
-    ),
-    "location": AppSpec(
+    )
+
+
+def _location_spec() -> AppSpec:
+    from routes import location, owntracks
+    return AppSpec(
         id="location",
         card={
             "title": "Location",
@@ -273,8 +297,12 @@ BUILTIN_APPS: dict[str, AppSpec] = {
             # OwnTracks ingest — HTTP Basic bound to an owner inside the handler.
             RouterMount(owntracks.router),
         ),
-    ),
-    "birds": AppSpec(
+    )
+
+
+def _birds_spec() -> AppSpec:
+    from routes import birds, environment
+    return AppSpec(
         id="birds",
         card={
             "title": "Birds",
@@ -295,8 +323,12 @@ BUILTIN_APPS: dict[str, AppSpec] = {
             RouterMount(environment.router, deps=(Depends(require_user),)),
         ),
         background=(_env_refresh_loop, _atlas_rebuild_loop),
-    ),
-    "health": AppSpec(
+    )
+
+
+def _health_spec() -> AppSpec:
+    from routes import health
+    return AppSpec(
         id="health",
         card=None,  # headless: iOS Health auto-export ingest + reads, no launcher card
         identity={
@@ -309,14 +341,17 @@ BUILTIN_APPS: dict[str, AppSpec] = {
             # /ingest: HTTP Basic bound to owner; reads: require_user per-endpoint.
             RouterMount(health.router),
         ),
-    ),
-    "wearables": AppSpec(
+    )
+
+
+def _wearables_spec() -> AppSpec:
+    # External app: served from its own origin, no in-platform route module.
+    return AppSpec(
         id="wearables",
         card={
             "title": "Open Wearables",
             "tagline": "Wearables data UI",
             "icon": "Watch",
-            # External app served from its own origin (Tailscale Serve per-port).
             "href": os.environ.get("WORKSHOP_WEARABLES_URL", ""),
             "external": True,
             "probe": "open-wearables-backend",
@@ -327,8 +362,40 @@ BUILTIN_APPS: dict[str, AppSpec] = {
             "provides": [],
             "needs": [],
         },
-    ),
-}
+    )
+
+
+# (id, required route modules, factory). An app is admitted to the catalog only
+# when every required module is importable on this instance; otherwise it is
+# skipped (logged once) and can never be installed, mounted, or listed. Apps with
+# no required modules (external apps like wearables) are always admitted.
+_CATALOG_FACTORIES: tuple[tuple[str, tuple[str, ...], Callable[[], AppSpec]], ...] = (
+    ("finance", ("finance", "plaid_webhook"), _finance_spec),
+    ("budget", ("budget",), _budget_spec),
+    ("commute", ("commute",), _commute_spec),
+    ("location", ("location", "owntracks"), _location_spec),
+    ("birds", ("birds", "environment"), _birds_spec),
+    ("health", ("health",), _health_spec),
+    ("wearables", (), _wearables_spec),
+)
+
+
+def _build_catalog() -> dict[str, AppSpec]:
+    catalog: dict[str, AppSpec] = {}
+    for app_id, required, factory in _CATALOG_FACTORIES:
+        missing = [m for m in required if not _has_module(m)]
+        if missing:
+            log.info("app %r not in catalog: route module(s) not shipped: %s", app_id, ", ".join(missing))
+            continue
+        try:
+            catalog[app_id] = factory()
+        except Exception as e:  # a factory that fails to build must not sink the rest
+            log.warning("app %r skipped: failed to build spec: %s", app_id, e)
+    return catalog
+
+
+# The built-in catalog for THIS instance — only apps whose modules are present.
+BUILTIN_APPS: dict[str, AppSpec] = _build_catalog()
 
 
 def installed_specs() -> list[AppSpec]:
