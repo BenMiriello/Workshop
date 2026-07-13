@@ -7,9 +7,13 @@ A provider answers three questions for a given chat thread:
   3. apply_actions()  — parse any structured directives the model emitted in its
                         reply, mutate app state, and return human-readable notes
 
-Register a provider per app by adding it to PROVIDERS. The chat route stays
-app-agnostic; everything app-specific lives behind this interface. Adding chat
-to a new app = write one provider + drop the <ChatDock contextKey="..."> in.
+This module is the PLATFORM chat plumbing: the ContextProvider base, the general
++ new-project + project/build providers, the role preamble, and dispatch. It
+hardcodes NO app. A built-in app's own persona lives in `services/app_personas`
+and is registered through the app's AppSpec (`app_registry`: `chat_provider` /
+`chat_snapshot`), so a persona appears only when its app is installed and adding
+a new app's assistant never edits this file. Adding chat to a fresh app = write
+one provider (in the app) + register it + drop the <ChatDock contextKey="..."> in.
 
 Per-provider context is bounded — Plaid balances + last-30d-summary + computed
 budget go in for budget chat; latest commute decision for commute chat; etc.
@@ -20,10 +24,20 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from typing import Any
 
 log = logging.getLogger("workshop.chat_context")
+
+
+def operator_name() -> str:
+    """Display name for the operator in assistant personas. Per-instance and
+    env-driven: WORKSHOP_OPERATOR_NAME, else a generic label. Deliberately does
+    NOT read the operator auth-email env — that is an auth-config value and must
+    never be consulted at request-time code (see tests/test_ownership.py); a
+    persona label is request-time text."""
+    return os.environ.get("WORKSHOP_OPERATOR_NAME", "").strip() or "the operator"
 
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
@@ -477,30 +491,28 @@ class ContextProvider:
     def persona(self) -> str:
         return (
             "You are Clawd, the operator's personal assistant inside the Workshop app. "
-            "The operator is benmiriello — a senior engineer who dislikes padding. Be direct "
+            f"The operator is {operator_name()} — a senior engineer who dislikes padding. Be direct "
             "and brief. Use short paragraphs or tight bullet lists. No emojis.\n\n"
-            "You have access to a snapshot of the operator's connected accounts (via Plaid), "
-            "live commute state, and current budget plan — read what's given to you each turn "
-            "before answering, and DON'T make up numbers when real ones are right there."
+            "Below each turn you may be given live snapshots from the operator's installed apps "
+            "(accounts, budget, location, commute, etc.) — read what's given to you before "
+            "answering, and DON'T make up numbers when real ones are right there."
         )
 
     def live_context(self) -> str:
         # General assistant gets a broad system snapshot so it can answer
         # cross-cutting questions ("how much in savings", "next train", etc.)
-        # without the operator having to switch tabs.
+        # without the operator having to switch tabs. The snapshots come from the
+        # INSTALLED apps that register one (app_registry) — no app is hardcoded
+        # here, so an instance that doesn't install finance/commute/… simply omits
+        # that section.
+        from services import app_registry
+
         parts: list[str] = []
-        try:
-            parts.append(_finance_snapshot())
-        except Exception as e:
-            log.warning("general live_context: finance snapshot failed: %s", e)
-        try:
-            parts.append(_commute_snapshot())
-        except Exception as e:
-            log.warning("general live_context: commute snapshot failed: %s", e)
-        try:
-            parts.append(_location_snapshot())
-        except Exception as e:
-            log.warning("general live_context: location snapshot failed: %s", e)
+        for snap in app_registry.installed_snapshots():
+            try:
+                parts.append(snap())
+            except Exception as e:
+                log.warning("general live_context: a snapshot failed: %s", e)
         return "\n\n".join(p for p in parts if p)
 
     def apply_actions(self, reply: str) -> tuple[str, list[str]]:
@@ -571,211 +583,6 @@ class ContextProvider:
         return "\n".join(lines)
 
 
-# ---------------------------------------------------------------- budget provider
-
-_PATCH_BLOCK = re.compile(r"```plan-patch\s*\n(.*?)```", re.DOTALL)
-
-# Shared Plaid-lookup method heuristics (general, situation-free) appended to
-# every persona that has the transaction-lookup tools. Encodes METHOD only —
-# operator-specific facts live in the per-project memory store, not here. These
-# two are the exact gaps that once produced a ~$4.3k answer to a since-an-event
-# total that should have been ~$16k: no source-account provenance, no widened
-# lookback past the 90-day search default.
-_PLAID_LOOKUP_METHOD = (
-    "\n\nLOOKUP METHOD: (1) TRANSFER ATTRIBUTION — to attribute a transfer to a "
-    "person or entity, read the counterparty / source account number: an inflow "
-    "from an account that is not one of the operator's own accounts came from "
-    "someone else. Don't infer the source from amount or memo text alone. "
-    "(2) CUMULATIVE LOOKBACK — when reconstructing a total since an event (a debt "
-    "owed, deposits since a date), set the lookback window to span the entire "
-    "period; never rely on the 90-day search default — pass an explicit `days` "
-    "wide enough to cover from the event to today."
-)
-
-
-class BudgetContextProvider(ContextProvider):
-    key = "budget"
-    label = "Budget assistant"
-    # Budget chat gets read-only Plaid lookups: ad-hoc transaction search +
-    # date-range listing for questions the cached 30-day rollup can't answer
-    # ("what did I spend at Whole Foods last month", "find Comcast bills in
-    # the last 90 days"). NO balance fetch (already in context), NO writes,
-    # NO refresh (the finance cache warms on its own cadence).
-    allowed_tools = [
-        "mcp__plaid__search_transactions",
-        "mcp__plaid__list_transactions",
-    ]
-    mcp_servers = ["plaid"]
-    max_turns = 4
-    # Budget chat keeps a stronger default — plan-patch path generation wants
-    # careful reasoning (operator can still drop to haiku via the picker).
-    default_model = _llm.TIER_SONNET
-
-    def persona(self) -> str:
-        return (
-            "You are Clawd, the operator's budgeting assistant, embedded inside the Workshop "
-            "Budget app. The operator's model is a priority allocation waterfall: income → "
-            "necessities → prioritized debt payoffs → prioritized savings buckets (emergency "
-            "fund first) → variable spend targets → leftover.\n\n"
-            "Each turn you receive: (1) the editable plan, (2) live Plaid account balances, "
-            "(3) recent-30-day spending actuals already categorized by bucket. USE THESE. The "
-            "operator's repeated correction: don't invent numbers you can readily see in the "
-            "context. If they ask 'fill in realistic targets', base them on the actual recent "
-            "spend totals shown to you, not Mountain-View defaults.\n\n"
-            "You can READ the live plan + balances + actuals (given below each turn) and you can "
-            "EDIT the plan. To change the plan, include exactly one fenced block in your reply:\n\n"
-            "```plan-patch\n"
-            '{"set": [{"path": "<dotted.path>", "value": <new value>}, ...]}\n'
-            "```\n\n"
-            "Path rules: dotted segments. List items are addressed by their `id`. Examples:\n"
-            "  income.monthly                      -> the monthly income number\n"
-            "  income.per_paycheck\n"
-            "  savings.emergency.target            -> emergency bucket's target\n"
-            "  savings.emergency.planned_monthly\n"
-            "  savings.emergency.target_date       -> 'YYYY-MM-DD' or null\n"
-            "  savings.emergency.note              -> free-text note\n"
-            "  debts.citi.planned_monthly          -> Citi monthly payment\n"
-            "  debts.citi.balance                  -> override balance (live overrides for mask)\n"
-            "  necessities.rent.monthly\n"
-            "  necessities.rent.name               -> rename\n"
-            "  variable.groceries.target           -> monthly groceries budget\n"
-            "  variable.groceries.name             -> rename\n\n"
-            "Only emit a plan-patch when the operator actually asks to change something. Always "
-            "also explain the change in plain words. When only answering a question, do NOT emit a "
-            "patch. Be direct and brief. No emojis.\n\n"
-            "TOOLS: you have a NARROW read-only Plaid lookup tool set in this chat — ad-hoc "
-            "transaction search (mcp__plaid__search_transactions) and date-range listing "
-            "(mcp__plaid__list_transactions). Use them ONLY for questions the injected 30-day "
-            "rollup and balances above can't answer (e.g. 'what did I spend at Whole Foods last "
-            "month', 'find Comcast bills in the last 90 days'). Prefer the context that's already "
-            "in front of you; reach for a lookup only when the answer truly isn't there. You also "
-            "have web search + fetch for quick external lookups (a merchant, a current rate, a "
-            "definition). You do NOT have Read, Bash, Gmail, or file edits. If asked for something "
-            "outside plan edits, these Plaid lookups, and web search (e.g. 'check my emails for the "
-            "Citi statement'), say plainly you can't and point the operator to where to find it. The "
-            "authoritative capability statement is in the preamble above this persona."
-            + _PLAID_LOOKUP_METHOD
-        )
-
-    def live_context(self) -> str:
-        # Cheap: plan + live snapshot, computed budget summary, no raw txn dump.
-        return _budget_full_context()
-
-    def apply_actions(self, reply: str) -> tuple[str, list[str]]:
-        from services import budget_store
-
-        notes: list[str] = []
-        m = _PATCH_BLOCK.search(reply)
-        if not m:
-            return reply, notes
-
-        raw = m.group(1).strip()
-        try:
-            patch = json.loads(raw)
-            ops = patch.get("set", []) if isinstance(patch, dict) else []
-        except json.JSONDecodeError:
-            return reply, ["(could not parse a plan edit — left the plan unchanged)"]
-
-        if not ops:
-            cleaned = _PATCH_BLOCK.sub("", reply).strip()
-            return cleaned, notes
-
-        plan = budget_store.load_plan()
-        applied: list[str] = []
-        failed: list[str] = []
-        for op in ops:
-            path = op.get("path", "")
-            value = op.get("value")
-            ok, label = _set_path(plan, path, value)
-            (applied if ok else failed).append(label)
-
-        if applied:
-            budget_store.save_plan(plan)
-            notes.append("Updated plan: " + "; ".join(applied))
-        for f in failed:
-            notes.append(f"Could not apply: {f}")
-
-        # Strip the machine block from what the operator sees — the note covers it.
-        cleaned = _PATCH_BLOCK.sub("", reply).strip()
-        return cleaned, notes
-
-
-# ---------------------------------------------------------------- finance provider
-
-
-class FinanceContextProvider(ContextProvider):
-    """Read-only assistant for the Accounts/Finance page. Knows balances +
-    recent spend without the budget-plan editing surface."""
-    key = "finance"
-    label = "Accounts assistant"
-    # Finance chat = strictly read-only Plaid surface. Same transaction
-    # lookup as budget, plus holdings/investments since this page also
-    # surfaces investment accounts. No balance fetch (cached snapshot is
-    # injected each turn; refresh has its own cadence).
-    allowed_tools = [
-        "mcp__plaid__search_transactions",
-        "mcp__plaid__list_transactions",
-        "mcp__plaid__get_holdings",
-        "mcp__plaid__list_investment_transactions",
-    ]
-    mcp_servers = ["plaid"]
-    max_turns = 4
-
-    def persona(self) -> str:
-        return (
-            "You are Clawd, the operator's finance assistant, embedded inside the Workshop "
-            "Accounts page. You can answer questions about live balances, recent transactions, "
-            "and spending patterns — using the snapshot supplied each turn. You CANNOT edit "
-            "anything on this page (no plan to mutate); for budget changes, the operator opens "
-            "the Budget app. Be direct, brief. No emojis. If asked to do something that requires "
-            "writes, say plainly that this view is read-only and point them at the right app."
-            + _PLAID_LOOKUP_METHOD
-        )
-
-    def live_context(self) -> str:
-        return _finance_snapshot() + "\n\n" + _spend_snapshot()
-
-
-# ---------------------------------------------------------------- commute provider
-
-
-class CommuteContextProvider(ContextProvider):
-    key = "commute"
-    label = "Commute assistant"
-
-    def persona(self) -> str:
-        return (
-            "You are Clawd, the operator's commute assistant, embedded inside the Workshop "
-            "Commute app. You see the latest train schedule decision, recent location ping, "
-            "and the brief-tracking state. Answer questions about timing, what the alerter "
-            "is doing, and when the next decision will fire. Be direct, brief. No emojis. "
-            "Read-only — you can't change schedules or send alerts; explain how to do those "
-            "in the operator's terminal if asked."
-        )
-
-    def live_context(self) -> str:
-        return _commute_snapshot() + "\n\n" + _location_snapshot()
-
-
-# ---------------------------------------------------------------- location provider
-
-
-class LocationContextProvider(ContextProvider):
-    key = "location"
-    label = "Location assistant"
-
-    def persona(self) -> str:
-        return (
-            "You are Clawd, the operator's location assistant, embedded inside the Workshop "
-            "Location app. You see the most recent OwnTracks ping (lat/lng/ts) and can answer "
-            "questions about where the operator was last seen and how stale that signal is. "
-            "Read-only. Be direct, brief. No emojis."
-        )
-
-    def live_context(self) -> str:
-        return _location_snapshot()
-
-
 # ---------------------------------------------------------------- new-project provider
 # Data-mode, text-only assistant for the "build with chat" flow: shape a project
 # idea in conversation, then (only when the operator is ready) emit ONE ui-card of
@@ -817,7 +624,7 @@ class NewProjectContextProvider(ContextProvider):
         return (
             "You are Clawd, the operator's assistant inside the Workshop app, "
             "helping shape a NEW project before it is created. The operator is "
-            "benmiriello, a senior engineer who dislikes padding. Be direct and "
+            f"{operator_name()}, a senior engineer who dislikes padding. Be direct and "
             "brief. No emojis.\n\n"
             "Your job in this chat is to turn an idea into a concrete project. "
             "Draw out and converge on:\n"
@@ -847,452 +654,6 @@ class NewProjectContextProvider(ContextProvider):
         # the conversation carry everything. (Overrides the base finance/commute/
         # location snapshot, which is irrelevant here.)
         return ""
-
-
-# ============================================================================
-# Live snapshot helpers — each returns a compact, plain-text block. None of
-# these block long: balances come from the finance cache (<5ms hot), commute
-# decisions are tiny JSON, location is a single file. They tolerate missing
-# files / Plaid not connected gracefully.
-# ============================================================================
-
-
-def _money(x: Any) -> str:
-    try:
-        return f"${float(x):,.0f}"
-    except (TypeError, ValueError):
-        return str(x)
-
-
-def _money_c(x: Any) -> str:
-    try:
-        return f"${float(x):,.2f}"
-    except (TypeError, ValueError):
-        return str(x)
-
-
-def _finance_snapshot() -> str:
-    """Compact balances summary from the finance cache. Doesn't trigger a Plaid
-    roundtrip — only reads the already-warm cache file."""
-    from pathlib import Path
-    import os
-
-    cache_file = Path(os.environ.get(
-        "WORKSHOP_FINANCE_CACHE",
-        "/home/clawd-a/workshop/.runtime/finance-cache.json",
-    ))
-    if not cache_file.exists():
-        return "LIVE BALANCES: (no finance cache — Plaid likely not warmed up yet)"
-    try:
-        state = json.loads(cache_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return "LIVE BALANCES: (finance cache unreadable)"
-    bal = (state.get("balances") or {}).get("data") or {}
-    items = bal.get("items") or []
-    if not items:
-        return "LIVE BALANCES: (no banks connected)"
-    lines = ["LIVE BALANCES (from Plaid, cached):"]
-    for item in items:
-        for acct in item.get("accounts", []) or []:
-            mask = acct.get("mask") or "?"
-            name = acct.get("name") or acct.get("official_name") or "Account"
-            subtype = acct.get("subtype") or acct.get("type") or ""
-            cur = (acct.get("balance") or {}).get("current")
-            limit = (acct.get("balance") or {}).get("limit")
-            if subtype == "credit card":
-                # For credit, `current` is the amount owed. Limit + available is informative.
-                lines.append(
-                    f"- {name} ··{mask} ({subtype}): owed {_money_c(cur)}"
-                    + (f", limit {_money(limit)}" if limit else "")
-                )
-            else:
-                lines.append(f"- {name} ··{mask} ({subtype}): {_money_c(cur)}")
-    return "\n".join(lines)
-
-
-def _spend_snapshot(days: int = 30) -> str:
-    """Last-N-day spend categorized by Plaid primary category. Reads the cached
-    transactions and bucketizes on the fly — small enough computation that the
-    extra ~5ms beats trying to share state with budget_engine."""
-    from pathlib import Path
-    import os
-
-    cache_file = Path(os.environ.get(
-        "WORKSHOP_FINANCE_CACHE",
-        "/home/clawd-a/workshop/.runtime/finance-cache.json",
-    ))
-    if not cache_file.exists():
-        return ""
-    try:
-        state = json.loads(cache_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return ""
-
-    txns_entry = state.get(f"transactions:{days}") or state.get("transactions:30") or {}
-    txns_data = txns_entry.get("data")
-    if isinstance(txns_data, list):
-        txns = txns_data
-    elif isinstance(txns_data, dict):
-        txns = txns_data.get("transactions") or []
-    else:
-        txns = []
-    if not isinstance(txns, list):
-        txns = []
-    if not txns:
-        return f"LAST {days}D SPEND: (no transactions in cache)"
-
-    by_primary: dict[str, float] = {}
-    total_out = 0.0
-    excluded = ("LOAN_PAYMENTS", "TRANSFER_IN", "TRANSFER_OUT", "INCOME", "BANK_FEES_OVERDRAFT")
-    for t in txns:
-        amt = t.get("amount")
-        if amt is None or amt <= 0:
-            continue
-        cat = t.get("category_detailed") or t.get("category") or "UNKNOWN"
-        if any(cat.startswith(p) for p in excluded):
-            continue
-        # Primary = first segment of detailed cat
-        primary = cat.split("_")[0] if cat else "UNKNOWN"
-        # For FOOD_AND_DRINK keep two segments so groceries vs eating-out are distinguishable
-        if cat.startswith("FOOD_AND_DRINK"):
-            primary = "FOOD_AND_DRINK_" + cat.split("_", 3)[3] if len(cat.split("_")) > 3 else "FOOD_AND_DRINK"
-        elif cat.startswith("RENT_AND_UTILITIES"):
-            primary = "RENT_AND_UTILITIES"
-        elif cat.startswith("TRANSPORTATION"):
-            primary = "TRANSPORTATION"
-        elif cat.startswith("GENERAL_MERCHANDISE"):
-            primary = "GENERAL_MERCHANDISE"
-        elif cat.startswith("GENERAL_SERVICES"):
-            primary = "GENERAL_SERVICES"
-        elif cat.startswith("ENTERTAINMENT"):
-            primary = "ENTERTAINMENT"
-        elif cat.startswith("TRAVEL"):
-            primary = "TRAVEL"
-        else:
-            primary = cat.split("_")[0]
-        by_primary[primary] = by_primary.get(primary, 0.0) + float(amt)
-        total_out += float(amt)
-
-    # Sort largest first
-    rows = sorted(by_primary.items(), key=lambda kv: -kv[1])
-    lines = [f"LAST {days}D SPEND (Plaid categories, transfers/income/payments excluded):"]
-    lines.append(f"  Total: {_money_c(total_out)}")
-    for cat, amt in rows[:12]:  # cap at top 12 — long-tail is noise
-        lines.append(f"  - {cat}: {_money_c(amt)}")
-    return "\n".join(lines)
-
-
-def _budget_full_context() -> str:
-    """Plan + balances + computed actuals + per-bucket pacing. The richest
-    context we ship to any provider — the budget chat needs all of it to
-    answer questions or fill realistic targets."""
-    try:
-        from services import budget_store, budget_engine
-
-        plan = budget_store.load_plan()
-        # Reuse the cached balances + txns rather than re-fetching from Plaid.
-        # The engine wants the full transactions-response dict (it pulls
-        # ["transactions"] internally), so pass that through verbatim.
-        balances, txns_resp = _read_finance_cache_raw()
-        computed = budget_engine.compute(plan, balances, txns_resp, window_days=30)
-    except Exception as e:
-        log.warning("budget context build failed: %s", e, exc_info=True)
-        return build_budget_context()  # fall back to plain plan dump
-
-    out: list[str] = ["CURRENT PLAN (editable):"]
-    inc = plan.get("income", {})
-    out.append(
-        f"- Income: {_money(inc.get('monthly'))}/mo "
-        f"({_money(inc.get('per_paycheck'))} x {inc.get('paychecks_per_month')} paychecks)"
-    )
-    nec = [n for n in plan.get("necessities", []) if n.get("monthly")]
-    if nec:
-        out.append("- Necessities: " + ", ".join(
-            f"{n['name']} {_money(n['monthly'])} (id:{n['id']})" for n in nec
-        ))
-    else:
-        out.append("- Necessities: none set (rent/utilities/phone/insurance all $0)")
-    for d in plan.get("debts", []):
-        if d.get("balance") or d.get("planned_monthly"):
-            extra = f", promo until {d['promo_until']}" if d.get("promo_until") else ""
-            out.append(
-                f"- Debt {d['name']} (id:{d['id']}): balance {_money(d.get('balance'))}, "
-                f"paying {_money(d.get('planned_monthly'))}/mo{extra}"
-            )
-    for s in plan.get("savings", []):
-        if s.get("target") or s.get("current") or s.get("planned_monthly"):
-            out.append(
-                f"- Savings {s['name']} (id:{s['id']}): {_money(s.get('current'))} / "
-                f"{_money(s.get('target'))} target, saving {_money(s.get('planned_monthly'))}/mo"
-            )
-    var = [v for v in plan.get("variable", []) if v.get("target")]
-    if var:
-        out.append("- Variable targets: " + ", ".join(
-            f"{v['name']} {_money(v['target'])} (id:{v['id']})" for v in var
-        ))
-    else:
-        ids = [v["id"] for v in plan.get("variable", [])]
-        out.append("- Variable spend targets: none set yet (ids: " + ", ".join(ids) + ")")
-
-    # Live snapshot — balances first.
-    out.append("")
-    out.append(_finance_snapshot())
-
-    # Computed actuals per bucket (this is the "what was actually spent" signal
-    # the operator wanted — derived from real transactions, not made up).
-    out.append("")
-    out.append("LAST 30D ACTUAL SPEND PER BUCKET (categorized, transfers excluded):")
-    for v in computed.get("variable", []):
-        target_s = _money(v.get("target", 0)) if v.get("target") else "no target"
-        pct = v.get("pct")
-        pct_s = f" ({pct*100:.0f}%)" if isinstance(pct, (int, float)) else ""
-        flag = " OVER" if v.get("over") else ""
-        out.append(
-            f"  - {v['name']} (id:{v['id']}): actual {_money_c(v.get('actual', 0))} / "
-            f"target {target_s}{pct_s}{flag}"
-        )
-    actuals = computed.get("actuals", {})
-    out.append(
-        f"  Necessities (rent/utilities autodetected): {_money_c(actuals.get('necessities', 0))}; "
-        f"unclassified spend: {_money_c(actuals.get('unclassified', 0))}"
-    )
-
-    # Summary numbers — what's allocated vs leftover.
-    s = computed.get("summary", {})
-    out.append("")
-    out.append("COMPUTED ALLOCATION (waterfall):")
-    out.append(
-        f"  Income {_money(s.get('income'))}/mo  -  "
-        f"necessities {_money(s.get('necessities_planned'))}  -  "
-        f"debt {_money(s.get('debt_planned'))}  -  "
-        f"savings {_money(s.get('savings_planned'))}  -  "
-        f"variable targets {_money(s.get('variable_target'))}"
-    )
-    out.append(
-        f"  = committed {_money(s.get('committed'))}, "
-        f"discretionary {_money(s.get('discretionary'))}, "
-        f"leftover {_money(s.get('leftover'))}"
-    )
-    if s.get("shortfall"):
-        out.append("  SHORTFALL: planned allocations exceed income.")
-    return "\n".join(out)
-
-
-def _read_finance_cache_raw() -> tuple[dict, dict]:
-    """Direct read of the finance cache file — sync, no Plaid call. Returns
-    (balances_response, transactions_response) — both raw shapes from the
-    Plaid-bridge, ready to hand to budget_engine.compute which expects dicts
-    (balances has .items, txns has .transactions). Safe empty defaults so the
-    caller never needs to None-check the cache."""
-    from pathlib import Path
-    import os
-
-    cache_file = Path(os.environ.get(
-        "WORKSHOP_FINANCE_CACHE",
-        "/home/clawd-a/workshop/.runtime/finance-cache.json",
-    ))
-    if not cache_file.exists():
-        return {"items": []}, {"transactions": []}
-    try:
-        state = json.loads(cache_file.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {"items": []}, {"transactions": []}
-    bal = (state.get("balances") or {}).get("data") or {"items": []}
-    txn_entry = state.get("transactions:30") or {}
-    txn_data = txn_entry.get("data")
-    if isinstance(txn_data, list):
-        txn_data = {"transactions": txn_data}
-    elif not isinstance(txn_data, dict):
-        txn_data = {"transactions": []}
-    return bal, txn_data
-
-
-def _commute_snapshot() -> str:
-    """Latest commute decision + tick state. The commute app writes a poll/decide
-    result into .runtime/commute/ — we surface the latest one."""
-    from pathlib import Path
-
-    runtime = Path("/home/clawd-a/workshop/.runtime/commute")
-    if not runtime.exists():
-        return "COMMUTE: (no commute runtime dir)"
-    # Latest schedule snapshot
-    latest_files = sorted(
-        runtime.glob("*.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    lines: list[str] = ["COMMUTE (latest snapshot):"]
-    found_any = False
-    for p in latest_files[:3]:
-        try:
-            d = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        ts = d.get("ts") or "?"
-        agency = d.get("agency") or ""
-        feeds = d.get("feeds") or {}
-        trip_count = (feeds.get("trip_updates") or {}).get("entity_count")
-        vehicle_count = (feeds.get("vehicle_positions") or {}).get("entity_count")
-        lines.append(
-            f"- {p.name} ts={ts} agency={agency} trips={trip_count} vehicles={vehicle_count}"
-        )
-        found_any = True
-        # First decision is enough — break after one
-        break
-    if not found_any:
-        lines.append("(no parseable snapshots)")
-
-    # Subscription count (informational only). The file mixes meta keys (_schema)
-    # with source-keyed agent lists, so we just report the count of real source
-    # entries — nothing fancy.
-    sub_file = Path("/home/clawd-a/workshop/.runtime/agent-subscriptions.json")
-    if sub_file.exists():
-        try:
-            subs = json.loads(sub_file.read_text())
-            if isinstance(subs, dict):
-                real_sources = [k for k in subs if not k.startswith("_")]
-                lines.append(f"  Subscribed sources: {len(real_sources)} ({', '.join(real_sources[:6])})")
-        except (json.JSONDecodeError, OSError):
-            pass
-    return "\n".join(lines)
-
-
-def _location_snapshot() -> str:
-    """Latest position with an explicit freshness verdict.
-
-    The phone tracker (OwnTracks/Overland) can silently stop posting for hours,
-    so the presence of a 'latest' ping is NOT proof of current whereabouts. We
-    label anything older than the staleness window as stale and tell the model in
-    plain words not to treat a stale fix as the operator's current location.
-    """
-    from datetime import datetime, timezone
-
-    STALE_AFTER_MIN = 30  # matches commute LOCATION_STALE_AFTER_S and the UI
-
-    # Read the canonical, ownership-aware store — NOT a hardcoded path. (The old
-    # /home/.../.runtime/location-latest.json was moved to per-user runtime by the
-    # ownership migration; reading it directly returned "no pings" forever.)
-    try:
-        from services import location as location_svc  # local import: avoid cycle
-        d = location_svc.latest()
-    except Exception:  # noqa: BLE001 — no owner pinned / unreadable => unknown
-        d = None
-    if not d:
-        return ("LOCATION: unknown — no recent location ping available. Do NOT "
-                "guess or imply where the operator is.")
-
-    ts = d.get("ts")
-    age_min: float | None = None
-    if ts:
-        try:
-            t = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            age_min = (datetime.now(timezone.utc) - t).total_seconds() / 60
-        except (ValueError, TypeError):
-            age_min = None
-
-    if age_min is None:
-        return (f"LOCATION: last ping at {ts}, age unknown — treat as possibly "
-                f"stale; do not assume it is the operator's current location.")
-
-    if age_min < 60:
-        age = f"{age_min:.0f} min ago"
-    elif age_min < 1440:
-        age = f"{age_min / 60:.1f} h ago"
-    else:
-        age = f"{age_min / 1440:.1f} d ago"
-
-    coords = f"lat {d.get('lat')}, lng {d.get('lng')}, src={d.get('source','?')}"
-    if age_min > STALE_AFTER_MIN:
-        return (
-            f"LOCATION (STALE — last KNOWN position from {age}, NOT necessarily "
-            f"where the operator is now): {coords}. The phone tracker may have "
-            f"stopped updating. Do NOT state or imply this is his current "
-            f"location — call it the last known fix from {age} and say live "
-            f"location is unavailable."
-        )
-    return f"LOCATION (live, {age}): {coords}."
-
-
-# ============================================================================
-# Path resolution for plan-patch (used by BudgetContextProvider.apply_actions)
-# ============================================================================
-
-
-def _set_path(plan: dict, path: str, value: Any) -> tuple[bool, str]:
-    """Resolve a dotted path (list items keyed by `id`) and set the leaf.
-    Returns (ok, human_label)."""
-    parts = [p for p in path.split(".") if p]
-    if not parts:
-        return False, f"{path} (empty path)"
-    node: Any = plan
-    trail: list[str] = []
-    for i, seg in enumerate(parts):
-        last = i == len(parts) - 1
-        if isinstance(node, dict):
-            if last:
-                if seg not in node:
-                    return False, f"{path} (no field '{seg}')"
-                node[seg] = value
-                return True, f"{'.'.join(trail + [seg])} = {value}"
-            if seg not in node:
-                return False, f"{path} (no field '{seg}')"
-            node = node[seg]
-            trail.append(seg)
-        elif isinstance(node, list):
-            match = next((it for it in node if isinstance(it, dict) and it.get("id") == seg), None)
-            if match is None:
-                return False, f"{path} (no item id '{seg}')"
-            if last:
-                # setting a whole list item is unusual; require a sub-field
-                return False, f"{path} (point at a field of '{seg}')"
-            node = match
-            trail.append(seg)
-        else:
-            return False, f"{path} (cannot descend into '{seg}')"
-    return False, f"{path} (unresolved)"
-
-
-def build_budget_context() -> str:
-    """A compact, current snapshot of the editable plan. Plan-only fallback for
-    when the engine isn't reachable; main path goes through _budget_full_context."""
-    from services import budget_store
-
-    plan = budget_store.load_plan()
-    lines = ["CURRENT PLAN (editable):"]
-    inc = plan.get("income", {})
-    lines.append(
-        f"- Income: {_money(inc.get('monthly'))}/mo "
-        f"({_money(inc.get('per_paycheck'))} x {inc.get('paychecks_per_month')} paychecks)"
-    )
-    nec = [n for n in plan.get("necessities", []) if n.get("monthly")]
-    if nec:
-        lines.append("- Necessities: " + ", ".join(
-            f"{n['name']} {_money(n['monthly'])} (id:{n['id']})" for n in nec
-        ))
-    else:
-        lines.append("- Necessities: none set (rent/utilities/phone/insurance all $0)")
-    for d in plan.get("debts", []):
-        if d.get("balance") or d.get("planned_monthly"):
-            extra = f", promo until {d['promo_until']}" if d.get("promo_until") else ""
-            lines.append(
-                f"- Debt {d['name']} (id:{d['id']}): balance {_money(d.get('balance'))}, "
-                f"paying {_money(d.get('planned_monthly'))}/mo{extra}"
-            )
-    for s in plan.get("savings", []):
-        if s.get("target") or s.get("current") or s.get("planned_monthly"):
-            lines.append(
-                f"- Savings {s['name']} (id:{s['id']}): {_money(s.get('current'))} / "
-                f"{_money(s.get('target'))} target, saving {_money(s.get('planned_monthly'))}/mo"
-            )
-    var = [v for v in plan.get("variable", []) if v.get("target")]
-    if var:
-        lines.append("- Variable targets: " + ", ".join(
-            f"{v['name']} {_money(v['target'])} (id:{v['id']})" for v in var
-        ))
-    else:
-        lines.append("- Variable spend targets: none set yet (ids: "
-                     + ", ".join(v["id"] for v in plan.get("variable", [])) + ")")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------- project provider
@@ -1359,7 +720,7 @@ class ProjectContextProvider(ContextProvider):
         return (
             "You are the build agent for the operator's Workshop Project "
             f"'{self.slug}'. You have full Claude Code tool access inside the "
-            f"project directory ({self.dir}). The operator is benmiriello — a "
+            f"project directory ({self.dir}). The operator is {operator_name()} — a "
             "senior engineer who dislikes padding. Be direct and brief.\n\n"
             "Always read PROJECT.md FIRST to ground your work in the current "
             "goal and constraints, then act. When you finish a task, update "
@@ -1422,7 +783,7 @@ class BuildAgentContextProvider(ContextProvider):
         return (
             f"You are the build agent '{self.name}' inside the Workshop. You have full "
             f"Claude Code tool access inside the directory {self.dir}. The operator is "
-            "benmiriello — a senior engineer who dislikes padding. Be direct and brief.\n\n"
+            f"{operator_name()} — a senior engineer who dislikes padding. Be direct and brief.\n\n"
             "Always read PROJECT.md FIRST to ground your work in the current goal and "
             "constraints, then act. When you finish a task, update TODO.md (check items off, "
             "add follow-ups). When the operator gives a non-trivial direction, append a "
@@ -1452,23 +813,39 @@ class BuildAgentContextProvider(ContextProvider):
 _general = ContextProvider()
 _general.max_turns = 8
 
-PROVIDERS: dict[str, ContextProvider] = {
+# Platform providers — always present, no app required: the general assistant
+# and the new-project ("build with chat") flow. App personas are NOT listed here;
+# they come from the installed apps' AppSpecs (see provider_map()).
+_PLATFORM_PROVIDERS: dict[str, ContextProvider] = {
     "general": _general,
-    "budget": BudgetContextProvider(),
-    "finance": FinanceContextProvider(),
-    "commute": CommuteContextProvider(),
-    "location": LocationContextProvider(),
     "new-project": NewProjectContextProvider(),
 }
 
 
+def provider_map() -> dict[str, ContextProvider]:
+    """The dispatchable provider map: platform providers + one per INSTALLED app
+    that registers a chat provider (app_registry). Built per call so installing/
+    removing an app changes the available personas with no edit here — a persona
+    for a not-installed (or not-shipped) app is simply absent."""
+    from services import app_registry
+
+    providers: dict[str, ContextProvider] = dict(_PLATFORM_PROVIDERS)
+    for factory in app_registry.installed_chat_providers():
+        try:
+            p = factory()
+            providers[p.key] = p
+        except Exception as e:  # a broken persona must not sink the whole map
+            log.warning("chat provider build failed: %s", e)
+    return providers
+
+
 def _project_slugs() -> list[str]:
-    """Read project slugs from the projects.json registry, if present."""
-    reg = _projects_root().parent / "projects.json"
-    if not reg.exists():
+    """Read project slugs from the projects registry (per-instance, .runtime/)."""
+    from routes.projects import REGISTRY as _reg
+    if not _reg.exists():
         return []
     try:
-        data = json.loads(reg.read_text())
+        data = json.loads(_reg.read_text())
         return sorted((data.get("projects") or {}).keys())
     except Exception:
         return []
@@ -1534,7 +911,8 @@ def get_provider(context_key: str | None) -> ContextProvider:
     if context_key and context_key.startswith("build:"):
         slug = context_key.split(":", 1)[1]
         return BuildAgentContextProvider(slug)
-    return PROVIDERS.get(context_key or "general", PROVIDERS["general"])
+    providers = provider_map()
+    return providers.get(context_key or "general", providers["general"])
 
 
 def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict:
@@ -1571,7 +949,7 @@ def list_providers(scope: str | None = None) -> list[dict]:
         # get_provider falls back to the `general` provider for unknown keys;
         # only return an entry if the resolved key actually matches the request
         # (so a bogus scope doesn't silently expose `general`).
-        if provider.key != scope and scope not in PROVIDERS:
+        if provider.key != scope and scope not in provider_map():
             return []
         # Preserve the nicer dynamic labels for project:/build: keys.
         if scope.startswith("project:"):
@@ -1582,7 +960,7 @@ def list_providers(scope: str | None = None) -> list[dict]:
             label = None
         return [_provider_entry(provider, label)]
 
-    out = [_provider_entry(p) for p in PROVIDERS.values()]
+    out = [_provider_entry(p) for p in provider_map().values()]
     for slug in _project_slugs():
         out.append(_provider_entry(
             ProjectContextProvider(slug), f"Build · project · {slug}"

@@ -64,6 +64,41 @@ def test_missing_module_drops_only_its_app_and_never_crashes():
         _reload_registry()  # restore a full catalog for any later test
 
 
+def test_chat_personas_are_install_gated():
+    """A chat persona is available only when its app is installed — chat_context
+    assembles its provider map from installed apps, hardcoding none."""
+    from services import chat_context, app_registry
+
+    # Full roster: the four app personas plus the two platform providers.
+    full = chat_context.provider_map()
+    for key in ("general", "new-project", "finance", "budget", "commute", "location"):
+        assert key in full, f"{key} persona missing from full provider map"
+
+    # Simulate an instance with only 'budget' installed: only its persona (+
+    # platform providers) should appear; finance/commute/location must be absent.
+    orig = app_registry.installed_specs
+    app_registry.installed_specs = lambda: [s for s in orig() if s.id == "budget"]
+    try:
+        slim = chat_context.provider_map()
+        assert "budget" in slim
+        assert "general" in slim and "new-project" in slim  # platform always present
+        for gone in ("finance", "commute", "location"):
+            assert gone not in slim, f"{gone} persona leaked with its app uninstalled"
+    finally:
+        app_registry.installed_specs = orig
+
+
+def test_chat_context_has_no_hardcoded_app_personas_or_operator():
+    """chat_context is platform plumbing: no app persona classes, no hardcoded
+    operator identity (the exact coupling the 2026-07-12 pass removed)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "services" / "chat_context.py").read_text()
+    for banned in ("class BudgetContextProvider", "class FinanceContextProvider",
+                   "class CommuteContextProvider", "class LocationContextProvider"):
+        assert banned not in src, f"chat_context still defines {banned!r}"
+    assert "is benmiriello" not in src, "chat_context hardcodes the operator name"
+
+
 def test_catalog_never_hard_imports_app_modules_at_toplevel():
     """The source itself must not top-level `from routes import <app>` — that is
     exactly what reintroduces the crash. (Belt-and-suspenders to the shell guard.)"""

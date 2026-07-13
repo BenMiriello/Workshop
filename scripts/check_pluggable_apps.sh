@@ -21,6 +21,7 @@ MAIN="backend/main.py"
 LLM="backend/services/llm_router.py"
 APPS_TSX="frontend/src/pages/Apps.tsx"
 REGISTRY="backend/services/app_registry.py"
+CHATCTX="backend/services/chat_context.py"
 
 # App route modules — these belong to installed apps and must mount from
 # services/app_registry, never from main.py.
@@ -57,6 +58,23 @@ if [[ -f "$REGISTRY" ]]; then
   fi
   if ! grep -q "_build_catalog" "$REGISTRY"; then
     VIOL+=("$REGISTRY no longer builds the catalog tolerantly via _build_catalog() — a slimmed instance (missing an app module) would crash on import.")
+  fi
+fi
+
+# 1c) chat_context.py is platform chat plumbing — it must not hardcode app
+#     personas. App personas live in services/app_personas.py and are registered
+#     via each app's AppSpec (chat_provider/chat_snapshot), so a persona appears
+#     only when its app is installed. Guard both the anti-pattern (app persona
+#     classes back in chat_context) and the invariant (dispatch via provider_map).
+if [[ -f "$CHATCTX" ]]; then
+  if grep -nE "^class (Budget|Finance|Commute|Location)ContextProvider" "$CHATCTX" >/dev/null; then
+    VIOL+=("$CHATCTX defines an app persona class. App personas belong in services/app_personas.py, registered via AppSpec.chat_provider — never hardcoded in chat plumbing.")
+  fi
+  if grep -nE "operator is benmiriello|is benmiriello" "$CHATCTX" >/dev/null; then
+    VIOL+=("$CHATCTX hardcodes the operator name. Use operator_name() (env-driven) so a fresh instance isn't branded with one operator's identity.")
+  fi
+  if ! grep -q "installed_chat_providers\|provider_map" "$CHATCTX"; then
+    VIOL+=("$CHATCTX no longer assembles providers from installed apps (provider_map/installed_chat_providers) — app personas would not be install-gated.")
   fi
 fi
 

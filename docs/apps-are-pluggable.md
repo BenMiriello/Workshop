@@ -21,6 +21,7 @@ None of these is ever touched to install or uninstall an app:
 
 - `backend/main.py` (router mounts, startup loops)
 - `backend/services/llm_router.py` (MCP server specs)
+- `backend/services/chat_context.py` (chat personas)
 - `frontend/src/pages/Apps.tsx` (launcher cards)
 - `backend/apps.json` / `backend/services/manifests.py` `SEED` (ship empty)
 
@@ -84,6 +85,13 @@ each installed app's `on_startup` hooks and `background` loops the same way.
   frontend.
 - **MCP** — `llm_router` reads `app_registry.installed_mcp_servers()`; the `plaid`
   server is available to chat tool-use only when `finance`/`budget` is installed.
+- **Chat personas** — each app's in-app assistant (persona, live context, tool
+  policy) lives in `services/app_personas.py` and is registered on its AppSpec
+  (`chat_provider`, `chat_snapshot`). `chat_context` (platform chat plumbing)
+  assembles its provider map from installed apps, so a persona appears only when
+  its app is installed and the general assistant's cross-app snapshot aggregates
+  only installed apps — `chat_context` hardcodes no app and no operator identity
+  (`operator_name()` is env-driven).
 - **Identity manifests** — `app_registry.ensure_identity_manifests()` seeds an
   `apps.json` entry for each installed app from the catalog on startup (preserving
   operator `ui` overrides such as the assistant toggle). `apps.json` is derived

@@ -74,6 +74,13 @@ class AppSpec:
     mcp: dict[str, dict] = field(default_factory=dict)
     on_startup: tuple[Callable[[FastAPI], Awaitable[None]], ...] = ()
     background: tuple[Callable[[], Awaitable[None]], ...] = ()
+    # Chat surface (services/chat_context, services/app_personas):
+    #   chat_provider — factory returning this app's ContextProvider (its in-app
+    #                   assistant persona). Exposed only when the app is installed.
+    #   chat_snapshot — a compact live-state string for the GENERAL assistant's
+    #                   cross-app snapshot. None => this app contributes none.
+    chat_provider: Callable[[], Any] | None = None
+    chat_snapshot: Callable[[], str] | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -205,8 +212,11 @@ async def _atlas_rebuild_loop() -> None:
 # every app module: an app whose modules aren't shipped is simply never built.
 def _finance_spec() -> AppSpec:
     from routes import finance, plaid_webhook
+    from services import app_personas as ap
     return AppSpec(
         id="finance",
+        chat_provider=ap.FinanceContextProvider,
+        chat_snapshot=ap.finance_snapshot,
         card={
             "title": "Finance",
             "tagline": "Balances, accounts, recent transactions",
@@ -232,8 +242,10 @@ def _finance_spec() -> AppSpec:
 
 def _budget_spec() -> AppSpec:
     from routes import budget
+    from services import app_personas as ap
     return AppSpec(
         id="budget",
+        chat_provider=ap.BudgetContextProvider,
         card={
             "title": "Budget",
             "tagline": "Payoff plan, savings goals, projections",
@@ -256,8 +268,11 @@ def _budget_spec() -> AppSpec:
 
 def _commute_spec() -> AppSpec:
     from routes import commute
+    from services import app_personas as ap
     return AppSpec(
         id="commute",
+        chat_provider=ap.CommuteContextProvider,
+        chat_snapshot=ap.commute_snapshot,
         card={
             "title": "Commute",
             "tagline": "Day-of departures + transit status",
@@ -278,8 +293,11 @@ def _commute_spec() -> AppSpec:
 
 def _location_spec() -> AppSpec:
     from routes import location, owntracks
+    from services import app_personas as ap
     return AppSpec(
         id="location",
+        chat_provider=ap.LocationContextProvider,
+        chat_snapshot=ap.location_snapshot,
         card={
             "title": "Location",
             "tagline": "Live position + history from OwnTracks",
@@ -406,6 +424,19 @@ def installed_specs() -> list[AppSpec]:
         if spec is not None:
             out.append(spec)
     return out
+
+
+def installed_chat_providers() -> list[Callable[[], Any]]:
+    """Chat-provider factories for installed apps that register one, in install
+    order. Drives chat_context.provider_map(): a persona is available only when
+    its app is installed."""
+    return [spec.chat_provider for spec in installed_specs() if spec.chat_provider]
+
+
+def installed_snapshots() -> list[Callable[[], str]]:
+    """Live-snapshot callables for installed apps that register one — the general
+    assistant's cross-app context. Absent apps contribute nothing."""
+    return [spec.chat_snapshot for spec in installed_specs() if spec.chat_snapshot]
 
 
 def installed_mcp_servers() -> dict[str, dict]:
