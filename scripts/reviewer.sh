@@ -170,12 +170,28 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^frontend/src/.*\.tsx$'; then
   fi
 fi
 
+# 4.6 Pluggable-app invariant — apps must not be welded back into platform-core
+#     files, and per-instance data must stay untracked (docs/apps-are-pluggable.md).
+#     Repo-wide invariant, so it always runs (not gated on changed paths).
+APPS_CHECK="skipped"
+if [[ -x "$WORKSHOP/scripts/check_pluggable_apps.sh" ]]; then
+  if bash "$WORKSHOP/scripts/check_pluggable_apps.sh" >/dev/null 2>&1; then
+    APPS_CHECK="ok"
+  else
+    APPS_CHECK="fail"
+  fi
+fi
+
 # 5. Decide.
 REASONS=()
 COMPLETE="true"
 
 if [[ "$DESIGN_CHECK" == "fail" ]]; then
   REASONS+=("design_violations")
+  COMPLETE="false"
+fi
+if [[ "$APPS_CHECK" == "fail" ]]; then
+  REASONS+=("pluggable_app_violations")
   COMPLETE="false"
 fi
 
@@ -205,7 +221,7 @@ REASONS_JSON=$(printf '%s\n' "${REASONS[@]:-}" | python3 -c "import json,sys; r=
 # Emit JSON. Build via env vars + Python decoding so shell quoting is safe.
 COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
-export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK REASONS_JSON TS_NOW BASELINE
+export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE
 python3 - <<'PYEOF'
 import json, os
 out = {
@@ -214,6 +230,7 @@ out = {
     "stub_hits": json.loads(os.environ["STUB_HITS_JSON"]),
     "typecheck": {"py": os.environ["PY_CHECK"], "ts": os.environ["TS_CHECK"]},
     "design":    os.environ["DESIGN_CHECK"],
+    "pluggable_apps": os.environ["APPS_CHECK"],
     "reasons":   json.loads(os.environ["REASONS_JSON"]),
     "ts":        os.environ["TS_NOW"],
     "baseline":  os.environ["BASELINE"],
@@ -222,4 +239,4 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK reasons=${REASONS[*]:-none}" >> "$LOG"

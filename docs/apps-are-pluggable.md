@@ -26,6 +26,15 @@ None of these is ever touched to install or uninstall an app:
 
 If installing an app makes you want to edit one of these, that is the bug.
 
+**This rule is enforced mechanically.** `scripts/check_pluggable_apps.sh` fails
+if `main.py` imports/mounts an app router or defines an app startup loop, if
+`llm_router` hardcodes `_MCP_SERVER_SPECS`, if `Apps.tsx` stops fetching
+`/base-apps/launcher` or hardcodes an app route, or if any per-instance data file
+(`projects.json`, `build_agents.json`, `backend/apps.json`, `commute/*` config,
+`commute/notes/`) becomes git-tracked. It is wired into the completion gate
+(`scripts/reviewer.sh`, reason `pluggable_app_violations`), so a change that
+re-welds an app never passes review.
+
 ## The two registries
 
 Workshop keeps a **catalog** of built-in apps (code, tracked) and a per-instance
