@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
 from services.budget import budget_for
-from services import global_memory, per_channel_agents, build_agents, dev_servers, jobs, triggers
+from services import global_memory, per_channel_agents, build_agents, dev_servers, jobs, triggers, agents_registry
 
 router = APIRouter()
 
@@ -66,27 +66,71 @@ class MemoryBlockUpdate(BaseModel):
 
 @router.get("/")
 async def list_agents(request: Request):
-    try:
-        data = await request.app.state.letta.list_agents()
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Letta unreachable: {e}")
-    out = []
-    for a in data:
-        meta = a.get("metadata_") or a.get("metadata") or {}
+    """One unified roster: every Agent across both scopes and both runtimes,
+    sourced from the agents registry (definition files + builder runtime state).
+
+    A live-Letta fallback surfaces assistant agents that do not yet have a
+    definition file (pre-migration, or created outside the registry) so no real
+    agent silently drops off the roster. Per-channel masini agents are excluded
+    from both sources.
+    """
+    reg = agents_registry.list_agents()
+    excluded = agents_registry.per_channel_ids()
+    reg_letta_ids = {a.get("letta_agent_id") for a in reg if a.get("letta_agent_id")}
+
+    out: list[dict] = []
+    for a in reg:
         out.append({
             "id": a.get("id"),
+            "slug": a.get("slug"),
+            "runtime": a.get("runtime"),
             "name": a.get("name"),
-            "kind": "data",
-            "created_at": a.get("created_at"),
-            # Last activity drives the Agents-tab recency sort + timestamp. Letta
-            # exposes updated_at (last touched); fall back to created_at so a
-            # never-run agent still sorts and labels sensibly.
-            "last_active": a.get("updated_at") or a.get("created_at"),
-            "memory_blocks": [b.get("label") for b in a.get("memory", {}).get("blocks", [])],
-            # Unified trigger vocabulary, read from Letta autonomy metadata via
-            # the Phase-1 adapter (Phase 2 swaps the backing store; same shape).
-            "triggers": triggers.agent_triggers(meta),
+            "purpose": a.get("purpose"),
+            "triggers": a.get("triggers") or [],
+            "limits": a.get("limits") or {},
+            "capabilities": a.get("capabilities") or [],
+            "memory": a.get("memory"),
+            "project_slug": a.get("project_slug"),
+            "scope": a.get("scope"),
+            "state": a.get("state"),
+            "claude_session": a.get("claude_session"),
+            "created_at": a.get("created"),
+            "last_active": a.get("last_active") or a.get("created"),
+            "memory_blocks": [],
+            "source": a.get("source"),
         })
+
+    # Live-Letta fallback for assistants not yet represented by a definition.
+    try:
+        letta_agents = await request.app.state.letta.list_agents()
+    except Exception:
+        letta_agents = []
+    for la in letta_agents:
+        lid = la.get("id")
+        if not lid or lid in reg_letta_ids or lid in excluded:
+            continue
+        meta = la.get("metadata_") or la.get("metadata") or {}
+        out.append({
+            "id": lid,
+            "slug": lid,
+            "runtime": "assistant",
+            "name": la.get("name"),
+            "purpose": "",
+            "triggers": triggers.agent_triggers(meta),
+            "limits": {},
+            "capabilities": [],
+            "memory": "letta",
+            "project_slug": None,
+            "scope": "user",
+            "state": None,
+            "claude_session": None,
+            "created_at": la.get("created_at"),
+            "last_active": la.get("updated_at") or la.get("created_at"),
+            "memory_blocks": [b.get("label") for b in la.get("memory", {}).get("blocks", [])],
+            "source": "letta",
+        })
+
+    out.sort(key=lambda a: a.get("last_active") or a.get("created_at") or "", reverse=True)
     return out
 
 
@@ -604,16 +648,68 @@ async def agent_memory_effective(agent_id: str, request: Request):
 
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str, request: Request):
+    """Unified detail. Resolve from the registry first (by slug, routing id, or
+    linked Letta id); fall back to a raw Letta agent for un-migrated / per-channel
+    ids. Assistant records are enriched with their live Letta memory blocks so the
+    detail surface can show and edit the persona."""
+    rec = agents_registry.get(agent_id)
+    if rec is not None:
+        if rec["runtime"] == "assistant" and rec.get("letta_agent_id"):
+            try:
+                la = await request.app.state.letta.get_agent(rec["letta_agent_id"])
+                rec = {
+                    **rec,
+                    "memory_blocks": [b.get("label") for b in la.get("memory", {}).get("blocks", [])],
+                    "letta": la,
+                }
+            except Exception:
+                pass
+        return rec
+    # Fallback: a raw Letta agent (not yet migrated to a definition file).
     try:
         agent = await request.app.state.letta.get_agent(agent_id)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Letta unreachable: {e}")
-    # Read-side: surface the unified trigger list alongside the raw agent so the
-    # UI can move off the bare autonomy metadata. Metadata fields are unchanged.
     meta = agent.get("metadata_") or agent.get("metadata") or {}
     if isinstance(agent, dict):
         agent["triggers"] = triggers.agent_triggers(meta)
+        agent["runtime"] = "assistant"
     return agent
+
+
+class AgentDefinitionUpdate(BaseModel):
+    name: str | None = None
+    purpose: str | None = None
+    triggers: list[dict] | None = None
+    limits: dict | None = None
+    capabilities: list[str] | None = None
+    definition: str | None = None  # the markdown body (persona / instructions)
+
+
+@router.put("/{agent_id}")
+async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
+    """Write the declarative definition (name/purpose/triggers/limits/body) to the
+    agent's markdown file via the registry. Trigger writes land in frontmatter and
+    regenerate `.runtime/agent-subscriptions.json` as a union (non-registry
+    entries preserved). This is the Phase-2 trigger-write path; Letta metadata is
+    no longer the backing store for autonomy."""
+    rec = agents_registry.get(agent_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    try:
+        return agents_registry.update(
+            rec["slug"],
+            name=body.name,
+            purpose=body.purpose,
+            triggers_list=body.triggers,
+            limits=body.limits,
+            capabilities=body.capabilities,
+            body=body.definition,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/")
@@ -643,6 +739,23 @@ async def create_agent(body: AgentCreate, request: Request):
             await global_memory.attach_to(agent["id"])
         except Exception as e:
             # Non-fatal: agent exists; operator can re-sync later via /agents/global-memory/sync.
+            pass
+        # Register the assistant as a unified Agent (runtime: assistant) so it
+        # appears in the one roster and its triggers move to definition
+        # frontmatter. Best-effort: the Letta agent already exists regardless.
+        # (Per-channel agents are created via /spinoff, which does NOT do this,
+        # so they stay out of the registry.)
+        try:
+            agents_registry.create(
+                slug=agents_registry.mint_slug(body.name),
+                runtime="assistant",
+                name=body.name,
+                triggers_list=triggers.agent_triggers(meta),
+                memory="letta",
+                letta_agent_id=agent["id"],
+                body=body.persona,
+            )
+        except Exception:
             pass
         return agent
     except Exception as e:
@@ -821,6 +934,17 @@ async def agent_budget(agent_id: str, request: Request):
         raise HTTPException(status_code=502, detail=f"Letta unreachable: {e}")
     meta = agent.get("metadata_") or agent.get("metadata") or {}
     return budget_for(meta, agent_id)
+
+
+@router.get("/{agent_id}/jobs")
+async def agent_jobs(agent_id: str, limit: int = 50):
+    """Job history filtered to this agent, sourced from the unified Job store
+    (`services.jobs` / `.runtime/jobs.jsonl`). Declared as a two-segment path so
+    it never falls into the `/{agent_id}` catch-all. Interactive chat turns are
+    not Jobs and never appear here."""
+    limit = max(1, min(limit, 200))
+    records = jobs.read(agent_id=agent_id, limit=limit)
+    return {"agent_id": agent_id, "jobs": records, "count": len(records)}
 
 
 @router.get("/{agent_id}/runs")

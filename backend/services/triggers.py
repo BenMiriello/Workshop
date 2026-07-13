@@ -123,7 +123,11 @@ def project_mode_from_triggers(triggers: list[dict]) -> str:
 def agent_triggers(meta: dict | None) -> list[dict]:
     """Present an agent's autonomy metadata as a trigger list. Reads
     `autonomy_mode` (off|scheduled|event-driven|continuous), `cron_expression`,
-    and `event_sources`."""
+    and `event_sources`.
+
+    Phase 1 read path, kept for agents not yet migrated to a definition file
+    (their triggers still live on Letta metadata). Phase 2's source of record is
+    `definition_triggers` below; the two produce the same normalized shape."""
     meta = meta or {}
     mode = meta.get("autonomy_mode") or meta.get("autonomy") or "off"
     out: list[dict] = []
@@ -135,6 +139,21 @@ def agent_triggers(meta: dict | None) -> list[dict]:
         out.append(make_trigger("loop"))
     # off -> no automatic trigger; the agent still runs on manual invocation.
     return out
+
+
+# ---------------------------------------------------------------------------
+# Agent adapter — definition frontmatter (Phase 2 backing store) -> triggers
+# ---------------------------------------------------------------------------
+# Phase 2 swaps the agent-side backing store from Letta metadata to markdown
+# definition frontmatter. The frontmatter already stores triggers in normalized
+# shape under a `triggers:` list, so the adapter is a normalize pass — the same
+# output shape as `agent_triggers`, so nothing downstream of the adapter changes.
+
+def definition_triggers(defn: dict | None) -> list[dict]:
+    """Read the `triggers` list from an agent definition's frontmatter (or a
+    registry record) and return it normalized."""
+    raw = (defn or {}).get("triggers") or []
+    return [normalize(t) for t in raw if isinstance(t, dict)]
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
-import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
 import Agents from "./pages/Agents";
-import AgentConfig from "./pages/AgentConfig";
+import AgentDetail from "./pages/AgentDetail";
 import AgentBuild from "./pages/AgentBuild";
 import Projects from "./pages/Projects";
 import ProjectNew from "./pages/ProjectNew";
@@ -30,7 +30,6 @@ import Activity from "./pages/Activity";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
 import FocusedChat from "./pages/FocusedChat";
-import VoiceMode from "./components/VoiceMode";
 import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
 
 // Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
@@ -47,6 +46,13 @@ function BirdsLayout() {
   );
 }
 
+// Deep-link / mobile-shell compatibility: the builder work pane moved from
+// /agents/build/:slug to /agents/:slug/chat. Keep old links working.
+function AgentBuildRedirect() {
+  const { slug = "" } = useParams();
+  return <Navigate to={`/agents/${encodeURIComponent(slug)}/chat`} replace />;
+}
+
 export default function App() {
   // Width by page type. Content/app pages keep the reading-width cap (980).
   // The builder is a 3-pane IDE and needs the full viewport (wide). The
@@ -56,7 +62,7 @@ export default function App() {
   // narrow — so they share the roomy cap. (finance/budget/location/commute stay
   // at 980 by choice; an app may impose its own column.)
   const { pathname } = useLocation();
-  const wide = pathname.startsWith("/agents/build/");
+  const wide = /^\/agents\/[^/]+\/chat$/.test(pathname);
   // The focused chat is a full-screen surface: the shell becomes a viewport-tall
   // flex column that never scrolls, so the chat log is the only scroller and the
   // composer pins to the bottom (above the mobile keyboard). See .ws-app--chatfull.
@@ -86,8 +92,10 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/apps" replace />} />
           <Route path="/agents" element={<Agents />} />
-          <Route path="/agents/build/:slug" element={<AgentBuild />} />
-          <Route path="/agents/:agentId" element={<AgentConfig />} />
+          <Route path="/agents/new" element={<AgentDetail />} />
+          <Route path="/agents/:slug/chat" element={<AgentBuild />} />
+          <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />
+          <Route path="/agents/:slug" element={<AgentDetail />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectDetail />} />
@@ -118,7 +126,9 @@ export default function App() {
           </Route>
           <Route path="/apps/commute" element={<CommuteApp />} />
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
-          <Route path="/voice/:contextKey" element={<VoiceMode />} />
+          {/* Voice is now a toggle inside the chat, not a separate screen. Old
+              /voice links land on the same focused chat (talk from there). */}
+          <Route path="/voice/:contextKey" element={<FocusedChat />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />

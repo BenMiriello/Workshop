@@ -62,16 +62,23 @@ export function resolveCrumbs(pathname: string): Crumb[] {
     const key = decodeURIComponent(pathname.slice("/chat/".length));
     return [{ label: `Chat · ${key}` }];
   }
-  // Build-agent detail: /agents/build/<slug>. Resolved separately so the
-  // breadcrumb reads Agents / Build / <slug> instead of Agents / build/<slug>.
-  if (pathname.startsWith("/agents/build/")) {
+  // New agent: /agents/new.
+  if (pathname === "/agents/new") {
+    return [{ label: "Agents", to: "/agents" }, { label: "New agent" }];
+  }
+  // Agent work pane: /agents/<slug>/chat (and the legacy /agents/build/<slug>
+  // redirect target). Reads Agents / <slug> / Chat.
+  const chatMatch = pathname.match(/^\/agents\/([^/]+)\/chat$/);
+  const buildMatch = pathname.match(/^\/agents\/build\/([^/]+)$/);
+  if (chatMatch || buildMatch) {
+    const slug = decodeURIComponent((chatMatch || buildMatch)![1]);
     return [
       { label: "Agents", to: "/agents" },
-      { label: "Build" },
-      { label: decodeURIComponent(pathname.slice("/agents/build/".length)) },
+      { label: slug, to: `/agents/${encodeURIComponent(slug)}` },
+      { label: "Chat" },
     ];
   }
-  // Dynamic detail under a known section, e.g. /agents/<id>.
+  // Agent detail: /agents/<slug>.
   if (pathname.startsWith("/agents/")) {
     return [
       { label: "Agents", to: "/agents" },

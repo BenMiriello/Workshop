@@ -878,7 +878,9 @@ function AgentsSection() {
         )}
       </Row>
       <Row label="new agent">
-        <Link to="/agents/new" style={{ color: "var(--accent)" }}>create from blank ↗</Link>
+        <Link to="/agents/new">
+          <Button size="sm" variant="ghost">New agent ↗</Button>
+        </Link>
       </Row>
       <Row label="memory tree">
         <span className="muted" style={{ fontSize: "0.85rem" }}>

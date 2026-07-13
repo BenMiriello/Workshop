@@ -74,6 +74,10 @@ registry-bundles/
 /build_agents.json
 /backend/apps.json
 /commute/schedule.json
+# User-scope agent definition files (declarative registry of record, but they
+# hold the operator's personas/config) are instance state. Project-scoped agent
+# defs live under /projects/* and are already ignored above.
+/agents/
 /commute/legs.json
 /commute/targets.json
 /commute/sources/registry.json
