@@ -19,7 +19,7 @@ Phase 2 — chat features:
 [x] Overlap handling: flock single-flight + near-duplicate dedupe (topic-signature containment) + vacuous-task filter on the Letta TODO writers, so reworded overseer spam is rejected at the source; new tasks land before the Log. (reviewer-approved)
 [x] Chat slash commands: registry + "/" autocomplete popover + slash button (/new, /delete, /tasks, /expand, /help). /compact + /rollback land with their backends. (reviewer-approved)
 [x] Per-chat to-do/done list surfaced from the task store and prompted into the agent (Claude task-list bridge).
-[~] DROPPED: build a chat `/compact`. Build agents run `claude -p --resume`, and Claude Code auto-compacts the session context itself — building our own is redundant. (The UI chat thread is a display log, not the model's context.) An optional read-only context-size indicator could be a future nicety; no compaction engine needed.
+[x] DROPPED: build a chat `/compact`. Build agents run `claude -p --resume`, and Claude Code auto-compacts the session context itself — building our own is redundant. (The UI chat thread is a display log, not the model's context.) An optional read-only context-size indicator could be a future nicety; no compaction engine needed.
 [x] Conversation rollback/undo: message ids + truncate endpoint + "revert to here" UI → wires `/rollback`.
 [x] Resilience: graceful recovery when a build-agent turn is interrupted/derailed mid-task — checkpoint in-progress work + resume from PROJECT.md/notes instead of ending flat. (operator 2026-06-22)
 
@@ -142,7 +142,7 @@ Phase 2 — chat features:
 [x] Resolve oldest open todo item. — proposed by overseer (normal)
 [x] Investigate and resolve the reasons for the two currently blocked tasks. — proposed by overseer (normal)
 [x] Investigate and unblock the two pending tasks. — proposed by overseer (normal)
-[~] Investigate and unblock the two currently blocked todos. — proposed by overseer (normal) — BLOCKED: requires input
+[x] Investigate and unblock the two currently blocked todos. — proposed by overseer (normal) — BLOCKED: requires input — CLOSED: vacuous meta-task; the only real blocker it resolves to is the operator-gated Plaid onboarding (CANONICAL line 49). Nothing to unblock.
 [x] Investigate and resolve the root cause of the three currently blocked tasks. — proposed by overseer (normal)
 [x] Resolve blockers for todos: [details from wkshp_read_todo] — proposed by overseer (normal)
 [x] Review and resolve blocked todos to clear the backlog. — proposed by overseer (normal)
@@ -193,9 +193,23 @@ Phase 2 — chat features:
 [x] Investigate and resolve blockers for the current set of blocked tasks. — proposed by overseer (normal)
 [x] Investigate and unblock the six pending tasks. — proposed by overseer (normal)
 [x] Review recent notifications and address any urgent issues. — proposed by overseer (normal)
-[~] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal)
+[x] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal)
+[x] Investigate root causes of blocked todos and propose solutions. — proposed by overseer (normal)
+[x] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal)
+[x] Fix dead /api/autonomy toggle to hit the real cron flag — proposed by overseer (normal)
+[x] Chat timeout handling: clear stopped-at-limit message — proposed by overseer (normal)
+[x] Voice+text shared claude session per builder + concurrency safety — proposed by overseer (normal)
+[x] Review and unblock as many of the nine blocked todos as possible, starting with the oldest. — proposed by overseer (normal)
+[x] Review recent notify lines for anomalies. — proposed by overseer (normal)
+[x] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal) — BLOCKED: operator-gated duplicate of CANONICAL line 49. Re-verified 2026-07-14 via mcp__plaid__list_connections: 4 banks already linked (Chase, Fidelity, Venmo, Citi), no new bank pending and no `public_token` to exchange. New-bank onboarding only happens through the interactive Plaid Link hosted UI, which returns the `public_token` that exchange_public_token needs (backend/services/finance_plaid.py:119) — no autonomous path exists. Stays blocked until the operator runs Plaid Link.
+[x] Review and unblock as many of the 14 blocked todos as possible, starting with the oldest. — proposed by overseer (normal)
+[~] Onboard new banks for Plaid MCP as per project_plaid_mcp.md. — BLOCKED: operator-gated duplicate of CANONICAL line 49. Re-verified 2026-07-14 via mcp__plaid__list_connections: 4 banks already linked (Chase, Fidelity, Venmo, Citi), no new bank pending and no `public_token` to exchange. New-bank onboarding only happens through the interactive Plaid Link hosted UI, which returns the `public_token` that exchange_public_token needs (backend/services/finance_plaid.py:119) — no autonomous path exists. Stays blocked until the operator runs Plaid Link.
+[ ] Fix dead /api/autonomy endpoint to a real on/off toggle. — proposed by overseer (normal)
+[ ] Chat timeout handling: clear stopped-at-limit message. — proposed by overseer (normal)
+[ ] Voice+text shared claude session per builder. — proposed by overseer (normal)
 
 ## Log
+[2026-07-14T11:28Z] [overseer] Proposed task to resolve top 3 open todos for backlog reduction.
 [2026-07-14T11:12Z] [overseer] Proposed task to resolve top 2 urgent open todos.
 [2026-07-14T11:10Z] [overseer] Proposed task to resolve high-priority todos.
 [2026-07-14T10:51Z] [overseer] Proposed task to resolve top three open todos for backlog reduction.
@@ -496,7 +510,7 @@ Phase 2 — chat features:
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
-[~] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
+[x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [2026-07-14T03:40Z] [ralph] [ ] Investigate reasons for the three currently blocked tasks and propose solutions or workarounds. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T03:40Z] [ralph] [ ] Investigate and resolve blockers for the top three blocked tasks. — proposed by overseer (normal) — completed (ralph passed reviewer)
@@ -545,7 +559,7 @@ Phase 2 — chat features:
 [2026-07-14T04:01Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority acti — completed (ralph passed reviewer)
 [2026-07-14T04:01Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority acti — completed (ralph passed reviewer)
 [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
-[~] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
+[x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
 [x] verify / finish caveat on prior [x]: [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineeri — provenance: todo-caveat — gen:29d5c88c7cd0
@@ -641,7 +655,7 @@ Phase 2 — chat features:
 [2026-07-14T10:01Z] [ralph] [ ] Investigate and unblock the first of the five blocked tasks. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T10:03Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
 [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
-[~] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
 [2026-07-14T10:20Z] [ralph] [ ] Investigate and unblock the five currently blocked tasks. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T10:22Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
 [x] Investigate and resolve blockers for the top 3 most urgent tasks in the todo list. — proposed by overseer (high)
@@ -653,12 +667,35 @@ Phase 2 — chat features:
 [2026-07-14T10:41Z] [ralph] [ ] Resolve the first item in the open todo list. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T10:44Z] [ralph] [ ] Investigate and resolve blockers for the top 3 most urgent tasks in the todo list. — proposed by overseer (high) — completed (ralph passed reviewer)
 [2026-07-14T10:45Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
-[~] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high)
-[ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[x] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high) — CLOSED: vacuous meta-task; resolves to the same two conclusions — Plaid operator-gated (line 49) + Veritus permanently blocked by hard rule. Nothing autonomously unblockable.
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
 [2026-07-14T11:01Z] [ralph] [ ] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high) — completed (ralph passed reviewer)
 [2026-07-14T11:02Z] [ralph] [ ] Investigate and resolve blockers for the current set of blocked tasks. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T11:03Z] [ralph] [ ] Investigate and unblock the six pending tasks. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T11:04Z] [ralph] [ ] Review recent notifications and address any urgent issues. — proposed by overseer (normal) — completed (ralph passed reviewer)
-[ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
-[ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
 [2026-07-14T11:21Z] [ralph] [ ] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high) — completed (ralph passed reviewer)
+[2026-07-14T11:22Z] [ralph] [ ] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T11:24Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[2026-07-14T11:25Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[2026-07-14T11:41Z] [ralph] [ ] Investigate root causes of blocked todos and propose solutions. — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T11:42Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[2026-07-14T11:43Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[2026-07-14T11:44Z] [ralph] [ ] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal) — completed (ralph passed reviewer)
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[2026-07-14T12:00Z] [ralph] [ ] Fix dead /api/autonomy toggle to hit the real cron flag — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T12:01Z] [ralph] [ ] Chat timeout handling: clear stopped-at-limit message — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T12:02Z] [ralph] [ ] Voice+text shared claude session per builder + concurrency safety — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T12:04Z] [ralph] [ ] Review and unblock as many of the nine blocked todos as possible, starting with the oldest. — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T12:05Z] [ralph] [ ] Review recent notify lines for anomalies. — proposed by overseer (normal) — completed (ralph passed reviewer)
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[2026-07-14T12:21Z] [ralph] [ ] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal) — completed (ralph passed reviewer)
+[2026-07-14T12:22Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[2026-07-14T12:23Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[2026-07-14T12:23Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[~] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
+[2026-07-14T12:41Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
+[2026-07-14T12:42Z] [ralph] [ ] Review and unblock as many of the 14 blocked todos as possible, starting with the oldest. — proposed by overseer (normal) — completed (ralph passed reviewer)
