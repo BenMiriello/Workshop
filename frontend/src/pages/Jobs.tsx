@@ -143,7 +143,7 @@ export default function Jobs() {
       <StateBlock
         variant="error"
         title="Couldn't load jobs"
-        hint={<><code>/api/jobs</code> — {err}</>}
+        hint={<><code>/api/jobs</code> ({err})</>}
         action={<Button size="sm" onClick={refresh}>Retry</Button>}
       />
     );

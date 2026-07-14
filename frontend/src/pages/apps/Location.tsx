@@ -283,7 +283,7 @@ export default function Location() {
             <span className="muted">status</span>
             <span>
               {latestStale ? (
-                <StatusDot status="warn">stale — last known, may not be current</StatusDot>
+                <StatusDot status="warn">stale, last known, may not be current</StatusDot>
               ) : (
                 <StatusDot status="ok">live</StatusDot>
               )}
@@ -297,7 +297,7 @@ export default function Location() {
           </div>
         ) : (
           <p className="muted" style={{ marginTop: "0.5rem" }}>
-            No position recorded yet. Configure Owntracks iOS — see <code>docs/owntracks-ios.md</code>.
+            No position recorded yet. Configure Owntracks iOS: see <code>docs/owntracks-ios.md</code>.
           </p>
         )}
       </div>
@@ -312,7 +312,7 @@ export default function Location() {
         <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>
           {pointCount} point{pointCount === 1 ? "" : "s"} in {segments.length} segment
           {segments.length === 1 ? "" : "s"}. The breadcrumb is recorded pings, not
-          continuous tracking — OwnTracks "significant" mode only pings on meaningful
+          continuous tracking. OwnTracks "significant" mode only pings on meaningful
           movement. When it goes quiet for a while (or flushes a buffered fix from far
           away), the line breaks into a new segment instead of drawing a long straight
           line across the gap. Switch the phone to "move" mode for denser tracking

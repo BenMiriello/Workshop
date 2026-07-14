@@ -111,7 +111,7 @@ export default function AppPreview() {
 
       {err ? (
         <StateBlock variant="error" title="Couldn't load app status"
-          hint={<code>GET /api/base-apps/run/{slug}/status — {err}</code>}
+          hint={<code>GET /api/base-apps/run/{slug}/status ({err})</code>}
           action={<Button size="sm" onClick={load}>Retry</Button>} />
       ) : !status ? (
         <Skeleton width="100%" />
@@ -126,7 +126,7 @@ export default function AppPreview() {
               <StatusDot status="warn">partial</StatusDot>
               <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
                 <TriangleAlert size={13} aria-hidden />
-                <code className="ws-mono">{service!.name}</code> is running but its {downDeps.length > 1 ? "services" : "service"} <code className="ws-mono">{downDeps.join(", ")}</code> {downDeps.length > 1 ? "aren't" : "isn't"} up — the frame below will likely be blank until you start {downDeps.length > 1 ? "them" : "it"} from the project's Run &amp; Deploy section.
+                <code className="ws-mono">{service!.name}</code> is running but its {downDeps.length > 1 ? "services" : "service"} <code className="ws-mono">{downDeps.join(", ")}</code> {downDeps.length > 1 ? "aren't" : "isn't"} up, so the frame below will likely be blank until you start {downDeps.length > 1 ? "them" : "it"} from the project's Run &amp; Deploy section.
               </span>
             </Row>
           ) : (

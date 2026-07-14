@@ -67,14 +67,14 @@ export default function LocationSettings() {
     <SettingsSection icon={MapPin} title="Location">
       <Row label="status">
         {noData ? (
-          <StatusDot status="danger">no data — Owntracks not publishing yet</StatusDot>
+          <StatusDot status="danger">no data, Owntracks not publishing yet</StatusDot>
         ) : stale ? (
-          <StatusDot status="warn">stale ({fmtAge(latest!.ts!)}) — check Owntracks app</StatusDot>
+          <StatusDot status="warn">stale ({fmtAge(latest!.ts!)}), check Owntracks app</StatusDot>
         ) : (
           <StatusDot status="ok">live · last ping {fmtAge(latest!.ts!)}</StatusDot>
         )}
       </Row>
-      <Row label="source">{latest?.source || "—"}</Row>
+      <Row label="source">{latest?.source || "–"}</Row>
       {latest?.lat != null && (
         <Row label="position">
           <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>

@@ -219,7 +219,7 @@ function PresenceChatter({ rows }: { rows: ScatterPt[] }) {
     <section className="card birds-ins" style={{ padding: "1rem" }}>
       <h3 className="atlas-h3"><ScatterChart size={16} /> Presence ↔ chatter</h3>
       <div dangerouslySetInnerHTML={{ __html: svg }} />
-      <p className="cap-note">Plot presence against raw detections and the false signals separate out: dots above the dashed line talk more than their presence warrants; those below are around constantly but quiet — exactly the over-counting the 15-minute window corrects.</p>
+      <p className="cap-note">Plot presence against raw detections and the false signals separate out: dots above the dashed line talk more than their presence warrants; those below are around constantly but quiet, exactly the over-counting the 15-minute window corrects.</p>
     </section>
   );
 }
@@ -236,10 +236,10 @@ function CallTypeHeatmap({ heatmap }: { heatmap: { call_types: string[]; rows: H
       {has ? (
         <>
           <div dangerouslySetInnerHTML={{ __html: heatSVG(heatmap.rows.map((r) => cap(r.call_type)), heat) }} />
-          <p className="cap-note">When each kind of call happens — the dawn chorus of song, the all-day hum of contact calls, the morning begging spike at the nest.</p>
+          <p className="cap-note">When each kind of call happens: the dawn chorus of song, the all-day hum of contact calls, the morning begging spike at the nest.</p>
         </>
       ) : (
-        <p className="muted" style={{ fontSize: ".84rem", margin: ".3rem 0 0" }}>Label call groups in the map above to populate this — call types come from your cluster labels.</p>
+        <p className="muted" style={{ fontSize: ".84rem", margin: ".3rem 0 0" }}>Label call groups in the map above to populate this. Call types come from your cluster labels.</p>
       )}
     </section>
   );
@@ -258,7 +258,7 @@ function NoveltyTimeline({ items, days }: { items: NoveltyPt[]; days: number }) 
     <section className="card birds-ins" style={{ padding: "1rem" }}>
       <h3 className="atlas-h3"><Sparkles size={16} /> Acoustic novelty</h3>
       <div dangerouslySetInnerHTML={{ __html: noveltySVG(pts.map(({ day, label, kind, flag }) => ({ day, label, kind, flag }))) }} />
-      <p className="cap-note">What's new in your yard — every point is the first time a species was heard in the last {days} days. Ringed points are recent arrivals worth a look.</p>
+      <p className="cap-note">What's new in your yard: every point is the first time a species was heard in the last {days} days. Ringed points are recent arrivals worth a look.</p>
     </section>
   );
 }

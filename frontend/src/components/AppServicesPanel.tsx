@@ -168,7 +168,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This project is the running Workshop"
-            hint="Editing it edits the live app you're using — there is no separate deployment. The frontend hot-reloads on save; backend changes need a restart (bash scripts/restart_backend.sh). Use the builder chat to make changes." />
+            hint="Editing it edits the live app you're using: there is no separate deployment. The frontend hot-reloads on save; backend changes need a restart (bash scripts/restart_backend.sh). Use the builder chat to make changes." />
         </Card>
       </section>
     );
@@ -186,7 +186,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This is a built-in Workshop app"
-            hint={<>It runs as part of Workshop, not as a separate deployment — its live code is in the monorepo (<code className="ws-mono">frontend/src/pages/apps</code> and <code className="ws-mono">backend/services</code>). Open it from the Apps launcher; edit it through the Workshop project's builder chat.</>} />
+            hint={<>It runs as part of Workshop, not as a separate deployment. Its live code is in the monorepo (<code className="ws-mono">frontend/src/pages/apps</code> and <code className="ws-mono">backend/services</code>). Open it from the Apps launcher; edit it through the Workshop project's builder chat.</>} />
         </Card>
       </section>
     );
@@ -251,7 +251,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
           <StateBlock
             variant="error"
             title="Couldn't resolve the app manifest"
-            hint={<code>GET /api/base-apps/run/{slug}/manifest — {err}</code>}
+            hint={<code>GET /api/base-apps/run/{slug}/manifest ({err})</code>}
             action={<Button size="sm" onClick={loadManifest}>Retry</Button>}
           />
         ) : !manifest || manifest.services.length === 0 ? (
@@ -265,7 +265,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
               {manifest.detected
                 ? "Auto-detected. Add a workshop.app.json to declare services explicitly."
                 : "Declared in workshop.app.json."}
-              {" "}Each service runs on its own port; the monitor restarts a crashed one while the app is up. Running the app is the deployment — the exposed service's URL is its standalone origin.
+              {" "}Each service runs on its own port; the monitor restarts a crashed one while the app is up. Running the app is the deployment. The exposed service's URL is its standalone origin.
             </p>
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -319,7 +319,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                     {downDeps.length > 0 && (
                       <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-1) 0 0", display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
                         <TriangleAlert size={13} aria-hidden />
-                        Running, but <code className="ws-mono">{downDeps.join(", ")}</code> {downDeps.length > 1 ? "are" : "is"} not up — the app may load blank until {downDeps.length > 1 ? "they're" : "it's"} started.
+                        Running, but <code className="ws-mono">{downDeps.join(", ")}</code> {downDeps.length > 1 ? "are" : "is"} not up, so the app may load blank until {downDeps.length > 1 ? "they're" : "it's"} started.
                       </p>
                     )}
                     {!ms.enabled && (
@@ -376,7 +376,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         )}
       </Card>
 
-      <Modal open={logsFor !== null} onClose={() => setLogsFor(null)} title={logsFor ? `Logs — ${logsFor}` : "Logs"}>
+      <Modal open={logsFor !== null} onClose={() => setLogsFor(null)} title={logsFor ? `Logs: ${logsFor}` : "Logs"}>
         <pre className="ws-mono" style={{
           maxHeight: "60vh", overflow: "auto", fontSize: "var(--fs-xs)",
           background: "var(--surface-2)", padding: "var(--space-3)", borderRadius: "var(--radius-2)",

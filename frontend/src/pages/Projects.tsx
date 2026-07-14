@@ -203,7 +203,7 @@ export default function Projects() {
           title="No projects yet"
           hint={
             <span>
-              Projects are standalone things you build — sites, sub-apps, capability
+              Projects are standalone things you build: sites, sub-apps, capability
               providers. Start one with{" "}
               <Link to="/projects/new" style={{ color: "var(--accent)" }}>+ New project</Link>.
             </span>

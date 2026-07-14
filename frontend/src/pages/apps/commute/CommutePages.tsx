@@ -197,8 +197,8 @@ function StatusTab({ brief, onPollNow, polling }: {
       {!rtAvail && (
         <p style={{ fontSize: "0.82rem", color: "var(--warn)", marginBottom: "0.75rem" }}>
           {rtReason === "needs_511_key"
-            ? "No realtime data — set WORKSHOP_511_API_KEY (free at 511.org/open-data/token). Times below are static schedule."
-            : `Realtime unavailable (${rtReason ?? "unknown"}) — times below are static schedule.`}
+            ? "No realtime data. Set WORKSHOP_511_API_KEY (free at 511.org/open-data/token). Times below are static schedule."
+            : `Realtime unavailable (${rtReason ?? "unknown"}). Times below are static schedule.`}
         </p>
       )}
 
@@ -246,9 +246,9 @@ function StatusTab({ brief, onPollNow, polling }: {
               const rtTag = !rt ? "(no data)"
                 : rt.available
                   ? (rt.delay_min && rt.delay_min > 0 ? `realtime +${rt.delay_min}m` : "realtime on-time")
-                  : rt.reason === "needs_511_key" ? "(static — no 511 key)"
-                  : rt.reason === "no_match" ? "(static — no match)"
-                  : `(static — ${rt.reason ?? "no data"})`;
+                  : rt.reason === "needs_511_key" ? "(static, no 511 key)"
+                  : rt.reason === "no_match" ? "(static, no match)"
+                  : `(static, ${rt.reason ?? "no data"})`;
               const route = leg.preferred_train ?? leg.preferred_route;
               return (
                 <div
@@ -601,8 +601,8 @@ function ScheduleTab() {
           </div>
           <p className="muted" style={{ fontSize: "0.76rem", margin: "0.1rem 0 0" }}>
             {anchorType === "arrive"
-              ? "Leave-by is computed from leg durations (minus buffer) — shown live on the Status tab."
-              : "Arrival is computed from leg durations — shown live on the Status tab."}
+              ? "Leave-by is computed from leg durations (minus buffer), shown live on the Status tab."
+              : "Arrival is computed from leg durations, shown live on the Status tab."}
           </p>
         </div>
         );
@@ -705,7 +705,7 @@ function SourcesTab() {
                 <p className="muted" style={{ margin: 0, fontSize: "0.8rem" }}>
                   {st?.ts
                     ? `last poll ${fmtAge(st.ts)}`
-                    : "never polled — no live poller for this source yet"}
+                    : "never polled (no live poller for this source yet)"}
                   {entityCount != null ? ` · ${entityCount} entities` : ""}
                 </p>
                 {(st?.note || (!st && src.note)) && (

@@ -88,7 +88,7 @@ export default function Services() {
           title="Couldn't probe services"
           hint={
             <>
-              <code>/api/services/</code> — {err}
+              <code>/api/services/</code> ({err})
             </>
           }
           action={

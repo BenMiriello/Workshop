@@ -359,15 +359,15 @@ export default function Projection({ budget }: { budget: Budget }) {
         </div>
         <div className="stat">
           <p className="k">Emergency fund hit</p>
-          <p className="v">{stats.emergFund ?? "—"}</p>
+          <p className="v">{stats.emergFund ?? "–"}</p>
         </div>
         {params.gapStart >= 0 && params.gapLength > 0 && (
           <div className="stat">
             <p className="k">Cash low in gap</p>
             <p className="v" style={{ color: stats.gapRanOut ? "var(--err)" : undefined }}>
-              {stats.gapMinCash != null ? usd0(stats.gapMinCash) : "—"}
+              {stats.gapMinCash != null ? usd0(stats.gapMinCash) : "–"}
             </p>
-            {stats.gapRanOut && <p className="muted" style={{ margin: "0.15rem 0 0", fontSize: "0.72rem", color: "var(--err)" }}>runs out — bigger cushion needed</p>}
+            {stats.gapRanOut && <p className="muted" style={{ margin: "0.15rem 0 0", fontSize: "0.72rem", color: "var(--err)" }}>runs out, bigger cushion needed</p>}
           </div>
         )}
       </div>

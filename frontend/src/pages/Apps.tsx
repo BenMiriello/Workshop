@@ -638,7 +638,7 @@ export default function Apps() {
           title="No apps installed"
           hint={
             <>
-              Install an app to see it here — add its id to this instance's installed-apps registry
+              Install an app to see it here: add its id to this instance's installed-apps registry
               (<code>.runtime/installed-apps.json</code>), or build one from{" "}
               <Link to="/projects/new">Projects</Link>.
             </>

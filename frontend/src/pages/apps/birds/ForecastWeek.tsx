@@ -243,7 +243,7 @@ function DayDetail({ day, profiles, regulars, locationId }: {
 
       {profiles && (
         <div style={{ marginTop: ".8rem" }}>
-          <span className="muted" style={{ fontSize: ".76rem" }}>Expected activity by hour — shaded band is the likely range, rain behind on its own axis</span>
+          <span className="muted" style={{ fontSize: ".76rem" }}>Expected activity by hour. Shaded band is the likely range, rain behind on its own axis</span>
           <DayShape day={day} activity={profiles.activity} />
         </div>
       )}

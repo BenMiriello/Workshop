@@ -410,7 +410,7 @@ export default function Budget() {
           </div>
 
           <p className="muted" style={{ fontSize: "0.78rem", margin: "0 0 0.75rem", opacity: 0.85 }}>
-            Click any underlined value to edit it inline — income, debts, savings goals, targets, names, notes. Use <em>Edit plan</em> for adding/removing rows or bulk changes.
+            Click any underlined value to edit it inline: income, debts, savings goals, targets, names, notes. Use <em>Edit plan</em> for adding/removing rows or bulk changes.
           </p>
           <WaterfallHero data={data} scale={scale} periodLabel={periodLabel} onSaved={load} />
           <NecessitiesSection necessities={data.necessities} scale={scale} onSaved={load} />
@@ -508,7 +508,7 @@ function WaterfallHero({ data, scale, periodLabel, onSaved }: { data: Budget; sc
       </div>
       {s.shortfall && (
         <p className="err" style={{ marginTop: "0.7rem", marginBottom: 0, fontSize: "0.85rem" }}>
-          Planned allocations exceed income — trim a category or lower a contribution.
+          Planned allocations exceed income. Trim a category or lower a contribution.
         </p>
       )}
     </section>
@@ -740,7 +740,7 @@ function SavingsSection({ savings, summary, scale, onSaved }: { savings: Saving[
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.45rem", gap: "0.5rem", flexWrap: "wrap" }}>
             <span className="muted" style={{ fontSize: "0.8rem" }}>
-              {usd(summary.available_after_fixed * scale)} free after necessities + debt — {summary.goals_affordable
+              {usd(summary.available_after_fixed * scale)} free after necessities + debt. {summary.goals_affordable
                 ? "enough to cover required savings + your spending targets"
                 : "NOT enough to fund all goals on time AND hit spending targets; stretch a date or trim a target"}
             </span>
@@ -875,7 +875,7 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
 
   return (
     <section className="card" style={{ marginTop: "1rem" }}>
-      <h3 className="sec-h">Edit plan — add, rename, retarget or remove anything</h3>
+      <h3 className="sec-h">Edit plan: add, rename, retarget or remove anything</h3>
 
       {/* Income */}
       <p className="sec-h" style={{ marginTop: "0.6rem" }}>Income</p>

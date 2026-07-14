@@ -149,12 +149,12 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
           <Stack gap="sm"><Skeleton width="55%" /><Skeleton width="40%" /></Stack>
         ) : err ? (
           <StateBlock variant="error" title="Couldn't load environment"
-            hint={<code>GET /api/base-apps/run/{slug}/env — {err}</code>}
+            hint={<code>GET /api/base-apps/run/{slug}/env ({err})</code>}
             action={<Button size="sm" onClick={load}>Retry</Button>} />
         ) : (data?.requirements.length ?? 0) === 0 ? (
           <StateBlock
             title="No environment variables declared"
-            hint="Declare them in workshop.app.json `env_requirements` (the builder can add them) — key, description, required, secret, how_to_obtain. They'll appear here to fill." />
+            hint="Declare them in workshop.app.json `env_requirements` (the builder can add them): key, description, required, secret, how_to_obtain. They'll appear here to fill." />
         ) : (
           <Stack>
             <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>

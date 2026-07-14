@@ -761,7 +761,7 @@ export default function ProjectDetail() {
           <StateBlock
             variant="error"
             title="Couldn't load project agents"
-            hint={<code>GET /api/agents — {defAgentsErr}</code>}
+            hint={<code>GET /api/agents ({defAgentsErr})</code>}
             action={<Button size="sm" onClick={loadDefAgents}>Retry</Button>}
           />
         ) : defAgents.length === 0 ? (
@@ -806,7 +806,7 @@ export default function ProjectDetail() {
           <StateBlock
             variant="error"
             title="Couldn't load grants"
-            hint={<code>GET /api/grants — {grantsErr}</code>}
+            hint={<code>GET /api/grants ({grantsErr})</code>}
             action={<Button size="sm" onClick={loadGrants}>Retry</Button>}
           />
         ) : heldGrants.length === 0 ? (
@@ -927,7 +927,7 @@ export default function ProjectDetail() {
               <StateBlock
                 variant="error"
                 title="Couldn't load tasks"
-                hint={<code>GET /api/projects/{slug}/tasks — {tasksErr}</code>}
+                hint={<code>GET /api/projects/{slug}/tasks ({tasksErr})</code>}
                 action={<Button size="sm" onClick={loadTasks}>Retry</Button>}
               />
             ) : ownerOrder.length === 0 ? (
@@ -1002,7 +1002,7 @@ export default function ProjectDetail() {
               <StateBlock
                 variant="error"
                 title="Couldn't load notes"
-                hint={<code>GET /api/projects/{slug}/interventions — {notesErr}</code>}
+                hint={<code>GET /api/projects/{slug}/interventions ({notesErr})</code>}
                 action={<Button size="sm" onClick={loadNotes}>Retry</Button>}
               />
             ) : notes.length === 0 ? (
@@ -1054,7 +1054,7 @@ export default function ProjectDetail() {
               <StateBlock
                 variant="error"
                 title="Couldn't load branches"
-                hint={<code>GET /api/worktrees/{slug} — {worktreesErr}</code>}
+                hint={<code>GET /api/worktrees/{slug} ({worktreesErr})</code>}
                 action={<Button size="sm" onClick={loadWorktrees}>Retry</Button>}
               />
             </div>

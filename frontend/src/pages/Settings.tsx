@@ -477,9 +477,9 @@ function HealthSection() {
     <Section icon={Heart} title="Health (Apple Health)">
       <Row label="status">
         {!latestTs ? (
-          <StatusDot status="danger">no data — install Health Auto Export</StatusDot>
+          <StatusDot status="danger">no data, install Health Auto Export</StatusDot>
         ) : stale ? (
-          <StatusDot status="warn">stale ({fmtAge(latestTs)}) — check Health Auto Export</StatusDot>
+          <StatusDot status="warn">stale ({fmtAge(latestTs)}), check Health Auto Export</StatusDot>
         ) : (
           <StatusDot status="ok">{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {fmtAge(latestTs)}</StatusDot>
         )}
@@ -493,7 +493,7 @@ function HealthSection() {
       {entries.slice(0, 8).map(([name, v]) => (
         <Row key={name} label={name}>
           <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
-            {String(v.qty ?? "—")}{v.units ? ` ${v.units}` : ""}
+            {String(v.qty ?? "–")}{v.units ? ` ${v.units}` : ""}
             {v.date && <span className="muted" style={{ marginLeft: "0.5rem", fontSize: "0.78rem" }}>{v.date}</span>}
           </span>
         </Row>

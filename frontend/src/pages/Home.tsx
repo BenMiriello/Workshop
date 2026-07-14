@@ -210,7 +210,7 @@ function RecentChats() {
   return (
     <Section icon={MessagesSquare} title="Recent chats" viewAll={{ to: "/chats" }}>
       {err ? (
-        <StateBlock variant="error" title="Couldn't load chats" hint={<><code>/api/chat/threads</code> — {err}</>} />
+        <StateBlock variant="error" title="Couldn't load chats" hint={<><code>/api/chat/threads</code> ({err})</>} />
       ) : !threads ? (
         <CardSkeletons />
       ) : threads.length === 0 ? (
@@ -268,13 +268,13 @@ function RecentJobs() {
   return (
     <Section icon={ListChecks} title="Recent jobs" viewAll={{ to: "/jobs" }}>
       {err ? (
-        <StateBlock variant="error" title="Couldn't load jobs" hint={<><code>/api/jobs</code> — {err}</>} />
+        <StateBlock variant="error" title="Couldn't load jobs" hint={<><code>/api/jobs</code> ({err})</>} />
       ) : !jobs ? (
         <CardSkeletons />
       ) : jobs.length === 0 ? (
         <StateBlock
           title="No jobs yet"
-          hint={<>A Job is recorded for every bounded run — cron sweep, project sweep, or a manual run.</>}
+          hint={<>A Job is recorded for every bounded run: cron sweep, project sweep, or a manual run.</>}
         />
       ) : (
         <CardGrid>
@@ -335,7 +335,7 @@ function PinnedApps() {
   return (
     <Section icon={LayoutGrid} title="Apps" viewAll={{ to: "/apps" }}>
       {err ? (
-        <StateBlock variant="error" title="Couldn't load apps" hint={<><code>/api/base-apps/launcher</code> — {err}</>} />
+        <StateBlock variant="error" title="Couldn't load apps" hint={<><code>/api/base-apps/launcher</code> ({err})</>} />
       ) : !apps ? (
         <CardSkeletons />
       ) : apps.length === 0 ? (
@@ -411,7 +411,7 @@ function RecentProjects() {
   return (
     <Section icon={FolderGit2} title="Projects" viewAll={{ to: "/projects" }}>
       {err ? (
-        <StateBlock variant="error" title="Couldn't load projects" hint={<><code>/api/projects/</code> — {err}</>} />
+        <StateBlock variant="error" title="Couldn't load projects" hint={<><code>/api/projects/</code> ({err})</>} />
       ) : !projects ? (
         <CardSkeletons />
       ) : projects.length === 0 ? (
