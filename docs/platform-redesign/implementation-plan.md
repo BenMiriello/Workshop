@@ -162,6 +162,7 @@ The highest-risk steps and the guard for each:
 
 - **Full Letta retirement**: swap assistant memory to a Store of type `Memory`, promote the plaintext knowledge index to primary, migrate masini per-channel agents off Letta. Dedicated phase, tested against the masini bridge in isolation. This is next.
 - **Task-management system**: per `task-management-exploration.md`. The Job object and per-project Task scope are reserved here; the task model itself is a separate build. (That doc's "promote to task" gesture is part of the deferred design and is NOT built in this round; locked decision 2 removes promotion from this migration entirely.)
+  UPDATE 2026-07-13: now fully designed in `autonomy-task-management.md` (assessment of the current chat/TODO.md/.tasks.json/loop drift, canonical Task model with project AND agent scopes, task-patch + task-proposal card emission from chat, the background trigger dispatcher, Job task_id/parent_id linkage, acceptance gates + awaiting_input, and a five-phase file-scoped build plan T1-T5). Ready to schedule; T2 sequences with the review-addendum chat fixes P1-P3.
 - **Hosting / versioning / deploy / marketplace** deep design.
 - **Multi-tenant / commercial** architecture.
 
