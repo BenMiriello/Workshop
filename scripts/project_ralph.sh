@@ -34,6 +34,7 @@ ASSIGNEE=""          # --assignee agent:<slug>: claim only this delegate's (or u
 MAX_WALL=3000        # 50 min total for a project sweep
 MAX_TASKS=20         # cap tasks per sweep
 RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
+DEFAULT_MAX_ITER=3   # per-task attempt cap when the task sets no max_iterations
 FORCE=0              # manual operator-triggered run bypasses the global off-switch
 JOB_ID=""            # adopt an already-open Job (manual run) instead of creating one
 
@@ -80,6 +81,31 @@ if [[ -z "$SLUG" && -z "$DIR_ARG" ]]; then
   echo "usage: project_ralph.sh <slug> | --dir <path> [--assignee agent:<slug>] [--max-wall SEC] [--max-tasks N]" >&2
   exit 4
 fi
+
+# Pull a single field out of a task JSON blob (from project_tasks.py). Nested
+# fields use dotted paths (e.g. acceptance.kind); missing -> empty string.
+jf() {  # $1=json $2=dotted-key
+  echo "$1" | python3 -c "
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: d = {}
+cur = d
+for k in sys.argv[1].split('.'):
+    cur = cur.get(k) if isinstance(cur, dict) else None
+    if cur is None: break
+print('' if cur is None else cur)
+" "$2" 2>/dev/null
+}
+
+# Run a task's command-acceptance spec inside the scope dir. Echoes PASS/FAIL and
+# the tail of output; return code mirrors the command's.
+run_acceptance_cmd() {  # $1=spec
+  local out rc
+  out=$( (cd "$DIR" && bash -lc "$1") 2>&1 )
+  rc=$?
+  echo "$out" | tail -c 800
+  return $rc
+}
 
 # Subscription auth; defend against accidental API-key auth.
 if [[ -r "$AUTH_ENV" ]]; then
@@ -163,8 +189,23 @@ fi
 START_EPOCH=$(date +%s)
 log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS ==="
 
-DONE=0; FAILED=0; BLOCKED=0; TIMEOUT=0
+DONE=0; FAILED=0; BLOCKED=0; TIMEOUT=0; IN_REVIEW=0
 tick_remaining() { echo $(( MAX_WALL - ( $(date +%s) - START_EPOCH ) )); }
+
+# After a failed / incomplete attempt, decide retry (release to todo) vs give-up
+# (block), based on the per-task attempt cap. $ATTEMPTS is the count already spent
+# (claim bumps it before the run). Echoes "blocked" or "retry".
+release_or_block() {  # $1=task_id $2=attempts $3=cap $4=reason-verb
+  if (( $2 >= $3 )); then
+    python3 "$PTASKS" block "$DIR" "$1" "$4 after $2 attempt(s) (cap $3)" >/dev/null 2>>"$LOG"
+    log "task=$1 BLOCKED: $4 after $2/$3 attempts"
+    echo blocked
+  else
+    python3 "$PTASKS" set-status "$DIR" "$1" todo >/dev/null 2>>"$LOG"
+    log "task=$1 released to todo ($4; attempt $2/$3)"
+    echo retry
+  fi
+}
 
 n=0
 while (( n < MAX_TASKS )); do
@@ -176,28 +217,37 @@ while (( n < MAX_TASKS )); do
 
   # Dependency-aware, assignee-scoped next task (reconciles the store first).
   NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
-  TASK_ID=$(echo "$NEXT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
-  TASK_TEXT=$(echo "$NEXT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('text',''))" 2>/dev/null)
+  TASK_ID=$(jf "$NEXT" id)
+  TASK_TEXT=$(jf "$NEXT" text)
   if [[ -z "$TASK_ID" ]]; then
     log "no ready tasks"
     break
   fi
   n=$((n+1))
 
+  # Acceptance gate + per-task cap (O4). acceptance.kind: reviewer (default,
+  # enforced inside ralph.sh) | command (run the spec after ralph passes) |
+  # operator (worker finishing lands the task in_review, operator approves).
+  ACC_KIND=$(jf "$NEXT" acceptance.kind)
+  ACC_SPEC=$(jf "$NEXT" acceptance.spec)
+  MAX_ITER=$(jf "$NEXT" max_iterations)
+  [[ -z "$MAX_ITER" || "$MAX_ITER" == "None" ]] && MAX_ITER=$DEFAULT_MAX_ITER
+
   # Per-task child Job under the coordinator sweep Job (task_id + parent_id link
   # the Jobs feed and the task's history into one graph).
   CHILD_JOB=$(job_start_child "$TASK_ID" "$JOB_ID")
-  # Atomic claim: todo->doing recording the child job id. A concurrent sweep or
-  # CLI that already claimed it makes this return {}; skip without running.
+  # Atomic claim: todo->doing recording the child job id + bumping attempts. A
+  # concurrent sweep or CLI that already claimed it returns {}; skip.
   CLAIMED=$(python3 "$PTASKS" claim "$DIR" "$TASK_ID" "$CHILD_JOB" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
-  CLAIMED_ID=$(echo "$CLAIMED" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+  CLAIMED_ID=$(jf "$CLAIMED" id)
   if [[ -z "$CLAIMED_ID" ]]; then
     log "task=$TASK_ID already claimed elsewhere — skipping"
     job_finish_child "$CHILD_JOB" cancelled 0
     continue
   fi
+  ATTEMPTS=$(jf "$CLAIMED" attempts); [[ -z "$ATTEMPTS" ]] && ATTEMPTS=1
   BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
-  log "task=$TASK_ID job=$CHILD_JOB \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
+  log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ITER acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
   set +e
   "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" >> "$LOG" 2>&1
@@ -205,10 +255,35 @@ while (( n < MAX_TASKS )); do
   set -e
 
   case "$RC" in
-    0) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done >/dev/null 2>>"$LOG"; DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE" ;;
+    0)
+      # ralph's reviewer gate passed. Apply the task's own acceptance policy.
+      if [[ "$ACC_KIND" == "command" && -n "$ACC_SPEC" ]]; then
+        set +e; ACC_OUT=$(run_acceptance_cmd "$ACC_SPEC"); ACC_RC=$?; set -e
+        if (( ACC_RC == 0 )); then
+          python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
+          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" >/dev/null 2>>"$LOG"
+          DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE (command acceptance ok)"
+        else
+          python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance FAILED (exit $ACC_RC): $ACC_SPEC :: $(echo "$ACC_OUT" | tr '\n' ' ' | head -c 300)" --kind acceptance >/dev/null 2>>"$LOG"
+          if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "command acceptance failing")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+          job_finish_child "$CHILD_JOB" failed "$ACC_RC"
+        fi
+      elif [[ "$ACC_KIND" == "operator" ]]; then
+        python3 "$PTASKS" note "$DIR" "$TASK_ID" "worker completed; awaiting operator approval" --kind acceptance >/dev/null 2>>"$LOG"
+        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" >/dev/null 2>>"$LOG"
+        IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID -> in_review (operator gate)"
+      else
+        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" >/dev/null 2>>"$LOG"
+        DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE"
+      fi
+      ;;
     3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID BLOCKED (classifier)" ;;
-    1|2) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo >/dev/null 2>>"$LOG"; TIMEOUT=$((TIMEOUT+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID incomplete (rc=$RC) — released to todo" ;;
-    *) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo >/dev/null 2>>"$LOG"; FAILED=$((FAILED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID failed (rc=$RC) — released to todo" ;;
+    1|2)
+      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else TIMEOUT=$((TIMEOUT+1)); fi
+      job_finish_child "$CHILD_JOB" done "$RC" ;;
+    *)
+      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+      job_finish_child "$CHILD_JOB" failed "$RC" ;;
   esac
   sleep 1
 done
@@ -218,18 +293,32 @@ DURATION=$(( $(date +%s) - START_EPOCH ))
 # and NONE are ready (every one is blocked / in_review), the sweep is waiting on
 # the operator: finish awaiting_input with evidence. Home's AttentionStrip + Job
 # detail surface it; the dispatcher skips an unchanged awaiting scope next tick.
-OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" <<'PYEOF'
+OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" "${SLUG:-$DIR}" <<'PYEOF'
 import json, sys
 from pathlib import Path
 sys.path.insert(0, "/home/clawd-a/workshop/backend")
 from services import tasks
-root = Path(sys.argv[1]); assignee = sys.argv[2] or None
+root = Path(sys.argv[1]); assignee = sys.argv[2] or None; scope = sys.argv[3]
 ready = tasks.next_ready(root, assignee=assignee)
 open_tasks = tasks.list_tasks(root, include_done=False)
 waiting = [t for t in open_tasks if t["status"] in ("blocked", "in_review")]
+
+def question_for(t: dict) -> str:
+    if t["status"] == "in_review":
+        return "Worker finished this task. Review the change and approve it, or send it back with a note."
+    reason = (t.get("blocked_reason") or "").strip()
+    return f"Blocked: {reason}" if reason else "Blocked; needs your input to proceed."
+
+# Write the per-task awaiting payload so the task carries its own question (the
+# store is the source of truth; JobDetail + TaskPanel read it from there).
+detail = []
+for t in waiting:
+    q = question_for(t)
+    tasks.update(root, t["id"], awaiting={"question": q})
+    detail.append({"id": t["id"], "status": t["status"], "text": (t.get("text") or "").split("\n")[0][:140],
+                   "blocked_reason": t.get("blocked_reason"), "question": q})
 print(json.dumps({"ready": bool(ready), "open": len(open_tasks), "waiting": len(waiting),
-                  "detail": [{"id": t["id"], "status": t["status"],
-                              "blocked_reason": t.get("blocked_reason")} for t in waiting][:20]}))
+                  "scope": scope, "detail": detail[:20]}))
 PYEOF
 )
 READY=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ready'))" 2>/dev/null)

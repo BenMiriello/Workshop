@@ -19,6 +19,7 @@ Verbs (all take a scope directory as the first positional):
   claim <dir> <id> <job_id> [--assignee A]
   note <dir> <id> "evidence text" [--kind KIND] [--ref REF]
   block <dir> <id> "reason"
+  set-awaiting <dir> <id> "question"  set/clear the operator-input payload
 
 Every command prints JSON on stdout (a task object, a list, or {} / {"error":...}).
 """
@@ -49,6 +50,8 @@ def _slim(t: dict | None) -> dict:
         "assignee": t.get("assignee"), "status": t.get("status"),
         "priority": t.get("priority", 0), "depends_on": t.get("depends_on", []),
         "acceptance": t.get("acceptance"), "max_iterations": t.get("max_iterations"),
+        "attempts": t.get("attempts", 0), "awaiting": t.get("awaiting"),
+        "blocked_reason": t.get("blocked_reason"),
         "touches": t.get("touches", []),
     }
 
@@ -91,6 +94,9 @@ def main(argv: list[str]) -> int:
     sp = sub.add_parser("block"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("reason")
 
+    sp = sub.add_parser("set-awaiting"); scope(sp)
+    sp.add_argument("task_id"); sp.add_argument("question")
+
     a = p.parse_args(argv[1:])
     root: Path = a.dir
 
@@ -126,6 +132,10 @@ def main(argv: list[str]) -> int:
             return 0
         if a.cmd == "block":
             t = tasks.update(root, a.task_id, status="blocked", blocked_reason=a.reason)
+            print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "set-awaiting":
+            t = tasks.update(root, a.task_id, awaiting={"question": a.question})
             print(json.dumps(_slim(t)))
             return 0
     except ValueError as e:

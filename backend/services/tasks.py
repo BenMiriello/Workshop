@@ -18,6 +18,8 @@ Canonical Task (version 2)::
       "acceptance": {"kind": "reviewer"|"command"|"operator", "spec": str|None}|None,
       "max_iterations": int | None,    # per-task override of the ralph cap
       "blocked_reason": str | None,
+      "awaiting": {"question": str, "since": iso}|None,  # operator input this task waits on
+      "attempts": int,                 # worker runs spent on this task (cap enforcement)
       "job_ids": [str],                # executions that worked this task
       "evidence": [{"kind": str, "ref": str, "ts": iso}],
       "source": {"kind": "operator"|"chat"|"agent"|"autogen", "ref": str|None},
@@ -178,6 +180,8 @@ def _normalize(task: dict) -> dict:
         "acceptance": acceptance,
         "max_iterations": _as_int_or_none(task.get("max_iterations")),
         "blocked_reason": task.get("blocked_reason") or None,
+        "awaiting": task.get("awaiting") if isinstance(task.get("awaiting"), dict) else None,
+        "attempts": _as_int(task.get("attempts"), 0),
         "job_ids": [str(j) for j in (task.get("job_ids") or []) if j],
         "evidence": [e for e in (task.get("evidence") or []) if isinstance(e, dict)],
         "source": {"kind": str(src.get("kind") or "operator"), "ref": src.get("ref")},
@@ -577,6 +581,8 @@ def update(
     max_iterations: int | None = None,
     job_id: str | None = None,
     evidence: dict | None = None,
+    awaiting: dict | None = None,
+    bump_attempt: bool = False,
 ) -> dict | None:
     """Update a task. ``owner`` (or ``assignee``) scopes the match so an agent
     can't mutate another delegate's task. Additive fields are patched when
@@ -599,6 +605,10 @@ def update(
             return None
         if status is not None:
             found["status"] = status
+            # Leaving a waiting state clears the operator-input payload; nothing
+            # is waiting on a task that is now todo/doing/done/cancelled.
+            if status not in ("blocked", "in_review"):
+                found["awaiting"] = None
         if text is not None:
             found["text"] = text
         if assignee is not None:
@@ -614,6 +624,12 @@ def update(
             found["acceptance"] = acceptance or None
         if max_iterations is not None:
             found["max_iterations"] = _as_int_or_none(max_iterations)
+        if awaiting is not None:
+            found["awaiting"] = ({"question": str(awaiting.get("question") or "").strip(),
+                                  "since": awaiting.get("since") or _now()}
+                                 if awaiting.get("question") else None)
+        if bump_attempt:
+            found["attempts"] = _as_int(found.get("attempts"), 0) + 1
         if job_id:
             if job_id not in found["job_ids"]:
                 found["job_ids"].append(job_id)
@@ -640,6 +656,7 @@ def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None)
         if found is None or found["status"] != "todo":
             return None
         found["status"] = "doing"
+        found["attempts"] = _as_int(found.get("attempts"), 0) + 1
         if job_id and job_id not in found["job_ids"]:
             found["job_ids"].append(job_id)
         found["updated"] = _now()
