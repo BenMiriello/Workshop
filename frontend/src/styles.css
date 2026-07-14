@@ -578,7 +578,7 @@ input[type="range"].grad::-moz-range-thumb {
   min-width: 1rem; height: 1rem; padding: 0 0.2rem;
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 0.62rem; font-weight: var(--fw-semi); line-height: 1;
-  background: var(--accent); color: #fff; border-radius: 999px;
+  background: var(--accent); color: var(--accent-fg); border-radius: 999px;
 }
 
 /* ---- Log + messages ---- */
@@ -607,7 +607,7 @@ input[type="range"].grad::-moz-range-thumb {
   padding: 0.5rem 0.7rem; border-radius: 12px; font-size: 0.9rem; line-height: 1.4;
   white-space: pre-wrap; word-break: break-word;
 }
-.chat-msg.user .chat-bubble { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; }
+.chat-msg.user .chat-bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
 .chat-bubble.error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--fg); }
 /* Timeout: a calm warn treatment (not the red error), with a small lead tag so
@@ -692,10 +692,10 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-ellipsis__dots { flex: 0 0 auto; letter-spacing: 0.15em; }
 .chat-ellipsis__label { flex: 0 0 auto; }
 /* Legible on the accent-filled user bubble. */
-.chat-msg.user .chat-more { color: rgba(255, 255, 255, 0.9); }
-.chat-msg.user .chat-ellipsis { color: rgba(255, 255, 255, 0.85); }
-.chat-msg.user .chat-ellipsis::after { border-color: rgba(255, 255, 255, 0.4); }
-.chat-msg.user .chat-ellipsis:hover { color: #fff; }
+.chat-msg.user .chat-more { color: color-mix(in srgb, var(--accent-fg) 90%, transparent); }
+.chat-msg.user .chat-ellipsis { color: color-mix(in srgb, var(--accent-fg) 85%, transparent); }
+.chat-msg.user .chat-ellipsis::after { border-color: color-mix(in srgb, var(--accent-fg) 40%, transparent); }
+.chat-msg.user .chat-ellipsis:hover { color: var(--accent-fg); }
 /* Deterministic spacing for the work section (the "Show N earlier steps" toggle
    + step list). No stacked margins: the container owns ONE internal gap and ONE
    bottom margin that exists ONLY when an answer follows — so a message whose
@@ -793,7 +793,7 @@ input[type="range"].grad::-moz-range-thumb {
   width: 2.1rem; height: 2.1rem; padding: 0;
   border-radius: var(--radius-md); cursor: pointer;
 }
-.chat-send { background: var(--accent); color: #fff; border: none; }
+.chat-send { background: var(--accent); color: var(--accent-fg); border: none; }
 .chat-send:hover:not(:disabled) { background: var(--accent-hover); }
 .chat-send:disabled { opacity: 0.4; }
 
