@@ -21,12 +21,16 @@ async def list_jobs(
     agent_id: str | None = None,
     project_slug: str | None = None,
     status: str | None = None,
+    task_id: str | None = None,
+    parent_id: str | None = None,
     limit: int = 50,
 ) -> dict:
     records = jobs.read(
         agent_id=agent_id,
         project_slug=project_slug,
         status=status,
+        task_id=task_id,
+        parent_id=parent_id,
         limit=limit,
     )
     return {"jobs": records, "count": len(records)}

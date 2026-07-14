@@ -91,8 +91,12 @@ def start(
     status: str = "running",
     budget: dict | None = None,
     job_id: str | None = None,
+    task_id: str | None = None,
+    parent_id: str | None = None,
 ) -> dict:
-    """Open a Job and append its record. Returns the full record (with `id`)."""
+    """Open a Job and append its record. Returns the full record (with `id`).
+    `task_id` links a child Job to the Task it worked; `parent_id` links it to
+    the coordinator sweep Job, so the Jobs feed + task history form one graph."""
     if trigger not in TRIGGERS:
         trigger = "manual"
     if status not in STATUSES:
@@ -106,6 +110,8 @@ def start(
         status=status,
         started_at=_now_iso(),
         budget=budget,
+        task_id=task_id,
+        parent_id=parent_id,
     )
     _append(record)
     return record
@@ -177,9 +183,11 @@ def read(
     agent_id: str | None = None,
     project_slug: str | None = None,
     status: str | None = None,
+    task_id: str | None = None,
+    parent_id: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """Most recent Jobs first, filtered by agent/project/status."""
+    """Most recent Jobs first, filtered by agent/project/status/task/parent."""
     limit = max(1, min(int(limit), 1000))
     records = list(_read_all().values())
 
@@ -189,6 +197,10 @@ def read(
         if project_slug is not None and r.get("project_slug") != project_slug:
             return False
         if status is not None and r.get("status") != status:
+            return False
+        if task_id is not None and r.get("task_id") != task_id:
+            return False
+        if parent_id is not None and r.get("parent_id") != parent_id:
             return False
         return True
 
@@ -217,6 +229,8 @@ def _cli(argv: list[str]) -> int:
     p_start.add_argument("--status", default="running", choices=list(STATUSES))
     p_start.add_argument("--budget", default=None, help="JSON object")
     p_start.add_argument("--id", dest="job_id", default=None)
+    p_start.add_argument("--task-id", default=None)
+    p_start.add_argument("--parent-id", default=None)
 
     p_finish = sub.add_parser("finish", help="close a Job")
     p_finish.add_argument("--id", dest="job_id", required=True)
@@ -243,6 +257,8 @@ def _cli(argv: list[str]) -> int:
             status=args.status,
             budget=budget,
             job_id=args.job_id,
+            task_id=args.task_id,
+            parent_id=args.parent_id,
         )
         print(rec["id"])
         return 0

@@ -36,9 +36,106 @@ from __future__ import annotations
 
 from typing import Any
 
+from datetime import datetime, timedelta, timezone
+
 from services import jobs
 
 KINDS = ("manual", "cron", "event", "loop")
+
+
+# ---------------------------------------------------------------------------
+# Cron scheduling (dispatcher). croniter if importable, else a self-contained
+# 5-field matcher with a conservative firing window. Used by dispatch_triggers.
+# ---------------------------------------------------------------------------
+
+def _field_match(spec: str, value: int) -> bool:
+    """Match one cron field (`*`, `*/n`, `a-b`, `a,b`, `a`) against a value."""
+    for part in spec.split(","):
+        part = part.strip()
+        if part in ("*", "?"):
+            return True
+        step = 1
+        if "/" in part:
+            base, _, s = part.partition("/")
+            try:
+                step = int(s)
+            except ValueError:
+                step = 1
+            part = base or "*"
+        if part in ("*", ""):
+            if value % step == 0:
+                return True
+            continue
+        if "-" in part:
+            a, _, b = part.partition("-")
+            try:
+                lo, hi = int(a), int(b)
+            except ValueError:
+                continue
+            if lo <= value <= hi and (value - lo) % step == 0:
+                return True
+            continue
+        try:
+            if int(part) == value:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _cron_match(expr: str, dt: datetime) -> bool:
+    fields = (expr or "").split()
+    if len(fields) != 5:
+        return False
+    minute, hour, dom, mon, dow = fields
+    cron_dow = (dt.weekday() + 1) % 7  # cron: 0=Sun..6=Sat (Python: 0=Mon..6=Sun)
+    return (
+        _field_match(minute, dt.minute)
+        and _field_match(hour, dt.hour)
+        and _field_match(dom, dt.day)
+        and _field_match(mon, dt.month)
+        and (_field_match(dow, cron_dow) or _field_match(dow, 7 if cron_dow == 0 else cron_dow))
+    )
+
+
+def due(cron_expression: str, last_fired_iso: str | None, now: datetime | None = None,
+        *, fresh_window_min: int = 30, lookback_cap_min: int = 1500) -> bool:
+    """Is a cron trigger due? True if it would have fired in (last_fired, now].
+    Prefers croniter; falls back to scanning minutes backward from now to
+    last_fired (capped). A never-fired trigger only fires if it matched within
+    the last `fresh_window_min` minutes (one dispatcher tick), so a fresh daily
+    cron does not fire immediately mid-day."""
+    if not cron_expression:
+        return False
+    now = (now or datetime.now(timezone.utc)).replace(second=0, microsecond=0)
+    try:
+        from croniter import croniter  # type: ignore
+        base = _parse_iso(last_fired_iso) or (now - timedelta(minutes=fresh_window_min))
+        nxt = croniter(cron_expression, base).get_next(datetime)
+        return nxt <= now
+    except Exception:
+        last = _parse_iso(last_fired_iso)
+        floor = last if last is not None else (now - timedelta(minutes=fresh_window_min))
+        t = now
+        for _ in range(lookback_cap_min):
+            if t <= floor:
+                break
+            if _cron_match(cron_expression, t):
+                return True
+            t -= timedelta(minutes=1)
+        return False
+
+
+def _parse_iso(s: str | None) -> datetime | None:
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).replace(second=0, microsecond=0)
+    except ValueError:
+        return None
 
 # Default loop bounds. These mirror the Ralph sweep caps in project_ralph.sh so a
 # `continuous` project translates to a loop that is actually bounded.
