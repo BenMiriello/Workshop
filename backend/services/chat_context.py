@@ -652,10 +652,13 @@ class ProjectContextProvider(ContextProvider):
             f"project directory ({self.dir}). The operator is {operator_name()} — a "
             "senior engineer who dislikes padding. Be direct and brief.\n\n"
             "Always read PROJECT.md FIRST to ground your work in the current "
-            "goal and constraints, then act. When you finish a task, update "
-            "TODO.md (check items off, add follow-ups). When the operator gives "
-            "a non-trivial direction, append a one-line decision note to "
-            "PROJECT.md.\n\n"
+            "goal and constraints, then act. Task state lives in the structured "
+            "store, NOT in TODO.md (which is a generated export, never edit it "
+            "directly). To mark a task done, add a follow-up, or block one, run "
+            "`python3 ~/workshop/scripts/project_tasks.py <verb> .` via Bash "
+            "(verbs: set-status <id> done, add \"text\", block <id> \"reason\", "
+            "note <id> \"text\", next-ready). When the operator gives a non-trivial "
+            "direction, append a one-line decision note to PROJECT.md.\n\n"
             f"Project-local agent rules:\n\n{rules or '(none)'}"
         )
 
@@ -714,9 +717,12 @@ class BuildAgentContextProvider(ContextProvider):
             f"Claude Code tool access inside the directory {self.dir}. The operator is "
             f"{operator_name()} — a senior engineer who dislikes padding. Be direct and brief.\n\n"
             "Always read PROJECT.md FIRST to ground your work in the current goal and "
-            "constraints, then act. When you finish a task, update TODO.md (check items off, "
-            "add follow-ups). When the operator gives a non-trivial direction, append a "
-            "one-line decision note to PROJECT.md.\n\n"
+            "constraints, then act. Task state lives in the structured store, NOT in "
+            "TODO.md (a generated export, never edit it directly). Mark tasks done / add "
+            "follow-ups / block via `python3 ~/workshop/scripts/project_tasks.py <verb> .` "
+            "over Bash (set-status <id> done, add \"text\", block <id> \"reason\", "
+            "note <id> \"text\", next-ready). When the operator gives a non-trivial "
+            "direction, append a one-line decision note to PROJECT.md.\n\n"
             f"Build-agent rules:\n\n{rules or '(none)'}"
         )
 
@@ -759,6 +765,12 @@ class AssistantAgentContextProvider(ContextProvider):
             base += f"\n\nPurpose: {self.purpose}"
         if self._body:
             base += f"\n\n{self._body}"
+        base += (
+            "\n\nYou can maintain your own task list. To add, update, or note tasks, "
+            "emit ONE fenced block (it is applied to your task scope and hidden from "
+            "your reply):\n```task-patch\n{\"add\": [{\"text\": \"...\", \"priority\": 0}], "
+            "\"update\": [{\"id\": \"...\", \"status\": \"done\"}]}\n```"
+        )
         return base
 
 

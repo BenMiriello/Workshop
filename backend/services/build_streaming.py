@@ -521,17 +521,25 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             from services import chat_context
             thread = chat_store.get_thread(turn.thread_id)
             provider = chat_context.get_provider((thread or {}).get("context_key"))
+            ctx_key = (thread or {}).get("context_key")
+            new_text = text
+            applied_notes: list[str] = []
             if type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
-                cleaned, applied_notes = provider.apply_actions(text)
-                if cleaned != text or applied_notes:
-                    text = cleaned or "(done)"
-                    notes = applied_notes or None
-                    # Replace the trailing text run with the cleaned answer so the
-                    # rendered segments match the applied result.
-                    cut = len(turn.segments)
-                    while cut > 0 and turn.segments[cut - 1].get("t") == "text":
-                        cut -= 1
-                    turn.segments = turn.segments[:cut] + ([{"t": "text", "text": text}] if text else [])
+                new_text, pnotes = provider.apply_actions(new_text)
+                applied_notes += (pnotes or [])
+            # O2: apply a task-patch block against this chat's task scope.
+            from services import task_scope
+            new_text, tnotes = task_scope.apply_task_patch(ctx_key, new_text)
+            applied_notes += tnotes
+            if new_text != text or applied_notes:
+                text = new_text or "(done)"
+                notes = applied_notes or None
+                # Replace the trailing text run with the cleaned answer so the
+                # rendered segments match the applied result.
+                cut = len(turn.segments)
+                while cut > 0 and turn.segments[cut - 1].get("t") == "text":
+                    cut -= 1
+                turn.segments = turn.segments[:cut] + ([{"t": "text", "text": text}] if text else [])
         except Exception as e:
             log.warning("turn %s: provider apply_actions failed: %s", turn.id, e)
     try:

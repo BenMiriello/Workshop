@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_store, chat_context
+from services import task_scope
 from services import knowledge
 from services import skills
 from services import llm_router
@@ -725,6 +726,11 @@ async def send_message(thread_id: str, body: PostMessage):
         return {"message": msg, "notes": []}
 
     cleaned, notes = provider.apply_actions(reply)
+    # O2: a task-bound chat can maintain its task list via a task-patch block,
+    # applied against THIS scope's store and stripped from the stored reply.
+    cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned)
+    if tnotes:
+        notes = (notes or []) + tnotes
     if not cleaned:
         cleaned = "(done)"
     meta: dict = {}
