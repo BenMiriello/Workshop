@@ -175,23 +175,30 @@ export default function Chats() {
         <StateBlock title="No matches" hint="No chat matches that filter. Clear the search or pick All to see everything." />
       ) : (
         <>
-          <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          <div style={{ display: "grid", gap: "var(--space-2)" }}>
             {visible.map((t) => (
               <Card
                 key={t.id}
+                interactive
+                compact
                 onClick={() => open(t)}
-                style={{ padding: "var(--space-4)", cursor: "pointer" }}
+                style={{ cursor: "pointer" }}
               >
-                <div style={{ display: "flex", alignItems: "baseline", gap: "var(--space-3)", flexWrap: "wrap" }}>
-                  <MessagesSquare size={14} aria-hidden />
-                  <strong style={{ minWidth: 0 }}>{t.title || "New chat"}</strong>
-                  <Tag hue={catFor(t.context_key)}>{contextLabel(t.context_key)}</Tag>
-                  <span className="ws-card__meta" style={{ marginLeft: "auto" }}>
-                    {t.message_count} msg
+                {/* One line: icon + title ellipsize, tag + count never shrink.
+                    nowrap + min-width:0 keeps a long title/context from wrapping
+                    the row tall or overflowing the viewport on mobile. */}
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
+                  <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
+                  <strong style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {t.title || "New chat"}
+                  </strong>
+                  <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
+                    <Tag hue={catFor(t.context_key)}>{contextLabel(t.context_key)}</Tag>
+                    <span className="ws-card__meta">{t.message_count}</span>
                   </span>
                 </div>
                 {t.last_message && (
-                  <p className="ws-muted" style={{ margin: "var(--space-2) 0 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-sm)" }}>
                     {t.last_message}
                   </p>
                 )}
