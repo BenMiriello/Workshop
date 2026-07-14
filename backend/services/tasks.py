@@ -1,45 +1,61 @@
-"""Structured task store (ADR / docs/workshop-v1 02 §3, plan item 14).
+"""Structured task store (canonical Task model, orchestration-and-autonomy O1).
 
-Replaces raw TODO.md editing. The authoritative store is a JSON file per
-working tree at ``<root>/.tasks.json``; TODO.md is regenerated from the store
-on every write so it stays a git-friendly export AND so chat_context (which
-reads TODO.md as live turn context) always sees current state.
+The authoritative store is a JSON file per working tree at ``<root>/.tasks.json``;
+``TODO.md`` is a regenerated EXPORT plus a healed inbox. One write path: nothing
+edits TODO.md as the way to change state; a stray hand edit is absorbed by
+``reconcile`` on the next read, never destroyed.
 
-A Task::
+Canonical Task (version 2)::
 
     {
-      "id":      str,          # uuid4 hex, stable across reorders
-      "text":    str,
-      "status":  "todo"|"doing"|"done"|"blocked",
-      "owner":   str,          # a build-agent slug or "operator"
-      "parent":  str | None,   # parent task id for the tree
-      "created": iso8601,
-      "updated": iso8601,
+      "id": str,                       # uuid4 hex, stable across reorders
+      "text": str,
+      "status": "todo"|"doing"|"in_review"|"blocked"|"done"|"cancelled",
+      "assignee": None|"agent:<slug>"|"operator",   # the delegate (human owns)
+      "parent": str | None,
+      "priority": int,                 # higher first; default 0
+      "depends_on": [task_id],         # gates readiness
+      "acceptance": {"kind": "reviewer"|"command"|"operator", "spec": str|None}|None,
+      "max_iterations": int | None,    # per-task override of the ralph cap
+      "blocked_reason": str | None,
+      "job_ids": [str],                # executions that worked this task
+      "evidence": [{"kind": str, "ref": str, "ts": iso}],
+      "source": {"kind": "operator"|"chat"|"agent"|"autogen", "ref": str|None},
+      "provenance": str | None,        # stable dedupe key
+      "touches": [str],                # path globs this task writes (fan-out safety)
+      "discovered_from": str | None,   # task id that spawned this follow-up
+      "effort": str | None,            # "s"|"m"|"l" hint
+      "created": iso, "updated": iso
     }
 
-Ownership: a project's roll-up holds tasks for every owner (operator + each
-agent). A build-agent's view is the subset of tasks owned by that agent slug,
-stored in the agent's linked project (if any) else the agent's own cwd.
-
-Migration: on first access, if ``.tasks.json`` is absent but ``TODO.md``
-exists, the markdown checklist is parsed via :mod:`services.todos` into tasks
-owned by ``"operator"`` (done flag → status ``done``/``todo``).
+Backward compatibility: records carry an ``owner`` field mirroring ``assignee``
+so existing readers (frontend task panel, per-agent endpoints) keep working while
+callers migrate. Legacy ``owner`` on read maps to ``assignee`` (an agent slug
+becomes ``agent:<slug>``; ``operator`` stays).
 """
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
+import re
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from services import todos
 
-STATUSES = {"todo", "doing", "done", "blocked"}
-DEFAULT_OWNER = "operator"
+# in_review = worker finished, operator is the gate; cancelled = dropped.
+STATUSES = {"todo", "doing", "in_review", "blocked", "done", "cancelled"}
+TERMINAL = {"done", "cancelled"}
+DEFAULT_OWNER = "operator"  # canonical assignee for the human
 
 STORE_NAME = ".tasks.json"
 EXPORT_NAME = "TODO.md"
+LOCK_NAME = ".tasks.json.lock"
+STORE_VERSION = 2
 
 
 def _now() -> str:
@@ -58,10 +74,13 @@ def _export_path(root: Path) -> Path:
     return root / EXPORT_NAME
 
 
+def _lock_path(root: Path) -> Path:
+    return root / LOCK_NAME
+
+
 # ---- IO --------------------------------------------------------------------
 
 def _atomic_write(path: Path, content: str) -> None:
-    """Write via a temp file in the same dir + os.replace for atomicity."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
@@ -75,63 +94,143 @@ def _atomic_write(path: Path, content: str) -> None:
                 pass
 
 
-def _read_store(root: Path) -> list[dict] | None:
-    """Return the raw task list from .tasks.json, or None if absent/corrupt."""
+@contextmanager
+def _locked(root: Path):
+    """flock around a load-modify-persist so the backend API and the shell CLI
+    (project_tasks.py) can genuinely interleave writes to the same store during
+    a sweep without clobbering each other. One lock file, one module, every
+    writer goes through here."""
+    root.mkdir(parents=True, exist_ok=True)
+    lp = _lock_path(root)
+    f = open(lp, "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(f, fcntl.LOCK_UN)
+        finally:
+            f.close()
+
+
+def _read_payload(root: Path) -> tuple[list[dict] | None, str | None]:
+    """Return (raw task list, export_sha) from .tasks.json, or (None, None)."""
     p = _store_path(root)
     if not p.exists():
-        return None
+        return None, None
     try:
         data = json.loads(p.read_text())
     except (json.JSONDecodeError, OSError):
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    tasks = data.get("tasks")
+    export_sha = data.get("export_sha")
+    return (tasks if isinstance(tasks, list) else None,
+            export_sha if isinstance(export_sha, str) else None)
+
+
+def _read_store(root: Path) -> list[dict] | None:
+    tasks, _ = _read_payload(root)
+    return tasks
+
+
+def _sha(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# ---- Normalization ---------------------------------------------------------
+
+def _assignee_from_legacy(task: dict) -> str | None:
+    """Map a record's assignee/owner to the canonical assignee. Legacy `owner`:
+    'operator' stays; a bare agent slug becomes 'agent:<slug>'; blank -> operator."""
+    a = task.get("assignee")
+    if a is not None:
+        return a or None
+    owner = task.get("owner")
+    if owner is None or owner == "" or owner == DEFAULT_OWNER:
+        return DEFAULT_OWNER
+    return owner if str(owner).startswith("agent:") else f"agent:{owner}"
+
+
+def _normalize(task: dict) -> dict:
+    """Coerce a stored record into a well-formed canonical Task (defensive
+    against hand edits and forward-migrating v1 records losslessly)."""
+    status = task.get("status")
+    if status not in STATUSES:
+        status = "done" if task.get("done") else "todo"
+    now = _now()
+    assignee = _assignee_from_legacy(task)
+    acceptance = task.get("acceptance")
+    if not isinstance(acceptance, dict):
+        acceptance = None
+    src = task.get("source")
+    if not isinstance(src, dict):
+        src = {"kind": "operator", "ref": None}
+    rec = {
+        "id": str(task.get("id") or _new_id()),
+        "text": str(task.get("text") or "").strip(),
+        "status": status,
+        "assignee": assignee,
+        "parent": task.get("parent") or None,
+        "priority": _as_int(task.get("priority"), 0),
+        "depends_on": [str(d) for d in (task.get("depends_on") or []) if d],
+        "acceptance": acceptance,
+        "max_iterations": _as_int_or_none(task.get("max_iterations")),
+        "blocked_reason": task.get("blocked_reason") or None,
+        "job_ids": [str(j) for j in (task.get("job_ids") or []) if j],
+        "evidence": [e for e in (task.get("evidence") or []) if isinstance(e, dict)],
+        "source": {"kind": str(src.get("kind") or "operator"), "ref": src.get("ref")},
+        "provenance": task.get("provenance") or None,
+        "touches": [str(t) for t in (task.get("touches") or []) if t],
+        "discovered_from": task.get("discovered_from") or None,
+        "effort": task.get("effort") or None,
+        "created": str(task.get("created") or now),
+        "updated": str(task.get("updated") or now),
+    }
+    # `owner` mirror keeps legacy readers (frontend panel, per-agent endpoints)
+    # working until they migrate to `assignee`.
+    rec["owner"] = rec["assignee"] or DEFAULT_OWNER
+    return rec
+
+
+def _as_int(v, default: int) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int_or_none(v):
+    if v is None:
         return None
-    tasks = data.get("tasks") if isinstance(data, dict) else None
-    return tasks if isinstance(tasks, list) else None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def _migrate_from_todo(root: Path) -> list[dict]:
-    """Parse an existing TODO.md into operator-owned tasks. Returns the list
-    (possibly empty if TODO.md is missing or has no checklist items)."""
+    """Parse an existing TODO.md into operator-assigned tasks."""
     export = _export_path(root)
     text = export.read_text() if export.exists() else ""
     now = _now()
     tasks: list[dict] = []
     for item in todos.parse(text):
-        tasks.append({
+        tasks.append(_normalize({
             "id": _new_id(),
             "text": item.get("text", ""),
             "status": "done" if item.get("done") else "todo",
-            "owner": DEFAULT_OWNER,
-            "parent": None,
-            "created": now,
-            "updated": now,
-        })
+            "assignee": DEFAULT_OWNER,
+            "created": now, "updated": now,
+            "source": {"kind": "operator", "ref": "todo-migrate"},
+        }))
     return tasks
-
-
-def _normalize(task: dict) -> dict:
-    """Coerce a stored record into a well-formed Task (defensive against hand
-    edits to the JSON file)."""
-    status = task.get("status")
-    if status not in STATUSES:
-        status = "done" if task.get("done") else "todo"
-    now = _now()
-    return {
-        "id": str(task.get("id") or _new_id()),
-        "text": str(task.get("text") or "").strip(),
-        "status": status,
-        "owner": str(task.get("owner") or DEFAULT_OWNER),
-        "parent": task.get("parent") or None,
-        "created": str(task.get("created") or now),
-        "updated": str(task.get("updated") or now),
-    }
 
 
 def _load(root: Path) -> list[dict]:
     """Load the authoritative task list, migrating from TODO.md on first access.
-
-    If the store is absent, migrate (and persist, regenerating TODO.md so the
-    two are immediately consistent). If present, normalize in memory.
-    """
+    Does NOT reconcile (callers that want the healed view call reconcile first)."""
     raw = _read_store(root)
     if raw is None:
         tasks = _migrate_from_todo(root)
@@ -141,33 +240,109 @@ def _load(root: Path) -> list[dict]:
 
 
 def _persist(root: Path, tasks: list[dict]) -> None:
-    """Atomically write .tasks.json AND regenerate the TODO.md export."""
-    payload = {"version": 1, "tasks": tasks}
+    """Atomically write .tasks.json (version 2, with export_sha) AND regenerate
+    the TODO.md export. export_sha lets reconcile detect out-of-band edits."""
+    rendered = render_markdown(tasks)
+    payload = {"version": STORE_VERSION, "tasks": tasks, "export_sha": _sha(rendered)}
     _atomic_write(_store_path(root), json.dumps(payload, indent=2) + "\n")
-    _atomic_write(_export_path(root), render_markdown(tasks))
+    _atomic_write(_export_path(root), rendered)
+
+
+# ---- Reconcile (heal out-of-band TODO.md edits) ----------------------------
+
+_BOX_TO_STATUS = {" ": "todo", "x": "done", "X": "done", "~": "doing",
+                  "!": "blocked", "?": "in_review", "-": "cancelled"}
+_LINE_RE = re.compile(r"^\s*[-*]\s*\[([ xX~!?\-])\]\s*(.*?)\s*$")
+
+
+def _norm_text(s: str) -> str:
+    # Strip a trailing status tag like "  (doing)" for matching, and collapse ws.
+    s = re.sub(r"\s*\((?:doing|blocked|in_review|in review|cancelled)\)\s*$", "", s, flags=re.I)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def _parse_export_lines(text: str) -> list[tuple[str, str]]:
+    """Return [(status, text)] for every checklist line in a TODO.md body,
+    matching all six status boxes plus a bare `[ ]`."""
+    out: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        m = _LINE_RE.match(line)
+        if not m:
+            continue
+        box, body = m.group(1), m.group(2)
+        if not body:
+            continue
+        out.append((_BOX_TO_STATUS.get(box, "todo"), body.strip()))
+    return out
+
+
+def reconcile(root: Path) -> bool:
+    """Heal an out-of-band TODO.md edit back into the store. Cheap: short-circuits
+    on an unchanged hash. Checkbox flips apply to the matching store task
+    (normalized-text match); unmatched new checklist lines import as new tasks;
+    lines missing from the file are ignored (the store wins on deletion). Returns
+    True if anything changed. The store remains the single authority."""
+    export = _export_path(root)
+    if not export.exists():
+        return False
+    with _locked(root):
+        tasks_raw, export_sha = _read_payload(root)
+        if tasks_raw is None:
+            return False
+        current = export.read_text()
+        if export_sha is not None and _sha(render_markdown([_normalize(t) for t in tasks_raw])) == export_sha \
+                and _sha(current) == export_sha:
+            return False
+        if _sha(current) == export_sha:
+            return False  # export matches what we last wrote; nothing to heal
+        tasks = [_normalize(t) for t in tasks_raw]
+        by_text: dict[str, dict] = {}
+        for t in tasks:
+            by_text.setdefault(_norm_text(t["text"]), t)
+        changed = False
+        now = _now()
+        for status, text in _parse_export_lines(current):
+            key = _norm_text(text)
+            match = by_text.get(key)
+            if match is not None:
+                if match["status"] != status:
+                    match["status"] = status
+                    match["updated"] = now
+                    changed = True
+            else:
+                # Unmatched new line -> import (non-destructive).
+                new = _normalize({
+                    "id": _new_id(), "text": text, "status": status,
+                    "assignee": DEFAULT_OWNER, "created": now, "updated": now,
+                    "source": {"kind": "operator", "ref": "todo-reconcile"},
+                })
+                tasks.append(new)
+                by_text.setdefault(key, new)
+                changed = True
+        # Always re-persist so export_sha tracks the current file even when the
+        # only diff was cosmetic (whitespace), preventing a reconcile loop.
+        _persist(root, tasks)
+        return changed
 
 
 # ---- Markdown export -------------------------------------------------------
 
-_STATUS_BOX = {"todo": " ", "doing": "~", "done": "x", "blocked": "!"}
-_STATUS_LABEL = {"doing": "doing", "blocked": "blocked"}
+_STATUS_BOX = {"todo": " ", "doing": "~", "in_review": "?", "blocked": "!",
+               "done": "x", "cancelled": "-"}
+_STATUS_LABEL = {"doing": "doing", "blocked": "blocked", "in_review": "in_review",
+                 "cancelled": "cancelled"}
 
 
 def render_markdown(tasks: list[dict], *, header: str = "# TODO\n\n") -> str:
-    """Render the structured tasks as a GitHub-style checklist, grouped by
-    owner with a heading per owner (operator first). Nested children are
-    indented under their parent. Status maps to the checkbox + a tag for the
-    non-binary states so the markdown stays lossy-but-readable; .tasks.json is
-    the source of truth, this is the export.
-    """
+    """Render the tasks as a GitHub-style checklist grouped by assignee (operator
+    first). .tasks.json is the source of truth; this is the export."""
     groups = group_by_owner(tasks)
-    # operator first, then the rest alphabetically.
     owners = sorted(groups.keys(), key=lambda o: (o != DEFAULT_OWNER, o))
     lines: list[str] = []
     for owner in owners:
-        roots, children = _tree_for(groups[owner])
         if not groups[owner]:
             continue
+        roots, children = _tree_for(groups[owner])
         lines.append(f"## {owner}")
         lines.append("")
         for t in roots:
@@ -192,17 +367,14 @@ def _emit(task: dict, children: dict[str, list[dict]], out: list[str], *, depth:
 # ---- Tree / grouping helpers ----------------------------------------------
 
 def group_by_owner(tasks: list[dict]) -> dict[str, list[dict]]:
-    """Group tasks by owner. Returns {owner: [task, ...]} preserving order."""
+    """Group tasks by assignee (the `owner` mirror). Name kept for compat."""
     groups: dict[str, list[dict]] = {}
     for t in tasks:
-        groups.setdefault(t.get("owner", DEFAULT_OWNER), []).append(t)
+        groups.setdefault(t.get("owner") or t.get("assignee") or DEFAULT_OWNER, []).append(t)
     return groups
 
 
 def _tree_for(tasks: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
-    """Return (root tasks, {parent_id: [child, ...]}) for a flat list. A task
-    whose parent is missing from this list is treated as a root so nothing is
-    orphaned out of the rendering."""
     ids = {t["id"] for t in tasks}
     children: dict[str, list[dict]] = {}
     roots: list[dict] = []
@@ -215,28 +387,21 @@ def _tree_for(tasks: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
     return roots, children
 
 
+def _match_assignee(task: dict, owner: str | None) -> bool:
+    """Assignee-scoped match, tolerant of the legacy owner form (bare slug)."""
+    if owner is None:
+        return True
+    want = owner if (owner == DEFAULT_OWNER or owner.startswith("agent:")) else f"agent:{owner}"
+    return (task.get("assignee") or DEFAULT_OWNER) == want or task.get("owner") == owner
+
+
 def tree(root: Path, *, include_done: bool = True, owner: str | None = None) -> dict:
-    """Build a grouped/nested view of the store for the frontend.
-
-    Returns::
-
-        {
-          "owners": [
-            {"owner": str, "tasks": [<task with "children">, ...]},
-            ...
-          ]
-        }
-
-    Operator group first, others alphabetical. When ``owner`` is given, only
-    that owner's group is returned. ``include_done=False`` drops done tasks
-    (and any of their subtrees that become empty are simply omitted).
-    """
+    reconcile(root)
     tasks = _load(root)
     if owner is not None:
-        tasks = [t for t in tasks if t["owner"] == owner]
+        tasks = [t for t in tasks if _match_assignee(t, owner)]
     if not include_done:
-        tasks = [t for t in tasks if t["status"] != "done"]
-
+        tasks = [t for t in tasks if t["status"] not in TERMINAL]
     groups = group_by_owner(tasks)
     owners = sorted(groups.keys(), key=lambda o: (o != DEFAULT_OWNER, o))
 
@@ -252,58 +417,101 @@ def tree(root: Path, *, include_done: bool = True, owner: str | None = None) -> 
     return {"owners": out_owners}
 
 
-# ---- CRUD ------------------------------------------------------------------
+# ---- Queries ---------------------------------------------------------------
 
 def list_tasks(root: Path, *, include_done: bool = True, owner: str | None = None) -> list[dict]:
-    """Flat list of tasks with parent/owner so the frontend can build the tree.
-
-    ``owner`` filters to a single owner (used by the build-agent endpoints).
-    ``include_done=False`` drops done tasks.
-    """
+    reconcile(root)
     tasks = _load(root)
     if owner is not None:
-        tasks = [t for t in tasks if t["owner"] == owner]
+        tasks = [t for t in tasks if _match_assignee(t, owner)]
     if not include_done:
-        tasks = [t for t in tasks if t["status"] != "done"]
+        tasks = [t for t in tasks if t["status"] not in TERMINAL]
     return tasks
 
 
 def get_task(root: Path, task_id: str, *, owner: str | None = None) -> dict | None:
     for t in _load(root):
-        if t["id"] == task_id and (owner is None or t["owner"] == owner):
+        if t["id"] == task_id and _match_assignee(t, owner):
             return t
     return None
 
+
+def next_ready(root: Path, *, assignee: str | None = None) -> dict | None:
+    """The next task ready to run: status==todo AND every depends_on is
+    done|cancelled, ordered by priority desc then created asc. Optionally scoped
+    to an assignee (an agent claims only its own or unassigned tasks). Replaces
+    'first todo'. Reconciles first so a task added by any route is seen."""
+    reconcile(root)
+    tasks = _load(root)
+    by_id = {t["id"]: t for t in tasks}
+
+    def ready(t: dict) -> bool:
+        if t["status"] != "todo":
+            return False
+        for dep in t.get("depends_on") or []:
+            d = by_id.get(dep)
+            if d is not None and d["status"] not in TERMINAL:
+                return False
+        return True
+
+    def in_scope(t: dict) -> bool:
+        if assignee is None:
+            return True
+        a = t.get("assignee") or DEFAULT_OWNER
+        return a == assignee or a is None or t.get("assignee") is None
+
+    cands = [t for t in tasks if ready(t) and in_scope(t)]
+    cands.sort(key=lambda t: (-_as_int(t.get("priority"), 0), t.get("created") or ""))
+    return cands[0] if cands else None
+
+
+# ---- Mutations -------------------------------------------------------------
 
 def add(
     root: Path,
     *,
     text: str,
     owner: str = DEFAULT_OWNER,
+    assignee: str | None = None,
     parent: str | None = None,
     status: str = "todo",
+    priority: int = 0,
+    depends_on: list[str] | None = None,
+    acceptance: dict | None = None,
+    max_iterations: int | None = None,
+    touches: list[str] | None = None,
+    discovered_from: str | None = None,
+    effort: str | None = None,
+    source: dict | None = None,
+    provenance: str | None = None,
 ) -> dict:
     text = (text or "").strip()
     if not text:
         raise ValueError("text required")
     if status not in STATUSES:
         status = "todo"
-    tasks = _load(root)
-    if parent is not None and not any(t["id"] == parent for t in tasks):
-        raise ValueError(f"parent task not found: {parent}")
-    now = _now()
-    task = {
-        "id": _new_id(),
-        "text": text,
-        "status": status,
-        "owner": owner or DEFAULT_OWNER,
-        "parent": parent or None,
-        "created": now,
-        "updated": now,
-    }
-    tasks.append(task)
-    _persist(root, tasks)
-    return task
+    with _locked(root):
+        tasks = _load(root)
+        if parent is not None and not any(t["id"] == parent for t in tasks):
+            raise ValueError(f"parent task not found: {parent}")
+        if provenance:  # idempotent re-add (work_generator dedupe key)
+            for t in tasks:
+                if t.get("provenance") == provenance:
+                    return t
+        now = _now()
+        task = _normalize({
+            "id": _new_id(), "text": text, "status": status,
+            "assignee": assignee if assignee is not None else owner,
+            "parent": parent or None, "priority": priority,
+            "depends_on": depends_on or [], "acceptance": acceptance,
+            "max_iterations": max_iterations, "touches": touches or [],
+            "discovered_from": discovered_from, "effort": effort,
+            "source": source or {"kind": "operator", "ref": None},
+            "provenance": provenance, "created": now, "updated": now,
+        })
+        tasks.append(task)
+        _persist(root, tasks)
+        return task
 
 
 def update(
@@ -313,75 +521,123 @@ def update(
     status: str | None = None,
     text: str | None = None,
     owner: str | None = None,
+    assignee: str | None = None,
+    priority: int | None = None,
+    depends_on: list[str] | None = None,
+    blocked_reason: str | None = None,
+    acceptance: dict | None = None,
+    max_iterations: int | None = None,
+    job_id: str | None = None,
+    evidence: dict | None = None,
 ) -> dict | None:
-    """Update status and/or text of a task. ``owner`` (when given) scopes the
-    match so an agent cannot mutate another owner's task. Returns the updated
-    task or None if no matching task."""
+    """Update a task. ``owner`` (or ``assignee``) scopes the match so an agent
+    can't mutate another delegate's task. Additive fields are patched when
+    provided. Returns the updated task or None."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if text is not None:
         text = text.strip()
         if not text:
             raise ValueError("text required")
-    tasks = _load(root)
-    found = None
-    for t in tasks:
-        if t["id"] == task_id and (owner is None or t["owner"] == owner):
-            found = t
-            break
-    if found is None:
-        return None
-    if status is not None:
-        found["status"] = status
-    if text is not None:
-        found["text"] = text
-    found["updated"] = _now()
-    _persist(root, tasks)
-    return found
+    scope = assignee if assignee is not None else owner
+    with _locked(root):
+        tasks = _load(root)
+        found = None
+        for t in tasks:
+            if t["id"] == task_id and _match_assignee(t, scope):
+                found = t
+                break
+        if found is None:
+            return None
+        if status is not None:
+            found["status"] = status
+        if text is not None:
+            found["text"] = text
+        if assignee is not None:
+            found["assignee"] = assignee
+            found["owner"] = assignee
+        if priority is not None:
+            found["priority"] = int(priority)
+        if depends_on is not None:
+            found["depends_on"] = [str(d) for d in depends_on if d]
+        if blocked_reason is not None:
+            found["blocked_reason"] = blocked_reason or None
+        if acceptance is not None:
+            found["acceptance"] = acceptance or None
+        if max_iterations is not None:
+            found["max_iterations"] = _as_int_or_none(max_iterations)
+        if job_id:
+            if job_id not in found["job_ids"]:
+                found["job_ids"].append(job_id)
+        if evidence:
+            ev = dict(evidence)
+            ev.setdefault("ts", _now())
+            found["evidence"].append(ev)
+        found["updated"] = _now()
+        _persist(root, tasks)
+        return found
+
+
+def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None) -> dict | None:
+    """Atomically claim a task: todo -> doing under flock, recording the job id.
+    Returns the claimed task, or None if it was already claimed / not todo (a
+    concurrent sweep + CLI can race for the same task; the loser gets None)."""
+    with _locked(root):
+        tasks = _load(root)
+        found = None
+        for t in tasks:
+            if t["id"] == task_id and _match_assignee(t, assignee):
+                found = t
+                break
+        if found is None or found["status"] != "todo":
+            return None
+        found["status"] = "doing"
+        if job_id and job_id not in found["job_ids"]:
+            found["job_ids"].append(job_id)
+        found["updated"] = _now()
+        _persist(root, tasks)
+        return found
 
 
 def remove(root: Path, task_id: str, *, owner: str | None = None) -> bool:
-    """Remove a task and re-parent its direct children to the removed task's
-    parent (so subtrees are not silently dropped). ``owner`` scopes the match.
-    Returns True if a task was removed."""
-    tasks = _load(root)
-    target = None
-    for t in tasks:
-        if t["id"] == task_id and (owner is None or t["owner"] == owner):
-            target = t
-            break
-    if target is None:
-        return False
-    new_parent = target.get("parent")
-    keep = [t for t in tasks if t["id"] != task_id]
-    for t in keep:
-        if t.get("parent") == task_id:
-            t["parent"] = new_parent
-    _persist(root, keep)
-    return True
+    with _locked(root):
+        tasks = _load(root)
+        target = None
+        for t in tasks:
+            if t["id"] == task_id and _match_assignee(t, owner):
+                target = t
+                break
+        if target is None:
+            return False
+        new_parent = target.get("parent")
+        keep = [t for t in tasks if t["id"] != task_id]
+        for t in keep:
+            if t.get("parent") == task_id:
+                t["parent"] = new_parent
+        _persist(root, keep)
+        return True
 
 
 # ---- Legacy TODO.md bridge -------------------------------------------------
 
 def export_markdown(root: Path) -> str:
-    """Return the current rendered TODO.md (regenerating from the store first
-    so it is guaranteed current). Used by the legacy GET /todo endpoint so
-    there is ONE source of truth."""
+    reconcile(root)
     tasks = _load(root)
     _persist(root, tasks)
     return _export_path(root).read_text()
 
 
 def import_markdown(root: Path, content: str) -> None:
-    """Accept a raw TODO.md body (legacy PUT /todo): write it, then re-derive
-    the structured store from it so the store stays authoritative and the two
-    representations converge. Operator-owned, since a hand-edited markdown
-    blob has no per-owner attribution.
-
-    Note: this re-keys task ids (markdown carries no stable ids), which is
-    acceptable for the legacy textarea path — the structured endpoints are the
-    primary surface and preserve ids.
-    """
-    _atomic_write(_export_path(root), content if content.endswith("\n") or not content else content + "\n")
-    tasks = _migrate_from_todo(root)
-    _persist(root, tasks)
+    """Legacy PUT /todo: write the body then reconcile it into the store (the
+    store stays authoritative). Non-destructive now, unlike the old re-key."""
+    with _locked(root):
+        _atomic_write(
+            _export_path(root),
+            content if (content.endswith("\n") or not content) else content + "\n",
+        )
+        # Force reconcile to see this as an out-of-band edit by clearing the sha.
+        tasks_raw, _ = _read_payload(root)
+        if tasks_raw is None:
+            tasks = _migrate_from_todo(root)
+            _persist(root, tasks)
+    reconcile(root)
