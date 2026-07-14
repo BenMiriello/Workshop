@@ -551,6 +551,9 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)
     try:
         build_agents.touch(turn.agent_slug)
+        # Turn is over: drop the persisted "running" ratchet back to idle so the
+        # store stops claiming every agent that ever ran is live.
+        build_agents.mark_idle(turn.agent_slug)
     except Exception:
         pass
 

@@ -181,6 +181,56 @@ def _merge_build_state(rec: dict, state: dict) -> None:
             rec[k] = state[k]
 
 
+# Real liveness, computed on read. The persisted `state` in build_agents.json is
+# set to "running" on the first chat turn and NEVER reset when the turn finishes
+# (finalize only touches last_active), so it ratchets to "running" forever and
+# the roster shows every agent that ever ran once as "live". Truth is: an agent
+# is working iff a build turn is genuinely in flight, i.e. a turn journal marked
+# "running" whose detached subprocess is still alive. We scan the journals once
+# per list and downgrade a stale "running" to "idle". Self-contained (no
+# build_streaming import) to stay cycle-free.
+_TURNS_DIR = WORKSHOP_ROOT / ".runtime" / "turns"
+
+
+def _pid_alive(pid: object) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _live_builder_slugs() -> set[str]:
+    """Slugs with a build turn actually in flight right now."""
+    live: set[str] = set()
+    try:
+        dirs = list(_TURNS_DIR.iterdir())
+    except OSError:
+        return live
+    for d in dirs:
+        try:
+            m = json.loads((d / "meta.json").read_text())
+        except Exception:
+            continue
+        if m.get("status") == "running" and _pid_alive(m.get("pid")):
+            slug = m.get("agent_slug")
+            if slug:
+                live.add(slug)
+    return live
+
+
+def _correct_liveness(rec: dict, live_slugs: set[str]) -> None:
+    """Downgrade a stale persisted "running" to "idle" unless a turn is live."""
+    if rec.get("state") == "running" and rec.get("slug") not in live_slugs:
+        rec["state"] = "idle"
+
+
 # ---------------------------------------------------------------------------
 # Read API
 # ---------------------------------------------------------------------------
@@ -190,6 +240,7 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
     excluded. Builder runtime state is merged from build_agents.json."""
     excluded = per_channel_ids()
     build_state = (_build_agents._load().get("build_agents") or {})
+    live_slugs = _live_builder_slugs()
 
     defs: dict[str, dict] = {}
     if USER_AGENTS_DIR.exists():
@@ -215,6 +266,7 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
             st = build_state.get(slug)
             if st:
                 _merge_build_state(r, st)
+            _correct_liveness(r, live_slugs)
         if not include_retired and (r.get("retired") or r.get("state") == "retired"):
             continue
         out.append(r)
@@ -226,6 +278,7 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
             continue
         r = _record_from_build_state(slug, st)
         _merge_build_state(r, st)
+        _correct_liveness(r, live_slugs)
         if not include_retired and (r.get("retired") or r.get("state") == "retired"):
             continue
         out.append(r)

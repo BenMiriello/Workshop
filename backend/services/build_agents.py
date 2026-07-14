@@ -214,6 +214,18 @@ def retire(slug: str) -> None:
         _save(data)
 
 
+def mark_idle(slug: str) -> None:
+    """Return an agent to idle when its turn finishes. Roster liveness is now
+    computed on read from live turn journals (agents_registry), but the persisted
+    `state` used to ratchet to "running" forever because nothing reset it; keep it
+    honest so any direct reader of build_agents.json is not misled."""
+    data = _load()
+    record = (data.get("build_agents") or {}).get(slug)
+    if record and record.get("state") == "running":
+        record["state"] = "idle"
+        _save(data)
+
+
 def slugs() -> list[str]:
     return list((_load().get("build_agents") or {}).keys())
 
