@@ -93,3 +93,4 @@ scratch/
 tmp/
 **/scratch/
 **/tmp/
+.tasks.json.lock

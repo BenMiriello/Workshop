@@ -59,6 +59,25 @@ EXPORT_NAME = "TODO.md"
 LOCK_NAME = ".tasks.json.lock"
 STORE_VERSION = 2
 
+# Roots that this store must NOT manage yet. The workshop repo root's TODO.md is
+# not a clean checklist: it carries `## Log`, `## Autogen`, `## Proposed` prose
+# that render_markdown() (task-checklist only) would wipe on the first _persist.
+# Migrating it into the store is Phase O7 (root-queue convergence); until then
+# any tasks.* call on the root must be an inert no-op, not a destructive
+# regeneration. Env-overridable so O7 can lift the guard for the cutover.
+_PROTECTED_ROOTS = {
+    Path(p).resolve()
+    for p in os.environ.get("WORKSHOP_TASKS_PROTECTED_ROOTS", "/home/clawd-a/workshop").split(":")
+    if p.strip()
+}
+
+
+def _is_protected(root: Path) -> bool:
+    try:
+        return root.resolve() in _PROTECTED_ROOTS
+    except OSError:
+        return False
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -237,6 +256,10 @@ def _load(root: Path) -> list[dict]:
     Does NOT reconcile (callers that want the healed view call reconcile first)."""
     raw = _read_store(root)
     if raw is None:
+        # Protected root with no store yet: return empty WITHOUT migrating (which
+        # would _persist and wipe its prose TODO.md). Inert until O7.
+        if _is_protected(root):
+            return []
         tasks = _migrate_from_todo(root)
         _persist(root, tasks)
         return tasks
@@ -246,6 +269,10 @@ def _load(root: Path) -> list[dict]:
 def _persist(root: Path, tasks: list[dict]) -> None:
     """Atomically write .tasks.json (version 2, with export_sha) AND regenerate
     the TODO.md export. export_sha lets reconcile detect out-of-band edits."""
+    if _is_protected(root):
+        # Never regenerate a protected root's TODO.md (would wipe its prose
+        # sections). Inert until O7 migrates it properly.
+        return
     rendered = render_markdown(tasks)
     payload = {"version": STORE_VERSION, "tasks": tasks, "export_sha": _sha(rendered)}
     _atomic_write(_store_path(root), json.dumps(payload, indent=2) + "\n")
@@ -318,6 +345,8 @@ def reconcile(root: Path) -> bool:
     (normalized-text match); unmatched new checklist lines import as new tasks;
     lines missing from the file are ignored (the store wins on deletion). Returns
     True if anything changed. The store remains the single authority."""
+    if _is_protected(root):
+        return False  # never heal/persist a protected root's mixed TODO.md
     export = _export_path(root)
     if not export.exists():
         return False
