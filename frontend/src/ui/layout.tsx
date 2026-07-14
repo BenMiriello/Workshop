@@ -95,6 +95,7 @@ export function Card({
   flat,
   raised,
   pad0,
+  compact,
   className,
   children,
   ...rest
@@ -103,6 +104,7 @@ export function Card({
   flat?: boolean;
   raised?: boolean;
   pad0?: boolean;
+  compact?: boolean;
   className?: string;
   children?: ReactNode;
 } & React.HTMLAttributes<HTMLDivElement>) {
@@ -114,6 +116,7 @@ export function Card({
         flat && "ws-card--flat",
         raised && "ws-card--raised",
         pad0 && "ws-card--pad-0",
+        compact && "ws-card--compact",
         className,
       )}
       {...rest}

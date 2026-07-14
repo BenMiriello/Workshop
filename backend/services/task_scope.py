@@ -42,6 +42,22 @@ def root_for_context(context_key: str | None) -> Path | None:
     return None
 
 
+def root_for_job(job: dict | None) -> Path | None:
+    """The task-store directory a Job worked, from its binding. A project sweep
+    carries project_slug; an agent sweep carries agent_id ('agent:<slug>'). Lets
+    the Jobs API act on an awaiting job's bound tasks without the caller knowing
+    project-vs-agent routing."""
+    if not job:
+        return None
+    slug = job.get("project_slug")
+    if slug:
+        return root_for_context(f"project:{slug}")
+    agent_id = job.get("agent_id") or ""
+    if agent_id.startswith("agent:"):
+        return root_for_context(agent_id)
+    return None
+
+
 def _build_agent_root(slug: str) -> Path | None:
     """A build agent's task store: its linked project dir, else its own cwd."""
     from services import build_agents

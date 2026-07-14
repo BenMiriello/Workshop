@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft } from "lucide-react";
+import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle } from "lucide-react";
 import {
   Button,
   Card,
@@ -19,6 +19,20 @@ import {
 // One Job's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from the Jobs feed, Home attention cards, and an agent's
 // job history. Reads GET /api/jobs/{id}.
+//
+// When a job is awaiting_input its evidence is a list of the tasks it stopped
+// on, each carrying a plain-language question. That case gets a dedicated,
+// actionable section at the top (approve / send back / unblock / cancel) so the
+// operator can see WHAT is waited on, WHERE it ran, and resolve it in place —
+// not just read a raw JSON blob.
+
+type WaitingTask = {
+  id: string;
+  status?: string;
+  text?: string;
+  blocked_reason?: string | null;
+  question?: string;
+};
 
 type Job = {
   id: string;
@@ -35,6 +49,30 @@ type Job = {
   evidence?: unknown;
   budget?: Record<string, unknown>;
 };
+
+// A job's evidence is "waiting tasks" when it's a list of task-shaped objects.
+function waitingTasks(job: Job): WaitingTask[] {
+  const ev = job.evidence;
+  if (!Array.isArray(ev)) return [];
+  return ev.filter(
+    (e): e is WaitingTask => !!e && typeof e === "object" && typeof (e as WaitingTask).id === "string",
+  );
+}
+
+// Plain-language sentence for who/what launched this run.
+function ranSummary(job: Job): string {
+  const trig =
+    job.trigger === "loop" ? "an autonomous loop sweep"
+    : job.trigger === "cron" ? "a scheduled sweep"
+    : job.trigger === "event" ? "an event-triggered run"
+    : "a manual run";
+  const where =
+    job.project_slug ? `of project ${job.project_slug}`
+    : job.agent_id ? `by ${job.agent_id}`
+    : "";
+  const from = job.chat_id ? `, started from chat ${job.chat_id}` : "";
+  return `This was ${trig} ${where}${from}`.replace(/\s+/g, " ").trim() + ".";
+}
 
 const STATUS_KIND: Record<string, StatusKind> = {
   running: "running",
@@ -84,6 +122,8 @@ export default function JobDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [acting, setActing] = useState<string | null>(null); // "<taskId>:<action>" in flight
+  const [actErr, setActErr] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -108,6 +148,27 @@ export default function JobDetail() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const act = useCallback(
+    async (taskId: string, action: string) => {
+      setActing(`${taskId}:${action}`);
+      setActErr(null);
+      try {
+        const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/tasks/${encodeURIComponent(taskId)}/action`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        await refresh();
+      } catch (e) {
+        setActErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setActing(null);
+      }
+    },
+    [id, refresh],
+  );
 
   const back = (
     <Button size="sm" variant="ghost" onClick={() => nav("/jobs")}>
@@ -158,10 +219,87 @@ export default function JobDetail() {
     );
   } else {
     const dur = duration(job);
-    const ev = evidenceText(job.evidence);
+    const waiting = waitingTasks(job);
+    const isAwaiting = job.status === "awaiting_input" && waiting.length > 0;
+    // Only show the raw JSON when it isn't the structured awaiting case (the
+    // cards below already render it far more usefully).
+    const ev = isAwaiting ? "" : evidenceText(job.evidence);
     const budgetEntries = job.budget ? Object.entries(job.budget) : [];
     body = (
       <Stack>
+        {isAwaiting && (
+          <section>
+            <SectionLabel>Needs your input</SectionLabel>
+            <Stack gap="sm">
+              <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
+                {ranSummary(job)} It paused because these tasks need you before the
+                sweep can continue. Resolve one and the loop picks it up on its next run.
+              </p>
+              {actErr && (
+                <StateBlock variant="error" title="Action failed" hint={actErr} />
+              )}
+              {waiting.map((t) => {
+                const inReview = t.status === "in_review";
+                const busy = (a: string) => acting === `${t.id}:${a}`;
+                const anyBusy = acting?.startsWith(`${t.id}:`) ?? false;
+                return (
+                  <Card key={t.id} style={{ padding: "var(--space-4)" }}>
+                    <Stack gap="sm">
+                      <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                        <StatusPill status={inReview ? "warn" : "danger"}>
+                          {t.status ?? "waiting"}
+                        </StatusPill>
+                        <span style={{ fontWeight: 600 }}>{t.text || "(untitled task)"}</span>
+                      </Row>
+                      <Row style={{ gap: "var(--space-2)", alignItems: "flex-start" }}>
+                        <HelpCircle aria-hidden style={{ marginTop: 2, flexShrink: 0 }} />
+                        <span style={{ fontSize: "var(--fs-sm)" }}>
+                          {t.question || t.blocked_reason || "Waiting on your input."}
+                        </span>
+                      </Row>
+                      <Row wrap style={{ gap: "var(--space-2)" }}>
+                        {inReview ? (
+                          <>
+                            <Button size="sm" onClick={() => act(t.id, "approve")} loading={busy("approve")} disabled={anyBusy}>
+                              Approve
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => act(t.id, "reject")} loading={busy("reject")} disabled={anyBusy}>
+                              Send back
+                            </Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button size="sm" onClick={() => act(t.id, "unblock")} loading={busy("unblock")} disabled={anyBusy}>
+                              Unblock
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => act(t.id, "cancel")} loading={busy("cancel")} disabled={anyBusy}>
+                              Cancel task
+                            </Button>
+                          </>
+                        )}
+                        {(job.project_slug || job.agent_id) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() =>
+                              nav(
+                                job.project_slug
+                                  ? `/projects/${encodeURIComponent(job.project_slug)}`
+                                  : `/agents/${encodeURIComponent(job.agent_id!)}`,
+                              )
+                            }
+                          >
+                            Open {job.project_slug ? "project" : "agent"}
+                          </Button>
+                        )}
+                      </Row>
+                    </Stack>
+                  </Card>
+                );
+              })}
+            </Stack>
+          </section>
+        )}
         <section>
           <SectionLabel>Overview</SectionLabel>
           <Card style={{ padding: "var(--space-4)" }}>
@@ -227,19 +365,21 @@ export default function JobDetail() {
           </section>
         )}
 
-        <section>
-          <SectionLabel>Evidence</SectionLabel>
-          {ev ? (
-            <Card style={{ padding: "var(--space-3)" }}>
-              <pre style={{
-                margin: 0, whiteSpace: "pre-wrap", overflow: "auto", maxHeight: "40vh",
-                fontSize: "var(--fs-sm)",
-              }}>{ev}</pre>
-            </Card>
-          ) : (
-            <StateBlock title="No evidence recorded" hint="This job did not attach a proof-of-work payload." />
-          )}
-        </section>
+        {!isAwaiting && (
+          <section>
+            <SectionLabel>Evidence</SectionLabel>
+            {ev ? (
+              <Card style={{ padding: "var(--space-3)" }}>
+                <pre style={{
+                  margin: 0, whiteSpace: "pre-wrap", overflow: "auto", maxHeight: "40vh",
+                  fontSize: "var(--fs-sm)",
+                }}>{ev}</pre>
+              </Card>
+            ) : (
+              <StateBlock title="No evidence recorded" hint="This job did not attach a proof-of-work payload." />
+            )}
+          </section>
+        )}
       </Stack>
     );
   }

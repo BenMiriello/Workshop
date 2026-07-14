@@ -151,25 +151,20 @@ function AttentionStrip() {
   return (
     <section style={{ marginBottom: "var(--space-7)" }}>
       <SectionLabel icon={<AlertTriangle aria-hidden />}>Needs attention</SectionLabel>
-      <CardGrid>
+      <CardGrid className="ws-card-grid--dense">
         {jobs.map((job) => {
           const bind = jobBinding(job);
           return (
             <li key={job.id}>
               <Link to={`/jobs/${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive>
+                <Card interactive compact>
                   <Row between wrap style={{ gap: "var(--space-2)" }}>
                     <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
                       {bind.icon}
-                      <span className="ws-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{bind.text}</span>
+                      <span className="ws-mono" style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bind.text}</span>
                     </Row>
                     <StatusPill status="warn">awaiting input</StatusPill>
                   </Row>
-                  {job.trigger && (
-                    <p className="ws-card__meta" style={{ marginTop: "var(--space-2)" }}>
-                      <Tag hue={catFor(job.trigger)}>{job.trigger}</Tag>
-                    </p>
-                  )}
                 </Card>
               </Link>
             </li>
@@ -216,22 +211,22 @@ function RecentChats() {
       ) : threads.length === 0 ? (
         <StateBlock title="No chats yet" hint={<>Start one from <Link to="/chats">Chats</Link>.</>} />
       ) : (
-        <CardGrid>
+        <CardGrid className="ws-card-grid--dense">
           {threads.map((t) => (
             <li key={t.id}>
               <Link
                 to={`/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`}
                 style={{ textDecoration: "none", color: "inherit" }}
               >
-                <Card interactive>
+                <Card interactive compact>
                   <Row between style={{ gap: "var(--space-2)" }}>
-                    <h3 className="ws-card__title" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    <h3 className="ws-card__title" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-base)" }}>
                       <MessageSquare size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                       {t.title || "Untitled chat"}
                     </h3>
-                    {t.updated_at && <span className="ws-card__meta" style={{ flex: "0 0 auto" }}>{fmtAge(t.updated_at)}</span>}
+                    {t.updated_at && <span className="ws-card__meta ws-mono" style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{fmtAge(t.updated_at)}</span>}
                   </Row>
-                  <p className="ws-card__meta ws-mono" style={{ marginTop: "var(--space-1)" }}>{t.context_key}</p>
+                  <p className="ws-card__meta ws-mono" style={{ marginTop: "var(--space-1)", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.context_key}</p>
                 </Card>
               </Link>
             </li>
@@ -277,26 +272,29 @@ function RecentJobs() {
           hint={<>A Job is recorded for every bounded run: cron sweep, project sweep, or a manual run.</>}
         />
       ) : (
-        <CardGrid>
+        <CardGrid className="ws-card-grid--dense">
           {jobs.map((job) => {
             const bind = jobBinding(job);
+            const inner = (
+              <Card interactive compact>
+                <Row between wrap style={{ gap: "var(--space-2)" }}>
+                  <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
+                    {bind.icon}
+                    <span className="ws-mono" style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bind.text}</span>
+                  </Row>
+                  <StatusPill status={jobStatusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
+                </Row>
+                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center", marginTop: "var(--space-2)" }}>
+                  {job.trigger && <Tag hue={catFor(job.trigger)}>{job.trigger}</Tag>}
+                  {job.started_at && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtAge(job.started_at)}</span>}
+                </Row>
+              </Card>
+            );
             return (
               <li key={job.id}>
-                <Card>
-                  <Stack gap="sm">
-                    <Row between wrap style={{ gap: "var(--space-2)" }}>
-                      <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
-                        {bind.icon}
-                        <span className="ws-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{bind.text}</span>
-                      </Row>
-                      <StatusPill status={jobStatusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
-                    </Row>
-                    <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                      {job.trigger && <Tag hue={catFor(job.trigger)}>{job.trigger}</Tag>}
-                      {job.started_at && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtAge(job.started_at)}</span>}
-                    </Row>
-                  </Stack>
-                </Card>
+                <Link to={`/jobs/${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
+                  {inner}
+                </Link>
               </li>
             );
           })}

@@ -195,12 +195,25 @@ a.ws-btn { text-decoration: none; }
 .ws-card--flat { background: transparent; box-shadow: none; }
 .ws-card--raised { box-shadow: var(--shadow-md); }
 .ws-card--pad-0 { padding: 0; }
+/* Dense list cards (Home recents, attention strip): tighter than a content card
+   so a scannable list doesn't read as a wall of chunky boxes. */
+.ws-card--compact { padding: var(--space-3) var(--space-4); }
 
 /* card grid (matches existing .cards) */
 .ws-card-grid {
   list-style: none; margin: 0; padding: 0;
   display: grid; gap: var(--space-4);
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+/* min-width:0 on every grid item so a long unbroken token inside a card (a
+   chat_id, an agent id, a mono binding) can't set the item's min-content width
+   and blow the 1fr track past the viewport — the #1 cause of horizontal scroll
+   on mobile. Ellipsis inside the card then actually clips instead of overflowing. */
+.ws-card-grid > li { min-width: 0; }
+/* Dense variant for scannable home lists: narrower tracks, tighter gap. */
+.ws-card-grid--dense {
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
 }
 
 /* Agents grid: uniform card heights regardless of content length. Every card
