@@ -231,6 +231,12 @@ def _correct_liveness(rec: dict, live_slugs: set[str]) -> None:
         rec["state"] = "idle"
 
 
+def live_builder_slugs() -> set[str]:
+    """Public: slugs with a build turn genuinely in flight right now. Used by the
+    detail endpoint to apply the same honest-liveness rule as the roster."""
+    return _live_builder_slugs()
+
+
 # ---------------------------------------------------------------------------
 # Read API
 # ---------------------------------------------------------------------------

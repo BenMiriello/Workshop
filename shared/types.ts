@@ -32,6 +32,9 @@ export type BuildAgent = {
   created: string;
   last_active: string;
   claude_session: string | null;
+  // Real check (detail endpoint) that the CLI session file still exists on disk,
+  // not merely "a session id string is stored". Undefined on the roster payload.
+  session_alive?: boolean;
 };
 
 // A worktree-pinned development branch off a project's main, as returned by

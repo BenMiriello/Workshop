@@ -76,6 +76,19 @@ const stateKind = (s?: string): StatusKind => {
   }
 };
 
+// The status bar shows three INDEPENDENT axes (agent lifecycle, CLI session,
+// preview server), so each pill names its axis. "working" reads more honestly
+// than the raw "running" flag, which used to ratchet on forever.
+const agentStateWord = (s?: string): string => {
+  switch (s) {
+    case "running": return "working";
+    case "idle": return "idle";
+    case "parked": return "parked";
+    case "retired": return "retired";
+    default: return s || "unknown";
+  }
+};
+
 // Editor/Preview/Diff is a view switch (view preference) — a Segmented control
 // reads more clearly as "pick a view" than tab underlines, and keeps one height.
 const PANE_VIEWS: SegmentedOption<PaneTab>[] = [
@@ -641,9 +654,9 @@ export default function AgentBuild() {
       {/* --- Status bar (top) --- */}
       <Card style={{ padding: "var(--space-2) var(--space-3)", marginBottom: "var(--space-4)" }}>
         <Row wrap className="ws-agent-build__status">
-          <StatusPill status={stateKind(agent.state)}>{agent.state}</StatusPill>
-          <StatusPill status={agent.claude_session ? "ok" : "stopped"}>
-            {agent.claude_session ? "session live" : "per-turn"}
+          <StatusPill status={stateKind(agent.state)}>Agent {agentStateWord(agent.state)}</StatusPill>
+          <StatusPill status={agent.session_alive ? "ok" : "stopped"}>
+            {agent.session_alive ? "Session live" : "Session per-turn"}
           </StatusPill>
           {previewRunning && preview?.public_url ? (
             <a href={preview.public_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>

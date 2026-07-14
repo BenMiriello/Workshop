@@ -190,9 +190,21 @@ async def rename_build_agent(slug: str, body: BuildAgentRename):
 @router.get("/build/{slug}")
 async def get_build_agent(slug: str):
     try:
-        return build_agents.get_agent(slug)
+        rec = build_agents.get_agent(slug)
     except KeyError:
         raise HTTPException(404, f"build agent not found: {slug}")
+    # Make the detail view's status honest, matching the roster rule:
+    #  - `state` "running" only if a turn is genuinely in flight (not the stale
+    #    flag that ratcheted on first turn).
+    #  - `session_alive` is a REAL check that the CLI session file still exists,
+    #    not merely "a session id string is stored" (which stayed true after the
+    #    session was pruned, so the pill lied).
+    from services import build_streaming
+    if rec.get("state") == "running" and slug not in agents_registry.live_builder_slugs():
+        rec["state"] = "idle"
+    rec["session_alive"] = build_streaming.session_alive(
+        rec.get("claude_session"), rec.get("cwd") or "")
+    return rec
 
 
 @router.post("/build/{slug}/retire")
