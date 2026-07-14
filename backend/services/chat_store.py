@@ -203,12 +203,15 @@ def finalize_streaming_assistant(
     content: str,
     error: bool = False,
     timed_out: bool = False,
+    notes: list[str] | None = None,
 ) -> dict | None:
     """Mark the live turn complete (streaming=False) with its final segments.
     If the placeholder message is missing, append a finished one instead.
 
     `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
-    the UI can render a calm "stopped — continue" note instead of a red error."""
+    the UI can render a calm "stopped — continue" note instead of a red error.
+    `notes` mirrors the blocking path's meta.notes (e.g. "Updated the plan" from
+    an action provider) so a streamed action turn renders the same follow-ups."""
     thread = get_thread(thread_id)
     if thread is None:
         return None
@@ -219,6 +222,8 @@ def finalize_streaming_assistant(
             meta["error"] = True
         if timed_out:
             meta["timeout"] = True
+        if notes:
+            meta["notes"] = notes
         return append_message(thread_id, "assistant", content, meta=meta or None)
     m["content"] = content
     meta = m.setdefault("meta", {})
@@ -228,6 +233,8 @@ def finalize_streaming_assistant(
         meta["error"] = True
     if timed_out:
         meta["timeout"] = True
+    if notes:
+        meta["notes"] = notes
     save_thread(thread)
     return m
 

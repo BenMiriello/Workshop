@@ -242,10 +242,22 @@ def _kill_turn_proc(pid: int | None, proc=None) -> None:
 
 async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str,
                      cwd: str, session_id: str | None, resume: bool,
-                     max_turns: int = 60, timeout_s: float = 900) -> Turn:
-    """Kick off a build turn. The claude subprocess is detached and streams to a
-    disk journal so it survives a backend restart; the returned Turn is driven by
-    tailing that journal. Returns immediately."""
+                     max_turns: int = 60, timeout_s: float = 900,
+                     allowed_tools: list[str] | None = None,
+                     mcp_servers: list[str] | None = None,
+                     tools_disabled: bool = False) -> Turn:
+    """Kick off a streaming turn. The claude subprocess is detached and streams
+    to a disk journal so it survives a backend restart; the returned Turn is
+    driven by tailing that journal. Returns immediately.
+
+    Tool surface (shared with llm_router via tool_flags so the modes never drift):
+      - default (allowed_tools=None, tools_disabled=False): full agentic toolset,
+        the Build/Project path (cwd pinned, bypassPermissions).
+      - allowed_tools set: narrow surface (web + the named MCP tools only), the
+        data/assistant path. No cwd write-build without a real project.
+      - tools_disabled: pure text (ENABLE_CHAT_TOOLS off).
+    A None session_id spawns stateless (no --session-id/--resume), so a general
+    or project chat streams without a persistent Claude Code session."""
     turn = _make_turn(thread_id, agent_slug)
     try:
         owner_id = ownership.current_owner()
@@ -256,6 +268,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
         "owner_id": owner_id, "prompt": prompt, "max_turns": max_turns,
         "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
+        "allowed_tools": allowed_tools, "mcp_servers": mcp_servers,
+        "tools_disabled": bool(tools_disabled),
     }
     _write_meta(meta)
     asyncio.create_task(_spawn_and_drive(turn, meta))
@@ -269,14 +283,23 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         "--output-format", "stream-json",
         "--verbose",
         "--max-turns", str(meta["max_turns"]),
-        # A build turn is headless — there is no interactive approver to grant
-        # Write/Edit/Bash. Without this the model asks "may I write this file?" and
-        # stalls, so builders (esp. freestanding blank projects, whose cwd has no
-        # allow-list settings) can't actually DO anything. Same rationale + mode as
-        # the voice-build worker and llm_router's data path. The auto-checkpoint +
-        # git history are the safety net (every turn is revertable).
-        "--permission-mode", "bypassPermissions",
     ]
+    # Tool surface. Data/assistant turns (allowed_tools set) and tools-off turns
+    # get their narrow flags from the SAME helper llm_router.call_cloud uses, so
+    # a streamed data turn and a blocking one expose identical capabilities. Full
+    # agentic turns (Build/Project) fall through to bypassPermissions: headless,
+    # no interactive approver, so without it the model stalls asking to write.
+    # The auto-checkpoint + git history are the safety net (every turn revertable).
+    tool_env: dict = {}
+    if meta.get("allowed_tools") is not None or meta.get("tools_disabled"):
+        _tflags, tool_env, _block = llm_router.tool_flags(
+            tools_disabled=bool(meta.get("tools_disabled")),
+            allowed_tools=meta.get("allowed_tools"),
+            mcp_servers=meta.get("mcp_servers"),
+        )
+        cmd.extend(_tflags)
+    else:
+        cmd.extend(["--permission-mode", "bypassPermissions"])
     if meta["session_id"] and meta["resume"]:
         cmd.extend(["--resume", meta["session_id"]])
     elif meta["session_id"]:
@@ -293,6 +316,11 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     jd = _journal_dir(turn.id)
     jd.mkdir(parents=True, exist_ok=True)
     env = llm_router._claude_env()
+    # MCP-startup blocking for narrow-tool turns that spawn a server (else the
+    # model fires before the handshake and sees no tools). tool_flags() returns
+    # the env delta; empty for tools-off / no-server / full-agentic turns.
+    if tool_env:
+        env.update(tool_env)
     # stdout/stderr go STRAIGHT to files (not pipes) so the detached child keeps
     # writing even after the parent backend exits. The child dup's these fds at
     # exec, so the parent closes its own copies right after spawn.
@@ -482,10 +510,34 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         detail = f": {turn.error}" if turn.error else ""
         text = f"The turn ended unexpectedly (exit {rc}){detail}. Try sending it again."
         is_error = True
+    # Provider actions (e.g. an app persona applying a plan-patch to budget.json).
+    # Only providers that actually override apply_actions run here, so the general
+    # chat and build turns pay nothing. Mirrors the blocking POST /messages path:
+    # the action is applied server-side, its fence is stripped from the answer, and
+    # any human-readable notes ("Updated the plan") ride along in meta.notes.
+    notes: list[str] | None = None
+    if not is_error and text:
+        try:
+            from services import chat_context
+            thread = chat_store.get_thread(turn.thread_id)
+            provider = chat_context.get_provider((thread or {}).get("context_key"))
+            if type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
+                cleaned, applied_notes = provider.apply_actions(text)
+                if cleaned != text or applied_notes:
+                    text = cleaned or "(done)"
+                    notes = applied_notes or None
+                    # Replace the trailing text run with the cleaned answer so the
+                    # rendered segments match the applied result.
+                    cut = len(turn.segments)
+                    while cut > 0 and turn.segments[cut - 1].get("t") == "text":
+                        cut -= 1
+                    turn.segments = turn.segments[:cut] + ([{"t": "text", "text": text}] if text else [])
+        except Exception as e:
+            log.warning("turn %s: provider apply_actions failed: %s", turn.id, e)
     try:
         chat_store.finalize_streaming_assistant(
             turn.thread_id, turn.id, turn.segments, text,
-            error=is_error, timed_out=timed_out,
+            error=is_error, timed_out=timed_out, notes=notes,
         )
     except Exception as e:
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)

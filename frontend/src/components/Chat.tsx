@@ -19,7 +19,6 @@ import {
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
 import { useVoiceSession } from "../lib/useVoiceSession";
-import { detectCaps, type EngineCaps } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -333,7 +332,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Composer text is a persisted draft (survives reload, syncs across tabs /
   // devices) keyed by this chat's contextKey — see lib/draftSync.
   const [input, setInput] = useDraft(contextKey);
-  const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState(false);
   // A build turn's SSE dropped and we're re-attaching to the still-running turn
   // (proxy/idle timeouts mid-turn are normal on long turns) — the working
@@ -434,7 +432,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // interfaces write the SAME thread — see useVoiceSession + voice_worker).
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState(false);
-  const [voiceCaps, setVoiceCaps] = useState<EngineCaps | null>(null);
   // The engine created a thread for a brand-new chat: adopt it as this chat's so
   // the transcript stays unified (never a parallel thread).
   const adoptThread = useCallback((id: string) => {
@@ -459,10 +456,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [voiceOn, vsession, vprewarm]);
 
   // Probe engine capabilities when voice turns on / the settings sheet opens, so
-  // the provider controls reflect the truth before a session ever starts.
+  // the provider controls reflect the truth before a session ever starts. Caps live
+  // on the session (the single source): probeCaps fills them while idle, start()
+  // owns them once running, and both flow to the UI via vsnap.caps.
   useEffect(() => {
-    if (voiceOn || voiceSettings) detectCaps().then(setVoiceCaps).catch(() => {});
-  }, [voiceOn, voiceSettings]);
+    if (voiceOn || voiceSettings) void vsession.probeCaps();
+  }, [voiceOn, voiceSettings, vsession]);
 
   // Esc interrupts the assistant mid-speech while voice is on (the settings sheet,
   // when open, owns Esc to close itself — handled by Modal).
@@ -574,6 +573,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         try {
           const t = await chatApi.getThread(threadId);
           setMessages(t.messages);
+          // If the turn applied a provider action (e.g. an app persona editing
+          // the budget plan), it rides in the final message's meta.notes; tell
+          // the host so it refetches its data (the old sendData path did this).
+          const last = t.messages[t.messages.length - 1];
+          if (last?.meta?.notes?.length) onAction?.();
         } catch { /* ignore */ }
         setPendingSegments([]);
         refreshThreads();
@@ -616,7 +620,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (es.readyState === EventSource.CLOSED) void handleDrop();
       };
     },
-    [refreshThreads, scheduleAutoNameRefetch, dispatchNext],
+    [refreshThreads, scheduleAutoNameRefetch, dispatchNext, onAction],
   );
   attachStreamRef.current = attachStream;
 
@@ -692,7 +696,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     scrollToBottom();
     atBottomRef.current = true;
-  }, [messages, pendingSegments, queued, busy, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
+  }, [messages, pendingSegments, queued, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
 
   // Keep the log pinned to the bottom when the composer is focused and the mobile
   // keyboard opens/closes (which resizes the visual viewport) or the textarea
@@ -717,13 +721,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // begins streaming and keeps running across reconnects (streaming stays true),
   // so "Working… 45s" reflects the real turn duration, not the last reconnect.
   useEffect(() => {
-    if (!(streaming || busy)) { setElapsed(0); turnStartRef.current = 0; return; }
+    if (!streaming) { setElapsed(0); turnStartRef.current = 0; return; }
     if (!turnStartRef.current) turnStartRef.current = Date.now();
     const tick = () => setElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
     tick();
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
-  }, [streaming, busy]);
+  }, [streaming]);
 
   // Auto-grow the composer: 2.5 lines tall by default, grows with content.
   const autosize = useCallback(() => {
@@ -776,33 +780,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     refreshThreads();
   }, [activeId, newChat, refreshThreads]);
 
-  const sendData = useCallback(async (text: string) => {
-    setBusy(true);
-    const isFirst = messages.length <= 1;
-    try {
-      let id = activeId;
-      if (!id) {
-        const t = await chatApi.createThread(scope);
-        id = t.id;
-        setActiveId(id);
-      }
-      const { message, notes } = await chatApi.sendMessage(id, text, selectedModel || undefined);
-      setMessages((m) => [...m, message]);
-      refreshThreads();
-      scheduleAutoNameRefetch(isFirst);
-      setTaskRefetchKey((k) => k + 1);
-      if (notes && notes.length) onAction?.();
-    } catch (e) {
-      setErr(String(e));
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: "(failed to send - try again)", ts: new Date().toISOString(), meta: { error: true } },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  }, [activeId, scope, refreshThreads, onAction, messages.length, selectedModel, scheduleAutoNameRefetch]);
-
+  // The universal turn sender. EVERY chat (general, app, project, build) streams
+  // through POST /threads/{id}/turns + the SSE channel, so every turn shows its
+  // work (tool calls, interim text) live instead of a blocking spinner. The
+  // backend picks the tool surface + session from the provider class; the client
+  // is transport-uniform.
   const sendBuild = useCallback(async (text: string) => {
     setStreaming(true);
     setPendingSegments([]);
@@ -838,18 +820,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const text = raw.trim();
     if (!text) return;
     setErr(null);
-    // Build turn already streaming → queue this message; it sends when the
-    // current turn finishes (a session can't run two turns at once).
-    if (effectiveMode === "build" && streaming) {
+    // A turn is already streaming → queue this message; it sends when the current
+    // turn finishes (a single conversation runs one turn at a time).
+    if (streaming) {
       setQueue([...queuedRef.current, text]);
       return;
     }
-    if (effectiveMode !== "build" && busy) return;
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
-    if (effectiveMode === "build") sendBuild(text);
-    else sendData(text);
-  }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
+    sendBuild(text);
+  }, [streaming, sendBuild, setQueue]);
 
   // Composer text change. In voice mode, keep the engine's typing-hold aware of
   // whether the composer currently holds text (so it defers taking its turn).
@@ -943,7 +923,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     c.run?.();
   };
 
-  const inFlight = effectiveMode === "build" ? streaming : busy;
+  const inFlight = streaming;
 
   // Egress banner (build only).
   const lastErrorMessage = useMemo(() => {
@@ -1098,7 +1078,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Recency nuance: the most recent assistant answer is expanded; older ones
   // auto-shorten. "Most recent" only applies when nothing is streaming (a live
   // turn is itself the most recent).
-  const idle = !streaming && !busy && pendingSegments.length === 0;
+  const idle = !streaming && pendingSegments.length === 0;
   let lastAssistantIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "assistant") { lastAssistantIdx = i; break; }
@@ -1158,13 +1138,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           ))}
         </div>
       ))}
-      {(busy || streaming || pendingSegments.length > 0) && (
+      {(streaming || pendingSegments.length > 0) && (
         <div className="chat-msg assistant">
           <div className="chat-bubble">
             {pendingSegments.length > 0 && (
               <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} cardCtx={cardCtx} streaming />
             )}
-            {(streaming || busy) && (
+            {streaming && (
               <div className="chat-working" role="status" aria-live="polite">
                 <span className="chat-working__label">
                   {reconnecting ? "Reconnecting" : "Working"}
@@ -1233,21 +1213,23 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     />
   ) : null;
 
-  const streamingBuild = effectiveMode === "build" && streaming;
+  // Every chat streams now, so the streaming affordances (Stop, queue-next hint,
+  // composer streaming state) apply whenever a turn is live, regardless of mode.
+  const streamingBuild = streaming;
 
   // Context usage below the composer. Prefer the backend's REAL count (it
   // assembles the actual prompt — persona + live app context + windowed history),
   // refetched when a turn settles; fall back to a client estimate if unavailable.
   const [serverCtx, setServerCtx] = useState<{ used: number; window: number } | null>(null);
   useEffect(() => {
-    if (!activeId || busy || streaming) return;
+    if (!activeId || streaming) return;
     let cancelled = false;
     chatApi
       .threadContext(activeId)
       .then((r) => { if (!cancelled) setServerCtx({ used: r.used_tokens, window: r.window_tokens }); })
       .catch(() => { /* keep the client estimate */ });
     return () => { cancelled = true; };
-  }, [activeId, messages.length, busy, streaming]);
+  }, [activeId, messages.length, streaming]);
   useEffect(() => { setServerCtx(null); }, [activeId]); // drop stale count on thread switch
 
   const ctx = useMemo(() => {
@@ -1415,7 +1397,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {/* onMouseDown preventDefault: don't let tapping an action button blur the
             textarea — on mobile that closes the keyboard, the layout jumps, and the
             tap lands where the button no longer is (the "send needs two taps" bug). */}
-        <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim() || (effectiveMode !== "build" && busy)} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>
+        <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim()} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>
           <CornerDownLeft size={16} aria-hidden />
         </button>
         {streamingBuild && (
@@ -1441,7 +1423,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onClose={() => setVoiceSettings(false)}
         prefs={vprefs}
         updatePrefs={vupdatePrefs}
-        caps={voiceCaps}
+        caps={vsnap.caps}
       />
     </div>
   );

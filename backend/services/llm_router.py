@@ -383,6 +383,48 @@ def _mcp_server_specs() -> dict[str, dict]:
     return app_registry.installed_mcp_servers()
 
 
+def tool_flags(
+    *,
+    tools_disabled: bool = False,
+    allowed_tools: list[str] | None = None,
+    mcp_servers: list[str] | None = None,
+) -> tuple[list[str], dict, bool]:
+    """The tool / MCP / permission CLI flags for one of the three tool modes,
+    shared by call_cloud (the blocking data path) and build_streaming (streaming
+    turns) so the modes never drift. Returns (flags, env_updates,
+    block_mcp_startup). Does NOT set --output-format, --max-turns, --model, or
+    session flags: the caller owns those (call_cloud uses text/stream-json per
+    mode; build_streaming is always stream-json).
+
+    - tools_disabled -> hardened tools-off (no permission-mode; there's nothing
+      to permit).
+    - allowed_tools  -> narrow surface: only the named MCP tools + built-ins,
+      bypassPermissions (the allowlist is the gate), block on MCP startup when a
+      server is actually spawned.
+    - neither        -> full agentic inheritance; NO flags here (the caller adds
+      its own permission-mode: call_cloud keeps the CLI default, build_streaming
+      sets bypassPermissions for its headless turns)."""
+    if tools_disabled:
+        return ([
+            "--strict-mcp-config",
+            "--mcp-config", _EMPTY_MCP_CONFIG_JSON,
+            "--tools", "",
+            "--append-system-prompt", _TOOLS_OFF_SYSTEM_NUDGE,
+        ], {}, False)
+    if allowed_tools:
+        _specs = _mcp_server_specs()
+        servers_subset = {
+            name: _specs[name] for name in (mcp_servers or []) if name in _specs
+        }
+        builtin_tools = [t for t in allowed_tools if not t.startswith("mcp__")]
+        flags = ["--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": servers_subset})]
+        flags += (["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
+        flags += ["--allowedTools", *allowed_tools, "--permission-mode", "bypassPermissions"]
+        env = dict(_MCP_BLOCK_STARTUP_ENV) if servers_subset else {}
+        return (flags, env, bool(servers_subset))
+    return ([], {}, False)
+
+
 def call_cloud(
     prompt: str,
     *,
@@ -429,61 +471,24 @@ def call_cloud(
     # model turn (fixes the handshake race — see _MCP_BLOCK_STARTUP_ENV). Only
     # the narrow-tool path sets this; it spawns the server the model must use.
     block_mcp_startup = False
+    # Tool/MCP/permission flags are shared with build_streaming via tool_flags()
+    # so the three modes never drift. call_cloud owns the output-format + max-turns
+    # decisions per mode (stream-json for tools-off/narrow so partial text is
+    # recoverable; text for full agentic).
+    _tflags, _tenv, block_mcp_startup = tool_flags(
+        tools_disabled=tools_disabled, allowed_tools=allowed_tools, mcp_servers=mcp_servers,
+    )
     if tools_disabled:
-        # Tools-off path: stream-json so we can salvage partial text on error,
-        # hardened MCP/tool config, and pin max_turns=1 (there's no agentic
-        # loop to bound — it's a single Q&A round-trip).
-        cmd.extend([
-            "--output-format", "stream-json",
-            "--verbose",                       # required by stream-json
-            "--max-turns", "1",
-            "--strict-mcp-config",
-            "--mcp-config", _EMPTY_MCP_CONFIG_JSON,
-            "--tools", "",                     # empty = disable all built-ins
-            "--append-system-prompt", _TOOLS_OFF_SYSTEM_NUDGE,
-        ])
+        # Tools-off path: single Q&A round-trip, no agentic loop to bound.
+        cmd.extend(["--output-format", "stream-json", "--verbose", "--max-turns", "1", *_tflags])
         use_stream_json = True
     elif allowed_tools:
-        # Narrow-tool path: only the MCP servers the caller needs are spawned,
-        # only the named tools are permitted, built-ins stay off. Stream-json
-        # to preserve partial-text recovery if the model hits max_turns mid-
-        # synthesis. bypassPermissions is safe here — there's no interactive
-        # operator to confirm prompts, and the allowlist IS the gate.
-        _specs = _mcp_server_specs()
-        servers_subset = {
-            name: _specs[name]
-            for name in (mcp_servers or [])
-            if name in _specs
-        }
-        # allowed_tools may mix MCP tools ("mcp__plaid__…") with built-in tools
-        # ("WebSearch", "WebFetch"). MCP names are gated via --allowedTools; the
-        # built-in names must ALSO be enabled in the built-in set via --tools
-        # (default is "" = all built-ins off). So a data-mode assistant can be
-        # granted web access without opening the full agentic toolset.
-        builtin_tools = [t for t in allowed_tools if not t.startswith("mcp__")]
-        cmd.extend([
-            "--output-format", "stream-json",
-            "--verbose",
-            "--max-turns", str(max_turns),
-            "--strict-mcp-config",
-            "--mcp-config", json.dumps({"mcpServers": servers_subset}),
-        ])
-        # "" keeps built-ins off (MCP-only surfaces); a list enables exactly the
-        # named built-ins (e.g. web tools) and nothing else (no Bash/Edit/Read).
-        cmd.extend(["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
-        cmd.extend([
-            "--allowedTools", *allowed_tools,
-            "--permission-mode", "bypassPermissions",
-        ])
+        # Narrow-tool path: honor the caller's max_turns (one tool call + a
+        # synthesis turn with headroom). Stream-json for partial-text recovery.
+        cmd.extend(["--output-format", "stream-json", "--verbose", "--max-turns", str(max_turns), *_tflags])
         use_stream_json = True
-        # Wait for the MCP handshake before the model turn — otherwise the model
-        # sees no tools and fabricates the call (see _MCP_BLOCK_STARTUP_ENV).
-        block_mcp_startup = bool(servers_subset)
     else:
-        cmd.extend([
-            "--output-format", "text",
-            "--max-turns", str(max_turns),
-        ])
+        cmd.extend(["--output-format", "text", "--max-turns", str(max_turns)])
 
     # Session persistence (Build mode): `--session-id` reserves a uuid on the
     # first call so subsequent `--resume` calls continue the same conversation.

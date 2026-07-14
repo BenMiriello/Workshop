@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
@@ -556,6 +557,50 @@ async def thread_context(thread_id: str):
     }
 
 
+async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, bool]:
+    """Assemble the full turn prompt (role preamble + persona + capability facts +
+    auto-recalled knowledge + compacted history + this message) for either a data
+    or a build provider. Shared by POST /messages (blocking) and POST /turns
+    (streaming) so the two never fork. Returns (prompt, is_build_mode); persists
+    nothing. Build providers on a resumed session use a runtime briefing instead
+    of this full assembly (the caller handles that); this is the first-turn /
+    stateless assembly.
+
+    Capability facts come from the SAME branch that decides the run config
+    (capability_for mirrors the build/narrow/tools-off ladder), so the role
+    preamble can never claim tools the run does not actually have."""
+    tools_active, tool_summary = chat_context.capability_for(
+        provider, enable_chat_tools=ENABLE_CHAT_TOOLS
+    )
+    is_build_mode = chat_context.is_build_provider(provider)
+    preamble = chat_context.role_preamble(
+        tools_active=tools_active,
+        tool_summary=tool_summary,
+        cwd=(str(provider.dir) if is_build_mode else None),
+        is_build=is_build_mode,
+    )
+    history = t.get("messages", [])
+    recalled = ""
+    summary = ""
+    if not is_build_mode:
+        # Auto-recall (Phase 2): retrieve notes relevant to this message from the
+        # provider's knowledge scope and inject them into the reply tail. Build
+        # providers read files directly, so skip them. Best-effort.
+        if len(content.strip()) >= 8:
+            try:
+                hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
+                blocks = [f"[{h.get('note_id') or 'note'}] {(h.get('text') or '').strip()}" for h in hits]
+                recalled = "\n\n".join(blocks)[:2000]
+            except Exception as e:
+                log.warning("chat auto-recall failed for %s: %s", provider.key, e)
+        # Threshold compaction (Phase 3): fold the oldest half of a long transcript
+        # into a running summary so the cached prefix stays stable and the window
+        # does not overflow. Data mode only (build agents keep their own session).
+        summary, history = await _maybe_compact(t, provider.knowledge_scope())
+    prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled, summary=summary)
+    return prompt, is_build_mode
+
+
 @router.post("/threads/{thread_id}/messages")
 async def send_message(thread_id: str, body: PostMessage):
     t = chat_store.get_thread(thread_id)
@@ -574,38 +619,7 @@ async def send_message(thread_id: str, body: PostMessage):
     if body.model is not None and model != t.get("model"):
         chat_store.set_thread_model(thread_id, model)
 
-    # Capability facts: computed from the SAME branch that decides the run config
-    # (capability_for mirrors the build/narrow/tools-off ladder below), so the
-    # role preamble can never claim tools the run doesn't actually have.
-    tools_active, tool_summary = chat_context.capability_for(
-        provider, enable_chat_tools=ENABLE_CHAT_TOOLS
-    )
-    is_build_mode = chat_context.is_build_provider(provider)
-    preamble = chat_context.role_preamble(
-        tools_active=tools_active,
-        tool_summary=tool_summary,
-        cwd=(str(provider.dir) if is_build_mode else None),
-        is_build=is_build_mode,
-    )
-    # Auto-recall (Phase 2): for data-mode assistants, retrieve notes relevant to
-    # this message from the provider's knowledge scope and inject them into the
-    # reply tail. Build providers read files directly, so skip them. Best-effort.
-    recalled = ""
-    if not is_build_mode and len(content.strip()) >= 8:
-        try:
-            kscope = provider.knowledge_scope()
-            hits = await knowledge.search(kscope, content, limit=3)
-            blocks = [f"[{h.get('note_id') or 'note'}] {(h.get('text') or '').strip()}" for h in hits]
-            recalled = "\n\n".join(blocks)[:2000]
-        except Exception as e:
-            log.warning("chat auto-recall failed for %s: %s", provider.key, e)
-    # Threshold compaction (Phase 3): fold the oldest half of a long transcript
-    # into a running summary so the cached prefix stays stable and the window does
-    # not overflow. Data mode only (build agents keep their own session history).
-    summary = ""
-    if not is_build_mode:
-        summary, history = await _maybe_compact(t, provider.knowledge_scope())
-    prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled, summary=summary)
+    prompt, is_build_mode = await _assemble_full_prompt(t, provider, content)
 
     # Persist the user's message first so it isn't lost if the model call fails.
     chat_store.append_message(thread_id, "user", content)
@@ -752,8 +766,12 @@ async def send_message(thread_id: str, body: PostMessage):
 #      returns a turn_id immediately.
 #   2) GET /turns/{turn_id}/stream is an SSE channel with `id: <offset>` per
 #      event so EventSource auto-reconnect resumes via Last-Event-ID.
-# Only Build providers (Project / BuildAgent) use this path; Data chats stay
-# on the synchronous POST /messages route since their turns are short.
+# EVERY chat uses this streaming path (general, app, project, and build), so the
+# turn shows its work (tool calls, interim text) live instead of a blocking spinner.
+# The provider class decides the tool surface + session: BuildAgent = persistent
+# session + full tools, Project = full tools no session, Data/assistant = narrow
+# tools (web + declared MCP) no cwd-build. POST /messages remains for non-UI
+# callers (the voice worker, scripts).
 
 
 class StartTurnIn(BaseModel):
@@ -773,8 +791,6 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         raise HTTPException(400, "empty message")
 
     provider = chat_context.get_provider(t.get("context_key"))
-    if not isinstance(provider, chat_context.BuildAgentContextProvider):
-        raise HTTPException(400, "streaming turns are Build-only; use POST /messages for Data chats")
 
     # Resolve + persist the model (explicit > thread > provider default). 400 on
     # a bad id. Build providers no longer hard-force sonnet — opus is selectable.
@@ -782,67 +798,79 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if body.model is not None and model != t.get("model"):
         chat_store.set_thread_model(thread_id, model)
 
-    history = t.get("messages", [])
     chat_store.append_message(thread_id, "user", content)
 
-    # Persistent session via build_agents.ensure_session_id.
-    from services import build_agents as _ba
-    try:
-        sid, is_new = _ba.ensure_session_id(provider.slug)
-    except KeyError:
-        sid, is_new = None, True
-
-    # Stale-session guard: an existing id whose claude session no longer exists on
-    # disk (old agent, post-reboot prune, manual cleanup) would make `--resume`
-    # fail the whole turn with "No conversation found with session ID". Detect it
-    # up front and start a fresh session instead, so the turn just works.
-    if sid and not is_new and not build_streaming.session_alive(sid, str(provider.dir)):
-        log.info("agent %s: claude session %s is gone; starting fresh", provider.slug, sid)
-        _ba.reset_session(provider.slug)
+    # ---- Build-agent providers: the persistent Claude Code session path --------
+    if isinstance(provider, chat_context.BuildAgentContextProvider):
+        history = t.get("messages", [])
+        from services import build_agents as _ba
         try:
             sid, is_new = _ba.ensure_session_id(provider.slug)
         except KeyError:
             sid, is_new = None, True
+        # Stale-session guard: an existing id whose claude session no longer exists
+        # on disk (old agent, post-reboot prune) would make `--resume` fail the
+        # whole turn. Detect it up front and start fresh so the turn just works.
+        if sid and not is_new and not build_streaming.session_alive(sid, str(provider.dir)):
+            log.info("agent %s: claude session %s is gone; starting fresh", provider.slug, sid)
+            _ba.reset_session(provider.slug)
+            try:
+                sid, is_new = _ba.ensure_session_id(provider.slug)
+            except KeyError:
+                sid, is_new = None, True
+        # First turn: full assembled prompt. Resumed turn: just the new message
+        # with the runtime briefing re-sent (the session retains persona/history
+        # but the environment block must refresh every turn). Slash commands go
+        # raw so the CLI registers them as commands.
+        if content.startswith("/"):
+            prompt = content
+            resume_flag = bool(sid and not is_new)
+        elif sid and not is_new:
+            briefing = chat_context.runtime_briefing(provider)
+            prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
+            resume_flag = True
+        else:
+            prompt, _ = await _assemble_full_prompt(t, provider, content)
+            resume_flag = False
+        _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
+        turn = await build_streaming.start_turn(
+            thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
+            cwd=str(provider.dir), session_id=sid, resume=resume_flag,
+            max_turns=provider.max_turns, timeout_s=900,
+        )
+        return {"turn_id": turn.id}
 
-    # First turn: full prompt with the platform role preamble (capability +
-    # egress facts) + runtime briefing + persona + live context. Resumed turn:
-    # the new user message, with the runtime briefing re-sent (the session
-    # retains persona/history but the environment block must refresh every turn).
-    if content.startswith("/"):
-        # Claude Code slash command (/compact, /cost, /context, /review, …):
-        # forward it RAW so the CLI registers it as a command rather than a chat
-        # message. A wrapped "/compact" (briefing + preamble in front) would not
-        # register. Resume the live session when there is one so the command acts
-        # on THIS conversation's context.
-        prompt = content
-        resume_flag = bool(sid and not is_new)
-    elif sid and not is_new:
-        briefing = chat_context.runtime_briefing(provider)
-        prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
-        resume_flag = True
+    # ---- Project providers: full agentic toolset over the project tree, but no
+    #      persistent session (there is no per-project agent record to hang one on;
+    #      spawn a Build agent in the project to get resumable sessions). ----------
+    if chat_context.is_build_provider(provider):
+        _link_build_skills(provider)
+        prompt, _ = await _assemble_full_prompt(t, provider, content)
+        turn = await build_streaming.start_turn(
+            thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
+            prompt=prompt, model=model, cwd=str(provider.dir),
+            session_id=None, resume=False, max_turns=provider.max_turns, timeout_s=900,
+        )
+        return {"turn_id": turn.id}
+
+    # ---- Data / assistant providers: narrow tools (web + the provider's declared
+    #      MCP) or tools-off, stateless, no project cwd. They can search the web and
+    #      query the workshop, but cannot free-build without a chosen project. Same
+    #      capability ladder (ENABLE_CHAT_TOOLS + effective_allowed_tools) as the
+    #      blocking POST /messages path, now streamed so the turn shows its work. --
+    prompt, _ = await _assemble_full_prompt(t, provider, content)
+    if ENABLE_CHAT_TOOLS:
+        allowed_tools = chat_context.effective_allowed_tools(provider)
+        mcp_servers = list(provider.mcp_servers)
+        tools_disabled = False
     else:
-        tools_active, tool_summary = chat_context.capability_for(
-            provider, enable_chat_tools=ENABLE_CHAT_TOOLS
-        )
-        preamble = chat_context.role_preamble(
-            tools_active=tools_active,
-            tool_summary=tool_summary,
-            cwd=str(provider.dir),
-            is_build=True,
-        )
-        prompt = _build_prompt(provider, history, content, preamble=preamble)
-        resume_flag = False
-
-    _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
+        allowed_tools, mcp_servers, tools_disabled = None, [], True
+    default_cwd = os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~"))
     turn = await build_streaming.start_turn(
-        thread_id=thread_id,
-        agent_slug=provider.slug,
-        prompt=prompt,
-        model=model,
-        cwd=str(provider.dir),
-        session_id=sid,
-        resume=resume_flag,
-        max_turns=provider.max_turns,
+        thread_id=thread_id, agent_slug=provider.key, prompt=prompt, model=model,
+        cwd=default_cwd, session_id=None, resume=False,
+        max_turns=max(provider.max_turns, 6), timeout_s=CHAT_TIMEOUT_S,
+        allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
     return {"turn_id": turn.id}
 
