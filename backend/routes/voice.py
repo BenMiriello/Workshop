@@ -25,6 +25,9 @@ from services.ownership import user_runtime_dir
 log = logging.getLogger("workshop.voice")
 router = APIRouter()
 
+# NOTE: enter_interrupts / typing_hold_ms / eager_silence_ms / verbosity are no
+# longer surfaced in the settings UI (Phase 4 rework) — kept here for compat so
+# existing stored prefs files and API clients still round-trip.
 _PREFS_DEFAULTS = {
     "enabled": True,
     "tts_provider": "auto",   # auto | server | browser | off

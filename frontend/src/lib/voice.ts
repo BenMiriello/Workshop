@@ -54,7 +54,10 @@ function getSR(): any | null {
 // ---- server probe ----------------------------------------------------------
 export async function probeServer(): Promise<VoiceHealth | null> {
   try {
-    const r = await fetch("/api/voice/health");
+    // Bound the probe (D6/Phase 6.3): a hung backend must not wedge the session
+    // in "connecting". On timeout the fetch rejects, we return null, and
+    // detectCaps falls to the browser/native tiers.
+    const r = await fetch("/api/voice/health", { signal: AbortSignal.timeout(1500) });
     if (!r.ok) return null;
     return (await r.json()) as VoiceHealth;
   } catch {
@@ -79,6 +82,32 @@ export async function detectCaps(): Promise<EngineCaps> {
   return { server, browserStt, browserTts, native: nativeSpeech, stt, tts };
 }
 
+// ---- audio unlock (autoplay policy) ----------------------------------------
+// A one-frame silent WAV, played (muted) once from a user gesture so the browser
+// treats later programmatic Audio().play() calls as user-initiated. Data URI so
+// it is self-contained and needs no network under the artifact/CSP model.
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRmQBAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YUABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+// Idempotent: the silent prime only needs to run once per page load.
+let _audioPrimed = false;
+
+// Called SYNCHRONOUSLY from the voice-toggle click (the user gesture). It (1)
+// creates/resumes the shared ServerSpeaker AudioContext and (2) plays a silent
+// clip so a later held-draft release — which fires OUTSIDE any gesture — is not
+// blocked by the autoplay policy (D6). Calling this from an effect would not
+// satisfy the gesture requirement, so it must live in the click handler.
+export function unlockAudio(): void {
+  ServerSpeaker.primeContext();
+  if (_audioPrimed) return;
+  try {
+    const a = new Audio(SILENT_WAV);
+    a.muted = true;
+    const p = a.play();
+    if (p && typeof p.then === "function") p.then(() => { try { a.pause(); } catch { /* noop */ } }).catch(() => {});
+    _audioPrimed = true;
+  } catch { /* noop — best-effort; real confirmation is on-device */ }
+}
+
 // ============================================================================
 // Microphone stream + voice-activity detection (VAD)
 // ============================================================================
@@ -91,7 +120,42 @@ export type MicEvents = {
   // An earlier, lower-confidence pause (< endSilenceMs). Fires once per silence
   // gap when eager endpointing is on; the session may speculate on it.
   onEagerPause?: () => void;
+  // A recorder-construction failure (e.g. no supported MediaRecorder mime). The
+  // session surfaces it via snapshot.error instead of letting it throw uncaught.
+  onError?: (message: string) => void;
 };
+
+// MediaRecorder container/codec candidates, most-preferred first. Safari has no
+// audio/webm at all (D6): constructing MediaRecorder with an unsupported mime
+// throws, which crashed the server-STT auto pick on iPhones. We negotiate the
+// first supported type and fall back to the browser default when none match.
+const REC_MIME_CANDIDATES = [
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/mp4;codecs=mp4a.40.2",
+  "audio/mp4",
+];
+
+function pickRecorderMime(): string {
+  const MR = (window as unknown as { MediaRecorder?: typeof MediaRecorder }).MediaRecorder;
+  if (MR && typeof MR.isTypeSupported === "function") {
+    for (const m of REC_MIME_CANDIDATES) {
+      try { if (MR.isTypeSupported(m)) return m; } catch { /* keep scanning */ }
+    }
+  }
+  return "";   // let MediaRecorder choose its own supported default (Safari: mp4)
+}
+
+// Map a recorder mime to a filename extension whisper/faster-whisper recognizes
+// (PyAV decodes by container content, but a matching extension keeps the upload
+// honest). Chrome yields webm/opus → .webm; Safari yields mp4/aac → .m4a.
+function extForMime(mime: string): string {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("mp4") || m.includes("m4a") || m.includes("aac")) return "m4a";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("wav")) return "wav";
+  return "webm";
+}
 
 export class MicStream {
   private stream: MediaStream | null = null;
@@ -215,16 +279,39 @@ export class MicStream {
     this.raf = requestAnimationFrame(this.loop);
   };
 
-  // Record a segment to a Blob (webm/opus) for server STT.
+  // Record a segment to a Blob for server STT. The container/codec is negotiated
+  // (see pickRecorderMime) so this never throws on Safari; a construction failure
+  // is reported via onError instead of propagating uncaught (D6).
   startRecording() {
     if (!this.stream) return;
     this.chunks = [];
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-    this.recorder = new MediaRecorder(this.stream, { mimeType: mime });
-    this.recorder.ondataavailable = (e) => e.data.size && this.chunks.push(e.data);
-    this.recorder.start();
+    try {
+      const mime = pickRecorderMime();
+      const chunks = this.chunks;
+      this.recorder = mime
+        ? new MediaRecorder(this.stream, { mimeType: mime })
+        : new MediaRecorder(this.stream);
+      // Bind to THIS chunk array so a discarded/superseded recorder's late
+      // ondataavailable can never leak into a fresh segment's chunks.
+      this.recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+      this.recorder.start();
+    } catch (e) {
+      this.recorder = null;
+      this.events.onError?.(`recorder: ${String((e as Error)?.message || e)}`);
+    }
+  }
+
+  // Barge pre-roll (Phase 6.4, self-contained + revertable): the recorder runs
+  // continuously through the assistant's speech so an interruption is captured
+  // from its first word. This drops the current recorder's buffer (assistant TTS
+  // echo + the sustain window) and starts a fresh one hot, with no cold-start
+  // gap. Detaching the old ondataavailable first prevents its trailing data from
+  // contaminating the new segment. Revert this + its callers to disable pre-roll.
+  discardSegment() {
+    const old = this.recorder;
+    if (old) { old.ondataavailable = null; try { old.stop(); } catch { /* noop */ } }
+    this.recorder = null;
+    this.startRecording();
   }
 
   async stopRecording(): Promise<Blob | null> {
@@ -272,7 +359,9 @@ export async function nativeTranscribe(locale = "en-US"): Promise<string> {
 // ---- STT: server ------------------------------------------------------------
 export async function transcribeBlob(blob: Blob): Promise<string> {
   const fd = new FormData();
-  fd.append("audio", blob, "utterance.webm");
+  // Filename extension tracks the negotiated recorder mime (webm on Chrome, m4a
+  // on Safari); appending a Blob sets the part's Content-Type from blob.type.
+  fd.append("audio", blob, `utterance.${extForMime(blob.type)}`);
   fd.append("language", "en");
   const r = await fetch("/api/voice/stt", { method: "POST", body: fd });
   if (!r.ok) throw new Error(`stt ${r.status}`);
@@ -316,6 +405,10 @@ export type SpeakEvents = {
   onSentenceStart?: (i: number) => void;
   onSentenceEnd?: (i: number) => void;
   onDone?: (reached: number) => void;   // index reached when finished/stopped
+  // Autoplay policy blocked a programmatic play() (a held-draft release happens
+  // outside a user gesture). The session surfaces a "tap to enable audio" hint
+  // via snapshot.error rather than silently marking the sentence heard (D6).
+  onBlocked?: () => void;
 };
 
 export interface Speaker {
@@ -330,6 +423,10 @@ export interface Speaker {
   // Held: render/queue ahead but do not start playback until released. Used for
   // speculative drafts. Absent on speakers that cannot hold.
   setHeld?(on: boolean): void;
+  // Null the event sink so a subsequent stop() cannot fire onDone/onSentence*
+  // (used by the session to tear a superseded/barged/timed-out speaker down
+  // without accidentally driving finishSpeaking).
+  detach(): void;
   stop(): void;             // returns via onDone(reached)
   readonly speaking: boolean;
   outputLevel?(): number;   // live 0..1 TTS envelope, when measurable
@@ -353,10 +450,22 @@ export class ServerSpeaker implements Speaker {
   // <audio> element routed through one analyser → destination.
   private static actx: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
+  private blockedNotified = false;   // fire onBlocked at most once per turn
 
   constructor(opts: { voice?: string; speed?: number } = {}) {
     this.voice = opts.voice;
     this.speed = opts.speed ?? 1.0;
+  }
+
+  // Create/resume the shared AudioContext. Called from unlockAudio() inside the
+  // voice-toggle click so the graph is live before the first held-draft release.
+  static primeContext() {
+    try {
+      const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!ServerSpeaker.actx) ServerSpeaker.actx = new AC();
+      const ctx = ServerSpeaker.actx;
+      if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+    } catch { /* noop — outputLevel just returns 0 */ }
   }
 
   private wireGraph(a: HTMLAudioElement) {
@@ -416,6 +525,7 @@ export class ServerSpeaker implements Speaker {
     this.ended = false;
     this.playing = false;
     this.speaking = true;
+    this.blockedNotified = false;
   }
 
   // Held: keep rendering ahead (audio is fetched at enqueue) but do not start
@@ -467,7 +577,18 @@ export class ServerSpeaker implements Speaker {
     };
     a.onended = () => { this.ev.onSentenceEnd?.(i); advance(); };
     a.onerror = () => advance();
-    a.play().catch(() => advance());
+    a.play().catch((err: unknown) => {
+      // Autoplay policy blocks programmatic play() outside a user gesture — this
+      // is the held-draft release path (D6). Surface a hint once via onBlocked
+      // instead of silently marking the sentence heard; still advance so the turn
+      // completes rather than wedging in "speaking". unlockAudio() (primed from
+      // the toggle click) is what prevents this on a well-behaved device.
+      if ((err as { name?: string })?.name === "NotAllowedError" && !this.blockedNotified) {
+        this.blockedNotified = true;
+        this.ev.onBlocked?.();
+      }
+      advance();
+    });
   }
 
   // `reached` = count of sentences fully heard before this point (== the index
@@ -478,6 +599,8 @@ export class ServerSpeaker implements Speaker {
     this.speaking = false;
     this.ev.onDone?.(reached);
   }
+
+  detach() { this.ev = {}; }
 
   stop() {
     this.stopped = true;
@@ -553,6 +676,8 @@ export class BrowserSpeaker implements Speaker {
     this.ev.onDone?.(reached);
   }
 
+  detach() { this.ev = {}; }
+
   stop() {
     this.stopped = true;
     try { window.speechSynthesis.cancel(); } catch { /* noop */ }
@@ -560,8 +685,10 @@ export class BrowserSpeaker implements Speaker {
   }
 }
 
-// Instant, always-available filler while a cold session warms up.
-export function speakFiller(text = "One moment.") {
+// One-shot browser-TTS notice (e.g. the watchdog's spoken retry/failure notice).
+// Always a standalone utterance — it never overlaps a Kokoro reply, so using the
+// browser voice here does not reintroduce the mixed-voice bug.
+export function speakNotice(text: string) {
   if (!browserTtsAvailable()) return;
   try {
     const u = new SpeechSynthesisUtterance(text);
@@ -634,6 +761,8 @@ export class NativeSpeaker implements Speaker {
     this.speaking = false;
     this.ev.onDone?.(reached);
   }
+
+  detach() { this.ev = {}; }
 
   stop() {
     this.stopped = true;

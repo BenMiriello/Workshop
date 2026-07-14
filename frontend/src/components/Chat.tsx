@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, Clock, Slash, AudioLines,
-  PanelsTopLeft, Mic, MicOff, Loader, Settings2, Volume2, VolumeX, AlertTriangle,
+  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
@@ -19,6 +19,7 @@ import {
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
 import { useVoiceSession } from "../lib/useVoiceSession";
+import { unlockAudio } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -456,7 +457,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs, prewarm: vprewarm,
   } = useVoiceSession(contextKey, selectedModel || undefined, activeId ?? undefined, adoptThread);
 
-  const toggleVoice = useCallback(() => setVoiceOn((on) => !on), []);
+  const toggleVoice = useCallback(() => {
+    // Unlock audio HERE, in the click gesture (Phase 6.2). The lifecycle effect
+    // that calls vsession.start() is NOT a user gesture, so priming there would
+    // not satisfy the autoplay policy — a later held-draft release (which fires
+    // outside any gesture) would still be blocked. This click is the gesture.
+    unlockAudio();
+    setVoiceOn((on) => !on);
+  }, []);
 
   // Drive the engine from voiceOn (not the toggle) so that if the session object
   // is recreated mid-conversation — e.g. the model changes, which rebuilds the
@@ -509,15 +517,55 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }
   }, [voiceOn, vsnap.fatal, vsnap.error]);
 
-  // When a spoken turn finishes (thinking/speaking → listening/idle), settle it
-  // into the log WITHOUT a vanishing frame (D4). We capture the just-finished
-  // exchange from the live snapshot into `settling` and keep the overlay showing
-  // it, then poll getThread until the persisted turn has landed (the worker
-  // persists a beat after playback ends). Only once the refetch contains the new
-  // messages do we swap `messages` and clear `settling` — a single commit, so the
-  // exchange is on screen in every frame.
+  // Overlay settle (D4). When a spoken turn finishes we must never drop the frame
+  // where the just-finished exchange lives: the live overlay only renders during
+  // thinking|speaking, and the persisted-message refetch is async. So on finish we
+  // snapshot the exchange into `settling` (kept rendered), then poll getThread
+  // until the persisted turn has landed (the worker persists a beat after playback)
+  // and swap `messages` + clear `settling` in ONE commit. The poll is ref-driven,
+  // not tied to the effect's cleanup, so the next turn starting (a benign
+  // listening→thinking transition) can't cancel an in-flight settle — turn N stays
+  // on screen (as the settling overlay, above turn N+1's live overlay) until its
+  // messages land.
+  const settlePollRef = useRef<{ cancelled: boolean } | null>(null);
+  const startSettle = useCallback((id: string, user: string, assistant: string, baseLen: number) => {
+    const handle = { cancelled: false };
+    settlePollRef.current = handle;
+    setSettling({ user, assistant });
+    let tries = 0;
+    const finishSettle = (msgs: ChatMsg[] | null) => {
+      if (handle.cancelled) return;
+      if (msgs) setMessages(msgs);
+      // Only clear if this settle is still the active one (a newer turn may have
+      // taken over) — the swap into the log is a single commit either way.
+      setSettling((s) => (settlePollRef.current === handle ? null : s));
+      if (settlePollRef.current === handle) settlePollRef.current = null;
+      void refreshThreads();
+    };
+    const poll = () => {
+      if (handle.cancelled) return;
+      chatApi.getThread(id)
+        .then((t) => {
+          if (handle.cancelled) return;
+          if (t.messages.length > baseLen) finishSettle(t.messages);   // the new turn persisted
+          else if (++tries >= 8) finishSettle(t.messages);             // give up: swap what we have
+          else window.setTimeout(poll, 250);
+        })
+        .catch(() => {
+          if (handle.cancelled) return;
+          if (++tries >= 8) finishSettle(null);
+          else window.setTimeout(poll, 250);
+        });
+    };
+    poll();
+  }, [refreshThreads]);
+
   const prevVoiceState = useRef(vsnap.state);
-  useEffect(() => {
+  // useLayoutEffect (not useEffect): the live overlay unmounts on the same commit
+  // that flips state away from speaking/thinking, so `settling` must be set BEFORE
+  // the browser paints, or there is a one-frame gap where the just-finished
+  // exchange is absent (the vanish-then-pop this redesign set out to kill).
+  useLayoutEffect(() => {
     const prev = prevVoiceState.current;
     prevVoiceState.current = vsnap.state;
     if (!voiceOn) return;
@@ -526,41 +574,22 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     if (!finished || !activeId) return;
     const user = vsnap.lastUser;
     const assistant = vsnap.sentences.map((s) => s.text).join(" ").trim();
-    // Nothing to settle (e.g. an empty/aborted turn): just refresh and bail.
     if (!user && !assistant) { void refreshThreads(); return; }
-    const baseLen = messagesRef.current.length;
-    setSettling({ user, assistant });
-    let cancelled = false;
-    let tries = 0;
-    const poll = () => {
-      if (cancelled) return;
-      chatApi.getThread(activeId).then((t) => {
-        if (cancelled) return;
-        const landed = t.messages.length > baseLen;   // the new user+assistant persisted
-        if (landed || tries >= 8) {
-          setMessages(t.messages);
-          setSettling(null);            // swap once — overlay → real log in one commit
-          void refreshThreads();
-          return;
-        }
-        tries += 1;
-        window.setTimeout(poll, 250);
-      }).catch(() => {
-        if (cancelled) return;
-        if (tries >= 8) { setSettling(null); return; }
-        tries += 1;
-        window.setTimeout(poll, 250);
-      });
-    };
-    poll();
-    return () => { cancelled = true; };
+    startSettle(activeId, user, assistant, messagesRef.current.length);
     // vsnap.lastUser/sentences are read at the finish transition; state is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vsnap.state, voiceOn, activeId, refreshThreads]);
+  }, [vsnap.state, voiceOn, activeId, startSettle]);
 
-  // Leaving voice mode drops any in-flight settle overlay so it can't flash back
-  // on re-entry.
-  useEffect(() => { if (!voiceOn) setSettling(null); }, [voiceOn]);
+  // Cancel any in-flight settle and drop the overlay when voice turns off, the
+  // thread switches, or the component unmounts, so a stale poll can't overwrite
+  // the log of another thread and the overlay can't flash back on re-entry.
+  useEffect(() => {
+    if (!voiceOn) {
+      if (settlePollRef.current) settlePollRef.current.cancelled = true;
+      setSettling(null);
+    }
+    return () => { if (settlePollRef.current) settlePollRef.current.cancelled = true; };
+  }, [voiceOn, activeId]);
 
   const setQueue = useCallback((next: string[]) => {
     queuedRef.current = next;
@@ -1232,7 +1261,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       )}
       {queued.map((q, i) => (
         <div key={`q${i}`} className="chat-msg user">
-          <div className="chat-bubble chat-bubble--queued" title="Queued — sends when the current turn finishes">{q}</div>
+          <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">{q}</div>
         </div>
       ))}
       {/* Live spoken turn: the just-sent utterance + the streaming reply, rendered
@@ -1242,7 +1271,24 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           bubbles) until the refetch lands the persisted messages, then swaps once
           into the log (D4 — no vanish-then-pop). Muted (captions-only) replies
           stay in `thinking` the whole time and stream their captions here too. */}
-      {voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking") ? (
+      {/* The settling exchange (the just-finished turn) renders ABOVE the live
+          overlay so a fast follow-up turn never hides it: turn N stays put as
+          plain bubbles until its persisted messages land, then swaps out. */}
+      {voiceOn && settling && (
+        <>
+          {settling.user && (
+            <div className="chat-msg user">
+              <div className="chat-bubble">{settling.user}</div>
+            </div>
+          )}
+          {settling.assistant && (
+            <div className="chat-msg assistant">
+              <div className="chat-bubble">{settling.assistant}</div>
+            </div>
+          )}
+        </>
+      )}
+      {voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking") && (
         <>
           {vsnap.lastUser && (
             <div className="chat-msg user">
@@ -1275,20 +1321,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             </div>
           </div>
         </>
-      ) : voiceOn && settling ? (
-        <>
-          {settling.user && (
-            <div className="chat-msg user">
-              <div className="chat-bubble">{settling.user}</div>
-            </div>
-          )}
-          {settling.assistant && (
-            <div className="chat-msg assistant">
-              <div className="chat-bubble">{settling.assistant}</div>
-            </div>
-          )}
-        </>
-      ) : null}
+      )}
     </div>
   );
 
@@ -1359,21 +1392,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const voiceErrored = !!vsnap.error;
   const voiceOrbAction = () => {
     if (vsnap.state === "speaking") vsession.interrupt();
+    else if (vsnap.state === "thinking") vsession.cancelTurn();  // scrap a mis-heard send
     else if (vsnap.state === "listening") vsession.forceEndUtterance();
   };
   const voiceOrbIcon =
     voiceErrored || vsnap.state === "idle"
       ? <AlertTriangle size={16} aria-hidden />
-      : vsnap.state === "thinking" || vsnap.state === "connecting"
+      : vsnap.state === "connecting"
         ? <Loader size={16} aria-hidden className="ws-spin" />
-        : vsnap.state === "speaking"
-          ? <Square size={16} aria-hidden />
-          : <AudioLines size={16} aria-hidden />;
+        : vsnap.state === "thinking"
+          ? <X size={16} aria-hidden />          /* tap = scrap the mis-heard turn */
+          : vsnap.state === "speaking"
+            ? <Square size={16} aria-hidden />
+            : <AudioLines size={16} aria-hidden />;
   const voiceOrbLabel =
     voiceErrored ? "Voice error"
-    : vsnap.state === "speaking" ? "Interrupt (Esc)"
+    : vsnap.state === "speaking" ? "Stop"
     : vsnap.state === "listening" ? "Send now"
-    : vsnap.state === "thinking" ? "Thinking" : "Listening";
+    : vsnap.state === "thinking" ? "Cancel — scrap that"
+    : vsnap.state === "connecting" ? "Starting" : "Listening";
 
   // The single voice status surface, above the composer (replaces the ghost line).
   // One of: an error with Retry, the live partial transcript while listening, or
@@ -1481,20 +1518,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
               onClick={() => vupdatePrefs({ mic_enabled: !vprefs.mic_enabled })}
               aria-pressed={vprefs.mic_enabled}
               aria-label={vprefs.mic_enabled ? "Mute microphone" : "Unmute microphone"}
-              title={vprefs.mic_enabled ? "Mic on — tap to mute" : "Mic muted — tap to talk"}
+              title={vprefs.mic_enabled ? "Mic on, tap to mute" : "Mic muted, tap to talk"}
             >
               {vprefs.mic_enabled ? <Mic size={16} aria-hidden /> : <MicOff size={16} aria-hidden />}
             </button>
-            <button
-              className={`chat-slash-btn${vprefs.speak_replies ? " is-active" : ""}`}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => vupdatePrefs({ speak_replies: !vprefs.speak_replies })}
-              aria-pressed={vprefs.speak_replies}
-              aria-label={vprefs.speak_replies ? "Mute replies" : "Speak replies"}
-              title={vprefs.speak_replies ? "Speaking replies — tap to mute" : "Replies muted — tap to speak"}
-            >
-              {vprefs.speak_replies ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
-            </button>
+            {/* Reply-mute ("Speak replies") lives in Voice settings, not here:
+                a persistent TTS-off button next to the mic is the #1 thing that
+                made this cluster confusing (two mute buttons doing different
+                things). The main surface stays orb + mic-mute + settings. */}
             <button
               className="chat-slash-btn"
               onMouseDown={(e) => e.preventDefault()}
@@ -1512,7 +1543,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           onClick={toggleVoice}
           aria-pressed={voiceOn}
           aria-label={voiceOn ? "Exit voice mode" : "Voice mode"}
-          title={voiceOn ? "Exit voice mode" : (build ? "Voice mode — build by talking" : "Voice mode — talk instead of type")}
+          title={voiceOn ? "Exit voice mode" : (build ? "Voice mode: build by talking" : "Voice mode: talk instead of type")}
         >
           <AudioLines size={16} aria-hidden />
         </button>
@@ -1532,7 +1563,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {/* onMouseDown preventDefault: don't let tapping an action button blur the
             textarea — on mobile that closes the keyboard, the layout jumps, and the
             tap lands where the button no longer is (the "send needs two taps" bug). */}
-        <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim()} aria-label="Send (Enter)" title={streamingBuild ? "Send — queues until the current turn finishes" : "Send (Enter)"}>
+        <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim()} aria-label="Send (Enter)" title={streamingBuild ? "Send (queues until the current turn finishes)" : "Send (Enter)"}>
           <CornerDownLeft size={16} aria-hidden />
         </button>
         {streamingBuild && (

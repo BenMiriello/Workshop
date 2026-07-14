@@ -132,6 +132,13 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
             "documentation", "document", "doc", "draft", "feature", "release",
             "design", "presentation", "escalation", "unblocking", "number",
             "highest", "lowest", "topmost", "possible", "necessary", "clearly",
+            # temporal / quantifier fillers — pure adverbs of time/degree with no
+            # concrete referent ("the CURRENTLY blocked tasks", "the MOST urgent
+            # task"). A real task never leans on these to carry its meaning.
+            "currently", "current", "now", "presently", "recently", "latest",
+            "most", "more", "less", "least", "some", "few", "many", "various",
+            "certain", "specific", "relevant", "outstanding", "existing", "each",
+            "all", "any", "first", "second", "third", "fourth", "fifth", "last",
             # bare numerals / count words the tokenizer keeps
             "1", "2", "3", "4", "5", "one", "two", "three", "four", "five",
             # generic connectors/fillers the stopword set doesn't cover

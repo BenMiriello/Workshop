@@ -92,9 +92,16 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         return []
     out: list[dict] = []
     for p in _chat_dir().glob("*.json"):
+        # The composer-draft store lives alongside threads (chat/drafts.json); it is
+        # not a thread. Skip it, and skip any file that isn't a well-formed thread
+        # (missing id / partial write) so ONE bad file can't 500 the whole list.
+        if p.name == "drafts.json":
+            continue
         try:
             t = json.loads(p.read_text())
         except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(t, dict) or "id" not in t:
             continue
         if context_key and t.get("context_key") != context_key:
             continue
@@ -104,6 +111,7 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         # seed instead of a bare "New chat".
         if title in (None, "", "New chat") and t.get("_seed_title"):
             title = t["_seed_title"]
+        last = msgs[-1] if msgs else None
         out.append({
             "id": t["id"],
             "context_key": t.get("context_key", "general"),
@@ -113,7 +121,7 @@ def list_threads(context_key: str | None = None) -> list[dict]:
             "created_at": t.get("created_at"),
             "updated_at": t.get("updated_at"),
             "message_count": len(msgs),
-            "last_message": (msgs[-1]["content"][:120] if msgs else ""),
+            "last_message": ((last.get("content") or "")[:120] if isinstance(last, dict) else ""),
         })
     out.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
     return out

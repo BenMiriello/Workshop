@@ -761,38 +761,52 @@ a.ws-btn { text-decoration: none; }
   height: 100%;
   min-height: 0;
 }
-.ws-agent-build {
+/* Chat-first layout. Closed: chat fills the whole area. Open: a two-up split
+   with chat kept as a strong primary column and the workbench beside it. */
+.ws-agent-chat {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr) 400px;
+  grid-template-columns: 1fr;
   gap: var(--space-4);
   align-items: stretch;
-  /* Flex to fill the height left under the header/status bar (no magic constant). */
   flex: 1 1 auto;
   min-height: 0;
 }
-/* Each region fills the grid cell and scrolls internally, not the page. */
-.ws-agent-build__region {
+.ws-agent-chat[data-workbench="open"] {
+  grid-template-columns: minmax(360px, 1fr) minmax(0, 1.35fr);
+}
+.ws-agent-chat__chat,
+.ws-agent-chat__workbench {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
 }
-.ws-agent-build__region-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
+/* The chat card fills its column and scrolls internally (never the page). */
+.ws-agent-chat__chat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  overflow: hidden;
 }
-/* Region header: title left, focus/restore control right. One control height. */
-.ws-region-head {
+.ws-agent-chat__workbench {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  padding: var(--space-3);
+  overflow: hidden;
+}
+.ws-agent-chat__wb-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   min-height: var(--control-h);
-  margin-bottom: var(--space-2);
 }
+.ws-agent-chat__wb-tabs {
+  margin-top: var(--space-2);
+  overflow-x: auto;
+}
+/* Section-label motif reused for the workbench + files headings. */
 .ws-region-head__title {
   display: inline-flex;
   align-items: center;
@@ -801,49 +815,46 @@ a.ws-btn { text-decoration: none; }
   font-size: var(--fs-sm);
   font-weight: 600;
 }
-
-/* Focus modes: hide the non-focused regions, let the focused one fill width. */
-.ws-agent-build[data-focus="files"]  { grid-template-columns: 1fr; }
-.ws-agent-build[data-focus="center"] { grid-template-columns: 1fr; }
-.ws-agent-build[data-focus="chat"]   { grid-template-columns: 1fr; }
-.ws-agent-build[data-focus="files"]  > :not(.ws-agent-build__files),
-.ws-agent-build[data-focus="center"] > :not(.ws-agent-build__main),
-.ws-agent-build[data-focus="chat"]   > :not(.ws-agent-build__chat) { display: none; }
+/* Body: optional files rail + the active center view; fills remaining height. */
+.ws-agent-chat__wb-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+.ws-agent-chat__wb-body[data-files="on"] {
+  grid-template-columns: 220px minmax(0, 1fr);
+}
+.ws-agent-chat__files {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ws-agent-chat__files-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
 
 @media (max-width: 1100px) {
-  .ws-agent-build[data-focus="all"] { grid-template-columns: 220px minmax(0, 1fr); }
-  .ws-agent-build[data-focus="all"] > .ws-agent-build__chat { grid-column: 1 / -1; }
+  .ws-agent-chat[data-workbench="open"] { grid-template-columns: minmax(320px, 1fr) minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
-  /* Stacked + page-scrolling: the page grows with its content and <main> scrolls,
-     rather than the desktop "fill the viewport, scroll inside each region" model. */
-  .ws-agent-build-page { display: block; height: auto; }
-  /* Stacked, page-scrolling. Chat first (the primary driver), then center, files.
-     The chat carries its OWN expand-to-fullscreen control (toolbar Maximize →
-     /chat/:key) — that is how you take the chat full-screen on a phone. The
-     per-region "expand full width" toggle is the desktop 3-pane model and reads
-     as a stray second expand button here, so it is hidden on mobile. */
-  .ws-agent-build {
-    display: flex;
-    flex-direction: column;
-    height: auto;
-    min-height: 0;
+  /* Chat is the screen. The workbench opens as a full-screen overlay above it,
+     with its own Close (X) — one clear surface at a time, no stray expanders. */
+  .ws-agent-chat[data-workbench="open"] { grid-template-columns: 1fr; }
+  .ws-agent-chat__workbench {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal, 50);
+    border: 0;
+    border-radius: 0;
+    padding: var(--space-3);
+    overflow: auto;
   }
-  /* A persisted desktop focus must not hide a region on mobile — re-show all. */
-  .ws-agent-build[data-focus] > .ws-agent-build__region { display: flex; }
-  /* The embedded chat is BOUNDED — never full page length. A definite height,
-     comfortably under a phone's viewport, caps it and lets the log scroll INSIDE
-     rather than growing the page. (Full-screen is the toolbar workbench/expand
-     button, not this inline panel.) */
-  .ws-agent-build > .ws-agent-build__chat   { order: 0; height: 70vh; }
-  .ws-agent-build > .ws-agent-build__main   { order: 1; }
-  .ws-agent-build > .ws-agent-build__files  { order: 2; }
-  .ws-agent-build .ws-agent-build__region-body { overflow: visible; }
-  .ws-agent-build__files .ws-agent-build__region-body { max-height: 40vh; overflow: auto; }
-  .ws-region-head__focus { display: none; }
-  /* The chat region's own body bounds its panel and scrolls internally, so the
-     conversation can never run the full length of the page. */
-  .ws-agent-build__chat .ws-agent-build__region-body { min-height: 0; overflow: hidden; }
+  .ws-agent-chat__wb-body[data-files="on"] { grid-template-columns: 1fr; }
+  .ws-agent-chat__files-body { max-height: 32vh; }
 }
 
 .ws-agent-build__status {
@@ -1116,8 +1127,43 @@ a.ws-btn { text-decoration: none; }
 .ws-voice-rangeends { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--faint); }
 .ws-range { accent-color: var(--accent); width: 100%; }
 
+/* Disclosure: an accessible collapse for secondary controls (e.g. the voice
+   settings "Advanced" section). The summary is a real button (aria-expanded);
+   the chevron rotates when open. Reuse anywhere a group should stay collapsed. */
+.ws-disclosure {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin-top: var(--space-2); padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+.ws-disclosure__summary {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  align-self: flex-start;
+  background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.05em;
+  font-weight: var(--fw-semi); color: var(--muted);
+}
+.ws-disclosure__summary:hover { color: var(--fg); }
+.ws-disclosure__chevron { transition: transform var(--dur-fast) var(--ease-out); }
+.ws-disclosure[data-open="true"] .ws-disclosure__chevron { transform: rotate(180deg); }
+.ws-disclosure__body { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* The voice cluster: orb + mic-mute + reply-mute + gear share a subtle pill so
+   they read as one group, distinct from the exit toggle and Send outside it. */
+.chat-voice-cluster {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.15rem 0.25rem; border-radius: var(--radius-pill);
+  background: var(--bg-inset); border: 1px solid var(--border);
+}
+.chat-voice-cluster.is-error { border-color: var(--danger); }
+/* Inside the pill the buttons blend into the group: drop their own chrome so the
+   cluster reads as one surface rather than four boxes. */
+.chat-voice-cluster .chat-slash-btn,
+.chat-voice-cluster .chat-voice-orb { background: transparent; border-color: transparent; }
+.chat-voice-cluster .chat-slash-btn:hover { background: var(--card-hover); }
+
 /* Inline composer state orb: same footprint as the other action buttons, round,
-   its ring reacting to mic level (--vlevel) and turn state. */
+   its ring reacting to mic level (--vlevel, written directly by onLevel) and turn
+   state. It never shows a Mic glyph (that is the mic-mute button's job). */
 .chat-voice-orb {
   position: relative;
   display: inline-flex; align-items: center; justify-content: center;
@@ -1135,6 +1181,10 @@ a.ws-btn { text-decoration: none; }
 .chat-voice-orb.is-speaking { color: var(--ok); border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
 .chat-voice-orb.is-thinking,
 .chat-voice-orb.is-connecting { color: var(--muted); }
+/* Error / idle-unexpectedly: the AlertTriangle tint. Placed last so it wins over
+   is-listening etc. when both classes are present. */
+.chat-voice-orb.is-error,
+.chat-voice-orb.is-idle { color: var(--danger); border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger); }
 
 /* Live spoken-turn caption cues, inside a normal assistant bubble. */
 .chat-voice-live { display: inline; }
@@ -1142,17 +1192,38 @@ a.ws-btn { text-decoration: none; }
 .chat-voice-now { color: var(--accent); font-weight: var(--fw-medium); }
 .chat-voice-pending { color: var(--muted); }
 
-/* Partial transcript ghost above the composer while listening. */
-.chat-voice-ghost {
-  font-size: var(--fs-sm); color: var(--muted); font-style: italic;
+/* Voice status strip above the composer: the single voice status surface. Shows
+   the state word, the live partial transcript ("Heard: …"), or an error + Retry.
+   Neutral by default (color is a signal, not decoration); danger only on error. */
+.chat-voice-strip {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
+  min-height: 1.65rem;
   padding: 0 var(--space-1) var(--space-1);
+  font-size: var(--fs-sm); color: var(--muted);
+}
+.chat-voice-strip__msg {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  flex: 1 1 auto; min-width: 0;
+}
+.chat-voice-strip__state { color: var(--muted); }
+.chat-voice-strip__label { color: var(--faint); flex: none; }
+.chat-voice-strip__partial {
+  color: var(--fg); font-style: italic; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.chat-voice-strip__icon { flex: none; }
+.chat-voice-strip.is-error { color: var(--danger); }
+.chat-voice-strip.is-error .chat-voice-strip__msg { color: var(--danger); white-space: normal; }
 
 .ws-spin { animation: ws-spin 1s linear infinite; }
 @keyframes ws-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {
   .chat-voice-orb { transition: none; }
+  /* Freeze the mic-level halo at a static ring — the --vlevel box-shadow would
+     otherwise pulse ~60fps even with motion reduced. */
+  .chat-voice-orb.is-listening {
+    box-shadow: 0 0 0 1px var(--running), 0 0 4px var(--running-soft);
+  }
   .ws-spin { animation-duration: 2.4s; }
 }

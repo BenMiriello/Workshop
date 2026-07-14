@@ -2,10 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import {
   File, Folder, FolderOpen, GitCommit, Play, RefreshCw, RotateCcw, Save, Square,
-  Trash2, ExternalLink, Plus, Maximize2, Minimize2, FileCode, MonitorPlay,
-  GitCompare, MessageSquare, FolderTree, Pencil,
+  Trash2, ExternalLink, Plus, FileCode, MonitorPlay, GitCompare, FolderTree,
+  Pencil, PanelsTopLeft, ScrollText, StickyNote, X,
 } from "lucide-react";
-import type { ReactNode } from "react";
 import type { BuildAgent } from "@shared/types";
 import {
   Button,
@@ -21,22 +20,20 @@ import {
   Stack,
   StateBlock,
   StatusPill,
-  Tabs,
   Textarea,
   type SegmentedOption,
   type StatusKind,
-  type TabItem,
 } from "../ui";
 import Chat from "../components/Chat";
 import { useCrumbLabel } from "../components/appNav";
 
-// Build-agent detail = the in-web coding UI. Per ADR-009:
-//   - Top status strip with pills (state / preview / branch) and a
-//     pop-chat link.
-//   - Two docs tabs: system-prompt | interventions.
-//   - Preview is a link-out-of-box card; custom-command behind a disclosure.
-//   - Branches picker on the status bar; modal opens for a new branch.
-//   - Existing file tree + editor + diff tabs preserved.
+// Build-agent surface = chat-first. Opening a builder lands you in the CHAT (the
+// primary surface, full-width). The coding tools — file tree, editor, live
+// preview, diff/commit, system prompt, interventions — live in ONE secondary
+// "Workbench" panel toggled from the header. There is a SINGLE view control (the
+// Workbench toggle); the chat carries no separate expand button here, so the
+// old "two expanders, one worked" confusion is gone. On mobile the Workbench
+// opens as a full-screen overlay over the chat.
 
 type TreeNode = {
   name: string;
@@ -46,12 +43,11 @@ type TreeNode = {
   children?: TreeNode[];
 };
 
-type PaneTab = "editor" | "preview" | "diff";
-type DocTab = "system-prompt" | "interventions";
-
-// Which region is expanded full-width (IDE-style focus). "all" = the 3-up layout.
-type FocusRegion = "all" | "files" | "center" | "chat";
-const FOCUS_KEY = "ws-agent-build-focus";
+// Workbench center views. Editor/Preview/Diff are the code panes; Prompt (the
+// agent's PROJECT.md) and Notes (interventions) are the steering docs — all one
+// Segmented switch so the workbench is a single, flat surface.
+type PaneTab = "editor" | "preview" | "diff" | "prompt" | "notes";
+const WORKBENCH_KEY = "ws-agent-build-workbench";
 
 type Worktree = {
   branch_slug: string;
@@ -86,18 +82,17 @@ const PANE_VIEWS: SegmentedOption<PaneTab>[] = [
   { value: "editor", label: <><FileCode size={15} aria-hidden /> Editor</> },
   { value: "preview", label: <><MonitorPlay size={15} aria-hidden /> Preview</> },
   { value: "diff", label: <><GitCompare size={15} aria-hidden /> Diff</> },
+  { value: "prompt", label: <><ScrollText size={15} aria-hidden /> Prompt</> },
+  { value: "notes", label: <><StickyNote size={15} aria-hidden /> Notes</> },
 ];
 
 const PANE_HELP: Record<PaneTab, string> = {
   editor: "The file selected in Files.",
   preview: "The live running app (dev server).",
   diff: "Working-tree changes vs HEAD, with commit.",
+  prompt: "The agent's system prompt (PROJECT.md), read first every turn.",
+  notes: "Interventions the agent picks up between turns.",
 };
-
-const DOC_TABS: TabItem<DocTab>[] = [
-  { value: "system-prompt", label: "System prompt" },
-  { value: "interventions", label: "Interventions" },
-];
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
@@ -266,40 +261,6 @@ function NewBranchModal({
   );
 }
 
-// Region header: title + a focus/restore toggle. When this region is focused it
-// shows "restore" (Minimize2); otherwise "expand" (Maximize2). One control height.
-function RegionHead({
-  icon, title, region, focus, onFocus, extra,
-}: {
-  icon: ReactNode;
-  title: string;
-  region: Exclude<FocusRegion, "all">;
-  focus: FocusRegion;
-  onFocus: (next: FocusRegion) => void;
-  extra?: ReactNode;
-}) {
-  const focused = focus === region;
-  return (
-    <div className="ws-region-head">
-      <span className="ws-region-head__title">{icon} {title}</span>
-      <Row style={{ gap: "var(--space-1)" }}>
-        {extra}
-        <Button
-          size="sm"
-          variant="ghost"
-          icon
-          className="ws-region-head__focus"
-          onClick={() => onFocus(focused ? "all" : region)}
-          aria-label={focused ? `Restore ${title} to split view` : `Expand ${title} full width`}
-          title={focused ? "Restore split view" : "Expand full width"}
-        >
-          {focused ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
-        </Button>
-      </Row>
-    </div>
-  );
-}
-
 export default function AgentBuild() {
   const { slug = "" } = useParams();
   const [agent, setAgent] = useState<BuildAgent | null>(null);
@@ -312,21 +273,21 @@ export default function AgentBuild() {
   const [fileSaving, setFileSaving] = useState(false);
 
   const [paneTab, setPaneTab] = useState<PaneTab>("editor");
-  const [docTab, setDocTab] = useState<DocTab>("system-prompt");
 
-  // IDE-style pane focus, persisted across reloads. Desktop shows the 3-up
-  // workbench ("all") and each region's Maximize/Restore toggle expands a pane.
-  // The chat ALSO has its own expand-to-fullscreen control (toolbar Maximize →
-  // /chat/:key); on mobile the regions stack and that pop-out is how you take the
-  // chat full-screen (the per-region toggle is hidden on mobile — see the CSS).
-  const [focus, setFocus] = useState<FocusRegion>(() => {
-    if (typeof localStorage === "undefined") return "all";
-    const v = localStorage.getItem(FOCUS_KEY) as FocusRegion | null;
-    return v === "files" || v === "center" || v === "chat" || v === "all" ? v : "all";
+  // Chat-first: the Workbench (files/editor/preview/diff/prompt/notes) is a
+  // secondary panel, closed by default so you land in pure chat. Persisted so it
+  // stays where you left it. This single toggle is the ONLY view control on the
+  // page — there is no separate chat expander.
+  const [workbenchOpen, setWorkbenchOpen] = useState<boolean>(() => {
+    if (typeof localStorage === "undefined") return false;
+    return localStorage.getItem(WORKBENCH_KEY) === "open";
   });
-  const changeFocus = useCallback((next: FocusRegion) => {
-    setFocus(next);
-    try { localStorage.setItem(FOCUS_KEY, next); } catch { /* ignore */ }
+  const toggleWorkbench = useCallback(() => {
+    setWorkbenchOpen((cur) => {
+      const next = !cur;
+      try { localStorage.setItem(WORKBENCH_KEY, next ? "open" : "closed"); } catch { /* ignore */ }
+      return next;
+    });
   }, []);
 
   // System prompt (file is PROJECT.md; the label is what's "system prompt"-y).
@@ -454,8 +415,6 @@ export default function AgentBuild() {
   const pickFile = useCallback(async (path: string) => {
     setPickedPath(path);
     setPaneTab("editor");
-    // If Files is focused full-width, picking a file should reveal the editor.
-    setFocus((f) => (f === "files" ? "all" : f));
     try {
       const r = await fetch(`/api/agents/build/${slug}/file?path=${encodeURIComponent(path)}`);
       if (!r.ok) {
@@ -635,6 +594,9 @@ export default function AgentBuild() {
   const previewLabel = previewRunning
     ? `Preview · :${preview?.port}`
     : "Preview · stopped";
+  // The file tree is only companion to the file-oriented panes; Preview / Prompt /
+  // Notes take the full workbench width.
+  const showFiles = paneTab === "editor" || paneTab === "diff";
 
   return (
     <div className="ws-agent-build-page">
@@ -652,6 +614,15 @@ export default function AgentBuild() {
         }
         actions={
           <Row wrap>
+            <Button
+              size="sm"
+              variant={workbenchOpen ? "primary" : "ghost"}
+              onClick={toggleWorkbench}
+              aria-pressed={workbenchOpen}
+              title={workbenchOpen ? "Hide the workbench (files · editor · preview · diff)" : "Show the workbench (files · editor · preview · diff)"}
+            >
+              <PanelsTopLeft aria-hidden /> {workbenchOpen ? "Hide workbench" : "Workbench"}
+            </Button>
             <Button size="sm" variant="ghost" onClick={openRename}>
               <Pencil aria-hidden /> Rename
             </Button>
@@ -671,6 +642,9 @@ export default function AgentBuild() {
       <Card style={{ padding: "var(--space-2) var(--space-3)", marginBottom: "var(--space-4)" }}>
         <Row wrap className="ws-agent-build__status">
           <StatusPill status={stateKind(agent.state)}>{agent.state}</StatusPill>
+          <StatusPill status={agent.claude_session ? "ok" : "stopped"}>
+            {agent.claude_session ? "session live" : "per-turn"}
+          </StatusPill>
           {previewRunning && preview?.public_url ? (
             <a href={preview.public_url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}>
               <StatusPill status="ok">{previewLabel} <ExternalLink size={11} aria-hidden /></StatusPill>
@@ -708,55 +682,70 @@ export default function AgentBuild() {
         </Row>
       </Card>
 
-      <div className="ws-agent-build" data-focus={focus}>
-        {/* --- Files tree --- */}
-        <Card className="ws-agent-build__files ws-agent-build__region" style={{ padding: "var(--space-3)" }}>
-          <RegionHead
-            icon={<FolderTree size={14} aria-hidden />}
-            title="Files"
-            region="files"
-            focus={focus}
-            onFocus={changeFocus}
+      <div className="ws-agent-chat" data-workbench={workbenchOpen ? "open" : "closed"}>
+        {/* --- PRIMARY: chat (the surface you land on) --- */}
+        <section className="ws-agent-chat__chat" aria-label="Chat">
+          <Chat
+            contextKey={`build:${agent.slug}`}
+            mode="build"
+            variant="panel"
+            placeholder="Tell the agent what to build..."
+            scoped
+            hideExpand
           />
-          <p className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", marginBottom: "0.5rem" }}>
-            {agent.cwd}
-          </p>
-          <div className="ws-agent-build__region-body">
-            {!tree ? (
-              <p className="ws-muted">...</p>
-            ) : tree.length === 0 ? (
-              <p className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>(empty)</p>
-            ) : (
-              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                {tree.map((n) => (
-                  <FileTreeNode key={n.path} node={n} depth={0} onPick={pickFile} picked={pickedPath} />
-                ))}
-              </ul>
-            )}
-          </div>
-        </Card>
+        </section>
 
-        {/* --- Center region: Editor / Preview / Diff --- */}
-        <div className="ws-agent-build__main ws-agent-build__region">
-          <RegionHead
-            icon={<FileCode size={14} aria-hidden />}
-            title="Center"
-            region="center"
-            focus={focus}
-            onFocus={changeFocus}
-            extra={
-              <Segmented
-                options={PANE_VIEWS}
-                value={paneTab}
-                onChange={setPaneTab}
-                ariaLabel="Center view"
-              />
-            }
-          />
-          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginBottom: "var(--space-2)" }}>
+        {/* --- SECONDARY: workbench (files · editor · preview · diff · prompt · notes) --- */}
+        {workbenchOpen && (
+        <section className="ws-agent-chat__workbench" aria-label="Workbench">
+          <div className="ws-agent-chat__wb-head">
+            <span className="ws-region-head__title"><PanelsTopLeft size={14} aria-hidden /> Workbench</span>
+            <Button
+              size="sm"
+              variant="ghost"
+              icon
+              onClick={toggleWorkbench}
+              aria-label="Close workbench"
+              title="Close workbench"
+            >
+              <X aria-hidden />
+            </Button>
+          </div>
+          <div className="ws-agent-chat__wb-tabs">
+            <Segmented
+              options={PANE_VIEWS}
+              value={paneTab}
+              onChange={setPaneTab}
+              ariaLabel="Workbench view"
+            />
+          </div>
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0" }}>
             {PANE_HELP[paneTab]}
           </p>
-          <div className="ws-agent-build__region-body">
+          <div className="ws-agent-chat__wb-body" data-files={showFiles ? "on" : "off"}>
+            {showFiles && (
+              <Card className="ws-agent-chat__files" style={{ padding: "var(--space-3)" }}>
+                <span className="ws-region-head__title" style={{ marginBottom: "var(--space-2)" }}>
+                  <FolderTree size={14} aria-hidden /> Files
+                </span>
+                <p className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", marginBottom: "0.5rem" }}>
+                  {agent.cwd}
+                </p>
+                <div className="ws-agent-chat__files-body">
+                  {!tree ? (
+                    <p className="ws-muted">...</p>
+                  ) : tree.length === 0 ? (
+                    <p className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>(empty)</p>
+                  ) : (
+                    <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                      {tree.map((n) => (
+                        <FileTreeNode key={n.path} node={n} depth={0} onPick={pickFile} picked={pickedPath} />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </Card>
+            )}
           <div className="ws-agent-build__center-view">
             {paneTab === "editor" && (
               <Card style={{ padding: "var(--space-3)" }}>
@@ -948,89 +937,59 @@ export default function AgentBuild() {
                 )}
               </Card>
             )}
-          </div>
-
-          {/* --- Docs tabs: system-prompt | interventions --- */}
-          <div style={{ marginTop: "var(--space-5)", flex: "0 0 auto" }}>
-            <Tabs items={DOC_TABS} value={docTab} onChange={setDocTab} />
-            <Card style={{ padding: "var(--space-3)", marginTop: "var(--space-3)" }}>
-              {docTab === "system-prompt" && (
-                <>
-                  <Row between style={{ marginBottom: "0.5rem" }}>
-                    <span className="ws-card__meta">System prompt - the agent reads this first every turn.</span>
-                    <Button size="sm" variant="primary" onClick={saveSystemPrompt} disabled={!systemPromptDirty}>
-                      <Save aria-hidden /> Save
-                    </Button>
-                  </Row>
-                  <Textarea
-                    value={systemPrompt}
-                    onChange={(e) => { setSystemPrompt(e.target.value); setSystemPromptDirty(true); }}
-                    rows={12}
-                    style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fs-sm)" }}
+            {paneTab === "prompt" && (
+              <Card style={{ padding: "var(--space-3)" }}>
+                <Row between style={{ marginBottom: "0.5rem" }}>
+                  <span className="ws-card__meta">System prompt - the agent reads this first every turn.</span>
+                  <Button size="sm" variant="primary" onClick={saveSystemPrompt} disabled={!systemPromptDirty}>
+                    <Save aria-hidden /> Save
+                  </Button>
+                </Row>
+                <Textarea
+                  value={systemPrompt}
+                  onChange={(e) => { setSystemPrompt(e.target.value); setSystemPromptDirty(true); }}
+                  className="ws-agent-build__editor-area"
+                  rows={16}
+                  style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fs-sm)" }}
+                />
+                <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.4rem" }}>
+                  Stored as <code className="ws-mono">PROJECT.md</code>.
+                </p>
+              </Card>
+            )}
+            {paneTab === "notes" && (
+              <Card style={{ padding: "var(--space-3)" }}>
+                <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>
+                  Drop a note for the agent to pick up on its next turn. The agent reads{" "}
+                  <code className="ws-mono">INTERVENTIONS.md</code> between turns; unacked entries are injected into context.
+                </p>
+                <Row style={{ marginBottom: "var(--space-3)" }}>
+                  <Input
+                    value={newIntervention}
+                    placeholder="Drop intervention..."
+                    onChange={(e) => setNewIntervention(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); dropIntervention(); } }}
+                    style={{ flex: 1 }}
                   />
-                  <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.4rem" }}>
-                    Treat this like the system prompt. Stored as <code className="ws-mono">PROJECT.md</code>.
-                  </p>
-                </>
-              )}
-              {docTab === "interventions" && (
-                <>
-                  <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>
-                    Drop a note for the agent to pick up on its next turn. The agent reads{" "}
-                    <code className="ws-mono">INTERVENTIONS.md</code> between turns; unacked entries are injected into context.
-                  </p>
-                  <Row style={{ marginBottom: "var(--space-3)" }}>
-                    <Input
-                      value={newIntervention}
-                      placeholder="Drop intervention..."
-                      onChange={(e) => setNewIntervention(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); dropIntervention(); } }}
-                      style={{ flex: 1 }}
-                    />
-                    <Button variant="primary" onClick={dropIntervention} disabled={!newIntervention.trim()}>
-                      Drop
-                    </Button>
-                  </Row>
-                  <pre
-                    style={{
-                      padding: "0.6rem", background: "var(--bg-inset)",
-                      borderRadius: "var(--radius-sm)", fontSize: "var(--fs-xs)",
-                      maxHeight: "30vh", overflow: "auto", whiteSpace: "pre-wrap",
-                    }}
-                  >
-                    {interventions || "(no interventions yet)"}
-                  </pre>
-                </>
-              )}
-            </Card>
+                  <Button variant="primary" onClick={dropIntervention} disabled={!newIntervention.trim()}>
+                    Drop
+                  </Button>
+                </Row>
+                <pre
+                  style={{
+                    padding: "0.6rem", background: "var(--bg-inset)",
+                    borderRadius: "var(--radius-sm)", fontSize: "var(--fs-xs)",
+                    flex: 1, minHeight: "12rem", overflow: "auto", whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {interventions || "(no interventions yet)"}
+                </pre>
+              </Card>
+            )}
           </div>
           </div>
-        </div>
-
-        {/* --- Chat (Build mode) --- */}
-        <Card className="ws-agent-build__chat ws-agent-build__region" style={{ padding: "var(--space-3)" }}>
-          <RegionHead
-            icon={<MessageSquare size={14} aria-hidden />}
-            title="Chat"
-            region="chat"
-            focus={focus}
-            onFocus={changeFocus}
-            extra={
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                {agent.claude_session ? "session live" : "per-turn"}
-              </span>
-            }
-          />
-          <div className="ws-agent-build__region-body" style={{ display: "flex", flexDirection: "column" }}>
-            <Chat
-              contextKey={`build:${agent.slug}`}
-              mode="build"
-              variant="panel"
-              placeholder="Tell the agent what to build..."
-              scoped
-            />
-          </div>
-        </Card>
+        </section>
+        )}
       </div>
 
       <ConfirmDialog

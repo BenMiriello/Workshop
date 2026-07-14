@@ -2,7 +2,7 @@
 // streaming reply path to the resident voice worker (/api/voice/session +
 // /turns + SSE), loads + persists per-owner prefs, and exposes a live snapshot
 // via useSyncExternalStore.
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { chatApi } from "./chat";
 import { voiceApi } from "./voiceApi";
@@ -27,7 +27,16 @@ export function useVoiceSession(
   const workerThreadRef = useRef<string | null>(null);
   const onBoundRef = useRef(onThreadBound);
   onBoundRef.current = onThreadBound;
-  const prefsRef = useRef<VoicePrefs>({ ...DEFAULT_PREFS });
+  // Prefs are React state so every control repaints the instant it changes (no
+  // reliance on the 60fps mic-level emit to force a re-render). prefsRef mirrors
+  // the same value synchronously so updatePrefs can merge against the live prefs
+  // and construct the session before the first render commit.
+  const [prefs, setPrefsState] = useState<VoicePrefs>({ ...DEFAULT_PREFS });
+  const prefsRef = useRef<VoicePrefs>(prefs);
+  // The 400ms persist debounce accumulates the WHOLE set of fields changed within
+  // the window and PUTs them together, so a rapid Voice-then-Speed change doesn't
+  // drop the Voice save (the old code persisted only the last patch).
+  const pendingPatch = useRef<Partial<VoicePrefs>>({});
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Ensure the resident worker exists for the bound thread; returns the thread id.
@@ -55,7 +64,7 @@ export function useVoiceSession(
   // handle cancels generation (barge-in). Falls back to the blocking /messages
   // path if streaming can't start and no tokens have arrived yet.
   const startReply = useCallback(
-    (text: string, handlers: ReplyHandlers, opts?: { speculative?: boolean }): ReplyHandle => {
+    (text: string, handlers: ReplyHandlers, opts?: { speculative?: boolean; blocking?: boolean }): ReplyHandle => {
       const ac = new AbortController();
       let turnId: string | null = null;
       let full = "";
@@ -104,6 +113,9 @@ export function useVoiceSession(
       };
 
       (async () => {
+        // Watchdog retry (and any caller that asks): skip streaming, go straight
+        // to the blocking /messages fallback.
+        if (opts?.blocking) { await fallback(); return; }
         try {
           const thread = await ensureSession();
           const tr = await fetch(`/api/voice/session/${thread}/turns`, {
@@ -212,6 +224,7 @@ export function useVoiceSession(
           verbosity: (p.verbosity as VoicePrefs["verbosity"]) ?? DEFAULT_PREFS.verbosity,
         };
         prefsRef.current = merged;
+        setPrefsState(merged);
         session.setPrefs(merged);
       })
       .catch(() => {});
@@ -232,12 +245,22 @@ export function useVoiceSession(
     (patch: Partial<VoicePrefs>) => {
       const next = { ...prefsRef.current, ...patch };
       prefsRef.current = next;
+      // (a) React state so the controls repaint now; (b) push merged prefs to the
+      // live session (re-resolves providers / applies mute mid-speech).
+      setPrefsState(next);
       session.setPrefs(next);
+      // (c) accumulate the changed fields and flush the whole set once — merging
+      // so a second field changed within the window is not lost.
+      pendingPatch.current = { ...pendingPatch.current, ...patch };
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => voiceApi.putPrefs(patch).catch(() => {}), 400);
+      saveTimer.current = setTimeout(() => {
+        const merged = pendingPatch.current;
+        pendingPatch.current = {};
+        if (Object.keys(merged).length) voiceApi.putPrefs(merged).catch(() => {});
+      }, 400);
     },
     [session],
   );
 
-  return { session, snapshot, prefs: prefsRef.current, updatePrefs, prewarm };
+  return { session, snapshot, prefs, updatePrefs, prewarm };
 }
