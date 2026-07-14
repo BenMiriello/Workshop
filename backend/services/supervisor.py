@@ -516,6 +516,13 @@ async def _supervise_one(agent: dict) -> None:
 # AgentSupervisor — FastAPI lifespan-bound
 # ============================================================
 
+# Durable pause flag. The legacy Letta/Ollama heartbeat is being retired (see
+# docs/platform-redesign/coherent-rebuild-2026-07-14.md, Stage 0/9). While it is
+# paused we must survive a backend restart without silently resuming and
+# re-flooding the Jobs feed, so the paused state is persisted here and re-read on
+# start(). Delete the file (or call resume()) to bring the heartbeat back.
+_PAUSE_FLAG = Path("/home/clawd-a/workshop/.runtime/supervisor-paused")
+
 
 class AgentSupervisor:
     def __init__(self) -> None:
@@ -529,6 +536,13 @@ class AgentSupervisor:
     async def start(self) -> None:
         self._client = httpx.AsyncClient(base_url=LETTA_URL, timeout=30.0)
         self.started_at = _now_iso()
+        if _PAUSE_FLAG.exists():
+            # Honor a durable pause across restarts: keep the client for a cheap
+            # resume() but do not start the scan loop, so no heartbeats fire.
+            self.paused = True
+            self.paused_at = _now_iso()
+            log.info("supervisor: start suppressed (durable pause flag present)")
+            return
         self.paused = False
         self.paused_at = None
         self._scan_task = asyncio.create_task(self._scan_loop(), name="supervisor-scan")
@@ -560,6 +574,11 @@ class AgentSupervisor:
         self._scan_task = None
         self.paused = True
         self.paused_at = _now_iso()
+        try:
+            _PAUSE_FLAG.parent.mkdir(parents=True, exist_ok=True)
+            _PAUSE_FLAG.write_text(self.paused_at)
+        except OSError as e:
+            log.warning("supervisor: could not persist pause flag: %s", e)
         log.info("supervisor: paused")
 
     async def resume(self) -> None:
@@ -572,6 +591,10 @@ class AgentSupervisor:
         self.started_at = _now_iso()
         self.paused = False
         self.paused_at = None
+        try:
+            _PAUSE_FLAG.unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("supervisor: could not clear pause flag: %s", e)
         if self._scan_task is None or self._scan_task.done():
             self._scan_task = asyncio.create_task(self._scan_loop(), name="supervisor-scan")
         log.info("supervisor: resumed")
