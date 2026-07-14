@@ -104,6 +104,47 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         if any(m in norm for m in vacuous_markers):
             return ("skipped (vacuous self-referential task — just do the work, "
                     f"don't propose reviewing the list): {task_text.strip()}")
+        # Backstop for the reworded-meta spam the marker list keeps missing
+        # ("Reduce todo backlog by …", "Review and unblock todos", "Review and
+        # finalize the documentation for the new feature release"). A concrete
+        # task always names a concrete referent (a file, service, endpoint,
+        # feature by name). A vacuous meta-task is built ENTIRELY from
+        # list-management vocabulary — management verbs applied to the todo list
+        # itself. So: strip stopwords, then if every remaining word is generic
+        # management vocab with nothing concrete left, reject it. Real tasks
+        # survive because they carry at least one domain word.
+        _meta_vocab = {
+            # management verbs
+            "review", "reviewing", "unblock", "unblocking", "resolve", "resolving",
+            "reduce", "reducing", "prioritize", "prioritizing", "address",
+            "addressing", "escalate", "escalating", "investigate", "investigating",
+            "finalize", "finalizing", "evaluate", "evaluating", "complete",
+            "completing", "process", "processing", "categorize", "categorizing",
+            "streamline", "streamlining", "begin", "identify", "identifying",
+            "analyze", "analyzing", "summarize", "summarizing", "handle", "clear",
+            "clean", "cleanup", "triage", "sort", "organize",
+            # list-referential / generic-filler nouns
+            "backlog", "blocked", "block", "blocker", "open", "priority",
+            "prioritized", "urgent", "urgency", "oldest", "newest", "top", "next",
+            "step", "root", "cause", "critical", "high", "low", "normal",
+            "remaining", "current", "multiple", "several", "clear", "progress",
+            "workflow", "immediate", "pending", "actionable", "backlog",
+            "documentation", "document", "doc", "draft", "feature", "release",
+            "design", "presentation", "escalation", "unblocking", "number",
+            "highest", "lowest", "topmost", "possible", "necessary", "clearly",
+            # bare numerals / count words the tokenizer keeps
+            "1", "2", "3", "4", "5", "one", "two", "three", "four", "five",
+            # generic connectors/fillers the stopword set doesn't cover
+            "by", "up", "out", "if", "so", "then", "else", "via", "at", "not",
+        }
+        _content = [
+            _stem(w) for w in re.findall(r"[a-z0-9]+", norm)
+            if w not in _stop and len(w) > 1
+        ]
+        if _content and all(_stem(w) in _meta_vocab or w in _meta_vocab for w in _content):
+            return ("skipped (vacuous meta-task — pure list-management vocabulary "
+                    "with no concrete referent; just do the work): "
+                    f"{task_text.strip()}")
         # Near-duplicate dedupe: skip if an open task shares most of its topic
         # signature with this one (containment ≥ 0.7 of the smaller set, ≥ 2 words
         # shared). Catches the reworded-same-task spam that exact-match misses.
