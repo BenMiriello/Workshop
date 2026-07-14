@@ -348,9 +348,9 @@ export default function Location() {
                       <td style={{ padding: "0.3rem 0.5rem", fontFamily: "ui-monospace, monospace" }}>
                         {r.lat.toFixed(5)}, {r.lng.toFixed(5)}
                       </td>
-                      <td style={{ padding: "0.3rem 0.5rem" }}>{r.accuracy_m != null ? Math.round(r.accuracy_m) : "—"}</td>
+                      <td style={{ padding: "0.3rem 0.5rem" }}>{r.accuracy_m != null ? Math.round(r.accuracy_m) : "–"}</td>
                       <td style={{ padding: "0.3rem 0.5rem", fontFamily: "ui-monospace, monospace", color: "var(--muted)" }}>
-                        {r.source || "—"}
+                        {r.source || "–"}
                       </td>
                     </tr>
                   ))}

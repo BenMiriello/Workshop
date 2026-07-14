@@ -80,7 +80,7 @@ type BalancesResp = { items: Item[]; _cache?: CacheMeta };
 type TransactionsResp = { transactions: Transaction[]; _cache?: CacheMeta };
 
 const fmt = (n: number | null, ccy: string | null) => {
-  if (n == null) return "—";
+  if (n == null) return "–";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: ccy || "USD" }).format(n);
 };
 
@@ -298,8 +298,7 @@ export default function Finance() {
                 {fetchErr}
                 {isLocal && (
                   <>
-                    {" "}
-                    — showing last saved data
+                    {", showing last saved data"}
                     {localBalTs ? ` from ${fmtAge(Date.now() - localBalTs)}` : ""}
                   </>
                 )}

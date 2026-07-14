@@ -777,7 +777,7 @@ function AlertsTab() {
                 const deliveryLabel = a.delivery?.ok ? "sent"
                   : a.delivery?.queued ? `queued (${a.delivery.via ?? "file"})`
                   : a.delivery?.error ? `err: ${a.delivery.error.slice(0, 40)}`
-                  : "—";
+                  : "–";
                 return (
                   <tr key={i} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem", whiteSpace: "nowrap" }}>{new Date(a.ts).toLocaleString([], { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
@@ -786,9 +786,9 @@ function AlertsTab() {
                       {a.checkpoint ? ` · ${a.checkpoint}` : ""}
                       {a.force ? " (forced)" : ""}
                     </td>
-                    <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>{a.schedule_id ?? "—"}</td>
+                    <td style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>{a.schedule_id ?? "–"}</td>
                     <td style={{ fontSize: "0.85rem", color: a.late_by_min ? "var(--danger)" : "var(--muted)" }}>
-                      {a.late_by_min != null ? `+${Math.round(a.late_by_min)}m` : "—"}
+                      {a.late_by_min != null ? `+${Math.round(a.late_by_min)}m` : "–"}
                     </td>
                     <td>
                       <span style={{ color: deliveryColor, fontSize: "0.82rem", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>

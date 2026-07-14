@@ -45,7 +45,7 @@ export type Budget = {
 };
 
 const usd = (n: number | null | undefined, cents = false) =>
-  n == null ? "—" : new Intl.NumberFormat("en-US", {
+  n == null ? "–" : new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD",
     minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0,
   }).format(n);
@@ -84,7 +84,7 @@ async function patchPlan(t: PatchTarget, value: number | string | null): Promise
 }
 
 function InlineNumber({
-  value, target, onSaved, placeholder = "—", display, ariaLabel,
+  value, target, onSaved, placeholder = "–", display, ariaLabel,
 }: {
   value: number; target: PatchTarget; onSaved: () => void;
   placeholder?: string; display?: (n: number) => string; ariaLabel?: string;
@@ -149,7 +149,7 @@ function InlineNumber({
 }
 
 function InlineText({
-  value, target, onSaved, placeholder = "—", ariaLabel, nullable = false,
+  value, target, onSaved, placeholder = "–", ariaLabel, nullable = false,
 }: {
   value: string | null; target: PatchTarget; onSaved: () => void;
   placeholder?: string; ariaLabel?: string; nullable?: boolean;
@@ -297,7 +297,7 @@ function ScaledInner({
   if (!editing) {
     return (
       <button className="inline-edit" onClick={start} aria-label={ariaLabel || "edit"} title="Click to edit">
-        {value || value === 0 ? display(value) : (placeholder || "—")}
+        {value || value === 0 ? display(value) : (placeholder || "–")}
       </button>
     );
   }
@@ -569,7 +569,7 @@ function payoffSummary(d: Debt): string {
   if (d.strategy === "payoff_by_date") {
     const amt = d.planned_per_period > 0 ? ` · ~${usd(d.planned_per_period, true)}/${unit}` : "";
     const left = d.months_remaining != null ? ` · ${Math.ceil(d.months_remaining)} mo left` : "";
-    return `Pay off by ${d.target_date ?? "—"}${amt}${left}`;
+    return `Pay off by ${d.target_date ?? "–"}${amt}${left}`;
   }
   // fixed_amount
   const amt = d.planned_per_period > 0 ? `${usd(d.planned_per_period)} per ${unit}` : "no payment set";

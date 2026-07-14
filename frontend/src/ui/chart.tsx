@@ -63,7 +63,7 @@ export function ChartTooltip({
           {showName && p.name != null && (
             <span className="ws-chart-tooltip__name">{p.name}</span>
           )}
-          <span>{p.value != null ? (format ? format(p.value) : String(p.value)) : "—"}</span>
+          <span>{p.value != null ? (format ? format(p.value) : String(p.value)) : "–"}</span>
         </div>
       ))}
     </div>

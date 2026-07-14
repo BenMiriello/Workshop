@@ -58,10 +58,10 @@ type OllamaStatus = {
 };
 
 const fmtMiB = (m: number | undefined) =>
-  m == null ? "—" : m >= 1024 ? `${(m / 1024).toFixed(1)} GiB` : `${m} MiB`;
+  m == null ? "–" : m >= 1024 ? `${(m / 1024).toFixed(1)} GiB` : `${m} MiB`;
 
 const fmtBytes = (b: number | null) => {
-  if (b == null) return "—";
+  if (b == null) return "–";
   if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GiB`;
   if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(0)} MiB`;
   return `${b} B`;
@@ -195,7 +195,7 @@ export default function AutonomyControls() {
       </Row>
 
       <Row label="supervisor">
-        {auto == null ? "—" : (
+        {auto == null ? "–" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <StatusDot status={supPaused ? "warn" : "running"}>
               {supPaused ? "paused" : `ticking ${auto.supervisor.agent_count} agent${auto.supervisor.agent_count === 1 ? "" : "s"}`}
@@ -218,7 +218,7 @@ export default function AutonomyControls() {
       </Row>
 
       <Row label="cron loop">
-        {auto == null ? "—" : (
+        {auto == null ? "–" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <StatusDot status={cronDisabled ? "stopped" : "running"}>
               {cronDisabled ? "disabled" : "enabled (Ralph fires every 20m)"}
@@ -257,7 +257,7 @@ export default function AutonomyControls() {
       </Row>
 
       <Row label="broker">
-        {bro == null ? "—" : !bro.available ? (
+        {bro == null ? "–" : !bro.available ? (
           <span className="ws-muted">gpubrokerd offline · Workshop running standalone</span>
         ) : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>

@@ -112,7 +112,7 @@ export function Textarea({ className, ...rest }: React.TextareaHTMLAttributes<HT
 export function ReadOnly({ value, className }: { value?: ReactNode; className?: string }) {
   const empty = value == null || value === "";
   return (
-    <span className={cx("ws-readonly", empty && "ws-readonly--empty", className)}>{empty ? "—" : value}</span>
+    <span className={cx("ws-readonly", empty && "ws-readonly--empty", className)}>{empty ? "–" : value}</span>
   );
 }
 
