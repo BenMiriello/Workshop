@@ -15,26 +15,41 @@ import {
   type ReplyHandlers,
 } from "./voiceSession";
 
-export function useVoiceSession(contextKey: string, model?: string, initialThreadId?: string) {
-  const threadRef = useRef<string | null>(null);
+export function useVoiceSession(
+  contextKey: string,
+  model?: string,
+  threadId?: string,
+  onThreadBound?: (id: string) => void,
+) {
+  const threadRef = useRef<string | null>(threadId ?? null);
+  // The thread the resident worker is currently warmed for. Cleared when the host
+  // chat switches threads so the next spoken turn re-binds (and re-warms) lazily.
+  const workerThreadRef = useRef<string | null>(null);
+  const onBoundRef = useRef(onThreadBound);
+  onBoundRef.current = onThreadBound;
   const prefsRef = useRef<VoicePrefs>({ ...DEFAULT_PREFS });
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Ensure the resident worker + thread exist; returns the thread id. Binds an
-  // existing thread when launched from a chat (so the conversation continues),
-  // else the backend creates one. Prewarmed on mount.
+  // Ensure the resident worker exists for the bound thread; returns the thread id.
+  // Binds the host chat's active thread when there is one (so the conversation
+  // continues), else the backend creates one and we report it back via
+  // onThreadBound so the host can adopt it. NOT called on mount — a worker is
+  // only spawned when voice actually starts, so idle chats never spawn one.
   const ensureSession = useCallback(async (): Promise<string> => {
-    if (threadRef.current) return threadRef.current;
+    if (threadRef.current && workerThreadRef.current === threadRef.current) return threadRef.current;
+    const wasBound = !!threadRef.current;
     const r = await fetch("/api/voice/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_key: contextKey, thread_id: initialThreadId }),
+      body: JSON.stringify({ context_key: contextKey, thread_id: threadRef.current ?? undefined }),
     });
     if (!r.ok) throw new Error(`session ${r.status}`);
     const id = (await r.json()).thread_id as string;
     threadRef.current = id;
+    workerThreadRef.current = id;
+    if (!wasBound) onBoundRef.current?.(id);
     return id;
-  }, [contextKey, initialThreadId]);
+  }, [contextKey]);
 
   // startReply: begin a streaming turn. Deltas arrive over SSE; the returned
   // handle cancels generation (barge-in). Falls back to the blocking /messages
@@ -155,13 +170,21 @@ export function useVoiceSession(contextKey: string, model?: string, initialThrea
     [startReply, persistSignal],
   );
 
-  // Prewarm the resident worker on mount — but ONLY when we're continuing an
-  // existing thread. Voice is just another interface to the SAME chat; opening it
-  // must never fabricate a parallel thread. With no thread to bind, we defer: the
-  // thread is created lazily on the first spoken turn (see startReply).
+  // Follow the host chat's active thread. When it switches (or first resolves),
+  // rebind so the next spoken turn targets the right thread; the worker re-warms
+  // lazily on that turn. Voice is just another interface to the SAME chat — it
+  // must never fabricate a parallel thread.
   useEffect(() => {
-    if (initialThreadId) ensureSession().catch(() => {});
-  }, [initialThreadId, ensureSession]);
+    const next = threadId ?? null;
+    if (next !== threadRef.current) {
+      threadRef.current = next;
+      workerThreadRef.current = null;
+    }
+  }, [threadId]);
+
+  // Warm the worker ahead of the first spoken turn (called when voice turns on),
+  // so first-turn latency isn't paid on the mic. No-op if already warm.
+  const prewarm = useCallback(() => { ensureSession().catch(() => {}); }, [ensureSession]);
 
   // Load persisted prefs once and push them into the live session.
   useEffect(() => {
@@ -216,5 +239,5 @@ export function useVoiceSession(contextKey: string, model?: string, initialThrea
     [session],
   );
 
-  return { session, snapshot, prefs: prefsRef.current, updatePrefs };
+  return { session, snapshot, prefs: prefsRef.current, updatePrefs, prewarm };
 }

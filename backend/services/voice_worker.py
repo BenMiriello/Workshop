@@ -112,22 +112,45 @@ class VoiceTurn:
     deferred_persist: bool = False
     # Ordered event log the SSE endpoint replays/streams. Each: {kind, payload, ts}.
     events: list[dict] = field(default_factory=list)
+    # Ordered text/tool segments, same shape the build chat persists
+    # (build_streaming._seg_text/_seg_tool -> chat_store meta["segments"]): a
+    # {"t":"text","text":...} or {"t":"tool","name":...,"input":...} list. Lets a
+    # voice BUILD turn keep its tool history in the thread transcript.
+    segments: list[dict] = field(default_factory=list)
     text: str = ""            # accumulated visible reply text
     complete: bool = False
     committed: bool = False
     cancelled: bool = False
+    # An explicit user cancel ("scrap what I just said") — the mis-heard utterance
+    # and any partial reply are DROPPED, not written to the thread. (A barge-in is
+    # different: reason="barge" keeps what was actually heard.)
+    discarded: bool = False
     persisted: bool = False
     error: str | None = None
     heard_count: int | None = None
     started: float = field(default_factory=time.time)
     # marks and lifecycle
     first_delta_at: float | None = None
+    completed_at: float | None = None
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
     new_event: asyncio.Event = field(default_factory=asyncio.Event)
 
     def push(self, kind: str, payload: dict) -> None:
         self.events.append({"kind": kind, "payload": payload, "ts": time.time()})
         self.new_event.set()
+
+    # Segment accumulators mirror build_streaming's _seg_text/_seg_tool so the
+    # persisted meta["segments"] is identical in shape to a text build turn.
+    def seg_text(self, s: str) -> None:
+        if not s:
+            return
+        if self.segments and self.segments[-1].get("t") == "text":
+            self.segments[-1]["text"] += s
+        else:
+            self.segments.append({"t": "text", "text": s})
+
+    def seg_tool(self, name, inp) -> None:
+        self.segments.append({"t": "tool", "name": name or "?", "input": inp or ""})
 
 
 TURNS: dict[str, VoiceTurn] = {}
@@ -251,19 +274,28 @@ async def _pump(worker: VoiceWorker) -> None:
             elif t == "result":
                 _finish_turn(turn, error=None)
             elif t == "assistant":
+                # The completed assistant message carries the authoritative,
+                # ORDERED content blocks (text + tool_use), exactly like the
+                # source build_streaming builds its segments from. Accumulate
+                # them into turn.segments so a voice BUILD turn persists its tool
+                # history in the same shape as a text build turn. (A build turn
+                # emits several assistant messages, tool_use -> tool_result ->
+                # assistant ...; each contributes its blocks in arrival order.)
                 for b in ev.get("message", {}).get("content", []) or []:
                     if not isinstance(b, dict):
                         continue
-                    # Fallback: if no deltas arrived (partials disabled/edge),
-                    # salvage the complete assistant text.
-                    if b.get("type") == "text" and not turn.text:
-                        turn.text += b.get("text", "")
+                    if b.get("type") == "text":
+                        txt = b.get("text", "")
+                        # Fallback: if no deltas arrived (partials disabled/edge),
+                        # salvage the complete assistant text into the reply.
+                        if not turn.text:
+                            turn.text += txt
+                        turn.seg_text(txt)
                     elif b.get("type") == "tool_use":
                         # Enrich the tool chip with a one-line input summary.
-                        turn.push("tool", {
-                            "name": b.get("name", "tool"),
-                            "input": _summarize_tool_input(b.get("input", {}) or {}),
-                        })
+                        inp = _summarize_tool_input(b.get("input", {}) or {})
+                        turn.push("tool", {"name": b.get("name", "tool"), "input": inp})
+                        turn.seg_tool(b.get("name", "tool"), inp)
     except Exception as e:  # pragma: no cover — defensive
         log.warning("voice pump %s died: %s", worker.session_key, e)
     # stdout closed -> process gone.
@@ -277,6 +309,7 @@ def _finish_turn(turn: VoiceTurn, *, error: str | None) -> None:
         return
     turn.error = error
     turn.complete = True
+    turn.completed_at = time.time()
     if error:
         turn.push("error", {"detail": error})
     turn.push("done", {"text_len": len(turn.text), "error": bool(error)})
@@ -339,6 +372,18 @@ async def start_turn(*, context_key: str, thread_id: str, text: str,
     """Begin a streaming reply turn. Returns immediately; the SSE endpoint reads
     the turn's event log as it fills."""
     worker = await ensure_worker(context_key, thread_id, model)
+    # Title the auto-created voice thread from the first utterance instead of the
+    # permanent "Voice" placeholder (routes/voice.py voice_session). Only on the
+    # first turn (no messages yet) and only while still the placeholder, so a
+    # later turn never clobbers a real title.
+    try:
+        th = chat_store.get_thread(thread_id)
+        if th and th.get("title") == "Voice" and not th.get("messages"):
+            first_line = " ".join(text.split())[:40].strip()
+            if first_line:
+                chat_store.rename_thread(thread_id, first_line)
+    except Exception:  # pragma: no cover — titling is cosmetic, never block a turn
+        pass
     turn = VoiceTurn(
         id=str(uuid.uuid4()), session_key=worker.session_key, thread_id=thread_id,
         user_text=text, speculative=speculative, deferred_persist=speculative,
@@ -374,8 +419,10 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
             _finish_turn(turn, error=f"timeout after {int(timeout_s)}s")
         worker.current = None
         worker.touch()
-    # Persist outside the lock (unless deferred for a speculative draft).
-    if not turn.deferred_persist:
+    # Persist outside the lock — unless it was a speculative draft (deferred) or
+    # the user explicitly cancelled ("scrap that"), in which case the utterance is
+    # dropped so a mis-heard send never lands in the transcript.
+    if not turn.deferred_persist and not turn.discarded:
         _persist_turn(turn)
 
 
@@ -407,6 +454,13 @@ def _persist_turn(turn: VoiceTurn) -> None:
         meta: dict = {"voice": True}
         if turn.heard_count is not None:
             meta["heard"] = turn.heard_count
+        # A voice BUILD turn ran tools; persist the ordered text/tool segments in
+        # the SAME shape the text build chat stores (chat_store meta["segments"])
+        # so the thread keeps its tool history. Conversational turns have only a
+        # single text segment redundant with the content, so skip meta bloat there
+        # and attach segments only when a tool actually ran.
+        if any(s.get("t") == "tool" for s in turn.segments):
+            meta["segments"] = turn.segments
         chat_store.append_message(
             turn.thread_id, "assistant", turn.text.strip(),
             meta=meta if meta else None,
@@ -454,7 +508,20 @@ async def cancel_turn(turn_id: str, *, reason: str = "superseded",
                 f"\"{heard_text.strip()}\". Anything after that was not spoken, so "
                 "do not assume I heard it.]"
             )
+        # Speculative supersede: the just-cancelled draft answered an incomplete
+        # fragment that was never spoken. Tell the model to answer the full,
+        # corrected utterance fresh instead of continuing from the dropped draft
+        # (design.md section 4 / D2 correction-marker).
+        elif reason == "superseded":
+            worker.pending_note = (
+                "[correction: my previous message was an incomplete fragment of "
+                "the next one and your reply was never spoken; answer the full "
+                "message fresh.]"
+            )
     turn.cancelled = True
+    # An explicit user cancel discards the utterance entirely (see _run_turn).
+    if reason in ("cancelled", "discard"):
+        turn.discarded = True
     if not turn.complete:
         _finish_turn(turn, error=None)
         turn.push("cancelled", {"reason": reason})
@@ -534,3 +601,10 @@ async def _reaper() -> None:
                         pass
                 worker.dead = True
                 # Keep the record so a later turn respawns with --resume (memory).
+        # Prune completed turn records older than 10 minutes. TURNS otherwise
+        # grows unbounded until restart (D6 backend-hygiene). A live SSE stream
+        # holds its own reference to the turn object, so dropping the dict entry
+        # never interrupts an in-flight reader; only fully-finished turns qualify.
+        for tid, turn in list(TURNS.items()):
+            if turn.completed_at is not None and now - turn.completed_at > 600:
+                del TURNS[tid]

@@ -289,6 +289,58 @@ def _extract_text_from_stream_json(stdout: str) -> str:
     return "\n".join(parts).strip()
 
 
+def _summarize_tool_input(inp) -> str:
+    """One-line preview of a tool call's input for the UI chip. Mirrors
+    build_streaming._summarize_tool_input (kept local to avoid an import cycle:
+    build_streaming imports llm_router)."""
+    if not isinstance(inp, dict):
+        return str(inp)[:300]
+    for key in ("file_path", "path", "pattern", "command", "url", "query", "prompt"):
+        if key in inp:
+            v = str(inp[key])
+            return v if len(v) <= 300 else v[:297] + "…"
+    keys = ",".join(list(inp.keys())[:4])
+    return f"({keys})"
+
+
+def _extract_segments_from_stream_json(stdout: str) -> list[dict]:
+    """Walk stream-json events into the ordered text/tool segment shape the chat
+    UI renders (`AssistantTurn`): {"t":"text","text":...} / {"t":"tool","name",
+    "input"}. Consecutive text blocks merge into one segment, matching the build
+    streaming parser. This is what lets a data/assistant chat surface its tool
+    use (web search, workshop queries) as chips instead of a flat text answer."""
+    segs: list[dict] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if ev.get("type") != "assistant":
+            continue
+        msg = ev.get("message") or {}
+        for block in msg.get("content") or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                txt = block.get("text") or ""
+                if not txt:
+                    continue
+                if segs and segs[-1].get("t") == "text":
+                    segs[-1]["text"] += txt
+                else:
+                    segs.append({"t": "text", "text": txt})
+            elif block.get("type") == "tool_use":
+                segs.append({
+                    "t": "tool",
+                    "name": block.get("name") or "?",
+                    "input": _summarize_tool_input(block.get("input") or {}),
+                })
+    return segs
+
+
 # Empty MCP-server config — pairs with --strict-mcp-config to truly disable
 # all MCP tools. Without this, `--tools ""` only disables the built-in tools
 # (Bash/Read/Edit/etc); MCP servers loaded from project .mcp.json or user
@@ -489,6 +541,10 @@ def call_cloud(
                 "exit_code": proc.returncode,
                 "stop_reason": stop_reason,
                 "recovered": proc.returncode != 0,
+                # Ordered text/tool segments so a data/assistant chat can render
+                # its tool use (web search, workshop queries) as chips, the same
+                # way a build turn does. Empty when the model emitted plain text.
+                "segments": _extract_segments_from_stream_json(proc.stdout),
             }
         # No salvageable text — fall through to the error path with detail.
         stderr_snip = (proc.stderr or "").strip()[:300]

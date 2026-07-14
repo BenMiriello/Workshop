@@ -41,7 +41,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import local_runner, port_registry
+from services import compose_gen, container_runtime, local_runner, port_registry
 
 log = logging.getLogger("workshop.app_runner")
 
@@ -121,6 +121,7 @@ class ServiceSpec:
     health: str | None = None  # http path probed for readiness, e.g. "/health"
     expose: bool = False     # the app's primary UI surface (reflected as the URL)
     enabled: bool = True
+    disabled_reason: str | None = None  # why enabled=false, shown in the UI
     depends_on: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
 
@@ -212,6 +213,7 @@ def _spec_from_raw(raw: dict, idx: int) -> ServiceSpec:
         health=(str(raw["health"]) if raw.get("health") else None),
         expose=bool(raw.get("expose", False)),
         enabled=bool(raw.get("enabled", True)),
+        disabled_reason=(str(raw["_disabled_reason"]).strip() if raw.get("_disabled_reason") else None),
         depends_on=[str(d) for d in (raw.get("depends_on") or []) if isinstance(d, str)],
         env={str(k): str(v) for k, v in (raw.get("env") or {}).items()},
     )
@@ -256,7 +258,13 @@ def _autodetect(project_dir: Path) -> AppManifest:
         if services:
             return AppManifest(name=project_dir.name, services=services, detected=True)
 
-    cmd = local_runner.resolve_command(str(project_dir))  # raises AppError-equivalent
+    try:
+        cmd = local_runner.resolve_command(str(project_dir))
+    except local_runner.DeployError as e:
+        # No declared manifest and nothing auto-detectable to run. Normalize to
+        # AppError so every caller (manifest_dict, start_app, the route) handles a
+        # not-runnable project uniformly instead of a 500 leaking a DeployError.
+        raise AppError(str(e), status=400) from e
     return AppManifest(
         name=project_dir.name,
         services=[ServiceSpec(name="app", start=cmd, cwd=".", expose=True)],
@@ -809,6 +817,165 @@ _SELF_MSG = ("This project is the running Workshop itself — it is not a separa
              "`bash scripts/restart_backend.sh`.")
 
 
+# ---- container backend (docker compose) -------------------------------------
+# When the backend process can reach docker, an app runs as containers via a
+# generated compose file (compose_gen) driven by container_runtime — docker owns
+# ports, restart-on-crash, health, and cleanup, so the port_registry / orphan-reaper
+# / monitor apparatus below is bypassed. Until docker is reachable (it needs the
+# `docker` group, applied on a fresh login/reboot), start_app uses the subprocess
+# path so a running app is never interrupted mid-transition.
+
+def _use_containers() -> bool:
+    return container_runtime.available()
+
+
+def _compose_path_for(slug: str) -> Path:
+    return compose_gen.COMPOSE_ROOT / f"{slug}.yml"
+
+
+# container state → our five-status vocabulary
+_CSTATE = {
+    "running": "running", "restarting": "crashlooping", "exited": "failed",
+    "dead": "failed", "created": "starting", "paused": "stopped", "removing": "stopped",
+}
+
+
+def _container_services(slug: str, manifest: AppManifest, project_dir: Path) -> tuple[list[dict], list[dict]]:
+    """Live per-service + per-dep status from `docker compose ps`, mapped to the same
+    shapes app_status returns for the subprocess backend. Missing rows fall back to
+    the persisted intent (disabled / missing-env failure)."""
+    compose_path = _compose_path_for(slug)
+    rows: dict[str, dict] = {}
+    if compose_path.exists():
+        try:
+            for r in container_runtime.ps(slug, compose_path, cwd=project_dir):
+                if r.get("service"):
+                    rows[r["service"]] = r
+        except container_runtime.ComposeError:
+            pass
+    persisted = _STATE.get(slug, {}).get("services", {})
+    exposed = next((s for s in manifest.services if s.expose and s.enabled), None)
+    services: list[dict] = []
+    for spec in manifest.services:
+        ps = rows.get(spec.name)
+        ps_state = (ps or {}).get("state", "")
+        if not spec.enabled:
+            status = "disabled"
+        elif ps is None:
+            # Enabled but not in compose ps: either never started or gated (missing
+            # required env). Keep the persisted status if it carries a reason.
+            status = persisted.get(spec.name, {}).get("status") or "stopped"
+        else:
+            status = _CSTATE.get(ps_state, "stopped")
+        health = (ps or {}).get("health")
+        healthy = None
+        if status == "running":
+            healthy = True if health in ("healthy", None, "") else False
+        port = persisted.get(spec.name, {}).get("port") if spec is exposed else None
+        services.append({
+            "name": spec.name,
+            "status": status,
+            "pid": None,
+            "port": port,
+            "url": f"http://127.0.0.1:{port}" if port else None,
+            "expose": spec.expose,
+            "healthy": healthy,
+            "error": persisted.get(spec.name, {}).get("error"),
+            "restarts": 0,
+        })
+    deps: list[dict] = []
+    for dep in manifest.deps:
+        ps = rows.get(dep.name)
+        if ps is None:
+            deps.append({"name": dep.name, "ok": False, "error": None})
+            continue
+        ok = ps.get("state") == "running" and ps.get("health") in ("healthy", None, "")
+        err = None if ok else f"{ps.get('state')}" + (f" ({ps.get('health')})" if ps.get("health") else "")
+        deps.append({"name": dep.name, "ok": ok, "error": err})
+    return services, deps
+
+
+def _container_bring_up(slug: str, manifest: AppManifest) -> None:
+    """Worker-thread body for the container backend: generate the compose file and
+    bring the enabled services up (compose pulls their linked deps). A service whose
+    required env is unfilled is gated out with a clear error, exactly like the
+    subprocess path — never upped to crash-loop on a missing key."""
+    lock = _slug_lock(slug)
+    with lock:
+        try:
+            project_dir = _project_dir(slug)
+        except AppError as e:
+            app = _STATE.get(slug, {})
+            app["error"] = e.message
+            app["phase"] = "failed"
+            _persist_state()
+            return
+
+        app = _STATE[slug]
+        app["backend"] = "container"
+        exposed = next((s for s in manifest.services if s.expose and s.enabled), None)
+        host_port = 0
+        if exposed:
+            try:
+                host_port = port_registry.allocate(
+                    _app_owner(slug, exposed.name), "app",
+                    preferred=app.get("services", {}).get(exposed.name, {}).get("port"),
+                )
+                app["services"].setdefault(exposed.name, {})["port"] = host_port
+                app["services"][exposed.name]["url"] = f"http://127.0.0.1:{host_port}"
+            except RuntimeError as e:
+                app["error"] = f"could not allocate a port: {e}"
+
+        secrets = {s.name: _secret_env_for_service(slug, s.name)
+                   for s in manifest.services if s.enabled}
+        meta = compose_gen.generate(slug, manifest, project_dir, host_port,
+                                    secrets_by_service=secrets)
+        app["compose_path"] = str(meta["compose_path"])
+
+        runnable: list[str] = []
+        for spec in [s for s in manifest.services if s.enabled]:
+            missing = _missing_required_env(slug, spec.name, manifest)
+            sstate = app["services"].setdefault(spec.name, _init_service_state(spec, None))
+            if missing:
+                sstate["status"] = "failed"
+                sstate["error"] = ("Missing required env: " + ", ".join(missing)
+                                   + " — set in the project's Environment panel.")
+            else:
+                sstate["status"] = "starting"
+                sstate["error"] = None
+                runnable.append(spec.name)
+        _persist_state()
+
+        if runnable:
+            ok, out = container_runtime.up(slug, meta["compose_path"], services=runnable,
+                                           build=True, cwd=project_dir)
+            if not ok:
+                app["error"] = out[-400:]
+
+        services, deps = _container_services(slug, manifest, project_dir)
+        app["services"] = {s["name"]: {**app["services"].get(s["name"], {}), **s} for s in services}
+        app["deps"] = deps
+        running = sum(1 for s in services if s["status"] == "running")
+        total = sum(1 for s in services if s["status"] != "disabled")
+        app["phase"] = "up" if running and running == total else ("partial" if running else "stopped")
+        _reflect_primary_surface(slug, manifest)
+        _persist_state()
+
+
+def _container_stop(slug: str) -> None:
+    project_dir = None
+    try:
+        project_dir = _project_dir(slug)
+    except AppError:
+        pass
+    compose_path = _compose_path_for(slug)
+    if compose_path.exists():
+        try:
+            container_runtime.down(slug, compose_path, cwd=project_dir)
+        except container_runtime.ComposeError as e:
+            log.warning("compose down failed for %s: %s", slug, e.message)
+
+
 def start_app(slug: str) -> dict:
     """Start (or resume) all enabled services of an app. Returns immediately with a
     'starting' snapshot; build + spawn run on a background thread. Idempotent: an
@@ -834,9 +1001,14 @@ def start_app(slug: str) -> dict:
             app["services"][spec.name] = {**_init_service_state(spec, None), "status": "disabled"}
         else:
             app["services"].setdefault(spec.name, _init_service_state(spec, None))
+    # Record which backend this app is using so status/stop/restart route to the
+    # same one for the app's whole lifetime (a mid-run docker availability change
+    # must not split an app across both backends).
+    app["backend"] = "container" if _use_containers() else "subprocess"
     _persist_state()
 
-    t = threading.Thread(target=_bring_up, args=(slug, manifest), daemon=True)
+    target = _container_bring_up if app["backend"] == "container" else _bring_up
+    t = threading.Thread(target=target, args=(slug, manifest), daemon=True)
     t.start()
     return {"slug": slug, "phase": "starting", **app_status(slug)}
 
@@ -873,6 +1045,18 @@ def stop_app(slug: str) -> dict:
         local_runner._reflect_surface(slug, None)
         return {"slug": slug, "phase": "stopped", "services": []}
     app["desired"] = "stopped"
+    if app.get("backend") == "container":
+        _container_stop(slug)
+        for name, sstate in app.get("services", {}).items():
+            port_registry.release(_app_owner(slug, name))
+            sstate["pid"] = None
+            sstate["status"] = "disabled" if sstate.get("status") == "disabled" else "stopped"
+            sstate["started_at"] = None
+        app["phase"] = "stopped"
+        app["deps"] = []
+        local_runner._reflect_surface(slug, None)
+        _persist_state()
+        return {"slug": slug, **app_status(slug)}
     for name, sstate in app.get("services", {}).items():
         _stop_service(slug, name, sstate)
     # Reap any orphaned service processes too (leftovers from prior runs), so Stop
@@ -898,6 +1082,14 @@ def restart_service(slug: str, svc_name: str) -> dict:
         raise AppError(f"no service '{svc_name}' in app '{slug}'", status=404)
     project_dir = _project_dir(slug)
     app = _STATE.setdefault(slug, {"slug": slug, "services": {}})
+    if app.get("backend") == "container":
+        compose_path = _compose_path_for(slug)
+        if not compose_path.exists():
+            raise AppError(f"app '{slug}' is not running", status=409)
+        ok, out = container_runtime.restart(slug, compose_path, svc_name, cwd=project_dir)
+        if not ok:
+            raise AppError(f"restart failed: {out[-200:]}", status=500)
+        return app_status(slug)
     sstate = app["services"].setdefault(svc_name, _init_service_state(spec, None))
     if sstate.get("pid") and _alive(sstate["pid"]):
         _stop_service(slug, svc_name, sstate)
@@ -941,6 +1133,24 @@ def app_status(slug: str) -> dict:
     app = _STATE.get(slug)
     if not app:
         return {"slug": slug, "phase": "stopped", "desired": "stopped", "services": [], "deps": []}
+    if app.get("backend") == "container":
+        try:
+            manifest = resolve_manifest(slug)
+            project_dir = _project_dir(slug)
+        except AppError:
+            return {"slug": slug, "phase": app.get("phase", "stopped"),
+                    "desired": app.get("desired", "stopped"), "services": [], "deps": []}
+        services, deps = _container_services(slug, manifest, project_dir)
+        running = sum(1 for s in services if s["status"] == "running")
+        total = sum(1 for s in services if s["status"] != "disabled")
+        phase = app.get("phase", "stopped")
+        if phase not in ("starting",):
+            phase = "up" if running and running == total else ("partial" if running else "stopped")
+        return {
+            "slug": slug, "phase": phase, "desired": app.get("desired", "stopped"),
+            "manifest_detected": app.get("manifest_detected", False),
+            "backend": "container", "services": services, "deps": deps,
+        }
     services = []
     for name, s in app.get("services", {}).items():
         pid = s.get("pid")
@@ -982,6 +1192,19 @@ def app_status(slug: str) -> dict:
 
 
 def app_logs(slug: str, svc_name: str, max_bytes: int = 16384) -> str:
+    app = _STATE.get(slug)
+    if app and app.get("backend") == "container":
+        compose_path = _compose_path_for(slug)
+        if not compose_path.exists():
+            return "(app not running)"
+        try:
+            project_dir = _project_dir(slug)
+        except AppError:
+            project_dir = None
+        try:
+            return container_runtime.logs(slug, compose_path, svc_name, cwd=project_dir)[-max_bytes:]
+        except container_runtime.ComposeError as e:
+            return f"(could not read logs: {e.message})"
     path = _build_log(slug, svc_name)
     if not path.exists():
         return ""
@@ -995,21 +1218,45 @@ def app_logs(slug: str, svc_name: str, max_bytes: int = 16384) -> str:
         return ""
 
 
+def is_builtin_app(slug: str) -> bool:
+    """True if this project is a built-in Workshop app (registered in the manifest
+    store), whose live code is in the monorepo rather than the project dir. Running
+    such a project as a separate app is meaningless — it already runs as part of
+    Workshop. Never raises."""
+    try:
+        from services import manifests
+        return manifests.get_manifest(slug) is not None
+    except Exception:
+        return False
+
+
 def manifest_dict(slug: str) -> dict:
     """Resolved manifest as a plain dict for the API/UI (so the operator can see
-    exactly what the runner will start, detected or declared)."""
+    exactly what the runner will start, detected or declared). Never raises for a
+    known project that simply has nothing runnable yet — returns an empty-services
+    manifest (flagged `builtin` for a monorepo app, else a plain empty scaffold) so
+    the panel shows a calm state instead of an error."""
     if is_self_project(slug):
-        return {"name": slug, "self": True, "detected": False,
+        return {"name": slug, "self": True, "detected": False, "builtin": False,
                 "services": [], "deps": [], "env_requirements": []}
-    m = resolve_manifest(slug)
+    _project_dir(slug)  # raises 404 for a genuinely unknown project
+    builtin = is_builtin_app(slug)
+    try:
+        m = resolve_manifest(slug)
+    except AppError:
+        # Known project, nothing runnable yet (empty scaffold / built-in shadow).
+        return {"name": slug, "self": False, "builtin": builtin, "detected": True,
+                "services": [], "deps": [], "env_requirements": []}
     return {
         "name": m.name,
         "detected": m.detected,
+        "builtin": builtin,
         "services": [
             {
                 "name": s.name, "start": s.start, "cwd": s.cwd, "build": s.build,
                 "port_env": s.port_env, "health": s.health, "expose": s.expose,
-                "enabled": s.enabled, "depends_on": s.depends_on, "env_keys": sorted(s.env.keys()),
+                "enabled": s.enabled, "disabled_reason": s.disabled_reason,
+                "depends_on": s.depends_on, "env_keys": sorted(s.env.keys()),
             }
             for s in m.services
         ],

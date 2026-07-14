@@ -75,6 +75,15 @@ log "pass 1: caveat scan of TODO.md"
 while IFS= read -r line; do
   # only consider [x] items (skip [~] which is already-flagged blocked work)
   if [[ "$line" != "[x] "* ]]; then continue; fi
+  # Never re-scan our OWN caveat output. A completed caveat item is an `[x]`
+  # line whose prose still contains cue words (e.g. "deferred"), so Pass 1
+  # would re-flag it and emit a deeper-nested caveat. Each nesting level
+  # truncates at a different point, producing a distinct sha that dodges the
+  # dedupe in append_item — an unbounded self-referential loop. Exclude any
+  # caveat-provenance line (and the caveat-prefixed body) at the source.
+  case "$line" in
+    *"provenance: todo-caveat"*|"[x] verify / finish caveat on prior"*) continue ;;
+  esac
   # match cue patterns
   if ! echo "$line" | grep -qiE '\b(still needs|needs operator|deferred|needs backend restart|needs operator-side|TODO:|pending until|gated on|next pass)\b'; then
     continue

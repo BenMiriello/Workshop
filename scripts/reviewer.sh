@@ -116,8 +116,12 @@ PYEOF
 fi
 
 # 3. Python typecheck on changed .py files.
+# Filter to files that still exist on disk: a file deleted in the working tree
+# (vs an older baseline) shows up in the diff but must not be handed to
+# py_compile/mypy — the tool errors "No such file" and fails the whole check.
+# The stub scan already guards this way (os.path.isfile); mirror it here.
 PY_CHECK="skipped"
-PY_FILES=$(printf '%s\n' "$CHANGED_ALL" | grep '\.py$' | grep -v '\.venv/' | grep -v '__pycache__' || true)
+PY_FILES=$(printf '%s\n' "$CHANGED_ALL" | grep '\.py$' | grep -v '\.venv/' | grep -v '__pycache__' | while IFS= read -r f; do [[ -f "$f" ]] && printf '%s\n' "$f"; done || true)
 if [[ -n "$PY_FILES" ]]; then
   # Prefer backend venv mypy. Fall back to py_compile.
   MYPY=$WORKSHOP/backend/.venv/bin/mypy

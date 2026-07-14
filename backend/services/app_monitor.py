@@ -56,6 +56,12 @@ def tick(now: float | None = None) -> dict:
         app = app_runner._STATE.get(slug) or {}
         if app.get("desired") != "running":
             continue
+        # Once docker is reachable the subprocess supervisor is retired: container
+        # apps self-heal via docker's restart policy, and a stale subprocess app must
+        # NOT be resurrected here (it would race the container instance for the port)
+        # — the operator restarts it once to adopt the container backend.
+        if app.get("backend") == "container" or app_runner._use_containers():
+            continue
         # Refresh live status (this marks crashed services as failed + frees ports).
         status = app_runner.app_status(slug)
         for svc in status["services"]:

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button, PageHeader, Row, StateBlock, StatusDot, Skeleton } from "../ui";
 import { useCrumbLabel } from "../components/appNav";
 
@@ -12,6 +12,8 @@ import { useCrumbLabel } from "../components/appNav";
 
 type Service = { name: string; status: string; port: number | null; expose: boolean; healthy: boolean | null };
 type AppStatus = { slug: string; phase: string; services: Service[] };
+type ManifestService = { name: string; depends_on: string[] };
+type Manifest = { services: ManifestService[] };
 
 function backendOrigin(): string {
   const { protocol, hostname, port } = window.location;
@@ -23,6 +25,7 @@ export default function AppPreview() {
   const { slug = "" } = useParams();
   const navigate = useNavigate();
   const [status, setStatus] = useState<AppStatus | null>(null);
+  const [manifest, setManifest] = useState<Manifest | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
@@ -47,9 +50,13 @@ export default function AppPreview() {
   const load = useCallback(async () => {
     setErr(null);
     try {
-      const r = await fetch(`/api/base-apps/run/${slug}/status`);
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setStatus(await r.json());
+      const [rs, rm] = await Promise.all([
+        fetch(`/api/base-apps/run/${slug}/status`),
+        fetch(`/api/base-apps/run/${slug}/manifest`),
+      ]);
+      if (!rs.ok) throw new Error(`${rs.status} ${await rs.text()}`);
+      setStatus(await rs.json());
+      if (rm.ok) setManifest(await rm.json());
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
@@ -64,6 +71,19 @@ export default function AppPreview() {
       ?? svcs.find((s) => s.status === "running")
       ?? null;
   }, [status]);
+
+  // A frontend previewed with its API service down loads blank. Name the down
+  // dependencies so the empty frame is explained, not mysterious.
+  const downDeps = useMemo(() => {
+    if (!service) return [];
+    const ms = manifest?.services.find((m) => m.name === service.name);
+    if (!ms) return [];
+    const svcs = status?.services ?? [];
+    return ms.depends_on.filter((d) => {
+      const ds = svcs.find((s) => s.name === d);
+      return !ds || ds.status !== "running";
+    });
+  }, [service, manifest, status]);
 
   const src = service ? `${backendOrigin()}/base-apps/run/${slug}/proxy/${service.name}/?_=${nonce}` : "";
 
@@ -101,12 +121,22 @@ export default function AppPreview() {
           action={<Link to={`/projects/${slug}`} style={{ textDecoration: "none" }}><Button size="sm" variant="primary">Go to project</Button></Link>} />
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-          <Row style={{ gap: "var(--space-2)" }}>
-            <StatusDot status="ok">running</StatusDot>
-            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-              Framed through the app-runner proxy. If the app calls its own API it needs that service running too.
-            </span>
-          </Row>
+          {downDeps.length > 0 ? (
+            <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+              <StatusDot status="warn">partial</StatusDot>
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", display: "flex", gap: "var(--space-1)", alignItems: "center" }}>
+                <TriangleAlert size={13} aria-hidden />
+                <code className="ws-mono">{service!.name}</code> is running but its {downDeps.length > 1 ? "services" : "service"} <code className="ws-mono">{downDeps.join(", ")}</code> {downDeps.length > 1 ? "aren't" : "isn't"} up — the frame below will likely be blank until you start {downDeps.length > 1 ? "them" : "it"} from the project's Run &amp; Deploy section.
+              </span>
+            </Row>
+          ) : (
+            <Row style={{ gap: "var(--space-2)" }}>
+              <StatusDot status="ok">running</StatusDot>
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                Framed through the app-runner proxy. If the app calls its own API it needs that service running too.
+              </span>
+            </Row>
+          )}
           <iframe
             key={nonce}
             title={`${slug} preview`}

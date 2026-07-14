@@ -14,6 +14,7 @@ export function Modal({
   children,
   actions,
   labelledBy = "ws-modal-title",
+  size = "default",
 }: {
   open: boolean;
   onClose: () => void;
@@ -22,6 +23,8 @@ export function Modal({
   children?: ReactNode;
   actions?: ReactNode;
   labelledBy?: string;
+  // "lg" widens the dialog for content-heavy forms (many fields/sliders).
+  size?: "default" | "lg";
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const lastFocus = useRef<HTMLElement | null>(null);
@@ -76,7 +79,7 @@ export function Modal({
     >
       <div
         ref={modalRef}
-        className={cx("ws-modal", danger && "ws-modal--danger")}
+        className={cx("ws-modal", size === "lg" && "ws-modal--lg", danger && "ws-modal--danger")}
         role="dialog"
         aria-modal="true"
         aria-labelledby={title != null ? labelledBy : undefined}

@@ -713,8 +713,20 @@ async def send_message(thread_id: str, body: PostMessage):
     cleaned, notes = provider.apply_actions(reply)
     if not cleaned:
         cleaned = "(done)"
-    meta = {"notes": notes} if notes else None
-    msg = chat_store.append_message(thread_id, "assistant", cleaned, meta=meta)
+    meta: dict = {}
+    if notes:
+        meta["notes"] = notes
+    # If the turn actually called tools (web search, workshop queries, an app's
+    # MCP tools), surface them as chips so a data/assistant chat reads like a
+    # real agent turn instead of a flat answer. Render = the tool calls as the
+    # turn's "work", then the action-cleaned text as the answer. (UI-card fences
+    # like project-proposal survive apply_actions and render inside the answer;
+    # only server-side actions such as a budget plan-patch are stripped.)
+    raw_segments = result.get("segments") or []
+    tool_segs = [s for s in raw_segments if s.get("t") == "tool"]
+    if tool_segs:
+        meta["segments"] = tool_segs + ([{"t": "text", "text": cleaned}] if cleaned else [])
+    msg = chat_store.append_message(thread_id, "assistant", cleaned, meta=meta or None)
 
     # Auto-checkpoint a build turn so the builder's work is a recoverable
     # timeline (doc 05 history substrate). Best-effort, off the event loop.

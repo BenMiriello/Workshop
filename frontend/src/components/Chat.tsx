@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, Clock, Slash, AudioLines,
-  PanelsTopLeft,
+  PanelsTopLeft, Mic, MicOff, Loader, Settings2, Volume2, VolumeX,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
@@ -18,6 +18,9 @@ import {
   shortHttpError,
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
+import { useVoiceSession } from "../lib/useVoiceSession";
+import { detectCaps, type EngineCaps } from "../lib/voice";
+import VoiceSettings from "./VoiceSettings";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
 
@@ -423,6 +426,71 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     window.setTimeout(() => { void refreshThreads(); }, 2500);
   }, [refreshThreads]);
 
+  // ---- Voice mode -----------------------------------------------------------
+  // Voice is a MODE of this chat, not a separate screen: the same thread, the
+  // same message log. The engine (mic/STT/TTS/barge-in over a warm worker) drives
+  // input + spoken replies; we render its in-flight turn as normal bubbles and
+  // fold the finished turn into `messages` once the worker persists it (both
+  // interfaces write the SAME thread — see useVoiceSession + voice_worker).
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [voiceSettings, setVoiceSettings] = useState(false);
+  const [voiceCaps, setVoiceCaps] = useState<EngineCaps | null>(null);
+  // The engine created a thread for a brand-new chat: adopt it as this chat's so
+  // the transcript stays unified (never a parallel thread).
+  const adoptThread = useCallback((id: string) => {
+    setActiveId((cur) => cur ?? id);
+    void refreshThreads();
+  }, [refreshThreads]);
+  const {
+    session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs, prewarm: vprewarm,
+  } = useVoiceSession(contextKey, selectedModel || undefined, activeId ?? undefined, adoptThread);
+
+  const toggleVoice = useCallback(() => setVoiceOn((on) => !on), []);
+
+  // Drive the engine from voiceOn (not the toggle) so that if the session object
+  // is recreated mid-conversation — e.g. the model changes, which rebuilds the
+  // reply path — voice re-starts on the new session instead of silently going
+  // deaf. Turning off (or unmounting / switching session) stops the mic.
+  useEffect(() => {
+    if (!voiceOn) return;
+    vprewarm();
+    vsession.start();
+    return () => vsession.stop();
+  }, [voiceOn, vsession, vprewarm]);
+
+  // Probe engine capabilities when voice turns on / the settings sheet opens, so
+  // the provider controls reflect the truth before a session ever starts.
+  useEffect(() => {
+    if (voiceOn || voiceSettings) detectCaps().then(setVoiceCaps).catch(() => {});
+  }, [voiceOn, voiceSettings]);
+
+  // Esc interrupts the assistant mid-speech while voice is on (the settings sheet,
+  // when open, owns Esc to close itself — handled by Modal).
+  useEffect(() => {
+    if (!voiceOn) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !voiceSettings) vsession.interrupt();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [voiceOn, voiceSettings, vsession]);
+
+  // When a spoken turn finishes (thinking/speaking → listening/idle), sync the
+  // thread so the just-finished turn becomes a permanent message and the live
+  // overlay retires into the normal log.
+  const prevVoiceState = useRef(vsnap.state);
+  useEffect(() => {
+    const prev = prevVoiceState.current;
+    prevVoiceState.current = vsnap.state;
+    if (!voiceOn) return;
+    const finished = (prev === "speaking" || prev === "thinking")
+      && (vsnap.state === "listening" || vsnap.state === "idle");
+    if (finished && activeId) {
+      chatApi.getThread(activeId).then((t) => setMessages(t.messages)).catch(() => {});
+      void refreshThreads();
+    }
+  }, [vsnap.state, voiceOn, activeId, refreshThreads]);
+
   const setQueue = useCallback((next: string[]) => {
     queuedRef.current = next;
     setQueued(next);
@@ -624,7 +692,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     scrollToBottom();
     atBottomRef.current = true;
-  }, [messages, pendingSegments, queued, busy, streaming, scrollToBottom]);
+  }, [messages, pendingSegments, queued, busy, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
 
   // Keep the log pinned to the bottom when the composer is focused and the mobile
   // keyboard opens/closes (which resizes the visual viewport) or the textarea
@@ -783,12 +851,27 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     else sendData(text);
   }, [effectiveMode, streaming, busy, sendBuild, sendData, setQueue]);
 
+  // Composer text change. In voice mode, keep the engine's typing-hold aware of
+  // whether the composer currently holds text (so it defers taking its turn).
+  const onComposerChange = useCallback((v: string) => {
+    setInput(v);
+    if (voiceOn) vsession.setTyping(v.trim().length > 0);
+  }, [setInput, voiceOn, vsession]);
+
   const send = useCallback(() => {
     const text = input.trim();
     if (!text) return;
     setInput("");
-    submitText(text);
-  }, [input, submitText]);
+    // In voice mode a typed message runs through the voice engine too (so the
+    // reply is spoken and uses the warm worker); slash-commands still go the
+    // normal chat route.
+    if (voiceOn && !text.startsWith("/")) {
+      vsession.submitText(text);
+      vsession.setTyping(false);
+    } else {
+      submitText(text);
+    }
+  }, [input, submitText, voiceOn, vsession, setInput]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Slash-command menu owns the arrow/enter/tab/escape keys while it's open.
@@ -1100,6 +1183,44 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <div className="chat-bubble chat-bubble--queued" title="Queued — sends when the current turn finishes">{q}</div>
         </div>
       ))}
+      {/* Live spoken turn: the just-sent utterance + the streaming reply, rendered
+          as normal bubbles. The heard / speaking / pending caption cue is the one
+          voice-specific touch — it lives INSIDE a standard assistant bubble. Once
+          the turn settles it's refetched into `messages` and this retires. */}
+      {voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking") && (
+        <>
+          {vsnap.lastUser && (
+            <div className="chat-msg user">
+              <div className="chat-bubble">{vsnap.lastUser}</div>
+            </div>
+          )}
+          <div className="chat-msg assistant">
+            <div className="chat-bubble">
+              {vsnap.sentences.length > 0 ? (
+                <span className="chat-voice-live">
+                  {vsnap.sentences.map((s, i) => (
+                    <span
+                      key={i}
+                      className={
+                        s.status === "heard" ? "chat-voice-heard"
+                        : s.status === "speaking" ? "chat-voice-now"
+                        : "chat-voice-pending"
+                      }
+                    >
+                      {s.text}{" "}
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <div className="chat-working" role="status" aria-live="polite">
+                  <span className="chat-working__label">Thinking</span>
+                  <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
+                </div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 
@@ -1160,6 +1281,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   );
 
+  // Voice affordances for the composer: the state "orb" doubles as interrupt (when
+  // speaking) / send-now (when listening); a ghost line shows the partial
+  // transcript so nothing is sent unseen.
+  const vGhost = voiceOn && vsnap.state === "listening" ? (vsnap.partial || vsnap.pendingUser) : "";
+  const voiceOrbAction = () => {
+    if (vsnap.state === "speaking") vsession.interrupt();
+    else if (vsnap.state === "listening") vsession.forceEndUtterance();
+  };
+  const voiceOrbIcon =
+    vsnap.state === "thinking" || vsnap.state === "connecting"
+      ? <Loader size={16} aria-hidden className="ws-spin" />
+      : vsnap.state === "speaking"
+        ? <Square size={16} aria-hidden />
+        : <Mic size={16} aria-hidden />;
+  const voiceOrbLabel =
+    vsnap.state === "speaking" ? "Interrupt (Esc)"
+    : vsnap.state === "listening" ? "Send now"
+    : vsnap.state === "thinking" ? "Thinking" : "Listening";
+
   const composer = (
     <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
       {showSlash && (
@@ -1183,43 +1323,93 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           })}
         </ul>
       )}
+      {vGhost && <div className="chat-voice-ghost" aria-label="Heard so far">{vGhost}</div>}
       <textarea
         ref={inputRef}
         className="chat-input"
         rows={1}
         value={input}
-        placeholder={placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message Clawd...")}
-        onChange={(e) => setInput(e.target.value)}
+        placeholder={
+          voiceOn
+            ? (vprefs.mic_enabled ? "Talk, or type a message..." : "Type a message (mic muted)...")
+            : (placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message Clawd..."))
+        }
+        onChange={(e) => onComposerChange(e.target.value)}
         onKeyDown={onKey}
         onFocus={() => setInputFocused(true)}
         onBlur={() => setInputFocused(false)}
       />
       <div className="chat-actions">
-        {contextMeter}
+        {!voiceOn && contextMeter}
         <span className="chat-actions__spacer" />
-        {/* Voice mode works on every chat now: conversational for assistant
-            chats, and voice-driven BUILDING for build chats (full toolset in the
-            agent's tree; the model narrates aloud as it edits). */}
+        {/* Voice mode: a mode of THIS chat (same thread + log), toggled in place.
+            When on, the state orb, mic mute, reply mute, and settings sit here;
+            when off, just the slash button. Build chats build by talking; data
+            chats converse — either way it's the same conversation. */}
+        {voiceOn && (
+          <>
+            <button
+              className={`chat-voice-orb is-${vsnap.state}`}
+              style={{ ["--vlevel" as string]: String(0.15 + vsnap.level * 0.85) } as React.CSSProperties}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={voiceOrbAction}
+              aria-label={voiceOrbLabel}
+              title={voiceOrbLabel}
+            >
+              {voiceOrbIcon}
+            </button>
+            <button
+              className={`chat-slash-btn${vprefs.mic_enabled ? " is-active" : ""}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => vupdatePrefs({ mic_enabled: !vprefs.mic_enabled })}
+              aria-pressed={vprefs.mic_enabled}
+              aria-label={vprefs.mic_enabled ? "Mute microphone" : "Unmute microphone"}
+              title={vprefs.mic_enabled ? "Mic on — tap to mute" : "Mic muted — tap to talk"}
+            >
+              {vprefs.mic_enabled ? <Mic size={16} aria-hidden /> : <MicOff size={16} aria-hidden />}
+            </button>
+            <button
+              className={`chat-slash-btn${vprefs.speak_replies ? " is-active" : ""}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => vupdatePrefs({ speak_replies: !vprefs.speak_replies })}
+              aria-pressed={vprefs.speak_replies}
+              aria-label={vprefs.speak_replies ? "Mute replies" : "Speak replies"}
+              title={vprefs.speak_replies ? "Speaking replies — tap to mute" : "Replies muted — tap to speak"}
+            >
+              {vprefs.speak_replies ? <Volume2 size={16} aria-hidden /> : <VolumeX size={16} aria-hidden />}
+            </button>
+            <button
+              className="chat-slash-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => setVoiceSettings(true)}
+              aria-label="Voice settings"
+              title="Voice settings"
+            >
+              <Settings2 size={16} aria-hidden />
+            </button>
+          </>
+        )}
         <button
-          className="chat-slash-btn"
-          onClick={() => {
-            const q = activeId ? `?thread=${encodeURIComponent(activeId)}` : "";
-            navigate(`/voice/${encodeURIComponent(contextKey)}${q}`);
-          }}
-          aria-label="Voice mode"
-          title={build ? "Voice mode — build by talking" : "Voice mode — talk instead of type"}
+          className={`chat-slash-btn${voiceOn ? " is-active" : ""}`}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={toggleVoice}
+          aria-pressed={voiceOn}
+          aria-label={voiceOn ? "Exit voice mode" : "Voice mode"}
+          title={voiceOn ? "Exit voice mode" : (build ? "Voice mode — build by talking" : "Voice mode — talk instead of type")}
         >
           <AudioLines size={16} aria-hidden />
         </button>
-        <button
-          className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
-          aria-label="Slash commands"
-          title="Slash commands"
-        >
-          <Slash size={16} aria-hidden />
-        </button>
+        {!voiceOn && (
+          <button
+            className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
+            aria-label="Slash commands"
+            title="Slash commands"
+          >
+            <Slash size={16} aria-hidden />
+          </button>
+        )}
         {/* While a build turn streams, Send (queues the next message) sits to the
             left of Stop. Otherwise just Send. */}
         {/* onMouseDown preventDefault: don't let tapping an action button blur the
@@ -1246,6 +1436,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
       {deleteDialog}
+      <VoiceSettings
+        open={voiceSettings}
+        onClose={() => setVoiceSettings(false)}
+        prefs={vprefs}
+        updatePrefs={vupdatePrefs}
+        caps={voiceCaps}
+      />
     </div>
   );
 
