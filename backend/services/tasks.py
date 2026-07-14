@@ -252,27 +252,59 @@ def _persist(root: Path, tasks: list[dict]) -> None:
 
 _BOX_TO_STATUS = {" ": "todo", "x": "done", "X": "done", "~": "doing",
                   "!": "blocked", "?": "in_review", "-": "cancelled"}
-_LINE_RE = re.compile(r"^\s*[-*]\s*\[([ xX~!?\-])\]\s*(.*?)\s*$")
+_LINE_RE = re.compile(r"^(\s*)[-*]\s*\[([ xX~!?\-])\]\s*(.*?)\s*$")
 
 
 def _norm_text(s: str) -> str:
-    # Strip a trailing status tag like "  (doing)" for matching, and collapse ws.
-    s = re.sub(r"\s*\((?:doing|blocked|in_review|in review|cancelled)\)\s*$", "", s, flags=re.I)
-    return re.sub(r"\s+", " ", s).strip().lower()
+    """Normalize a task's FIRST line for matching (strip trailing status tag,
+    collapse whitespace, lowercase). Multi-line bodies match on line one."""
+    first = (s or "").split("\n", 1)[0]
+    first = re.sub(r"\s*\((?:doing|blocked|in_review|in review|cancelled)\)\s*$", "", first, flags=re.I)
+    return re.sub(r"\s+", " ", first).strip().lower()
 
 
-def _parse_export_lines(text: str) -> list[tuple[str, str]]:
-    """Return [(status, text)] for every checklist line in a TODO.md body,
-    matching all six status boxes plus a bare `[ ]`."""
+def _parse_export_blocks(text: str) -> list[tuple[str, str]]:
+    """Return [(status, full_text)] for every checklist item in a TODO.md body.
+    A task's full_text is its checklist line PLUS any following continuation
+    lines indented deeper than the marker (the detail block), dedented and joined
+    with newlines, so multi-line task bodies round-trip losslessly. Matches all
+    six status boxes plus a bare `[ ]`. Nested checklist items are their own
+    tasks (handled by the store's parent field, not folded in here)."""
+    lines = text.splitlines()
     out: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        m = _LINE_RE.match(line)
+    i = 0
+    while i < len(lines):
+        m = _LINE_RE.match(lines[i])
         if not m:
+            i += 1
             continue
-        box, body = m.group(1), m.group(2)
-        if not body:
-            continue
-        out.append((_BOX_TO_STATUS.get(box, "todo"), body.strip()))
+        marker_indent = len(m.group(1))
+        box, body = m.group(2), m.group(3)
+        i += 1
+        cont: list[str] = []
+        while i < len(lines):
+            nxt = lines[i]
+            if not nxt.strip():
+                # blank line: include only if a deeper continuation follows
+                if (i + 1 < len(lines) and lines[i + 1].strip()
+                        and not _LINE_RE.match(lines[i + 1])
+                        and len(lines[i + 1]) - len(lines[i + 1].lstrip()) > marker_indent):
+                    cont.append("")
+                    i += 1
+                    continue
+                break
+            if _LINE_RE.match(nxt):
+                break  # next checklist item / nested task
+            indent = len(nxt) - len(nxt.lstrip())
+            if indent <= marker_indent:
+                break  # dedented back out: not part of this item
+            cont.append(nxt.strip())
+            i += 1
+        full = body.strip()
+        if cont:
+            full = full + "\n" + "\n".join(cont)
+        if full.strip():
+            out.append((_BOX_TO_STATUS.get(box, "todo"), full))
     return out
 
 
@@ -301,12 +333,20 @@ def reconcile(root: Path) -> bool:
             by_text.setdefault(_norm_text(t["text"]), t)
         changed = False
         now = _now()
-        for status, text in _parse_export_lines(current):
+        for status, text in _parse_export_blocks(current):
             key = _norm_text(text)
             match = by_text.get(key)
             if match is not None:
+                # Heal a checkbox flip; also absorb an edited/extended body so a
+                # hand-edited detail block is not lost on the next re-render.
+                item_changed = False
                 if match["status"] != status:
                     match["status"] = status
+                    item_changed = True
+                if text.strip() != (match["text"] or "").strip():
+                    match["text"] = text.strip()
+                    item_changed = True
+                if item_changed:
                     match["updated"] = now
                     changed = True
             else:
@@ -359,7 +399,15 @@ def _emit(task: dict, children: dict[str, list[dict]], out: list[str], *, depth:
     box = _STATUS_BOX.get(task["status"], " ")
     tag = _STATUS_LABEL.get(task["status"])
     suffix = f"  ({tag})" if tag else ""
-    out.append(f"{indent}- [{box}] {task['text']}{suffix}")
+    # Multi-line task bodies (detail lines under the checklist item) round-trip
+    # losslessly: first line carries the box + tag, continuation lines align
+    # under the text so the parser re-gathers them.
+    lines = (task["text"] or "").split("\n")
+    first = lines[0] if lines else ""
+    out.append(f"{indent}- [{box}] {first}{suffix}")
+    cont_indent = indent + "      "  # under "- [x] "
+    for extra in lines[1:]:
+        out.append(f"{cont_indent}{extra}" if extra.strip() else "")
     for child in children.get(task["id"], []):
         _emit(child, children, out, depth=depth + 1)
 
