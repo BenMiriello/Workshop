@@ -45,6 +45,7 @@ from services import llm_router as _llm  # noqa: E402
 
 PICKABLE_MODELS: list[str] = [
     _llm.TIER_OPUS,    # claude-opus-4-8
+    _llm.TIER_FABLE,   # claude-fable-5
     _llm.TIER_SONNET,  # claude-sonnet-4-6
     _llm.TIER_HAIKU,   # claude-haiku-4-5-20251001
 ]
@@ -52,6 +53,7 @@ PICKABLE_MODELS: list[str] = [
 # Short tier-name aliases accepted from the API alongside the full ids.
 MODEL_ALIASES: dict[str, str] = {
     "opus": _llm.TIER_OPUS,
+    "fable": _llm.TIER_FABLE,
     "sonnet": _llm.TIER_SONNET,
     "haiku": _llm.TIER_HAIKU,
 }
@@ -729,6 +731,37 @@ class BuildAgentContextProvider(ContextProvider):
         return "\n\n".join(parts)
 
 
+class AssistantAgentContextProvider(ContextProvider):
+    """A registry assistant agent (`agent:<slug>`) as a chat provider: a data-tier
+    assistant whose persona comes from its markdown definition body, scoped to its
+    own knowledge namespace. This is what makes registry assistants reachable from
+    a chat surface (before this they silently fell back to `general`). Data-tier
+    tools (web + anything it declares), no project cwd, no build."""
+    role = "assistant"
+    max_turns = 8
+    default_model = _llm.TIER_HAIKU
+
+    def __init__(self, slug: str, record: dict):
+        self.slug = slug
+        self.key = f"agent:{slug}"
+        self.name = record.get("name") or slug
+        self.label = self.name
+        self.purpose = record.get("purpose") or ""
+        self._body = (record.get("definition") or "").strip()
+
+    def persona(self) -> str:
+        base = (
+            f"You are {self.name}, an assistant agent inside the Workshop app. The "
+            f"operator is {operator_name()} — a senior engineer who dislikes padding. "
+            "Be direct and brief. Use short paragraphs or tight bullet lists. No emojis."
+        )
+        if self.purpose:
+            base += f"\n\nPurpose: {self.purpose}"
+        if self._body:
+            base += f"\n\n{self._body}"
+        return base
+
+
 # ---------------------------------------------------------------- registry
 
 # EVERY data/assistant provider gets web access — the route + capability_for add
@@ -839,6 +872,21 @@ def get_provider(context_key: str | None) -> ContextProvider:
     if context_key and context_key.startswith("build:"):
         slug = context_key.split(":", 1)[1]
         return BuildAgentContextProvider(slug)
+    if context_key and context_key.startswith("agent:"):
+        # A registry agent bound to this chat. Builders resolve to the build
+        # provider (their runtime); assistants resolve to the assistant provider
+        # (persona from the definition body). An unknown slug falls back to
+        # general so a stale binding never 500s the chat.
+        slug = context_key.split(":", 1)[1]
+        try:
+            from services import agents_registry
+            rec = agents_registry.get(slug)
+        except Exception:
+            rec = None
+        if rec and not rec.get("retired"):
+            if rec.get("runtime") == "builder":
+                return BuildAgentContextProvider(slug)
+            return AssistantAgentContextProvider(slug, rec)
     providers = provider_map()
     return providers.get(context_key or "general", providers["general"])
 

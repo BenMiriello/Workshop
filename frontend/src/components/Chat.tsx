@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, Clock, Slash, AudioLines,
-  PanelsTopLeft, Mic, MicOff, Loader, Settings2, Volume2, VolumeX,
+  PanelsTopLeft, Mic, MicOff, Loader, Settings2, Volume2, VolumeX, AlertTriangle,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
@@ -76,6 +76,7 @@ const TASK_STATUS_LABELS: Record<AgentTaskStatus, string> = {
 
 const MODEL_LABELS: Record<string, string> = {
   "claude-opus-4-8": "Opus 4.8",
+  "claude-fable-5": "Fable 5",
   "claude-sonnet-4-6": "Sonnet 4.6",
   "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
@@ -114,6 +115,7 @@ function modelDisplay(model?: string | null): ModelDisplay {
 // smaller). It's a "how full is this chat" indicator, not an exact accounting.
 const CONTEXT_WINDOW: Record<string, number> = {
   "claude-opus-4-8": 200_000,
+  "claude-fable-5": 200_000,
   "claude-sonnet-4-6": 200_000,
   "claude-haiku-4-5-20251001": 200_000,
 };
@@ -329,6 +331,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
+  // Live mirror of `messages` so effects (the voice overlay-settle poll) can read
+  // the current length without listing `messages` in their dep arrays.
+  const messagesRef = useRef<ChatMsg[]>(messages);
+  messagesRef.current = messages;
   // Composer text is a persisted draft (survives reload, syncs across tabs /
   // devices) keyed by this chat's contextKey — see lib/draftSync.
   const [input, setInput] = useDraft(contextKey);
@@ -432,6 +438,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // interfaces write the SAME thread — see useVoiceSession + voice_worker).
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState(false);
+  // The just-finished spoken exchange, held locally so the overlay keeps showing
+  // the user+assistant bubbles while the thread refetch is in flight — no frame
+  // where the exchange vanishes then pops back (D4). Cleared once the refetch has
+  // landed the persisted messages, so the swap into the log is a single commit.
+  const [settling, setSettling] = useState<{ user: string; assistant: string } | null>(null);
+  // The orb element: the mic-level halo is written here directly (a CSS var) by
+  // the session's onLevel callback, off the React render path (Phase 3 item 3).
+  const orbRef = useRef<HTMLButtonElement>(null);
   // The engine created a thread for a brand-new chat: adopt it as this chat's so
   // the transcript stays unified (never a parallel thread).
   const adoptThread = useCallback((id: string) => {
@@ -474,9 +488,34 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => window.removeEventListener("keydown", onKey);
   }, [voiceOn, voiceSettings, vsession]);
 
-  // When a spoken turn finishes (thinking/speaking → listening/idle), sync the
-  // thread so the just-finished turn becomes a permanent message and the live
-  // overlay retires into the normal log.
+  // Mic level → orb, off the React render path. The session pushes ~60fps; we
+  // write it straight onto the orb element as `--vlevel` (a CSS var the halo
+  // reads), so the level animates without re-rendering Chat (D4).
+  useEffect(() => {
+    vsession.setOnLevel((v) => {
+      const el = orbRef.current;
+      if (el) el.style.setProperty("--vlevel", String(0.15 + v * 0.85));
+    });
+    return () => vsession.setOnLevel(null);
+  }, [vsession]);
+
+  // A fatal engine error (mic permission denied, mic start failure) must never
+  // leave a live-looking-but-deaf orb (D1): drop out of voice mode and surface
+  // the reason in the chat error line so it persists after the strip is gone.
+  useEffect(() => {
+    if (voiceOn && vsnap.fatal) {
+      setErr(vsnap.error || "Voice unavailable.");
+      setVoiceOn(false);
+    }
+  }, [voiceOn, vsnap.fatal, vsnap.error]);
+
+  // When a spoken turn finishes (thinking/speaking → listening/idle), settle it
+  // into the log WITHOUT a vanishing frame (D4). We capture the just-finished
+  // exchange from the live snapshot into `settling` and keep the overlay showing
+  // it, then poll getThread until the persisted turn has landed (the worker
+  // persists a beat after playback ends). Only once the refetch contains the new
+  // messages do we swap `messages` and clear `settling` — a single commit, so the
+  // exchange is on screen in every frame.
   const prevVoiceState = useRef(vsnap.state);
   useEffect(() => {
     const prev = prevVoiceState.current;
@@ -484,11 +523,44 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     if (!voiceOn) return;
     const finished = (prev === "speaking" || prev === "thinking")
       && (vsnap.state === "listening" || vsnap.state === "idle");
-    if (finished && activeId) {
-      chatApi.getThread(activeId).then((t) => setMessages(t.messages)).catch(() => {});
-      void refreshThreads();
-    }
+    if (!finished || !activeId) return;
+    const user = vsnap.lastUser;
+    const assistant = vsnap.sentences.map((s) => s.text).join(" ").trim();
+    // Nothing to settle (e.g. an empty/aborted turn): just refresh and bail.
+    if (!user && !assistant) { void refreshThreads(); return; }
+    const baseLen = messagesRef.current.length;
+    setSettling({ user, assistant });
+    let cancelled = false;
+    let tries = 0;
+    const poll = () => {
+      if (cancelled) return;
+      chatApi.getThread(activeId).then((t) => {
+        if (cancelled) return;
+        const landed = t.messages.length > baseLen;   // the new user+assistant persisted
+        if (landed || tries >= 8) {
+          setMessages(t.messages);
+          setSettling(null);            // swap once — overlay → real log in one commit
+          void refreshThreads();
+          return;
+        }
+        tries += 1;
+        window.setTimeout(poll, 250);
+      }).catch(() => {
+        if (cancelled) return;
+        if (tries >= 8) { setSettling(null); return; }
+        tries += 1;
+        window.setTimeout(poll, 250);
+      });
+    };
+    poll();
+    return () => { cancelled = true; };
+    // vsnap.lastUser/sentences are read at the finish transition; state is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vsnap.state, voiceOn, activeId, refreshThreads]);
+
+  // Leaving voice mode drops any in-flight settle overlay so it can't flash back
+  // on re-entry.
+  useEffect(() => { if (!voiceOn) setSettling(null); }, [voiceOn]);
 
   const setQueue = useCallback((next: string[]) => {
     queuedRef.current = next;
@@ -1165,9 +1237,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       ))}
       {/* Live spoken turn: the just-sent utterance + the streaming reply, rendered
           as normal bubbles. The heard / speaking / pending caption cue is the one
-          voice-specific touch — it lives INSIDE a standard assistant bubble. Once
-          the turn settles it's refetched into `messages` and this retires. */}
-      {voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking") && (
+          voice-specific touch — it lives INSIDE a standard assistant bubble. When
+          the turn finishes it does NOT vanish: it's held in `settling` (plain
+          bubbles) until the refetch lands the persisted messages, then swaps once
+          into the log (D4 — no vanish-then-pop). Muted (captions-only) replies
+          stay in `thinking` the whole time and stream their captions here too. */}
+      {voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking") ? (
         <>
           {vsnap.lastUser && (
             <div className="chat-msg user">
@@ -1200,7 +1275,20 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             </div>
           </div>
         </>
-      )}
+      ) : voiceOn && settling ? (
+        <>
+          {settling.user && (
+            <div className="chat-msg user">
+              <div className="chat-bubble">{settling.user}</div>
+            </div>
+          )}
+          {settling.assistant && (
+            <div className="chat-msg assistant">
+              <div className="chat-bubble">{settling.assistant}</div>
+            </div>
+          )}
+        </>
+      ) : null}
     </div>
   );
 
@@ -1264,23 +1352,46 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   );
 
   // Voice affordances for the composer: the state "orb" doubles as interrupt (when
-  // speaking) / send-now (when listening); a ghost line shows the partial
-  // transcript so nothing is sent unseen.
-  const vGhost = voiceOn && vsnap.state === "listening" ? (vsnap.partial || vsnap.pendingUser) : "";
+  // speaking) / send-now (when listening). The orb NEVER shows a Mic glyph — that
+  // was the confusing twin of the mic-mute button (D6). It uses AudioLines
+  // (listening, with the level halo), Loader (thinking/connecting), Square
+  // (speaking, the stop affordance), and AlertTriangle (error/idle-unexpectedly).
+  const voiceErrored = !!vsnap.error;
   const voiceOrbAction = () => {
     if (vsnap.state === "speaking") vsession.interrupt();
     else if (vsnap.state === "listening") vsession.forceEndUtterance();
   };
   const voiceOrbIcon =
-    vsnap.state === "thinking" || vsnap.state === "connecting"
-      ? <Loader size={16} aria-hidden className="ws-spin" />
-      : vsnap.state === "speaking"
-        ? <Square size={16} aria-hidden />
-        : <Mic size={16} aria-hidden />;
+    voiceErrored || vsnap.state === "idle"
+      ? <AlertTriangle size={16} aria-hidden />
+      : vsnap.state === "thinking" || vsnap.state === "connecting"
+        ? <Loader size={16} aria-hidden className="ws-spin" />
+        : vsnap.state === "speaking"
+          ? <Square size={16} aria-hidden />
+          : <AudioLines size={16} aria-hidden />;
   const voiceOrbLabel =
-    vsnap.state === "speaking" ? "Interrupt (Esc)"
+    voiceErrored ? "Voice error"
+    : vsnap.state === "speaking" ? "Interrupt (Esc)"
     : vsnap.state === "listening" ? "Send now"
     : vsnap.state === "thinking" ? "Thinking" : "Listening";
+
+  // The single voice status surface, above the composer (replaces the ghost line).
+  // One of: an error with Retry, the live partial transcript while listening, or
+  // the plain state word. `aria-live="polite"` announces state changes.
+  const voiceStatus: { kind: "error" | "partial" | "state"; text: string } =
+    vsnap.error
+      ? { kind: "error", text: vsnap.error }
+      : vsnap.state === "listening" && (vsnap.partial || vsnap.pendingUser)
+        ? { kind: "partial", text: vsnap.partial || vsnap.pendingUser }
+        : {
+            kind: "state",
+            text:
+              vsnap.state === "connecting" ? "Connecting"
+              : vsnap.state === "thinking" ? "Thinking"
+              : vsnap.state === "speaking" ? "Speaking, Esc to stop"
+              : vsnap.state === "listening" ? "Listening"
+              : "Voice on",
+          };
 
   const composer = (
     <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
@@ -1305,7 +1416,28 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           })}
         </ul>
       )}
-      {vGhost && <div className="chat-voice-ghost" aria-label="Heard so far">{vGhost}</div>}
+      {voiceOn && (
+        <div className={`chat-voice-strip is-${voiceStatus.kind}`} role="status" aria-live="polite">
+          {voiceStatus.kind === "error" ? (
+            <>
+              <span className="chat-voice-strip__msg">
+                <AlertTriangle size={14} aria-hidden className="chat-voice-strip__icon" />
+                {voiceStatus.text}
+              </span>
+              <Button size="sm" variant="ghost" onClick={() => vsession.retry()}>Retry</Button>
+            </>
+          ) : voiceStatus.kind === "partial" ? (
+            <span className="chat-voice-strip__msg">
+              <span className="chat-voice-strip__label">Heard:</span>
+              <span className="chat-voice-strip__partial">{voiceStatus.text}</span>
+            </span>
+          ) : (
+            <span className="chat-voice-strip__msg">
+              <span className="chat-voice-strip__state">{voiceStatus.text}</span>
+            </span>
+          )}
+        </div>
+      )}
       <textarea
         ref={inputRef}
         className="chat-input"
@@ -1328,11 +1460,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             When on, the state orb, mic mute, reply mute, and settings sit here;
             when off, just the slash button. Build chats build by talking; data
             chats converse — either way it's the same conversation. */}
+        {/* The voice cluster (orb, mic-mute, reply-mute, gear) shares a subtle
+            background pill so it reads as one group, distinct from the exit
+            toggle and Send that sit outside it. */}
         {voiceOn && (
-          <>
+          <div className={`chat-voice-cluster${voiceErrored ? " is-error" : ""}`}>
             <button
-              className={`chat-voice-orb is-${vsnap.state}`}
-              style={{ ["--vlevel" as string]: String(0.15 + vsnap.level * 0.85) } as React.CSSProperties}
+              ref={orbRef}
+              className={`chat-voice-orb is-${vsnap.state}${voiceErrored ? " is-error" : ""}`}
               onMouseDown={(e) => e.preventDefault()}
               onClick={voiceOrbAction}
               aria-label={voiceOrbLabel}
@@ -1369,7 +1504,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             >
               <Settings2 size={16} aria-hidden />
             </button>
-          </>
+          </div>
         )}
         <button
           className={`chat-slash-btn${voiceOn ? " is-active" : ""}`}

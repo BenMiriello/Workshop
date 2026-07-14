@@ -449,9 +449,13 @@ function ExistingAgent({ agentId }: { agentId: string }) {
         actions={
           <Row wrap>
             <Tag hue={isBuilder ? "turquoise" : "violet"}>{agent.runtime}</Tag>
-            {isBuilder && (
+            {isBuilder ? (
               <Button size="sm" variant="primary" onClick={() => nav(`/agents/${encodeURIComponent(agent.slug)}/chat`)}>
                 <MessageSquare aria-hidden /> Open work pane
+              </Button>
+            ) : (
+              <Button size="sm" variant="primary" onClick={() => nav(`/chat/${encodeURIComponent(`agent:${agent.slug}`)}`)}>
+                <MessageSquare aria-hidden /> Chat
               </Button>
             )}
             {!editing && (
