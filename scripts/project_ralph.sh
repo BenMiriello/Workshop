@@ -29,6 +29,8 @@ RALPH=$WORKSHOP/scripts/ralph.sh
 PTASKS=$WORKSHOP/scripts/project_tasks.py
 
 SLUG=""
+DIR_ARG=""           # --dir: sweep an explicit scope dir (agent scope / any tree)
+ASSIGNEE=""          # --assignee agent:<slug>: claim only this delegate's (or unassigned) tasks
 MAX_WALL=3000        # 50 min total for a project sweep
 MAX_TASKS=20         # cap tasks per sweep
 RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
@@ -37,6 +39,8 @@ JOB_ID=""            # adopt an already-open Job (manual run) instead of creatin
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --dir)       DIR_ARG="$2"; shift 2 ;;
+    --assignee)  ASSIGNEE="$2"; shift 2 ;;
     --max-wall)  MAX_WALL="$2"; shift 2 ;;
     --max-tasks) MAX_TASKS="$2"; shift 2 ;;
     --job-id)    JOB_ID="$2"; shift 2 ;;
@@ -44,24 +48,36 @@ while [[ $# -gt 0 ]]; do
     *)           SLUG="$1"; shift ;;
   esac
 done
+ASSIGNEE_FLAG=(); [[ -n "$ASSIGNEE" ]] && ASSIGNEE_FLAG=(--assignee "$ASSIGNEE")
 
 # Job store shim (services.jobs). Run from the repo root so `backend.services`
 # is importable regardless of this script's caller cwd. The run-state of a sweep
 # is a Job in `running` status; we finish() it on exit. Replaces the old
 # per-project .runtime/ralph-run.json.
-job_start() {  # $1 = trigger kind ; echoes the new job id
+job_start() {  # $1 = trigger kind ; echoes the new job id (coordinator sweep Job)
   (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
-    --project-slug "$SLUG" --trigger "$1" --status running 2>/dev/null) || true
+    --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger "$1" --status running 2>/dev/null) || true
 }
-job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed
+job_start_child() {  # $1=task_id $2=parent_job ; echoes the child Job id
+  (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
+    --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger loop --status running \
+    --task-id "$1" --parent-id "$2" 2>/dev/null) || true
+}
+job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed [$5=evidence-json]
   [[ -z "$1" ]] && return 0
+  local ev=(); [[ -n "${5:-}" ]] && ev=(--evidence "$5")
   (cd "$WORKSHOP" && python3 -m backend.services.jobs finish \
-    --id "$1" --status "$2" --tasks-done "${3:-0}" --tasks-failed "${4:-0}" \
+    --id "$1" --status "$2" --tasks-done "${3:-0}" --tasks-failed "${4:-0}" "${ev[@]}" \
     >/dev/null 2>&1) || true
 }
+job_finish_child() {  # $1=child_job $2=status $3=exit_code
+  [[ -z "$1" ]] && return 0
+  (cd "$WORKSHOP" && python3 -m backend.services.jobs finish \
+    --id "$1" --status "$2" --exit-code "${3:-0}" >/dev/null 2>&1) || true
+}
 
-if [[ -z "$SLUG" ]]; then
-  echo "usage: project_ralph.sh <slug> [--max-wall SEC] [--max-tasks N]" >&2
+if [[ -z "$SLUG" && -z "$DIR_ARG" ]]; then
+  echo "usage: project_ralph.sh <slug> | --dir <path> [--assignee agent:<slug>] [--max-wall SEC] [--max-tasks N]" >&2
   exit 4
 fi
 
@@ -71,12 +87,19 @@ if [[ -r "$AUTH_ENV" ]]; then
 fi
 unset ANTHROPIC_API_KEY
 
-# Resolve project dir + autonomy mode from the registry.
+# A --dir sweep targets an explicit scope tree (agent scope, or any tree) and
+# trusts the caller's decision to run it (mode gate does not apply). Otherwise
+# resolve the project dir + autonomy mode from the registry.
+if [[ -n "$DIR_ARG" ]]; then
+  DIR="$DIR_ARG"; MODE="on"
+else
 read -r DIR MODE < <(python3 - "$SLUG" <<'PYEOF'
 import json, sys
 from pathlib import Path
 slug = sys.argv[1]
-reg = Path("/home/clawd-a/workshop/projects.json")
+import os
+reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
+                          "/home/clawd-a/workshop/.runtime/projects.json"))
 try:
     data = json.loads(reg.read_text())
 except Exception:
@@ -90,9 +113,10 @@ mode = ((p.get("autonomy") or {}).get("mode")) or "off"
 print(f"{p.get('dir','')} {mode}")
 PYEOF
 )
+fi
 
 if [[ -z "$DIR" || ! -d "$DIR" ]]; then
-  echo "[project_ralph] project not found or no dir: $SLUG" >&2
+  echo "[project_ralph] project not found or no dir: ${SLUG:-$DIR_ARG}" >&2
   exit 2
 fi
 
@@ -150,19 +174,30 @@ while (( n < MAX_TASKS )); do
     break
   fi
 
-  NEXT=$(python3 "$PTASKS" next-open "$DIR" 2>>"$LOG")
+  # Dependency-aware, assignee-scoped next task (reconciles the store first).
+  NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
   TASK_ID=$(echo "$NEXT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
   TASK_TEXT=$(echo "$NEXT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('text',''))" 2>/dev/null)
   if [[ -z "$TASK_ID" ]]; then
-    log "no open tasks; queue drained"
+    log "no ready tasks"
     break
   fi
   n=$((n+1))
 
-  # Mark doing so a concurrent sweep/operator sees it in flight.
-  python3 "$PTASKS" set-status "$DIR" "$TASK_ID" doing >/dev/null 2>>"$LOG"
+  # Per-task child Job under the coordinator sweep Job (task_id + parent_id link
+  # the Jobs feed and the task's history into one graph).
+  CHILD_JOB=$(job_start_child "$TASK_ID" "$JOB_ID")
+  # Atomic claim: todo->doing recording the child job id. A concurrent sweep or
+  # CLI that already claimed it makes this return {}; skip without running.
+  CLAIMED=$(python3 "$PTASKS" claim "$DIR" "$TASK_ID" "$CHILD_JOB" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
+  CLAIMED_ID=$(echo "$CLAIMED" | python3 -c "import json,sys; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+  if [[ -z "$CLAIMED_ID" ]]; then
+    log "task=$TASK_ID already claimed elsewhere — skipping"
+    job_finish_child "$CHILD_JOB" cancelled 0
+    continue
+  fi
   BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
-  log "task=$TASK_ID \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
+  log "task=$TASK_ID job=$CHILD_JOB \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
   set +e
   "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" >> "$LOG" 2>&1
@@ -170,17 +205,42 @@ while (( n < MAX_TASKS )); do
   set -e
 
   case "$RC" in
-    0) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done  >/dev/null 2>>"$LOG"; DONE=$((DONE+1)); log "task=$TASK_ID DONE" ;;
-    3) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" blocked >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); log "task=$TASK_ID BLOCKED (classifier)" ;;
-    1|2) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo >/dev/null 2>>"$LOG"; TIMEOUT=$((TIMEOUT+1)); log "task=$TASK_ID incomplete (rc=$RC) — released to todo" ;;
-    *) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo >/dev/null 2>>"$LOG"; FAILED=$((FAILED+1)); log "task=$TASK_ID failed (rc=$RC) — released to todo" ;;
+    0) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done >/dev/null 2>>"$LOG"; DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE" ;;
+    3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID BLOCKED (classifier)" ;;
+    1|2) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo >/dev/null 2>>"$LOG"; TIMEOUT=$((TIMEOUT+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID incomplete (rc=$RC) — released to todo" ;;
+    *) python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo >/dev/null 2>>"$LOG"; FAILED=$((FAILED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID failed (rc=$RC) — released to todo" ;;
   esac
   sleep 1
 done
 
 DURATION=$(( $(date +%s) - START_EPOCH ))
-log "=== sweep end slug=$SLUG done=$DONE incomplete=$TIMEOUT blocked=$BLOCKED failed=$FAILED (${DURATION}s) ==="
-# Close the run-state Job. A sweep that drained/hit-budget cleanly is `done`;
-# task-level failures are carried in tasks_failed, not the Job status.
-job_finish "$JOB_ID" done "$DONE" "$FAILED"
+# Terminal status of the coordinator sweep. If open (non-terminal) tasks remain
+# and NONE are ready (every one is blocked / in_review), the sweep is waiting on
+# the operator: finish awaiting_input with evidence. Home's AttentionStrip + Job
+# detail surface it; the dispatcher skips an unchanged awaiting scope next tick.
+OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" <<'PYEOF'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, "/home/clawd-a/workshop/backend")
+from services import tasks
+root = Path(sys.argv[1]); assignee = sys.argv[2] or None
+ready = tasks.next_ready(root, assignee=assignee)
+open_tasks = tasks.list_tasks(root, include_done=False)
+waiting = [t for t in open_tasks if t["status"] in ("blocked", "in_review")]
+print(json.dumps({"ready": bool(ready), "open": len(open_tasks), "waiting": len(waiting),
+                  "detail": [{"id": t["id"], "status": t["status"],
+                              "blocked_reason": t.get("blocked_reason")} for t in waiting][:20]}))
+PYEOF
+)
+READY=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ready'))" 2>/dev/null)
+OPEN=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('open',0))" 2>/dev/null)
+WAITING=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('waiting',0))" 2>/dev/null)
+log "=== sweep end scope=${SLUG:-$DIR} done=$DONE incomplete=$TIMEOUT blocked=$BLOCKED failed=$FAILED open=${OPEN:-0} waiting=${WAITING:-0} (${DURATION}s) ==="
+if [[ "$READY" == "False" && "${OPEN:-0}" -gt 0 && "${OPEN:-0}" == "${WAITING:-0}" ]]; then
+  EV=$(echo "$OUT" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('detail',[])))" 2>/dev/null)
+  job_finish "$JOB_ID" awaiting_input "$DONE" "$FAILED" "$EV"
+  log "sweep awaiting_input: ${WAITING} task(s) blocked/in_review, nothing ready"
+else
+  job_finish "$JOB_ID" done "$DONE" "$FAILED"
+fi
 exit 0

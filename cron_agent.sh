@@ -114,6 +114,14 @@ PRE_GEN=${PRE_GEN:-0}
 echo "[$(date -Iseconds)] pre-flight: graduated=$PRE_GRAD demoted=$PRE_VERIFY generated=$PRE_GEN" >> "$LOG"
 
 # =============================================================================
+# Phase 0.5 — Dispatcher (orchestration O3): launch background sweeps for armed
+# project/agent loop + cron triggers. It decides + spawns detached sweeps and
+# returns fast (never blocks this tick); it re-checks AUTONOMY_DISABLED itself.
+# This is what makes a project's `loop` trigger actually run unattended.
+# =============================================================================
+bash "$WORKSHOP/scripts/dispatch_triggers.sh" >> "$LOG" 2>&1 || true
+
+# =============================================================================
 # Phase 1 — Event-consumer (Layer 4, unchanged behavior)
 # =============================================================================
 # Drain up to MAX_PENDING pending events. Same logic as v1: re-read events.jsonl
