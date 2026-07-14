@@ -46,13 +46,14 @@ function waitingTasks(job: Job): WaitingTask[] {
 // Plain-language sentence for who/what launched this run.
 function ranSummary(job: Job): string {
   const trig =
-    job.trigger === "loop" ? "an autonomous loop sweep"
+    job.trigger === "loop" ? "an autonomous sweep"
     : job.trigger === "cron" ? "a scheduled sweep"
     : job.trigger === "event" ? "an event-triggered run"
     : "a manual run";
+  const who = job.agent_name || job.agent_id;
   const where =
     job.project_slug ? `of project ${job.project_slug}`
-    : job.agent_id ? `by ${job.agent_id}`
+    : who ? `by ${who}`
     : "";
   const from = job.chat_id ? `, started from chat ${job.chat_id}` : "";
   return `This was ${trig} ${where}${from}`.replace(/\s+/g, " ").trim() + ".";
@@ -164,7 +165,7 @@ export default function JobDetail() {
 
   const header = (
     <PageHeader
-      title="Job"
+      title={job?.title || "Job"}
       sub={<code className="ws-mono">{id}</code>}
       actions={
         <Row wrap style={{ gap: "var(--space-2)" }}>
@@ -208,8 +209,9 @@ export default function JobDetail() {
     const waiting = waitingTasks(job);
     const isAwaiting = job.status === "awaiting_input" && waiting.length > 0;
     // Only show the raw JSON when it isn't the structured awaiting case (the
-    // cards below already render it far more usefully).
-    const ev = isAwaiting ? "" : evidenceText(job.evidence);
+    // cards below already render it far more usefully) and isn't a failure (the
+    // Error section already renders the reason from the same evidence).
+    const ev = (isAwaiting || job.error) ? "" : evidenceText(job.evidence);
     const budgetEntries = job.budget ? Object.entries(job.budget) : [];
     body = (
       <Stack>
@@ -305,7 +307,9 @@ export default function JobDetail() {
             <Stack gap="sm">
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
                 <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
-                {job.trigger && <Tag hue={catFor(job.trigger)}>{job.trigger}</Tag>}
+                {(job.trigger_label || job.trigger) && (
+                  <Tag hue={catFor(job.trigger || "")}>{job.trigger_label || job.trigger}</Tag>
+                )}
                 {dur && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{dur}</span>}
                 {typeof job.exit_code === "number" && (
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>exit {job.exit_code}</span>
@@ -320,7 +324,11 @@ export default function JobDetail() {
               {job.agent_id && (
                 <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
                      onClick={() => nav(`/agents/${encodeURIComponent(job.agent_id!)}`)}>
-                  <Bot aria-hidden /> <span className="ws-mono">{job.agent_id}</span>
+                  <Bot aria-hidden />
+                  <span>{job.agent_name || job.agent_id}</span>
+                  {job.agent_name && job.agent_name !== job.agent_id && (
+                    <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.agent_id}</span>
+                  )}
                 </Row>
               )}
               {job.chat_id && (
@@ -331,6 +339,13 @@ export default function JobDetail() {
             </Stack>
           </Card>
         </section>
+
+        {job.error && (
+          <section>
+            <SectionLabel>Error</SectionLabel>
+            <StateBlock variant="error" title="This job failed" hint={job.error} />
+          </section>
+        )}
 
         <section>
           <SectionLabel>Timing</SectionLabel>

@@ -12,9 +12,92 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import jobs, tasks, task_scope
+from services import jobs, tasks, task_scope, agents_registry
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+# --- Ticket-shaping: enrich raw Job records into readable tickets -----------
+# A stored Job is machine-shaped: agent_id is a raw Letta UUID, trigger is
+# jargon ("loop"), evidence is a freeform dump, and failures hide inside it with
+# no exit_code. We compute display fields at read time so every job reads like a
+# ticket (a name, a title, an operator-language trigger, a real error) without
+# migrating the append-only log.
+
+_TRIGGER_LABELS = {
+    "loop": "Autonomous",
+    "cron": "Scheduled",
+    "event": "Event",
+    "manual": "Run now",
+}
+
+
+def _name_map() -> dict[str, str]:
+    """agent-id/slug/letta-id -> human name, built once per request."""
+    m: dict[str, str] = {}
+    try:
+        for a in agents_registry.list_agents(include_retired=True):
+            name = a.get("name") or a.get("slug")
+            if not name:
+                continue
+            for key in (a.get("slug"), a.get("id"), a.get("letta_agent_id")):
+                if key:
+                    m[key] = name
+    except Exception:
+        pass
+    return m
+
+
+def _display_agent(agent_id: str | None, names: dict[str, str]) -> str | None:
+    """Resolve a job's agent_id to a human name; degrade gracefully so the
+    operator never sees a bare UUID."""
+    if not agent_id:
+        return None
+    if agent_id in names:
+        return names[agent_id]
+    if agent_id.startswith("agent:"):
+        slug = agent_id.split(":", 1)[1]
+        return names.get(slug, slug)
+    if agent_id.startswith("agent-"):
+        # Raw Letta UUID with no registry definition (legacy heartbeat agent).
+        return f"Letta {agent_id[6:14]}"
+    return agent_id
+
+
+def _friendly_error(err: str | None) -> str:
+    if not err or not err.strip():
+        return "Failed (no detail recorded)."
+    s = err.strip()
+    if s.startswith("ollama_failed:"):
+        detail = s[len("ollama_failed:"):].strip()
+        base = "Local model server (Ollama) was unreachable."
+        return f"{base} {detail}" if detail else base
+    return s
+
+
+def _title(job: dict, agent_disp: str | None) -> str:
+    trig = job.get("trigger")
+    label = _TRIGGER_LABELS.get(trig, (trig or "Run").capitalize())
+    binding = job.get("project_slug") or agent_disp or "unbound"
+    if trig == "loop" and not job.get("project_slug"):
+        return f"Heartbeat · {binding}"
+    return f"{label} · {binding}"
+
+
+def _enrich(job: dict, names: dict[str, str]) -> dict:
+    j = dict(job)
+    trig = job.get("trigger")
+    j["trigger_label"] = _TRIGGER_LABELS.get(trig, (trig or "Run").capitalize())
+    agent_disp = _display_agent(job.get("agent_id"), names)
+    if agent_disp:
+        j["agent_name"] = agent_disp
+    ev = job.get("evidence")
+    if job.get("status") == "failed":
+        j["error"] = _friendly_error(ev if isinstance(ev, str) else None)
+    elif isinstance(ev, str) and ev.strip():
+        # A short freeform evidence string doubles as the job's one-line summary.
+        j["summary"] = ev.strip()[:240]
+    j["title"] = _title(job, agent_disp)
+    return j
 
 # Operator responses to an awaiting_input job, expressed as a task transition.
 # Acting changes the scope store's mtime, so the dispatcher's skip-unchanged
@@ -44,7 +127,9 @@ async def list_jobs(
         parent_id=parent_id,
         limit=limit,
     )
-    return {"jobs": records, "count": len(records)}
+    names = _name_map()
+    enriched = [_enrich(r, names) for r in records]
+    return {"jobs": enriched, "count": len(enriched)}
 
 
 @router.get("/{job_id}")
@@ -52,7 +137,7 @@ async def get_job(job_id: str) -> dict:
     rec = jobs.get(job_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"job not found: {job_id}")
-    return rec
+    return _enrich(rec, _name_map())
 
 
 class JobTaskAction(BaseModel):

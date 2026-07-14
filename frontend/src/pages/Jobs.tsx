@@ -6,7 +6,6 @@ import {
   Card,
   CardGrid,
   PageHeader,
-  Row,
   Stack,
   Skeleton,
   StateBlock,
@@ -52,9 +51,23 @@ function duration(job: Job): string {
   return s ? `${m}m ${s}s` : `${m}m`;
 }
 
+// Single fixed-height meta line: everything that used to be its own row
+// (duration, exit code, task counts, started-at) joined into one ellipsized
+// string, so a card's height never depends on which of these are present.
+function metaLine(job: Job, dur: string): string {
+  const parts = [fmtTs(job.started_at)];
+  if (dur) parts.push(dur);
+  if (typeof job.exit_code === "number") parts.push(`exit ${job.exit_code}`);
+  if (typeof job.tasks_done === "number") parts.push(`${job.tasks_done} done`);
+  if (typeof job.tasks_failed === "number" && job.tasks_failed > 0) parts.push(`${job.tasks_failed} failed`);
+  return parts.filter(Boolean).join(" · ") || " ";
+}
+
+// Icon + human name for the job's binding. Prefers the enriched agent_name over
+// the raw UUID; the ticket title (job.title) carries the primary label.
 function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
   if (job.project_slug) return { icon: <FolderGit2 aria-hidden />, text: job.project_slug };
-  if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_id };
+  if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_name || job.agent_id };
   if (job.chat_id) return { icon: <MessageSquare aria-hidden />, text: job.chat_id };
   return { icon: <Bot aria-hidden />, text: "unbound" };
 }
@@ -149,38 +162,34 @@ export default function Jobs() {
     );
   } else {
     body = (
-      <CardGrid>
+      <CardGrid className="ws-jobs-grid">
         {jobs.map((job) => {
           const bind = bindingLabel(job);
           const dur = duration(job);
           return (
-            <Card key={job.id} onClick={() => nav(`/jobs/${encodeURIComponent(job.id)}`)} style={{ cursor: "pointer" }}>
-              <Stack gap="sm">
-                <Row between wrap style={{ gap: "var(--space-2)" }}>
-                  <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
-                    {bind.icon}
-                    <span className="ws-mono" style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {bind.text}
-                    </span>
-                  </Row>
+            <li key={job.id}>
+              <Card
+                interactive
+                compact
+                className="ws-job-card"
+                onClick={() => nav(`/jobs/${encodeURIComponent(job.id)}`)}
+                style={{ cursor: "pointer" }}
+              >
+                <div className="ws-job-card__bind">
+                  {bind.icon}
+                  <span>{job.title || bind.text}</span>
+                </div>
+                <div className="ws-job-card__pills">
                   <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
-                </Row>
-                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  {job.trigger && <Tag hue={catFor(job.trigger)}>{job.trigger}</Tag>}
-                  {dur && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{dur}</span>}
-                  {typeof job.exit_code === "number" && (
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>exit {job.exit_code}</span>
+                  {(job.trigger_label || job.trigger) && (
+                    <Tag hue={catFor(job.trigger || "")}>{job.trigger_label || job.trigger}</Tag>
                   )}
-                </Row>
-                {(typeof job.tasks_done === "number" || typeof job.tasks_failed === "number") && (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {typeof job.tasks_done === "number" ? `${job.tasks_done} done` : ""}
-                    {typeof job.tasks_failed === "number" && job.tasks_failed > 0 ? `, ${job.tasks_failed} failed` : ""}
-                  </span>
-                )}
-                <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(job.started_at)}</span>
-              </Stack>
-            </Card>
+                </div>
+                <span className="ws-job-card__meta ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                  {job.error || metaLine(job, dur)}
+                </span>
+              </Card>
+            </li>
           );
         })}
       </CardGrid>

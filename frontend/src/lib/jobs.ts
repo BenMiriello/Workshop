@@ -21,6 +21,13 @@ export type Job = {
   task_id?: string;
   evidence?: unknown;
   budget?: Record<string, unknown>;
+  // Display fields computed by the API (routes/jobs._enrich); absent on raw
+  // records but always present from GET /api/jobs and /api/jobs/{id}.
+  title?: string;
+  agent_name?: string;
+  trigger_label?: string;
+  error?: string;
+  summary?: string;
 };
 
 // Job status -> one of the five design status kinds.
