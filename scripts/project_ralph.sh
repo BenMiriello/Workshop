@@ -325,11 +325,19 @@ READY=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).ge
 OPEN=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('open',0))" 2>/dev/null)
 WAITING=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('waiting',0))" 2>/dev/null)
 log "=== sweep end scope=${SLUG:-$DIR} done=$DONE incomplete=$TIMEOUT blocked=$BLOCKED failed=$FAILED open=${OPEN:-0} waiting=${WAITING:-0} (${DURATION}s) ==="
-if [[ "$READY" == "False" && "${OPEN:-0}" -gt 0 && "${OPEN:-0}" == "${WAITING:-0}" ]]; then
+# Only park as awaiting_input when the sweep is BOUND to a resolvable scope
+# (a project slug or an assignee agent). An unbound sweep (--dir with no slug/
+# assignee) has no scope the Jobs API can act on, so an awaiting_input job for it
+# is a permanent, unresolvable operator alert. Finish it `done` instead; the
+# always-available Dismiss stays as the escape hatch for any that slip through.
+if [[ "$READY" == "False" && "${OPEN:-0}" -gt 0 && "${OPEN:-0}" == "${WAITING:-0}" && ( -n "$SLUG" || -n "$ASSIGNEE" ) ]]; then
   EV=$(echo "$OUT" | python3 -c "import json,sys; print(json.dumps(json.load(sys.stdin).get('detail',[])))" 2>/dev/null)
   job_finish "$JOB_ID" awaiting_input "$DONE" "$FAILED" "$EV"
   log "sweep awaiting_input: ${WAITING} task(s) blocked/in_review, nothing ready"
 else
+  if [[ "$READY" == "False" && "${OPEN:-0}" -gt 0 && "${OPEN:-0}" == "${WAITING:-0}" ]]; then
+    log "sweep waiting but scope is unbound (no slug/assignee); finishing done, not awaiting_input"
+  fi
   job_finish "$JOB_ID" done "$DONE" "$FAILED"
 fi
 exit 0

@@ -143,6 +143,19 @@ export default function JobDetail() {
     [id, refresh],
   );
 
+  const dismiss = useCallback(async () => {
+    setActing("__dismiss__");
+    setActErr(null);
+    try {
+      const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      nav("/jobs");
+    } catch (e) {
+      setActErr(e instanceof Error ? e.message : String(e));
+      setActing(null);
+    }
+  }, [id, nav]);
+
   const back = (
     <Button size="sm" variant="ghost" onClick={() => nav("/jobs")}>
       <ChevronLeft aria-hidden /> Jobs
@@ -205,12 +218,25 @@ export default function JobDetail() {
             <SectionLabel>Needs your input</SectionLabel>
             <Stack gap="sm">
               <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
-                {ranSummary(job)} It paused because these tasks need you before the
-                sweep can continue. Resolve one and the loop picks it up on its next run.
+                {ranSummary(job)}{" "}
+                {job.project_slug || job.agent_id
+                  ? "It paused because these tasks need you before the sweep can continue. Resolve one and the loop picks it up on its next run."
+                  : "It is not bound to any project or agent, so there is nothing to resolve in place (a malformed or orphaned run). Dismiss it to clear this alert."}
               </p>
               {actErr && (
                 <StateBlock variant="error" title="Action failed" hint={actErr} />
               )}
+              <Row wrap style={{ gap: "var(--space-2)" }}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={dismiss}
+                  loading={acting === "__dismiss__"}
+                  disabled={!!acting && acting !== "__dismiss__"}
+                >
+                  Dismiss this alert
+                </Button>
+              </Row>
               {waiting.map((t) => {
                 const inReview = t.status === "in_review";
                 const busy = (a: string) => acting === `${t.id}:${a}`;

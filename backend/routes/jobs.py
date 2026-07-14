@@ -103,3 +103,18 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
             jobs.finish(job_id, status="done")
             job_cleared = True
     return {"ok": True, "action": body.action, "task": updated, "job_cleared": job_cleared}
+
+
+@router.post("/{job_id}/dismiss")
+async def dismiss_job(job_id: str) -> dict:
+    """The always-available escape hatch: clear a job off the attention feed
+    regardless of its binding or task state. Needed because a malformed
+    awaiting_input job (unbound sweep, phantom or question-less task) has no
+    resolvable scope, so the per-task actions cannot act on it, and the operator
+    must never be stuck with a permanent, unresolvable warning. Finishes the job
+    `cancelled`; it does NOT touch any task store (there may be none to touch)."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"job not found: {job_id}")
+    jobs.finish(job_id, status="cancelled")
+    return {"ok": True, "dismissed": True}
