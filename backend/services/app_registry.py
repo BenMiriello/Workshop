@@ -403,6 +403,28 @@ def _wearables_spec() -> AppSpec:
     )
 
 
+def _notes_spec() -> AppSpec:
+    from routes import notes
+    return AppSpec(
+        id="notes-app",
+        card={
+            "title": "Notes",
+            "tagline": "Markdown vault — wikilinks, backlinks, search",
+            "icon": "NotebookPen",
+            "route": "/apps/notes",
+        },
+        identity={
+            "sensitivity": "private",
+            "api_prefixes": ["/notes-app"],
+            "provides": list(notes.PROVIDES),
+            "needs": [],
+        },
+        mounts=(
+            RouterMount(notes.router, deps=(Depends(require_user),)),
+        ),
+    )
+
+
 # (id, required route modules, factory). An app is admitted to the catalog only
 # when every required module is importable on this instance; otherwise it is
 # skipped (logged once) and can never be installed, mounted, or listed. Apps with
@@ -414,6 +436,7 @@ _CATALOG_FACTORIES: tuple[tuple[str, tuple[str, ...], Callable[[], AppSpec]], ..
     ("location", ("location", "owntracks"), _location_spec),
     ("birds", ("birds", "environment"), _birds_spec),
     ("health", ("health",), _health_spec),
+    ("notes-app", ("notes",), _notes_spec),
     ("wearables", (), _wearables_spec),
 )
 

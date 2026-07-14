@@ -43,6 +43,7 @@ const NODES: Record<string, RouteNode> = {
   "/apps/birds/location": { label: "Location", parent: "/apps/birds/locations" },
   "/apps/birds/bird": { label: "Bird", parent: "/apps/birds" },
   "/apps/commute": { label: "Commute", parent: "/apps" },
+  "/apps/notes": { label: "Notes", parent: "/apps" },
   "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },

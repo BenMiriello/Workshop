@@ -1227,3 +1227,95 @@ a.ws-btn { text-decoration: none; }
   }
   .ws-spin { animation-duration: 2.4s; }
 }
+
+/* ---- NOTES app (pages/apps/notes) --------------------------------------- */
+.ws-note-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+@media (max-width: 720px) {
+  .ws-note-layout { grid-template-columns: 1fr; }
+}
+
+.ws-note-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  padding: var(--space-2);
+  max-height: 70vh;
+}
+.ws-note-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+  color: var(--muted);
+}
+.ws-note-search .ws-input { flex: 1; }
+.ws-note-list {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ws-note-row,
+.ws-note-hit,
+.ws-note-backlink {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  color: var(--fg);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+}
+.ws-note-row:hover,
+.ws-note-hit:hover,
+.ws-note-backlink:hover { background: var(--bg); }
+.ws-note-row.is-active,
+.ws-note-hit.is-active { background: var(--accent-soft); color: var(--accent); }
+.ws-note-row svg { color: var(--muted); flex: none; }
+.ws-note-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.ws-note-hit,
+.ws-note-backlink { flex-direction: column; align-items: flex-start; gap: 0; }
+
+.ws-note-main { min-width: 0; }
+.ws-note-title { font-size: var(--fs-xl); font-weight: 600; margin: 0; }
+.ws-note-meta {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.ws-note-backlink-path { font-size: var(--fs-sm); color: var(--fg); }
+
+.ws-note-editor {
+  width: 100%;
+  min-height: 50vh;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* Unresolved wikilink in the rendered preview — dashed + muted, click to create. */
+.ws-md a[href^="#wl-missing:"] {
+  color: var(--muted);
+  text-decoration: underline dashed;
+  text-underline-offset: 2px;
+}

@@ -32,6 +32,7 @@ import Jobs from "./pages/Jobs";
 import JobDetail from "./pages/JobDetail";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
+import Notes from "./pages/apps/notes/Notes";
 import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
 
@@ -88,6 +89,7 @@ export default function App() {
       pathname === "/chats" ||
       pathname === "/marketplace" ||
       pathname.startsWith("/apps/birds") ||
+      pathname === "/apps/notes" ||
       pathname === "/settings");
   const widthClass = chatFull
     ? " ws-app--chatfull"
@@ -122,6 +124,7 @@ export default function App() {
           <Route path="/apps/finance" element={<Finance />} />
           <Route path="/apps/budget" element={<Budget />} />
           <Route path="/apps/location" element={<LocationApp />} />
+          <Route path="/apps/notes" element={<Notes />} />
           {/* Birds runs inside the responsive Birds shell (sidebar / mobile tabs)
               with the persistent Location·Device·Time scope. The Workshop topnav
               above stays the outer nav level; this is the inner one. */}
