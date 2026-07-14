@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Menu, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, MessagesSquare, Settings as SettingsIcon } from "lucide-react";
+import { Menu, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, MessagesSquare, Settings as SettingsIcon } from "lucide-react";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
@@ -46,7 +46,7 @@ const NODES: Record<string, RouteNode> = {
   "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
-  "/jobs": { label: "Jobs", parent: "/agents" },
+  "/jobs": { label: "Jobs" },
   "/chats": { label: "Chats" },
   "/projects": { label: "Projects" },
   "/projects/new": { label: "New project", parent: "/projects" },
@@ -348,14 +348,17 @@ export function AppGroupNav() {
 // the links collapse to a single overflow-menu button so the toolbar stays one
 // row — the current section is already named in the breadcrumb, so nothing is
 // lost. CSS toggles which of the two renders at the breakpoint.
-// Per ADR-008: use first, build second, workers third, telemetry fourth,
-// config last. Matches frequency of operator use.
+// Per ADR-008: use first, build second, workers third, config last. Matches
+// frequency of operator use. Jobs is the "workers" view (the work-queue every
+// autonomous sweep + manual run lands in); it was previously reachable only via
+// a button on Agents and Home, so background work had no home in the nav.
 const SECTIONS = [
   { to: "/", label: "Home", icon: HomeIcon },
   { to: "/chats", label: "Chats", icon: MessagesSquare },
   { to: "/projects", label: "Projects", icon: FolderGit2 },
   { to: "/apps", label: "Apps", icon: LayoutGrid },
   { to: "/agents", label: "Agents", icon: Bot },
+  { to: "/jobs", label: "Jobs", icon: ListChecks },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 const linkClass = ({ isActive }: { isActive: boolean }) => (isActive ? "is-active" : undefined);

@@ -23,6 +23,7 @@ import { chatApi, type ThreadSummary } from "../lib/chat";
 
 function contextLabel(key: string): string {
   if (!key || key === "general") return "General";
+  if (!key.includes(":")) return `App · ${key}`; // app chats bind a bare app id
   const [kind, rest] = key.split(":", 2);
   if (kind === "project") return `Project · ${rest}`;
   if (kind === "build") return `Builder · ${rest}`;
@@ -32,23 +33,25 @@ function contextLabel(key: string): string {
 }
 
 // Classify a context key into the coarse buckets the Segmented filter exposes.
-// (agent: threads fall under "other" — they only appear under the All filter,
-// matching contextLabel's mapping until registry assistants become reachable.)
-type ContextKind = "general" | "project" | "build" | "app" | "other";
+// App chats bind a BARE app id (finance, budget, ...), not `app:<id>`; a bare
+// non-general key is therefore an app. agent: threads are assistants.
+type ContextKind = "general" | "project" | "build" | "agent" | "app" | "other";
 function contextKind(key: string): ContextKind {
   if (!key || key === "general") return "general";
+  if (!key.includes(":")) return "app"; // bare app id
   const kind = key.split(":", 1)[0];
-  if (kind === "project" || kind === "build" || kind === "app") return kind;
+  if (kind === "project" || kind === "build" || kind === "agent" || kind === "app") return kind;
   return "other";
 }
 
 // The context-kind view filter. Commits on change (a view preference).
-type FilterKind = "all" | "general" | "project" | "build" | "app";
+type FilterKind = "all" | "general" | "project" | "build" | "agent" | "app";
 const KIND_OPTIONS: SegmentedOption<FilterKind>[] = [
   { value: "all", label: "All" },
   { value: "general", label: "General" },
   { value: "project", label: "Projects" },
   { value: "build", label: "Builders" },
+  { value: "agent", label: "Assistants" },
   { value: "app", label: "Apps" },
 ];
 

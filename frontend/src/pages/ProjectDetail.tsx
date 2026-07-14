@@ -12,7 +12,6 @@ import {
   Pencil,
   RefreshCw,
   Send,
-  ExternalLink,
   Upload,
   Store,
   MessagesSquare,
@@ -728,7 +727,7 @@ export default function ProjectDetail() {
           <CardGrid>
             {agents.map((a) => (
               <li key={a.slug}>
-                <Link to={`/agents/build/${a.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
+                <Link to={`/agents/${a.slug}/chat`} style={{ textDecoration: "none", color: "inherit" }}>
                   <Card interactive>
                     <Row between>
                       <h3 className="ws-card__title">
@@ -1073,16 +1072,11 @@ export default function ProjectDetail() {
                   <Row wrap style={{ alignItems: "center" }}>
                     <GitBranch size={14} aria-hidden />
                     <span className="ws-mono" style={{ fontSize: "var(--fs-sm)", flex: "1 1 12rem" }}>{w.branch_slug}</span>
-                    {/* Condensed, aligned, equal-height actions menu. */}
+                    {/* Condensed, aligned, equal-height actions menu. The per-branch
+                        Diff button was removed: it pointed at /projects/:slug/diff,
+                        a route that never existed (always 404'd). Branch diffs live
+                        in the builder workbench; add a real diff surface here if wanted. */}
                     <Row style={{ gap: "var(--space-2)" }}>
-                      <Link
-                        to={`/projects/${slug}/diff?branch=${encodeURIComponent(w.branch_slug)}`}
-                        style={{ textDecoration: "none" }}
-                      >
-                        <Button size="sm" variant="ghost">
-                          <ExternalLink aria-hidden /> Diff
-                        </Button>
-                      </Link>
                       <Button size="sm" variant="default" onClick={() => { setMergeTarget(w); setMergeMessage(""); }}>
                         <GitMerge aria-hidden /> Merge
                       </Button>
@@ -1159,7 +1153,7 @@ export default function ProjectDetail() {
         projectTitle={project.title}
         onCreated={(agentSlug) => {
           setSpawning(false);
-          nav(`/agents/build/${agentSlug}`);
+          nav(`/agents/${agentSlug}/chat`);
         }}
       />
 

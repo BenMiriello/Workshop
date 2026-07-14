@@ -13,8 +13,8 @@ import {
   StatusPill,
   Tag,
   catFor,
-  type StatusKind,
 } from "../ui";
+import { type Job, jobStatusKind } from "../lib/jobs";
 
 // One Job's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from the Jobs feed, Home attention cards, and an agent's
@@ -32,22 +32,6 @@ type WaitingTask = {
   text?: string;
   blocked_reason?: string | null;
   question?: string;
-};
-
-type Job = {
-  id: string;
-  agent_id?: string;
-  project_slug?: string;
-  chat_id?: string;
-  trigger?: string;
-  status?: string;
-  started_at?: string;
-  ended_at?: string;
-  exit_code?: number;
-  tasks_done?: number;
-  tasks_failed?: number;
-  evidence?: unknown;
-  budget?: Record<string, unknown>;
 };
 
 // A job's evidence is "waiting tasks" when it's a list of task-shaped objects.
@@ -74,18 +58,7 @@ function ranSummary(job: Job): string {
   return `This was ${trig} ${where}${from}`.replace(/\s+/g, " ").trim() + ".";
 }
 
-const STATUS_KIND: Record<string, StatusKind> = {
-  running: "running",
-  done: "ok",
-  queued: "stopped",
-  cancelled: "stopped",
-  awaiting_input: "warn",
-  failed: "danger",
-};
-
-function statusKind(status?: string): StatusKind {
-  return STATUS_KIND[status ?? ""] ?? "stopped";
-}
+const statusKind = jobStatusKind;
 
 function fmtTs(ts?: string): string {
   if (!ts) return "";

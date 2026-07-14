@@ -56,6 +56,13 @@ function AgentBuildRedirect() {
   return <Navigate to={`/agents/${encodeURIComponent(slug)}/chat`} replace />;
 }
 
+// Voice is now an inline toggle inside the chat, not a screen. Old /voice/:key
+// deep-links redirect to the one focused chat (talk from the toggle there).
+function VoiceRedirect() {
+  const { contextKey = "general" } = useParams();
+  return <Navigate to={`/chat/${encodeURIComponent(contextKey)}`} replace />;
+}
+
 export default function App() {
   // Width by page type. Content/app pages keep the reading-width cap (980).
   // The builder is a 3-pane IDE and needs the full viewport (wide). The
@@ -134,9 +141,9 @@ export default function App() {
           </Route>
           <Route path="/apps/commute" element={<CommuteApp />} />
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
-          {/* Voice is now a toggle inside the chat, not a separate screen. Old
-              /voice links land on the same focused chat (talk from there). */}
-          <Route path="/voice/:contextKey" element={<FocusedChat />} />
+          {/* Voice is a toggle inside the chat, not a separate screen. Old
+              /voice deep-links redirect to the one focused chat (no second mount). */}
+          <Route path="/voice/:contextKey" element={<VoiceRedirect />} />
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />

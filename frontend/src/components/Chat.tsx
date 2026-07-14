@@ -1076,7 +1076,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {effectiveMode === "build" && slug && variant === "full" && (
         <button
           className="chat-tb__btn"
-          onClick={() => navigate(`/agents/build/${slug}`)}
+          onClick={() => navigate(`/agents/${slug}/chat`)}
           title="Open builder workbench (files · editor · preview · diff)"
           aria-label="Open builder workbench"
         >

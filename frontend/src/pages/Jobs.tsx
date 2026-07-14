@@ -14,40 +14,17 @@ import {
   Tag,
   Segmented,
   catFor,
-  type StatusKind,
   type SegmentedOption,
 } from "../ui";
+import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
 
 // The Jobs page: one feed for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
 // (services.jobs). Interactive chat turns are NOT Jobs and never appear here.
 
-type Job = {
-  id: string;
-  agent_id?: string;
-  project_slug?: string;
-  chat_id?: string;
-  trigger?: string;
-  status?: string;
-  started_at?: string;
-  ended_at?: string;
-  exit_code?: number;
-  tasks_done?: number;
-  tasks_failed?: number;
-};
-
 type JobsResp = { jobs: Job[]; count: number };
 
 type StatusFilter = "all" | "running" | "awaiting_input" | "done" | "failed";
-
-const STATUS_KIND: Record<string, StatusKind> = {
-  running: "running",
-  done: "ok",
-  queued: "stopped",
-  cancelled: "stopped",
-  awaiting_input: "warn",
-  failed: "danger",
-};
 
 const FILTERS: SegmentedOption<StatusFilter>[] = [
   { value: "all", label: "All" },
@@ -56,10 +33,6 @@ const FILTERS: SegmentedOption<StatusFilter>[] = [
   { value: "done", label: "Done" },
   { value: "failed", label: "Failed" },
 ];
-
-function statusKind(status?: string): StatusKind {
-  return STATUS_KIND[status ?? ""] ?? "stopped";
-}
 
 function fmtTs(ts?: string): string {
   if (!ts) return "";

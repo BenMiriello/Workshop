@@ -22,8 +22,8 @@ import {
   Textarea,
   catFor,
   type SegmentedOption,
-  type StatusKind,
 } from "../ui";
+import { type Job, jobStatusKind } from "../lib/jobs";
 import GrantPicker from "../components/GrantPicker";
 import { useCrumbLabel } from "../components/appNav";
 import {
@@ -48,16 +48,6 @@ type AgentDetailData = UnifiedAgent & {
   letta?: { memory?: { blocks?: { label: string; value: string }[] } };
 };
 
-type Job = {
-  id: string;
-  trigger?: string;
-  status?: string;
-  started_at?: string;
-  ended_at?: string;
-  tasks_done?: number;
-  tasks_failed?: number;
-};
-
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
 type ResourceGrant = {
   id: string;
@@ -72,15 +62,7 @@ type ResourceGrant = {
 
 const MAX_GRANTS = 200; // overflow guard for the per-agent grants list
 
-const STATUS_KIND: Record<string, StatusKind> = {
-  running: "running",
-  done: "ok",
-  queued: "stopped",
-  cancelled: "stopped",
-  awaiting_input: "warn",
-  failed: "danger",
-};
-const jobKind = (s?: string): StatusKind => STATUS_KIND[s ?? ""] ?? "stopped";
+const jobKind = jobStatusKind;
 
 const TRIGGER_KINDS: SegmentedOption<TriggerKind>[] = [
   { value: "manual", label: "Manual" },

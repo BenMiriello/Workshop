@@ -30,6 +30,7 @@ import {
   catFor,
   type StatusKind,
 } from "../ui";
+import { type Job, jobStatusKind } from "../lib/jobs";
 
 // Home — the operational hub (the platform root, "/"). Calm and scannable: a
 // strip for anything needing attention (a Job awaiting input), then recent
@@ -38,28 +39,6 @@ import {
 // "view all" link (Chats, Agents/Jobs, Apps, Projects).
 
 // ---- Jobs -----------------------------------------------------------------
-type Job = {
-  id: string;
-  agent_id?: string;
-  project_slug?: string;
-  chat_id?: string;
-  trigger?: string;
-  status?: string;
-  started_at?: string;
-  ended_at?: string;
-};
-
-const JOB_STATUS_KIND: Record<string, StatusKind> = {
-  running: "running",
-  done: "ok",
-  queued: "stopped",
-  cancelled: "stopped",
-  awaiting_input: "warn",
-  failed: "danger",
-};
-
-const jobStatusKind = (status?: string): StatusKind => JOB_STATUS_KIND[status ?? ""] ?? "stopped";
-
 function jobBinding(job: Job): { icon: JSX.Element; text: string } {
   if (job.project_slug) return { icon: <FolderGit2 aria-hidden />, text: job.project_slug };
   if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_id };
