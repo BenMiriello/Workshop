@@ -1,59 +1,137 @@
 #!/usr/bin/env python3
-"""Thin CLI over backend/services/tasks.py so shell (project_ralph.sh) can drive
-a project's structured task store WITHOUT desyncing it from TODO.md.
+"""Thin CLI over backend/services/tasks.py so shell (project_ralph.sh) and a
+builder chat's Bash can drive a scope's structured task store WITHOUT desyncing
+it from TODO.md.
 
-The store (projects/<slug>/.tasks.json) is authoritative; TODO.md is its export.
-project_ralph.sh must not sed-edit TODO.md directly (that would drift), so it
-picks and marks tasks through this helper instead.
+The store (<scope>/.tasks.json) is authoritative; TODO.md is its regenerated
+export plus a healed inbox. NEVER sed-edit TODO.md directly; a stray edit is
+reconciled back in, but editing state that way is not the contract. Change state
+through this CLI (shell) or the task API (chat/UI).
 
-Usage:
-  project_tasks.py next-open <project_dir>
-      -> prints JSON {"id","text","owner"} of the first `todo` task, or {} if none.
-  project_tasks.py set-status <project_dir> <task_id> <todo|doing|done|blocked>
-      -> updates the task; prints JSON of the updated task or {}.
+Verbs (all take a scope directory as the first positional):
+  next-open <dir>                     first ready task as JSON (alias: next-ready)
+  next-ready <dir> [--assignee A]     dependency-aware next ready task
+  list-json <dir> [--assignee A] [--include-done]
+  add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
+      [--touches glob,glob] [--acceptance-cmd CMD] [--max-iterations N]
+      [--effort s|m|l] [--discovered-from id] [--provenance KEY] [--source KIND]
+  set-status <dir> <id> <status> [--job-id J] [--reason R]
+  claim <dir> <id> <job_id> [--assignee A]
+  note <dir> <id> "evidence text" [--kind KIND] [--ref REF]
+  block <dir> <id> "reason"
+
+Every command prints JSON on stdout (a task object, a list, or {} / {"error":...}).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
 
-# backend/ on path so `from services import tasks` resolves the same store the
-# API uses.
+# backend/ on path so `from services import tasks` resolves the SAME store the API uses.
 _BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(_BACKEND))
 
 from services import tasks  # noqa: E402
 
 
-def _next_open(root: Path) -> dict:
-    for t in tasks.list_tasks(root, include_done=False):
-        if t.get("status") == "todo":
-            return {"id": t["id"], "text": t.get("text", ""), "owner": t.get("owner", "operator")}
-    return {}
+def _csv(v: str | None) -> list[str]:
+    return [x.strip() for x in (v or "").split(",") if x.strip()]
+
+
+def _slim(t: dict | None) -> dict:
+    """Compact projection for the loop (keeps next-open's old shape + new fields)."""
+    if not t:
+        return {}
+    return {
+        "id": t["id"], "text": t.get("text", ""), "owner": t.get("owner", "operator"),
+        "assignee": t.get("assignee"), "status": t.get("status"),
+        "priority": t.get("priority", 0), "depends_on": t.get("depends_on", []),
+        "acceptance": t.get("acceptance"), "max_iterations": t.get("max_iterations"),
+        "touches": t.get("touches", []),
+    }
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) < 3:
-        print("usage: project_tasks.py <next-open|set-status> <project_dir> [task_id status]", file=sys.stderr)
-        return 2
-    cmd, root = argv[1], Path(argv[2])
-    if cmd == "next-open":
-        print(json.dumps(_next_open(root)))
-        return 0
-    if cmd == "set-status":
-        if len(argv) < 5:
-            print("usage: project_tasks.py set-status <project_dir> <task_id> <status>", file=sys.stderr)
-            return 2
-        task_id, status = argv[3], argv[4]
-        try:
-            updated = tasks.update(root, task_id, status=status)
-        except ValueError as e:
-            print(json.dumps({"error": str(e)}))
-            return 1
-        print(json.dumps(updated or {}))
-        return 0
-    print(f"unknown command: {cmd}", file=sys.stderr)
+    p = argparse.ArgumentParser(prog="project_tasks.py")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    def scope(sp):
+        sp.add_argument("dir", type=Path)
+
+    sp = sub.add_parser("next-open"); scope(sp); sp.add_argument("--assignee", default=None)
+    sp = sub.add_parser("next-ready"); scope(sp); sp.add_argument("--assignee", default=None)
+    sp = sub.add_parser("list-json"); scope(sp)
+    sp.add_argument("--assignee", default=None); sp.add_argument("--include-done", action="store_true")
+
+    sp = sub.add_parser("add"); scope(sp); sp.add_argument("text")
+    sp.add_argument("--priority", type=int, default=0)
+    sp.add_argument("--depends-on", default=None)
+    sp.add_argument("--assignee", default=None)
+    sp.add_argument("--touches", default=None)
+    sp.add_argument("--acceptance-cmd", default=None)
+    sp.add_argument("--max-iterations", type=int, default=None)
+    sp.add_argument("--effort", default=None)
+    sp.add_argument("--discovered-from", default=None)
+    sp.add_argument("--provenance", default=None)
+    sp.add_argument("--source", default="agent")
+
+    sp = sub.add_parser("set-status"); scope(sp)
+    sp.add_argument("task_id"); sp.add_argument("status")
+    sp.add_argument("--job-id", default=None); sp.add_argument("--reason", default=None)
+
+    sp = sub.add_parser("claim"); scope(sp)
+    sp.add_argument("task_id"); sp.add_argument("job_id"); sp.add_argument("--assignee", default=None)
+
+    sp = sub.add_parser("note"); scope(sp)
+    sp.add_argument("task_id"); sp.add_argument("text")
+    sp.add_argument("--kind", default="note"); sp.add_argument("--ref", default=None)
+
+    sp = sub.add_parser("block"); scope(sp)
+    sp.add_argument("task_id"); sp.add_argument("reason")
+
+    a = p.parse_args(argv[1:])
+    root: Path = a.dir
+
+    try:
+        if a.cmd in ("next-open", "next-ready"):
+            print(json.dumps(_slim(tasks.next_ready(root, assignee=a.assignee))))
+            return 0
+        if a.cmd == "list-json":
+            print(json.dumps(tasks.list_tasks(root, include_done=a.include_done, owner=a.assignee)))
+            return 0
+        if a.cmd == "add":
+            acceptance = {"kind": "command", "spec": a.acceptance_cmd} if a.acceptance_cmd else None
+            t = tasks.add(
+                root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
+                assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,
+                max_iterations=a.max_iterations, effort=a.effort,
+                discovered_from=a.discovered_from, provenance=a.provenance,
+                source={"kind": a.source, "ref": None},
+            )
+            print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "set-status":
+            t = tasks.update(root, a.task_id, status=a.status, job_id=a.job_id, blocked_reason=a.reason)
+            print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "claim":
+            t = tasks.claim(root, a.task_id, a.job_id, assignee=a.assignee)
+            print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "note":
+            t = tasks.update(root, a.task_id, evidence={"kind": a.kind, "ref": a.ref or a.text})
+            print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "block":
+            t = tasks.update(root, a.task_id, status="blocked", blocked_reason=a.reason)
+            print(json.dumps(_slim(t)))
+            return 0
+    except ValueError as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+    print(json.dumps({"error": f"unknown command: {a.cmd}"}))
     return 2
 
 
