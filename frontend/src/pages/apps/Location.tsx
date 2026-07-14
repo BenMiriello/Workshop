@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Play, Square } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
+import { AppSettings } from "../../components/AppSettings";
+import LocationSettings from "../../components/appSettings/LocationSettings";
 import { Button, PageHeader, StatusDot } from "../../ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
@@ -365,6 +367,10 @@ export default function Location() {
           </>
         )}
       </div>
+      <AppSettings>
+        <LocationSettings />
+      </AppSettings>
+
       {/* In-app assistant — defaults to location scope (knows last ping + age);
           operator can swap providers from the picker inside the dock. */}
       <AppChatDock appId="location" title="Location assistant" placeholder="Ask about latest position…" />

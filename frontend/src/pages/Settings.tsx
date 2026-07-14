@@ -1,18 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
-  MapPin,
-  TrainFront,
   Bot,
-  Banknote,
   Server,
   Heart,
   Eye,
   EyeOff,
   Copy,
   Check,
-  Power,
-  Cpu,
   Palette,
   Sun,
   Moon,
@@ -26,10 +21,8 @@ import {
 } from "lucide-react";
 import {
   Button,
-  Card,
   ConfirmDialog,
   PageHeader,
-  SectionLabel,
   Segmented,
   StatusDot,
   useTheme,
@@ -39,7 +32,9 @@ import {
   type ThemeMode,
 } from "../ui";
 import { useAuth } from "../auth/AuthProvider";
-import { BankConnections } from "../components/PlaidLink";
+import Services from "./Services";
+import Events from "./Events";
+import { SettingsSection as Section, SettingsRow as Row } from "../components/AppSettings";
 import { native } from "../native/bridge";
 import { useNative, useTrackingStatus } from "../native/useNative";
 import { startDeviceTracking, stopDeviceTracking } from "../native/location";
@@ -47,14 +42,6 @@ import type { PermissionState } from "@shared/native-bridge";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
-
-type LocationLatest = {
-  ts?: string;
-  lat?: number;
-  lng?: number;
-  accuracy_m?: number;
-  source?: string;
-} | null;
 
 type ServiceProbe = {
   name: string;
@@ -89,12 +76,8 @@ export default function Settings() {
       <AppearanceSection />
       <BaseAppsSection />
       <PlatformSection />
-      <LocationSection />
       <HealthSection />
-      <CommuteSection />
       <AgentsSection />
-      <AutonomySection />
-      <FinanceSection />
       <SystemSection />
     </div>
   );
@@ -136,39 +119,6 @@ function PlatformSection() {
         </span>
       </Row>
     </Section>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Reusable section shell — design-system SectionLabel + Card.
-// ----------------------------------------------------------------------------
-function Section({
-  icon: Icon,
-  title,
-  children,
-}: {
-  icon: typeof MapPin;
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <SectionLabel icon={<Icon aria-hidden />}>{title}</SectionLabel>
-      <Card>{children}</Card>
-    </section>
-  );
-}
-
-// Label-beside-value row. Uses the inline-field grid; a hairline separates rows.
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div
-      className="ws-field ws-field--inline"
-      style={{ alignItems: "baseline", padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}
-    >
-      <span className="ws-field__label ws-muted">{label}</span>
-      <span>{children}</span>
-    </div>
   );
 }
 
@@ -484,132 +434,6 @@ function AppearanceSection() {
 }
 
 // ----------------------------------------------------------------------------
-// Location section — Owntracks status + privacy
-// ----------------------------------------------------------------------------
-function LocationSection() {
-  const [latest, setLatest] = useState<LocationLatest>(null);
-  const [, setTick] = useState(0);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : { latest: null };
-      setLatest((j.latest as LocationLatest) || null);
-    } catch {
-      setLatest(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 30_000);
-    const tick = setInterval(() => setTick((x) => x + 1), 10_000);
-    return () => { clearInterval(t); clearInterval(tick); };
-  }, [load]);
-
-  const ageS = latest?.ts ? Math.max(0, Math.round((Date.now() - Date.parse(latest.ts)) / 1000)) : null;
-  const stale = ageS != null && ageS > 30 * 60; // > 30min with no ping → likely a problem
-  const noData = !latest?.ts;
-
-  const onClearHistory = async () => {
-    setClearing(true);
-    try {
-      await fetch("/api/location/history", { method: "DELETE" });
-      await load();
-    } finally {
-      setClearing(false);
-      setConfirmClear(false);
-    }
-  };
-
-  return (
-    <Section icon={MapPin} title="Location">
-      <Row label="status">
-        {noData ? (
-          <StatusDot status="danger">no data — Owntracks not publishing yet</StatusDot>
-        ) : stale ? (
-          <StatusDot status="warn">stale ({fmtAge(latest!.ts!)}) — check Owntracks app</StatusDot>
-        ) : (
-          <StatusDot status="ok">live · last ping {fmtAge(latest!.ts!)}</StatusDot>
-        )}
-      </Row>
-      <Row label="source">{latest?.source || "—"}</Row>
-      {latest?.lat != null && (
-        <Row label="position">
-          <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-            {latest.lat.toFixed(5)}, {latest.lng?.toFixed(5)}
-            {latest.accuracy_m != null && ` · ±${Math.round(latest.accuracy_m)}m`}
-          </span>
-        </Row>
-      )}
-      <Row label="iOS app">
-        <a href="https://owntracks.org/booklet/features/ios/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
-          Owntracks
-        </a>{" · "}
-        config walkthrough: <code style={{ fontSize: "var(--fs-xs)" }}>docs/owntracks-ios.md</code>
-      </Row>
-      <OwntracksCredentials />
-      <Row label="history">
-        <Link to="/apps/location" style={{ color: "var(--accent)" }}>full history viewer ↗</Link>
-        {" · "}
-        <Button size="sm" variant="danger-ghost" onClick={() => setConfirmClear(true)}>
-          <Trash2 aria-hidden /> Clear all
-        </Button>
-      </Row>
-      <ConfirmDialog
-        open={confirmClear}
-        onCancel={() => setConfirmClear(false)}
-        onConfirm={onClearHistory}
-        title="Clear all location history?"
-        body="This deletes the stored history file on the backend. This can't be undone."
-        confirmLabel="Clear history"
-        busy={clearing}
-      />
-    </Section>
-  );
-}
-
-function OwntracksCredentials() {
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const url = "https://debian.tail38e62e.ts.net:8446/api/location/owntracks";
-
-  const copy = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(label);
-      setTimeout(() => setCopied(null), 1200);
-    } catch {
-      // ignore
-    }
-  };
-
-  return (
-    <>
-      <Row label="endpoint URL">
-        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem", wordBreak: "break-all" }}>{url}</span>
-        <button onClick={() => copy("url", url)} style={{ marginLeft: "0.4rem", padding: "0.2rem 0.4rem", fontSize: "0.75rem" }}>
-          {copied === "url" ? <Check size={12} strokeWidth={2} /> : <Copy size={12} strokeWidth={1.8} />}
-        </button>
-      </Row>
-      <Row label="auth">
-        Basic · user <code style={{ fontSize: "0.8rem" }}>workshop</code> · pass{" "}
-        <button onClick={() => setRevealed((v) => !v)} style={{ marginLeft: "0.3rem", padding: "0.2rem 0.4rem", fontSize: "0.75rem" }} title={revealed ? "hide" : "reveal"}>
-          {revealed ? <EyeOff size={12} strokeWidth={1.8} /> : <Eye size={12} strokeWidth={1.8} />}
-        </button>
-        {revealed && (
-          <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--muted)" }}>
-            from <code>~/.config/clawdbot/owntracks-auth.env</code>
-          </span>
-        )}
-      </Row>
-    </>
-  );
-}
-
-// ----------------------------------------------------------------------------
 // Health section — Apple Health data via Health Auto Export iOS app
 // ----------------------------------------------------------------------------
 function HealthSection() {
@@ -720,144 +544,6 @@ function HealthCredentials() {
 }
 
 // ----------------------------------------------------------------------------
-// Commute section — links to commute config + 511 key entry
-// ----------------------------------------------------------------------------
-function CommuteSection() {
-  const [services, setServices] = useState<ServiceProbe[] | null>(null);
-  const [schedule, setSchedule] = useState<{ home?: { lat?: number | null; lon?: number | null; address?: string }; work?: { lat?: number | null; lon?: number | null; address?: string } } | null>(null);
-
-  const loadSchedule = useCallback(async () => {
-    try {
-      const r = await fetch("/api/commute/schedule");
-      const j = r.ok ? await r.json() : null;
-      setSchedule(j);
-    } catch {
-      setSchedule(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetch("/api/services/").then((r) => r.ok ? r.json() : { services: [] }).then((j) => setServices(j.services || []));
-    loadSchedule();
-  }, [loadSchedule]);
-
-  const realtime = services?.find((s) => s.name?.includes("caltrain.gtfs_rt")) || services?.find((s) => s.name?.includes("511"));
-
-  return (
-    <Section icon={TrainFront} title="Commute">
-      <Row label="config">
-        <a href="https://debian.tail38e62e.ts.net:8444/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
-          Open Commute · Config tab ↗
-        </a>
-      </Row>
-      <Row label="511 API key">
-        {realtime?.status === "ok" ? (
-          <StatusDot status="ok">configured · transit realtime active</StatusDot>
-        ) : (
-          <span style={{ color: "var(--danger)" }}>
-            missing · register at <a href="https://511.org/open-data/token" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>511.org</a>,
-            paste to <code style={{ fontSize: "0.8rem" }}>~/.config/clawdbot/auth.env</code> as <code>WORKSHOP_511_API_KEY</code>
-          </span>
-        )}
-      </Row>
-      <CoordsRow label="home coords" name="home" entry={schedule?.home} onSaved={loadSchedule} />
-      <CoordsRow label="work coords" name="work" entry={schedule?.work} onSaved={loadSchedule} />
-    </Section>
-  );
-}
-
-function CoordsRow({
-  label,
-  name,
-  entry,
-  onSaved,
-}: {
-  label: string;
-  name: "home" | "work";
-  entry: { lat?: number | null; lon?: number | null; address?: string } | undefined;
-  onSaved: () => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [lat, setLat] = useState("");
-  const [lon, setLon] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const isSet = entry?.lat != null && entry?.lon != null;
-
-  const openEdit = () => {
-    setLat(entry?.lat != null ? String(entry.lat) : "");
-    setLon(entry?.lon != null ? String(entry.lon) : "");
-    setErr(null);
-    setEditing(true);
-  };
-
-  const save = async () => {
-    setSaving(true); setErr(null);
-    try {
-      const r = await fetch("/api/commute/coords", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, lat: parseFloat(lat), lon: parseFloat(lon) }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      setEditing(false);
-      onSaved();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Row label={label}>
-      {editing ? (
-        <span style={{ display: "inline-flex", gap: "0.3rem", flexWrap: "wrap", alignItems: "center" }}>
-          <input
-            value={lat}
-            onChange={(e) => setLat(e.target.value)}
-            placeholder="lat"
-            style={{ width: "9ch", padding: "0.2rem 0.4rem", fontSize: "0.85rem", fontFamily: "ui-monospace, monospace" }}
-          />
-          <input
-            value={lon}
-            onChange={(e) => setLon(e.target.value)}
-            placeholder="lon"
-            style={{ width: "10ch", padding: "0.2rem 0.4rem", fontSize: "0.85rem", fontFamily: "ui-monospace, monospace" }}
-          />
-          <button onClick={save} disabled={saving} style={{ fontSize: "0.8rem", padding: "0.2rem 0.5rem" }}>
-            {saving ? "…" : "save"}
-          </button>
-          <button onClick={() => setEditing(false)} type="button" style={{ fontSize: "0.8rem", padding: "0.2rem 0.5rem" }}>
-            cancel
-          </button>
-          {err && <span style={{ color: "var(--err)", fontSize: "0.78rem" }}>{err}</span>}
-        </span>
-      ) : (
-        <span>
-          {isSet ? (
-            <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
-              {Number(entry!.lat).toFixed(5)}, {Number(entry!.lon).toFixed(5)}
-            </span>
-          ) : (
-            <span style={{ color: "var(--err)", fontSize: "0.85rem" }}>
-              not set · location-aware commute disabled
-            </span>
-          )}
-          <button onClick={openEdit} style={{ marginLeft: "0.5rem", fontSize: "0.78rem", padding: "0.2rem 0.5rem" }}>
-            {isSet ? "edit" : "set"}
-          </button>
-          {entry?.address && (
-            <div className="muted" style={{ fontSize: "0.78rem", marginTop: "0.2rem" }}>{entry.address}</div>
-          )}
-        </span>
-      )}
-    </Row>
-  );
-}
-
-// ----------------------------------------------------------------------------
 // Agents section — fleet overview, defaults
 // ----------------------------------------------------------------------------
 function AgentsSection() {
@@ -892,420 +578,6 @@ function AgentsSection() {
 }
 
 // ----------------------------------------------------------------------------
-// Finance section — cache + privacy
-// ----------------------------------------------------------------------------
-function FinanceSection() {
-  const [cache, setCache] = useState<Record<string, { age_s: number; ttl_s: number }> | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/finance/cache");
-      const j = r.ok ? await r.json() : { entries: {} };
-      setCache(j.entries || {});
-    } catch {
-      setCache({});
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const onInvalidate = async () => {
-    if (!confirm("Drop the Plaid response cache? Next finance load will refetch from Plaid (~4s).")) return;
-    await fetch("/api/finance/cache/invalidate", { method: "POST" });
-    await load();
-  };
-
-  const entries = cache ? Object.entries(cache) : [];
-  return (
-    <>
-      <section style={{ marginBottom: "var(--space-6)" }}>
-        <SectionLabel icon={<Banknote aria-hidden />}>Banks</SectionLabel>
-        <BankConnections />
-      </section>
-    <Section icon={Banknote} title="Finance">
-      <Row label="cache">
-        {entries.length === 0 ? "no entries" : `${entries.length} key${entries.length === 1 ? "" : "s"}`}
-        <button onClick={onInvalidate} style={{ marginLeft: "0.6rem", padding: "0.2rem 0.5rem", fontSize: "0.78rem", color: "var(--err)" }}>
-          invalidate all
-        </button>
-      </Row>
-      {entries.map(([k, v]) => (
-        <Row key={k} label={k}>
-          <span className="muted" style={{ fontSize: "0.85rem", fontFamily: "ui-monospace, monospace" }}>
-            age {Math.round(v.age_s)}s · ttl {v.ttl_s}s
-          </span>
-        </Row>
-      ))}
-      <Row label="connected">
-        <Link to="/apps/finance" style={{ color: "var(--accent)" }}>view balances + transactions ↗</Link>
-      </Row>
-    </Section>
-    </>
-  );
-}
-
-// ----------------------------------------------------------------------------
-// Autonomy & GPU section
-// Three independent off-switches:
-//   - Supervisor heartbeats (Wave-2 Letta loop, in-process)
-//   - Cron autonomy (Wave-1 Ralph loop, via AUTONOMY_DISABLED flag file)
-//   - Ollama GPU residency (unload resident models to free VRAM)
-// Plus a single "Stop everything" that toggles supervisor + cron together.
-// ----------------------------------------------------------------------------
-type AutonomyStatus = {
-  supervisor: {
-    paused: boolean;
-    paused_at: string | null;
-    started_at: string | null;
-    agent_count: number;
-  };
-  cron_autonomy: {
-    disabled: boolean;
-    disabled_at: string | null;
-    flag_path: string;
-  };
-};
-
-type LoadedModel = {
-  name: string;
-  size_vram_bytes: number | null;
-  expires_at: string | null;
-};
-
-type OllamaStatus = {
-  ollama_up: boolean;
-  loaded_models: LoadedModel[];
-  gpu: {
-    available: boolean;
-    memory_used_mib?: number;
-    memory_free_mib?: number;
-    memory_total_mib?: number;
-    utilization_pct?: number;
-    error?: string;
-  };
-};
-
-const fmtMiB = (m: number | undefined) =>
-  m == null ? "—" : m >= 1024 ? `${(m / 1024).toFixed(1)} GiB` : `${m} MiB`;
-
-const fmtBytes = (b: number | null) => {
-  if (b == null) return "—";
-  if (b >= 1024 ** 3) return `${(b / 1024 ** 3).toFixed(1)} GiB`;
-  if (b >= 1024 ** 2) return `${(b / 1024 ** 2).toFixed(0)} MiB`;
-  return `${b} B`;
-};
-
-type BrokerLease = {
-  id: string;
-  app: string;
-  vram_budget_mib: number;
-  vram_actual_mib: number;
-  priority: number;
-  state: string;
-  reason: string;
-  implicit: boolean;
-};
-
-type BrokerStatus = {
-  available: boolean;
-  mode?: string;
-  total_vram_mib?: number;
-  committed_mib?: number;
-  free_budget_mib?: number;
-  active_lease_count?: number;
-  queue_depth?: number;
-  my_leases?: BrokerLease[];
-};
-
-function AutonomySection() {
-  const [auto, setAuto] = useState<AutonomyStatus | null>(null);
-  const [oll, setOll] = useState<OllamaStatus | null>(null);
-  const [bro, setBro] = useState<BrokerStatus | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [confirmStopAll, setConfirmStopAll] = useState(false);
-  const [confirmUnload, setConfirmUnload] = useState(false);
-
-  const load = useCallback(async () => {
-    try {
-      const [a, o, b] = await Promise.all([
-        fetch("/api/agents/autonomy/status").then((r) => r.ok ? r.json() : null),
-        fetch("/api/ollama/status").then((r) => r.ok ? r.json() : null),
-        fetch("/api/gpu/broker/status").then((r) => r.ok ? r.json() : { available: false }),
-      ]);
-      setAuto(a);
-      setOll(o);
-      setBro(b);
-    } catch {
-      // keep prior state
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  const post = useCallback(async (label: string, path: string) => {
-    setBusy(label);
-    try {
-      await fetch(path, { method: "POST" });
-      await load();
-    } finally {
-      setBusy(null);
-    }
-  }, [load]);
-
-  const supPaused = !!auto?.supervisor.paused;
-  const cronDisabled = !!auto?.cron_autonomy.disabled;
-  const allStopped = supPaused && cronDisabled;
-
-  const onStopAll = async () => {
-    setBusy("stop-all");
-    try {
-      // Order matters: pause supervisor and disable cron FIRST so nothing
-      // can reload models the moment after we unload them.
-      await Promise.all([
-        fetch("/api/agents/supervisor/pause", { method: "POST" }),
-        fetch("/api/agents/autonomy/disable", { method: "POST" }),
-      ]);
-      await fetch("/api/ollama/unload", { method: "POST" });
-      await load();
-    } finally {
-      setBusy(null);
-      setConfirmStopAll(false);
-    }
-  };
-
-  const onStartAll = async () => {
-    setBusy("start-all");
-    try {
-      await Promise.all([
-        fetch("/api/agents/supervisor/resume", { method: "POST" }),
-        fetch("/api/agents/autonomy/enable", { method: "POST" }),
-      ]);
-      await load();
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onUnload = async () => {
-    setBusy("unload");
-    try {
-      await fetch("/api/ollama/unload", { method: "POST" });
-      await load();
-    } finally {
-      setBusy(null);
-      setConfirmUnload(false);
-    }
-  };
-
-  return (
-    <Section icon={Power} title="Autonomy & GPU">
-      <Row label="all autonomy">
-        {auto == null ? "loading…" : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={allStopped ? "stopped" : supPaused || cronDisabled ? "warn" : "running"}>
-              {allStopped ? "stopped" : supPaused || cronDisabled ? "partial" : "running"}
-            </StatusDot>
-            {allStopped ? (
-              <Button size="sm" variant="primary" loading={busy === "start-all"} disabled={busy != null} onClick={onStartAll}>
-                Start all
-              </Button>
-            ) : (
-              <Button size="sm" variant="danger-ghost" disabled={busy != null} onClick={() => setConfirmStopAll(true)}>
-                <Power aria-hidden /> Stop all
-              </Button>
-            )}
-          </span>
-        )}
-      </Row>
-
-      <Row label="supervisor">
-        {auto == null ? "—" : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={supPaused ? "warn" : "running"}>
-              {supPaused ? "paused" : `ticking ${auto.supervisor.agent_count} agent${auto.supervisor.agent_count === 1 ? "" : "s"}`}
-            </StatusDot>
-            <Button
-              size="sm"
-              variant={supPaused ? "default" : "danger-ghost"}
-              disabled={busy != null}
-              onClick={() => post(supPaused ? "resume" : "pause", supPaused ? "/api/agents/supervisor/resume" : "/api/agents/supervisor/pause")}
-            >
-              {busy === "pause" ? "pausing…" : busy === "resume" ? "resuming…" : supPaused ? "Resume" : "Pause"}
-            </Button>
-            {supPaused && auto.supervisor.paused_at && (
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                since {fmtAge(auto.supervisor.paused_at)}
-              </span>
-            )}
-          </span>
-        )}
-      </Row>
-
-      <Row label="cron loop">
-        {auto == null ? "—" : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={cronDisabled ? "stopped" : "running"}>
-              {cronDisabled ? "disabled" : "enabled (Ralph fires every 20m)"}
-            </StatusDot>
-            <Button
-              size="sm"
-              variant={cronDisabled ? "default" : "danger-ghost"}
-              disabled={busy != null}
-              onClick={() => post(cronDisabled ? "enable" : "disable", cronDisabled ? "/api/agents/autonomy/enable" : "/api/agents/autonomy/disable")}
-            >
-              {busy === "enable" ? "enabling…" : busy === "disable" ? "disabling…" : cronDisabled ? "Enable" : "Disable"}
-            </Button>
-          </span>
-        )}
-      </Row>
-
-      <Row label="gpu memory">
-        {oll == null || !oll.gpu.available ? (
-          oll?.gpu.error ? <span className="ws-muted">no nvidia-smi</span> : "loading…"
-        ) : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-              {fmtMiB(oll.gpu.memory_used_mib)} / {fmtMiB(oll.gpu.memory_total_mib)}
-              {" · "}{oll.gpu.utilization_pct}% util
-            </span>
-            <Button
-              size="sm"
-              variant="danger-ghost"
-              disabled={busy != null || !oll.ollama_up || oll.loaded_models.length === 0}
-              onClick={() => setConfirmUnload(true)}
-            >
-              {busy === "unload" ? "unloading…" : "Free GPU"}
-            </Button>
-          </span>
-        )}
-      </Row>
-
-      <Row label="broker">
-        {bro == null ? "—" : !bro.available ? (
-          <span className="ws-muted">gpubrokerd offline · Workshop running standalone</span>
-        ) : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status="ok">up</StatusDot>
-            <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
-              mode={bro.mode} · committed {fmtMiB(bro.committed_mib)}/{fmtMiB(bro.total_vram_mib)}
-              {" · "}q={bro.queue_depth} · {bro.active_lease_count} lease{bro.active_lease_count === 1 ? "" : "s"}
-            </span>
-          </span>
-        )}
-      </Row>
-
-      <ConfirmDialog
-        open={confirmStopAll}
-        onCancel={() => setConfirmStopAll(false)}
-        onConfirm={onStopAll}
-        title="Stop all autonomy and free GPU?"
-        body="Pauses supervisor heartbeats, disables the cron autonomy loop, and unloads all resident Ollama models. The next manual start reloads them (~20s warm-up)."
-        confirmLabel="Stop all"
-        busy={busy === "stop-all"}
-      />
-      <ConfirmDialog
-        open={confirmUnload}
-        onCancel={() => setConfirmUnload(false)}
-        onConfirm={onUnload}
-        title="Free GPU memory?"
-        body="Unloads all resident Ollama models. The next agent tick reloads qwen2.5:32b (~20s warm-up)."
-        confirmLabel="Free GPU"
-        busy={busy === "unload"}
-      />
-
-      {bro?.available && (
-        <Row label="my leases">
-          {bro.my_leases && bro.my_leases.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-              {bro.my_leases.map((l) => (
-                <span key={l.id} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem" }}>
-                  {l.app} · {fmtMiB(l.vram_budget_mib)} budget · {fmtMiB(l.vram_actual_mib)} actual · pri {l.priority}
-                  {l.implicit ? " · implicit" : ""}
-                </span>
-              ))}
-              <span>
-                <button
-                  onClick={async () => {
-                    setBusy("release-mine");
-                    try {
-                      await fetch("/api/gpu/broker/release-mine", { method: "POST" });
-                      await load();
-                    } finally { setBusy(null); }
-                  }}
-                  disabled={busy != null}
-                  style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem", color: "var(--err)" }}
-                >
-                  {busy === "release-mine" ? "releasing…" : "release all mine"}
-                </button>
-              </span>
-            </div>
-          ) : (
-            <span className="muted">none</span>
-          )}
-        </Row>
-      )}
-
-      {bro?.available && (
-        <Row label="operator hold">
-          <button
-            onClick={async () => {
-              if (!confirm("Reserve GPU for you exclusively for 30 minutes? Workshop and other apps will be preempted.")) return;
-              setBusy("reserve");
-              try {
-                await fetch("/api/gpu/broker/reserve", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ duration_s: 1800, reason: "operator hold via UI" }),
-                });
-                await load();
-              } finally { setBusy(null); }
-            }}
-            disabled={busy != null}
-            style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
-          >
-            {busy === "reserve" ? "reserving…" : "reserve for me (30m)"}
-          </button>
-          <button
-            onClick={async () => {
-              setBusy("boost");
-              try {
-                await fetch("/api/gpu/broker/boost", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ priority: 80, ttl_s: 1800 }),
-                });
-                await load();
-              } finally { setBusy(null); }
-            }}
-            disabled={busy != null}
-            style={{ marginLeft: "0.5rem", padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
-          >
-            {busy === "boost" ? "boosting…" : "boost workshop priority (30m)"}
-          </button>
-        </Row>
-      )}
-
-      {oll && oll.loaded_models.length > 0 && (
-        <Row label="loaded">
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-            {oll.loaded_models.map((m) => (
-              <span key={m.name} style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.8rem" }}>
-                <Cpu size={11} strokeWidth={1.8} style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                {m.name} · {fmtBytes(m.size_vram_bytes)}
-              </span>
-            ))}
-          </div>
-        </Row>
-      )}
-    </Section>
-  );
-}
-
-// ----------------------------------------------------------------------------
 // System section
 // ----------------------------------------------------------------------------
 function SystemSection() {
@@ -1321,25 +593,32 @@ function SystemSection() {
   const down = services?.filter((s) => s.status === "down").length ?? 0;
 
   return (
-    <Section icon={Server} title="System">
-      <Row label="backend">{health?.ok ? <StatusDot status="ok">healthy</StatusDot> : <StatusDot status="danger">down</StatusDot>}</Row>
-      <Row label="services">
-        {services == null ? "probing…" : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status="ok">{up} up</StatusDot>
-            {down > 0 && <StatusDot status="danger">{down} down</StatusDot>}
-            <Link to="/activity#services" style={{ color: "var(--accent)" }}>details ↗</Link>
+    <>
+      <Section icon={Server} title="System">
+        <Row label="backend">{health?.ok ? <StatusDot status="ok">healthy</StatusDot> : <StatusDot status="danger">down</StatusDot>}</Row>
+        <Row label="services">
+          {services == null ? "probing…" : (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
+              <StatusDot status="ok">{up} up</StatusDot>
+              {down > 0 && <StatusDot status="danger">{down} down</StatusDot>}
+            </span>
+          )}
+        </Row>
+        <Row label="URLs">
+          <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", display: "block" }}>
+            :8443 workshop · :8444 commute · :8445 wearables
           </span>
-        )}
-      </Row>
-      <Row label="URLs">
-        <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", display: "block" }}>
-          :8443 workshop · :8444 commute · :8445 wearables
-        </span>
-      </Row>
-      <Row label="events">
-        <Link to="/activity#events" style={{ color: "var(--accent)" }}>recent event feed ↗</Link>
-      </Row>
-    </Section>
+        </Row>
+      </Section>
+
+      {/* Telemetry, re-homed from the retired Activity page: the full Services
+          probe grid and the recent Event feed live under System now. */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <Services />
+      </section>
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <Events />
+      </section>
+    </>
   );
 }

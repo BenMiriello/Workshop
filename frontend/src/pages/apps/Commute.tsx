@@ -2,6 +2,8 @@ import { AppGroupNav } from "../../components/appNav";
 import { PageHeader } from "../../ui";
 import CommutePages from "./commute/CommutePages";
 import AppChatDock from "../../components/AppChatDock";
+import { AppSettings } from "../../components/AppSettings";
+import CommuteSettings from "../../components/appSettings/CommuteSettings";
 import { useCommuteNative } from "../../native/commute";
 
 // Commute is a first-class Workshop app (like Finance / Budget / Location /
@@ -18,6 +20,9 @@ export default function Commute() {
       <AppGroupNav />
       <PageHeader title="Commute" />
       <CommutePages />
+      <AppSettings>
+        <CommuteSettings />
+      </AppSettings>
       <AppChatDock appId="commute" title="Commute assistant" placeholder="Ask about departures or transit status…" />
     </div>
   );

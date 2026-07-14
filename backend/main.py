@@ -13,7 +13,7 @@ from deps_user import (
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, agent_runs, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants
+from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants
 from services.supervisor import AgentSupervisor
 from services import global_memory, app_registry, installed_apps
 from letta_legacy_client import LettaClient
@@ -108,8 +108,7 @@ _USER = [Depends(require_user)]
 _LOOPBACK = [Depends(require_loopback)]
 
 # Platform / infra control surface — operator (admin) only.
-app.include_router(agent_runs.router, dependencies=_OPERATOR)  # before agents so /agents/runs wins over /agents/{agent_id}
-app.include_router(jobs.router, dependencies=_OPERATOR)  # top-level Job feed (/jobs); /agents/runs is a thin alias over it
+app.include_router(jobs.router, dependencies=_OPERATOR)  # top-level Job feed (/jobs)
 app.include_router(agents.router, prefix="/agents", tags=["agents"], dependencies=_OPERATOR)
 app.include_router(projects.router, prefix="/projects", tags=["projects"], dependencies=_OPERATOR)
 app.include_router(knowledge.router, prefix="/knowledge", tags=["knowledge"], dependencies=_OPERATOR)

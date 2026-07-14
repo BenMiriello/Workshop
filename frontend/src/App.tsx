@@ -27,7 +27,8 @@ import ForecastWeek from "./pages/apps/birds/ForecastWeek";
 import { BirdsScopeProvider } from "./pages/apps/birds/scope";
 import BirdsShell from "./pages/apps/birds/BirdsShell";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
-import Activity from "./pages/Activity";
+import Home from "./pages/Home";
+import Jobs from "./pages/Jobs";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
 import FocusedChat from "./pages/FocusedChat";
@@ -70,14 +71,15 @@ export default function App() {
   const chatFull = pathname.startsWith("/chat/");
   const roomy =
     !wide && !chatFull &&
-    (pathname === "/apps" ||
+    (pathname === "/" ||
+      pathname === "/apps" ||
       pathname === "/projects" ||
       pathname.startsWith("/projects/") ||
       pathname === "/agents" ||
+      pathname === "/jobs" ||
       pathname === "/chats" ||
       pathname === "/marketplace" ||
       pathname.startsWith("/apps/birds") ||
-      pathname === "/activity" ||
       pathname === "/settings");
   const widthClass = chatFull
     ? " ws-app--chatfull"
@@ -92,8 +94,9 @@ export default function App() {
       </header>
       <main>
         <Routes>
-          <Route path="/" element={<Navigate to="/apps" replace />} />
+          <Route path="/" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
+          <Route path="/jobs" element={<Jobs />} />
           <Route path="/agents/new" element={<AgentDetail />} />
           <Route path="/agents/:slug/chat" element={<AgentBuild />} />
           <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />
@@ -135,11 +138,12 @@ export default function App() {
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />
-          <Route path="/activity" element={<Activity />} />
-          {/* Direct-access shortcuts kept for bookmarks/links — they redirect into Activity with the right sub-tab. */}
-          <Route path="/services" element={<Navigate to="/activity#services" replace />} />
-          <Route path="/events" element={<Navigate to="/activity#events" replace />} />
-          <Route path="/runs" element={<Navigate to="/activity#runs" replace />} />
+          {/* Activity retired: Jobs live at /jobs (under Agents), Services/Events
+              moved into Settings > System. Old URLs redirect to their new homes. */}
+          <Route path="/activity" element={<Navigate to="/" replace />} />
+          <Route path="/services" element={<Navigate to="/settings" replace />} />
+          <Route path="/events" element={<Navigate to="/settings" replace />} />
+          <Route path="/runs" element={<Navigate to="/jobs" replace />} />
           {/* Old /location web-geolocation page removed. Owntracks iOS now
               posts to /api/location/owntracks; viewer lives at /apps/location. */}
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />

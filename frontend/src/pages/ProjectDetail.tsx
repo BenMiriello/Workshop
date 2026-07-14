@@ -557,6 +557,7 @@ export default function ProjectDetail() {
         actions={
           <Row wrap>
             <StatusPill status={stateKind(project.state)}>{project.state}</StatusPill>
+            <Tag hue="slate">{project.sensitivity}</Tag>
             <Button size="sm" variant="primary" onClick={() => nav(`/chat/${encodeURIComponent(`project:${slug}`)}`)}>
               <MessagesSquare aria-hidden /> Open chat
             </Button>

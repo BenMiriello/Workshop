@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
+import { AppSettings } from "../../components/AppSettings";
+import FinanceSettings from "../../components/appSettings/FinanceSettings";
 import { ConnectBankButton } from "../../components/PlaidLink";
 import {
   Button,
@@ -416,6 +418,10 @@ export default function Finance() {
       ) : (
         <TransactionsTable txns={txns} />
       )}
+
+      <AppSettings>
+        <FinanceSettings />
+      </AppSettings>
 
       <AppChatDock
         appId="finance"

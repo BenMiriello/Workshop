@@ -21,6 +21,7 @@ import {
   type StatusKind,
 } from "../ui";
 import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTriggers";
+import AutonomyControls from "../components/AutonomyControls";
 
 type SupervisorStatus = {
   supervisor: { paused: boolean; agent_count: number; paused_at: string | null };
@@ -363,6 +364,13 @@ export default function Agents() {
           })}
         </CardGrid>
       )}
+
+      {/* Global autonomy pause + supervisor + Ollama/GPU broker controls. Moved
+          here from Settings (Phase 5): the fleet they govern lives on this page,
+          and the AUTONOMY_DISABLED switch stays reachable. */}
+      <div style={{ marginTop: "var(--space-7)" }}>
+        <AutonomyControls />
+      </div>
 
       <NewBuilderModal
         open={spawning}

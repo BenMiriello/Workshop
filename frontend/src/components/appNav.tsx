@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Menu, Bot, FolderGit2, LayoutGrid, Store, MessagesSquare, Activity as ActivityIcon, Settings as SettingsIcon } from "lucide-react";
+import { Menu, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, MessagesSquare, Settings as SettingsIcon } from "lucide-react";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
@@ -43,12 +43,13 @@ const NODES: Record<string, RouteNode> = {
   "/apps/birds/location": { label: "Location", parent: "/apps/birds/locations" },
   "/apps/birds/bird": { label: "Bird", parent: "/apps/birds" },
   "/apps/commute": { label: "Commute", parent: "/apps" },
+  "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
+  "/jobs": { label: "Jobs", parent: "/agents" },
   "/chats": { label: "Chats" },
   "/projects": { label: "Projects" },
   "/projects/new": { label: "New project", parent: "/projects" },
-  "/activity": { label: "Activity" },
   "/settings": { label: "Settings" },
   "/settings/base-apps": { label: "Base Apps", parent: "/settings" },
   "/settings/grants": { label: "Grants", parent: "/settings" },
@@ -237,7 +238,7 @@ export function BreadcrumbBar() {
 
   return (
     <nav className="ws-breadcrumbs" ref={barRef} aria-label="Breadcrumb">
-      <NavLink to="/apps" className="ws-brand__home">
+      <NavLink to="/" end className="ws-brand__home">
         {plan.brandShort ? "W" : "Workshop"}
       </NavLink>
 
@@ -350,12 +351,11 @@ export function AppGroupNav() {
 // Per ADR-008: use first, build second, workers third, telemetry fourth,
 // config last. Matches frequency of operator use.
 const SECTIONS = [
-  { to: "/apps", label: "Apps", icon: LayoutGrid },
+  { to: "/", label: "Home", icon: HomeIcon },
   { to: "/chats", label: "Chats", icon: MessagesSquare },
-  { to: "/marketplace", label: "Marketplace", icon: Store },
   { to: "/projects", label: "Projects", icon: FolderGit2 },
+  { to: "/apps", label: "Apps", icon: LayoutGrid },
   { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/activity", label: "Activity", icon: ActivityIcon },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 const linkClass = ({ isActive }: { isActive: boolean }) => (isActive ? "is-active" : undefined);
@@ -389,7 +389,7 @@ export function SectionNav() {
     <>
       <nav className="ws-nav ws-sectionnav-inline" aria-label="Sections">
         {SECTIONS.map((s) => (
-          <NavLink key={s.to} to={s.to} className={linkClass}>
+          <NavLink key={s.to} to={s.to} end={s.to === "/"} className={linkClass}>
             {s.label}
           </NavLink>
         ))}
@@ -414,6 +414,7 @@ export function SectionNav() {
                 <NavLink
                   key={s.to}
                   to={s.to}
+                  end={s.to === "/"}
                   role="menuitem"
                   className={({ isActive }) => (isActive ? "ws-menu__item is-active" : "ws-menu__item")}
                 >

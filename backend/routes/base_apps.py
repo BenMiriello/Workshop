@@ -109,24 +109,6 @@ async def set_app_manifest_ui(app_id: str, body: AppUiIn):
 # CONSULTED source of truth — default-permissive for the operator — not a wall.
 
 
-@router.get("/grants")
-async def get_grants():
-    """Return the operator-owned grants document {"grants": [...], "guests": [...]}.
-    Auto-created empty on first read; tolerant of a corrupt file (serves empty)."""
-    return permissions.load_grants()
-
-
-@router.put("/grants")
-async def put_grants(doc: dict = Body(...)):
-    """Replace the full grants document. Validates the top-level shape (400 on a
-    bad shape) and atomically saves. Operator-only conceptually; loopback-trusted
-    like the existing manifest pattern — no new auth surface."""
-    try:
-        return permissions.save_grants(doc)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-
 @router.get("/permissions/{app_id}")
 async def get_app_permissions(app_id: str):
     """Assistant capabilities for an app under the operator identity: what a data
