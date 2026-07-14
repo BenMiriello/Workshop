@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain, Clock, PanelsTopLeft } from "lucide-react";
+import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks } from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
   Button,
@@ -270,6 +270,9 @@ export default function Agents() {
             <Button variant="ghost" size="sm" onClick={() => setSpawning(true)}>
               <Plus aria-hidden /> New builder
             </Button>
+            <Link to="/jobs">
+              <Button variant="ghost" size="sm"><ListChecks aria-hidden /> Jobs</Button>
+            </Link>
           </Row>
         }
       />
@@ -325,7 +328,12 @@ export default function Agents() {
             const lastJob = lastJobByAgent.get(a.id);
             return (
               <li key={`${a.runtime}:${a.id}`} className={isBuilder ? "ws-agent-card-cell" : undefined}>
-                <Link to={`/agents/${encodeURIComponent(a.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
+                <Link
+                  to={isBuilder
+                    ? `/agents/${encodeURIComponent(a.slug)}/chat`
+                    : `/agents/${encodeURIComponent(a.id)}`}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                >
                   <Card interactive className="ws-agent-card">
                     <Row between>
                       <h2 className="ws-card__title">
@@ -352,11 +360,11 @@ export default function Agents() {
                   <button
                     type="button"
                     className="ws-agent-card__workbench"
-                    onClick={() => nav(`/agents/${encodeURIComponent(a.slug)}/chat`)}
-                    title="Open builder work pane (files · editor · preview · diff · chat)"
-                    aria-label="Open builder work pane"
+                    onClick={() => nav(`/agents/${encodeURIComponent(a.id)}`)}
+                    title="Builder settings (triggers · jobs · config)"
+                    aria-label="Builder settings"
                   >
-                    <PanelsTopLeft size={16} aria-hidden />
+                    <SlidersHorizontal size={16} aria-hidden />
                   </button>
                 )}
               </li>

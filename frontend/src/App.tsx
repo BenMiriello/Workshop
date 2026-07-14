@@ -29,6 +29,7 @@ import BirdsShell from "./pages/apps/birds/BirdsShell";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
 import Home from "./pages/Home";
 import Jobs from "./pages/Jobs";
+import JobDetail from "./pages/JobDetail";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
 import FocusedChat from "./pages/FocusedChat";
@@ -76,7 +77,7 @@ export default function App() {
       pathname === "/projects" ||
       pathname.startsWith("/projects/") ||
       pathname === "/agents" ||
-      pathname === "/jobs" ||
+      pathname.startsWith("/jobs") ||
       pathname === "/chats" ||
       pathname === "/marketplace" ||
       pathname.startsWith("/apps/birds") ||
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/jobs" element={<Jobs />} />
+          <Route path="/jobs/:id" element={<JobDetail />} />
           <Route path="/agents/new" element={<AgentDetail />} />
           <Route path="/agents/:slug/chat" element={<AgentBuild />} />
           <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />

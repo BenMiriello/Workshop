@@ -156,7 +156,7 @@ function AttentionStrip() {
           const bind = jobBinding(job);
           return (
             <li key={job.id}>
-              <Link to="/agents" style={{ textDecoration: "none", color: "inherit" }}>
+              <Link to={`/jobs/${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
                 <Card interactive>
                   <Row between wrap style={{ gap: "var(--space-2)" }}>
                     <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
@@ -266,7 +266,7 @@ function RecentJobs() {
   }, [load]);
 
   return (
-    <Section icon={ListChecks} title="Recent jobs" viewAll={{ to: "/agents" }}>
+    <Section icon={ListChecks} title="Recent jobs" viewAll={{ to: "/jobs" }}>
       {err ? (
         <StateBlock variant="error" title="Couldn't load jobs" hint={<><code>/api/jobs</code> — {err}</>} />
       ) : !jobs ? (

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare } from "lucide-react";
 import {
   Button,
@@ -37,7 +38,7 @@ type Job = {
 
 type JobsResp = { jobs: Job[]; count: number };
 
-type StatusFilter = "all" | "running" | "done" | "failed";
+type StatusFilter = "all" | "running" | "awaiting_input" | "done" | "failed";
 
 const STATUS_KIND: Record<string, StatusKind> = {
   running: "running",
@@ -51,6 +52,7 @@ const STATUS_KIND: Record<string, StatusKind> = {
 const FILTERS: SegmentedOption<StatusFilter>[] = [
   { value: "all", label: "All" },
   { value: "running", label: "Running" },
+  { value: "awaiting_input", label: "Awaiting" },
   { value: "done", label: "Done" },
   { value: "failed", label: "Failed" },
 ];
@@ -85,6 +87,7 @@ function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
 }
 
 export default function Jobs() {
+  const nav = useNavigate();
   const [data, setData] = useState<JobsResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -178,7 +181,7 @@ export default function Jobs() {
           const bind = bindingLabel(job);
           const dur = duration(job);
           return (
-            <Card key={job.id}>
+            <Card key={job.id} onClick={() => nav(`/jobs/${encodeURIComponent(job.id)}`)} style={{ cursor: "pointer" }}>
               <Stack gap="sm">
                 <Row between wrap style={{ gap: "var(--space-2)" }}>
                   <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
