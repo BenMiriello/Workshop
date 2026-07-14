@@ -20,9 +20,11 @@ import {
   Stack,
   Tag,
   Textarea,
+  catFor,
   type SegmentedOption,
   type StatusKind,
 } from "../ui";
+import GrantPicker from "../components/GrantPicker";
 import { useCrumbLabel } from "../components/appNav";
 import {
   EVENT_SOURCES,
@@ -34,7 +36,7 @@ import {
 
 // One Agent, one config surface. `runtime` is a field, not a separate noun.
 // This page is the definition (editable), triggers + limits, the grant set
-// (read-only placeholder until Phase 4), and this agent's Job history. The
+// (Phase-4 scoped Store tokens, minted here via the broker), and its Job history. The
 // builder work pane (files / editor / preview / diff + chat) lives separately at
 // /agents/:slug/chat.
 
@@ -55,6 +57,20 @@ type Job = {
   tasks_done?: number;
   tasks_failed?: number;
 };
+
+// A Phase-4 resource-scoped grant minted TO this agent (over a Store).
+type ResourceGrant = {
+  id: string;
+  from: string;
+  to: string;
+  store_uri: string;
+  subtree?: boolean;
+  verbs: string[];
+  caveats?: Record<string, unknown>;
+  created_at?: string;
+};
+
+const MAX_GRANTS = 200; // overflow guard for the per-agent grants list
 
 const STATUS_KIND: Record<string, StatusKind> = {
   running: "running",
@@ -326,6 +342,11 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [confirmRetire, setConfirmRetire] = useState(false);
 
+  // Phase-4 grants minted to this agent, plus the broker (GrantPicker) mount.
+  const [grants, setGrants] = useState<ResourceGrant[] | null>(null);
+  const [grantsErr, setGrantsErr] = useState<string | null>(null);
+  const [grantPickerOpen, setGrantPickerOpen] = useState(false);
+
   // Draft (edit-mode). Nested triggers/limits are managed manually so dirty
   // detection is deep, not the shallow useEditMode compare.
   const [editing, setEditing] = useState(false);
@@ -359,6 +380,22 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       .then((d) => setJobs(d.jobs || []))
       .catch(() => setJobs([]));
   }, [agentId]);
+
+  const loadGrants = useCallback(async () => {
+    setGrantsErr(null);
+    setGrants(null);
+    try {
+      const r = await fetch("/api/grants");
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const data = (await r.json()) as { resource_grants?: ResourceGrant[] };
+      const to = `agent:${agentId}`;
+      setGrants((data.resource_grants || []).filter((g) => g.to === to));
+    } catch (e) {
+      setGrantsErr(String(e));
+    }
+  }, [agentId]);
+
+  useEffect(() => { loadGrants(); }, [loadGrants]);
 
   const personaValue = useMemo(() => {
     const blocks = agent?.letta?.memory?.blocks || [];
@@ -553,20 +590,66 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           )}
         </section>
 
-        {/* --- Grants (read-only placeholder, Phase 4) --- */}
+        {/* --- Grants (Phase 4: scoped capability tokens over Stores) --- */}
         <section>
-          <SectionLabel>Grants</SectionLabel>
-          <Card style={{ padding: "var(--space-3)" }}>
-            {agent.capabilities && agent.capabilities.length > 0 ? (
-              <Row wrap>
-                {agent.capabilities.map((c) => <Tag key={c} hue="blue">{c}</Tag>)}
-              </Row>
-            ) : (
-              <p className="ws-muted">
-                No grants. Scoped capability grants land here in Phase 4.
-              </p>
-            )}
-          </Card>
+          <Row between style={{ alignItems: "center" }}>
+            <SectionLabel>Grants</SectionLabel>
+            <Button size="sm" onClick={() => setGrantPickerOpen(true)}>
+              <Plus aria-hidden /> Grant access to a store
+            </Button>
+          </Row>
+          {grantsErr ? (
+            <StateBlock
+              variant="error"
+              title="Couldn't load grants"
+              hint={<code>/api/grants</code>}
+              action={<Button onClick={loadGrants}>Retry</Button>}
+            />
+          ) : grants === null ? (
+            <Card style={{ padding: "var(--space-3)" }}><p className="ws-muted">Loading…</p></Card>
+          ) : grants.length === 0 ? (
+            <StateBlock
+              title="No grants"
+              hint="Grant this agent scoped access to a Store (read / write / append) through the broker. Minted grants appear here and can be revoked from the Grants settings page."
+            />
+          ) : grants.length > MAX_GRANTS ? (
+            <StateBlock
+              title="Too many grants to list safely"
+              hint={`${grants.length} grants exceeds the ${MAX_GRANTS}-row cap; manage them from the Grants settings page.`}
+            />
+          ) : (
+            <Stack>
+              {grants.map((g) => {
+                const caveatKeys = Object.keys(g.caveats || {});
+                return (
+                  <Card key={g.id} style={{ padding: "var(--space-3)" }}>
+                    <Row wrap style={{ alignItems: "center", gap: "var(--space-2)" }}>
+                      <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{g.store_uri}</span>
+                      {g.subtree && <Tag hue={catFor("subtree")}>subtree</Tag>}
+                    </Row>
+                    <Row wrap style={{ marginTop: "var(--space-2)", gap: "var(--space-2)", alignItems: "center" }}>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", minWidth: "4.5rem" }}>verbs</span>
+                      {g.verbs.length === 0 ? (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>none</span>
+                      ) : (
+                        g.verbs.map((v) => <Tag key={v} hue={catFor(v)}>{v}</Tag>)
+                      )}
+                    </Row>
+                    {caveatKeys.length > 0 && (
+                      <Row wrap style={{ marginTop: "var(--space-2)", gap: "var(--space-2)", alignItems: "center" }}>
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", minWidth: "4.5rem" }}>caveats</span>
+                        {caveatKeys.map((k) => (
+                          <StatusPill key={k} status="warn">
+                            {k}: {String((g.caveats || {})[k])}
+                          </StatusPill>
+                        ))}
+                      </Row>
+                    )}
+                  </Card>
+                );
+              })}
+            </Stack>
+          )}
         </section>
 
         {/* --- Job history --- */}
@@ -608,6 +691,13 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           )}
         </ActionBar>
       )}
+
+      <GrantPicker
+        open={grantPickerOpen}
+        onClose={() => setGrantPickerOpen(false)}
+        to={`agent:${agent.slug}`}
+        onGranted={() => loadGrants()}
+      />
 
       <ConfirmDialog
         open={confirmRetire}

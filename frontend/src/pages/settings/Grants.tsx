@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network, Database } from "lucide-react";
+import { Plus, Trash2, ShieldCheck, ArrowRight, Users, Network, Database, Download } from "lucide-react";
 import {
   ActionBar,
   Button,
@@ -16,6 +16,7 @@ import {
   Tag,
   catFor,
 } from "../../ui";
+import GrantPicker from "../../components/GrantPicker";
 
 // Platform / Grants: operator-facing access-control editor.
 // app-platform-plan.md §3.2 + workshop-v1/01-agents-and-chat.md §2.
@@ -46,6 +47,15 @@ type ResourceGrant = {
   created_at?: string;
 };
 
+// A declared Store: a named, typed handle onto an app's data (GET /api/stores).
+type StoreRow = {
+  uri: string;
+  owner_app: string;
+  name: string;
+  type: string | null;
+  path: string;
+};
+
 type Manifest = {
   title: string;
   sensitivity?: string;
@@ -65,6 +75,17 @@ export default function Grants() {
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
   const [revoking, setRevoking] = useState<ResourceGrant | null>(null);
+
+  // Stores catalog (independent async state; not gated by the grants doc load).
+  const [stores, setStores] = useState<StoreRow[] | null>(null);
+  const [storesErr, setStoresErr] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<string | null>(null);
+  const [exported, setExported] = useState<Record<string, string>>({});
+
+  // "Mint a grant" broker (GrantPicker). The requester is operator-supplied here
+  // (an agent slug / app id); AgentDetail pre-scopes it instead.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [mintTo, setMintTo] = useState("");
 
   const load = async () => {
     setErr(null);
@@ -94,6 +115,34 @@ export default function Grants() {
     }
   };
 
+  const loadStores = async () => {
+    setStoresErr(null);
+    setStores(null);
+    try {
+      const r = await fetch("/api/stores");
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const data = (await r.json()) as { stores: StoreRow[] };
+      setStores(Array.isArray(data.stores) ? data.stores : []);
+    } catch (e) {
+      setStoresErr(String(e));
+    }
+  };
+
+  const exportStore = async (uri: string) => {
+    setExporting(uri);
+    setStoresErr(null);
+    try {
+      const r = await fetch(`/api/stores/export?uri=${encodeURIComponent(uri)}`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const data = (await r.json()) as { path: string };
+      setExported((cur) => ({ ...cur, [uri]: data.path }));
+    } catch (e) {
+      setStoresErr(`Export failed: ${String(e)}`);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   const revokeResource = async (grant: ResourceGrant) => {
     setErr(null);
     try {
@@ -113,6 +162,7 @@ export default function Grants() {
 
   useEffect(() => {
     load();
+    loadStores();
   }, []);
 
   const dirty = doc != null && JSON.stringify(doc) !== baseline;
@@ -482,9 +532,23 @@ export default function Grants() {
 
       {/* 4) Store-scoped grants (Phase 4) ----------------------------------- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
-        <SectionLabel icon={<Database size={14} strokeWidth={1.8} aria-hidden />}>
-          Store grants
-        </SectionLabel>
+        <Row between wrap style={{ alignItems: "center", gap: "var(--space-2)" }}>
+          <SectionLabel icon={<Database size={14} strokeWidth={1.8} aria-hidden />}>
+            Store grants
+          </SectionLabel>
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            <Input
+              aria-label="Requester"
+              placeholder="requester (agent slug / app id)"
+              value={mintTo}
+              onChange={(e) => setMintTo(e.target.value)}
+              style={{ maxWidth: "22ch" }}
+            />
+            <Button size="sm" onClick={() => setPickerOpen(true)} disabled={!mintTo.trim()}>
+              <Plus aria-hidden /> Mint a grant
+            </Button>
+          </Row>
+        </Row>
         <Card>
           {resourceGrants.length === 0 ? (
             <StateBlock
@@ -547,6 +611,84 @@ export default function Grants() {
           )}
         </Card>
       </section>
+
+      {/* 5) Stores catalog (Phase 4) ---------------------------------------- */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <SectionLabel icon={<Database size={14} strokeWidth={1.8} aria-hidden />}>
+          Stores
+        </SectionLabel>
+        <Card>
+          {storesErr && !stores ? (
+            <StateBlock
+              variant="error"
+              title="Couldn't load stores"
+              hint={<code>/api/stores</code>}
+              action={<Button onClick={loadStores}>Retry</Button>}
+            />
+          ) : !stores ? (
+            <>
+              <Skeleton width="50%" />
+              <Skeleton width="70%" style={{ marginTop: "var(--space-2)" }} />
+            </>
+          ) : stores.length === 0 ? (
+            <StateBlock
+              title="No stores declared"
+              hint="Apps declare stores from their manifest provides plus the built-in data registry. Install an app that owns one to see it here."
+            />
+          ) : stores.length > MAX_ROWS ? (
+            <StateBlock
+              title="Too many stores to list safely"
+              hint={`${stores.length} stores exceeds the ${MAX_ROWS}-row cap.`}
+            />
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+              {stores.map((s) => (
+                <div
+                  key={s.uri}
+                  style={{ paddingBottom: "var(--space-3)", borderBottom: "1px solid var(--border)" }}
+                >
+                  <Row between wrap style={{ alignItems: "center", gap: "var(--space-2)" }}>
+                    <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                      <Database size={16} strokeWidth={1.8} aria-hidden className="ws-muted" />
+                      <span style={{ fontWeight: 600 }}>{s.owner_app} · {s.name}</span>
+                      {s.type && <Tag hue={catFor(s.type)}>{s.type}</Tag>}
+                    </Row>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => exportStore(s.uri)}
+                      loading={exporting === s.uri}
+                    >
+                      <Download aria-hidden /> Export
+                    </Button>
+                  </Row>
+                  <div className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-1)" }}>
+                    {s.uri}
+                  </div>
+                  <div className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-1)" }}>
+                    {s.path}
+                  </div>
+                  {exported[s.uri] && (
+                    <div style={{ marginTop: "var(--space-2)" }}>
+                      <StatusDot status="ok">exported to {exported[s.uri]}</StatusDot>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {storesErr && stores && (
+            <p className="ws-field__error" style={{ marginTop: "var(--space-3)" }}>{storesErr}</p>
+          )}
+        </Card>
+      </section>
+
+      <GrantPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        to={mintTo}
+        onGranted={() => load()}
+      />
 
       <ConfirmDialog
         open={revoking != null}

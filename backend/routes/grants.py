@@ -107,3 +107,16 @@ async def list_stores(type: str | None = None):
         "stores": [s.to_dict() for s in stores.list(type=type)],
         "types": stores.types(),
     }
+
+
+@router.get("/stores/export")
+async def export_store(uri: str):
+    """Serialize a Store to a portable artifact directory and return its path.
+    Read-only over the source (never moves/deletes/chmods). 404 if the store is
+    not declared. {"uri": ..., "path": ...}."""
+    stores.register_all()
+    try:
+        path = stores.export(uri)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+    return {"uri": uri, "path": path}
