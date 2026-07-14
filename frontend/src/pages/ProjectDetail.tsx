@@ -16,6 +16,8 @@ import {
   Upload,
   Store,
   MessagesSquare,
+  Users,
+  KeyRound,
 } from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
@@ -76,6 +78,32 @@ type Task = {
 };
 
 type NoteEntry = { ts: string | null; who: string; text: string };
+
+// A row from GET /api/agents (the unified registry roster). Distinct from the
+// runtime Build agents list (GET /api/agents/build): these are DEFINITION-file
+// agents under projects/<slug>/agents/*.md, of either runtime.
+type RosterAgent = {
+  id: string;
+  slug: string;
+  runtime: string;
+  name: string;
+  purpose: string;
+  project_slug: string | null;
+  scope: string | null;
+  source: string | null;
+};
+
+// A resource-scoped capability grant from GET /api/grants (resource_grants[]).
+type ResourceGrant = {
+  id: string;
+  from: string;
+  to: string;
+  store_uri: string;
+  subtree: boolean;
+  verbs: string[];
+  caveats: Record<string, unknown>;
+  created_at: string;
+};
 
 const stateKind = (s?: string): StatusKind => {
   switch (s) {
@@ -303,6 +331,12 @@ export default function ProjectDetail() {
   const [agents, setAgents] = useState<BuildAgent[] | null>(null);
   const [spawning, setSpawning] = useState(false);
 
+  // Project-scoped DEFINITION-file agents (registry) + capability grants they hold.
+  const [defAgents, setDefAgents] = useState<RosterAgent[] | null>(null);
+  const [defAgentsErr, setDefAgentsErr] = useState<string | null>(null);
+  const [resourceGrants, setResourceGrants] = useState<ResourceGrant[] | null>(null);
+  const [grantsErr, setGrantsErr] = useState<string | null>(null);
+
   const [worktrees, setWorktrees] = useState<Worktree[] | null>(null);
   const [worktreesErr, setWorktreesErr] = useState<string | null>(null);
   const [worktreesLoading, setWorktreesLoading] = useState(true);
@@ -371,6 +405,35 @@ export default function ProjectDetail() {
     }
   }, [slug]);
 
+  // Definition-file agents scoped to this project (registry roster, source =
+  // "definition"), distinct from the runtime Build agents above.
+  const loadDefAgents = useCallback(async () => {
+    setDefAgentsErr(null);
+    try {
+      const r = await fetch("/api/agents");
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const all: RosterAgent[] = await r.json();
+      setDefAgents(all.filter((a) => a.project_slug === slug && a.source === "definition"));
+    } catch (e) {
+      setDefAgentsErr(String(e));
+      setDefAgents([]);
+    }
+  }, [slug]);
+
+  // All resource-scoped grants; filtered to this project's scope client-side.
+  const loadGrants = useCallback(async () => {
+    setGrantsErr(null);
+    try {
+      const r = await fetch("/api/grants");
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const d = await r.json();
+      setResourceGrants((d.resource_grants ?? []) as ResourceGrant[]);
+    } catch (e) {
+      setGrantsErr(String(e));
+      setResourceGrants([]);
+    }
+  }, []);
+
   const loadAll = useCallback(async () => {
     try {
       const [pR, bR, aR] = await Promise.all([
@@ -392,6 +455,8 @@ export default function ProjectDetail() {
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => { loadNotes(); }, [loadNotes]);
   useEffect(() => { loadChats(); }, [loadChats]);
+  useEffect(() => { loadDefAgents(); }, [loadDefAgents]);
+  useEffect(() => { loadGrants(); }, [loadGrants]);
   useEffect(() => { loadAll(); }, [loadAll]);
 
   // ---- Task mutations -------------------------------------------------------
@@ -535,6 +600,33 @@ export default function ProjectDetail() {
 
   const doneCount = useMemo(() => (tasks ?? []).filter((t) => t.status === "done").length, [tasks]);
 
+  // Grants held by this project's scope: either the project scope itself
+  // (`project:<slug>`) or any of its definition-file agents (`agent:<id|slug>`).
+  const grantScopes = useMemo(() => {
+    const s = new Set<string>([`project:${slug}`]);
+    for (const a of defAgents ?? []) {
+      s.add(`agent:${a.id}`);
+      s.add(`agent:${a.slug}`);
+    }
+    return s;
+  }, [defAgents, slug]);
+
+  const heldGrants = useMemo(
+    () => (resourceGrants ?? []).filter((g) => grantScopes.has(g.to)),
+    [resourceGrants, grantScopes],
+  );
+
+  const grantAgentLabel = useCallback(
+    (to: string) => {
+      const id = to.startsWith("agent:") ? to.slice("agent:".length) : "";
+      const a = (defAgents ?? []).find((x) => x.id === id || x.slug === id);
+      if (a) return a.name;
+      if (to === `project:${slug}`) return "project scope";
+      return to;
+    },
+    [defAgents, slug],
+  );
+
   if (err) {
     return (
       <div>
@@ -561,7 +653,7 @@ export default function ProjectDetail() {
             <Button size="sm" variant="primary" onClick={() => nav(`/chat/${encodeURIComponent(`project:${slug}`)}`)}>
               <MessagesSquare aria-hidden /> Open chat
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => { loadAll(); loadTasks(); loadNotes(); loadWorktrees(); loadChats(); }}>
+            <Button size="sm" variant="ghost" onClick={() => { loadAll(); loadTasks(); loadNotes(); loadWorktrees(); loadChats(); loadDefAgents(); loadGrants(); }}>
               <RefreshCw aria-hidden /> Refresh
             </Button>
           </Row>
@@ -652,6 +744,106 @@ export default function ProjectDetail() {
               </li>
             ))}
           </CardGrid>
+        )}
+      </section>
+
+      {/* --- Agents (definition files under projects/<slug>/agents) --- */}
+      {/* Distinct from Build agents above: these are the registry's declarative
+          agent definitions scoped to this project (either runtime). Each links to
+          its AgentDetail config page. */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <Row between style={{ marginBottom: "var(--space-3)" }}>
+          <SectionLabel icon={<Users aria-hidden />}>Agents</SectionLabel>
+        </Row>
+        {defAgents === null ? (
+          <Card><Skeleton width="40%" /></Card>
+        ) : defAgentsErr ? (
+          <StateBlock
+            variant="error"
+            title="Couldn't load project agents"
+            hint={<code>GET /api/agents — {defAgentsErr}</code>}
+            action={<Button size="sm" onClick={loadDefAgents}>Retry</Button>}
+          />
+        ) : defAgents.length === 0 ? (
+          <StateBlock
+            title="No agent definitions for this project"
+            hint={<>Add a definition file at <code className="ws-mono">projects/{slug}/agents/&lt;slug&gt;.md</code> to give this project a scoped assistant or builder.</>}
+          />
+        ) : defAgents.length > 100 ? (
+          <StateBlock title="Too many agents to render" hint="Retire unused agent definitions to keep this list readable." />
+        ) : (
+          <CardGrid>
+            {defAgents.map((a) => (
+              <li key={a.slug}>
+                <Link to={`/agents/${a.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
+                  <Card interactive>
+                    <Row between style={{ gap: "var(--space-2)" }}>
+                      <h3 className="ws-card__title" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <Bot size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                        {a.name}
+                      </h3>
+                      <Tag hue={catFor(a.runtime)}>{a.runtime}</Tag>
+                    </Row>
+                    <p className="ws-card__meta ws-mono">{a.slug}</p>
+                    {a.purpose && <p style={{ marginTop: "var(--space-2)" }}>{a.purpose}</p>}
+                  </Card>
+                </Link>
+              </li>
+            ))}
+          </CardGrid>
+        )}
+      </section>
+
+      {/* --- Grants (capabilities held by this project's agents/scope) --- */}
+      {/* Read-only view of resource-scoped grants (GET /api/grants) whose holder
+          is this project's scope or one of its definition-file agents. Minting /
+          revoking lives on AgentDetail + Settings > Grants, not here. */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <SectionLabel icon={<KeyRound aria-hidden />}>Grants</SectionLabel>
+        {resourceGrants === null ? (
+          <Card><Skeleton width="45%" /></Card>
+        ) : grantsErr ? (
+          <StateBlock
+            variant="error"
+            title="Couldn't load grants"
+            hint={<code>GET /api/grants — {grantsErr}</code>}
+            action={<Button size="sm" onClick={loadGrants}>Retry</Button>}
+          />
+        ) : heldGrants.length === 0 ? (
+          <StateBlock
+            title="No grants held"
+            hint="This project's agents hold no capability grants over any Store. Mint one from an agent's detail page (Grants section) to give it scoped access."
+          />
+        ) : heldGrants.length > 100 ? (
+          <StateBlock title="Too many grants to render" hint="Revoke unused grants from Settings > Grants to keep this list readable." />
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {heldGrants.map((g) => {
+              const caveatKeys = Object.keys(g.caveats || {});
+              return (
+                <li key={g.id}>
+                  <Card style={{ marginBottom: "var(--space-2)" }}>
+                    <Row between wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                      <span className="ws-mono" style={{ flex: "1 1 16rem", overflowWrap: "anywhere" }}>
+                        {g.store_uri}{g.subtree ? "/*" : ""}
+                      </span>
+                      <Tag hue="slate">{grantAgentLabel(g.to)}</Tag>
+                    </Row>
+                    <Row wrap style={{ gap: "var(--space-1)", marginTop: "var(--space-2)" }}>
+                      {g.verbs.map((v) => (
+                        <Tag key={v} hue={catFor(v)}>{v}</Tag>
+                      ))}
+                    </Row>
+                    {caveatKeys.length > 0 && (
+                      <p className="ws-muted" style={{ margin: "var(--space-2) 0 0", fontSize: "var(--fs-xs)" }}>
+                        caveats: {caveatKeys.map((k) => `${k}=${String((g.caveats as Record<string, unknown>)[k])}`).join(", ")}
+                      </p>
+                    )}
+                  </Card>
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
 
