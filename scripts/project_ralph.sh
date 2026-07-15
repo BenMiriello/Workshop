@@ -173,11 +173,16 @@ if [[ "$MODE" == "off" && "$FORCE" -ne 1 ]]; then
   exit 2
 fi
 
-# One sweep per project at a time.
-LOCK=/tmp/workshop-project-ralph-$SLUG.lock
+# One sweep per TREE at a time. Key the lock on the resolved DIR, not the slug:
+# an agent sweep (empty slug) and the project sweep it is linked to resolve to
+# the SAME tree but different slugs, so a slug lock let both run and collide on
+# the inner per-tree ralph lock (the loser exits 4 and burns a task attempt).
+# A DIR-keyed lock makes any two sweeps on one tree serialize at the sweep level
+# (clean skip, no claim, no attempt burned). (review F17)
+LOCK=/tmp/workshop-project-ralph-$(echo "$DIR" | md5sum | cut -c1-12).lock
 exec 8>"$LOCK"
 if ! flock -n 8; then
-  log "another sweep already running for $SLUG; aborting"
+  log "another sweep already running against $DIR; aborting"
   job_finish "$JOB_ID" cancelled 0 0
   exit 4
 fi

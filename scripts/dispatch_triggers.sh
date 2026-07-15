@@ -193,6 +193,16 @@ plan = []
 state = load_state()
 now = None  # triggers.due uses utcnow by default
 
+# Close any phantom 'running' coordinator Jobs whose sweep process died (crash,
+# reboot, OOM). Otherwise running_job() below skips that scope forever and wedges
+# it permanently. Idempotent + cheap; belt-and-suspenders with the liveness
+# watchdog cron so the dispatcher does not depend on that cron being installed.
+# (review F7)
+try:
+    jobs.reconcile_stuck()
+except Exception:
+    pass
+
 # --- Project loop triggers -------------------------------------------------
 try:
     reg = json.loads(PROJECTS_REGISTRY.read_text())
@@ -247,13 +257,13 @@ for a in agents:
     if not slug or not trigs:
         continue
     fire = False
+    fired_cron_keys = []  # committed to state only if this agent is dispatched (F16)
     for t in trigs:
         if t.get("kind") == "cron":
             key = f"agent:{slug}:cron:{t.get('cron_expression','')}"
             if triggers.due(t.get("cron_expression", ""), state.get(key), now):
                 fire = True
-                state[key] = __import__("datetime").datetime.now(
-                    __import__("datetime").timezone.utc).replace(microsecond=0).isoformat()
+                fired_cron_keys.append(key)
         elif t.get("kind") == "loop":
             fire = fire or True  # loop fires when the scope has ready tasks (checked below)
     if not fire:
@@ -290,6 +300,12 @@ for a in agents:
         print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
         continue
     plan.append(("agent", str(root), f"agent:{slug}"))
+    # Consume the cron firing ONLY now that it is actually dispatched; a firing
+    # skipped by any gate above stays "due" for the next tick instead of being
+    # silently lost until the next cron occurrence. (review F16)
+    _fire_ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    for _k in fired_cron_keys:
+        state[_k] = _fire_ts
     agent_started += 1
 
 save_state(state)
