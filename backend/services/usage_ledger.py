@@ -310,9 +310,22 @@ def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str
     if usage["app"] + reserve > app_total:
         return False, f"app budget exhausted: {usage['app']}/{int(app_total)} tokens in {usage['window_s']//3600}h (reserve {int(reserve)})"
     if scope:
+        used_scope = usage["by_project"].get(scope, 0)
         ceil = _project_params(cfg, scope).get("ceil")
-        if ceil is not None and usage["by_project"].get(scope, 0) >= float(ceil):
-            return False, f"project ceil reached: {scope} {usage['by_project'].get(scope, 0)}/{int(float(ceil))}"
+        if ceil is not None and used_scope >= float(ceil):
+            return False, f"project ceil reached: {scope} {used_scope}/{int(float(ceil))}"
+        # Enforce the weighted max-min allocation so configured floors/weights/ceil
+        # actually gate (they were previously display-only; review F10). A scope
+        # that has already spent its computed allowance for this window yields to
+        # others. Demanders = every scope with usage or config, plus this one
+        # (mirrors status()'s view). With the default config (weight 1, floor 0,
+        # ceil null) a lone scope's allowance equals app_total, so this never bites
+        # until the operator sets real weights/floors/ceils.
+        demanders = set(usage["by_project"]) | set(cfg.get("projects", {})) | {scope}
+        allowance = plan_budgets(usage["by_project"], demanders, cfg).get(scope)
+        if allowance is not None and used_scope >= allowance:
+            return False, (f"scope allocation reached: {scope} "
+                           f"{int(used_scope)}/{int(allowance)} tokens this window")
     return True, "ok"
 
 

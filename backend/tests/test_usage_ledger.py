@@ -10,6 +10,10 @@ from services import usage_ledger as ul
 def ledger(tmp_path, monkeypatch):
     monkeypatch.setattr(ul, "LEDGER_PATH", tmp_path / "usage.jsonl")
     monkeypatch.setattr(ul, "BUDGET_CONFIG_PATH", tmp_path / "usage-budget.json")
+    # can_admit reads the Jobs store for the in-flight reserve (F8a); isolate it to
+    # an empty temp log so admission tests never depend on live sweeps.
+    from services import jobs
+    monkeypatch.setattr(jobs, "JOBS_LOG", tmp_path / "jobs.jsonl")
     return ul
 
 
@@ -124,3 +128,36 @@ def test_status_reports_used_and_remaining(ledger):
     # a used 120 of its 200 allowance -> 80 remaining.
     assert st["projects"]["a"]["used"] == 120
     assert st["projects"]["a"]["remaining"] == 80
+
+
+# --- Admission enforces the allocation (review F10) --------------------------
+
+def test_can_admit_denies_when_scope_over_allowance(ledger):
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    cfg = {
+        "app_total": 400,
+        "nominal_task_tokens": 10,
+        "default_project": {"weight": 1.0, "floor": 0, "ceil": None},
+        "projects": {"a": {"weight": 1.0}, "b": {"weight": 1.0}},
+    }
+    ul.BUDGET_CONFIG_PATH.write_text(__import__("json").dumps(cfg))
+    # With a+b as demanders each gets a 200 allowance. a has spent 210 (over its
+    # share) while the app-wide total (210 < 400 - 10 reserve) still has room, so
+    # only the per-scope allocation should deny.
+    ledger.record("a", 210, ts=_iso(now - timedelta(hours=1)))
+    ok_a, reason_a = ul.can_admit("a", now=now)
+    assert ok_a is False and "allocation" in reason_a
+    # b has spent nothing -> still admissible under its own 200 allowance.
+    ok_b, _ = ul.can_admit("b", now=now)
+    assert ok_b is True
+
+
+def test_can_admit_default_config_only_app_cap_gates(ledger):
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    cfg = {"app_total": 400, "nominal_task_tokens": 10, "projects": {}}
+    ul.BUDGET_CONFIG_PATH.write_text(__import__("json").dumps(cfg))
+    # Default weights/floors: a lone scope's allowance == app_total, so a scope
+    # well under the app cap is admitted (per-scope allocation does not bite).
+    ledger.record("solo", 300, ts=_iso(now - timedelta(hours=1)))
+    ok, _ = ul.can_admit("solo", now=now)
+    assert ok is True
