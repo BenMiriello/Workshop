@@ -184,6 +184,28 @@ export default function Jobs() {
                   {bind.icon}
                   <span>{job.title || bind.text}</span>
                 </div>
+                {job.title && (job.project_slug || job.agent_name || job.chat_id) && (
+                  <div className="ws-job-card__sub ws-muted">
+                    {(job.project_slug || job.agent_name) && (
+                      <span>{job.project_slug || job.agent_name}</span>
+                    )}
+                    {job.chat_id && (
+                      <span
+                        className="ws-job-card__chat"
+                        role="link"
+                        tabIndex={0}
+                        title={`Open chat: ${job.chat_title || job.chat_id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (job.chat_context_key)
+                            nav(`/chat/${encodeURIComponent(job.chat_context_key)}?thread=${encodeURIComponent(job.chat_id!)}`);
+                        }}
+                      >
+                        <MessageSquare aria-hidden /> {job.chat_title || "chat"}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div className="ws-job-card__pills">
                   <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
                   {(job.trigger_label || job.trigger) && (

@@ -210,11 +210,23 @@ a.ws-btn { text-decoration: none; }
    and blow the 1fr track past the viewport — the #1 cause of horizontal scroll
    on mobile. Ellipsis inside the card then actually clips instead of overflowing. */
 .ws-card-grid > li { min-width: 0; }
-/* Dense variant for scannable home lists: narrower tracks, tighter gap. */
+/* Dense variant for scannable home lists: narrower tracks, tighter gap.
+   grid-auto-rows:1fr + the li/child flex-stretch chain make every card in a
+   row match height regardless of content (Home's attention strip / recent
+   chats / recent jobs are the only users of this class). */
 .ws-card-grid--dense {
   gap: var(--space-3);
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-auto-rows: 1fr;
 }
+.ws-card-grid--dense > li { display: flex; min-width: 0; }
+.ws-card-grid--dense > li > * { flex: 1 1 auto; min-width: 0; }
+
+/* Jobs page grid: same uniform-height treatment as the dense home grid, at
+   the page's normal (non-dense) track width. */
+.ws-jobs-grid { grid-auto-rows: 1fr; }
+.ws-jobs-grid > li { display: flex; min-width: 0; }
+.ws-jobs-grid > li > * { flex: 1 1 auto; min-width: 0; }
 
 /* Agents grid: uniform card heights regardless of content length. Every card
    has the same row structure (title / id / link / timestamp); the variable
@@ -242,6 +254,82 @@ a.ws-btn { text-decoration: none; }
 /* The timestamp sits at the bottom edge so cards align even when one has an
    empty meta line. */
 .ws-agent-card__when { margin-top: auto; padding-top: var(--space-2); min-height: 1.2em; }
+
+/* Projects grid: uniform card heights regardless of content length. Title and
+   slug clamp to one line each; the purpose/description line is reserved at a
+   fixed 2-line height (via -webkit-line-clamp) whether or not the text fills
+   both lines, so every card ends the same size. */
+.ws-projects-grid { grid-auto-rows: 1fr; }
+.ws-projects-grid > li { display: flex; min-width: 0; }
+.ws-projects-grid > li > * { flex: 1 1 auto; min-width: 0; }
+.ws-project-card { width: 100%; display: flex; flex-direction: column; }
+.ws-project-card .ws-card__title {
+  flex: 1 1 0; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-project-card .ws-row--between > .ws-pill { flex: 0 0 auto; }
+.ws-project-card .ws-card__meta.ws-mono {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-project-card__desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: var(--lh-tight, 1.4);
+  min-height: calc(var(--lh-tight, 1.4) * 2em);
+}
+.ws-project-card__when { margin-top: auto; padding-top: var(--space-2); }
+
+/* Chat list cards (Chats page): the title row is fixed height; the snippet
+   below is always rendered (even blank) and clamped to 2 lines so a card's
+   height never depends on whether/how long last_message is. */
+.ws-chat-card__snippet {
+  margin: var(--space-1) 0 0;
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  font-size: var(--fs-sm);
+  line-height: var(--lh-tight, 1.4);
+  min-height: calc(var(--lh-tight, 1.4) * 2em);
+}
+
+/* Job/binding list cards (Home "Needs attention" + "Recent jobs", the Jobs
+   page): one fixed-height binding row (icon + id, ellipsized, never wraps),
+   then a pill row that always holds the status pill first so it never lands
+   on the title row in one card and a second row in another. The pill row
+   itself never wraps — extra pills clip via overflow instead of pushing the
+   card taller. An optional single-line meta row (timestamp/duration/etc.)
+   closes out the card at the same fixed height every time. */
+.ws-job-card { display: flex; flex-direction: column; height: 100%; }
+.ws-job-card__bind { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.ws-job-card__bind > span {
+  min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-job-card__sub {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-1); min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: var(--fs-xs);
+}
+.ws-job-card__sub > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ws-job-card__chat {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  flex: 0 0 auto; cursor: pointer; color: var(--accent);
+}
+.ws-job-card__chat > svg { width: 12px; height: 12px; }
+.ws-job-card__pills {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: var(--space-2);
+  flex-wrap: nowrap; overflow: hidden;
+}
+.ws-job-card__pills > * { flex: 0 0 auto; }
+.ws-job-card__meta {
+  display: block; margin-top: var(--space-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* Build-agent card cell: the card body links to the chat; a corner button opens
    the full workbench. The button is a sibling of the card link (valid HTML), so

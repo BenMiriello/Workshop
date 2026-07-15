@@ -138,9 +138,10 @@ def _task_context(job: dict, cache: dict) -> dict:
 
 
 def _title(job: dict, agent_disp: str | None, tctx: dict) -> str:
-    # A child Job's title IS what it was for: the task text.
+    # A child Job's title IS what it was for: the task text, clipped to a
+    # name-length line (the full text lives on the task/detail view).
     if tctx.get("task_text"):
-        return _clip(tctx["task_text"])
+        return _clip(tctx["task_text"], 72)
     trig = job.get("trigger")
     label = _TRIGGER_LABELS.get(trig, (trig or "Run").capitalize())
     binding = job.get("project_slug") or agent_disp or "workspace"
