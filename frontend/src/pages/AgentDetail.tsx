@@ -239,7 +239,7 @@ function CreateAgent() {
         const a = await r.json();
         nav(`/agents/${encodeURIComponent(a.id)}`);
       } else {
-        if (!projectSlug) throw new Error("pick a project for the builder");
+        if (!projectSlug) throw new Error("pick a project for the agent");
         const slug = slugify(name.trim());
         const r = await fetch("/api/agents/build", {
           method: "POST",
@@ -298,7 +298,7 @@ function CreateAgent() {
                 ))}
               </Select>
             </Field>
-            <Field label="Purpose" help="One sentence: what is this builder working on?">
+            <Field label="Purpose" help="One sentence: what is this agent working on?">
               <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. build the landing hero" />
             </Field>
           </>
@@ -511,7 +511,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
               <p className="ws-card__meta">{agent.purpose || "No purpose set."}</p>
               <p className="ws-muted" style={{ marginTop: "var(--space-2)" }}>
                 <RuntimeIcon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-                {isBuilder ? "Claude Code builder" : "Letta-backed assistant"}
+                {isBuilder ? "Claude Code agent" : "Letta-backed assistant"}
                 {agent.memory ? ` · memory: ${agent.memory}` : ""}
               </p>
               <pre style={{

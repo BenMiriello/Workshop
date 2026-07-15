@@ -1047,7 +1047,7 @@ export default function AgentBuild() {
         />
       )}
 
-      <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename builder">
+      <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename agent">
         <Stack>
           <p className="ws-muted">
             The name and purpose are what you see across Workshop. The slug{" "}

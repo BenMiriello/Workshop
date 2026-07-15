@@ -766,7 +766,7 @@ export default function ProjectDetail() {
         ) : defAgents.length === 0 ? (
           <StateBlock
             title="No agent definitions for this project"
-            hint={<>Add a definition file at <code className="ws-mono">projects/{slug}/agents/&lt;slug&gt;.md</code> to give this project a scoped assistant or builder.</>}
+            hint={<>Add a definition file at <code className="ws-mono">projects/{slug}/agents/&lt;slug&gt;.md</code> to give this project a scoped agent.</>}
           />
         ) : defAgents.length > 100 ? (
           <StateBlock title="Too many agents to render" hint="Retire unused agent definitions to keep this list readable." />

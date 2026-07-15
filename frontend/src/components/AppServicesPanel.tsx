@@ -168,7 +168,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This project is the running Workshop"
-            hint="Editing it edits the live app you're using: there is no separate deployment. The frontend hot-reloads on save; backend changes need a restart (bash scripts/restart_backend.sh). Use the builder chat to make changes." />
+            hint="Editing it edits the live app you're using: there is no separate deployment. The frontend hot-reloads on save; backend changes need a restart (bash scripts/restart_backend.sh). Use the project chat to make changes." />
         </Card>
       </section>
     );
@@ -186,7 +186,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This is a built-in Workshop app"
-            hint={<>It runs as part of Workshop, not as a separate deployment. Its live code is in the monorepo (<code className="ws-mono">frontend/src/pages/apps</code> and <code className="ws-mono">backend/services</code>). Open it from the Apps launcher; edit it through the Workshop project's builder chat.</>} />
+            hint={<>It runs as part of Workshop, not as a separate deployment. Its live code is in the monorepo (<code className="ws-mono">frontend/src/pages/apps</code> and <code className="ws-mono">backend/services</code>). Open it from the Apps launcher; edit it through the Workshop project's chat.</>} />
         </Card>
       </section>
     );

@@ -154,7 +154,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
         ) : (data?.requirements.length ?? 0) === 0 ? (
           <StateBlock
             title="No environment variables declared"
-            hint="Declare them in workshop.app.json `env_requirements` (the builder can add them): key, description, required, secret, how_to_obtain. They'll appear here to fill." />
+            hint="Declare them in workshop.app.json `env_requirements` (the agent can add them): key, description, required, secret, how_to_obtain. They'll appear here to fill." />
         ) : (
           <Stack>
             <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>

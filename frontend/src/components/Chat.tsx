@@ -1093,8 +1093,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         <button
           className="chat-tb__btn"
           onClick={() => navigate(`/agents/${slug}/chat`)}
-          title="Open builder workbench (files · editor · preview · diff)"
-          aria-label="Open builder workbench"
+          title="Open workbench (files · editor · preview · diff)"
+          aria-label="Open workbench"
         >
           <PanelsTopLeft size={16} aria-hidden />
         </button>

@@ -124,7 +124,7 @@ function NewBuilderModal({
   const isNewProject = projectSlug === NEW_PROJECT;
 
   return (
-    <Modal open={open} onClose={onCancel} title="New builder">
+    <Modal open={open} onClose={onCancel} title="New agent">
       <Stack>
         <p className="ws-muted">
           A builder is a Claude Code session scoped to a project. Pick the project,
@@ -162,7 +162,7 @@ function NewBuilderModal({
             </Field>
           </>
         )}
-        {err && <StateBlock variant="error" title="Couldn't start builder" hint={<code>{err}</code>} />}
+        {err && <StateBlock variant="error" title="Couldn't start agent" hint={<code>{err}</code>} />}
         <Row end>
           <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
           <Button
@@ -171,7 +171,7 @@ function NewBuilderModal({
             disabled={busy || !projectSlug || (!isNewProject && (noProjects || !effectiveSlug || !effectiveName.trim()))}
             loading={busy}
           >
-            {isNewProject ? "New project…" : "Start builder"}
+            {isNewProject ? "New project…" : "Start agent"}
           </Button>
         </Row>
       </Stack>
@@ -361,7 +361,7 @@ export default function Agents() {
                     type="button"
                     className="ws-agent-card__workbench"
                     onClick={() => nav(`/agents/${encodeURIComponent(a.id)}`)}
-                    title="Builder settings (triggers · jobs · config)"
+                    title="Agent settings (triggers · jobs · config)"
                     aria-label="Builder settings"
                   >
                     <SlidersHorizontal size={16} aria-hidden />
