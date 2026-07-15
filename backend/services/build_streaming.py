@@ -568,6 +568,9 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             # as a ``learning-note`` block into the learnings store.
             new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
             applied_notes += lnotes
+            # Phase N3: capture a durable scoped ``note`` into the knowledge store.
+            new_text, nnotes = await task_scope.apply_note_block(ctx_key, new_text)
+            applied_notes += nnotes
             if new_text != text or applied_notes:
                 text = new_text or "(done)"
                 notes = applied_notes or None

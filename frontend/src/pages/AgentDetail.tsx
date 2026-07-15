@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Trash2, Plus, Bot, Brain, MessageSquare, Clock } from "lucide-react";
+import { useParams, useNavigate, Link } from "react-router-dom";
+import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote } from "lucide-react";
 import type { Project } from "@shared/types";
 import {
   ActionBar,
@@ -15,6 +15,7 @@ import {
   SectionLabel,
   Segmented,
   Select,
+  Skeleton,
   StateBlock,
   StatusPill,
   Stack,
@@ -69,7 +70,7 @@ const TRIGGER_KINDS: SegmentedOption<TriggerKind>[] = [
   { value: "loop", label: "Loop" },
 ];
 
-function fmtTs(ts?: string): string {
+function fmtTs(ts?: string | null): string {
   if (!ts) return "";
   const d = new Date(ts);
   return isNaN(d.getTime()) ? "" : d.toLocaleString();
@@ -309,6 +310,143 @@ function CreateAgent() {
         </Row>
       </Stack>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Notes (agent:<slug> knowledge scope)
+// ---------------------------------------------------------------------------
+// The same scoped-notes substrate the Project detail page uses, on the agent
+// scope. Operator writes and agent writes share it, and it IS injected into the
+// agent's chat context. List via GET /api/knowledge/agent:<slug>/notes, write a
+// fresh note via the per-note PUT route (same shape as the /notes surface).
+type KnowledgeNote = { id: string; title: string; hook: string; updated?: string | null };
+
+function freshNoteId(title: string): string {
+  const base =
+    (title || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "note";
+  return `${base}-${Date.now().toString(36)}`;
+}
+
+function AgentNotes({ slug }: { slug: string }) {
+  const scope = `agent:${slug}`;
+  const [notes, setNotes] = useState<KnowledgeNote[] | null>(null);
+  const [notesErr, setNotesErr] = useState<string | null>(null);
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
+  const [posting, setPosting] = useState(false);
+  const [postErr, setPostErr] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setNotesErr(null);
+    try {
+      const r = await fetch(`/api/knowledge/${encodeURIComponent(scope)}/notes`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setNotes(await r.json());
+    } catch (e) {
+      setNotesErr(String(e));
+      setNotes([]);
+    }
+  }, [scope]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const post = useCallback(async () => {
+    const t = title.trim();
+    if (!t && !body.trim()) return;
+    setPosting(true);
+    setPostErr(null);
+    try {
+      const id = freshNoteId(t);
+      const r = await fetch(
+        `/api/knowledge/${encodeURIComponent(scope)}/notes/${encodeURIComponent(id)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: t, content: body, hook: "" }),
+        },
+      );
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setTitle("");
+      setBody("");
+      await load();
+    } catch (e) {
+      setPostErr(String(e));
+    } finally {
+      setPosting(false);
+    }
+  }, [title, body, scope, load]);
+
+  return (
+    <section>
+      <Row between wrap style={{ alignItems: "baseline" }}>
+        <SectionLabel icon={<StickyNote aria-hidden />}>Notes</SectionLabel>
+        <Link to={`/notes?scope=${encodeURIComponent(scope)}`} className="ws-bc__link">
+          View all in Notes
+        </Link>
+      </Row>
+      <Card style={{ padding: "var(--space-3)" }}>
+        <Stack>
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Note title"
+            aria-label="Note title"
+          />
+          <Textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder="Leave a note for this agent. Notes here are read and written by the agent too, and injected into its chat context."
+            rows={3}
+          />
+          <Row>
+            <Button variant="primary" onClick={post} loading={posting} disabled={!title.trim() && !body.trim()}>
+              <Plus aria-hidden /> Save note
+            </Button>
+          </Row>
+          {postErr && <p className="ws-field__error">{postErr}</p>}
+
+          {notes === null ? (
+            <Stack gap="sm">
+              <Skeleton width="65%" />
+              <Skeleton width="50%" />
+            </Stack>
+          ) : notesErr ? (
+            <StateBlock
+              variant="error"
+              title="Couldn't load notes"
+              hint={<code>GET /api/knowledge/{scope}/notes ({notesErr})</code>}
+              action={<Button size="sm" onClick={load}>Retry</Button>}
+            />
+          ) : notes.length === 0 ? (
+            <StateBlock
+              title="No notes yet"
+              hint="Save a note above to leave context for this agent. The agent writes notes here too, and everything here is injected into its chat context."
+            />
+          ) : (
+            <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+              {notes.map((n) => (
+                <li key={n.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
+                  <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                    <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.id}</span>
+                    {n.updated && (
+                      <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.updated)}</span>
+                    )}
+                  </Row>
+                  {n.hook && (
+                    <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-sm)", wordBreak: "break-word" }}>{n.hook}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Stack>
+      </Card>
+    </section>
   );
 }
 
@@ -647,6 +785,9 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             </Stack>
           )}
         </section>
+
+        {/* --- Notes (agent:<slug> knowledge scope, injected into chat context) --- */}
+        <AgentNotes slug={agent.slug} />
       </Stack>
 
       {editing && (

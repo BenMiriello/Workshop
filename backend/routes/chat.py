@@ -923,6 +923,11 @@ async def send_message(thread_id: str, body: PostMessage):
     cleaned, lnotes = task_scope.apply_learning_note(t.get("context_key"), cleaned)
     if lnotes:
         notes = (notes or []) + lnotes
+    # Phase N3: a chat can leave a durable scoped ``note`` in the knowledge store
+    # (the Notes substrate), captured deterministically in this same finalize path.
+    cleaned, nnotes = await task_scope.apply_note_block(t.get("context_key"), cleaned)
+    if nnotes:
+        notes = (notes or []) + nnotes
     if not cleaned:
         cleaned = "(done)"
     meta: dict = {}

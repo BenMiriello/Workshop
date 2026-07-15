@@ -194,6 +194,28 @@ LEARNING_NOTE_PROTOCOL = (
     "Only lasting preferences and corrections."
 )
 
+# The `note` block: deterministic capture of a durable, scoped FINDING into the
+# knowledge store (the Notes substrate at services/knowledge.py), applied in the
+# same finalize path as task-patch/learning-note and stripped from the reply.
+# Distinct from learning-note (which records operator preferences as guardrails):
+# a note is freeform scoped knowledge the operator and agents both read. Described
+# to the general + build/project personas that should emit it.
+NOTE_PROTOCOL = (
+    "=== LEAVING A NOTE (note) ===\n"
+    "When you learn something durable and scoped that should outlive this chat (a "
+    "fact, a finding, a gotcha, running context an agent will want later), record "
+    "it as a note rather than leaving it in scratch. Emit ONE fenced block (it is "
+    "written to the knowledge store and hidden from your reply):\n"
+    "```note\n"
+    "{\"title\": \"<short note title>\", \"body\": \"<the finding, markdown>\", \"scope\": \"workshop\"}\n"
+    "```\n"
+    "`scope` is optional (default: this chat's scope, else `workshop`) and may be "
+    "`workshop`, `project:<slug>`, `app:<name>`, or `agent:<slug>`. Notes are for "
+    "durable scoped knowledge, NOT ephemeral scratch. For a choice or tradeoff that "
+    "will outlive the chat (an architectural decision, a policy), open a decision "
+    "record in `docs/decisions/` (the ADR convention) instead of a note."
+)
+
 # Skill loader protocol (Phase 5). Data-mode assistants see the available skill
 # names + descriptions ambiently (in the cache-stable prefix); to pull a skill's
 # FULL instructions they emit this fenced block and the backend feeds the body
@@ -641,6 +663,7 @@ class ContextProvider:
             "answering, and DON'T make up numbers when real ones are right there.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PATCH_PROTOCOL
             + "\n\n" + LEARNING_NOTE_PROTOCOL
+            + "\n\n" + NOTE_PROTOCOL
         )
 
     def live_context(self) -> str:
@@ -803,7 +826,7 @@ class ProjectContextProvider(ContextProvider):
             "note <id> \"text\", next-ready). When the operator gives a non-trivial "
             "direction, append a one-line decision note to PROJECT.md.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
-            + LEARNING_NOTE_PROTOCOL + "\n\n"
+            + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
             + f"Project-local agent rules:\n\n{rules or '(none)'}"
         )
 
@@ -869,7 +892,7 @@ class BuildAgentContextProvider(ContextProvider):
             "note <id> \"text\", next-ready). When the operator gives a non-trivial "
             "direction, append a one-line decision note to PROJECT.md.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
-            + LEARNING_NOTE_PROTOCOL + "\n\n"
+            + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
             + f"Build-agent rules:\n\n{rules or '(none)'}"
         )
 

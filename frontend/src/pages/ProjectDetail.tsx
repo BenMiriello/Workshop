@@ -11,7 +11,6 @@ import {
   Plus,
   Pencil,
   RefreshCw,
-  Send,
   Upload,
   Store,
   MessagesSquare,
@@ -80,7 +79,11 @@ type Task = {
   updated?: string;
 };
 
-type NoteEntry = { ts: string | null; who: string; text: string };
+// A note in the project's knowledge scope (project:<slug>). The Notes section
+// reads and writes this scope so operator notes and agent notes share the one
+// substrate that IS injected into chat context. The list carries title/hook/
+// updated; the hook is the one-line summary shown as the preview.
+type KnowledgeNote = { id: string; title: string; hook: string; updated?: string | null };
 
 // A row from GET /api/agents (the unified registry roster). Distinct from the
 // runtime Build agents list (GET /api/agents/build): these are DEFINITION-file
@@ -128,22 +131,22 @@ const stateKind = (s?: string): StatusKind => {
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
 
-// ---- Notes parsing ---------------------------------------------------------
-// INTERVENTIONS.md is append-only stamped lines: "[<iso>] <who>: <text>".
-function parseNotes(content: string): NoteEntry[] {
-  return content
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const m = /^\[([^\]]+)\]\s*([^:]+):\s*(.*)$/.exec(line);
-      if (m) return { ts: m[1], who: m[2].trim(), text: m[3] };
-      return { ts: null, who: "operator", text: line };
-    });
+// ---- Notes helpers ---------------------------------------------------------
+// A note id must match the knowledge store's slug rule ([a-z0-9] segments joined
+// by "-"). Derive one from the title, fall back to "note", and always append a
+// base36 timestamp so a fresh note never collides with an existing file. Same
+// rule as the /notes surface (Notes.tsx freshNoteId).
+function freshNoteId(title: string): string {
+  const base =
+    (title || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 48) || "note";
+  return `${base}-${Date.now().toString(36)}`;
 }
 
-function fmtTs(ts: string | null): string {
+function fmtTs(ts?: string | null): string {
   if (!ts) return "";
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
@@ -330,10 +333,12 @@ export default function ProjectDetail() {
   const [deleteTask, setDeleteTask] = useState<Task | null>(null);
   const [deletingTask, setDeletingTask] = useState(false);
 
-  // Notes (INTERVENTIONS.md)
-  const [notes, setNotes] = useState<NoteEntry[] | null>(null);
+  // Notes (project:<slug> knowledge scope, the substrate injected into context)
+  const noteScope = `project:${slug}`;
+  const [notes, setNotes] = useState<KnowledgeNote[] | null>(null);
   const [notesErr, setNotesErr] = useState<string | null>(null);
-  const [noteDraft, setNoteDraft] = useState("");
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteBody, setNoteBody] = useState("");
   const [postingNote, setPostingNote] = useState(false);
   const [notePostErr, setNotePostErr] = useState<string | null>(null);
 
@@ -404,15 +409,14 @@ export default function ProjectDetail() {
   const loadNotes = useCallback(async () => {
     setNotesErr(null);
     try {
-      const r = await fetch(`/api/projects/${slug}/interventions`);
+      const r = await fetch(`/api/knowledge/${encodeURIComponent(noteScope)}/notes`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const d = await r.json();
-      setNotes(parseNotes(d.content || ""));
+      setNotes(await r.json());
     } catch (e) {
       setNotesErr(String(e));
       setNotes([]);
     }
-  }, [slug]);
+  }, [noteScope]);
 
   // Definition-file agents scoped to this project (registry roster, source =
   // "definition"), distinct from the runtime Build agents above.
@@ -509,26 +513,34 @@ export default function ProjectDetail() {
   }, [deleteTask, slug, loadTasks]);
 
   // ---- Notes mutation -------------------------------------------------------
+  // Write a fresh note into the project knowledge scope via the per-note PUT
+  // route (same shape as the /notes surface). Title or body is enough.
   const postNote = useCallback(async () => {
-    const text = noteDraft.trim();
-    if (!text) return;
+    const title = noteTitle.trim();
+    const body = noteBody;
+    if (!title && !body.trim()) return;
     setPostingNote(true);
     setNotePostErr(null);
     try {
-      const r = await fetch(`/api/projects/${slug}/interventions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+      const id = freshNoteId(title);
+      const r = await fetch(
+        `/api/knowledge/${encodeURIComponent(noteScope)}/notes/${encodeURIComponent(id)}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title, content: body, hook: "" }),
+        },
+      );
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setNoteDraft("");
+      setNoteTitle("");
+      setNoteBody("");
       await loadNotes();
     } catch (e) {
       setNotePostErr(String(e));
     } finally {
       setPostingNote(false);
     }
-  }, [noteDraft, slug, loadNotes]);
+  }, [noteTitle, noteBody, noteScope, loadNotes]);
 
   // ---- Branch mutations -----------------------------------------------------
   const doMerge = useCallback(async () => {
@@ -984,24 +996,34 @@ export default function ProjectDetail() {
         </Card>
       </section>
 
-      {/* --- Notes (was Interventions) --- */}
+      {/* --- Notes (project:<slug> knowledge scope, injected into chat context) --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
-        <SectionLabel icon={<StickyNote aria-hidden />}>Notes</SectionLabel>
+        <Row between wrap style={{ alignItems: "baseline" }}>
+          <SectionLabel icon={<StickyNote aria-hidden />}>Notes</SectionLabel>
+          <Link to={`/notes?scope=${encodeURIComponent(noteScope)}`} className="ws-bc__link">
+            View all in Notes
+          </Link>
+        </Row>
         <Card>
           <Stack>
-            <Row wrap>
-              <Input
-                value={noteDraft}
-                onChange={(e) => setNoteDraft(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); postNote(); } }}
-                placeholder="Leave a note for this project…"
-                style={{ flex: "1 1 16rem" }}
-              />
-              <Button variant="primary" onClick={postNote} loading={postingNote} disabled={!noteDraft.trim()}>
-                <Send aria-hidden /> Post
+            <Input
+              value={noteTitle}
+              onChange={(e) => setNoteTitle(e.target.value)}
+              placeholder="Note title"
+              aria-label="Note title"
+            />
+            <Textarea
+              value={noteBody}
+              onChange={(e) => setNoteBody(e.target.value)}
+              placeholder="Leave a note for this project and its agents. Notes here are read and written by both, and injected into this project's chat context."
+              rows={3}
+            />
+            <Row>
+              <Button variant="primary" onClick={postNote} loading={postingNote} disabled={!noteTitle.trim() && !noteBody.trim()}>
+                <Plus aria-hidden /> Save note
               </Button>
             </Row>
-            {notePostErr && <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{notePostErr}</p>}
+            {notePostErr && <p className="ws-field__error">{notePostErr}</p>}
 
             {notes === null ? (
               <Stack gap="sm">
@@ -1012,23 +1034,27 @@ export default function ProjectDetail() {
               <StateBlock
                 variant="error"
                 title="Couldn't load notes"
-                hint={<code>GET /api/projects/{slug}/interventions ({notesErr})</code>}
+                hint={<code>GET /api/knowledge/{noteScope}/notes ({notesErr})</code>}
                 action={<Button size="sm" onClick={loadNotes}>Retry</Button>}
               />
             ) : notes.length === 0 ? (
               <StateBlock
                 title="No notes yet"
-                hint="Post a note above to leave context for this project and its agents."
+                hint="Save a note above to leave context for this project. Agents that work this project write notes here too, and everything here is injected into the project's chat context."
               />
             ) : (
               <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                {notes.slice().reverse().map((n, i) => (
-                  <li key={i} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
+                {notes.map((n) => (
+                  <li key={n.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
                     <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
-                      <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.ts)}</span>
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{n.who}</span>
+                      <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.id}</span>
+                      {n.updated && (
+                        <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.updated)}</span>
+                      )}
                     </Row>
-                    <Markdown className="ws-md--note">{n.text}</Markdown>
+                    {n.hook && (
+                      <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-sm)", wordBreak: "break-word" }}>{n.hook}</p>
+                    )}
                   </li>
                 ))}
               </ul>

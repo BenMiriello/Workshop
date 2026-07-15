@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { RefreshCw, Plus, Pencil, Trash2 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { RefreshCw, Plus, Pencil, Trash2, FileText } from "lucide-react";
 import {
   Button,
   Card,
   CardGrid,
   PageHeader,
+  SectionLabel,
   Row,
   Stack,
   Segmented,
@@ -42,13 +43,27 @@ type Note = {
 
 type NotesResp = { notes: Note[]; count: number; scopes?: number };
 
+// A doc from the read-only docs index (GET /api/docs). Notes are editable scoped
+// knowledge; docs are committed markdown under docs/, surfaced read-only here so
+// the operator sees notes and documents from one place (notes-system plan N3).
+type Doc = {
+  path: string;
+  title: string;
+  section: string;
+  mtime?: string | null;
+};
+type DocsResp = { docs: Doc[]; count: number };
+
 const OVERFLOW_AT = 100;
 
 // Filter view: all scopes or one scope. The Segmented over scopes would grow
-// unbounded (a scope per project + agent), so scope is a Select; the Segmented
-// here is reserved for future note/document tabs and kept as a single "Notes".
-type Tab = "notes";
-const TABS: SegmentedOption<Tab>[] = [{ value: "notes", label: "Notes" }];
+// unbounded (a scope per project + agent), so scope is a Select. The Segmented
+// switches between the editable Notes list and the read-only Documents index.
+type Tab = "notes" | "docs";
+const TABS: SegmentedOption<Tab>[] = [
+  { value: "notes", label: "Notes" },
+  { value: "docs", label: "Documents" },
+];
 
 function fmtTs(ts?: string | null): string {
   if (!ts) return "";
@@ -72,12 +87,15 @@ function freshNoteId(title: string): string {
 // ---- Page ------------------------------------------------------------------
 
 export default function Notes() {
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<Tab>("notes");
   const [data, setData] = useState<NotesResp | null>(null);
   const [scopes, setScopes] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [scope, setScope] = useState<string>("all");
+  // Honor a ?scope= deep link (the "View all in Notes" links from Project and
+  // Agent detail pass the scope so the operator lands pre-filtered).
+  const [scope, setScope] = useState<string>(searchParams.get("scope") || "all");
   const [query, setQuery] = useState("");
   const [applied, setApplied] = useState("");
   const [open, setOpen] = useState<
@@ -247,11 +265,17 @@ export default function Notes() {
       <div style={{ marginBottom: "var(--space-4)" }}>
         <Segmented<Tab> ariaLabel="Notes view" value={tab} onChange={setTab} options={TABS} />
       </div>
-      {notice && (
-        <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
+      {tab === "docs" ? (
+        <Documents />
+      ) : (
+        <>
+          {notice && (
+            <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
+          )}
+          <div style={{ marginBottom: "var(--space-4)" }}>{filterBar}</div>
+          {body}
+        </>
       )}
-      <div style={{ marginBottom: "var(--space-4)" }}>{filterBar}</div>
-      {body}
       {open?.mode === "create" && (
         <CreateNote
           scopes={scopes}
@@ -524,6 +548,174 @@ function EditNote({
         body={<>This removes the note from <strong>{scopeLabel(scope)}</strong>. It can't be undone.</>}
         confirmLabel="Delete note"
       />
+    </Modal>
+  );
+}
+
+// ---- Documents (read-only docs/ index) -------------------------------------
+
+// The read-only bridge to the committed docs/ tree (GET /api/docs). Plans and
+// decision records stay versioned markdown; this view only indexes and opens
+// them so the operator discovers documents alongside notes. No editing here.
+function Documents() {
+  const [data, setData] = useState<DocsResp | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [openDoc, setOpenDoc] = useState<Doc | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/docs");
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setData(await r.json());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const docs = data?.docs ?? [];
+
+  // Group by top-level section (loose top-level files go under "Top level").
+  const groups = new Map<string, Doc[]>();
+  for (const d of docs) {
+    const key = d.section || "";
+    const list = groups.get(key) ?? [];
+    list.push(d);
+    groups.set(key, list);
+  }
+  const sections = Array.from(groups.keys()).sort((a, b) => {
+    if (a === "") return -1;
+    if (b === "") return 1;
+    return a.localeCompare(b);
+  });
+
+  let body: JSX.Element;
+  if (err) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't load documents"
+        hint={<><code>/api/docs</code> ({err})</>}
+        action={<Button size="sm" onClick={refresh}>Retry</Button>}
+      />
+    );
+  } else if (!data) {
+    body = (
+      <CardGrid>
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i}>
+            <Stack gap="sm">
+              <Skeleton width="60%" />
+              <Skeleton width="40%" />
+            </Stack>
+          </Card>
+        ))}
+      </CardGrid>
+    );
+  } else if (docs.length === 0) {
+    body = (
+      <StateBlock
+        title="No documents yet"
+        hint={<>Long-form plans and decision records live as committed markdown under <code>docs/</code>. Add one to the repo and it shows up here.</>}
+      />
+    );
+  } else {
+    body = (
+      <Stack gap="lg">
+        {sections.map((section) => (
+          <div key={section || "top"}>
+            <SectionLabel>{section || "Top level"}</SectionLabel>
+            <CardGrid>
+              {(groups.get(section) ?? []).map((d) => (
+                <li key={d.path}>
+                  <Card
+                    interactive
+                    compact
+                    onClick={() => setOpenDoc(d)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <Stack gap="sm">
+                      <Row style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                        <FileText size={14} aria-hidden />
+                        <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{d.title}</span>
+                      </Row>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{d.path}</span>
+                    </Stack>
+                  </Card>
+                </li>
+              ))}
+            </CardGrid>
+          </div>
+        ))}
+      </Stack>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ marginBottom: "var(--space-4)" }}>
+        <Row wrap style={{ gap: "var(--space-3)" }}>
+          <Button size="sm" onClick={refresh} loading={loading}>
+            <RefreshCw aria-hidden /> Refresh
+          </Button>
+        </Row>
+      </div>
+      {body}
+      {openDoc && <DocViewer doc={openDoc} onClose={() => setOpenDoc(null)} />}
+    </>
+  );
+}
+
+function DocViewer({ doc, onClose }: { doc: Doc; onClose: () => void }) {
+  const [content, setContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setErr(null);
+    fetch(`/api/docs/file?path=${encodeURIComponent(doc.path)}`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        return r.json();
+      })
+      .then((j) => { if (live) setContent(j?.content ?? ""); })
+      .catch((e) => { if (live) setErr(e instanceof Error ? e.message : String(e)); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [doc.path]);
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={doc.title}
+      size="lg"
+      actions={<Button variant="primary" onClick={onClose}>Close</Button>}
+    >
+      <Stack gap="lg">
+        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{doc.path}</span>
+        {loading ? (
+          <Stack gap="sm">
+            <Skeleton width="80%" />
+            <Skeleton width="90%" />
+            <Skeleton width="60%" />
+          </Stack>
+        ) : err ? (
+          <StateBlock variant="error" title="Couldn't load this document" hint={<code>{err}</code>} />
+        ) : (
+          <p style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", margin: 0, fontSize: "var(--fs-sm)" }}>{content}</p>
+        )}
+      </Stack>
     </Modal>
   );
 }

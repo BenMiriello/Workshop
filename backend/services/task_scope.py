@@ -29,6 +29,14 @@ _PATCH_BLOCK = re.compile(r"```task-patch\s*\n(.*?)\n```", re.DOTALL)
 # distillation, by design, so an explicit operator correction lands immediately.
 _LEARNING_BLOCK = re.compile(r"```learning-note\s*\n(.*?)\n```", re.DOTALL)
 
+# ```note\n{...}\n``` the chat-side durable-note capture (notes-system plan Phase
+# N3). Parallel to learning-note but lands a freeform SCOPED note in the knowledge
+# store (services/knowledge.py), which is the Notes substrate. Parsed, written via
+# knowledge.put_note at the block's scope (default: this chat's knowledge scope),
+# and stripped from the stored reply. This makes "leave a note" a deterministic
+# act instead of a hope that compaction catches it.
+_NOTE_BLOCK = re.compile(r"```note\s*\n(.*?)\n```", re.DOTALL)
+
 # The workshop-root task store (the top-level `.tasks.json`). This is the scope
 # for tickets parked at the root, distinct from the `workshop` PROJECT under
 # projects/. Overridable for tests / alternate checkouts; the default is this
@@ -224,3 +232,51 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
     except ValueError:
         return cleaned, [f"(learning note skipped: {scope!r} is not a valid scope)"]
     return cleaned, [f"Captured a preference in learnings ({scope})."]
+
+
+def _note_id_from_title(title: str) -> str:
+    """A knowledge-store-safe note id derived from a title: lowercase [a-z0-9]
+    segments joined by '-', with a base36 time suffix so a fresh note never
+    collides with an existing file. Mirrors the frontend freshNoteId helper."""
+    import time
+    base = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")[:48] or "note"
+    return f"{base}-{int(time.time() * 1000):x}"
+
+
+async def apply_note_block(context_key: str | None, reply: str) -> tuple[str, list[str]]:
+    """Find a ``note`` block, write its {scope, title, body} as a durable note in
+    the knowledge store (the Notes substrate), strip the block, and return
+    (cleaned_reply, notes). No-op (reply unchanged, empty notes) when there is no
+    block. The note lands at the block's explicit `scope` or, absent one, this
+    chat's own knowledge scope (general -> workshop). Mirrors apply_learning_note:
+    server-side application, fence stripped, a human-readable outcome for
+    meta.notes. An invalid scope is reported, not raised."""
+    m = _NOTE_BLOCK.search(reply)
+    if not m:
+        return reply, []
+    cleaned = _NOTE_BLOCK.sub("", reply).strip()
+    try:
+        block = json.loads(m.group(1).strip())
+    except json.JSONDecodeError:
+        return cleaned, ["(could not parse a note, nothing was captured)"]
+    if not isinstance(block, dict):
+        return cleaned, []
+    title = (block.get("title") or "").strip()
+    body = (block.get("body") or "").strip()
+    if not title and not body:
+        return cleaned, []
+
+    from services import knowledge
+    scope = (block.get("scope") or "").strip()
+    if not scope:
+        try:
+            scope = knowledge.scope_for_context(context_key or "workshop")
+        except Exception:
+            scope = "workshop"
+
+    note_id = _note_id_from_title(title or "note")
+    try:
+        await knowledge.put_note(scope, note_id, title or note_id, body)
+    except ValueError:
+        return cleaned, [f"(note skipped: {scope!r} is not a valid scope)"]
+    return cleaned, [f"Saved a note to {scope}."]
