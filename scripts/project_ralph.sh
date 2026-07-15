@@ -75,10 +75,51 @@ job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed [$5=evidence
     --id "$1" --status "$2" --tasks-done "${3:-0}" --tasks-failed "${4:-0}" "${ev[@]}" \
     >/dev/null 2>&1) || true
 }
-job_finish_child() {  # $1=child_job $2=status $3=exit_code
+job_finish_child() {  # $1=child_job $2=status $3=exit_code [$4=evidence-json]
   [[ -z "$1" ]] && return 0
+  local ev=(); [[ -n "${4:-}" ]] && ev=(--evidence "$4")
   (cd "$WORKSHOP" && python3 -m backend.services.jobs finish \
-    --id "$1" --status "$2" --exit-code "${3:-0}" >/dev/null 2>&1) || true
+    --id "$1" --status "$2" --exit-code "${3:-0}" "${ev[@]}" >/dev/null 2>&1) || true
+}
+
+# Build the structured receipt (D3 shape) for a child Job's evidence by merging
+# the ralph-written receipt file (reviewer/summary/iterations/tokens) with the
+# git-derived commit/baseline/head facts collected around the run. Echoes a JSON
+# object on stdout. Best-effort: a missing/corrupt receipt still yields a
+# well-formed object carrying the git facts. Uses jq, which is available.
+build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(newline-sep)
+  local rf="$1" baseline="$2" head="$3" commits_blob="$4"
+  # Commit shas -> JSON array (empty when no commits landed).
+  local commits_json
+  commits_json=$(printf '%s\n' "$commits_blob" | sed '/^$/d' | jq -R . | jq -s . 2>/dev/null)
+  [[ -z "$commits_json" ]] && commits_json='[]'
+  # The ralph-written receipt, if it parses as JSON; else an empty object so the
+  # git-derived facts still produce a well-formed evidence record.
+  local base='{}'
+  if [[ -f "$rf" ]] && jq empty "$rf" >/dev/null 2>&1; then
+    base=$(cat "$rf")
+  fi
+  # Merge: reviewer sub-object gives files/diff_files/typecheck/design; the
+  # receipt top level gives iterations/tokens/summary; git gives commits/baseline/head.
+  jq -n \
+    --argjson receipt "$base" \
+    --arg baseline "$baseline" \
+    --arg head "$head" \
+    --argjson commits "$commits_json" \
+    '($receipt.reviewer // {}) as $r
+     | {
+         kind: "receipt",
+         files: ($r.files // []),
+         commits: $commits,
+         baseline: $baseline,
+         head: $head,
+         diff_files: ($r.diff_files // 0),
+         typecheck: ($r.typecheck // {}),
+         design: ($r.design // ""),
+         iterations: ($receipt.iterations // 0),
+         tokens: ($receipt.tokens // 0),
+         summary: ($receipt.summary // "")
+       }' 2>/dev/null
 }
 
 if [[ -z "$SLUG" && -z "$DIR_ARG" ]]; then
@@ -294,10 +335,25 @@ while (( n < MAX_TASKS )); do
   ALLOW_NO_DIFF=0
   [[ "$ACC_KIND" == "command" || "$ACC_KIND" == "operator" ]] && ALLOW_NO_DIFF=1
 
+  # ralph writes its structured receipt (reviewer/summary/iterations/tokens) here;
+  # we merge it with the git facts below and attach it to the child Job's evidence.
+  # pid+job-unique so concurrent sweeps never collide on the transport file.
+  RECEIPT_FILE="$RUNTIME/receipt-$CHILD_JOB-$$.json"
+
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" >> "$LOG" 2>&1
   RC=$?
   set -e
+
+  # Structured receipt for the child Job's evidence: git-derived commits/head vs
+  # the pre-run BASELINE, merged with ralph's receipt file. Attached on ALL
+  # terminal child paths below (a failed run's receipt explains the failure).
+  HEAD=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+  COMMITS=$(cd "$DIR" && git rev-list --reverse "$BASELINE..$HEAD" 2>/dev/null || echo "")
+  EVIDENCE=$(build_receipt_evidence "$RECEIPT_FILE" "$BASELINE" "$HEAD" "$COMMITS")
+  # One task-side evidence entry pointing at the child Job (the ticket timeline
+  # links to the run rather than duplicating the receipt payload).
+  note_receipt_ref() { python3 "$PTASKS" note "$DIR" "$TASK_ID" "$CHILD_JOB" --kind receipt --ref "$CHILD_JOB" >/dev/null 2>>"$LOG"; }
 
   case "$RC" in
     0)
@@ -307,22 +363,25 @@ while (( n < MAX_TASKS )); do
         if (( ACC_RC == 0 )); then
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
           python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-          DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE (command acceptance ok)"
+          note_receipt_ref
+          DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE (command acceptance ok)"
         else
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance FAILED (exit $ACC_RC): $ACC_SPEC :: $(echo "$ACC_OUT" | tr '\n' ' ' | head -c 300)" --kind acceptance >/dev/null 2>>"$LOG"
           if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "command acceptance failing")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
-          job_finish_child "$CHILD_JOB" failed "$ACC_RC"
+          job_finish_child "$CHILD_JOB" failed "$ACC_RC" "$EVIDENCE"
         fi
       elif [[ "$ACC_KIND" == "operator" ]]; then
         python3 "$PTASKS" note "$DIR" "$TASK_ID" "worker completed; awaiting operator approval" --kind acceptance >/dev/null 2>>"$LOG"
         python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-        IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID -> in_review (operator gate)"
+        note_receipt_ref
+        IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID -> in_review (operator gate)"
       else
         python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-        DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE"
+        note_receipt_ref
+        DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE"
       fi
       ;;
-    3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID BLOCKED (classifier)" ;;
+    3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
     5)
       # Environment failure (API outage / auth), NOT task failure: give the
       # attempt back and STOP the sweep so we do not hammer a down API. The sweep
@@ -330,19 +389,22 @@ while (( n < MAX_TASKS )); do
       # window (it keys on tasks_failed). (review F4)
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "environment failure (API/auth); attempt restored, sweep backing off" --kind acceptance >/dev/null 2>>"$LOG"
       python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-      job_finish_child "$CHILD_JOB" failed "$RC"; FAILED=$((FAILED+1))
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; FAILED=$((FAILED+1))
       log "task=$TASK_ID ENV FAILURE: released (attempt restored); stopping sweep to back off"
+      rm -f "$RECEIPT_FILE" 2>/dev/null || true
       break ;;
     1|2)
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
       # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
       # is visible to the circuit breaker, which keys on tasks_failed. (review F14)
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
-      job_finish_child "$CHILD_JOB" failed "$RC" ;;
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
     *)
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
-      job_finish_child "$CHILD_JOB" failed "$RC" ;;
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
   esac
+  # Receipt file is transport, not storage: attached to the Job above, drop it.
+  rm -f "$RECEIPT_FILE" 2>/dev/null || true
   sleep 1
 done
 

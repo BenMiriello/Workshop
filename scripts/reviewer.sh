@@ -237,12 +237,16 @@ REASONS_JSON=$(printf '%s\n' "${REASONS[@]:-}" | python3 -c "import json,sys; r=
 # Emit JSON. Build via env vars + Python decoding so shell quoting is safe.
 COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
-export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE
+export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL
 python3 - <<'PYEOF'
 import json, os
+# The changed-file list, capped so a huge diff cannot bloat the receipt/Job
+# evidence. project_ralph.sh reads this into the persisted receipt.
+files = [l for l in os.environ.get("CHANGED_ALL", "").splitlines() if l.strip()][:200]
 out = {
     "complete":  bool(int(os.environ["COMPLETE_BOOL"])),
     "diff_files": int(os.environ["DIFF_FILES"]),
+    "files":     files,
     "stub_hits": json.loads(os.environ["STUB_HITS_JSON"]),
     "typecheck": {"py": os.environ["PY_CHECK"], "ts": os.environ["TS_CHECK"]},
     "design":    os.environ["DESIGN_CHECK"],

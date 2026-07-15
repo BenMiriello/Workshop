@@ -44,6 +44,7 @@ MAX_WALL=1500   # 25 minutes
 MAX_TURNS_PER_ITER=6
 BILL_PROJECT=""   # --bill-project <scope>: record this run's tokens to the usage ledger
 LEARN_SCOPE_ARG=""  # --learn-scope <scope>: the learnings scope (project:/agent:/workshop)
+RECEIPT_PATH=""   # --receipt <path>: best-effort JSON receipt of this run's work product
 RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
 
 while [[ $# -gt 0 ]]; do
@@ -54,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --max-wall)      MAX_WALL="$2"; shift 2 ;;
     --bill-project)  BILL_PROJECT="$2"; shift 2 ;;
     --learn-scope)   LEARN_SCOPE_ARG="$2"; shift 2 ;;
+    --receipt)       RECEIPT_PATH="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
 done
@@ -191,6 +193,7 @@ fi
 iter=0
 exit_code=1
 last_reviewer_json='{"reasons":["initial-iteration-not-yet-run"]}'
+LAST_ITER_OUT=""   # path of the most recent iteration's --output-format json envelope
 # Session id captured from iteration 1's result envelope, so iterations >=2 resume
 # THIS run's own session (--resume) instead of the cwd's most-recent session
 # (--continue), which could grab a chat's session started in $DIR between iters
@@ -267,6 +270,7 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # exists (LOG lives there). Two sequential tasks in one sweep share a pid but
   # never overlap in time, so pid+iter is unique per live run. (review F1)
   ITER_OUT=$DIR/.runtime/ralph-iter-$$-${iter}.out
+  LAST_ITER_OUT="$ITER_OUT"   # remember for the receipt summary (final iter's .result)
   # --output-format json wraps the final text in `.result` (so the sentinel and
   # classifier grep -F still match verbatim) AND carries `.usage`, which is the
   # only way to meter real token spend for the usage ledger. --max-turns bounds
@@ -485,4 +489,58 @@ if [[ -n "$BILL_PROJECT" && "$RUN_TOKENS" -gt 0 ]]; then
 fi
 
 log "=== done iter=$iter exit_code=$exit_code (tokens=$RUN_TOKENS) ==="
+
+# Best-effort receipt: the structured work product of this run, for the parent
+# (project_ralph.sh) to attach to the child Job's evidence. NEVER blocks or
+# changes the exit code. `summary` is the .result text of the final iteration's
+# envelope, which on a PASS is the worker's own completion account (a worklog,
+# not raw chain-of-thought). Skipped entirely when --receipt was not passed.
+if [[ -n "$RECEIPT_PATH" ]]; then
+  ( RECEIPT_PATH="$RECEIPT_PATH" EXIT_CODE="$exit_code" ITERATIONS="$iter" \
+    TOKENS="$RUN_TOKENS" SESSION_ID="$SESSION_ID" \
+    REVIEWER_JSON="$last_reviewer_json" LAST_ITER_OUT="$LAST_ITER_OUT" \
+    python3 - <<'PYEOF'
+import json, os
+path = os.environ["RECEIPT_PATH"]
+# The final iteration's .result is the worker's own worklog summary, clipped.
+summary = ""
+last_out = os.environ.get("LAST_ITER_OUT", "")
+if last_out and os.path.isfile(last_out):
+    try:
+        txt = open(last_out, encoding="utf-8", errors="replace").read()
+        obj = None
+        try:
+            obj = json.loads(txt)
+        except Exception:
+            i = txt.find('{"type"')
+            if i >= 0:
+                try:
+                    obj = json.loads(txt[i:])
+                except Exception:
+                    obj = None
+        if isinstance(obj, dict):
+            summary = (obj.get("result") or "")[:1200]
+    except Exception:
+        summary = ""
+try:
+    reviewer = json.loads(os.environ.get("REVIEWER_JSON") or "null")
+except Exception:
+    reviewer = None
+receipt = {
+    "exit_code": int(os.environ.get("EXIT_CODE") or 0),
+    "iterations": int(os.environ.get("ITERATIONS") or 0),
+    "tokens": int(os.environ.get("TOKENS") or 0),
+    "session_id": os.environ.get("SESSION_ID") or "",
+    "reviewer": reviewer,
+    "summary": summary,
+}
+try:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(receipt, f)
+except Exception:
+    pass
+PYEOF
+  ) 2>>"$LOG" || true
+fi
+
 exit "$exit_code"

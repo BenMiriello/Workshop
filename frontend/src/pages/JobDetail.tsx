@@ -14,6 +14,7 @@ import {
   Tag,
   catFor,
 } from "../ui";
+import type { StatusKind } from "../ui";
 import { type Job, jobStatusKind } from "../lib/jobs";
 
 // One Job's detail: its binding, trigger, timing, outcome, and freeform
@@ -87,6 +88,130 @@ function evidenceText(evidence: unknown): string {
   } catch {
     return String(evidence);
   }
+}
+
+// The structured work-product receipt project_ralph.sh attaches to a child Job's
+// evidence (files/commits/typecheck/summary). Rendered cleanly instead of the raw
+// JSON fallback. Shape mirrors scripts/project_ralph.sh build_receipt_evidence.
+type Receipt = {
+  kind: "receipt";
+  files?: string[];
+  commits?: string[];
+  baseline?: string;
+  head?: string;
+  diff_files?: number;
+  typecheck?: Record<string, string>;
+  design?: string;
+  iterations?: number;
+  tokens?: number;
+  summary?: string;
+};
+
+function asReceipt(evidence: unknown): Receipt | null {
+  // The jobs finish CLI stores the --evidence argument verbatim, so evidence can
+  // arrive either as a real object OR as a JSON-encoded string. Accept both so
+  // the receipt renders no matter which form the store holds.
+  let ev: unknown = evidence;
+  if (typeof ev === "string") {
+    const s = ev.trim();
+    if (!s.startsWith("{")) return null;
+    try {
+      ev = JSON.parse(s);
+    } catch {
+      return null;
+    }
+  }
+  if (
+    !!ev &&
+    typeof ev === "object" &&
+    !Array.isArray(ev) &&
+    (ev as { kind?: unknown }).kind === "receipt"
+  ) {
+    return ev as Receipt;
+  }
+  return null;
+}
+
+// A gate result (ok/fail/skipped) mapped onto the five design status kinds.
+function checkKind(v?: string): StatusKind {
+  return v === "ok" ? "ok" : v === "fail" ? "danger" : "stopped";
+}
+
+const FILES_SHOWN = 50; // overflow cap for the changed-files list
+
+function ReceiptView({ receipt }: { receipt: Receipt }) {
+  const files = receipt.files ?? [];
+  const shown = files.slice(0, FILES_SHOWN);
+  const overflow = files.length - shown.length;
+  const commits = receipt.commits ?? [];
+  const checks = receipt.typecheck ? Object.entries(receipt.typecheck) : [];
+  return (
+    <section>
+      <SectionLabel>Work product</SectionLabel>
+      <Card style={{ padding: "var(--space-4)" }}>
+        <Stack gap="sm">
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            {checks.map(([k, v]) => (
+              <StatusPill key={k} status={checkKind(v)}>{`${k} ${v}`}</StatusPill>
+            ))}
+            {receipt.design && (
+              <StatusPill status={checkKind(receipt.design)}>{`design ${receipt.design}`}</StatusPill>
+            )}
+          </Row>
+          <Row wrap style={{ gap: "var(--space-3)" }}>
+            {typeof receipt.diff_files === "number" && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                {receipt.diff_files} file{receipt.diff_files === 1 ? "" : "s"} changed
+              </span>
+            )}
+            {typeof receipt.iterations === "number" && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                {receipt.iterations} iteration{receipt.iterations === 1 ? "" : "s"}
+              </span>
+            )}
+            {typeof receipt.tokens === "number" && receipt.tokens > 0 && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                {receipt.tokens.toLocaleString()} tokens
+              </span>
+            )}
+          </Row>
+
+          {receipt.summary && (
+            <p style={{ margin: 0, fontSize: "var(--fs-sm)", whiteSpace: "pre-wrap" }}>
+              {receipt.summary}
+            </p>
+          )}
+
+          {files.length > 0 && (
+            <Stack gap="sm">
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Changed files</span>
+              <Stack gap="sm">
+                {shown.map((f) => (
+                  <span key={f} className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{f}</span>
+                ))}
+              </Stack>
+              {overflow > 0 && (
+                <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                  and {overflow} more file{overflow === 1 ? "" : "s"}
+                </span>
+              )}
+            </Stack>
+          )}
+
+          {commits.length > 0 && (
+            <Stack gap="sm">
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Commits</span>
+              <Row wrap style={{ gap: "var(--space-2)" }}>
+                {commits.map((c) => (
+                  <span key={c} className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{c.slice(0, 7)}</span>
+                ))}
+              </Row>
+            </Stack>
+          )}
+        </Stack>
+      </Card>
+    </section>
+  );
 }
 
 export default function JobDetail() {
@@ -208,10 +333,13 @@ export default function JobDetail() {
     const dur = duration(job);
     const waiting = waitingTasks(job);
     const isAwaiting = job.status === "awaiting_input" && waiting.length > 0;
-    // Only show the raw JSON when it isn't the structured awaiting case (the
-    // cards below already render it far more usefully) and isn't a failure (the
-    // Error section already renders the reason from the same evidence).
-    const ev = (isAwaiting || job.error) ? "" : evidenceText(job.evidence);
+    const receipt = asReceipt(job.evidence);
+    // Only show the raw JSON when it isn't the structured awaiting case, isn't a
+    // structured receipt (both render far more usefully below), and isn't a
+    // failure (the Error section already renders the reason from the evidence).
+    // A failed run still carries a receipt, so ReceiptView renders regardless of
+    // job.error; only the generic <pre> is suppressed on failure.
+    const ev = (isAwaiting || job.error || receipt) ? "" : evidenceText(job.evidence);
     const budgetEntries = job.budget ? Object.entries(job.budget) : [];
     body = (
       <Stack>
@@ -364,6 +492,8 @@ export default function JobDetail() {
           </section>
         )}
 
+        {receipt && <ReceiptView receipt={receipt} />}
+
         <section>
           <SectionLabel>Timing</SectionLabel>
           <Card style={{ padding: "var(--space-4)" }}>
@@ -396,7 +526,7 @@ export default function JobDetail() {
           </section>
         )}
 
-        {!isAwaiting && (
+        {!isAwaiting && !receipt && (
           <section>
             <SectionLabel>Evidence</SectionLabel>
             {ev ? (

@@ -169,8 +169,17 @@ def _enrich(job: dict, names: dict[str, str], cache: dict | None = None) -> dict
     tctx = _task_context(job, cache)
     j.update(tctx)  # task_text, task_status, chat_id, chat_title
     ev = job.get("evidence")
+    receipt = ev if isinstance(ev, dict) and ev.get("kind") == "receipt" else None
+    if receipt and (rs := (receipt.get("summary") or "").strip()):
+        # The worker's own account of what it did doubles as the job's summary.
+        j["summary"] = rs[:240]
     if job.get("status") == "failed":
-        j["error"] = _friendly_error(ev if isinstance(ev, str) else None)
+        if isinstance(ev, str):
+            j["error"] = _friendly_error(ev)
+        elif receipt:
+            j["error"] = (receipt.get("summary") or "").strip()[:240] or "Failed (see receipt)."
+        else:
+            j["error"] = _friendly_error(None)
     elif isinstance(ev, str) and ev.strip():
         # A short freeform evidence string doubles as the job's one-line summary.
         j["summary"] = ev.strip()[:240]

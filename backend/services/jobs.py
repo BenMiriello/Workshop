@@ -341,13 +341,23 @@ def _cli(argv: list[str]) -> int:
         return 0
 
     if args.cmd == "finish":
+        evidence = args.evidence
+        if evidence is not None:
+            # Mirror --budget: a structured evidence payload (the receipt object,
+            # the awaiting-input question list) arrives as a JSON string on the
+            # CLI. Parse it so it is stored as a real object, not a string. A
+            # plain-text legacy evidence string falls through unchanged.
+            try:
+                evidence = json.loads(evidence)
+            except json.JSONDecodeError:
+                pass
         finish(
             args.job_id,
             status=args.status,
             exit_code=args.exit_code,
             tasks_done=args.tasks_done,
             tasks_failed=args.tasks_failed,
-            evidence=args.evidence,
+            evidence=evidence,
         )
         print("ok")
         return 0
