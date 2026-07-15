@@ -691,9 +691,11 @@ def add(
         tasks = _load(root)
         if parent is not None and not any(t["id"] == parent for t in tasks):
             raise ValueError(f"parent task not found: {parent}")
-        if provenance:  # idempotent re-add (work_generator dedupe key)
+        if provenance:  # idempotent re-add (work_generator / dedup key)
             for t in tasks:
-                if t.get("provenance") == provenance:
+                # Skip parked (dead-letter): a fresh re-request with the same key
+                # must become live work, not collapse back into a poison-pill task.
+                if t.get("provenance") == provenance and t.get("status") != "parked":
                     return t
         now = _now()
         task = _normalize({

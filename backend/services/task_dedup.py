@@ -91,9 +91,12 @@ def canonical_tokens(text: str) -> list[str]:
 
 
 def canonical(text: str) -> str:
-    """The canonical form for exact-dupe hashing: sorted unique-preserving token
-    multiset joined by spaces (sorted so word-order variants hash the same)."""
-    return " ".join(sorted(canonical_tokens(text)))
+    """The canonical form for exact-dupe hashing: tokens in ORDER, joined by
+    spaces. Order is kept on purpose: "move header above footer" and "move footer
+    above header" are DIFFERENT work and must not hash the same. Word-order
+    variants that really are the same task are caught downstream by the semantic
+    cosine + LLM same-work gate, not by the exact-hash path."""
+    return " ".join(canonical_tokens(text))
 
 
 def canonical_hash(text: str) -> str:
@@ -267,10 +270,20 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 # ---- decision -------------------------------------------------------------
 
+# parked = dead-letter (a poison-pill task next_ready never picks). A fresh
+# legitimate request must NOT be folded into a parked task: the work would
+# silently never happen while the chat reports "merged". Exclude parked from the
+# dedup candidate set so such a request becomes its own live task.
+_DEDUP_EXCLUDE = {"parked"}
+
+
 def _open_tasks(root: Path) -> list[dict]:
-    """Open (non-terminal) tasks in a scope, the dedup comparison set."""
+    """The dedup comparison set: open (non-terminal, non-parked) tasks in a scope
+    that a new task could legitimately merge into or link against."""
     return [t for t in tasks.list_tasks(root, include_done=False)
-            if t.get("status") not in tasks.TERMINAL and (t.get("text") or "").strip()]
+            if t.get("status") not in tasks.TERMINAL
+            and t.get("status") not in _DEDUP_EXCLUDE
+            and (t.get("text") or "").strip()]
 
 
 def decide(text: str, open_tasks: list[dict]) -> dict:
@@ -377,6 +390,7 @@ def dedup_add(
             root, text=text, priority=priority, depends_on=depends_on or [],
             acceptance=acceptance, touches=touches or [],
             discovered_from=matched_id, source=src,
+            provenance=canonical_hash(text),
         )
         # Evidence on BOTH sides so the link is navigable either direction.
         tasks.update(root, task["id"],
@@ -392,10 +406,13 @@ def dedup_add(
             "message": f"created task {task['id']}, linked related to {matched_id}{cpart}",
         }
 
-    # distinct
+    # distinct. provenance = canonical hash so two chats filing the same text
+    # concurrently collapse atomically under the store lock (TOCTOU: both decide
+    # "distinct" before either commits; add() returns the first under the lock).
     task = tasks.add(
         root, text=text, priority=priority, depends_on=depends_on or [],
         acceptance=acceptance, touches=touches or [], source=src,
+        provenance=canonical_hash(text),
     )
     return {
         "decision": "distinct",
