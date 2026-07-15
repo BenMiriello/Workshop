@@ -1,27 +1,22 @@
 #!/bin/bash
-# log_learning.sh — append a one-line pattern to workshop/shared/learnings.md.
+# log_learning.sh - record a one-line lesson into the structured learnings store.
 # Called by work_verifier.sh + work-reviewer + cron failure paths.
 #
 # Usage:
-#   log_learning.sh "pattern text" [source]
-# Source is a short label (verifier|reviewer|cron|discord) for auditability.
+#   log_learning.sh "pattern text" [source] [scope]
+# Source is a short label (verifier|reviewer|cron|discord). Scope defaults to
+# `global` (the workspace guardrails store). This delegates to
+# services.learnings (structured, deduped JSONL) which ALSO mirrors global
+# entries into shared/learnings.md so the SessionStart hook keeps seeing them.
 
 set -u
-PATTERN=${1:?usage: log_learning.sh <pattern> [source]}
+PATTERN=${1:?usage: log_learning.sh <pattern> [source] [scope]}
 SOURCE=${2:-anon}
-LEARN=/home/clawd-a/workshop/shared/learnings.md
-mkdir -p "$(dirname "$LEARN")"
-[[ -e "$LEARN" ]] || touch "$LEARN"
+SCOPE=${3:-global}
 
-# Dedupe by content hash — don't append the same pattern twice.
-SHA=$(printf '%s' "$PATTERN" | sha1sum | cut -c1-12)
-if grep -qF "$SHA" "$LEARN"; then
-  exit 0
-fi
+ROOT=/home/clawd-a/workshop
+PY=$ROOT/backend/.venv/bin/python
+[[ -x "$PY" ]] || PY=python3
 
-# Append in the "Failure patterns" section, or create it if missing.
-if ! grep -q '^## Failure patterns the worker has hit before' "$LEARN"; then
-  printf '\n## Failure patterns the worker has hit before\n\n' >> "$LEARN"
-fi
-TS=$(date -u +%Y-%m-%dT%H:%MZ)
-printf -- '- %s — %s [src:%s sha:%s]\n' "$PATTERN" "$TS" "$SOURCE" "$SHA" >> "$LEARN"
+PYTHONPATH=$ROOT/backend "$PY" -m services.learnings record "$PATTERN" \
+  --source "$SOURCE" --scope "$SCOPE" >/dev/null

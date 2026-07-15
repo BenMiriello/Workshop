@@ -361,6 +361,17 @@ def _build_prompt(
         cap_note = ""
     if cap_note:
         parts.append(cap_note)
+    # Learned memory (Stage 8 / 2f): workspace guardrails for every agent, plus a
+    # scoped agent/project's own accumulated memory. Sits in the cache-stable
+    # prefix (learnings append oldest-first so the earlier bytes stay stable).
+    # Best-effort; never blocks the reply.
+    try:
+        learn_block = chat_context.learnings_context(provider)
+    except Exception as e:
+        log.warning("chat learnings block failed for %s: %s", provider.key, e)
+        learn_block = ""
+    if learn_block:
+        parts.append(learn_block)
     # Ambient in-scope knowledge index (Phase 2): the note titles for this scope so
     # the model knows what it can recall. Small + cache-stable (bodies arrive via
     # retrieval in the reply region, not here). Best-effort; never blocks the reply.

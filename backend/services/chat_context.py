@@ -454,6 +454,44 @@ def runtime_briefing(provider: "ContextProvider") -> str:
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------ learned memory
+# Stage 8 (2f): learnings ride into a chat's cache-stable prefix. The workspace
+# `global` guardrails go into EVERY agent's context; a scoped agent/project also
+# carries its OWN accumulated memory. Kept append-ordered (oldest first) so a new
+# learning extends the tail and leaves the cached prefix bytes stable. Best-effort
+# and self-contained (mirrors runtime_briefing's shape) so a missing store never
+# breaks the chat path.
+
+
+def learnings_context(provider: "ContextProvider") -> str:
+    """The learned-memory block for a provider's chat: workspace guardrails plus,
+    for a scoped agent/project/app, that scope's own accumulated memory. Empty
+    string when there is nothing to inject."""
+    try:
+        from services import learnings
+    except Exception:
+        return ""
+    parts: list[str] = []
+    try:
+        g = learnings.memory_block(learnings.GLOBAL)
+    except Exception:
+        g = ""
+    if g:
+        parts.append("=== LEARNINGS (workspace guardrails) ===\n" + g)
+    try:
+        scope = provider.knowledge_scope()
+    except Exception:
+        scope = "workshop"
+    if scope not in (learnings.GLOBAL, "workshop"):
+        try:
+            m = learnings.memory_block(scope)
+        except Exception:
+            m = ""
+        if m:
+            parts.append(f"=== AGENT MEMORY (scope: {scope}) ===\n" + m)
+    return "\n\n".join(parts)
+
+
 # ---------------------------------------------------------------- base / general
 
 
