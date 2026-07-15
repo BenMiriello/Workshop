@@ -1,16 +1,29 @@
 """Ambient "ongoing work across the workspace" digest (Stage 7 / design 2e).
 
-A compact, cache-stable summary of open tasks + in-flight/recent jobs, injected
-into chat context so a chat stops losing track of work happening in other chats.
+A compact, LOW-CHURN summary of the open tasks in a chat's scope, injected into
+chat context so a chat stops losing track of work happening in other chats.
 Scope-correct (single-operator, so scope is correctness not a permission wall):
 
   - a project / build / agent chat -> ITS OWN task scope only.
-  - a general chat -> a workspace-wide roll-up (workshop root + every project),
-    plus jobs currently running or recently finished.
+  - a general chat -> a workspace-wide roll-up (workshop root + every project).
 
-Kept short (entries are capped) so it never blows the context window. Best-effort
-and self-contained: any failure yields "" rather than breaking the chat path,
-mirroring chat_context.learnings_context.
+Two things this block must NOT do (review F6, research 2026-07-15 #1/#4):
+  - bust the prompt cache. It sits in the cache-stable prefix, so its BYTES must
+    change as rarely as possible. We therefore select the top tasks by priority
+    but RENDER them ordered by creation (append-stable), and we drop the per-task
+    status tag (status flips todo/doing/todo every sweep tick and would reshuffle
+    the block constantly). Adding/closing/reprioritizing a task still changes it;
+    a status flip no longer does.
+  - inject distractors. A long list of topically-related tasks measurably
+    degrades the model (Chroma context-rot), so the block is capped small with a
+    "+N more" remainder count rather than dumping everything.
+
+Live JOB status is deliberately NOT here: it is the most volatile state in the
+system (flips every tick) and belongs in the Jobs UI, not in every chat's cached
+prefix. The digest answers "what work exists", not "what is running right now".
+
+Best-effort and self-contained: any failure yields "" rather than breaking the
+chat path, mirroring chat_context.learnings_context.
 """
 from __future__ import annotations
 
@@ -18,9 +31,8 @@ import json
 import os
 from pathlib import Path
 
-# Caps keep the block small + cache-stable.
-CAP_TASKS = 8
-CAP_JOBS = 5
+# Small cap keeps the block cache-friendly and distractor-light (research: ~5-7).
+CAP_TASKS = 6
 _TEXT_CLIP = 90
 
 
@@ -54,54 +66,29 @@ def _project_roots() -> list[tuple[str, Path]]:
     return out
 
 
-def _open_task_lines(root: Path, cap: int, *, label: str | None = None) -> list[str]:
-    """Up to `cap` open tasks from a store, highest priority + most recent first."""
+def _open_task_lines(root: Path, cap: int, *, label: str | None = None) -> tuple[list[str], int]:
+    """Return (lines, total_open) for a store. SELECT the top `cap` open tasks by
+    priority (relevance), but RENDER them ordered by creation so the byte prefix
+    is append-stable across sweeps (a status change does not reshuffle it). No
+    status tag, for the same cache-stability reason. `total_open` lets the caller
+    add a "+N more" remainder count."""
     try:
         from services import tasks
         items = [t for t in tasks.list_tasks(root, include_done=False)
                  if t.get("status") not in tasks.TERMINAL]
     except Exception:
-        return []
-    items.sort(key=lambda t: (int(t.get("priority") or 0), t.get("updated") or ""), reverse=True)
-    lines: list[str] = []
-    for t in items[:cap]:
-        prefix = f"[{label}] " if label else ""
-        status = t.get("status") or "todo"
-        tag = "" if status == "todo" else f" ({status})"
-        lines.append(f"- {prefix}{_clip(t.get('text') or '')}{tag}")
-    return lines
-
-
-def _job_lines(cap: int) -> list[str]:
-    """Running jobs first, then recently finished, deduped. Workspace-wide."""
-    try:
-        from services import jobs
-    except Exception:
-        return []
-    seen: set[str] = set()
-    picked: list[dict] = []
-    try:
-        for r in jobs.read(status="running", limit=cap):
-            if r.get("id") not in seen:
-                seen.add(r.get("id"))
-                picked.append(r)
-    except Exception:
-        pass
-    try:
-        for r in jobs.read(limit=cap * 2):
-            if len(picked) >= cap:
-                break
-            if r.get("id") not in seen:
-                seen.add(r.get("id"))
-                picked.append(r)
-    except Exception:
-        pass
-    lines: list[str] = []
-    for r in picked[:cap]:
-        title = _clip(r.get("title") or r.get("summary") or r.get("kind") or r.get("id") or "job")
-        status = r.get("status") or "?"
-        lines.append(f"- {title} ({status})")
-    return lines
+        return [], 0
+    total = len(items)
+    # Selection: most important first (stable tie-break on creation, not updated).
+    def _created(t: dict) -> str:
+        return t.get("created") or t.get("id") or ""
+    top = sorted(items, key=lambda t: (-int(t.get("priority") or 0), _created(t)))[:cap]
+    # Render: creation order, so appends extend the tail and leave earlier bytes
+    # stable for the prompt cache.
+    top.sort(key=_created)
+    prefix = f"[{label}] " if label else ""
+    lines = [f"- {prefix}{_clip(t.get('text') or '')}" for t in top]
+    return lines, total
 
 
 def _scoped_root(context_key: str | None) -> Path | None:
@@ -120,41 +107,42 @@ def digest_for_context(
     context_key: str | None,
     *,
     cap_tasks: int = CAP_TASKS,
-    cap_jobs: int = CAP_JOBS,
 ) -> str:
     """The ambient digest string for a chat's context binding, or "" when there
     is nothing to show. A project/build/agent chat gets its own scope; anything
-    else (general / app) gets the workspace-wide roll-up."""
+    else (general / app) gets the workspace-wide roll-up. Capped small with a
+    "+N more" remainder so the block stays cache-friendly and distractor-light."""
     scoped = _scoped_root(context_key)
-    parts: list[str] = []
 
     if scoped is not None:
         # Own-scope digest for a builder/project/agent chat.
-        task_lines = _open_task_lines(scoped, cap_tasks)
-        if task_lines:
-            parts.append("Open tasks in this scope:\n" + "\n".join(task_lines))
-    else:
-        # Workspace-wide roll-up for a general chat.
-        agg: list[str] = []
-        agg += _open_task_lines(_workshop_root(), cap_tasks, label="workshop")
+        lines, total = _open_task_lines(scoped, cap_tasks)
+        if not lines:
+            return ""
+        body = "Open tasks in this scope:\n" + "\n".join(lines)
+        if total > len(lines):
+            body += f"\n- (+{total - len(lines)} more; ask to list)"
+        return body
+
+    # Workspace-wide roll-up for a general chat. Aggregate across the workshop root
+    # and every project, still capped, with a remainder count.
+    agg: list[str] = []
+    total_all = 0
+    wl, wt = _open_task_lines(_workshop_root(), cap_tasks, label="workshop")
+    agg += wl
+    total_all += wt
+    for slug, root in _project_roots():
         remaining = max(0, cap_tasks - len(agg))
+        pl, pt = _open_task_lines(root, remaining if remaining else 1, label=slug)
+        total_all += pt
         if remaining:
-            for slug, root in _project_roots():
-                if remaining <= 0:
-                    break
-                pl = _open_task_lines(root, remaining, label=slug)
-                agg += pl
-                remaining -= len(pl)
-        if agg:
-            parts.append("Open tasks across the workspace:\n" + "\n".join(agg[:cap_tasks]))
-
-    job_lines = _job_lines(cap_jobs)
-    if job_lines:
-        parts.append("Jobs (running / recent):\n" + "\n".join(job_lines))
-
-    if not parts:
+            agg += pl[:remaining]
+    if not agg:
         return ""
-    return "\n\n".join(parts)
+    body = "Open tasks across the workspace:\n" + "\n".join(agg[:cap_tasks])
+    if total_all > len(agg[:cap_tasks]):
+        body += f"\n- (+{total_all - len(agg[:cap_tasks])} more; ask to list)"
+    return body
 
 
 def digest_for_provider(provider) -> str:
