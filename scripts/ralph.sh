@@ -42,6 +42,7 @@ MAX_ITER=10
 MAX_WALL=1500   # 25 minutes
 MAX_TURNS_PER_ITER=6
 BILL_PROJECT=""   # --bill-project <scope>: record this run's tokens to the usage ledger
+LEARN_SCOPE_ARG=""  # --learn-scope <scope>: the learnings scope (project:/agent:/workshop)
 RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
 
 while [[ $# -gt 0 ]]; do
@@ -51,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --max-iter)      MAX_ITER="$2"; shift 2 ;;
     --max-wall)      MAX_WALL="$2"; shift 2 ;;
     --bill-project)  BILL_PROJECT="$2"; shift 2 ;;
+    --learn-scope)   LEARN_SCOPE_ARG="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
 done
@@ -154,7 +156,15 @@ fi
 # chat path injects, so autonomous sweeps benefit from accumulated lessons and
 # stop repeating rejected patterns. LEARN_SCOPE is the billing scope (a project
 # slug) or empty for a root run. Best-effort; a missing store never blocks a run.
-LEARN_SCOPE="${BILL_PROJECT:-}"
+# The learnings/knowledge store requires a PREFIXED scope (project:/agent:/app:/
+# workshop); a bare billing slug like "demo-x" is rejected, which silently made
+# per-project learning empty and dumped every reviewer rejection into GLOBAL,
+# polluting every chat prompt. Prefer an explicit --learn-scope; else derive from
+# the billing scope, mapping a bare slug to project:<slug>. (review F3)
+LEARN_SCOPE="${LEARN_SCOPE_ARG:-${BILL_PROJECT:-}}"
+if [[ -n "$LEARN_SCOPE" && "$LEARN_SCOPE" != *:* && "$LEARN_SCOPE" != "workshop" ]]; then
+  LEARN_SCOPE="project:$LEARN_SCOPE"
+fi
 learn_block() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
      python3 -m services.learnings block --scope "$1" 2>/dev/null) || true
@@ -227,7 +237,12 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   fi
 
   # Capture stdout for sentinel + classifier-block detection.
-  ITER_OUT=$WORKSHOP/.runtime/ralph-iter-${iter}.out
+  # Per-tree AND per-pid: the dispatcher runs sweeps concurrently, so a shared
+  # $WORKSHOP path let runs read each other's output (foreign sentinel = false
+  # completion, cross-fired classifier block, cross-billed tokens). $DIR/.runtime
+  # exists (LOG lives there). Two sequential tasks in one sweep share a pid but
+  # never overlap in time, so pid+iter is unique per live run. (review F1)
+  ITER_OUT=$DIR/.runtime/ralph-iter-$$-${iter}.out
   # --output-format json wraps the final text in `.result` (so the sentinel and
   # classifier grep -F still match verbatim) AND carries `.usage`, which is the
   # only way to meter real token spend for the usage ledger. --max-turns bounds
@@ -282,7 +297,11 @@ print(tok)
 
   # Detect classifier block in output — the operator's hard rule says these
   # are real blocks, not workarounds. Treat as terminal for this Ralph run.
-  if grep -qiE 'classifier|safety-check|3 consecutive actions were blocked' "$ITER_OUT"; then
+  # Match only the exact multi-word block phrases, never the bare words
+  # "classifier"/"safety-check": this workspace has a BirdNET classifier
+  # subsystem, so legitimate task output routinely mentions "classifier" and must
+  # NOT be read as a safety block. (review F2)
+  if grep -qE '3 consecutive actions were blocked|Safety-Check Bypass|blocked by the (auto-mode )?classifier' "$ITER_OUT"; then
     log "classifier block detected in iter $iter output; stopping"
     exit_code=3
     break
