@@ -73,6 +73,33 @@ type Worktree = {
   dir: string;
 };
 
+// GET /api/worktrees/{slug}/repo-state: the canonical-state view (Phase G3).
+// bound=false for a purely local project. When bound, each active worktree
+// carries its assigned task id, ahead/behind vs origin/<default_branch>, and the
+// matched open PR (joined by head branch) when one exists.
+type RepoPr = {
+  number: number | null;
+  url: string;
+  state?: string;
+  title?: string;
+  headRefName?: string;
+  isDraft?: boolean;
+};
+type RepoWorktree = {
+  branch_slug: string;
+  dir: string;
+  task_id: string;
+  ahead_behind: { ahead: number; behind: number };
+  pr: RepoPr | null;
+};
+type RepoState = {
+  bound: boolean;
+  default_branch?: string;
+  remote_url?: string | null;
+  worktrees?: RepoWorktree[];
+  open_prs?: RepoPr[];
+};
+
 type Task = {
   id: string;
   text: string;
@@ -378,6 +405,20 @@ export default function ProjectDetail() {
   const [branchPr, setBranchPr] = useState<Record<string, { url: string; number: number }>>({});
   const [branchPublishErr, setBranchPublishErr] = useState<Record<string, string>>({});
 
+  // Canonical repo-state (default branch, active worktrees + PRs, ahead/behind).
+  // Fetched only when the project is bound to a remote.
+  const [repoState, setRepoState] = useState<RepoState | null>(null);
+  const [repoStateErr, setRepoStateErr] = useState<string | null>(null);
+  const [repoStateLoading, setRepoStateLoading] = useState(false);
+  const [cleaningUp, setCleaningUp] = useState(false);
+  const [cleanupMsg, setCleanupMsg] = useState<string | null>(null);
+  // Concurrent-worktrees opt-in (PATCH /api/projects/{slug}). A single boolean
+  // config toggle: commit on change with a brief "Saved" indicator, revert on
+  // failure. Mirrored locally so the switch reflects the pending write.
+  const [concurrent, setConcurrentState] = useState(false);
+  const [concurrentSaving, setConcurrentSaving] = useState(false);
+  const [concurrentFlash, setConcurrentFlash] = useState(false);
+
   // Publish-to-marketplace (the Deployments "Public" row).
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -408,6 +449,21 @@ export default function ProjectDetail() {
       setWorktrees([]);
     } finally {
       setWorktreesLoading(false);
+    }
+  }, [slug]);
+
+  const loadRepoState = useCallback(async () => {
+    setRepoStateLoading(true);
+    setRepoStateErr(null);
+    try {
+      const r = await fetch(`/api/worktrees/${slug}/repo-state`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setRepoState(await r.json());
+    } catch (e) {
+      setRepoStateErr(e instanceof Error ? e.message : String(e));
+      setRepoState(null);
+    } finally {
+      setRepoStateLoading(false);
     }
   }, [slug]);
 
@@ -483,6 +539,14 @@ export default function ProjectDetail() {
   }, [slug]);
 
   useEffect(() => { loadWorktrees(); }, [loadWorktrees]);
+  // Repo-state is a bound-project concern; only fetch once the project record
+  // shows a remote binding (avoids a guaranteed {bound:false} round-trip).
+  useEffect(() => { if (project?.repo) loadRepoState(); }, [project?.repo, loadRepoState]);
+  // Mirror the persisted opt-in into the local toggle whenever the record loads.
+  useEffect(() => {
+    const v = (project as (Project & { concurrent_worktrees?: boolean }) | null)?.concurrent_worktrees;
+    setConcurrentState(Boolean(v));
+  }, [project]);
   useEffect(() => { loadTasks(); }, [loadTasks]);
   useEffect(() => { loadNotes(); }, [loadNotes]);
   useEffect(() => { loadChats(); }, [loadChats]);
@@ -650,6 +714,48 @@ export default function ProjectDetail() {
       }
     },
     [slug, loadWorktrees],
+  );
+
+  // ---- Repo state: cleanup + concurrency opt-in -----------------------------
+  const doCleanup = useCallback(async () => {
+    setCleaningUp(true);
+    setCleanupMsg(null);
+    try {
+      const r = await fetch(`/api/worktrees/${slug}/cleanup`, { method: "POST" });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const d = await r.json();
+      const n = (d.removed ?? []).length;
+      setCleanupMsg(n === 0 ? "Nothing to clean up" : `Removed ${n} merged ${n === 1 ? "branch" : "branches"}`);
+      await loadRepoState();
+      await loadWorktrees();
+    } catch (e) {
+      setCleanupMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCleaningUp(false);
+    }
+  }, [slug, loadRepoState, loadWorktrees]);
+
+  const setConcurrent = useCallback(
+    async (v: boolean) => {
+      setConcurrentState(v);
+      setConcurrentSaving(true);
+      setConcurrentFlash(false);
+      try {
+        const r = await fetch(`/api/projects/${slug}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ concurrent_worktrees: v }),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        setConcurrentFlash(true);
+        window.setTimeout(() => setConcurrentFlash(false), 1600);
+      } catch {
+        setConcurrentState(!v); // revert on failure
+      } finally {
+        setConcurrentSaving(false);
+      }
+    },
+    [slug],
   );
 
   // ---- Publish to marketplace -----------------------------------------------
@@ -1170,6 +1276,104 @@ export default function ProjectDetail() {
                 </span>
                 <span>connected {fmtTs(project.repo.connected_at)}</span>
               </Row>
+
+              {/* Concurrent-worktrees opt-in. A single config boolean: the Toggle
+                  commits on change (PATCH) with a brief Saved indicator, and
+                  reverts if the write fails. */}
+              <Row
+                between
+                wrap
+                style={{ alignItems: "flex-start", gap: "var(--space-2)", paddingTop: "var(--space-2)" }}
+              >
+                <div style={{ flex: "1 1 20rem" }}>
+                  <Toggle
+                    checked={concurrent}
+                    onChange={setConcurrent}
+                    disabled={concurrentSaving}
+                    label="Concurrent worktrees (run tasks in isolated branches)"
+                  />
+                  <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-xs)" }}>
+                    When on, the dispatcher gives each task its own worktree off{" "}
+                    <code className="ws-mono">origin/{repoState?.default_branch ?? project.repo.default_branch}</code>{" "}
+                    so tasks run in parallel without contending on one working tree.
+                  </p>
+                </div>
+                {concurrentFlash && (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", whiteSpace: "nowrap" }}>Saved</span>
+                )}
+              </Row>
+
+              {/* Active worktrees (canonical repo-state). Four list states. */}
+              <div style={{ borderTop: "1px solid var(--border)", paddingTop: "var(--space-3)" }}>
+                <Row between wrap style={{ marginBottom: "var(--space-2)", alignItems: "center", gap: "var(--space-2)" }}>
+                  <span style={{ fontWeight: "var(--fw-semi)", fontSize: "var(--fs-sm)" }}>Active worktrees</span>
+                  <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                    {cleanupMsg && (
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{cleanupMsg}</span>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={doCleanup} loading={cleaningUp}>
+                      <Trash2 aria-hidden /> Clean up merged
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={loadRepoState} disabled={repoStateLoading}>
+                      <RefreshCw aria-hidden /> Refresh
+                    </Button>
+                  </Row>
+                </Row>
+
+                {repoStateLoading && !repoState ? (
+                  <Stack gap="sm">
+                    <Skeleton width="60%" />
+                    <Skeleton width="45%" />
+                  </Stack>
+                ) : repoStateErr ? (
+                  <StateBlock
+                    variant="error"
+                    title="Couldn't load repo state"
+                    hint={<code>GET /api/worktrees/{slug}/repo-state ({repoStateErr})</code>}
+                    action={<Button size="sm" onClick={loadRepoState}>Retry</Button>}
+                  />
+                ) : (repoState?.worktrees ?? []).length === 0 ? (
+                  <StateBlock
+                    title="No active worktrees"
+                    hint={
+                      <>
+                        Working on <code className="ws-mono">{repoState?.default_branch ?? project.repo.default_branch}</code>.
+                        Create a branch below, or a task allocates one when concurrent worktrees is on.
+                      </>
+                    }
+                  />
+                ) : (repoState?.worktrees ?? []).length > 50 ? (
+                  <StateBlock
+                    title="Too many worktrees to render"
+                    hint="Run Clean up merged, or merge/discard old branches to keep this list readable."
+                  />
+                ) : (
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                    {(repoState?.worktrees ?? []).map((w) => (
+                      <li key={w.branch_slug} style={{ borderBottom: "1px solid var(--border)", padding: "var(--space-2) 0" }}>
+                        <Row wrap style={{ alignItems: "center", gap: "var(--space-2)" }}>
+                          <GitBranch size={14} aria-hidden />
+                          <span className="ws-mono" style={{ fontSize: "var(--fs-sm)", flex: "1 1 12rem" }}>{w.branch_slug}</span>
+                          <Tag hue={catFor(w.task_id)}>task {w.task_id}</Tag>
+                          <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", whiteSpace: "nowrap" }}>
+                            {w.ahead_behind.ahead} ahead · {w.ahead_behind.behind} behind
+                          </span>
+                          {w.pr ? (
+                            <a href={w.pr.url} target="_blank" rel="noopener noreferrer" style={{ textDecoration: "none" }}>
+                              <Button size="sm" variant="ghost">
+                                <GitPullRequest aria-hidden /> PR #{w.pr.number}
+                                <ExternalLink size={14} aria-hidden />
+                              </Button>
+                            </a>
+                          ) : (
+                            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", whiteSpace: "nowrap" }}>no PR</span>
+                          )}
+                        </Row>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </Stack>
           ) : (
             <Row between wrap style={{ alignItems: "center" }}>

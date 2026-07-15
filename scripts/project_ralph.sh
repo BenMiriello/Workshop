@@ -43,6 +43,9 @@ RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
 RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
                          # distinct from the per-task ATTEMPT cap below (review F13)
 DEFAULT_MAX_ATTEMPTS=3   # per-task attempt cap (sweep runs) when the task sets no max_attempts
+CONCURRENT_WORKTREES_MAX=${CONCURRENT_WORKTREES_MAX:-2}  # bound on task-worktrees in flight
+                         # (worktree mode only). Sequential today (see the G3 block);
+                         # reserved for the deferred parallel-execution variant.
 FORCE=0              # manual operator-triggered run bypasses the global off-switch
 JOB_ID=""            # adopt an already-open Job (manual run) instead of creating one
 TASK_ID_ARG=""       # --task-id: run exactly this one task (run-now), skip next-ready
@@ -117,7 +120,7 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
   local ignore='^(\.runtime/|\.tasks\.json|TODO\.md$)'
   local files_json
   if [[ -n "$(printf '%s' "$commits_blob" | tr -d '[:space:]')" ]]; then
-    files_json=$(cd "$DIR" && git diff --name-only "$baseline".."$head" 2>/dev/null \
+    files_json=$(cd "$WORK_DIR" && git diff --name-only "$baseline".."$head" 2>/dev/null \
       | grep -vE "$ignore" | jq -R . | jq -s . 2>/dev/null)
   else
     files_json=$(printf '%s' "$base" | jq -c "(.reviewer.files // []) | map(select(test(\"$ignore\") | not))" 2>/dev/null)
@@ -148,6 +151,97 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
        }' 2>/dev/null
 }
 
+# --- GitHub worktree orchestration (Phase G2/G3) shells --------------------
+# These only ever run on the opt-in worktree path (bound project + the record's
+# `concurrent_worktrees` flag). They mirror how the sweep already shells into
+# backend services: run from $WORKSHOP with the backend on PYTHONPATH so
+# `from services import worktrees` resolves the same module the API uses.
+
+# Allocate an isolated, locked worktree for one task. Echoes "<dir>\t<branch_slug>"
+# on success, nothing on failure (caller falls back to the project dir).
+alloc_task_worktree() {  # $1=task_id
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+import sys
+from services import worktrees
+try:
+    r = worktrees.allocate_task_worktree(sys.argv[1], sys.argv[2])
+    print(f"{r['dir']}\t{r['branch_slug']}")
+except Exception as e:
+    print(f"[alloc_task_worktree] {e}", file=sys.stderr)
+PYEOF
+)
+}
+
+# Push a task worktree's branch and open its PR against the canonical base.
+# Echoes exactly one of:
+#   conflict                 -> rebase-onto-base hit a conflict; caller parks
+#   ok\t<pr_url>\t<pr_number> -> published
+#   error: <msg>             -> transient/other failure; caller logs, still done
+publish_task_worktree() {  # $1=branch_slug $2=title $3=body
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" "$1" "$2" "$3" <<'PYEOF' 2>>"$LOG"
+import sys
+from services import worktrees
+slug, branch_slug, title, body = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+try:
+    r = worktrees.publish_branch(slug, branch_slug, title=title, body=body)
+except Exception as e:
+    print(f"error: {e}")
+    raise SystemExit(0)
+if not r.get("ok"):
+    if r.get("conflict"):
+        print("conflict")
+    else:
+        print("error: " + str(r.get("detail") or r.get("reason") or "publish failed"))
+    raise SystemExit(0)
+pr = r.get("pr") or {}
+print(f"ok\t{pr.get('url') or ''}\t{pr.get('number') or ''}")
+PYEOF
+)
+}
+
+# Reap worktrees whose branch already merged into the canonical base. Best-effort.
+cleanup_merged_worktrees() {
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
+import sys
+from services import worktrees
+try:
+    worktrees.cleanup_merged(sys.argv[1])
+except Exception as e:
+    print(f"[cleanup_merged] {e}", file=sys.stderr)
+PYEOF
+) || true
+}
+
+# Called on a task's SUCCESS leg in worktree mode: push + open PR. On a rebase
+# conflict it PARKS the task (dead-letter, does not loop) and returns 1 so the
+# caller SKIPS its normal done/in_review transition. Otherwise augments $EVIDENCE
+# with the branch + pr and returns 0 so the caller proceeds. On the default path
+# (WT_MODE!=1) it is a no-op returning 0, so behavior there is unchanged.
+publish_or_park() {  # $1=branch_slug $2=title $3=body
+  [[ "$WT_MODE" != "1" ]] && return 0
+  local out; out=$(publish_task_worktree "$1" "$2" "$3")
+  if [[ "$out" == "conflict" ]]; then
+    python3 "$PTASKS" note "$DIR" "$TASK_ID" "publish conflict: branch does not rebase cleanly onto the canonical base; parked (not looping)" --kind acceptance >/dev/null 2>>"$LOG"
+    python3 "$PTASKS" set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+    job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+    PARKED=$((PARKED+1))
+    log "task=$TASK_ID PARKED (publish conflict)"
+    return 1
+  fi
+  if [[ "$out" == ok* ]]; then
+    local url num; url=$(printf '%s' "$out" | cut -f2); num=$(printf '%s' "$out" | cut -f3)
+    local aug; aug=$(printf '%s' "$EVIDENCE" | jq -c \
+      --arg branch "wt/$SLUG/$1" --arg url "$url" --arg num "$num" \
+      '. + {branch: $branch, pr: {url: $url, number: $num}}' 2>/dev/null)
+    [[ -n "$aug" ]] && EVIDENCE="$aug"
+    log "task=$TASK_ID published branch wt/$SLUG/$1 pr=$url"
+  else
+    log "task=$TASK_ID publish did not open a PR: ${out#error: }"
+  fi
+  return 0
+}
+# ---------------------------------------------------------------------------
+
 if [[ -z "$SLUG" && -z "$DIR_ARG" ]]; then
   echo "usage: project_ralph.sh <slug> | --dir <path> [--assignee agent:<slug>] [--max-wall SEC] [--max-tasks N]" >&2
   exit 4
@@ -172,7 +266,7 @@ print('' if cur is None else cur)
 # the tail of output; return code mirrors the command's.
 run_acceptance_cmd() {  # $1=spec
   local out rc
-  out=$( (cd "$DIR" && bash -lc "$1") 2>&1 )
+  out=$( (cd "$WORK_DIR" && bash -lc "$1") 2>&1 )
   rc=$?
   echo "$out" | tail -c 800
   return $rc
@@ -216,6 +310,41 @@ if [[ -z "$DIR" || ! -d "$DIR" ]]; then
   echo "[project_ralph] project not found or no dir: ${SLUG:-$DIR_ARG}" >&2
   exit 2
 fi
+
+# GitHub binding (Phase G2/G3). A project bound to a remote carries a `repo`
+# field (with a tracked default_branch) and an opt-in `concurrent_worktrees`
+# flag. REPO_BOUND drives fetch-before-work; WT_ENABLED (bound AND flag true,
+# and only for a slug-resolved project) drives the worktree-per-task path. An
+# unbound project, a --dir sweep, or the flag left false keeps the single-DIR
+# behavior below unchanged. WORK_DIR is the tree the current task actually runs
+# in: the project DIR by default, an isolated worktree only in WT mode.
+REPO_BOUND=0
+DEFAULT_BRANCH=""
+CONCURRENT_WT=0
+if [[ -n "$SLUG" ]]; then
+  read -r REPO_BOUND DEFAULT_BRANCH CONCURRENT_WT < <(python3 - "$SLUG" <<'PYEOF'
+import json, os, sys
+from pathlib import Path
+slug = sys.argv[1]
+reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
+                          "/home/clawd-a/workshop/.runtime/projects.json"))
+try:
+    data = json.loads(reg.read_text())
+except Exception:
+    print("0 - 0"); raise SystemExit(0)
+p = (data.get("projects") or {}).get(slug) or {}
+repo = p.get("repo") or {}
+bound = 1 if repo.get("remote_url") else 0
+db = repo.get("default_branch") or "-"
+conc = 1 if p.get("concurrent_worktrees") else 0
+print(f"{bound} {db} {conc}")
+PYEOF
+)
+fi
+[[ "$DEFAULT_BRANCH" == "-" ]] && DEFAULT_BRANCH=""
+WT_ENABLED=0
+[[ "$REPO_BOUND" == "1" && "$CONCURRENT_WT" == "1" && -n "$SLUG" ]] && WT_ENABLED=1
+WORK_DIR="$DIR"
 
 RUNTIME="$DIR/.runtime"
 mkdir -p "$RUNTIME"
@@ -268,9 +397,38 @@ fi
 BILL_SCOPE="${SLUG:-$ASSIGNEE}"; [[ -z "$BILL_SCOPE" ]] && BILL_SCOPE="$(basename "$DIR")"
 
 START_EPOCH=$(date +%s)
-log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS ==="
+log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
 
-DONE=0; FAILED=0; BLOCKED=0; TIMEOUT=0; IN_REVIEW=0
+# The canonical branch for a bound project: the tracked default_branch, else the
+# same main/master/HEAD detection worktrees.py falls back to. Used by
+# fetch-before-work and worktree allocation.
+resolve_default_branch() {
+  if [[ -n "$DEFAULT_BRANCH" ]]; then echo "$DEFAULT_BRANCH"; return; fi
+  local c
+  for c in main master; do
+    if git -C "$DIR" rev-parse --verify "$c" >/dev/null 2>&1; then echo "$c"; return; fi
+  done
+  git -C "$DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo main
+}
+
+# Fetch-before-work (Phase G2): a bound project starts its sweep from the
+# remote's latest canonical branch. fetch + ff-only never rewrites local work,
+# so this is safe on the normal single-DIR path too; it is skipped silently for
+# unbound projects and on any failure (e.g. the local branch has diverged).
+if [[ "$REPO_BOUND" == "1" ]]; then
+  DB=$(resolve_default_branch)
+  if git -C "$DIR" fetch origin "$DB" >/dev/null 2>>"$LOG"; then
+    if git -C "$DIR" merge --ff-only "origin/$DB" >/dev/null 2>>"$LOG"; then
+      log "fetch-before-work: fast-forwarded to origin/$DB"
+    else
+      log "fetch-before-work: origin/$DB fetched; ff-only skipped (local diverged)"
+    fi
+  else
+    log "fetch-before-work: fetch origin/$DB failed; continuing from local state"
+  fi
+fi
+
+DONE=0; FAILED=0; BLOCKED=0; TIMEOUT=0; IN_REVIEW=0; PARKED=0
 tick_remaining() { echo $(( MAX_WALL - ( $(date +%s) - START_EPOCH ) )); }
 
 # After a failed / incomplete attempt, decide retry (release to todo) vs give-up
@@ -375,8 +533,32 @@ while (( n < MAX_TASKS )); do
   # Fencing token from this claim; passed to every finalize so a zombie can't
   # clobber a task that a liveness reclaim reassigned to a newer sweep.
   CLAIM_TOKEN=$(jf "$CLAIMED" claim_token)
-  BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
-  log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ATTEMPTS acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
+
+  # Worktree-per-task (Phase G3): opt-in, bound projects only. Run this task in
+  # its own isolated worktree off origin/<default_branch> instead of the shared
+  # project DIR, so tasks never contend on the index and each carries its own
+  # branch + PR. WORK_DIR is the tree the worker (and the receipt/diff/acceptance
+  # below) operates in. If allocation fails we degrade to the project DIR for
+  # this one task (still correct, just no isolation/PR) rather than looping.
+  # Execution is SEQUENTIAL (one worktree at a time); parallel launch is deferred.
+  WORK_DIR="$DIR"; WT_MODE=0; WT_BRANCH_SLUG=""
+  PR_TITLE=""; PR_BODY=""
+  if [[ "$WT_ENABLED" == "1" ]]; then
+    ALLOC=$(alloc_task_worktree "$TASK_ID")
+    WT_DIR=$(printf '%s' "$ALLOC" | cut -f1)
+    WT_BRANCH_SLUG=$(printf '%s' "$ALLOC" | cut -f2)
+    if [[ -n "$WT_DIR" && -d "$WT_DIR" ]]; then
+      WORK_DIR="$WT_DIR"; WT_MODE=1
+      PR_TITLE="$(echo "$TASK_TEXT" | head -c 72 | tr '\n' ' ')"
+      PR_BODY="Automated change for task $TASK_ID in project $SLUG."
+      log "task=$TASK_ID allocated worktree $WT_DIR (branch wt/$SLUG/$WT_BRANCH_SLUG)"
+    else
+      log "task=$TASK_ID worktree allocation failed; running in project dir (no isolation, no PR)"
+    fi
+  fi
+
+  BASELINE=$(cd "$WORK_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+  log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ATTEMPTS acceptance=${ACC_KIND:-reviewer} wt=$WT_MODE dir=$WORK_DIR \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
   # A command/operator-acceptance task's real gate is the acceptance command or
   # operator review, so ralph's reviewer must not fail it on an empty tracked-file
@@ -393,15 +575,15 @@ while (( n < MAX_TASKS )); do
   RECEIPT_FILE="$RUNTIME/receipt-$CHILD_JOB-$$.json"
 
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" >> "$LOG" 2>&1
   RC=$?
   set -e
 
   # Structured receipt for the child Job's evidence: git-derived commits/head vs
   # the pre-run BASELINE, merged with ralph's receipt file. Attached on ALL
   # terminal child paths below (a failed run's receipt explains the failure).
-  HEAD=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
-  COMMITS=$(cd "$DIR" && git rev-list --reverse "$BASELINE..$HEAD" 2>/dev/null || echo "")
+  HEAD=$(cd "$WORK_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
+  COMMITS=$(cd "$WORK_DIR" && git rev-list --reverse "$BASELINE..$HEAD" 2>/dev/null || echo "")
   EVIDENCE=$(build_receipt_evidence "$RECEIPT_FILE" "$BASELINE" "$HEAD" "$COMMITS")
   # One task-side evidence entry pointing at the child Job (the ticket timeline
   # links to the run rather than duplicating the receipt payload).
@@ -410,27 +592,39 @@ while (( n < MAX_TASKS )); do
   case "$RC" in
     0)
       # ralph's reviewer gate passed. Apply the task's own acceptance policy.
+      # In worktree mode each SUCCESS leg first publishes the task's branch
+      # (push + PR). publish_or_park is a no-op returning 0 on the default path,
+      # so the transitions below are unchanged there; in worktree mode a publish
+      # conflict parks the task and returns non-zero, skipping the done/in_review
+      # transition (park, do not loop). On publish success it augments $EVIDENCE
+      # with the branch + pr so the child Job receipt carries them.
       if [[ "$ACC_KIND" == "command" && -n "$ACC_SPEC" ]]; then
         set +e; ACC_OUT=$(run_acceptance_cmd "$ACC_SPEC"); ACC_RC=$?; set -e
         if (( ACC_RC == 0 )); then
-          python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
-          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-          note_receipt_ref
-          DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE (command acceptance ok)"
+          if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
+            python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
+            python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+            note_receipt_ref
+            DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE (command acceptance ok)"
+          fi
         else
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance FAILED (exit $ACC_RC): $ACC_SPEC :: $(echo "$ACC_OUT" | tr '\n' ' ' | head -c 300)" --kind acceptance >/dev/null 2>>"$LOG"
           if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "command acceptance failing")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
           job_finish_child "$CHILD_JOB" failed "$ACC_RC" "$EVIDENCE"
         fi
       elif [[ "$ACC_KIND" == "operator" ]]; then
-        python3 "$PTASKS" note "$DIR" "$TASK_ID" "worker completed; awaiting operator approval" --kind acceptance >/dev/null 2>>"$LOG"
-        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-        note_receipt_ref
-        IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID -> in_review (operator gate)"
+        if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
+          python3 "$PTASKS" note "$DIR" "$TASK_ID" "worker completed; awaiting operator approval" --kind acceptance >/dev/null 2>>"$LOG"
+          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+          note_receipt_ref
+          IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID -> in_review (operator gate)"
+        fi
       else
-        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-        note_receipt_ref
-        DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE"
+        if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
+          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+          note_receipt_ref
+          DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE"
+        fi
       fi
       ;;
     3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
@@ -459,6 +653,13 @@ while (( n < MAX_TASKS )); do
   rm -f "$RECEIPT_FILE" 2>/dev/null || true
   sleep 1
 done
+
+# Worktree mode (Phase G3): reap worktrees whose branch already merged into the
+# canonical base so branches/<slug>/ does not accumulate stale trees. Best-effort.
+if [[ "$WT_ENABLED" == "1" ]]; then
+  cleanup_merged_worktrees
+  log "cleanup: reaped merged task worktrees for $SLUG"
+fi
 
 DURATION=$(( $(date +%s) - START_EPOCH ))
 # Terminal status of the coordinator sweep. If open (non-terminal) tasks remain
@@ -496,7 +697,7 @@ PYEOF
 READY=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ready'))" 2>/dev/null)
 OPEN=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('open',0))" 2>/dev/null)
 WAITING=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('waiting',0))" 2>/dev/null)
-log "=== sweep end scope=${SLUG:-$DIR} done=$DONE blocked=$BLOCKED failed=$FAILED in_review=$IN_REVIEW open=${OPEN:-0} waiting=${WAITING:-0} (${DURATION}s) ==="
+log "=== sweep end scope=${SLUG:-$DIR} done=$DONE blocked=$BLOCKED failed=$FAILED parked=$PARKED in_review=$IN_REVIEW open=${OPEN:-0} waiting=${WAITING:-0} (${DURATION}s) ==="
 # Only park as awaiting_input when the sweep is BOUND to a resolvable scope
 # (a project slug or an assignee agent). An unbound sweep (--dir with no slug/
 # assignee) has no scope the Jobs API can act on, so an awaiting_input job for it

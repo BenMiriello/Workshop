@@ -216,6 +216,21 @@ NOTE_PROTOCOL = (
     "record in `docs/decisions/` (the ADR convention) instead of a note."
 )
 
+# Git worktree / branch-philosophy pointer (Phase G3). Points agents at the
+# git-worktree-workflow skill and states the canonical-branch rule inline, so the
+# discipline holds even before the skill body is opened. Brief on purpose; the
+# full philosophy lives in shared/skills/git-worktree-workflow/SKILL.md.
+GIT_WORKTREE_RULE = (
+    "=== BRANCHES + WORKTREES ===\n"
+    "In a project bound to a GitHub remote, follow the git-worktree-workflow skill. "
+    "The canonical branch is the project's tracked repo.default_branch (usually "
+    "`main`): branch off `origin/<default_branch>` onto a short-lived "
+    "`wt/<slug>/<task-id>` branch, keep changes small and self-contained, rebase on "
+    "the default branch before you publish, then open a PR and merge on a green "
+    "reviewer gate. Never push to or reference the Workshop platform repo's own "
+    "remote, and never touch the veritusagent org (personal BenMiriello repos only)."
+)
+
 # Skill loader protocol (Phase 5). Data-mode assistants see the available skill
 # names + descriptions ambiently (in the cache-stable prefix); to pull a skill's
 # FULL instructions they emit this fenced block and the backend feeds the body
@@ -664,6 +679,7 @@ class ContextProvider:
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PATCH_PROTOCOL
             + "\n\n" + LEARNING_NOTE_PROTOCOL
             + "\n\n" + NOTE_PROTOCOL
+            + "\n\n" + GIT_WORKTREE_RULE
         )
 
     def live_context(self) -> str:
@@ -827,6 +843,7 @@ class ProjectContextProvider(ContextProvider):
             "direction, append a one-line decision note to PROJECT.md.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
+            + GIT_WORKTREE_RULE + "\n\n"
             + f"Project-local agent rules:\n\n{rules or '(none)'}"
         )
 
@@ -893,6 +910,7 @@ class BuildAgentContextProvider(ContextProvider):
             "direction, append a one-line decision note to PROJECT.md.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
+            + GIT_WORKTREE_RULE + "\n\n"
             + f"Build-agent rules:\n\n{rules or '(none)'}"
         )
 

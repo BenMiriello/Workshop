@@ -105,4 +105,5 @@ export type Project = {
   last_touched: string;
   claude_session: string | null;
   repo?: ProjectRepo;
+  concurrent_worktrees?: boolean;
 };

@@ -133,6 +133,12 @@ class ConnectGithubIn(BaseModel):
     scratch: bool | None = None
 
 
+class ProjectPatchIn(BaseModel):
+    # Minimal setter for the opt-in worktree-per-task flag (Phase G3). Additive:
+    # extend with more editable fields here as needed. None = leave unchanged.
+    concurrent_worktrees: bool | None = None
+
+
 class ImportProjectIn(BaseModel):
     url: str
     slug: str | None = None
@@ -191,6 +197,23 @@ async def list_projects() -> list[Project]:
 @router.get("/{slug}")
 async def get_project(slug: str) -> Project:
     raw = _ensure_project(slug)
+    return Project(slug=slug, **raw)
+
+
+@router.patch("/{slug}")
+async def patch_project(slug: str, body: ProjectPatchIn) -> Project:
+    """Read-modify-write a small set of editable project fields. Currently only
+    the `concurrent_worktrees` opt-in (Phase G3); the setter exists so the UI can
+    toggle it. Absent fields are left unchanged."""
+    data = _load_registry()
+    raw = (data.get("projects") or {}).get(slug)
+    if not raw:
+        raise HTTPException(404, f"project not found: {slug}")
+    if body.concurrent_worktrees is not None:
+        raw["concurrent_worktrees"] = body.concurrent_worktrees
+    raw["last_touched"] = _now()
+    data.setdefault("projects", {})[slug] = raw
+    _save_registry(data)
     return Project(slug=slug, **raw)
 
 
