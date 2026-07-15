@@ -3,6 +3,10 @@
 Status: reviewed plan, grounded against shipped code (every file claim below was read, not assumed).
 Scope: reconciles the operator's five asks with the shipped Task/Job/dispatch substrate.
 
+## Companion plans
+
+Two follow-on plans extend this one and are sequenced to slot in AFTER this plan's Phases 0-4 (do not reorder the phases below for them). `notes-system-plan-2026-07-15.md` (ASK N) systematizes scattered agent/chat notes onto the existing scoped knowledge store, gives them a real cross-scope UI mirroring the Work surface, makes the empty Project Notes section actually work (repointed from the dead-end `INTERVENTIONS.md` to the project's knowledge scope), and reconciles the `docs/` tree via an ADR convention plus an in-app index. `github-worktree-orchestration-plan-2026-07-15.md` (ASK G) binds projects to personal GitHub repos and lets agents create repos, branches, worktrees, push, and open/merge PRs themselves, with a tracked canonical branch and a rebase-before-merge reconcile model for concurrent worktrees, so code persists in the remote and not only locally. Both note their file overlaps with the phases below (ProjectDetail.tsx, appNav.tsx, App.tsx, chat_context.py, project_ralph.sh) and sequence around them.
+
 ## Executive summary
 
 1. Task and Job stay separate records; the Task becomes the one primary surface ("ticket") and Jobs render inside it as the run log. D1 confirmed.
