@@ -17,14 +17,25 @@ that dedups against existing OPEN tasks in the SAME scope before adding:
                                   (discovered_from + an evidence back-reference).
       cosine < 0.80   -> distinct: a plain new task.
 
-Embedding backend: the local birds `/embed` model is AUDIO only, so it cannot
-embed task text. We use a dependency-light local text embedder (a hashing
-term-frequency vectorizer over canonical tokens, numpy for the cosine) that needs
-no model download and works on the tiny task corpus. A real text-embedding
-service can be wired later through WORKSHOP_TEXT_EMBED_URL (an HTTP endpoint that
-takes {"texts": [...]} and returns {"vectors": [[...], ...]}); if that endpoint is
-set but unreachable, or embedding is force-disabled (WORKSHOP_DEDUP_EMBED=0), we
-fall back to hash-only dedup (exact dupes still merge) and never crash.
+Embedding backend (preference order): an explicit HTTP text-embed service
+(WORKSHOP_TEXT_EMBED_URL, {"texts": [...]} -> {"vectors": [[...], ...]}); else the
+local Ollama service (kept alive for exactly this) with a real semantic model
+(WORKSHOP_EMBED_OLLAMA_MODEL, default bge-m3) via /api/embeddings; else a
+dependency-light lexical hashing term-frequency vectorizer. The lexical fallback
+undershoots on paraphrase (two duplicate lines can score ~0.83 and be filed
+"related" instead of merged), which is exactly why the Ollama semantic path is
+preferred. The birds `/embed` model is AUDIO only and cannot embed task text. If
+every backend is unreachable, or embedding is force-disabled
+(WORKSHOP_DEDUP_EMBED=0), we fall back to hash-only dedup (exact dupes still
+merge) and never crash.
+
+Merge safety (non-destructive): a cosine >= MERGE_AT match is CONFIRMED by a
+cheap local LLM same-work check before merging, because a false merge silently
+drops a distinct unit of work (the worst failure of the ticket pipeline). If the
+LLM says "not the same work" (or is unreachable and we cannot confirm), the
+decision is downgraded to "related" (create + link) rather than merged. The merge
+itself is already non-destructive: it folds the new chat's provenance and exact
+wording into the surviving task's evidence, so no signal is lost.
 
 Single-operator system: scope here means correctness (a chat dedups within its
 own task scope), NOT a permission wall.
@@ -41,9 +52,20 @@ from pathlib import Path
 
 from services import tasks
 
-# Cosine decision thresholds (design 2e).
+# Cosine decision thresholds (design 2e). Calibrated for a semantic embedder;
+# the >= MERGE_AT tier is additionally gated by an LLM same-work check so a
+# slightly generous threshold cannot cause a silent false merge.
 MERGE_AT = 0.90
 RELATED_AT = 0.80
+
+# Local Ollama embedding + same-work check (the Ollama service is kept alive for
+# this and the local relay). All best-effort: any failure falls back cleanly.
+_OLLAMA_URL = os.environ.get("WORKSHOP_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+_EMBED_MODEL = os.environ.get("WORKSHOP_EMBED_OLLAMA_MODEL", "bge-m3").strip()
+# The same-work confirmation model: a small, fast local instruct model is plenty
+# for a binary judgement. Set WORKSHOP_DEDUP_LLM_CHECK=0 to disable the gate
+# (pure-cosine merge, the pre-hardening behavior).
+_DEDUP_LLM_MODEL = os.environ.get("WORKSHOP_DEDUP_LLM_MODEL", "llama3:latest").strip()
 
 # Hashing-vectorizer width. Small is fine: the task corpus per scope is tiny and
 # collisions only slightly blur cosine, never break the hash-exact merge path.
@@ -118,18 +140,57 @@ def _http_embed(texts: list[str], url: str) -> list[list[float]] | None:
         return None
 
 
+def _ollama_embed(texts: list[str]) -> list[list[float]] | None:
+    """Embed each text via the local Ollama /api/embeddings (one call per text;
+    the corpus is tiny). Returns L2-normalized vectors, or None on any failure so
+    the caller falls back to the lexical embedder."""
+    if not _EMBED_MODEL:
+        return None
+    out: list[list[float]] = []
+    try:
+        for t in texts:
+            body = json.dumps({"model": _EMBED_MODEL, "prompt": t or ""}).encode()
+            req = urllib.request.Request(
+                _OLLAMA_URL + "/api/embeddings",
+                data=body, headers={"content-type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=20) as r:
+                v = json.loads(r.read()).get("embedding")
+            if not isinstance(v, list) or not v:
+                return None
+            v = [float(x) for x in v]
+            norm = math.sqrt(sum(x * x for x in v))
+            out.append([x / norm for x in v] if norm > 0 else v)
+        return out
+    except Exception:
+        return None
+
+
 def embed_available() -> bool:
     """Whether Stage-2 cosine embedding is active (vs hash-only fallback).
-    False only when force-disabled via WORKSHOP_DEDUP_EMBED=0; the local lexical
-    embedder is otherwise always available (no external dependency)."""
+    False only when force-disabled via WORKSHOP_DEDUP_EMBED=0; a local embedder
+    (Ollama semantic, else lexical) is otherwise always available."""
     return os.environ.get("WORKSHOP_DEDUP_EMBED", "1").strip() not in ("0", "false", "no", "")
+
+
+def embed_backend() -> str:
+    """Name of the embedding backend that embed_texts() would use right now, for
+    observability + model-change tracking. Cheap probe (no network for the URL
+    case; a tiny Ollama call to confirm reachability)."""
+    if not embed_available():
+        return "disabled"
+    if os.environ.get("WORKSHOP_TEXT_EMBED_URL", "").strip():
+        return "http-embed"
+    if _ollama_embed(["ping"]) is not None:
+        return f"ollama:{_EMBED_MODEL}"
+    return "lexical"
 
 
 def embed_texts(texts: list[str]) -> list[list[float]] | None:
     """Embed each text to an L2-normalized vector, or None if embedding is
-    force-disabled (hash-only fallback). Prefers an external text-embed service
-    (WORKSHOP_TEXT_EMBED_URL) when set and reachable; otherwise uses the local
-    lexical embedder. Never raises."""
+    force-disabled (hash-only fallback). Preference: an explicit HTTP text-embed
+    service (WORKSHOP_TEXT_EMBED_URL); else local Ollama semantic embeddings; else
+    the local lexical embedder. Never raises."""
     if not texts:
         return []
     if not embed_available():
@@ -139,9 +200,56 @@ def embed_texts(texts: list[str]) -> list[list[float]] | None:
         got = _http_embed(texts, url)
         if got is not None:
             return got
-        # endpoint configured but unreachable -> fall through to local embedder
+        # endpoint configured but unreachable -> fall through
+    got = _ollama_embed(texts)
+    if got is not None:
+        return got
     try:
         return [_lexical_vector(t) for t in texts]
+    except Exception:
+        return None
+
+
+def _dedup_llm_check_enabled() -> bool:
+    return os.environ.get("WORKSHOP_DEDUP_LLM_CHECK", "1").strip() not in ("0", "false", "no", "")
+
+
+def same_work_llm(a: str, b: str) -> bool | None:
+    """Ask a small local model whether two task lines are the SAME unit of work
+    (same change, same target). Returns True/False, or None when the check is
+    disabled or the model is unreachable (caller treats None as "cannot confirm").
+    Deterministic-ish (temperature 0) and cheap; only ever called on the rare
+    >= MERGE_AT tier."""
+    if not _dedup_llm_check_enabled() or not _DEDUP_LLM_MODEL:
+        return None
+    prompt = (
+        "You are deduplicating a task queue. Two task descriptions are below.\n"
+        "Answer strictly whether they are the SAME unit of work: the same change "
+        "to the same target (same file/endpoint/feature). Different targets, or a "
+        "broader-vs-narrower scope, are NOT the same work.\n\n"
+        f"TASK A: {a}\n\nTASK B: {b}\n\n"
+        "Answer with exactly one word on the first line: YES or NO."
+    )
+    try:
+        body = json.dumps({
+            "model": _DEDUP_LLM_MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0},
+        }).encode()
+        req = urllib.request.Request(
+            _OLLAMA_URL + "/api/generate",
+            data=body, headers={"content-type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=45) as r:
+            resp = json.loads(r.read()).get("response") or ""
+        head = resp.strip().splitlines()[0].strip().upper() if resp.strip() else ""
+        if head.startswith("YES"):
+            return True
+        if head.startswith("NO"):
+            return False
+        # Ambiguous answer -> cannot confirm.
+        return None
     except Exception:
         return None
 
@@ -183,14 +291,28 @@ def decide(text: str, open_tasks: list[dict]) -> dict:
 
     new_vec = vectors[0]
     best_id = None
+    best_text = ""
     best_cos = 0.0
     for t, vec in zip(open_tasks, vectors[1:]):
         c = _cosine(new_vec, vec)
         if c > best_cos:
-            best_cos, best_id = c, t["id"]
+            best_cos, best_id, best_text = c, t["id"], (t.get("text") or "")
 
     if best_id is not None and best_cos >= MERGE_AT:
-        return {"decision": "merge", "matched_id": best_id, "cosine": best_cos, "stage": "cosine"}
+        # Non-destructive gate: a false merge silently drops a distinct unit of
+        # work, so confirm same-work with a cheap local LLM before merging. With
+        # the gate disabled we keep the pre-hardening pure-cosine merge; with it
+        # enabled, only an explicit "yes" merges -- a "no" or an unreachable model
+        # downgrades to a linked "related" task rather than risking a false merge.
+        if not _dedup_llm_check_enabled():
+            return {"decision": "merge", "matched_id": best_id, "cosine": best_cos,
+                    "stage": "cosine"}
+        confirm = same_work_llm(text, best_text)
+        if confirm is True:
+            return {"decision": "merge", "matched_id": best_id, "cosine": best_cos,
+                    "stage": "cosine+llm"}
+        return {"decision": "related", "matched_id": best_id, "cosine": best_cos,
+                "stage": "cosine+llm-downgrade", "gate": confirm}
     if best_id is not None and best_cos >= RELATED_AT:
         return {"decision": "related", "matched_id": best_id, "cosine": best_cos, "stage": "cosine"}
     return {"decision": "distinct", "matched_id": best_id, "cosine": best_cos, "stage": "cosine"}
