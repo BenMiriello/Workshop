@@ -30,6 +30,7 @@ import { RecorderProvider } from "./pages/apps/birds/recorder";
 import Home from "./pages/Home";
 import Jobs from "./pages/Jobs";
 import JobDetail from "./pages/JobDetail";
+import Usage from "./pages/Usage";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
 import Notes from "./pages/apps/notes/Notes";
@@ -108,6 +109,7 @@ export default function App() {
           <Route path="/agents" element={<Agents />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/jobs/:id" element={<JobDetail />} />
+          <Route path="/usage" element={<Usage />} />
           <Route path="/agents/new" element={<AgentDetail />} />
           <Route path="/agents/:slug/chat" element={<AgentBuild />} />
           <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />

@@ -13,7 +13,7 @@ from deps_user import (
 # location/birds/health/…) are NOT imported here; they mount from the installed-
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
-from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants
+from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants, usage
 from services.supervisor import AgentSupervisor
 from services import global_memory, app_registry, installed_apps
 from letta_legacy_client import LettaClient
@@ -121,6 +121,7 @@ app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], de
 app.include_router(grants.router, dependencies=_OPERATOR)
 app.include_router(backlog.router, dependencies=_OPERATOR)
 app.include_router(autonomy.router, dependencies=_OPERATOR)
+app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)
 app.include_router(redaction.router, dependencies=_OPERATOR)
 app.include_router(redaction.restore_router, dependencies=_OPERATOR)
 
