@@ -14,7 +14,9 @@
 #   }
 #
 # `complete: true` requires ALL of:
-#   - non-empty diff (something changed)
+#   - non-empty diff (something changed), UNLESS REVIEWER_ALLOW_NO_DIFF=1 — set by
+#     project_ralph.sh for command/operator-acceptance tasks, whose real gate is
+#     the acceptance command / operator review, not a tracked-file diff (F18)
 #   - zero NEW stub markers introduced (preexisting stubs in unchanged code are OK)
 #   - python typecheck passes on changed .py files (uses backend venv mypy if present)
 #   - typescript tsc --noEmit passes on changed .ts/.tsx files
@@ -200,8 +202,18 @@ if [[ "$APPS_CHECK" == "fail" ]]; then
 fi
 
 if [[ "$DIFF_FILES" -eq 0 ]]; then
-  REASONS+=("no_diff")
-  COMPLETE="false"
+  # An empty diff normally fails the gate (nothing changed). But a command- or
+  # operator-acceptance task ("restart the analyzer", "investigate and write
+  # findings") legitimately produces no tracked-file diff; its acceptance command
+  # or operator review is the real gate. project_ralph.sh sets REVIEWER_ALLOW_NO_DIFF
+  # only for those tasks, so a normal reviewer-acceptance code task never gets the
+  # exemption and the no_diff gate holds unchanged for it. (review F18)
+  if [[ "${REVIEWER_ALLOW_NO_DIFF:-0}" == "1" ]]; then
+    :
+  else
+    REASONS+=("no_diff")
+    COMPLETE="false"
+  fi
 fi
 if [[ "$STUB_COUNT" -gt 0 ]]; then
   REASONS+=("new_stubs:$STUB_COUNT")

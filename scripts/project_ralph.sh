@@ -285,8 +285,17 @@ while (( n < MAX_TASKS )); do
   BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
   log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ATTEMPTS acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
+  # A command/operator-acceptance task's real gate is the acceptance command or
+  # operator review, so ralph's reviewer must not fail it on an empty tracked-file
+  # diff (a "restart the analyzer" / "investigate and write findings" task produces
+  # none). Forward REVIEWER_ALLOW_NO_DIFF to ralph -> reviewer for those kinds only;
+  # a reviewer-acceptance code task never gets it, so its no_diff gate is unchanged.
+  # (review F18)
+  ALLOW_NO_DIFF=0
+  [[ "$ACC_KIND" == "command" || "$ACC_KIND" == "operator" ]] && ALLOW_NO_DIFF=1
+
   set +e
-  "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" >> "$LOG" 2>&1
   RC=$?
   set -e
 

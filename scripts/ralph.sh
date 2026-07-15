@@ -191,6 +191,15 @@ fi
 iter=0
 exit_code=1
 last_reviewer_json='{"reasons":["initial-iteration-not-yet-run"]}'
+# Session id captured from iteration 1's result envelope, so iterations >=2 resume
+# THIS run's own session (--resume) instead of the cwd's most-recent session
+# (--continue), which could grab a chat's session started in $DIR between iters
+# (review F12). Empty until captured; we fall back to --continue if never set.
+SESSION_ID=""
+# Per-run reviewer-reason counts. We record a learning only when the SAME reason
+# is rejected 2+ times in this run (a real repeated pattern), not on every raw
+# per-run diagnostic (review F15).
+declare -A REASON_COUNT=()
 
 while (( iter < MAX_ITER )); do
   iter=$((iter + 1))
@@ -216,7 +225,7 @@ while (( iter < MAX_ITER )); do
 ## Task
 
 $TASK"
-    CONTINUE_FLAG=""
+    RESUME_FLAG=()
   else
     REASONS=$(echo "$last_reviewer_json" | python3 -c "import json,sys; print(', '.join(json.load(sys.stdin).get('reasons',[])))" 2>/dev/null || echo "unknown")
     STUBS=$(echo "$last_reviewer_json" | python3 -c "
@@ -234,7 +243,13 @@ $STUBS
 Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured detail. Then DO THE WORK. When done, emit the sentinel.
 
 (Original task: $(echo "$TASK" | head -c 400))"
-    CONTINUE_FLAG="--continue"
+    # Resume THIS run's own session by id when we captured it in iter 1; only fall
+    # back to --continue (cwd's most-recent session) if we never got one. (F12)
+    if [[ -n "$SESSION_ID" ]]; then
+      RESUME_FLAG=(--resume "$SESSION_ID")
+    else
+      RESUME_FLAG=(--continue)
+    fi
   fi
 
   # Capture stdout for sentinel + classifier-block detection.
@@ -252,7 +267,7 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # </dev/null so claude doesn't wait on (and warn about) stdin — that warning
   # would otherwise be merged into ITER_OUT by 2>&1 and corrupt the JSON.
   ITER_START=$(date +%s)
-  timeout "$PER_ITER_TIMEOUT" "$CLAUDE" $CONTINUE_FLAG -p "$ITER_PROMPT" \
+  timeout "$PER_ITER_TIMEOUT" "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
     --output-format json \
     --max-turns "$MAX_TURNS_PER_ITER" \
     </dev/null >"$ITER_OUT" 2>&1
@@ -295,6 +310,42 @@ except Exception:
 print(tok)
 " 2>/dev/null || echo 0)
   RUN_TOKENS=$((RUN_TOKENS + ITER_TOKENS))
+
+  # Capture the session id from the result envelope once (iter 1), so iter >=2 can
+  # --resume THIS run's session rather than --continue the cwd's newest one. (F12)
+  # Robust to a stray non-JSON line landing in the file via 2>&1 (same ladder as
+  # the token parse: whole file, then a line carrying session_id, then first obj).
+  if [[ -z "$SESSION_ID" ]]; then
+    SESSION_ID=$(python3 -c "
+import json
+sid = ''
+try:
+    txt = open('$ITER_OUT').read()
+    obj = None
+    try:
+        obj = json.loads(txt)
+    except Exception:
+        for line in txt.splitlines():
+            line = line.strip()
+            if line.startswith('{') and '\"session_id\"' in line:
+                try:
+                    obj = json.loads(line); break
+                except Exception:
+                    pass
+        if obj is None:
+            i = txt.find('{\"type\"')
+            if i >= 0:
+                try:
+                    obj = json.loads(txt[i:])
+                except Exception:
+                    obj = None
+    sid = (obj or {}).get('session_id') or ''
+except Exception:
+    sid = ''
+print(sid)
+" 2>/dev/null || echo "")
+    [[ -n "$SESSION_ID" ]] && log "captured session_id=$SESSION_ID for --resume on later iters"
+  fi
 
   log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0), tokens=$ITER_TOKENS, dur=${ITER_DUR}s"
 
@@ -359,27 +410,41 @@ print(tok)
     break
   fi
 
-  # Reviewer rejected. Record each reason as a learning so future runs avoid it.
-  # Route into the billing scope (the project) when set, else global; record()
-  # dedups by canonical hash + Jaccard so a repeated rejection does not pile up.
+  # Reviewer rejected. A raw reviewer reason (no_diff, new_stubs:3,
+  # py_typecheck_fail) is a per-run diagnostic, not a durable lesson: recording
+  # every one buries the scope memory in transient near-dup facts that defeat
+  # dedup and bloat the injected block (review F15). Record a learning ONLY when
+  # the SAME reason is rejected 2+ times in THIS run (a genuine stuck pattern),
+  # ONCE (on the 2nd occurrence), with the task text for context.
   if [[ -n "$REVIEWER_JSON" ]]; then
-    echo "$REVIEWER_JSON" | (cd "$WORKSHOP" && \
-      PYTHONPATH="$WORKSHOP/backend" LEARN_SCOPE="${LEARN_SCOPE:-}" python3 -c "
-import json, sys, os
+    RUN_REASONS=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print('\n'.join(json.load(sys.stdin).get('reasons',[])))" 2>/dev/null || echo "")
+    while IFS= read -r reason; do
+      [[ -z "$reason" ]] && continue
+      REASON_COUNT["$reason"]=$(( ${REASON_COUNT["$reason"]:-0} + 1 ))
+      if (( ${REASON_COUNT["$reason"]} == 2 )); then
+        (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
+           LEARN_SCOPE="${LEARN_SCOPE:-}" LEARN_REASON="$reason" \
+           LEARN_TASK="$(echo "$TASK" | head -c 160)" python3 -c "
+import os
 from services import learnings
 scope = os.environ.get('LEARN_SCOPE') or learnings.GLOBAL
 try:
     scope = learnings._valid_scope(scope)
 except Exception:
     scope = learnings.GLOBAL
-data = json.load(sys.stdin)
-for reason in data.get('reasons', []):
-    try:
-        learnings.record(f'Ralph rejected: {reason}', source='ralph-reviewer',
-                         scope=scope, tags=['ralph', 'rejection'])
-    except Exception:
-        pass
+reason = os.environ.get('LEARN_REASON', '')
+task = os.environ.get('LEARN_TASK', '')
+try:
+    learnings.record(
+        f'Ralph keeps hitting \"{reason}\" on this task; the direct approach is not '
+        f'converging, try a different tactic: {task}',
+        source='ralph-reviewer', scope=scope, tags=['ralph', 'rejection', 'repeated'])
+except Exception:
+    pass
 ") 2>/dev/null || true
+        log "recorded repeated-rejection learning (reason=$reason x${REASON_COUNT["$reason"]})"
+      fi
+    done <<< "$RUN_REASONS"
   fi
 done
 
