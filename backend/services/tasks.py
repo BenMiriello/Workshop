@@ -10,7 +10,7 @@ Canonical Task (version 2)::
     {
       "id": str,                       # uuid4 hex, stable across reorders
       "text": str,
-      "status": "todo"|"doing"|"in_review"|"blocked"|"done"|"cancelled",
+      "status": "todo"|"doing"|"in_review"|"blocked"|"parked"|"done"|"cancelled",
       "assignee": None|"agent:<slug>"|"operator",   # the delegate (human owns)
       "parent": str | None,
       "priority": int,                 # higher first; default 0
@@ -20,6 +20,9 @@ Canonical Task (version 2)::
       "blocked_reason": str | None,
       "awaiting": {"question": str, "since": iso}|None,  # operator input this task waits on
       "attempts": int,                 # worker runs spent on this task (cap enforcement)
+      "claim_token": int | None,       # monotonic fencing token, bumped every claim
+      "lease_until": iso | None,       # claim lease; set while doing, cleared on release
+      "claim_pid": int | None,         # pid of the sweep that holds the claim (liveness)
       "job_ids": [str],                # executions that worked this task
       "evidence": [{"kind": str, "ref": str, "ts": iso}],
       "source": {"kind": "operator"|"chat"|"agent"|"autogen", "ref": str|None},
@@ -44,15 +47,27 @@ import os
 import re
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from services import todos
 
 # in_review = worker finished, operator is the gate; cancelled = dropped.
-STATUSES = {"todo", "doing", "in_review", "blocked", "done", "cancelled"}
+# parked = dead-letter: a poison-pill task that exhausted its attempt cap. Not
+# terminal (the operator still sees it as open work), but next_ready never picks
+# it, so it stops burning the budget every sweep. Self-healing design 2d.
+STATUSES = {"todo", "doing", "in_review", "blocked", "parked", "done", "cancelled"}
 TERMINAL = {"done", "cancelled"}
 DEFAULT_OWNER = "operator"  # canonical assignee for the human
+
+# Self-healing (design 2d): a claim carries a lease so a crashed/killed sweep
+# never strands a task in `doing` forever. Default lease is ~2x the per-task wall
+# budget handed to ralph.sh (RALPH_MAX_WALL=1200s), i.e. ~40 min. A `doing` task
+# past its lease whose claiming pid is dead is reclaimable. Env-overridable.
+LEASE_TTL_SEC = int(os.environ.get("WORKSHOP_TASK_LEASE_TTL_SEC", "2400"))
+# Attempt cap used by reclaim when a task carries no per-task max_iterations.
+# Mirrors project_ralph.sh DEFAULT_MAX_ITER so shell and store agree.
+RECLAIM_ATTEMPT_CAP = int(os.environ.get("WORKSHOP_TASK_ATTEMPT_CAP", "3"))
 
 STORE_NAME = ".tasks.json"
 EXPORT_NAME = "TODO.md"
@@ -80,6 +95,38 @@ def _is_protected(root: Path) -> bool:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _parse_iso(s) -> datetime | None:
+    """Parse a stored ISO timestamp into an aware datetime, or None."""
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(s))
+    except (TypeError, ValueError):
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _pid_alive(pid) -> bool:
+    """True if a process with this pid is alive (signal 0 probe). Unknown pid
+    (None / unparseable) is treated as NOT alive so a claim with no recorded pid
+    is reclaimable once its lease expires."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by someone else
+    except OSError:
+        return False
+    return True
 
 
 def _new_id() -> str:
@@ -200,6 +247,9 @@ def _normalize(task: dict) -> dict:
         "blocked_reason": task.get("blocked_reason") or None,
         "awaiting": task.get("awaiting") if isinstance(task.get("awaiting"), dict) else None,
         "attempts": _as_int(task.get("attempts"), 0),
+        "claim_token": _as_int_or_none(task.get("claim_token")),
+        "lease_until": task.get("lease_until") or None,
+        "claim_pid": _as_int_or_none(task.get("claim_pid")),
         "job_ids": [str(j) for j in (task.get("job_ids") or []) if j],
         "evidence": [e for e in (task.get("evidence") or []) if isinstance(e, dict)],
         "source": {"kind": str(src.get("kind") or "operator"), "ref": src.get("ref")},
@@ -281,15 +331,15 @@ def _persist(root: Path, tasks: list[dict]) -> None:
 # ---- Reconcile (heal out-of-band TODO.md edits) ----------------------------
 
 _BOX_TO_STATUS = {" ": "todo", "x": "done", "X": "done", "~": "doing",
-                  "!": "blocked", "?": "in_review", "-": "cancelled"}
-_LINE_RE = re.compile(r"^(\s*)[-*]\s*\[([ xX~!?\-])\]\s*(.*?)\s*$")
+                  "!": "blocked", "?": "in_review", "p": "parked", "-": "cancelled"}
+_LINE_RE = re.compile(r"^(\s*)[-*]\s*\[([ xX~!?p\-])\]\s*(.*?)\s*$")
 
 
 def _norm_text(s: str) -> str:
     """Normalize a task's FIRST line for matching (strip trailing status tag,
     collapse whitespace, lowercase). Multi-line bodies match on line one."""
     first = (s or "").split("\n", 1)[0]
-    first = re.sub(r"\s*\((?:doing|blocked|in_review|in review|cancelled)\)\s*$", "", first, flags=re.I)
+    first = re.sub(r"\s*\((?:doing|blocked|in_review|in review|parked|cancelled)\)\s*$", "", first, flags=re.I)
     return re.sub(r"\s+", " ", first).strip().lower()
 
 
@@ -400,9 +450,9 @@ def reconcile(root: Path) -> bool:
 # ---- Markdown export -------------------------------------------------------
 
 _STATUS_BOX = {"todo": " ", "doing": "~", "in_review": "?", "blocked": "!",
-               "done": "x", "cancelled": "-"}
+               "parked": "p", "done": "x", "cancelled": "-"}
 _STATUS_LABEL = {"doing": "doing", "blocked": "blocked", "in_review": "in_review",
-                 "cancelled": "cancelled"}
+                 "parked": "parked", "cancelled": "cancelled"}
 
 
 def render_markdown(tasks: list[dict], *, header: str = "# TODO\n\n") -> str:
@@ -516,12 +566,79 @@ def get_task(root: Path, task_id: str, *, owner: str | None = None) -> dict | No
     return None
 
 
+def _is_stale_claim(t: dict, now_dt: datetime, ttl: int) -> bool:
+    """A `doing` task is a stale claim (crashed/killed sweep) when its lease has
+    expired AND the process that holds the claim is no longer alive. A legacy
+    claim with no recorded lease falls back to `updated` + ttl."""
+    if t.get("status") != "doing":
+        return False
+    eff = _parse_iso(t.get("lease_until"))
+    if eff is None:
+        u = _parse_iso(t.get("updated"))
+        eff = (u + timedelta(seconds=ttl)) if u else None
+    if eff is None or now_dt < eff:
+        return False
+    pid = t.get("claim_pid")
+    if pid is not None and _pid_alive(pid):
+        return False  # sweep is legitimately still working; lease was conservative
+    return True
+
+
+def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC,
+            attempt_cap: int = RECLAIM_ATTEMPT_CAP) -> list[dict]:
+    """Release or park stale `doing` tasks so a crashed/killed sweep never strands
+    a task forever (self-healing 2d). A stale claim under its attempt cap returns
+    to `todo` (re-runnable next sweep); a stale claim AT the cap lands in `parked`
+    (dead-letter, visible to the operator, never re-picked). The monotonic
+    `claim_token` is left intact so a zombie that later tries to finalize is
+    fenced. Returns [{id, action}] for logging. Cheap: scans lock-free first and
+    only takes the lock when there is actually something to reclaim."""
+    raw = _read_store(root)
+    if not raw:
+        return []
+    now_dt = now or datetime.now(timezone.utc)
+    normalized = [_normalize(t) for t in raw if isinstance(t, dict)]
+    if not any(_is_stale_claim(t, now_dt, ttl) for t in normalized):
+        return []
+    out: list[dict] = []
+    with _locked(root):
+        tasks = _load(root)
+        changed = False
+        for t in tasks:
+            if not _is_stale_claim(t, now_dt, ttl):
+                continue
+            # attempts was already incremented at claim time, so the crashed run
+            # is already counted; do NOT bump again here (avoids double-counting).
+            attempts = _as_int(t.get("attempts"), 0)
+            cap = t.get("max_iterations") or attempt_cap
+            t["lease_until"] = None
+            t["claim_pid"] = None
+            if attempts >= cap:
+                t["status"] = "parked"
+                t["blocked_reason"] = (
+                    f"parked: worker died with lease expired after {attempts} "
+                    f"attempt(s) (cap {cap})"
+                )
+                out.append({"id": t["id"], "action": "parked"})
+            else:
+                t["status"] = "todo"
+                t["blocked_reason"] = None
+                out.append({"id": t["id"], "action": "released"})
+            t["updated"] = _now()
+            changed = True
+        if changed:
+            _persist(root, tasks)
+    return out
+
+
 def next_ready(root: Path, *, assignee: str | None = None) -> dict | None:
     """The next task ready to run: status==todo AND every depends_on is
     done|cancelled, ordered by priority desc then created asc. Optionally scoped
     to an assignee (an agent claims only its own or unassigned tasks). Replaces
-    'first todo'. Reconciles first so a task added by any route is seen."""
+    'first todo'. Reconciles first so a task added by any route is seen, and
+    reclaims stale claims so a crashed sweep's task becomes ready again."""
     reconcile(root)
+    reclaim(root)
     tasks = _load(root)
     by_id = {t["id"]: t for t in tasks}
 
@@ -611,10 +728,18 @@ def update(
     evidence: dict | None = None,
     awaiting: dict | None = None,
     bump_attempt: bool = False,
+    expect_claim_token: int | None = None,
 ) -> dict | None:
     """Update a task. ``owner`` (or ``assignee``) scopes the match so an agent
     can't mutate another delegate's task. Additive fields are patched when
-    provided. Returns the updated task or None."""
+    provided. Returns the updated task or None.
+
+    ``expect_claim_token`` fences a zombie: if provided and it does not match the
+    task's current ``claim_token``, the task was reclaimed and re-claimed by a
+    newer sweep, so this stale caller's finalize is rejected (returns None) rather
+    than clobbering live work (2d). Any transition OUT of ``doing`` releases the
+    claim (clears lease + pid) so a waiting task never freezes a dispatch slot and
+    is never mistaken for a crash."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if text is not None:
@@ -631,12 +756,22 @@ def update(
                 break
         if found is None:
             return None
+        if expect_claim_token is not None and \
+                _as_int(found.get("claim_token"), 0) != int(expect_claim_token):
+            return None  # fenced: task was reclaimed + reassigned to a newer sweep
         if status is not None:
             found["status"] = status
             # Leaving a waiting state clears the operator-input payload; nothing
             # is waiting on a task that is now todo/doing/done/cancelled.
             if status not in ("blocked", "in_review"):
                 found["awaiting"] = None
+            # Any transition out of `doing` releases the claim: a task that is
+            # waiting (blocked/in_review), released (todo), parked, or finished is
+            # NOT being worked, so it must not hold a lease/pid. This is the single
+            # most important detail for "the whole system never freezes" (2d).
+            if status != "doing":
+                found["lease_until"] = None
+                found["claim_pid"] = None
         if text is not None:
             found["text"] = text
         if assignee is not None:
@@ -670,8 +805,12 @@ def update(
         return found
 
 
-def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None) -> dict | None:
+def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,
+          pid: int | None = None, ttl: int = LEASE_TTL_SEC) -> dict | None:
     """Atomically claim a task: todo -> doing under flock, recording the job id.
+    Records a fencing token (`claim_token`, monotonic per task), a lease
+    (`lease_until` = now + ttl) and the claiming `claim_pid` so a crashed sweep's
+    task can be reclaimed and a zombie's late finalize can be fenced (2d).
     Returns the claimed task, or None if it was already claimed / not todo (a
     concurrent sweep + CLI can race for the same task; the loser gets None)."""
     with _locked(root):
@@ -685,6 +824,11 @@ def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None)
             return None
         found["status"] = "doing"
         found["attempts"] = _as_int(found.get("attempts"), 0) + 1
+        found["claim_token"] = _as_int(found.get("claim_token"), 0) + 1
+        found["lease_until"] = (
+            datetime.now(timezone.utc) + timedelta(seconds=ttl)
+        ).isoformat(timespec="seconds")
+        found["claim_pid"] = _as_int_or_none(pid)
         if job_id and job_id not in found["job_ids"]:
             found["job_ids"].append(job_id)
         found["updated"] = _now()

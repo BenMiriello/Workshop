@@ -93,10 +93,13 @@ def start(
     job_id: str | None = None,
     task_id: str | None = None,
     parent_id: str | None = None,
+    pid: int | None = None,
 ) -> dict:
     """Open a Job and append its record. Returns the full record (with `id`).
     `task_id` links a child Job to the Task it worked; `parent_id` links it to
-    the coordinator sweep Job, so the Jobs feed + task history form one graph."""
+    the coordinator sweep Job, so the Jobs feed + task history form one graph.
+    `pid` records the launching process so the liveness watchdog can tell a
+    running Job whose process is dead from one that is genuinely in flight (2d)."""
     if trigger not in TRIGGERS:
         trigger = "manual"
     if status not in STATUSES:
@@ -112,6 +115,7 @@ def start(
         budget=budget,
         task_id=task_id,
         parent_id=parent_id,
+        pid=pid,
     )
     _append(record)
     return record
@@ -214,6 +218,77 @@ def get(job_id: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Liveness reconcile (self-healing 2d): fail Jobs stuck `running` after death
+# ---------------------------------------------------------------------------
+
+def _pid_alive(pid) -> bool:
+    """True if a process with this pid is alive (signal 0 probe)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _age_seconds(rec: dict, now: datetime | None = None) -> float | None:
+    started = rec.get("started_at")
+    if not started:
+        return None
+    try:
+        dt = datetime.fromisoformat(started)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = now or datetime.now(timezone.utc)
+    return (now - dt).total_seconds()
+
+
+def reconcile_stuck(*, min_age_sec: int = 120, max_age_sec: int = 7200,
+                    now: datetime | None = None) -> list[dict]:
+    """Find Jobs stuck in `running` whose launching process is dead and close
+    them as `failed`, so the Jobs feed tells the truth and a crashed sweep does
+    not linger as a phantom "still running" record forever (2d).
+
+    A running Job is considered dead when it is older than ``min_age_sec`` (to
+    avoid racing a just-opened Job) AND either its recorded ``pid`` is no longer
+    alive, or it has no pid and is older than ``max_age_sec`` (a hard age ceiling
+    for legacy records that predate pid recording). Returns the list of Jobs it
+    failed. Reclaiming the associated Task is the task store's job (tasks.reclaim);
+    this only fixes the Job record."""
+    now = now or datetime.now(timezone.utc)
+    failed: list[dict] = []
+    for rec in read(status="running", limit=1000):
+        age = _age_seconds(rec, now)
+        if age is None or age < min_age_sec:
+            continue
+        pid = rec.get("pid")
+        if pid is not None:
+            dead = not _pid_alive(pid)
+        else:
+            dead = age >= max_age_sec
+        if not dead:
+            continue
+        finish(
+            rec["id"],
+            status="failed",
+            evidence="liveness watchdog: launching process dead while running",
+        )
+        failed.append(rec)
+    return failed
+
+
+# ---------------------------------------------------------------------------
 # CLI shim — for shell writers (cron_agent.sh / project_ralph.sh / ralph.sh)
 # ---------------------------------------------------------------------------
 
@@ -231,6 +306,7 @@ def _cli(argv: list[str]) -> int:
     p_start.add_argument("--id", dest="job_id", default=None)
     p_start.add_argument("--task-id", default=None)
     p_start.add_argument("--parent-id", default=None)
+    p_start.add_argument("--pid", type=int, default=None)
 
     p_finish = sub.add_parser("finish", help="close a Job")
     p_finish.add_argument("--id", dest="job_id", required=True)
@@ -259,6 +335,7 @@ def _cli(argv: list[str]) -> int:
             job_id=args.job_id,
             task_id=args.task_id,
             parent_id=args.parent_id,
+            pid=args.pid,
         )
         print(rec["id"])
         return 0

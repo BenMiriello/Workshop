@@ -55,14 +55,16 @@ ASSIGNEE_FLAG=(); [[ -n "$ASSIGNEE" ]] && ASSIGNEE_FLAG=(--assignee "$ASSIGNEE")
 # is importable regardless of this script's caller cwd. The run-state of a sweep
 # is a Job in `running` status; we finish() it on exit. Replaces the old
 # per-project .runtime/ralph-run.json.
+# --pid $$ records the sweep pid so the liveness watchdog can tell a crashed
+# sweep (dead pid, Job still `running`) from one genuinely in flight (2d).
 job_start() {  # $1 = trigger kind ; echoes the new job id (coordinator sweep Job)
   (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
-    --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger "$1" --status running 2>/dev/null) || true
+    --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger "$1" --status running --pid $$ 2>/dev/null) || true
 }
 job_start_child() {  # $1=task_id $2=parent_job ; echoes the child Job id
   (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
     --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger loop --status running \
-    --task-id "$1" --parent-id "$2" 2>/dev/null) || true
+    --task-id "$1" --parent-id "$2" --pid $$ 2>/dev/null) || true
 }
 job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed [$5=evidence-json]
   [[ -z "$1" ]] && return 0
@@ -201,12 +203,17 @@ tick_remaining() { echo $(( MAX_WALL - ( $(date +%s) - START_EPOCH ) )); }
 # (block), based on the per-task attempt cap. $ATTEMPTS is the count already spent
 # (claim bumps it before the run). Echoes "blocked" or "retry".
 release_or_block() {  # $1=task_id $2=attempts $3=cap $4=reason-verb
+  # $CLAIM_TOKEN (loop-scoped) fences this finalize: if a liveness reclaim already
+  # released + reassigned the task to a newer sweep, the token mismatches and the
+  # transition is a no-op instead of clobbering live work.
   if (( $2 >= $3 )); then
-    python3 "$PTASKS" block "$DIR" "$1" "$4 after $2 attempt(s) (cap $3)" >/dev/null 2>>"$LOG"
+    python3 "$PTASKS" block "$DIR" "$1" "$4 after $2 attempt(s) (cap $3)" \
+      --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
     log "task=$1 BLOCKED: $4 after $2/$3 attempts"
     echo blocked
   else
-    python3 "$PTASKS" set-status "$DIR" "$1" todo >/dev/null 2>>"$LOG"
+    python3 "$PTASKS" set-status "$DIR" "$1" todo \
+      --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
     log "task=$1 released to todo ($4; attempt $2/$3)"
     echo retry
   fi
@@ -250,9 +257,11 @@ while (( n < MAX_TASKS )); do
   # Per-task child Job under the coordinator sweep Job (task_id + parent_id link
   # the Jobs feed and the task's history into one graph).
   CHILD_JOB=$(job_start_child "$TASK_ID" "$JOB_ID")
-  # Atomic claim: todo->doing recording the child job id + bumping attempts. A
-  # concurrent sweep or CLI that already claimed it returns {}; skip.
-  CLAIMED=$(python3 "$PTASKS" claim "$DIR" "$TASK_ID" "$CHILD_JOB" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
+  # Atomic claim: todo->doing recording the child job id + bumping attempts, and
+  # setting the lease/pid/fencing-token (self-healing 2d). --pid $$ lets the
+  # liveness reclaim tell a crashed sweep from a live one. A concurrent sweep or
+  # CLI that already claimed it returns {}; skip.
+  CLAIMED=$(python3 "$PTASKS" claim "$DIR" "$TASK_ID" "$CHILD_JOB" --pid $$ "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
   CLAIMED_ID=$(jf "$CLAIMED" id)
   if [[ -z "$CLAIMED_ID" ]]; then
     log "task=$TASK_ID already claimed elsewhere — skipping"
@@ -260,6 +269,9 @@ while (( n < MAX_TASKS )); do
     continue
   fi
   ATTEMPTS=$(jf "$CLAIMED" attempts); [[ -z "$ATTEMPTS" ]] && ATTEMPTS=1
+  # Fencing token from this claim; passed to every finalize so a zombie can't
+  # clobber a task that a liveness reclaim reassigned to a newer sweep.
+  CLAIM_TOKEN=$(jf "$CLAIMED" claim_token)
   BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
   log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ITER acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
@@ -275,7 +287,7 @@ while (( n < MAX_TASKS )); do
         set +e; ACC_OUT=$(run_acceptance_cmd "$ACC_SPEC"); ACC_RC=$?; set -e
         if (( ACC_RC == 0 )); then
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
-          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" >/dev/null 2>>"$LOG"
+          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
           DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE (command acceptance ok)"
         else
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance FAILED (exit $ACC_RC): $ACC_SPEC :: $(echo "$ACC_OUT" | tr '\n' ' ' | head -c 300)" --kind acceptance >/dev/null 2>>"$LOG"
@@ -284,14 +296,14 @@ while (( n < MAX_TASKS )); do
         fi
       elif [[ "$ACC_KIND" == "operator" ]]; then
         python3 "$PTASKS" note "$DIR" "$TASK_ID" "worker completed; awaiting operator approval" --kind acceptance >/dev/null 2>>"$LOG"
-        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" >/dev/null 2>>"$LOG"
+        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
         IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID -> in_review (operator gate)"
       else
-        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" >/dev/null 2>>"$LOG"
+        python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
         DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE"
       fi
       ;;
-    3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID BLOCKED (classifier)" ;;
+    3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID BLOCKED (classifier)" ;;
     1|2)
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else TIMEOUT=$((TIMEOUT+1)); fi
       job_finish_child "$CHILD_JOB" done "$RC" ;;

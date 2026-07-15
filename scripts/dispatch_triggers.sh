@@ -42,6 +42,7 @@ fi
 # TYPE=project -> SCOPE is a slug; TYPE=agent -> SCOPE is a dir, ASSIGNEE=agent:slug.
 PLAN=$(cd "$WORKSHOP" && python3 - <<'PYEOF'
 import json, os, sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, "/home/clawd-a/workshop/backend")
@@ -49,6 +50,7 @@ from services import tasks, jobs, triggers, agents_registry, usage_ledger  # noq
 
 WORKSHOP = Path("/home/clawd-a/workshop")
 STATE_PATH = WORKSHOP / ".runtime" / "trigger-state.json"
+CB_PATH = WORKSHOP / ".runtime" / "circuit-breaker.json"
 # Canonical projects registry (moved to .runtime by the pluggable-apps refactor;
 # same env override the backend honors).
 PROJECTS_REGISTRY = Path(os.environ.get(
@@ -56,6 +58,92 @@ PROJECTS_REGISTRY = Path(os.environ.get(
 
 MAX_PROJECT_SWEEPS = 1
 MAX_AGENT_SWEEPS = 1
+
+# Circuit breaker (self-healing 2d): after CB_THRESHOLD consecutive sweeps for a
+# scope that made zero progress and only failed, skip that scope for a cool-off
+# window so a broken scope does not burn the tick budget every dispatch. The
+# window grows (base doubling per extra failure, capped) so a persistently broken
+# scope backs off further. State is a simple counter file in .runtime for operator
+# visibility; the count itself is recomputed from the Jobs log each tick (source
+# of truth = jobs.jsonl), so it never drifts.
+CB_THRESHOLD = 3
+CB_BASE_SEC = 600      # 10 min after the threshold is first crossed
+CB_MAX_SEC = 7200      # 2 h ceiling
+NOW = datetime.now(timezone.utc)
+
+
+def cb_load() -> dict:
+    try:
+        return json.loads(CB_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def cb_save(state: dict) -> None:
+    try:
+        CB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = CB_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2))
+        tmp.replace(CB_PATH)
+    except Exception:
+        pass
+
+
+CB_STATE = cb_load()
+
+
+def _coordinator_sweeps(**flt) -> list:
+    """Recent completed COORDINATOR sweep Jobs for a scope, newest first (child
+    per-task Jobs carry task_id/parent_id and are excluded)."""
+    out = []
+    for j in jobs.read(limit=50, **flt):
+        if j.get("task_id") or j.get("parent_id") or not j.get("ended_at"):
+            continue
+        out.append(j)
+    return out
+
+
+def _failed_sweep(j: dict) -> bool:
+    """A completed sweep that made no progress and only produced failures."""
+    try:
+        return int(j.get("tasks_failed") or 0) > 0 and int(j.get("tasks_done") or 0) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def circuit_open(scope_key: str, **flt) -> tuple[bool, str]:
+    """Return (open, reason). Counts the leading run of failed sweeps for the
+    scope; once it reaches CB_THRESHOLD, the scope is skipped until the cool-off
+    window (from the most recent failure) elapses. Records state for visibility."""
+    sweeps = _coordinator_sweeps(**flt)
+    n = 0
+    last_ended = None
+    for j in sweeps:
+        if _failed_sweep(j):
+            n += 1
+            if last_ended is None:
+                last_ended = j.get("ended_at")
+        else:
+            break
+    if n < CB_THRESHOLD or not last_ended:
+        CB_STATE.pop(scope_key, None)
+        return False, ""
+    cooldown = min(CB_BASE_SEC * (2 ** (n - CB_THRESHOLD)), CB_MAX_SEC)
+    try:
+        end_dt = datetime.fromisoformat(last_ended)
+    except (TypeError, ValueError):
+        return False, ""
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    open_until = end_dt + timedelta(seconds=cooldown)
+    CB_STATE[scope_key] = {
+        "consecutive_failures": n,
+        "open_until": open_until.isoformat(),
+        "updated": NOW.isoformat(),
+    }
+    if NOW < open_until:
+        return True, f"{n} consecutive failed sweeps; cooling off until {open_until.isoformat()}"
+    return False, ""
 
 def load_state() -> dict:
     try:
@@ -128,6 +216,10 @@ for slug, p in sorted(projects.items()):
     root = Path(pdir)
     if running_job(project_slug=slug):
         continue
+    opened, cb_reason = circuit_open(f"project:{slug}", project_slug=slug)
+    if opened:
+        print(f"skip-circuit\tproject:{slug}\t{cb_reason}", file=sys.stderr)
+        continue
     if awaiting_unchanged(slug, root):
         continue
     if not has_ready(root):
@@ -187,6 +279,10 @@ for a in agents:
         continue
     if running_job(agent_id=f"agent:{slug}"):
         continue
+    opened, cb_reason = circuit_open(f"agent:{slug}", agent_id=f"agent:{slug}")
+    if opened:
+        print(f"skip-circuit\tagent:{slug}\t{cb_reason}", file=sys.stderr)
+        continue
     if not has_ready(Path(root), assignee=f"agent:{slug}"):
         continue
     ok, reason = usage_ledger.can_admit(f"agent:{slug}")
@@ -197,6 +293,7 @@ for a in agents:
     agent_started += 1
 
 save_state(state)
+cb_save(CB_STATE)
 for typ, scope, assignee in plan:
     print(f"{typ}\t{scope}\t{assignee}")
 PYEOF

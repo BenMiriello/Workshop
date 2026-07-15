@@ -15,10 +15,10 @@ Verbs (all take a scope directory as the first positional):
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
       [--touches glob,glob] [--acceptance-cmd CMD] [--max-iterations N]
       [--effort s|m|l] [--discovered-from id] [--provenance KEY] [--source KIND]
-  set-status <dir> <id> <status> [--job-id J] [--reason R]
-  claim <dir> <id> <job_id> [--assignee A]
+  set-status <dir> <id> <status> [--job-id J] [--reason R] [--expect-claim-token T]
+  claim <dir> <id> <job_id> [--assignee A] [--pid PID]
   note <dir> <id> "evidence text" [--kind KIND] [--ref REF]
-  block <dir> <id> "reason"
+  block <dir> <id> "reason" [--expect-claim-token T]
   set-awaiting <dir> <id> "question"  set/clear the operator-input payload
 
 Every command prints JSON on stdout (a task object, a list, or {} / {"error":...}).
@@ -53,7 +53,20 @@ def _slim(t: dict | None) -> dict:
         "attempts": t.get("attempts", 0), "awaiting": t.get("awaiting"),
         "blocked_reason": t.get("blocked_reason"),
         "touches": t.get("touches", []),
+        "claim_token": t.get("claim_token"),
+        "lease_until": t.get("lease_until"),
+        "claim_pid": t.get("claim_pid"),
     }
+
+
+def _opt_int(v):
+    """An optional int CLI arg: empty string / None -> None (no fence / no pid)."""
+    if v is None or v == "":
+        return None
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
 
 
 def main(argv: list[str]) -> int:
@@ -83,9 +96,11 @@ def main(argv: list[str]) -> int:
     sp = sub.add_parser("set-status"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("status")
     sp.add_argument("--job-id", default=None); sp.add_argument("--reason", default=None)
+    sp.add_argument("--expect-claim-token", default=None)
 
     sp = sub.add_parser("claim"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("job_id"); sp.add_argument("--assignee", default=None)
+    sp.add_argument("--pid", default=None)
 
     sp = sub.add_parser("note"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("text")
@@ -93,6 +108,7 @@ def main(argv: list[str]) -> int:
 
     sp = sub.add_parser("block"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("reason")
+    sp.add_argument("--expect-claim-token", default=None)
 
     sp = sub.add_parser("set-awaiting"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("question")
@@ -119,11 +135,14 @@ def main(argv: list[str]) -> int:
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "set-status":
-            t = tasks.update(root, a.task_id, status=a.status, job_id=a.job_id, blocked_reason=a.reason)
+            t = tasks.update(root, a.task_id, status=a.status, job_id=a.job_id,
+                             blocked_reason=a.reason,
+                             expect_claim_token=_opt_int(a.expect_claim_token))
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "claim":
-            t = tasks.claim(root, a.task_id, a.job_id, assignee=a.assignee)
+            t = tasks.claim(root, a.task_id, a.job_id, assignee=a.assignee,
+                            pid=_opt_int(a.pid))
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "note":
@@ -131,7 +150,8 @@ def main(argv: list[str]) -> int:
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "block":
-            t = tasks.update(root, a.task_id, status="blocked", blocked_reason=a.reason)
+            t = tasks.update(root, a.task_id, status="blocked", blocked_reason=a.reason,
+                             expect_claim_token=_opt_int(a.expect_claim_token))
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "set-awaiting":
