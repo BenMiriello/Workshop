@@ -229,7 +229,10 @@ async def _distill_task_from_thread(t: dict) -> str:
     )
     try:
         res = await asyncio.to_thread(llm_router.call_cloud, prompt, model=llm_router.TIER_HAIKU)
-        return (res.get("text") or "").strip()[:2000]
+        # The prompt asks for no em-dashes, but enforce it: the operator's hard rule
+        # is no em-dashes anywhere, and Haiku emits them anyway. (review L7)
+        text = (res.get("text") or "").strip().replace("—", ", ")
+        return text[:2000]
     except Exception as e:
         log.warning("spawn-task distill failed: %s", e)
         return ""

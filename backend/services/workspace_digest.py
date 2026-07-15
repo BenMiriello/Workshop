@@ -109,9 +109,10 @@ def digest_for_context(
     cap_tasks: int = CAP_TASKS,
 ) -> str:
     """The ambient digest string for a chat's context binding, or "" when there
-    is nothing to show. A project/build/agent chat gets its own scope; anything
-    else (general / app) gets the workspace-wide roll-up. Capped small with a
-    "+N more" remainder so the block stays cache-friendly and distractor-light."""
+    is nothing to show. A project/build/agent chat gets its own scope; a general
+    chat gets the workspace-wide roll-up; an app chat gets "" (it must not carry
+    unrelated project tasks). Capped small with a "+N more" remainder so the block
+    stays cache-friendly and distractor-light."""
     scoped = _scoped_root(context_key)
 
     if scoped is not None:
@@ -123,6 +124,15 @@ def digest_for_context(
         if total > len(lines):
             body += f"\n- (+{total - len(lines)} more; ask to list)"
         return body
+
+    # scoped is None: either a general chat (workspace roll-up) or an APP chat. An
+    # app chat (budget/finance/commute/... any non-general bare key) must not carry
+    # unrelated project task text every turn — that is token cost with no benefit —
+    # so return "" for it. Only a genuine general chat (no key / general /
+    # new-project) gets the workspace-wide roll-up. (review L4)
+    ck = (context_key or "").strip()
+    if ck and ck not in ("general", "new-project"):
+        return ""
 
     # Workspace-wide roll-up for a general chat. Aggregate across the workshop root
     # and every project, still capped, with a remainder count.
