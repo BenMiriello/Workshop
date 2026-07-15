@@ -57,13 +57,19 @@ end sanitize
 
 on trim(t)
 	set t to t as string
-	repeat while t starts with " " or t starts with "."
-		if (length of t) is 0 then exit repeat
-		set t to text 2 thru -1 of t
+	repeat while (length of t) > 0 and (t starts with " " or t starts with ".")
+		if (length of t) is 1 then
+			set t to ""
+		else
+			set t to text 2 thru -1 of t
+		end if
 	end repeat
-	repeat while t ends with " " or t ends with "."
-		if (length of t) is 0 then exit repeat
-		set t to text 1 thru -2 of t
+	repeat while (length of t) > 0 and (t ends with " " or t ends with ".")
+		if (length of t) is 1 then
+			set t to ""
+		else
+			set t to text 1 thru -2 of t
+		end if
 	end repeat
 	return t
 end trim
