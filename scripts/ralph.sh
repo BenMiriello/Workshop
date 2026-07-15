@@ -41,14 +41,17 @@ DIR="$WORKSHOP"          # working tree to drive (default = workshop root)
 MAX_ITER=10
 MAX_WALL=1500   # 25 minutes
 MAX_TURNS_PER_ITER=6
+BILL_PROJECT=""   # --bill-project <scope>: record this run's tokens to the usage ledger
+RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --baseline-rev) BASELINE="$2"; shift 2 ;;
-    --dir)          DIR="$2"; shift 2 ;;
-    --max-iter)     MAX_ITER="$2"; shift 2 ;;
-    --max-wall)     MAX_WALL="$2"; shift 2 ;;
-    *)              TASK="$1"; shift ;;
+    --baseline-rev)  BASELINE="$2"; shift 2 ;;
+    --dir)           DIR="$2"; shift 2 ;;
+    --max-iter)      MAX_ITER="$2"; shift 2 ;;
+    --max-wall)      MAX_WALL="$2"; shift 2 ;;
+    --bill-project)  BILL_PROJECT="$2"; shift 2 ;;
+    *)               TASK="$1"; shift ;;
   esac
 done
 
@@ -198,17 +201,33 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
 
   # Capture stdout for sentinel + classifier-block detection.
   ITER_OUT=$WORKSHOP/.runtime/ralph-iter-${iter}.out
-  # We run claude with --output-format text so the sentinel is matchable as a
-  # plain string. --max-turns bounds within-iter cost.
+  # --output-format json wraps the final text in `.result` (so the sentinel and
+  # classifier grep -F still match verbatim) AND carries `.usage`, which is the
+  # only way to meter real token spend for the usage ledger. --max-turns bounds
+  # within-iter cost.
   set +e
   timeout "$PER_ITER_TIMEOUT" "$CLAUDE" $CONTINUE_FLAG -p "$ITER_PROMPT" \
-    --output-format text \
+    --output-format json \
     --max-turns "$MAX_TURNS_PER_ITER" \
     >"$ITER_OUT" 2>&1
   CLAUDE_EXIT=$?
   set -e
 
-  log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0)"
+  # Sum this iteration's real context+output tokens (input + cache read/creation
+  # + output) into the run total. Best-effort: a non-JSON error blob yields 0.
+  ITER_TOKENS=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('$ITER_OUT'))
+    u = d.get('usage') or {}
+    print(int(u.get('input_tokens',0)) + int(u.get('cache_read_input_tokens',0))
+          + int(u.get('cache_creation_input_tokens',0)) + int(u.get('output_tokens',0)))
+except Exception:
+    print(0)
+" 2>/dev/null || echo 0)
+  RUN_TOKENS=$((RUN_TOKENS + ITER_TOKENS))
+
+  log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0), tokens=$ITER_TOKENS"
 
   # Detect classifier block in output — the operator's hard rule says these
   # are real blocks, not workarounds. Treat as terminal for this Ralph run.
@@ -271,5 +290,14 @@ if (( iter >= MAX_ITER && exit_code == 1 )); then
   log "iteration cap ($MAX_ITER) hit; final reviewer JSON: $last_reviewer_json"
 fi
 
-log "=== done iter=$iter exit_code=$exit_code ==="
+# Bill this run's real token spend to the usage ledger so the dispatcher's
+# admission gate can enforce the rolling-window budget. Best-effort; never blocks
+# the exit. Only autonomous (billed) runs record — a bare manual ralph does not.
+if [[ -n "$BILL_PROJECT" && "$RUN_TOKENS" -gt 0 ]]; then
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
+     --project "$BILL_PROJECT" --tokens "$RUN_TOKENS" >/dev/null 2>&1) || true
+  log "billed $RUN_TOKENS tokens to usage ledger (scope=$BILL_PROJECT)"
+fi
+
+log "=== done iter=$iter exit_code=$exit_code (tokens=$RUN_TOKENS) ==="
 exit "$exit_code"

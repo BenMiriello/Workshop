@@ -186,8 +186,13 @@ if [[ -z "$JOB_ID" ]]; then
   JOB_ID=$(job_start loop)
 fi
 
+# The scope tokens are billed to in the usage ledger: the project slug for a
+# project sweep, else the agent assignee, else the tree name. The dispatcher and
+# this loop both admit against this scope's rolling-window budget.
+BILL_SCOPE="${SLUG:-$ASSIGNEE}"; [[ -z "$BILL_SCOPE" ]] && BILL_SCOPE="$(basename "$DIR")"
+
 START_EPOCH=$(date +%s)
-log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS ==="
+log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS ==="
 
 DONE=0; FAILED=0; BLOCKED=0; TIMEOUT=0; IN_REVIEW=0
 tick_remaining() { echo $(( MAX_WALL - ( $(date +%s) - START_EPOCH ) )); }
@@ -223,6 +228,15 @@ while (( n < MAX_TASKS )); do
     log "no ready tasks"
     break
   fi
+
+  # Usage-budget admission (Stage 5). Stop the sweep the moment this scope's
+  # rolling-window budget is exhausted, so autonomous work can never run away
+  # with the operator's Claude usage. Chats are unmetered and never gated.
+  if ! (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger \
+          admit --project "$BILL_SCOPE" >/dev/null 2>&1); then
+    log "usage budget exhausted for scope=$BILL_SCOPE — stopping sweep (task=$TASK_ID left ready)"
+    break
+  fi
   n=$((n+1))
 
   # Acceptance gate + per-task cap (O4). acceptance.kind: reviewer (default,
@@ -250,7 +264,7 @@ while (( n < MAX_TASKS )); do
   log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ITER acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
   set +e
-  "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" >> "$LOG" 2>&1
+  "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" >> "$LOG" 2>&1
   RC=$?
   set -e
 

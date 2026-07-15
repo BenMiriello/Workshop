@@ -45,7 +45,7 @@ import json, os, sys
 from pathlib import Path
 
 sys.path.insert(0, "/home/clawd-a/workshop/backend")
-from services import tasks, jobs, triggers, agents_registry  # noqa: E402
+from services import tasks, jobs, triggers, agents_registry, usage_ledger  # noqa: E402
 
 WORKSHOP = Path("/home/clawd-a/workshop")
 STATE_PATH = WORKSHOP / ".runtime" / "trigger-state.json"
@@ -132,6 +132,10 @@ for slug, p in sorted(projects.items()):
         continue
     if not has_ready(root):
         continue
+    ok, reason = usage_ledger.can_admit(slug)
+    if not ok:
+        print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
+        continue
     plan.append(("project", slug, ""))
     proj_started += 1
 
@@ -184,6 +188,10 @@ for a in agents:
     if running_job(agent_id=f"agent:{slug}"):
         continue
     if not has_ready(Path(root), assignee=f"agent:{slug}"):
+        continue
+    ok, reason = usage_ledger.can_admit(f"agent:{slug}")
+    if not ok:
+        print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
         continue
     plan.append(("agent", str(root), f"agent:{slug}"))
     agent_started += 1

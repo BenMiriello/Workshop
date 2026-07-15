@@ -52,6 +52,10 @@ BUDGET_CONFIG_PATH = Path(os.environ.get(
 # project may borrow when others are idle (null = up to the whole app pool).
 _DEFAULT_CONFIG = {
     "app_total": 2_000_000,
+    # Headroom kept free so a sweep never starts with a sliver of budget and
+    # overshoots (we can't know a task's real cost until it runs). Admission
+    # refuses once app_used + this reserve would exceed app_total.
+    "nominal_task_tokens": 150_000,
     "default_project": {"weight": 1.0, "floor": 0, "ceil": None},
     "projects": {},
 }
@@ -264,6 +268,34 @@ def status(now: datetime | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Admission (the enforcement primitive the dispatcher + sweeps call)
+# ---------------------------------------------------------------------------
+
+def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str]:
+    """Whether one more autonomous sweep/task may start in `scope` (a project
+    slug or agent label). Returns (ok, reason).
+
+    The app-wide cap is the runaway guard; a per-project `ceil` (when set) caps
+    one scope's borrow. We refuse once less than one nominal task's worth of
+    app-wide headroom remains, so a task never starts on a sliver of budget and
+    overshoots the ceiling (its true cost is unknown until it runs). Chats are
+    never recorded here, so this never gates interactive chat."""
+    cfg = load_config()
+    usage = window_usage(now)
+    app_total = float(cfg.get("app_total") or 0)
+    if app_total <= 0:
+        return True, "uncapped (no app_total)"
+    reserve = float(cfg.get("nominal_task_tokens") or _DEFAULT_CONFIG["nominal_task_tokens"])
+    if usage["app"] + reserve > app_total:
+        return False, f"app budget exhausted: {usage['app']}/{int(app_total)} tokens in {usage['window_s']//3600}h"
+    if scope:
+        ceil = _project_params(cfg, scope).get("ceil")
+        if ceil is not None and usage["by_project"].get(scope, 0) >= float(ceil):
+            return False, f"project ceil reached: {scope} {usage['by_project'].get(scope, 0)}/{int(float(ceil))}"
+    return True, "ok"
+
+
+# ---------------------------------------------------------------------------
 # CLI shim (for shell writers: python -m services.usage_ledger record ...)
 # ---------------------------------------------------------------------------
 
@@ -275,11 +307,17 @@ def _main(argv: list[str]) -> int:
     r.add_argument("--tokens", type=int, required=True)
     r.add_argument("--agent", default=None)
     r.add_argument("--job-id", default=None)
+    a = sub.add_parser("admit")  # exit 0 = admit, 1 = deny (for shell gating)
+    a.add_argument("--project", default=None)
     sub.add_parser("status")
     sub.add_parser("prune")
     args = ap.parse_args(argv)
     if args.cmd == "record":
         record(args.project, args.tokens, agent=args.agent, job_id=args.job_id)
+    elif args.cmd == "admit":
+        ok, reason = can_admit(args.project)
+        print(json.dumps({"ok": ok, "reason": reason}))
+        return 0 if ok else 1
     elif args.cmd == "status":
         print(json.dumps(status(), indent=2))
     elif args.cmd == "prune":
