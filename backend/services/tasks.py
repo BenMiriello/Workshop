@@ -16,7 +16,9 @@ Canonical Task (version 2)::
       "priority": int,                 # higher first; default 0
       "depends_on": [task_id],         # gates readiness
       "acceptance": {"kind": "reviewer"|"command"|"operator", "spec": str|None}|None,
-      "max_iterations": int | None,    # per-task override of the ralph cap
+      "max_attempts": int | None,      # per-task cap on worker RUNS (sweep attempts);
+                                       # distinct from ralph's inner iteration cap.
+                                       # Legacy stores' `max_iterations` reads in.
       "blocked_reason": str | None,
       "awaiting": {"question": str, "since": iso}|None,  # operator input this task waits on
       "attempts": int,                 # worker runs spent on this task (cap enforcement)
@@ -65,7 +67,7 @@ DEFAULT_OWNER = "operator"  # canonical assignee for the human
 # budget handed to ralph.sh (RALPH_MAX_WALL=1200s), i.e. ~40 min. A `doing` task
 # past its lease whose claiming pid is dead is reclaimable. Env-overridable.
 LEASE_TTL_SEC = int(os.environ.get("WORKSHOP_TASK_LEASE_TTL_SEC", "2400"))
-# Attempt cap used by reclaim when a task carries no per-task max_iterations.
+# Attempt cap used by reclaim when a task carries no per-task max_attempts.
 # Mirrors project_ralph.sh DEFAULT_MAX_ITER so shell and store agree.
 RECLAIM_ATTEMPT_CAP = int(os.environ.get("WORKSHOP_TASK_ATTEMPT_CAP", "3"))
 
@@ -243,7 +245,10 @@ def _normalize(task: dict) -> dict:
         "priority": _as_int(task.get("priority"), 0),
         "depends_on": [str(d) for d in (task.get("depends_on") or []) if d],
         "acceptance": acceptance,
-        "max_iterations": _as_int_or_none(task.get("max_iterations")),
+        # max_attempts is the per-task cap on worker RUNS (sweep attempts). Read
+        # legacy `max_iterations` for back-compat so old stores load unchanged.
+        "max_attempts": _as_int_or_none(
+            task.get("max_attempts", task.get("max_iterations"))),
         "blocked_reason": task.get("blocked_reason") or None,
         "awaiting": task.get("awaiting") if isinstance(task.get("awaiting"), dict) else None,
         "attempts": _as_int(task.get("attempts"), 0),
@@ -518,8 +523,14 @@ def _tree_for(tasks: list[dict]) -> tuple[list[dict], dict[str, list[dict]]]:
 
 
 def _match_assignee(task: dict, owner: str | None) -> bool:
-    """Assignee-scoped match, tolerant of the legacy owner form (bare slug)."""
+    """Assignee-scoped match, tolerant of the legacy owner form (bare slug). A task
+    with no assignee (assignee is None) is claimable by ANY scope, mirroring
+    next_ready.in_scope: otherwise an agent sweep loops offering-then-refusing an
+    unassigned task (next_ready returns it, claim's _match_assignee refuses),
+    opening + cancelling a child Job on every pass (review F19)."""
     if owner is None:
+        return True
+    if task.get("assignee") is None:
         return True
     want = owner if (owner == DEFAULT_OWNER or owner.startswith("agent:")) else f"agent:{owner}"
     return (task.get("assignee") or DEFAULT_OWNER) == want or task.get("owner") == owner
@@ -610,7 +621,7 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
             # attempts was already incremented at claim time, so the crashed run
             # is already counted; do NOT bump again here (avoids double-counting).
             attempts = _as_int(t.get("attempts"), 0)
-            cap = t.get("max_iterations") or attempt_cap
+            cap = t.get("max_attempts") or attempt_cap
             t["lease_until"] = None
             t["claim_pid"] = None
             if attempts >= cap:
@@ -675,7 +686,7 @@ def add(
     priority: int = 0,
     depends_on: list[str] | None = None,
     acceptance: dict | None = None,
-    max_iterations: int | None = None,
+    max_attempts: int | None = None,
     touches: list[str] | None = None,
     discovered_from: str | None = None,
     effort: str | None = None,
@@ -703,7 +714,7 @@ def add(
             "assignee": assignee if assignee is not None else owner,
             "parent": parent or None, "priority": priority,
             "depends_on": depends_on or [], "acceptance": acceptance,
-            "max_iterations": max_iterations, "touches": touches or [],
+            "max_attempts": max_attempts, "touches": touches or [],
             "discovered_from": discovered_from, "effort": effort,
             "source": source or {"kind": "operator", "ref": None},
             "provenance": provenance, "created": now, "updated": now,
@@ -725,7 +736,7 @@ def update(
     depends_on: list[str] | None = None,
     blocked_reason: str | None = None,
     acceptance: dict | None = None,
-    max_iterations: int | None = None,
+    max_attempts: int | None = None,
     job_id: str | None = None,
     evidence: dict | None = None,
     awaiting: dict | None = None,
@@ -788,8 +799,8 @@ def update(
             found["blocked_reason"] = blocked_reason or None
         if acceptance is not None:
             found["acceptance"] = acceptance or None
-        if max_iterations is not None:
-            found["max_iterations"] = _as_int_or_none(max_iterations)
+        if max_attempts is not None:
+            found["max_attempts"] = _as_int_or_none(max_attempts)
         if awaiting is not None:
             found["awaiting"] = ({"question": str(awaiting.get("question") or "").strip(),
                                   "since": awaiting.get("since") or _now()}

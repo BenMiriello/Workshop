@@ -34,7 +34,9 @@ ASSIGNEE=""          # --assignee agent:<slug>: claim only this delegate's (or u
 MAX_WALL=3000        # 50 min total for a project sweep
 MAX_TASKS=20         # cap tasks per sweep
 RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
-DEFAULT_MAX_ITER=3   # per-task attempt cap when the task sets no max_iterations
+RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
+                         # distinct from the per-task ATTEMPT cap below (review F13)
+DEFAULT_MAX_ATTEMPTS=3   # per-task attempt cap (sweep runs) when the task sets no max_attempts
 FORCE=0              # manual operator-triggered run bypasses the global off-switch
 JOB_ID=""            # adopt an already-open Job (manual run) instead of creating one
 
@@ -256,8 +258,11 @@ while (( n < MAX_TASKS )); do
   # operator (worker finishing lands the task in_review, operator approves).
   ACC_KIND=$(jf "$NEXT" acceptance.kind)
   ACC_SPEC=$(jf "$NEXT" acceptance.spec)
-  MAX_ITER=$(jf "$NEXT" max_iterations)
-  [[ -z "$MAX_ITER" || "$MAX_ITER" == "None" ]] && MAX_ITER=$DEFAULT_MAX_ITER
+  # Per-task ATTEMPT cap (how many sweep runs this task gets before block/park).
+  # Distinct from ralph's inner iteration cap (RALPH_INNER_MAX_ITER), which is a
+  # fixed per-attempt loop bound passed to ralph.sh below. (review F13)
+  MAX_ATTEMPTS=$(jf "$NEXT" max_attempts)
+  [[ -z "$MAX_ATTEMPTS" || "$MAX_ATTEMPTS" == "None" ]] && MAX_ATTEMPTS=$DEFAULT_MAX_ATTEMPTS
 
   # Per-task child Job under the coordinator sweep Job (task_id + parent_id link
   # the Jobs feed and the task's history into one graph).
@@ -278,10 +283,10 @@ while (( n < MAX_TASKS )); do
   # clobber a task that a liveness reclaim reassigned to a newer sweep.
   CLAIM_TOKEN=$(jf "$CLAIMED" claim_token)
   BASELINE=$(cd "$DIR" && git rev-parse HEAD 2>/dev/null || echo "")
-  log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ITER acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
+  log "task=$TASK_ID job=$CHILD_JOB attempt=$ATTEMPTS/$MAX_ATTEMPTS acceptance=${ACC_KIND:-reviewer} \"$(echo "$TASK_TEXT" | head -c 120 | tr '\n' ' ')\" baseline=$BASELINE"
 
   set +e
-  "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" >> "$LOG" 2>&1
+  "$RALPH" "$TASK_TEXT" --dir "$DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" >> "$LOG" 2>&1
   RC=$?
   set -e
 
@@ -296,7 +301,7 @@ while (( n < MAX_TASKS )); do
           DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC"; log "task=$TASK_ID DONE (command acceptance ok)"
         else
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance FAILED (exit $ACC_RC): $ACC_SPEC :: $(echo "$ACC_OUT" | tr '\n' ' ' | head -c 300)" --kind acceptance >/dev/null 2>>"$LOG"
-          if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "command acceptance failing")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+          if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "command acceptance failing")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
           job_finish_child "$CHILD_JOB" failed "$ACC_RC"
         fi
       elif [[ "$ACC_KIND" == "operator" ]]; then
@@ -323,10 +328,10 @@ while (( n < MAX_TASKS )); do
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
       # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
       # is visible to the circuit breaker, which keys on tasks_failed. (review F14)
-      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
       job_finish_child "$CHILD_JOB" failed "$RC" ;;
     *)
-      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
       job_finish_child "$CHILD_JOB" failed "$RC" ;;
   esac
   sleep 1

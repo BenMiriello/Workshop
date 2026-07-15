@@ -13,7 +13,7 @@ Verbs (all take a scope directory as the first positional):
   next-ready <dir> [--assignee A]     dependency-aware next ready task
   list-json <dir> [--assignee A] [--include-done]
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
-      [--touches glob,glob] [--acceptance-cmd CMD] [--max-iterations N]
+      [--touches glob,glob] [--acceptance-cmd CMD] [--max-attempts N]
       [--effort s|m|l] [--discovered-from id] [--provenance KEY] [--source KIND]
   set-status <dir> <id> <status> [--job-id J] [--reason R] [--expect-claim-token T]
   claim <dir> <id> <job_id> [--assignee A] [--pid PID]
@@ -49,7 +49,7 @@ def _slim(t: dict | None) -> dict:
         "id": t["id"], "text": t.get("text", ""), "owner": t.get("owner", "operator"),
         "assignee": t.get("assignee"), "status": t.get("status"),
         "priority": t.get("priority", 0), "depends_on": t.get("depends_on", []),
-        "acceptance": t.get("acceptance"), "max_iterations": t.get("max_iterations"),
+        "acceptance": t.get("acceptance"), "max_attempts": t.get("max_attempts"),
         "attempts": t.get("attempts", 0), "awaiting": t.get("awaiting"),
         "blocked_reason": t.get("blocked_reason"),
         "touches": t.get("touches", []),
@@ -87,7 +87,7 @@ def main(argv: list[str]) -> int:
     sp.add_argument("--assignee", default=None)
     sp.add_argument("--touches", default=None)
     sp.add_argument("--acceptance-cmd", default=None)
-    sp.add_argument("--max-iterations", type=int, default=None)
+    sp.add_argument("--max-attempts", type=int, default=None)
     sp.add_argument("--effort", default=None)
     sp.add_argument("--discovered-from", default=None)
     sp.add_argument("--provenance", default=None)
@@ -130,7 +130,7 @@ def main(argv: list[str]) -> int:
             t = tasks.add(
                 root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
                 assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,
-                max_iterations=a.max_iterations, effort=a.effort,
+                max_attempts=a.max_attempts, effort=a.effort,
                 discovered_from=a.discovered_from, provenance=a.provenance,
                 source={"kind": a.source, "ref": None},
             )
