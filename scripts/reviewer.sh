@@ -14,7 +14,7 @@
 #   }
 #
 # `complete: true` requires ALL of:
-#   - non-empty diff (something changed), UNLESS REVIEWER_ALLOW_NO_DIFF=1 — set by
+#   - non-empty diff (something changed), UNLESS REVIEWER_ALLOW_NO_DIFF=1, set by
 #     project_ralph.sh for command/operator-acceptance tasks, whose real gate is
 #     the acceptance command / operator review, not a tracked-file diff (F18)
 #   - zero NEW stub markers introduced (preexisting stubs in unchanged code are OK)

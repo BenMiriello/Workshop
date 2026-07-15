@@ -382,7 +382,7 @@ print(sid)
   # tokens + >60s of real runtime is a genuine long run, not an outage. (review F8b)
   if (( CLAUDE_EXIT == 124 && ITER_TOKENS == 0 && ITER_DUR > 60 )); then
     RUN_TOKENS=$((RUN_TOKENS + NOMINAL_TOKENS))
-    log "iter $iter: timeout kill, no usage JSON after ${ITER_DUR}s — billing nominal $NOMINAL_TOKENS tokens (F8b)"
+    log "iter $iter: timeout kill, no usage JSON after ${ITER_DUR}s, billing nominal $NOMINAL_TOKENS tokens (F8b)"
   fi
 
   # Detect classifier block in output — the operator's hard rule says these

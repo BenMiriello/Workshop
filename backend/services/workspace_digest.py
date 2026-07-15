@@ -127,9 +127,9 @@ def digest_for_context(
 
     # scoped is None: either a general chat (workspace roll-up) or an APP chat. An
     # app chat (budget/finance/commute/... any non-general bare key) must not carry
-    # unrelated project task text every turn — that is token cost with no benefit —
-    # so return "" for it. Only a genuine general chat (no key / general /
-    # new-project) gets the workspace-wide roll-up. (review L4)
+    # unrelated project task text every turn (token cost with no benefit), so
+    # return "" for it. Only a genuine general chat (no key / general / new-project)
+    # gets the workspace-wide roll-up. (review L4)
     ck = (context_key or "").strip()
     if ck and ck not in ("general", "new-project"):
         return ""
