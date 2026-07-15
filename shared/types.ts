@@ -79,6 +79,18 @@ export type ProjectSurfaces = {
   public: string | null;
 };
 
+// A project's GitHub binding (Phase G1). Absent until the project is connected
+// to a remote via POST /api/projects/{slug}/connect-github. Owner is always the
+// operator's personal account; never the veritusagent org.
+export type ProjectRepo = {
+  provider: string;
+  owner: string;
+  name: string;
+  remote_url: string;
+  default_branch: string;
+  connected_at: string;
+};
+
 export type Project = {
   slug: string;
   title: string;
@@ -92,4 +104,5 @@ export type Project = {
   created: string;
   last_touched: string;
   claude_session: string | null;
+  repo?: ProjectRepo;
 };

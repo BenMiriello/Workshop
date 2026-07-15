@@ -16,6 +16,9 @@ import {
   MessagesSquare,
   Users,
   KeyRound,
+  FolderGit2,
+  GitPullRequest,
+  ExternalLink,
 } from "lucide-react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
@@ -40,6 +43,7 @@ import {
   Field,
   ActionBar,
   Markdown,
+  Segmented,
   catFor,
   type StatusKind,
 } from "../ui";
@@ -360,6 +364,20 @@ export default function ProjectDetail() {
   const [discardTarget, setDiscardTarget] = useState<Worktree | null>(null);
   const [discarding, setDiscarding] = useState(false);
 
+  // Connect-to-GitHub (the Repository section). Create a new private repo or
+  // bind an existing BenMiriello remote; writes the project's `repo` field.
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [connectMode, setConnectMode] = useState<"create" | "bind">("create");
+  const [bindUrl, setBindUrl] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const [connectErr, setConnectErr] = useState<string | null>(null);
+
+  // Per-branch publish (push + open PR). Bound projects only. Tracks the branch
+  // currently in flight, the returned PR per branch, and any per-branch error.
+  const [publishingBranch, setPublishingBranch] = useState<string | null>(null);
+  const [branchPr, setBranchPr] = useState<Record<string, { url: string; number: number }>>({});
+  const [branchPublishErr, setBranchPublishErr] = useState<Record<string, string>>({});
+
   // Publish-to-marketplace (the Deployments "Public" row).
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -571,6 +589,68 @@ export default function ProjectDetail() {
       setDiscardTarget(null);
     }
   }, [discardTarget, slug, loadWorktrees]);
+
+  // ---- Connect to GitHub ----------------------------------------------------
+  // Create a new private repo (workshop-<slug> for a scratch project) or bind an
+  // existing BenMiriello remote. The server rejects any veritusagent owner with
+  // a 400, which we surface inline rather than crashing.
+  const doConnect = useCallback(async () => {
+    setConnecting(true);
+    setConnectErr(null);
+    try {
+      const payload =
+        connectMode === "create"
+          ? { mode: "create" as const }
+          : { mode: "bind" as const, remote_url: bindUrl.trim() };
+      const r = await fetch(`/api/projects/${slug}/connect-github`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      await loadAll();
+      setConnectOpen(false);
+      setBindUrl("");
+    } catch (e) {
+      setConnectErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setConnecting(false);
+    }
+  }, [connectMode, bindUrl, slug, loadAll]);
+
+  // ---- Publish a branch (push + open PR) ------------------------------------
+  const doPublishBranch = useCallback(
+    async (w: Worktree) => {
+      setPublishingBranch(w.branch_slug);
+      setBranchPublishErr((prev) => {
+        const next = { ...prev };
+        delete next[w.branch_slug];
+        return next;
+      });
+      try {
+        const r = await fetch(`/api/worktrees/${slug}/${w.branch_slug}/publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        const d = await r.json();
+        if (d?.pr?.url) {
+          setBranchPr((prev) => ({ ...prev, [w.branch_slug]: d.pr }));
+          window.open(d.pr.url, "_blank", "noopener,noreferrer");
+        }
+        await loadWorktrees();
+      } catch (e) {
+        setBranchPublishErr((prev) => ({
+          ...prev,
+          [w.branch_slug]: e instanceof Error ? e.message : String(e),
+        }));
+      } finally {
+        setPublishingBranch(null);
+      }
+    },
+    [slug, loadWorktrees],
+  );
 
   // ---- Publish to marketplace -----------------------------------------------
   // Publishing cuts a local release of this project and lists it in the
@@ -1063,6 +1143,51 @@ export default function ProjectDetail() {
         </Card>
       </section>
 
+      {/* --- Repository (GitHub binding) --- */}
+      <section style={{ marginBottom: "var(--space-6)" }}>
+        <SectionLabel icon={<FolderGit2 aria-hidden />}>Repository</SectionLabel>
+        <Card>
+          {project.repo ? (
+            <Stack gap="sm">
+              <Row wrap style={{ alignItems: "center", gap: "var(--space-2)" }}>
+                <FolderGit2 size={16} aria-hidden />
+                <a
+                  href={project.repo.remote_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ws-bc__link ws-mono"
+                  style={{ fontWeight: "var(--fw-semi)" }}
+                >
+                  {project.repo.owner}/{project.repo.name}
+                </a>
+                <StatusPill status="ok">connected</StatusPill>
+                <Tag hue="slate">{project.repo.provider}</Tag>
+              </Row>
+              <Row wrap className="ws-muted" style={{ gap: "var(--space-4)", fontSize: "var(--fs-sm)" }}>
+                <span>
+                  <GitBranch size={14} aria-hidden /> default branch{" "}
+                  <code className="ws-mono">{project.repo.default_branch}</code>
+                </span>
+                <span>connected {fmtTs(project.repo.connected_at)}</span>
+              </Row>
+            </Stack>
+          ) : (
+            <Row between wrap style={{ alignItems: "center" }}>
+              <p className="ws-muted" style={{ margin: 0, flex: "1 1 18rem", fontSize: "var(--fs-sm)" }}>
+                Not connected to a remote. Connect a GitHub repo to push branches and open PRs.
+              </p>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => { setConnectMode("create"); setBindUrl(""); setConnectErr(null); setConnectOpen(true); }}
+              >
+                <FolderGit2 aria-hidden /> Connect GitHub
+              </Button>
+            </Row>
+          )}
+        </Card>
+      </section>
+
       {/* --- Branches (git worktrees): main trunk + side branches --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
@@ -1114,6 +1239,31 @@ export default function ProjectDetail() {
                         a route that never existed (always 404'd). Branch diffs live
                         in the builder workbench; add a real diff surface here if wanted. */}
                     <Row style={{ gap: "var(--space-2)" }}>
+                      {/* Publish (push + open PR) only when the project is bound to a remote. */}
+                      {project.repo &&
+                        (branchPr[w.branch_slug] ? (
+                          <a
+                            href={branchPr[w.branch_slug].url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ textDecoration: "none" }}
+                          >
+                            <Button size="sm" variant="ghost">
+                              <GitPullRequest aria-hidden /> PR #{branchPr[w.branch_slug].number}
+                              <ExternalLink size={14} aria-hidden />
+                            </Button>
+                          </a>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="default"
+                            loading={publishingBranch === w.branch_slug}
+                            disabled={publishingBranch !== null}
+                            onClick={() => doPublishBranch(w)}
+                          >
+                            <GitPullRequest aria-hidden /> Publish
+                          </Button>
+                        ))}
                       <Button size="sm" variant="default" onClick={() => { setMergeTarget(w); setMergeMessage(""); }}>
                         <GitMerge aria-hidden /> Merge
                       </Button>
@@ -1122,6 +1272,11 @@ export default function ProjectDetail() {
                       </Button>
                     </Row>
                   </Row>
+                  {branchPublishErr[w.branch_slug] && (
+                    <p style={{ margin: "var(--space-2) 0 0", fontSize: "var(--fs-xs)", color: "var(--danger)" }}>
+                      POST /api/worktrees/{slug}/{w.branch_slug}/publish: {branchPublishErr[w.branch_slug]}
+                    </p>
+                  )}
                 </li>
               ))}
             </ul>
@@ -1193,6 +1348,61 @@ export default function ProjectDetail() {
           nav(`/agents/${agentSlug}/chat`);
         }}
       />
+
+      <Modal
+        open={connectOpen}
+        onClose={() => { if (!connecting) setConnectOpen(false); }}
+        title="Connect GitHub"
+        actions={
+          <>
+            <Button onClick={() => setConnectOpen(false)} disabled={connecting}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={doConnect}
+              loading={connecting}
+              disabled={connecting || (connectMode === "bind" && !bindUrl.trim())}
+            >
+              {connectMode === "create" ? "Create repo" : "Bind repo"}
+            </Button>
+          </>
+        }
+      >
+        <Stack>
+          <Segmented
+            ariaLabel="Connect mode"
+            value={connectMode}
+            onChange={(m) => { setConnectMode(m); setConnectErr(null); }}
+            options={[
+              { value: "create", label: "Create new" },
+              { value: "bind", label: "Bind existing" },
+            ]}
+          />
+          {connectMode === "create" ? (
+            <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
+              Creates a new private repository under <code className="ws-mono">BenMiriello</code> and
+              pushes the current project. A scratch project lands as{" "}
+              <code className="ws-mono">workshop-{slug}</code>.
+            </p>
+          ) : (
+            <Field label="Remote URL" help="An existing BenMiriello repository.">
+              <Input
+                value={bindUrl}
+                onChange={(e) => setBindUrl(e.target.value)}
+                placeholder="https://github.com/BenMiriello/my-repo.git"
+                spellCheck={false}
+                autoFocus
+              />
+            </Field>
+          )}
+          {connectErr && (
+            <StateBlock
+              variant="error"
+              title="Couldn't connect"
+              hint={<code>{connectErr}</code>}
+            />
+          )}
+        </Stack>
+      </Modal>
 
       <Modal
         open={mergeTarget !== null}
