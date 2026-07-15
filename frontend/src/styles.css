@@ -743,6 +743,18 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-note { margin-top: 0.3rem; font-size: 0.74rem; color: var(--accent); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem; }
 .chat-err { padding: 0.4rem 0.8rem; font-size: 0.78rem; color: var(--danger); }
 
+/* "Turn into task" confirmation: a calm one-line note under the toolbar. */
+.chat-spawn-note {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0.8rem; font-size: 0.8rem;
+  background: var(--accent-soft); color: var(--fg);
+  border-bottom: 1px solid var(--border);
+}
+.chat-spawn-note.is-error { background: transparent; color: var(--danger); }
+.chat-spawn-note__body { flex: 1 1 auto; min-width: 0; }
+.chat-spawn-note a { color: var(--accent); text-decoration: none; }
+.chat-spawn-note a:hover { text-decoration: underline; }
+
 /* Egress notice (build only). */
 .chat-egress { padding: var(--space-2) var(--space-3); }
 .chat-egress__details { margin-top: var(--space-2); }

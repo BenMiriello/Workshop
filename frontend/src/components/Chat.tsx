@@ -2,8 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
-  WifiOff, ChevronRight, X, ListTodo, Clock, Slash, AudioLines,
-  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle,
+  WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
+  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
 import {
@@ -366,6 +366,22 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
+  // "Turn into task": files the chat as a background ticket (Stage 4).
+  const [spawning, setSpawning] = useState(false);
+  const [spawnMsg, setSpawnMsg] = useState<{ ok: boolean; text: string; scope: string } | null>(null);
+  const spawnTaskFromChat = useCallback(async () => {
+    if (!activeId || spawning) return;
+    setSpawning(true);
+    setSpawnMsg(null);
+    try {
+      const r = await chatApi.spawnTask(activeId);
+      setSpawnMsg({ ok: true, text: r.task.text, scope: r.scope });
+    } catch {
+      setSpawnMsg({ ok: false, text: "Could not create a task from this chat.", scope: "" });
+    } finally {
+      setSpawning(false);
+    }
+  }, [activeId, spawning]);
   const [slashSel, setSlashSel] = useState(0);
   const slug = buildSlug(contextKey);
 
@@ -1116,6 +1132,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <Trash2 size={16} aria-hidden />
         </button>
       )}
+      {activeId && (
+        <button
+          className="chat-tb__btn"
+          onClick={spawnTaskFromChat}
+          title="Turn this chat into a background task"
+          aria-label="Turn into task"
+          aria-busy={spawning}
+        >
+          {spawning ? <Loader size={16} aria-hidden className="ws-spin" /> : <ListPlus size={16} aria-hidden />}
+        </button>
+      )}
       {slug && (
         <button
           className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
@@ -1545,7 +1572,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           aria-label={voiceOn ? "Exit voice mode" : "Voice mode"}
           title={voiceOn ? "Exit voice mode" : (build ? "Voice mode: build by talking" : "Voice mode: talk instead of type")}
         >
-          <AudioLines size={16} aria-hidden />
+          {/* Distinct glyph on/off so the exit toggle never reads as a twin of the
+              listening orb's AudioLines: AudioLines invites voice, PhoneOff leaves it. */}
+          {voiceOn ? <PhoneOff size={16} aria-hidden /> : <AudioLines size={16} aria-hidden />}
         </button>
         {!voiceOn && (
           <button
@@ -1578,6 +1607,24 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const panelInner = (
     <div className={`chat-panel chat-panel--${variant}`}>
       {toolbar}
+      {spawnMsg && (
+        <div className={`chat-spawn-note${spawnMsg.ok ? "" : " is-error"}`} role="status">
+          <span className="chat-spawn-note__body">
+            {spawnMsg.ok ? (
+              <>
+                Filed as a background task in <strong>{spawnMsg.scope}</strong>.{" "}
+                <a href="/jobs">Track it in Jobs</a>.{" "}
+                <span className="ws-muted">{spawnMsg.text.slice(0, 140)}{spawnMsg.text.length > 140 ? "…" : ""}</span>
+              </>
+            ) : (
+              spawnMsg.text
+            )}
+          </span>
+          <button className="chat-tb__btn" onClick={() => setSpawnMsg(null)} title="Dismiss" aria-label="Dismiss">
+            <X size={14} aria-hidden />
+          </button>
+        </div>
+      )}
       {taskPanel}
       {log}
       {egressBanner}

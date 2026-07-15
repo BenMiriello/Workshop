@@ -96,6 +96,12 @@ class RescopeThread(BaseModel):
     context_key: str
 
 
+class SpawnTask(BaseModel):
+    text: str | None = None       # explicit task text; else distilled from the chat
+    project: str | None = None    # target project slug; else the chat's own scope
+    acceptance: dict | None = None
+
+
 def _resolve_model(
     body_model: str | None,
     thread: dict,
@@ -202,6 +208,70 @@ async def rename(thread_id: str, body: RenameThread):
 @router.delete("/threads/{thread_id}")
 async def remove(thread_id: str):
     return {"deleted": chat_store.delete_thread(thread_id)}
+
+
+async def _distill_task_from_thread(t: dict) -> str:
+    """Turn the recent conversation into ONE self-contained task a background
+    worker can execute without seeing the chat. Cheap Haiku call; best-effort."""
+    msgs = t.get("messages", [])[-12:]
+    convo = "\n\n".join(
+        f"{'Operator' if m.get('role') == 'user' else 'Assistant'}: {(m.get('content') or '').strip()}"
+        for m in msgs if (m.get("content") or "").strip()
+    )
+    if not convo.strip():
+        return ""
+    prompt = (
+        "From this conversation, write ONE self-contained background task: a crisp, "
+        "actionable instruction a worker can execute WITHOUT seeing the chat. State the "
+        "concrete goal and any specifics decided (files, values, acceptance criteria). "
+        "Output ONLY the task text as one paragraph. No preamble, no heading, no "
+        "em-dashes.\n\n=== CONVERSATION ===\n" + convo + "\n\n=== TASK ==="
+    )
+    try:
+        res = await asyncio.to_thread(llm_router.call_cloud, prompt, model=llm_router.TIER_HAIKU)
+        return (res.get("text") or "").strip()[:2000]
+    except Exception as e:
+        log.warning("spawn-task distill failed: %s", e)
+        return ""
+
+
+@router.post("/threads/{thread_id}/spawn-task")
+async def spawn_task(thread_id: str, body: SpawnTask):
+    """Turn a chat into a self-contained background task (Stage 4). Files a ticket
+    into a project's structured queue, with provenance back to this chat, so the
+    work is tracked and executed in the background by the dispatcher and never
+    lost when the conversation scrolls away. Scope: an explicit `project`, else the
+    chat's own binding, else the workshop root queue (a general chat has nowhere
+    of its own to file to)."""
+    from pathlib import Path
+    from services import tasks as tasks_mod
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+
+    root = None
+    scope_label = None
+    if body.project:
+        root = task_scope.root_for_context(f"project:{body.project}")
+        scope_label = body.project
+    if root is None:
+        ctx = t.get("context_key")
+        root = task_scope.root_for_context(ctx)
+        scope_label = ctx
+    if root is None:
+        root = Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
+        scope_label = "workshop"
+
+    text = (body.text or "").strip()
+    if not text:
+        text = await _distill_task_from_thread(t)
+    if not text:
+        raise HTTPException(422, "could not derive a task from this chat; add a note first")
+
+    acceptance = body.acceptance if isinstance(body.acceptance, dict) else None
+    task = tasks_mod.add(root, text=text, acceptance=acceptance,
+                         source={"kind": "chat", "ref": thread_id})
+    return {"task": task, "scope": scope_label, "thread_id": thread_id}
 
 
 @router.post("/threads/{thread_id}/rescope")
