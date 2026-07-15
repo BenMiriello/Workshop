@@ -22,6 +22,13 @@ from services import tasks
 # ```task-patch\n{...}\n``` — same fence style as the budget plan-patch.
 _PATCH_BLOCK = re.compile(r"```task-patch\s*\n(.*?)\n```", re.DOTALL)
 
+# ```learning-note\n{...}\n``` the chat-side durable-preference capture (Phase
+# 4). Applied in the SAME finalize path as the task-patch block: parsed, recorded
+# into the learnings store at the named (or this chat's) scope, and stripped from
+# the stored reply. Deterministic capture in ADDITION to compaction-time
+# distillation, by design, so an explicit operator correction lands immediately.
+_LEARNING_BLOCK = re.compile(r"```learning-note\s*\n(.*?)\n```", re.DOTALL)
+
 # The workshop-root task store (the top-level `.tasks.json`). This is the scope
 # for tickets parked at the root, distinct from the `workshop` PROJECT under
 # projects/. Overridable for tests / alternate checkouts; the default is this
@@ -35,7 +42,11 @@ def root_for_context(context_key: str | None) -> Path | None:
     binding has no task scope (general / app chats)."""
     if not context_key:
         return None
-    if context_key == "workshop":
+    if context_key in ("workshop", "general"):
+        # The general chat is the orchestrator (Phase 4): it owns the workshop
+        # root queue, so a task-patch / task-proposal default resolves to the same
+        # root store the `workshop` binding uses. This is what turns "a chat that
+        # talks about work" into "a chat that owns a queue".
         return WORKSHOP_ROOT
     if context_key.startswith("project:"):
         from services import build_agents
@@ -150,6 +161,7 @@ def apply_task_patch(context_key: str | None, reply: str) -> tuple[str, list[str
             if tasks.update(
                 root, str(op["id"]), status=op.get("status"), text=op.get("text"),
                 blocked_reason=op.get("blocked_reason"),
+                priority=op.get("priority"),
             ):
                 updated += 1
         except ValueError:
@@ -173,3 +185,42 @@ def apply_task_patch(context_key: str | None, reply: str) -> tuple[str, list[str
         bits.append(f"noted {noted}")
     notes = ["Tasks: " + ", ".join(bits) + "."] if bits else []
     return cleaned, notes
+
+
+def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[str]]:
+    """Find a ``learning-note`` block, record its note as durable operator feedback
+    in the learnings store, strip the block, and return (cleaned_reply, notes).
+    No-op (the reply unchanged, empty notes) when there is no block. The note is
+    recorded at the block's explicit `scope` or, absent one, this chat's own
+    knowledge scope (general -> workshop). Mirrors apply_task_patch: server-side
+    application, fence stripped, a human-readable outcome for meta.notes."""
+    m = _LEARNING_BLOCK.search(reply)
+    if not m:
+        return reply, []
+    cleaned = _LEARNING_BLOCK.sub("", reply).strip()
+    try:
+        block = json.loads(m.group(1).strip())
+    except json.JSONDecodeError:
+        return cleaned, ["(could not parse a learning note, nothing was captured)"]
+    if not isinstance(block, dict):
+        return cleaned, []
+    note = (block.get("note") or "").strip()
+    if not note:
+        return cleaned, []
+
+    # Default the scope to this chat's own knowledge scope (which the learnings
+    # store shares its scope keys with); an explicit block scope wins.
+    scope = (block.get("scope") or "").strip()
+    if not scope:
+        from services import knowledge
+        try:
+            scope = knowledge.scope_for_context(context_key or "workshop")
+        except Exception:
+            scope = "workshop"
+
+    from services import learnings
+    try:
+        learnings.record_feedback(note, source="chat", scope=scope)
+    except ValueError:
+        return cleaned, [f"(learning note skipped: {scope!r} is not a valid scope)"]
+    return cleaned, [f"Captured a preference in learnings ({scope})."]

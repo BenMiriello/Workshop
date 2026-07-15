@@ -917,6 +917,12 @@ async def send_message(thread_id: str, body: PostMessage):
     cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned)
     if tnotes:
         notes = (notes or []) + tnotes
+    # Phase 4: an explicit operator preference/correction emitted as a
+    # ``learning-note`` block is captured into the learnings store here,
+    # deterministically (in addition to compaction-time distillation).
+    cleaned, lnotes = task_scope.apply_learning_note(t.get("context_key"), cleaned)
+    if lnotes:
+        notes = (notes or []) + lnotes
     if not cleaned:
         cleaned = "(done)"
     meta: dict = {}

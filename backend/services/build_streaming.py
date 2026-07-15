@@ -564,6 +564,10 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             from services import task_scope
             new_text, tnotes = task_scope.apply_task_patch(ctx_key, new_text)
             applied_notes += tnotes
+            # Phase 4: capture an explicit operator preference/correction emitted
+            # as a ``learning-note`` block into the learnings store.
+            new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
+            applied_notes += lnotes
             if new_text != text or applied_notes:
                 text = new_text or "(done)"
                 notes = applied_notes or None
