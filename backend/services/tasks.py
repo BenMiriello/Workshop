@@ -59,15 +59,14 @@ EXPORT_NAME = "TODO.md"
 LOCK_NAME = ".tasks.json.lock"
 STORE_VERSION = 2
 
-# Roots that this store must NOT manage yet. The workshop repo root's TODO.md is
-# not a clean checklist: it carries `## Log`, `## Autogen`, `## Proposed` prose
-# that render_markdown() (task-checklist only) would wipe on the first _persist.
-# Migrating it into the store is Phase O7 (root-queue convergence); until then
-# any tasks.* call on the root must be an inert no-op, not a destructive
-# regeneration. Env-overridable so O7 can lift the guard for the cutover.
+# Roots this store must NOT manage. Empty by default since the 2026-07-15 root
+# migration (Stage 3 / O7): the workshop root's legacy prose TODO.md was archived
+# to docs/archive/root-todo-legacy-2026-07-15.md and the structured store became
+# canonical at root, so nothing is protected anymore. Still env-overridable
+# (`WORKSHOP_TASKS_PROTECTED_ROOTS`, colon-separated) as an escape hatch.
 _PROTECTED_ROOTS = {
     Path(p).resolve()
-    for p in os.environ.get("WORKSHOP_TASKS_PROTECTED_ROOTS", "/home/clawd-a/workshop").split(":")
+    for p in os.environ.get("WORKSHOP_TASKS_PROTECTED_ROOTS", "").split(":")
     if p.strip()
 }
 

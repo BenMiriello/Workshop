@@ -1,4 +1,33 @@
 {
-  "version": 1,
-  "tasks": []
+  "version": 2,
+  "tasks": [
+    {
+      "id": "87eb49e4523b432e82fcea5f0d9db944",
+      "text": "Create docs/root-migration-canary.md containing exactly one line: root scope migrated to structured store",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "acceptance": null,
+      "max_iterations": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "agent",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "created": "2026-07-15T11:37:19+00:00",
+      "updated": "2026-07-15T11:37:19+00:00",
+      "owner": "operator"
+    }
+  ],
+  "export_sha": "ab9d1c966d815c691f77248962368ee29b74a2755802fe32bf3ebbfd786e75dc"
 }

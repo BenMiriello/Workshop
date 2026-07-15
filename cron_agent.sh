@@ -98,20 +98,15 @@ tick_remaining() { echo $(( TICK_BUDGET - ( $(date +%s) - TICK_START_EPOCH ) ));
 echo "[$TICK_START_ISO] === cron tick start (budget=${TICK_BUDGET}s) ===" >> "$LOG"
 
 # =============================================================================
-# Phase 0 — Pre-flight (deterministic, fast)
+# Phase 0 — RETIRED (2026-07-15 root migration, Stage 3 / O7).
 # =============================================================================
-# graduate_proposals → flip [proposed] >6h old to [ ].
-# work_verifier      → demote false [x] to [ ].
-# work_generator     → scan for stubs + caveats + missing files, append [ ].
-# Each emits a single integer count on stdout (for the log).
-
-PRE_GRAD=$("$WORKSHOP/scripts/graduate_proposals.sh" 2>/dev/null | tail -1)
-PRE_GRAD=${PRE_GRAD:-0}
-PRE_VERIFY=$("$WORKSHOP/scripts/work_verifier.sh" 2>/dev/null | tail -1)
-PRE_VERIFY=${PRE_VERIFY:-0}
-PRE_GEN=$("$WORKSHOP/scripts/work_generator.sh" 2>/dev/null | tail -1)
-PRE_GEN=${PRE_GEN:-0}
-echo "[$(date -Iseconds)] pre-flight: graduated=$PRE_GRAD demoted=$PRE_VERIFY generated=$PRE_GEN" >> "$LOG"
+# The legacy pre-flight (graduate_proposals / work_verifier / work_generator)
+# manipulated the root TODO.md text and fed the Phase 2 grep/sed worker-loop —
+# the "old, oddly-conceived" system that produced the autogen/caveat spam. Both
+# are gone: the root `self` scope is now the structured task store (.tasks.json),
+# worked through the SAME dispatcher path as every other project (Phase 0.5).
+# There is one task system and one loop now. The old prose TODO.md is archived at
+# docs/archive/root-todo-legacy-2026-07-15.md.
 
 # =============================================================================
 # Phase 0.5 — Dispatcher (orchestration O3): launch background sweeps for armed
@@ -235,128 +230,22 @@ except Exception:
 fi
 
 # =============================================================================
-# Phase 2 — Worker loop (Ralph-style, within-tick iteration)
+# Phase 2 — RETIRED (2026-07-15 root migration). The Ralph-style grep/sed
+# worker-loop that picked `^\[ \]` lines out of the root TODO.md and drove
+# ralph.sh against them is gone. Root work now flows through the SAME path as
+# every project: a task in the root `.tasks.json`, dispatched by Phase 0.5
+# (dispatch_triggers.sh -> project_ralph.sh) under the usage budget, with the
+# reviewer acceptance gate and a proper Job graph. One task system, one loop.
 # =============================================================================
-# Pick the FIRST unblocked `[ ]` task. Fire ralph.sh to drive it to done. When
-# ralph returns 0 (PASS), loop to pick the next task — but only if enough budget
-# remains for another full ralph cycle (RALPH_MAX_WALL + 30s overhead).
-
-TASKS_DONE=0
-TASKS_FAILED=0
-TASKS_TIMEOUT=0
-TASKS_BLOCKED=0
-
-while true; do
-  REMAIN=$(tick_remaining)
-  if (( REMAIN < RALPH_MAX_WALL + 30 )); then
-    echo "[$(date -Iseconds)] worker-loop: budget remaining ${REMAIN}s < ralph wall ${RALPH_MAX_WALL}s — stopping" >> "$LOG"
-    break
-  fi
-
-  # Pick the first [ ] task. Capture the line number for surgical updates.
-  TASK_LINE_NO=$(grep -n '^\[ \]' "$TODO" 2>/dev/null | head -1 | cut -d: -f1)
-  if [[ -z "$TASK_LINE_NO" ]]; then
-    echo "[$(date -Iseconds)] worker-loop: no unblocked [ ] tasks; idle" >> "$LOG"
-    break
-  fi
-  TASK_LINE=$(sed -n "${TASK_LINE_NO}p" "$TODO")
-  TASK_TEXT=${TASK_LINE#[ ] }
-  TASK_TRIM=$(echo "$TASK_TEXT" | head -c 200 | tr '\n' ' ')
-
-  # Mark in-progress so concurrent ticks don't grab the same task.
-  sed -i "${TASK_LINE_NO}s/^\[ \]/[~]/" "$TODO"
-
-  # Capture baseline rev so ralph's reviewer compares against PRE-task state.
-  BASELINE=$(git rev-parse HEAD 2>/dev/null || echo "")
-
-  echo "[$(date -Iseconds)] worker-loop: picking line=$TASK_LINE_NO task=\"$TASK_TRIM\"" >> "$LOG"
-
-  # One Job per dispatched task (trigger=cron: this worker fires on the cron
-  # schedule). Run-state is `running`; finished with the ralph outcome below.
-  TASK_JOB=$(job_start cron)
-
-  # Fire Ralph against this task.
-  set +e
-  "$WORKSHOP/scripts/ralph.sh" "$TASK_TEXT" --baseline-rev "$BASELINE" --max-wall "$RALPH_MAX_WALL" >> "$LOG" 2>&1
-  RALPH_EXIT=$?
-  set -e
-
-  # Outcome → checkbox state. Ralph exit codes:
-  #   0 = PASS (sentinel + reviewer ok)
-  #   1 = iteration cap hit (incomplete)
-  #   2 = wall-time cap hit (incomplete)
-  #   3 = classifier block (genuine blocker)
-  #   4 = startup failure
-  case "$RALPH_EXIT" in
-    0)
-      # Mark [x]; append log entry.
-      sed -i "${TASK_LINE_NO}s/^\[~\]/[x]/" "$TODO"
-      LOG_TS=$(date -u +%Y-%m-%dT%H:%MZ)
-      printf '[%s] [ralph] %s — completed (ralph passed reviewer)\n' "$LOG_TS" "$(echo "$TASK_TEXT" | head -c 200)" >> "$TODO"
-      printf "[%s] %s\n" "$LOG_TS" "$(echo "$TASK_TEXT" | head -c 200)" >> "$WORKSHOP/.runtime/notify-masini.txt"
-      TASKS_DONE=$((TASKS_DONE+1))
-      ;;
-    1|2)
-      # Partial progress; leave as [~] with incomplete marker so next tick re-tries.
-      LABEL=$([[ "$RALPH_EXIT" == "1" ]] && echo "iter-cap" || echo "wall-cap")
-      sed -i "${TASK_LINE_NO}s/^\[~\]/[ ]/" "$TODO"   # release to [ ] so future ticks retry
-      LOG_TS=$(date -u +%Y-%m-%dT%H:%MZ)
-      printf '[%s] [ralph] %s — incomplete ($LABEL); will retry next tick\n' "$LOG_TS" "$(echo "$TASK_TEXT" | head -c 200)" >> "$TODO"
-      TASKS_TIMEOUT=$((TASKS_TIMEOUT+1))
-      ;;
-    3)
-      # Classifier block — mark blocked permanently.
-      sed -i "${TASK_LINE_NO}s/^\[~\]/[~]/" "$TODO"
-      # Append BLOCKED suffix if not already there.
-      if ! sed -n "${TASK_LINE_NO}p" "$TODO" | grep -q 'BLOCKED:'; then
-        sed -i "${TASK_LINE_NO}s|.*|& — BLOCKED: classifier (ralph exit 3)|" "$TODO"
-      fi
-      LOG_TS=$(date -u +%Y-%m-%dT%H:%MZ)
-      printf '[%s] [ralph] %s — BLOCKED: classifier\n' "$LOG_TS" "$(echo "$TASK_TEXT" | head -c 200)" >> "$TODO"
-      TASKS_BLOCKED=$((TASKS_BLOCKED+1))
-      ;;
-    *)
-      # Startup failure or anything else: revert to [ ] so retried.
-      sed -i "${TASK_LINE_NO}s/^\[~\]/[ ]/" "$TODO"
-      TASKS_FAILED=$((TASKS_FAILED+1))
-      ;;
-  esac
-
-  # Close the task Job with the ralph outcome. 0=done, 3=classifier-block
-  # (cancelled), 1/2/other=failed (incomplete/failure, carried in tasks_failed).
-  case "$RALPH_EXIT" in
-    0)   TJ_STATUS=done;      TJ_DONE=1; TJ_FAIL=0 ;;
-    3)   TJ_STATUS=cancelled; TJ_DONE=0; TJ_FAIL=0 ;;
-    *)   TJ_STATUS=failed;    TJ_DONE=0; TJ_FAIL=1 ;;
-  esac
-  job_finish "$TASK_JOB" "$TJ_STATUS" "$RALPH_EXIT" "$TJ_DONE" "$TJ_FAIL"
-
-  # Tiny gap so log writes interleave cleanly.
-  sleep 1
-done
 
 # =============================================================================
-# Phase 3 — Final report
+# Phase 3 — Tick end
 # =============================================================================
+# Per-task/-event accounting is now each Job in .runtime/jobs.jsonl (the activity
+# source of record); the tick just logs that it ran. Sweeps launched by the
+# dispatcher run detached and report themselves.
 TICK_END_ISO=$(date -Iseconds)
 DURATION=$(( $(date +%s) - TICK_START_EPOCH ))
-OPEN_COUNT=$(grep -c '^\[ \]' "$TODO" 2>/dev/null)
-OPEN_COUNT=${OPEN_COUNT:-0}
-
-echo "[$TICK_END_ISO] === cron tick end (${DURATION}s) done=$TASKS_DONE incomplete=$TASKS_TIMEOUT blocked=$TASKS_BLOCKED failed=$TASKS_FAILED queue_open=$OPEN_COUNT ===" >> "$LOG"
-
-# Status broadcast: refresh status.md + notify-masini on substantive change.
-if (( TASKS_DONE > 0 || TASKS_TIMEOUT > 0 || TASKS_BLOCKED > 0 )); then
-  printf "Workshop cron status\nLast tick: %s\nDuration: %ds\nDone: %d  Incomplete: %d  Blocked: %d  Failed: %d  Open: %d\n" \
-    "$TICK_END_ISO" "$DURATION" "$TASKS_DONE" "$TASKS_TIMEOUT" "$TASKS_BLOCKED" "$TASKS_FAILED" "$OPEN_COUNT" > "$WORKSHOP/status.md"
-  if (( TASKS_DONE > 0 )); then
-    printf "[%s] cron-tick: %d task(s) completed, %d open remain\n" "$TICK_END_ISO" "$TASKS_DONE" "$OPEN_COUNT" >> "$WORKSHOP/.runtime/notify-masini.txt"
-  fi
-fi
-
-# The per-tick aggregate that used to be appended to .runtime/agent-runs.jsonl
-# is retired: every dispatched task and drained event is now its own Job in
-# .runtime/jobs.jsonl (see job_start/job_finish above), which is the activity
-# source of record. No aggregate row is written.
+echo "[$TICK_END_ISO] === cron tick end (${DURATION}s) ===" >> "$LOG"
 
 exit 0
