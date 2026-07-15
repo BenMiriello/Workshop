@@ -99,21 +99,37 @@ build_receipt_evidence() {  # $1=receipt_file $2=baseline $3=head $4=commits(new
   if [[ -f "$rf" ]] && jq empty "$rf" >/dev/null 2>&1; then
     base=$(cat "$rf")
   fi
-  # Merge: reviewer sub-object gives files/diff_files/typecheck/design; the
-  # receipt top level gives iterations/tokens/summary; git gives commits/baseline/head.
+  # The "files changed" the operator should see is the COMMITTED diff, not the
+  # reviewer's working-tree status (which is full of runtime churn: iter outputs,
+  # the task store, its lock, the regenerated TODO.md). Prefer baseline..head when
+  # commits landed; fall back to the reviewer list when nothing was committed (a
+  # failed run still shows what it touched). Filter bookkeeping paths in both.
+  local ignore='^(\.runtime/|\.tasks\.json|TODO\.md$)'
+  local files_json
+  if [[ -n "$(printf '%s' "$commits_blob" | tr -d '[:space:]')" ]]; then
+    files_json=$(cd "$DIR" && git diff --name-only "$baseline".."$head" 2>/dev/null \
+      | grep -vE "$ignore" | jq -R . | jq -s . 2>/dev/null)
+  else
+    files_json=$(printf '%s' "$base" | jq -c "(.reviewer.files // []) | map(select(test(\"$ignore\") | not))" 2>/dev/null)
+  fi
+  [[ -z "$files_json" ]] && files_json='[]'
+  # Merge: files/diff_files from the committed diff (above); typecheck/design from
+  # the reviewer sub-object; iterations/tokens/summary from the receipt top level;
+  # commits/baseline/head from git.
   jq -n \
     --argjson receipt "$base" \
     --arg baseline "$baseline" \
     --arg head "$head" \
     --argjson commits "$commits_json" \
+    --argjson files "$files_json" \
     '($receipt.reviewer // {}) as $r
      | {
          kind: "receipt",
-         files: ($r.files // []),
+         files: $files,
          commits: $commits,
          baseline: $baseline,
          head: $head,
-         diff_files: ($r.diff_files // 0),
+         diff_files: ($files | length),
          typecheck: ($r.typecheck // {}),
          design: ($r.design // ""),
          iterations: ($receipt.iterations // 0),
