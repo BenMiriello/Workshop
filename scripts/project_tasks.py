@@ -97,6 +97,8 @@ def main(argv: list[str]) -> int:
     sp.add_argument("task_id"); sp.add_argument("status")
     sp.add_argument("--job-id", default=None); sp.add_argument("--reason", default=None)
     sp.add_argument("--expect-claim-token", default=None)
+    sp.add_argument("--restore-attempt", action="store_true",
+                    help="give back the attempt the claim consumed (env failure, not task failure)")
 
     sp = sub.add_parser("claim"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("job_id"); sp.add_argument("--assignee", default=None)
@@ -137,6 +139,7 @@ def main(argv: list[str]) -> int:
         if a.cmd == "set-status":
             t = tasks.update(root, a.task_id, status=a.status, job_id=a.job_id,
                              blocked_reason=a.reason,
+                             restore_attempt=bool(getattr(a, "restore_attempt", False)),
                              expect_claim_token=_opt_int(a.expect_claim_token))
             print(json.dumps(_slim(t)))
             return 0

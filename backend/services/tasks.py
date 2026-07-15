@@ -730,6 +730,7 @@ def update(
     evidence: dict | None = None,
     awaiting: dict | None = None,
     bump_attempt: bool = False,
+    restore_attempt: bool = False,
     expect_claim_token: int | None = None,
 ) -> dict | None:
     """Update a task. ``owner`` (or ``assignee``) scopes the match so an agent
@@ -795,6 +796,11 @@ def update(
                                  if awaiting.get("question") else None)
         if bump_attempt:
             found["attempts"] = _as_int(found.get("attempts"), 0) + 1
+        if restore_attempt:
+            # Give back the attempt the claim consumed: the run failed on the
+            # environment (API outage / auth), not on the task, so it must not
+            # count toward the block/park cap (2d).
+            found["attempts"] = max(0, _as_int(found.get("attempts"), 0) - 1)
         if job_id:
             if job_id not in found["job_ids"]:
                 found["job_ids"].append(job_id)

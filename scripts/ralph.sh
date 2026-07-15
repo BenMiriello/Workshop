@@ -24,6 +24,7 @@
 #   2  — wall-time cap hit
 #   3  — classifier block hit
 #   4  — startup failure
+#   5  — environment failure on iter 1 (API outage/auth): release, do NOT burn an attempt
 
 set -u
 
@@ -250,11 +251,13 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   set +e
   # </dev/null so claude doesn't wait on (and warn about) stdin — that warning
   # would otherwise be merged into ITER_OUT by 2>&1 and corrupt the JSON.
+  ITER_START=$(date +%s)
   timeout "$PER_ITER_TIMEOUT" "$CLAUDE" $CONTINUE_FLAG -p "$ITER_PROMPT" \
     --output-format json \
     --max-turns "$MAX_TURNS_PER_ITER" \
     </dev/null >"$ITER_OUT" 2>&1
   CLAUDE_EXIT=$?
+  ITER_DUR=$(( $(date +%s) - ITER_START ))
   set -e
 
   # Sum this iteration's real context+output tokens (usage.input_tokens +
@@ -293,7 +296,20 @@ print(tok)
 " 2>/dev/null || echo 0)
   RUN_TOKENS=$((RUN_TOKENS + ITER_TOKENS))
 
-  log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0), tokens=$ITER_TOKENS"
+  log "iter $iter: claude exit=$CLAUDE_EXIT, output bytes=$(stat -c %s "$ITER_OUT" 2>/dev/null || echo 0), tokens=$ITER_TOKENS, dur=${ITER_DUR}s"
+
+  # Environment failure (API outage / auth expiry), NOT task failure: on the
+  # FIRST iteration claude exited nonzero, produced no usage AND no result
+  # envelope, and it was not a genuine wall-timeout kill (exit 124). The task did
+  # not fail, the environment did (design 2d), so bail with a distinct code so the
+  # caller releases the task WITHOUT burning an attempt or tripping a task-failure
+  # breaker on good work. (review F4)
+  if (( iter == 1 && CLAUDE_EXIT != 0 && CLAUDE_EXIT != 124 && ITER_TOKENS == 0 )) \
+     && ! grep -q '"result"' "$ITER_OUT" 2>/dev/null; then
+    log "ENV FAILURE on iter 1 (claude exit=$CLAUDE_EXIT, no result envelope, ${ITER_DUR}s) — releasing without burning an attempt"
+    exit_code=5
+    break
+  fi
 
   # Detect classifier block in output — the operator's hard rule says these
   # are real blocks, not workarounds. Treat as terminal for this Ralph run.

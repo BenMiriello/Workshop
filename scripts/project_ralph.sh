@@ -309,9 +309,22 @@ while (( n < MAX_TASKS )); do
       fi
       ;;
     3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC"; log "task=$TASK_ID BLOCKED (classifier)" ;;
+    5)
+      # Environment failure (API outage / auth), NOT task failure: give the
+      # attempt back and STOP the sweep so we do not hammer a down API. The sweep
+      # still tallies a failure so the circuit breaker cools this scope off for a
+      # window (it keys on tasks_failed). (review F4)
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "environment failure (API/auth); attempt restored, sweep backing off" --kind acceptance >/dev/null 2>>"$LOG"
+      python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+      job_finish_child "$CHILD_JOB" failed "$RC"; FAILED=$((FAILED+1))
+      log "task=$TASK_ID ENV FAILURE: released (attempt restored); stopping sweep to back off"
+      break ;;
     1|2)
-      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else TIMEOUT=$((TIMEOUT+1)); fi
-      job_finish_child "$CHILD_JOB" done "$RC" ;;
+      # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
+      # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
+      # is visible to the circuit breaker, which keys on tasks_failed. (review F14)
+      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "incomplete (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+      job_finish_child "$CHILD_JOB" failed "$RC" ;;
     *)
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ITER" "failed (rc=$RC)")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
       job_finish_child "$CHILD_JOB" failed "$RC" ;;
@@ -355,7 +368,7 @@ PYEOF
 READY=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('ready'))" 2>/dev/null)
 OPEN=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('open',0))" 2>/dev/null)
 WAITING=$(echo "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('waiting',0))" 2>/dev/null)
-log "=== sweep end scope=${SLUG:-$DIR} done=$DONE incomplete=$TIMEOUT blocked=$BLOCKED failed=$FAILED open=${OPEN:-0} waiting=${WAITING:-0} (${DURATION}s) ==="
+log "=== sweep end scope=${SLUG:-$DIR} done=$DONE blocked=$BLOCKED failed=$FAILED in_review=$IN_REVIEW open=${OPEN:-0} waiting=${WAITING:-0} (${DURATION}s) ==="
 # Only park as awaiting_input when the sweep is BOUND to a resolvable scope
 # (a project slug or an assignee agent). An unbound sweep (--dir with no slug/
 # assignee) has no scope the Jobs API can act on, so an awaiting_input job for it
