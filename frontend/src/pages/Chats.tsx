@@ -114,7 +114,6 @@ export default function Chats() {
     <div>
       <PageHeader
         title="Chats"
-        sub="Every conversation across the workspace"
         actions={
           <Button variant="primary" onClick={newChat}>
             <Plus aria-hidden /> New chat
@@ -184,13 +183,19 @@ export default function Chats() {
                 key={t.id}
                 interactive
                 compact
+                className="ws-chat-card"
                 onClick={() => open(t)}
-                style={{ cursor: "pointer" }}
+                // min-width:0 is what every other card grid sets on its items
+                // (see .ws-*-grid > li in components.css). This grid is a raw
+                // inline div, so the card must carry it itself, else a long
+                // context tag or snippet sets the card's min-content width and
+                // pushes it past the viewport on mobile (horizontal scroll).
+                style={{ cursor: "pointer", minWidth: 0 }}
               >
                 {/* One line: icon + title ellipsize, tag + count never shrink.
-                    nowrap + min-width:0 keeps a long title/context from wrapping
-                    the row tall or overflowing the viewport on mobile. */}
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0 }}>
+                    overflow:hidden + min-width:0 keep a long title/context from
+                    wrapping the row tall or overflowing the viewport on mobile. */}
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, overflow: "hidden" }}>
                   <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
                   <strong style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {t.title || "New chat"}
@@ -200,11 +205,10 @@ export default function Chats() {
                     <span className="ws-card__meta">{t.message_count}</span>
                   </span>
                 </div>
-                {t.last_message && (
-                  <p className="ws-muted" style={{ margin: "var(--space-1) 0 0", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-sm)" }}>
-                    {t.last_message}
-                  </p>
-                )}
+                {/* Always rendered (even when empty) so every card reserves the
+                    same 2-line height; the clamp trims longer snippets with an
+                    ellipsis instead of growing the card. */}
+                <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
               </Card>
             ))}
           </div>
