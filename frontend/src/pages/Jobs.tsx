@@ -66,9 +66,14 @@ function metaLine(job: Job, dur: string): string {
 // Icon + human name for the job's binding. Prefers the enriched agent_name over
 // the raw UUID; the ticket title (job.title) carries the primary label.
 function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
+  // Prefer the joined "where/who/from" subtitle (scope + chat) when present.
+  if (job.context_label) {
+    const icon = job.project_slug ? <FolderGit2 aria-hidden /> : job.chat_id ? <MessageSquare aria-hidden /> : <Bot aria-hidden />;
+    return { icon, text: job.context_label };
+  }
   if (job.project_slug) return { icon: <FolderGit2 aria-hidden />, text: job.project_slug };
   if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_name || job.agent_id };
-  if (job.chat_id) return { icon: <MessageSquare aria-hidden />, text: job.chat_id };
+  if (job.chat_id) return { icon: <MessageSquare aria-hidden />, text: job.chat_title || job.chat_id };
   return { icon: <Bot aria-hidden />, text: "unbound" };
 }
 

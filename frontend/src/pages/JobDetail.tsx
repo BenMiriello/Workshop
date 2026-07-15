@@ -55,7 +55,7 @@ function ranSummary(job: Job): string {
     job.project_slug ? `of project ${job.project_slug}`
     : who ? `by ${who}`
     : "";
-  const from = job.chat_id ? `, started from chat ${job.chat_id}` : "";
+  const from = job.chat_id ? `, started from chat "${job.chat_title || job.chat_id}"` : "";
   return `This was ${trig} ${where}${from}`.replace(/\s+/g, " ").trim() + ".";
 }
 
@@ -332,8 +332,25 @@ export default function JobDetail() {
                 </Row>
               )}
               {job.chat_id && (
+                job.chat_context_key ? (
+                  <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
+                       onClick={() => nav(`/chat/${encodeURIComponent(job.chat_context_key!)}?thread=${encodeURIComponent(job.chat_id!)}`)}>
+                    <MessageSquare aria-hidden />
+                    <span>{job.chat_title || "Chat"}</span>
+                    <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.chat_id}</span>
+                  </Row>
+                ) : (
+                  <Row style={{ gap: "var(--space-1)", alignItems: "center" }}>
+                    <MessageSquare aria-hidden />
+                    <span>{job.chat_title || "Chat"}</span>
+                    <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.chat_id}</span>
+                  </Row>
+                )
+              )}
+              {job.task_status && (
                 <Row style={{ gap: "var(--space-1)", alignItems: "center" }}>
-                  <MessageSquare aria-hidden /> <span className="ws-mono">{job.chat_id}</span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>task status</span>
+                  <Tag hue={catFor(job.task_status)}>{job.task_status}</Tag>
                 </Row>
               )}
             </Stack>

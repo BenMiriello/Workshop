@@ -74,29 +74,116 @@ def _friendly_error(err: str | None) -> str:
     return s
 
 
-def _title(job: dict, agent_disp: str | None) -> str:
+def _clip(s: str | None, n: int = 100) -> str:
+    s = (s or "").split("\n", 1)[0].strip()
+    return s if len(s) <= n else s[: n - 1].rstrip() + "…"
+
+
+def _scope_root_for_job(job: dict):
+    """The task-store root this job worked in, from its project_slug or agent_id,
+    so we can join the Task it ran. Best-effort -> None (legacy/unresolvable)."""
+    slug = job.get("project_slug")
+    agent = job.get("agent_id") or ""
+    try:
+        if slug and slug != "workshop":
+            return task_scope.root_for_context(f"project:{slug}")
+        if slug == "workshop":
+            return task_scope.root_for_context("workshop")
+        if agent.startswith("agent:"):
+            return task_scope.root_for_context(agent)
+    except Exception:
+        return None
+    return None
+
+
+def _task_context(job: dict, cache: dict) -> dict:
+    """Join the Task a child Job worked: its TEXT (what the job was actually for),
+    its current status, and the chat that spawned it (source.ref -> thread title).
+    Retroactive over all history, no writer change / log migration needed. The
+    per-request `cache` loads each scope's task list once. Best-effort."""
+    tid = job.get("task_id")
+    if not tid:
+        return {}
+    root = _scope_root_for_job(job)
+    if root is None:
+        return {}
+    key = str(root)
+    if key not in cache:
+        try:
+            cache[key] = {t["id"]: t for t in tasks.list_tasks(root, include_done=True)}
+        except Exception:
+            cache[key] = {}
+    t = cache[key].get(tid)
+    if not t:
+        return {}
+    out: dict = {}
+    text = (t.get("text") or "").strip()
+    if text:
+        out["task_text"] = text
+    if t.get("status"):
+        out["task_status"] = t.get("status")
+    src = t.get("source") or {}
+    if src.get("kind") == "chat" and src.get("ref"):
+        out["chat_id"] = src["ref"]
+        try:
+            from services import chat_store
+            th = chat_store.get_thread(src["ref"])
+            if th:
+                out["chat_title"] = th.get("title") or "Chat"
+                if th.get("context_key"):
+                    out["chat_context_key"] = th.get("context_key")
+        except Exception:
+            pass
+    return out
+
+
+def _title(job: dict, agent_disp: str | None, tctx: dict) -> str:
+    # A child Job's title IS what it was for: the task text.
+    if tctx.get("task_text"):
+        return _clip(tctx["task_text"])
     trig = job.get("trigger")
     label = _TRIGGER_LABELS.get(trig, (trig or "Run").capitalize())
-    binding = job.get("project_slug") or agent_disp or "unbound"
-    if trig == "loop" and not job.get("project_slug"):
-        return f"Heartbeat · {binding}"
+    binding = job.get("project_slug") or agent_disp or "workspace"
+    # A coordinator sweep (no task_id): name what it swept + the outcome.
+    if not job.get("task_id"):
+        done, failed = job.get("tasks_done"), job.get("tasks_failed")
+        counts = []
+        if done:
+            counts.append(f"{done} done")
+        if failed:
+            counts.append(f"{failed} failed")
+        tail = f" ({', '.join(counts)})" if counts else ""
+        return f"Sweep · {binding}{tail}"
     return f"{label} · {binding}"
 
 
-def _enrich(job: dict, names: dict[str, str]) -> dict:
+def _enrich(job: dict, names: dict[str, str], cache: dict | None = None) -> dict:
     j = dict(job)
+    cache = cache if cache is not None else {}
     trig = job.get("trigger")
     j["trigger_label"] = _TRIGGER_LABELS.get(trig, (trig or "Run").capitalize())
     agent_disp = _display_agent(job.get("agent_id"), names)
     if agent_disp:
         j["agent_name"] = agent_disp
+    tctx = _task_context(job, cache)
+    j.update(tctx)  # task_text, task_status, chat_id, chat_title
     ev = job.get("evidence")
     if job.get("status") == "failed":
         j["error"] = _friendly_error(ev if isinstance(ev, str) else None)
     elif isinstance(ev, str) and ev.strip():
         # A short freeform evidence string doubles as the job's one-line summary.
         j["summary"] = ev.strip()[:240]
-    j["title"] = _title(job, agent_disp)
+    j["title"] = _title(job, agent_disp, tctx)
+    # A compact "where / who / from" subtitle for the feed row.
+    bits: list[str] = []
+    if job.get("project_slug"):
+        bits.append(job["project_slug"])
+    elif agent_disp:
+        bits.append(agent_disp)
+    if j.get("chat_title"):
+        bits.append(f"from chat: {j['chat_title']}")
+    if bits:
+        j["context_label"] = " · ".join(bits)
     return j
 
 # Operator responses to an awaiting_input job, expressed as a task transition.
@@ -128,7 +215,8 @@ async def list_jobs(
         limit=limit,
     )
     names = _name_map()
-    enriched = [_enrich(r, names) for r in records]
+    cache: dict = {}
+    enriched = [_enrich(r, names, cache) for r in records]
     return {"jobs": enriched, "count": len(enriched)}
 
 

@@ -28,6 +28,13 @@ export type Job = {
   trigger_label?: string;
   error?: string;
   summary?: string;
+  // Joined from the task store at read time (routes/jobs._enrich): what the job
+  // was actually for, and which chat spawned it.
+  task_text?: string;
+  task_status?: string;
+  chat_title?: string;
+  chat_context_key?: string;
+  context_label?: string;
 };
 
 // Job status -> one of the five design status kinds.
