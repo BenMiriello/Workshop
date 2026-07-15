@@ -90,13 +90,37 @@ def _iter_notes(root: Path):
         yield abs_path, rel.as_posix()
 
 
+_FRONTMATTER = re.compile(r"\A﻿?---\n.*?\n---\n", re.DOTALL)
+
+
+def strip_frontmatter(text: str) -> str:
+    """Drop a leading YAML frontmatter block (`--- … ---`). It is metadata
+    (dates, etc.), never part of the note's visible body or its name."""
+    m = _FRONTMATTER.match(text)
+    return text[m.end():] if m else text
+
+
 def _title_of(text: str, rel_posix: str) -> str:
-    """First `# ` heading, else the filename stem."""
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("# "):
-            return stripped[2:].strip()
+    """A note's name is its first non-empty line (after any frontmatter), with a
+    leading `#` heading marker and wrapping emphasis stripped. Empty note falls
+    back to the filename stem. This is the single source of the name."""
+    for line in strip_frontmatter(text).splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        s = re.sub(r"^#{1,6}\s+", "", s)              # a leading heading marker
+        s = re.sub(r"^[*_~`]+|[*_~`]+$", "", s).strip()  # wrapping emphasis
+        if s:
+            return s[:120]
     return Path(rel_posix).stem
+
+
+def _sanitize_name(name: str) -> str:
+    """Turn a note name into a safe single filename component (no extension)."""
+    name = (name or "").strip()
+    name = re.sub(r"[\x00-\x1f/\\:*?\"<>|]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip().strip(".")
+    return (name or "Untitled")[:120]
 
 
 def list_notes(root: Path | None = None) -> list[dict]:
@@ -212,13 +236,40 @@ def create_note(note_path: str, content: str, root: Path | None = None) -> dict:
 
 
 def update_note(note_path: str, content: str, root: Path | None = None) -> dict:
-    """Overwrite an existing note. FileNotFoundError if it does not exist."""
+    """Overwrite an existing note, then sync its filename to its first-line name.
+
+    The name lives in one place: the note's first line. When editing it changes
+    the name, the file is renamed to match (in the same folder, de-colliding with
+    a numeric suffix) and referring wikilinks are rewritten. FileNotFoundError if
+    the note does not exist.
+    """
     root = root or vault_root()
     abs_path = safe_path(note_path, root)
     if not abs_path.is_file():
         raise FileNotFoundError(note_path)
     _atomic_write(abs_path, content)
+
+    target = _name_synced_path(abs_path, content, root)
+    if target is not None and target != abs_path:
+        result = _move_and_rewrite(abs_path, target, root)
+        return {"path": result["path"], "title": result["title"], "modified": result["modified"]}
     return _write_result(abs_path, root, content)
+
+
+def _name_synced_path(abs_path: Path, content: str, root: Path) -> Path | None:
+    """The path whose stem matches the note's first-line name, in the same folder.
+    None when the current filename already matches (no rename needed)."""
+    rel = abs_path.relative_to(root).as_posix()
+    desired_stem = _sanitize_name(_title_of(content, rel))
+    if desired_stem == abs_path.stem:
+        return None
+    parent = abs_path.parent
+    candidate = parent / f"{desired_stem}.md"
+    n = 2
+    while candidate.exists() and candidate != abs_path:
+        candidate = parent / f"{desired_stem} {n}.md"
+        n += 1
+    return candidate
 
 
 def _prune_empty_dirs(start: Path, root: Path) -> None:
@@ -261,9 +312,16 @@ def rename_note(old_path: str, new_path: str, root: Path | None = None) -> dict:
         raise FileNotFoundError(old_path)
     if new_abs.exists():
         raise FileExistsError(new_path)
+    return _move_and_rewrite(old_abs, new_abs, root)
+
+
+def _move_and_rewrite(old_abs: Path, new_abs: Path, root: Path) -> dict:
+    """Move old_abs -> new_abs and rewrite wikilinks that resolved to it. The
+    caller owns existence/collision checks. Preserves file mtime across the move."""
     old_rel = old_abs.relative_to(root).as_posix()
     new_rel = new_abs.relative_to(root).as_posix()
     new_target_text = new_rel[:-3] if new_rel.endswith(".md") else new_rel
+    prior = old_abs.stat()
 
     # Resolve referrers against the CURRENT state, before the move.
     index = _basename_index(root)
@@ -294,6 +352,7 @@ def rename_note(old_path: str, new_path: str, root: Path | None = None) -> dict:
 
     new_abs.parent.mkdir(parents=True, exist_ok=True)
     os.replace(old_abs, new_abs)
+    os.utime(new_abs, (prior.st_atime, prior.st_mtime))  # keep the real edited date
     _prune_empty_dirs(old_abs.parent, root)
     for abs_path, new_text in pending:
         _atomic_write(abs_path, new_text)

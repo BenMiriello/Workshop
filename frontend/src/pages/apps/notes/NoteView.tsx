@@ -18,7 +18,13 @@ import {
   useEditMode,
 } from "../../../ui";
 import { notesApi, type Note, type Backlink } from "./api";
-import { transformForPreview, parseWikiHref, type Resolver } from "./wikilinks";
+import {
+  transformForPreview,
+  parseWikiHref,
+  previewBody,
+  setNoteTitle,
+  type Resolver,
+} from "./wikilinks";
 
 function fmtTime(epoch: number): string {
   try {
@@ -49,8 +55,10 @@ export default function NoteView({
 }) {
   const edit = useEditMode<{ content: string }>({ content: note?.content ?? "" }, async (draft) => {
     if (!note) return;
-    await notesApi.update(note.path, draft.content);
-    onMutated(note.path);
+    // The name is the first line; the backend may rename the file to match, so
+    // follow the returned path.
+    const r = await notesApi.update(note.path, draft.content);
+    onMutated(r.path);
   });
 
   const [renaming, setRenaming] = useState(false);
@@ -107,15 +115,21 @@ export default function NoteView({
   }
 
   const startRename = () => {
-    setRenameTo(note.path);
+    setRenameTo(note.title);
     setRenameErr(null);
     setRenaming(true);
   };
   const doRename = async () => {
+    const name = renameTo.trim();
+    if (!name) {
+      setRenameErr("Name can't be empty.");
+      return;
+    }
     setRenameBusy(true);
     setRenameErr(null);
     try {
-      const r = await notesApi.rename(note.path, renameTo.trim());
+      // Renaming = rewriting the first line; the file follows automatically.
+      const r = await notesApi.update(note.path, setNoteTitle(note.content, name));
       setRenaming(false);
       onMutated(r.path);
     } catch (e: unknown) {
@@ -190,7 +204,9 @@ export default function NoteView({
         </>
       ) : (
         <div onClick={onPreviewClick}>
-          <Markdown>{transformForPreview(note.content, resolver) || "_Empty note._"}</Markdown>
+          <Markdown>
+            {transformForPreview(previewBody(note.content, note.title), resolver) || "_Empty note._"}
+          </Markdown>
         </div>
       )}
 
@@ -232,8 +248,8 @@ export default function NoteView({
         }
       >
         <Field
-          label="New path"
-          help="Referring [[wikilinks]] are rewritten to the new path."
+          label="Name"
+          help="The note's first line. The filename follows it and referring [[wikilinks]] are rewritten."
           error={renameErr || undefined}
         >
           <Input

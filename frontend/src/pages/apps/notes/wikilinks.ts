@@ -53,6 +53,46 @@ export function transformForPreview(content: string, resolve: Resolver): string 
   });
 }
 
+// A leading YAML frontmatter block (`--- … ---`) — metadata (dates, etc.), never
+// shown in the preview and not part of the note's name.
+const FRONTMATTER = /^﻿?---\n[\s\S]*?\n---\n/;
+
+export function stripFrontmatter(content: string): string {
+  return content.replace(FRONTMATTER, "");
+}
+
+const stripTitleMarks = (s: string) =>
+  s
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[*_~`]+|[*_~`]+$/g, "")
+    .trim();
+
+// The body shown in the preview: frontmatter removed, and the leading title line
+// dropped — the name is rendered once as the note header, not twice.
+export function previewBody(content: string, title: string): string {
+  const lines = stripFrontmatter(content).split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  if (i < lines.length && stripTitleMarks(lines[i]).toLowerCase() === title.trim().toLowerCase()) {
+    lines.splice(0, i + 1);
+  }
+  return lines.join("\n").trim();
+}
+
+// Rename by rewriting the first line — the single source of the note's name.
+// Frontmatter is preserved; the filename follows on save (backend auto-syncs it).
+export function setNoteTitle(content: string, title: string): string {
+  const fm = content.match(FRONTMATTER)?.[0] ?? "";
+  const lines = content.slice(fm.length).split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  const heading = `# ${title.trim()}`;
+  if (i < lines.length) lines[i] = heading;
+  else lines.push(heading);
+  return fm + lines.join("\n");
+}
+
 // Parse a sentinel href produced above. Returns the kind + decoded path/target.
 export function parseWikiHref(href: string): { kind: "open" | "create"; value: string } | null {
   if (href.startsWith("#wl:")) return { kind: "open", value: decodeURIComponent(href.slice(4)) };
