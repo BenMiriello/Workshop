@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Menu, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, MessagesSquare, Gauge, Settings as SettingsIcon } from "lucide-react";
+import { Menu, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, NotebookPen, MessagesSquare, Gauge, Settings as SettingsIcon } from "lucide-react";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
@@ -48,6 +48,7 @@ const NODES: Record<string, RouteNode> = {
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
   "/work": { label: "Work" },
+  "/notes": { label: "Notes" },
   "/jobs": { label: "Jobs" },
   "/usage": { label: "Usage" },
   "/chats": { label: "Chats" },
@@ -362,6 +363,7 @@ const SECTIONS = [
   { to: "/apps", label: "Apps", icon: LayoutGrid },
   { to: "/agents", label: "Agents", icon: Bot },
   { to: "/work", label: "Work", icon: ListChecks },
+  { to: "/notes", label: "Notes", icon: NotebookPen },
   { to: "/usage", label: "Usage", icon: Gauge },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
