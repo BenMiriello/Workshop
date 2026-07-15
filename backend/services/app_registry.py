@@ -482,12 +482,39 @@ def installed_snapshots() -> list[Callable[[], str]]:
     return [spec.chat_snapshot for spec in installed_specs() if spec.chat_snapshot]
 
 
-def installed_mcp_servers() -> dict[str, dict]:
-    """Merged MCP server launch specs registered by installed apps.
+# Platform-level MCP servers, always available (not tied to an installed app):
+# the read-only workshop-query tool the general chat uses to answer "what is
+# going on" from the task + knowledge digest (Stage 7 / 2e). It is NOT a
+# filesystem grant: the server returns a computed digest only, so it cannot leak
+# `.runtime` secrets. Runs under the backend venv with PYTHONPATH=backend so it
+# can reuse services.workspace_digest / services.knowledge.
+def _platform_mcp_servers() -> dict[str, dict]:
+    backend_dir = Path(__file__).resolve().parent.parent  # backend/
+    server = backend_dir / "mcp" / "workshop_query_server.py"
+    python = os.environ.get(
+        "WORKSHOP_MCP_PYTHON", str(backend_dir / ".venv" / "bin" / "python")
+    )
+    return {
+        "workshop": {
+            "type": "stdio",
+            "command": python,
+            "args": [str(server)],
+            "env": {
+                "PYTHONPATH": str(backend_dir),
+                "WORKSHOP_QUERY_SCOPE": os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop"),
+            },
+        }
+    }
 
-    Replaces the hardcoded llm_router._MCP_SERVER_SPECS: a server (e.g. plaid) is
-    available to chat tool-use only if an app that registers it is installed."""
-    merged: dict[str, dict] = {}
+
+def installed_mcp_servers() -> dict[str, dict]:
+    """Merged MCP server launch specs: the always-present platform servers plus
+    each server registered by an installed app.
+
+    Replaces the hardcoded llm_router._MCP_SERVER_SPECS: an app server (e.g.
+    plaid) is available to chat tool-use only if an app that registers it is
+    installed; platform servers (workshop-query) are always available."""
+    merged: dict[str, dict] = dict(_platform_mcp_servers())
     for spec in installed_specs():
         merged.update(spec.mcp)
     return merged

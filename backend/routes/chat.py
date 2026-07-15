@@ -244,7 +244,6 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     chat's own binding, else the workshop root queue (a general chat has nowhere
     of its own to file to)."""
     from pathlib import Path
-    from services import tasks as tasks_mod
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
@@ -269,9 +268,23 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         raise HTTPException(422, "could not derive a task from this chat; add a note first")
 
     acceptance = body.acceptance if isinstance(body.acceptance, dict) else None
-    task = tasks_mod.add(root, text=text, acceptance=acceptance,
-                         source={"kind": "chat", "ref": thread_id})
-    return {"task": task, "scope": scope_label, "thread_id": thread_id}
+    # Cross-chat dedup (Stage 7 / 2e): fold a duplicate into the existing task
+    # (merge), link a near-match as related, or create fresh. The decision is
+    # returned so the chat can tell the operator what happened.
+    from services import task_dedup
+    result = task_dedup.dedup_add(
+        root, text=text, acceptance=acceptance,
+        source={"kind": "chat", "ref": thread_id},
+    )
+    return {
+        "task": result["task"],
+        "scope": scope_label,
+        "thread_id": thread_id,
+        "decision": result["decision"],
+        "matched_id": result.get("matched_id"),
+        "cosine": result.get("cosine"),
+        "message": result["message"],
+    }
 
 
 @router.post("/threads/{thread_id}/rescope")
@@ -372,6 +385,17 @@ def _build_prompt(
         learn_block = ""
     if learn_block:
         parts.append(learn_block)
+    # Ambient cross-chat work digest (Stage 7 / 2e): open tasks + in-flight/recent
+    # jobs from the relevant scope (own scope for a builder/project/agent chat;
+    # workspace-wide for a general chat) so chats stop clashing and losing track
+    # of each other's work. Cache-stable prefix, capped small. Best-effort.
+    try:
+        ambient_block = chat_context.ambient_digest(provider)
+    except Exception as e:
+        log.warning("chat ambient digest failed for %s: %s", provider.key, e)
+        ambient_block = ""
+    if ambient_block:
+        parts.append(ambient_block)
     # Ambient in-scope knowledge index (Phase 2): the note titles for this scope so
     # the model knows what it can recall. Small + cache-stable (bodies arrive via
     # retrieval in the reply region, not here). Best-effort; never blocks the reply.

@@ -492,6 +492,23 @@ def learnings_context(provider: "ContextProvider") -> str:
     return "\n\n".join(parts)
 
 
+def ambient_digest(provider: "ContextProvider") -> str:
+    """Stage 7 (2e): a compact "ongoing work across the workspace" block for a
+    chat's cache-stable prefix. A project/build/agent chat sees ITS OWN scope; a
+    general chat sees a workspace-wide roll-up. Scope-correct, not a permission
+    wall (single-operator). Empty string when there is nothing to inject. Same
+    best-effort, self-contained shape as learnings_context so a missing store
+    never breaks the chat path."""
+    try:
+        from services import workspace_digest
+        body = workspace_digest.digest_for_provider(provider)
+    except Exception:
+        return ""
+    if not body:
+        return ""
+    return "=== ONGOING WORK (ambient, across chats) ===\n" + body
+
+
 # ---------------------------------------------------------------- base / general
 
 
@@ -822,6 +839,12 @@ class AssistantAgentContextProvider(ContextProvider):
 # general assistant so a research answer isn't cut short.
 _general = ContextProvider()
 _general.max_turns = 8
+# Stage 7 (2e): the general chat gets a scoped, read-only workshop-query tool
+# (platform MCP server, always available) so it can answer "what is going on /
+# what tasks and notes exist" on demand from the task + knowledge digest. It is
+# NOT a filesystem grant and never exposes `.runtime` secrets.
+_general.allowed_tools = ["mcp__workshop__query"]
+_general.mcp_servers = ["workshop"]
 
 # Platform providers — always present, no app required: the general assistant.
 # App personas are NOT listed here; they come from the installed apps' AppSpecs

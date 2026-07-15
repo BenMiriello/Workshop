@@ -105,19 +105,32 @@ def apply_task_patch(context_key: str | None, reply: str) -> tuple[str, list[str
     if named and named != context_key:
         return cleaned, [f"(task edit ignored: a {context_key} chat cannot write {named})"]
 
+    from services import task_dedup
+
     added = updated = noted = 0
+    merged = related = 0
     for op in patch.get("add", []) or []:
         if not isinstance(op, dict) or not (op.get("text") or "").strip():
             continue
         try:
-            tasks.add(
+            # Cross-chat dedup (Stage 7 / 2e): fold a duplicate into the existing
+            # scope task, link a near-match as related, or create fresh. This is
+            # the path that previously passed no provenance at all.
+            res = task_dedup.dedup_add(
                 root, text=op["text"], priority=int(op.get("priority") or 0),
                 depends_on=[str(d) for d in (op.get("depends_on") or [])],
                 acceptance=op.get("acceptance") if isinstance(op.get("acceptance"), dict) else None,
                 touches=[str(t) for t in (op.get("touches") or [])],
                 source={"kind": "chat", "ref": context_key},
             )
-            added += 1
+            decision = res.get("decision")
+            if decision in ("exact", "merge"):
+                merged += 1
+            elif decision == "related":
+                related += 1
+                added += 1
+            else:
+                added += 1
         except ValueError:
             pass
     for op in patch.get("update", []) or []:
@@ -140,6 +153,10 @@ def apply_task_patch(context_key: str | None, reply: str) -> tuple[str, list[str
     bits = []
     if added:
         bits.append(f"added {added} task{'s' if added != 1 else ''}")
+    if related:
+        bits.append(f"{related} linked as related to a near-match")
+    if merged:
+        bits.append(f"merged {merged} duplicate{'s' if merged != 1 else ''} into existing task(s)")
     if updated:
         bits.append(f"updated {updated}")
     if noted:
