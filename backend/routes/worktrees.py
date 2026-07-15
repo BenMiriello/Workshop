@@ -76,6 +76,26 @@ async def publish(project_slug: str, branch_slug: str, body: _PublishIn):
         raise HTTPException(400, str(e))
 
 
+@router.post("/{project_slug}/cleanup")
+async def cleanup(project_slug: str):
+    """Remove worktrees whose branch is already merged into the canonical base
+    (bound projects only; unbound returns empty)."""
+    try:
+        return worktrees.cleanup_merged(project_slug)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/{project_slug}/repo-state")
+async def repo_state(project_slug: str):
+    """Canonical-state view: default branch, remote, active worktrees + PRs,
+    ahead/behind, open PRs. Unbound projects return {bound: false}."""
+    try:
+        return worktrees.repo_state(project_slug)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.delete("/{project_slug}/{branch_slug}")
 async def discard(project_slug: str, branch_slug: str):
     try:

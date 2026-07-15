@@ -109,6 +109,10 @@ class Project(BaseModel):
     # (today's behavior). Shape when present:
     #   {provider, owner, name, remote_url, default_branch, connected_at}
     repo: dict | None = None
+    # Opt-in worktree-per-task concurrency (Phase G3). Default false keeps the
+    # existing single-dir sweep behavior; the dispatcher consults this flag to
+    # decide whether to allocate a per-task worktree. Absent reads as false.
+    concurrent_worktrees: bool = False
 
 
 class CreateProjectIn(BaseModel):
@@ -348,6 +352,7 @@ async def create_project(body: CreateProjectIn) -> Project:
         "created": now,
         "last_touched": now,
         "claude_session": None,
+        "concurrent_worktrees": False,
     }
 
     # Provision a private GitHub repo unless this is a scratch/blank scaffold
@@ -402,6 +407,14 @@ async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
     data = _load_registry()
     data.setdefault("projects", {})[slug] = raw
     _save_registry(data)
+
+    # Enable git rerere so recurring conflict resolutions replay automatically
+    # during rebase-before-publish (Phase G3). Best-effort: a failure here must
+    # not fail the connect.
+    try:
+        github.enable_rerere(str(proj_dir))
+    except Exception:
+        pass
 
     # The connect flow operated inside the project dir only; confirm the
     # workshop tree still ignores it (no project .git leaked into the monorepo).

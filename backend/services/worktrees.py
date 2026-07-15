@@ -12,10 +12,14 @@ The disk concept stays "worktree" (git's term); the URL path stays
 
 Public surface:
   create_branch(project_slug, branch_slug) -> dict
+  allocate_task_worktree(project_slug, task_id) -> dict
   list_branches(project_slug) -> list[dict]
   merge_branch(project_slug, branch_slug, *, message="") -> dict
   discard_branch(project_slug, branch_slug) -> dict
   diff_branch(project_slug, branch_slug) -> dict
+  publish_branch(project_slug, branch_slug, *, title="", body="") -> dict
+  cleanup_merged(project_slug) -> dict
+  repo_state(project_slug) -> dict
   branch_dir(project_slug, branch_slug) -> Path
 """
 from __future__ import annotations
@@ -72,6 +76,19 @@ def _validate_slug(value: str, label: str) -> str:
     if not SLUG_RE.match(v):
         raise ValueError(f"{label} must be kebab-case alphanumeric, start with a letter, max 48 chars")
     return v
+
+
+def _kebab_branch_slug(value: str) -> str:
+    """Normalize an arbitrary task id into a valid branch slug.
+
+    Lowercase; runs of non-alphanumeric collapse to a single dash; trimmed and
+    capped at 48 chars. A value that would not start with a letter (a uuid4 hex
+    id can begin with a digit) is prefixed `t-` so it satisfies SLUG_RE.
+    """
+    v = re.sub(r"[^a-z0-9]+", "-", (value or "").strip().lower()).strip("-")
+    if not v or not v[0].isalpha():
+        v = f"t-{v}" if v else "t"
+    return v[:48].rstrip("-")
 
 
 def _project_record(project_slug: str) -> dict:
@@ -183,6 +200,50 @@ def create_branch(project_slug: str, branch_slug: str) -> dict:
         "dir": str(target),
         "created": _now(),
     }
+
+
+def allocate_task_worktree(project_slug: str, task_id: str) -> dict:
+    """Allocate an isolated, locked worktree for one task (Phase G3 concurrency).
+
+    Creates branch wt/<slug>/<task-id> in its own worktree, off
+    origin/<default_branch> when the project is bound (so an agent starts from
+    the canonical remote base), else off the local canonical branch (today's
+    behavior). The worktree is locked so a crashed agent's stale index cannot
+    wedge sibling worktrees. The task-id is the branch slug (kebab-normalized
+    and validated). Returns {branch, branch_slug, dir}.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    branch_slug = _validate_slug(_kebab_branch_slug(task_id), "task_id")
+    project_dir = _project_dir(project_slug)
+    branch = _branch_name(project_slug, branch_slug)
+    target = _branch_path(project_slug, branch_slug)
+    if target.exists():
+        raise ValueError(f"worktree dir already exists: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    repo = _project_repo(project_slug)
+    if repo:
+        base = repo.get("default_branch") or _main_branch(project_dir)
+        start_point = f"origin/{base}"
+    else:
+        start_point = _canonical_branch(project_slug, project_dir)
+
+    try:
+        _run(
+            ["git", "-C", str(project_dir), "worktree", "add",
+             "-b", branch, str(target), start_point],
+            timeout=60,
+        )
+    except subprocess.CalledProcessError as e:
+        stderr = (e.stderr or "").strip()[:200]
+        raise ValueError(f"git worktree add failed (exit {e.returncode}): {stderr}")
+
+    # Lock the worktree so a crashed agent's stale index cannot block others.
+    subprocess.run(
+        ["git", "-C", str(project_dir), "worktree", "lock", str(target)],
+        env=_git_env(), capture_output=True, text=True, timeout=15,
+    )
+    return {"branch": branch, "branch_slug": branch_slug, "dir": str(target)}
 
 
 def list_branches(project_slug: str) -> list[dict]:
@@ -391,6 +452,23 @@ def publish_branch(project_slug: str, branch_slug: str, *,
     remote_url = repo["remote_url"]
     base = repo.get("default_branch") or _main_branch(project_dir)
 
+    from services import github
+
+    # Rebase the branch onto the canonical base before pushing so conflicts
+    # surface here as ordinary git conflicts rather than at merge time. A
+    # conflicting rebase leaves the worktree clean (github.rebase_onto aborts)
+    # and we return without pushing so the caller can park the task, not loop.
+    worktree_dir = _branch_path(project_slug, branch_slug)
+    rebase = github.rebase_onto(str(worktree_dir), base)
+    if not rebase.get("ok"):
+        return {
+            "ok": False,
+            "conflict": bool(rebase.get("conflict")),
+            "branch": branch,
+            "base": base,
+            "detail": rebase.get("detail", ""),
+        }
+
     push = subprocess.run(
         ["git", "-C", str(project_dir), "push", "-u", "origin", branch],
         env=_git_env(), capture_output=True, text=True, timeout=180,
@@ -398,14 +476,92 @@ def publish_branch(project_slug: str, branch_slug: str, *,
     if push.returncode != 0:
         raise ValueError(f"git push failed: {(push.stderr or push.stdout or '').strip()[:300]}")
 
-    from services import github
     pr_title = title.strip() or f"{branch_slug} ({project_slug})"
     pr_body = body.strip() or f"Publishes {branch} into {base}."
     pr = github.open_pr(
         str(project_dir), remote=remote_url, base=base, head=branch,
         title=pr_title, body=pr_body,
     )
-    return {"branch": branch, "remote_url": remote_url, "base": base, "pr": pr}
+    return {"ok": True, "branch": branch, "remote_url": remote_url, "base": base, "pr": pr}
+
+
+def cleanup_merged(project_slug: str) -> dict:
+    """Remove worktrees whose branch is already merged into the canonical base.
+
+    For each wt/<slug>/ branch, if github.is_merged reports it an ancestor of
+    origin/<default_branch>, the worktree is force-removed, its local ref
+    deleted, and stale worktree metadata pruned. Unbound projects have no origin
+    to compare against, so they are skipped. Returns {removed, kept} (branch
+    slugs). Best-effort per branch: a branch still ahead of the base is kept.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    project_dir = _project_dir(project_slug)
+    repo = _project_repo(project_slug)
+    if not repo:
+        return {"removed": [], "kept": []}
+    base = repo.get("default_branch") or _main_branch(project_dir)
+
+    from services import github
+    removed: list[str] = []
+    kept: list[str] = []
+    for wt in list_branches(project_slug):
+        branch = wt["branch"]
+        branch_slug = wt["branch_slug"]
+        if github.is_merged(str(project_dir), branch, base):
+            _reap_worktree(project_dir, project_slug, branch_slug, branch)
+            removed.append(branch_slug)
+        else:
+            kept.append(branch_slug)
+    subprocess.run(
+        ["git", "-C", str(project_dir), "worktree", "prune"],
+        env=_git_env(), capture_output=True, text=True, timeout=15,
+    )
+    return {"removed": removed, "kept": kept}
+
+
+def repo_state(project_slug: str) -> dict:
+    """Canonical-state view for the Repo panel and agent context (Phase G3).
+
+    For a bound project: default branch, remote URL, each active worktree with
+    its assigned task (= branch_slug), ahead/behind vs origin/<default_branch>,
+    and the matched open PR (joined by headRefName), plus all open PRs. Every
+    piece is best-effort and degrades to null/empty; an unbound project returns
+    {bound: False} without raising.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    project_dir = _project_dir(project_slug)
+    repo = _project_repo(project_slug)
+    if not repo:
+        return {"bound": False}
+    base = repo.get("default_branch") or _main_branch(project_dir)
+    remote_url = repo.get("remote_url")
+
+    from services import github
+    open_prs = github.list_open_prs(remote_url) if remote_url else []
+    pr_by_head = {
+        pr.get("headRefName"): pr for pr in open_prs if pr.get("headRefName")
+    }
+
+    worktrees_out: list[dict] = []
+    for wt in list_branches(project_slug):
+        branch = wt["branch"]
+        branch_slug = wt["branch_slug"]
+        wdir = wt.get("dir") or str(_branch_path(project_slug, branch_slug))
+        worktrees_out.append({
+            "branch_slug": branch_slug,
+            "dir": wdir,
+            "task_id": branch_slug,
+            "ahead_behind": github.ahead_behind(wdir, base),
+            "pr": pr_by_head.get(branch),
+        })
+
+    return {
+        "bound": True,
+        "default_branch": base,
+        "remote_url": remote_url,
+        "worktrees": worktrees_out,
+        "open_prs": open_prs,
+    }
 
 
 def branch_dir(project_slug: str, branch_slug: str) -> Path:

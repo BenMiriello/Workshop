@@ -19,9 +19,15 @@ Public surface:
   bind_repo(dir, remote_url) -> dict
   open_pr(dir, remote, base, head, title, body) -> dict
   merge_pr(dir, head, base) -> dict
+  enable_rerere(dir)
+  rebase_onto(dir, base) -> dict
+  list_open_prs(remote) -> list[dict]
+  ahead_behind(dir, base) -> dict
+  is_merged(dir, branch, base) -> bool
 """
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 
@@ -242,3 +248,111 @@ def merge_pr(dir: str, head: str, base: str) -> dict:
         "head": head,
         "local_ff": ff.returncode == 0,
     }
+
+
+def enable_rerere(dir: str) -> None:
+    """Turn on git rerere in the repo at `dir` so recurring conflict resolutions
+    replay automatically. Best-effort: a failure here never blocks connect.
+
+    Runs: git -C <dir> config rerere.enabled true
+    """
+    subprocess.run(
+        ["git", "-C", dir, "config", "rerere.enabled", "true"],
+        capture_output=True, text=True, timeout=15,
+    )
+
+
+def rebase_onto(dir: str, base: str) -> dict:
+    """Fetch `base` from origin and rebase the current branch onto it.
+
+    OUTWARD-FACING (git fetch touches the network). On a conflict the rebase is
+    aborted so the worktree is left clean, and {ok: False, conflict: True} is
+    returned so the caller can park the task rather than loop.
+
+    Runs: git -C <dir> fetch origin <base>
+    then:  git -C <dir> rebase origin/<base>
+    Returns {ok, conflict, detail}.
+    """
+    reject_veritus(base)
+    fetch = subprocess.run(
+        ["git", "-C", dir, "fetch", "origin", base],
+        capture_output=True, text=True, timeout=180,
+    )
+    if fetch.returncode != 0:
+        detail = ((fetch.stderr or "") + (fetch.stdout or "")).strip()[:300]
+        return {"ok": False, "conflict": False, "detail": f"fetch failed: {detail}"}
+
+    rebase = subprocess.run(
+        ["git", "-C", dir, "rebase", f"origin/{base}"],
+        capture_output=True, text=True, timeout=180,
+    )
+    if rebase.returncode == 0:
+        return {"ok": True, "conflict": False, "detail": ""}
+
+    detail = ((rebase.stderr or "") + (rebase.stdout or "")).strip()[:300]
+    # A stopped rebase leaves the worktree mid-conflict. Abort so it is clean
+    # again, then report the conflict for the caller to park on.
+    subprocess.run(
+        ["git", "-C", dir, "rebase", "--abort"],
+        capture_output=True, text=True, timeout=30,
+    )
+    return {"ok": False, "conflict": True, "detail": detail or "rebase conflict"}
+
+
+def list_open_prs(remote: str) -> list[dict]:
+    """Open PRs for a remote via `gh pr list --json`. Empty list on any error.
+
+    Runs: gh pr list --repo <remote>
+          --json number,title,headRefName,url,state,isDraft
+    Returns a list of PR dicts (empty on error so a missing/unreachable remote
+    degrades to "no PRs" rather than raising).
+    """
+    r = subprocess.run(
+        ["gh", "pr", "list", "--repo", remote,
+         "--json", "number,title,headRefName,url,state,isDraft"],
+        capture_output=True, text=True, timeout=60,
+    )
+    if r.returncode != 0:
+        return []
+    try:
+        data = json.loads(r.stdout or "[]")
+    except (json.JSONDecodeError, ValueError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def ahead_behind(dir: str, base: str) -> dict:
+    """Commits HEAD is ahead/behind `origin/<base>`. {ahead: 0, behind: 0} on error.
+
+    Runs: git -C <dir> rev-list --left-right --count origin/<base>...HEAD
+    The left count (origin/base only) is `behind`; the right count (HEAD only)
+    is `ahead`.
+    """
+    r = subprocess.run(
+        ["git", "-C", dir, "rev-list", "--left-right", "--count",
+         f"origin/{base}...HEAD"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if r.returncode != 0:
+        return {"ahead": 0, "behind": 0}
+    parts = (r.stdout or "").split()
+    if len(parts) != 2:
+        return {"ahead": 0, "behind": 0}
+    try:
+        behind, ahead = int(parts[0]), int(parts[1])
+    except ValueError:
+        return {"ahead": 0, "behind": 0}
+    return {"ahead": ahead, "behind": behind}
+
+
+def is_merged(dir: str, branch: str, base: str) -> bool:
+    """True when `branch` is an ancestor of `origin/<base>` (i.e. already merged).
+
+    Runs: git -C <dir> merge-base --is-ancestor <branch> origin/<base>
+    Returns False on any non-zero exit (not merged, or the ref is missing).
+    """
+    r = subprocess.run(
+        ["git", "-C", dir, "merge-base", "--is-ancestor", branch, f"origin/{base}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    return r.returncode == 0
