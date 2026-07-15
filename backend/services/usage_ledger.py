@@ -271,6 +271,21 @@ def status(now: datetime | None = None) -> dict:
 # Admission (the enforcement primitive the dispatcher + sweeps call)
 # ---------------------------------------------------------------------------
 
+def _inflight_coordinator_sweeps() -> int:
+    """Count coordinator sweep Jobs currently `running` (no task_id / parent_id: a
+    child task Job carries both). Each holds up to a nominal task's spend that has
+    NOT yet landed in the ledger, since billing happens once at ralph exit (up to
+    ~20 min later). Best-effort: any failure yields 0 (falls back to the old
+    single-nominal reserve). (review F8a)"""
+    try:
+        from services import jobs
+        running = jobs.read(status="running", limit=1000)
+        return sum(1 for r in running
+                   if not r.get("task_id") and not r.get("parent_id"))
+    except Exception:
+        return 0
+
+
 def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str]:
     """Whether one more autonomous sweep/task may start in `scope` (a project
     slug or agent label). Returns (ok, reason).
@@ -285,9 +300,15 @@ def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str
     app_total = float(cfg.get("app_total") or 0)
     if app_total <= 0:
         return True, "uncapped (no app_total)"
-    reserve = float(cfg.get("nominal_task_tokens") or _DEFAULT_CONFIG["nominal_task_tokens"])
+    nominal = float(cfg.get("nominal_task_tokens") or _DEFAULT_CONFIG["nominal_task_tokens"])
+    # Reserve one nominal task for the run about to start PLUS one per in-flight
+    # coordinator sweep whose spend has not billed yet, so N concurrent sweeps
+    # cannot collectively overshoot the cap before any of them records. (A sweep
+    # that calls admit from inside its own loop counts itself here, which only
+    # makes the reserve more conservative: safe.) (review F8a)
+    reserve = nominal * (1 + _inflight_coordinator_sweeps())
     if usage["app"] + reserve > app_total:
-        return False, f"app budget exhausted: {usage['app']}/{int(app_total)} tokens in {usage['window_s']//3600}h"
+        return False, f"app budget exhausted: {usage['app']}/{int(app_total)} tokens in {usage['window_s']//3600}h (reserve {int(reserve)})"
     if scope:
         ceil = _project_params(cfg, scope).get("ceil")
         if ceil is not None and usage["by_project"].get(scope, 0) >= float(ceil):

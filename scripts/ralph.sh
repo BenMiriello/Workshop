@@ -200,6 +200,14 @@ SESSION_ID=""
 # is rejected 2+ times in this run (a real repeated pattern), not on every raw
 # per-run diagnostic (review F15).
 declare -A REASON_COUNT=()
+# Nominal task cost (from the usage ledger config, 150k default). Used to bill a
+# timeout-killed iteration that produced no usage JSON so it is not invisible to
+# admission (review F8b). Read once; fall back to the hardcoded default.
+NOMINAL_TOKENS=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -c "
+from services import usage_ledger
+print(int(usage_ledger.load_config().get('nominal_task_tokens') or 150000))
+" 2>/dev/null) || echo 150000)
+[[ -z "$NOMINAL_TOKENS" ]] && NOMINAL_TOKENS=150000
 
 while (( iter < MAX_ITER )); do
   iter=$((iter + 1))
@@ -303,7 +311,12 @@ try:
                 except Exception:
                     obj = None
     u = (obj or {}).get('usage') or {}
-    tok = (int(u.get('input_tokens', 0)) + int(u.get('cache_read_input_tokens', 0))
+    # Weight cache-read tokens at 0.1: the subscription rate limits count a cache
+    # read far below a fresh input token, so metering them at parity trips the
+    # budget long before the real quota is spent (review L3). Fresh input, cache
+    # creation, and output stay at parity.
+    tok = (int(u.get('input_tokens', 0))
+           + int(0.1 * int(u.get('cache_read_input_tokens', 0)))
            + int(u.get('cache_creation_input_tokens', 0)) + int(u.get('output_tokens', 0)))
 except Exception:
     tok = 0
@@ -360,6 +373,16 @@ print(sid)
     log "ENV FAILURE on iter 1 (claude exit=$CLAUDE_EXIT, no result envelope, ${ITER_DUR}s) — releasing without burning an attempt"
     exit_code=5
     break
+  fi
+
+  # Bill nominal for a timeout-KILLED iteration that ran real wall time but yielded
+  # no usage JSON. The most expensive failure mode (a run that burns its whole wall
+  # budget then gets killed) otherwise bills 0 and stays invisible to the ledger's
+  # admission gate. We are past the env-failure bail, so exit 124 + no metered
+  # tokens + >60s of real runtime is a genuine long run, not an outage. (review F8b)
+  if (( CLAUDE_EXIT == 124 && ITER_TOKENS == 0 && ITER_DUR > 60 )); then
+    RUN_TOKENS=$((RUN_TOKENS + NOMINAL_TOKENS))
+    log "iter $iter: timeout kill, no usage JSON after ${ITER_DUR}s — billing nominal $NOMINAL_TOKENS tokens (F8b)"
   fi
 
   # Detect classifier block in output — the operator's hard rule says these
