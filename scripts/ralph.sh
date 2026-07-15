@@ -150,6 +150,33 @@ You are driving a single project: $DIR
   (it inspects THIS project's git repo, not the workshop root)."
 fi
 
+# Inject learned guardrails (Stage 8 wiring): the same global + scope memory the
+# chat path injects, so autonomous sweeps benefit from accumulated lessons and
+# stop repeating rejected patterns. LEARN_SCOPE is the billing scope (a project
+# slug) or empty for a root run. Best-effort; a missing store never blocks a run.
+LEARN_SCOPE="${BILL_PROJECT:-}"
+learn_block() {
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
+     python3 -m services.learnings block --scope "$1" 2>/dev/null) || true
+}
+GLOBAL_LEARN=$(learn_block global)
+SCOPE_LEARN=""
+if [[ -n "$LEARN_SCOPE" && "$LEARN_SCOPE" != "global" ]]; then
+  SCOPE_LEARN=$(learn_block "$LEARN_SCOPE")
+fi
+if [[ -n "$GLOBAL_LEARN" || -n "$SCOPE_LEARN" ]]; then
+  RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+
+## Learned guardrails (accumulated from past runs — do not repeat these)"
+  [[ -n "$GLOBAL_LEARN" ]] && RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+$GLOBAL_LEARN"
+  [[ -n "$SCOPE_LEARN" ]] && RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+
+Scope-specific ($LEARN_SCOPE):
+$SCOPE_LEARN"
+  log "injected learnings (global=$([[ -n $GLOBAL_LEARN ]] && echo y || echo n) scope=$([[ -n $SCOPE_LEARN ]] && echo y || echo n))"
+fi
+
 iter=0
 exit_code=1
 last_reviewer_json='{"reasons":["initial-iteration-not-yet-run"]}'
@@ -297,16 +324,27 @@ print(tok)
     break
   fi
 
-  # Reviewer rejected. Append learnings from the rejection.
+  # Reviewer rejected. Record each reason as a learning so future runs avoid it.
+  # Route into the billing scope (the project) when set, else global; record()
+  # dedups by canonical hash + Jaccard so a repeated rejection does not pile up.
   if [[ -n "$REVIEWER_JSON" ]]; then
-    echo "$REVIEWER_JSON" | python3 -c "
-import json, sys, subprocess
+    echo "$REVIEWER_JSON" | (cd "$WORKSHOP" && \
+      PYTHONPATH="$WORKSHOP/backend" LEARN_SCOPE="${LEARN_SCOPE:-}" python3 -c "
+import json, sys, os
+from services import learnings
+scope = os.environ.get('LEARN_SCOPE') or learnings.GLOBAL
+try:
+    scope = learnings._valid_scope(scope)
+except Exception:
+    scope = learnings.GLOBAL
 data = json.load(sys.stdin)
 for reason in data.get('reasons', []):
-    subprocess.run(['/home/clawd-a/workshop/scripts/log_learning.sh',
-                    f'Ralph rejected: {reason}', 'ralph'],
-                   check=False)
-" 2>/dev/null || true
+    try:
+        learnings.record(f'Ralph rejected: {reason}', source='ralph-reviewer',
+                         scope=scope, tags=['ralph', 'rejection'])
+    except Exception:
+        pass
+") 2>/dev/null || true
   fi
 done
 
