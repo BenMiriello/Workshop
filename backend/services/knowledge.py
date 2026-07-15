@@ -1,16 +1,14 @@
-"""KnowledgeStore — per-scope notes with plaintext files as source of truth and
-a per-scope Letta archive as the derived semantic-recall layer.
+"""KnowledgeStore — per-scope notes with plaintext markdown as the source of truth.
 
-Plaintext markdown is authoritative: every write lands on disk first and MUST
-succeed even when Letta is down. The Letta sync (delete-then-insert a passage
-tagged with the note id) is best-effort and only logged on failure. Files are
-git-inspectable; the archive is the vector index rebuilt from them.
+Every write lands on disk (git-inspectable); recall is a plaintext substring
+search over the scope's notes. The Letta vector-archive layer that used to derive
+a semantic index from these files was retired in the Stage 9 Letta teardown; the
+plaintext store was always authoritative and its search fallback is now the only
+path.
 
 Scope model (see `scope_for_context`): one of `workshop`, `project:<slug>`,
 `app:<name>`, `agent:<id>`. Each scope maps to a directory holding `MEMORY.md`
-(the index) plus one `<note-id>.md` per note, and to a Letta archive named
-`workshop-knowledge:<scope_key>`. The `scope_key -> {archive_id, passages}` map
-lives in `.runtime/knowledge/archives.json`.
+(the index) plus one `<note-id>.md` per note.
 """
 from __future__ import annotations
 
@@ -20,8 +18,6 @@ import logging
 import os
 import re
 from pathlib import Path
-
-from letta_legacy_client import LettaClient
 
 log = logging.getLogger("workshop.knowledge")
 
@@ -45,23 +41,6 @@ def _root() -> Path:
 
 def _runtime() -> Path:
     return Path(os.environ.get("WORKSHOP_RUNTIME", str(_root() / ".runtime")))
-
-
-def _archives_path() -> Path:
-    return _runtime() / "knowledge" / "archives.json"
-
-
-# --- Letta client (self-sufficient; no app.state dependency) -----------------
-@contextlib.asynccontextmanager
-async def _letta():
-    """A short-lived LettaClient built the same way the app builds app.state.letta
-    (LETTA_URL + LETTA_SERVER_PASS via the client's own module defaults). Mirrors
-    global_memory.py, which opens a fresh httpx client per call."""
-    client = LettaClient()
-    try:
-        yield client
-    finally:
-        await client.aclose()
 
 
 # --- scope mapping -----------------------------------------------------------
@@ -144,44 +123,6 @@ def _atomic_write(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text)
     os.replace(tmp, path)
-
-
-def _load_map() -> dict:
-    p = _archives_path()
-    if not p.exists():
-        return {}
-    try:
-        data = json.loads(p.read_text())
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        log.warning("knowledge: archives.json unreadable, treating as empty")
-        return {}
-
-
-def _save_map(m: dict) -> None:
-    _atomic_write(_archives_path(), json.dumps(m, indent=2, sort_keys=True))
-
-
-def _scope_entry(m: dict, scope_key: str) -> dict:
-    ent = m.setdefault(scope_key, {})
-    ent.setdefault("passages", {})
-    return ent
-
-
-def _set_passage(scope_key: str, note_id: str, passage_id: str) -> None:
-    m = _load_map()
-    _scope_entry(m, scope_key)["passages"][note_id] = passage_id
-    _save_map(m)
-
-
-def _pop_passage(scope_key: str, note_id: str) -> str | None:
-    m = _load_map()
-    ent = m.get(scope_key)
-    if not ent:
-        return None
-    pid = ent.get("passages", {}).pop(note_id, None)
-    _save_map(m)
-    return pid
 
 
 # --- MEMORY.md index ---------------------------------------------------------
@@ -279,15 +220,13 @@ def get_note(scope_key: str, note_id: str) -> str | None:
     return f.read_text() if f.exists() else None
 
 
-# --- writes (files first, Letta best-effort) ---------------------------------
+# --- writes ------------------------------------------------------------------
 async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "") -> dict:
-    """Write a note and sync it to the scope archive.
+    """Write a note (source of truth on disk).
 
-    1. write `<note-id>.md` atomically (source of truth),
-    2. upsert the MEMORY.md index line (kept sorted),
-    3. sync to Letta: drop the note's old passage, insert the new text tagged
-       `[note-id]`, remember the passage id. Letta failure is logged, not fatal.
-    Returns {scope, note_id, letta}.
+    1. write `<note-id>.md` atomically,
+    2. upsert the MEMORY.md index line (kept sorted).
+    Returns {scope, note_id}.
     """
     _parse_scope(scope_key)
     _valid_note_id(note_id)
@@ -299,30 +238,11 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     idx[note_id] = {"title": (title or note_id).strip(), "hook": (hook or "").strip()}
     _write_index(scope_key, idx)
 
-    letta_ok = False
-    passage_text = f"{title}\n\n{content}".strip() if title else content.strip()
-    try:
-        aid = await _archive_id(scope_key)
-        old_pid = _load_map().get(scope_key, {}).get("passages", {}).get(note_id)
-        async with _letta() as c:
-            if old_pid:
-                with contextlib.suppress(Exception):
-                    await c.delete_passage(aid, old_pid)
-            res = await c.insert_passage(
-                aid, passage_text, tags=[note_id], metadata={"scope": scope_key, "title": title},
-            )
-        new_pid = _passage_id(res)
-        if new_pid:
-            _set_passage(scope_key, note_id, new_pid)
-            letta_ok = True
-    except Exception as e:
-        log.warning("knowledge: Letta sync failed for %s/%s: %s", scope_key, note_id, e)
-
-    return {"scope": scope_key, "note_id": note_id, "letta": letta_ok}
+    return {"scope": scope_key, "note_id": note_id}
 
 
 async def delete_note(scope_key: str, note_id: str) -> dict:
-    """Remove the note file, its index line, and its archive passage."""
+    """Remove the note file and its index line."""
     _parse_scope(scope_key)
     _valid_note_id(note_id)
     d = scope_dir(scope_key)
@@ -336,80 +256,14 @@ async def delete_note(scope_key: str, note_id: str) -> dict:
     if idx.pop(note_id, None) is not None:
         _write_index(scope_key, idx)
 
-    pid = _pop_passage(scope_key, note_id)
-    aid = _load_map().get(scope_key, {}).get("archive_id")
-    if pid and aid:
-        try:
-            async with _letta() as c:
-                await c.delete_passage(aid, pid)
-        except Exception as e:
-            log.warning("knowledge: Letta passage delete failed for %s/%s: %s", scope_key, note_id, e)
-
     return {"scope": scope_key, "note_id": note_id, "existed": existed}
-
-
-def _passage_id(res) -> str | None:
-    if isinstance(res, list) and res:
-        return res[0].get("id")
-    if isinstance(res, dict):
-        return res.get("id")
-    return None
-
-
-# --- archive management ------------------------------------------------------
-async def _archive_id(scope_key: str) -> str:
-    """The scope's Letta archive id, lazily created. Reuses an existing archive
-    by name if the local map was lost."""
-    _parse_scope(scope_key)
-    m = _load_map()
-    ent = m.get(scope_key)
-    if ent and ent.get("archive_id"):
-        return ent["archive_id"]
-
-    name = f"workshop-knowledge:{scope_key}"
-    async with _letta() as c:
-        existing = await c.list_archives()
-        found = next((a for a in existing if a.get("name") == name), None)
-        if found:
-            aid = found["id"]
-        else:
-            cfg = await c.default_embedding_config()
-            arch = await c.create_archive(
-                name, cfg, description=f"Workshop knowledge scope {scope_key}",
-            )
-            aid = arch["id"]
-
-    m = _load_map()
-    _scope_entry(m, scope_key)["archive_id"] = aid
-    _save_map(m)
-    return aid
 
 
 # --- search + recall ---------------------------------------------------------
 async def search(scope_key: str, query: str, limit: int = 5) -> list[dict]:
-    """Vector search within the scope archive. On Letta error OR empty result,
-    fall back to a plaintext substring match so recall always returns something
-    usable. Each result carries a `debug` field: "letta" or "fallback"."""
+    """Plaintext substring search within the scope's notes. Each result carries a
+    `debug` field ("fallback") for shape-compat with older callers."""
     _parse_scope(scope_key)
-    try:
-        aid = await _archive_id(scope_key)
-        async with _letta() as c:
-            hits = await c.search_passages(aid, query, limit)
-        results = []
-        for item in hits:
-            p = item.get("passage") or {}
-            tags = p.get("tags") or []
-            results.append({
-                "note_id": tags[0] if tags else None,
-                "text": p.get("text", ""),
-                "score": item.get("score"),
-                "debug": "letta",
-            })
-        if results:
-            return results
-    except Exception as e:
-        log.warning("knowledge: Letta search failed for %s: %s", scope_key, e)
-
     return _plaintext_search(scope_key, query, limit)
 
 

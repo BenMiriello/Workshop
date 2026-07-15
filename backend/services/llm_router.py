@@ -1,22 +1,20 @@
-"""LLM router — picks the right tier per call class with health-gated fallback.
+"""LLM router — cloud calls via `claude -p`, plus an explicit local (Ollama) path.
 
-Tier ladder:
-    0  Ollama qwen2.5:32b      local, free, fast — but ONLY for short scoped prompts
-                               (classification, routing decisions, redaction, single-word answers)
-    1  Claude Haiku 4.5        subscription, default cloud — most agent reasoning, simple code
-    2  Claude Sonnet 4.6       subscription, mid-cost — bigger tasks
-    3  Claude Opus 4.8         subscription, expensive — only when truly needed
+The workshop autonomy tier-ladder (auto-classify a task and route the cheap ones
+to Ollama) has been retired: autonomous work runs through `claude -p` (see
+scripts/ralph.sh). What remains is the two explicit call paths:
 
-The router gates Ollama on health + GPU availability. If Ollama is down or the
-GPU is saturated by another workload (image gen, another model, etc.), the
-router falls through to Haiku automatically. Failures never permanently block;
-each call has a timeout and the system recovers as soon as Ollama is back.
+    Local (Ollama qwen2.5:32b)  used only when a caller ASKS for it — the
+                                redaction classifier and the /relay/local
+                                passthrough. Health/GPU gated so a saturated or
+                                down GPU raises OllamaUnavailable instead of
+                                blocking; the caller decides the fallback.
+    Cloud (Claude via claude -p)  Haiku / Sonnet / Opus / Fable by explicit model.
 
 Public API:
-    classify_task(task: str) -> str       # returns one of {"local","haiku","sonnet","opus"}
-    call_local(prompt, **kw) -> dict      # raises OllamaUnavailable if router falls through
+    call_local(prompt, **kw) -> dict      # raises OllamaUnavailable if gated out
     call_cloud(prompt, model, **kw)       # subprocess to `claude -p --model <model>`
-    route_and_call(task, prompt) -> dict  # high-level: classify + dispatch + return result
+    ollama_health() / ollama_available()  # health probes (redaction + status)
 
 Subscription auth: all cloud calls go through `claude -p` (subprocess to the
 local Claude Code CLI). That uses CLAUDE_CODE_OAUTH_TOKEN; never ANTHROPIC_API_KEY.
@@ -581,56 +579,7 @@ def call_cloud(
     }
 
 
-# -------------------------------------------------------------------- High-level routing
-
-
-def classify_task(task: str) -> str:
-    """Quick local classification of task → tier. Falls back to safe defaults.
-
-    Returns one of: "local", "haiku", "sonnet", "opus".
-    Heuristic-first (cheap, no LLM call); only escalates to Ollama for ambiguous cases.
-    """
-    t = task.lower()
-    words = len(task.split())
-
-    # Strong local indicators: classification, yes/no, single-fact extraction
-    if any(k in t for k in ["classify", "yes or no", "category", "extract", "redact", "is this", "summarize in one"]):
-        if words < 200:
-            return "local"
-
-    # Strong opus indicators: complex multi-step, design, architecture
-    if any(k in t for k in ["architect", "design the whole", "complex refactor", "audit the entire"]):
-        return "opus"
-
-    # Strong sonnet indicators: medium-substantial code work
-    if any(k in t for k in ["implement", "write a service", "build a", "refactor"]):
-        if words > 50:
-            return "sonnet"
-        return "haiku"
-
-    # Default: haiku for most agent reasoning + simple code
-    return "haiku"
-
-
-def route_and_call(task: str, prompt: str | None = None, **kwargs) -> dict:
-    """High-level: classify the task, dispatch to the right tier, fall through
-    on Ollama unavailability. Returns the call result + tier_used."""
-    prompt = prompt or task
-    tier = classify_task(task)
-
-    # Local tier with fallback to haiku
-    if tier == "local":
-        try:
-            r = call_local(prompt, purpose=kwargs.get("purpose", "general"))
-            return {**r, "tier_used": "local"}
-        except OllamaUnavailable as e:
-            log.info("router: local→haiku fallback: %s", e)
-            tier = "haiku"
-
-    model_map = {"haiku": TIER_HAIKU, "sonnet": TIER_SONNET, "opus": TIER_OPUS}
-    model = model_map.get(tier, TIER_HAIKU)
-    r = call_cloud(prompt, model=model, **{k: v for k, v in kwargs.items() if k in ("max_turns", "timeout_s", "cwd")})
-    return {**r, "tier_used": tier}
+# -------------------------------------------------------------------- Diagnostics
 
 
 def status() -> dict:

@@ -44,8 +44,6 @@ type Limits = { max_iterations?: number; budget?: { max_wall_s?: number } };
 
 type AgentDetailData = UnifiedAgent & {
   definition?: string;
-  letta_agent_id?: string | null;
-  letta?: { memory?: { blocks?: { label: string; value: string }[] } };
 };
 
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
@@ -271,7 +269,7 @@ function CreateAgent() {
           <Segmented options={CREATE_RUNTIME} value={runtime} onChange={setRuntime} ariaLabel="Runtime" />
           <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginTop: "var(--space-2)" }}>
             {runtime === "assistant"
-              ? "A Letta-backed assistant with persistent memory."
+              ? "An assistant agent with its own instructions and notes."
               : "A Claude Code coding session scoped to a project."}
           </p>
         </div>
@@ -379,10 +377,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
 
   useEffect(() => { loadGrants(); }, [loadGrants]);
 
-  const personaValue = useMemo(() => {
-    const blocks = agent?.letta?.memory?.blocks || [];
-    return blocks.find((b) => b.label === "persona")?.value ?? agent?.definition ?? "";
-  }, [agent]);
+  const personaValue = useMemo(() => agent?.definition ?? "", [agent]);
 
   const beginEdit = () => {
     if (!agent) return;
@@ -412,14 +407,6 @@ function ExistingAgent({ agentId }: { agentId: string }) {
         }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      // Keep the Letta persona block in sync for assistants (memory engine).
-      if (agent.runtime === "assistant" && agent.letta_agent_id) {
-        await fetch(`/api/agents/${encodeURIComponent(agent.letta_agent_id)}/memory/persona`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: dBody }),
-        }).catch(() => { /* def file already saved; persona sync best-effort */ });
-      }
       setEditing(false);
       setFlash(true);
       setTimeout(() => setFlash(false), 2000);
@@ -511,7 +498,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
               <p className="ws-card__meta">{agent.purpose || "No purpose set."}</p>
               <p className="ws-muted" style={{ marginTop: "var(--space-2)" }}>
                 <RuntimeIcon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
-                {isBuilder ? "Claude Code agent" : "Letta-backed assistant"}
+                {isBuilder ? "Claude Code agent" : "Assistant agent"}
                 {agent.memory ? ` · memory: ${agent.memory}` : ""}
               </p>
               <pre style={{

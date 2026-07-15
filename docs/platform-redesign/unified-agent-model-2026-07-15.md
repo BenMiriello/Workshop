@@ -83,3 +83,42 @@ Standard entity-resolution / retrieve-then-rerank shape:
 
 Shipped in `833ee22`. The LLM is the nuanced judge the operator expected; the
 embeddings are what make it affordable to only ask it about real candidates.
+
+## Relationship to "clawd" / clawdbot, and our orchestration stack
+
+Operator questions (2026-07-15): are we based on clawd? what is similar/different?
+do we use a framework to orchestrate agents?
+
+**Not based on clawd.** "Clawd" here is the `clawdbot` bridge (a Discord <-> Claude
+Code bridge with cron supervision, `~/clawdbot/`) running under the `clawd-a`
+Linux user; masini runs on it. Workshop is a SEPARATE, standalone product: its
+own FastAPI backend + React frontend + task/agent pipeline. What they share is
+the HOST (`clawd-a` user), some infra conventions, and historically Letta (being
+removed in Stage 9). Workshop is hosted ALONGSIDE clawd, not built ON it. Keeping
+Workshop on the `clawd-a` user is fine and is separable from the naming question.
+
+**No agent-orchestration framework, on purpose.** No LangGraph / CrewAI / AutoGen
+/ Temporal / Celery / message broker. The stack is hand-rolled:
+- worker runtime: `claude -p` (Claude Code CLI, headless), no SDK wrapper.
+- loop/orchestration: bash (`ralph.sh` worker loop, `project_ralph.sh` sweep,
+  `dispatch_triggers.sh` dispatcher) + Python services (`tasks.py`, `jobs.py`,
+  `usage_ledger.py`, `learnings.py`).
+- state: plain JSON files (`.tasks.json`, `jobs.jsonl`) with `flock`; `cron` for
+  scheduling.
+Letta was the one framework dependency (agent memory); Stage 9 removes it. After
+Stage 9 the platform has ~zero agent-framework dependency: a bespoke orchestrator
+on the Claude CLI + shell + Python + files. This is deliberate: it matches the
+ralph literature (favor a simple monolithic loop over jumping to distributed
+multi-agent frameworks) and the single-operator no-cruft rule. If it outgrows
+this, Temporal-style durable execution is the natural upgrade, not needed now.
+
+## Deferred decision (operator to weigh in, AFTER the system is proven)
+
+Not now; revisit once the rebuilt system is tested, proven, and more mature:
+- Reevaluate the legacy "clawd" name and the `clawd` service branding. Hosting
+  under the `clawd-a` user can probably stay; the NAME is what to reconsider.
+- Fold a masini-form agent INTO this system, defined by our own Agent primitive
+  (slug + persona + trigger, riding the shared pipeline), rather than as the
+  separate clawdbot/Letta process it is today.
+This is a discussion item that needs the operator; captured as a backlog task so
+it is not lost, explicitly gated on "system tested and matured" first.

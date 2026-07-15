@@ -3,34 +3,19 @@ import { Power, Cpu } from "lucide-react";
 import { Button, ConfirmDialog, StatusDot } from "../ui";
 import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 
-// Autonomy & GPU controls. The global cron-autonomy pause (AUTONOMY_DISABLED),
-// supervisor pause/resume, and Ollama/GPU broker controls. Moved out of the
-// platform Settings page (Phase 5) onto the Agents surface, where the fleet it
-// governs lives. The AUTONOMY_DISABLED switch is operationally load-bearing and
-// must stay reachable — this component is that home.
+// Autonomy & GPU controls. The global cron-autonomy pause (AUTONOMY_DISABLED)
+// and Ollama/GPU broker controls. Moved out of the platform Settings page
+// (Phase 5) onto the Agents surface, where the fleet it governs lives. The
+// AUTONOMY_DISABLED switch is operationally load-bearing and must stay
+// reachable — this component is that home.
 //
-// Three independent off-switches:
-//   - Supervisor heartbeats (Wave-2 Letta loop, in-process)
-//   - Cron autonomy (Wave-1 Ralph loop, via AUTONOMY_DISABLED flag file)
-//   - Ollama GPU residency (unload resident models to free VRAM)
-// Plus a single "Stop everything" that toggles supervisor + cron together.
-
-const fmtAge = (iso: string) => {
-  const ms = Date.now() - Date.parse(iso);
-  const s = Math.round(ms / 1000);
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.round(s / 60)}m ago`;
-  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return `${Math.round(s / 86400)}d ago`;
-};
+// Two independent off-switches:
+//   - Cron autonomy (the Ralph loop, via the AUTONOMY_DISABLED flag file)
+//   - Ollama GPU residency (unload resident models to free VRAM; Ollama keeps
+//     running, this only evicts the resident model)
+// Plus a single "Stop all" that disables the cron loop and frees the GPU.
 
 type AutonomyStatus = {
-  supervisor: {
-    paused: boolean;
-    paused_at: string | null;
-    started_at: string | null;
-    agent_count: number;
-  };
   cron_autonomy: {
     disabled: boolean;
     disabled_at: string | null;
@@ -128,19 +113,15 @@ export default function AutonomyControls() {
     }
   }, [load]);
 
-  const supPaused = !!auto?.supervisor.paused;
   const cronDisabled = !!auto?.cron_autonomy.disabled;
-  const allStopped = supPaused && cronDisabled;
+  const allStopped = cronDisabled;
 
   const onStopAll = async () => {
     setBusy("stop-all");
     try {
-      // Order matters: pause supervisor and disable cron FIRST so nothing
-      // can reload models the moment after we unload them.
-      await Promise.all([
-        fetch("/api/agents/supervisor/pause", { method: "POST" }),
-        fetch("/api/agents/autonomy/disable", { method: "POST" }),
-      ]);
+      // Disable cron FIRST so nothing can reload models the moment after we
+      // unload them.
+      await fetch("/api/agents/autonomy/disable", { method: "POST" });
       await fetch("/api/ollama/unload", { method: "POST" });
       await load();
     } finally {
@@ -152,10 +133,7 @@ export default function AutonomyControls() {
   const onStartAll = async () => {
     setBusy("start-all");
     try {
-      await Promise.all([
-        fetch("/api/agents/supervisor/resume", { method: "POST" }),
-        fetch("/api/agents/autonomy/enable", { method: "POST" }),
-      ]);
+      await fetch("/api/agents/autonomy/enable", { method: "POST" });
       await load();
     } finally {
       setBusy(null);
@@ -178,8 +156,8 @@ export default function AutonomyControls() {
       <Row label="all autonomy">
         {auto == null ? "loading…" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={allStopped ? "stopped" : supPaused || cronDisabled ? "warn" : "running"}>
-              {allStopped ? "stopped" : supPaused || cronDisabled ? "partial" : "running"}
+            <StatusDot status={allStopped ? "stopped" : "running"}>
+              {allStopped ? "stopped" : "running"}
             </StatusDot>
             {allStopped ? (
               <Button size="sm" variant="primary" loading={busy === "start-all"} disabled={busy != null} onClick={onStartAll}>
@@ -189,29 +167,6 @@ export default function AutonomyControls() {
               <Button size="sm" variant="danger-ghost" disabled={busy != null} onClick={() => setConfirmStopAll(true)}>
                 <Power aria-hidden /> Stop all
               </Button>
-            )}
-          </span>
-        )}
-      </Row>
-
-      <Row label="supervisor">
-        {auto == null ? "–" : (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={supPaused ? "warn" : "running"}>
-              {supPaused ? "paused" : `ticking ${auto.supervisor.agent_count} agent${auto.supervisor.agent_count === 1 ? "" : "s"}`}
-            </StatusDot>
-            <Button
-              size="sm"
-              variant={supPaused ? "default" : "danger-ghost"}
-              disabled={busy != null}
-              onClick={() => post(supPaused ? "resume" : "pause", supPaused ? "/api/agents/supervisor/resume" : "/api/agents/supervisor/pause")}
-            >
-              {busy === "pause" ? "pausing…" : busy === "resume" ? "resuming…" : supPaused ? "Resume" : "Pause"}
-            </Button>
-            {supPaused && auto.supervisor.paused_at && (
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                since {fmtAge(auto.supervisor.paused_at)}
-              </span>
             )}
           </span>
         )}
@@ -275,7 +230,7 @@ export default function AutonomyControls() {
         onCancel={() => setConfirmStopAll(false)}
         onConfirm={onStopAll}
         title="Stop all autonomy and free GPU?"
-        body="Pauses supervisor heartbeats, disables the cron autonomy loop, and unloads all resident Ollama models. The next manual start reloads them (~20s warm-up)."
+        body="Disables the cron autonomy loop and unloads all resident Ollama models. Ollama keeps running; the next manual start re-enables the loop and models reload on demand (~20s warm-up)."
         confirmLabel="Stop all"
         busy={busy === "stop-all"}
       />

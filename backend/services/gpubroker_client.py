@@ -19,9 +19,11 @@ URL = os.environ.get("GPUBROKER_URL", "http://127.0.0.1:8447")
 APP_NAME = "workshop-overseer"
 DEFAULT_BUDGET_MIB = 22500
 DEFAULT_PRIORITY = 30
+# On preemption the broker frees Workshop's GPU by evicting any resident Ollama
+# models (the heartbeat supervisor that used to be paused here is retired).
 PREEMPT_URL = os.environ.get(
     "GPUBROKER_WORKSHOP_PREEMPT_URL",
-    "http://127.0.0.1:8000/agents/supervisor/pause",
+    "http://127.0.0.1:8000/ollama/unload",
 )
 
 

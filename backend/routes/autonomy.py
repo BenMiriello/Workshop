@@ -1,14 +1,13 @@
 """Autonomy power switches and GPU memory control.
 
-Three independent off-switches for the Workshop autonomy stack:
+Two independent off-switches for the Workshop autonomy stack:
 
-  1. Supervisor pause/resume — stops the Wave-2 Letta heartbeat loop
-     in-process without restarting the backend.
-  2. Cron autonomy disable/enable — drops a flag file that cron_agent.sh
+  1. Cron autonomy disable/enable — drops a flag file that cron_agent.sh
      and curriculum_tick.sh check at their top and early-exit on. Halts the
-     Wave-1 Ralph loop without touching crontab.
-  3. Ollama unload — sends keep_alive=0 to each currently-resident model so
+     Ralph loop without touching crontab.
+  2. Ollama unload — sends keep_alive=0 to each currently-resident model so
      the GPU is freed for other workloads (ComfyUI, another tenant, etc.).
+     Ollama itself keeps running; this only evicts resident models.
 
 Plus read-only status endpoints feeding the Settings UI.
 """
@@ -22,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 
 from services import gpubroker_client, jobs
 
@@ -39,23 +38,6 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# ============================================================
-# Supervisor pause / resume
-# ============================================================
-
-
-@router.post("/agents/supervisor/pause")
-async def supervisor_pause(request: Request):
-    await request.app.state.supervisor.pause()
-    return {"ok": True, "paused": True, "at": request.app.state.supervisor.paused_at}
-
-
-@router.post("/agents/supervisor/resume")
-async def supervisor_resume(request: Request):
-    await request.app.state.supervisor.resume()
-    return {"ok": True, "paused": False, "started_at": request.app.state.supervisor.started_at}
 
 
 # ============================================================
@@ -80,8 +62,7 @@ async def autonomy_enable():
 
 
 @router.get("/agents/autonomy/status")
-async def autonomy_status(request: Request):
-    sup = request.app.state.supervisor.status()
+async def autonomy_status():
     flag_text = None
     if AUTONOMY_FLAG.exists():
         try:
@@ -89,12 +70,6 @@ async def autonomy_status(request: Request):
         except OSError:
             flag_text = ""
     return {
-        "supervisor": {
-            "paused": sup.get("paused", False),
-            "paused_at": sup.get("paused_at"),
-            "started_at": sup.get("started_at"),
-            "agent_count": len(sup.get("supervised_agents") or []),
-        },
         "cron_autonomy": {
             "disabled": AUTONOMY_FLAG.exists(),
             "disabled_at": flag_text,

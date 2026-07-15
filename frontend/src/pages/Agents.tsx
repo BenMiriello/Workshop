@@ -24,7 +24,6 @@ import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTr
 import AutonomyControls from "../components/AutonomyControls";
 
 type SupervisorStatus = {
-  supervisor: { paused: boolean; agent_count: number; paused_at: string | null };
   cron_autonomy: { disabled: boolean };
 };
 

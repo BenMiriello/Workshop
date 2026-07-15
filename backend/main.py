@@ -14,9 +14,7 @@ from deps_user import (
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
 from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants, usage
-from services.supervisor import AgentSupervisor
-from services import global_memory, app_registry, installed_apps
-from letta_legacy_client import LettaClient
+from services import app_registry
 import asyncio
 import logging
 import os
@@ -26,15 +24,6 @@ log = logging.getLogger("workshop.main")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app.state.letta = LettaClient()
-    app.state.supervisor = AgentSupervisor()
-    # Ensure Workshop global memory block exists in Letta (and value matches disk).
-    # Non-fatal on failure — agents will still create; block sync can be retried.
-    try:
-        await global_memory.ensure_block()
-    except Exception:
-        pass
-    await app.state.supervisor.start()
     # Installed apps: run each installed app's startup hooks + background loops
     # (finance prewarm/categorize, birds env-refresh/atlas). A fresh instance with
     # no apps installed starts none of these. Adding an app never edits this file.
@@ -64,8 +53,6 @@ async def lifespan(app: FastAPI):
     for t in [*getattr(app.state, "_app_bg", []), getattr(app.state, "_bg_app_monitor", None)]:
         if t:
             t.cancel()
-    await app.state.supervisor.stop()
-    await app.state.letta.aclose()
 
 
 app = FastAPI(title="Workshop", lifespan=lifespan)
@@ -183,10 +170,3 @@ async def root_redirect():
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
-
-
-@app.get("/agents/supervisor/status")
-async def supervisor_status(request: Request, user: dict = Depends(require_operator)):
-    # Operator-gated (was unauthed): identity, not origin, controls access — so it
-    # is safe on the public origin and no edge block is needed.
-    return request.app.state.supervisor.status()
