@@ -44,6 +44,7 @@ import os
 import re
 import sys
 import tempfile
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -228,8 +229,35 @@ def parse_source(text: str, fallback_stem: str, suffix: str) -> dict:
         "id": (meta.get("id") or "").strip(),
         "title": title,
         "folder": (meta.get("folder") or "").strip(),
+        "created": (meta.get("created") or "").strip(),
+        "modified": (meta.get("modified") or "").strip(),
         "body": body,
     }
+
+
+def parse_apple_dt(s: str) -> float | None:
+    """Apple export timestamps are naive local time; return an epoch or None."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(s, fmt).timestamp()
+        except ValueError:
+            continue
+    return None
+
+
+def build_frontmatter(created: str, modified: str) -> str:
+    """YAML frontmatter carrying the Apple note's real dates, or '' if none."""
+    fields = []
+    if created:
+        fields.append(f"created: {created}")
+    if modified:
+        fields.append(f"modified: {modified}")
+    if not fields:
+        return ""
+    return "---\n" + "\n".join(fields) + "\n---\n\n"
 
 
 def _title_from_markdown(body: str) -> str:
@@ -334,9 +362,10 @@ def run_import(export_dir: Path, vault: Path, into: str, *, update: bool, force:
             continue
 
         title = note["title"]
-        content = compose_note(title, note["body"])
+        content = build_frontmatter(note["created"], note["modified"]) + compose_note(title, note["body"])
         content_sha = sha(content)
-        if re.search(r"!\[|<img|attachment", note["body"], re.I):
+        note_mtime = parse_apple_dt(note["modified"]) or parse_apple_dt(note["created"])
+        if re.search(r"!\[|<img", note["body"], re.I):
             stats["attachments"] += 1
 
         # ---- resolve the target vault-relative path (stable per identity) ----
@@ -386,6 +415,8 @@ def run_import(export_dir: Path, vault: Path, into: str, *, update: bool, force:
         if action in ("create", "update"):
             if not dry_run:
                 atomic_write(abs_path, content)
+                if note_mtime is not None:
+                    os.utime(abs_path, (note_mtime, note_mtime))
                 by_id[identity] = {"path": rel, "content_sha": content_sha,
                                    "title": title, "source": src.name}
             stats["created" if action == "create" else "updated"] += 1

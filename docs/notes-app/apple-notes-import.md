@@ -103,12 +103,25 @@ emits: headings, paragraph/line breaks, **bold** / *italic* / ~~strike~~,
 bulleted and numbered lists, links, blockquotes, and code. Verified with
 `python3 scripts/import_apple_notes.py --self-test` plus an end-to-end run.
 
+## Dates
+
+Each note's real `created` / `modified` timestamps ride in the export header and
+are preserved two ways: as YAML frontmatter at the top of the `.md`, and by
+setting the file's mtime to the modified date (so the Notes UI shows the true
+"edited" date, not the import date). Apple keeps no per-note edit *history* -
+only those two endpoints exist, so intermediate revisions can't be recovered.
+
 ## Known limitations
 
-- **Attachments/images are not migrated** (text and structure only). Apple stores
-  attachments outside the note body, so pulling them is a separate, larger job.
-  The importer reports how many notes referenced media so you know which to
-  revisit.
+- **Attachments/images are not migrated** (text and structure only). The
+  AppleScript `body` strips media out entirely - it leaves no marker at all, so
+  the text export carries no signal about which notes had images. Pulling them is
+  a separate job that must read the source on the Mac:
+  `~/Library/Group Containers/group.com.apple.notes/` - `NoteStore.sqlite` holds
+  the note<->attachment mapping, `Accounts/<uuid>/Media/` holds the files. Plan:
+  copy that container to the box, run a stdlib-`sqlite3` extractor that joins each
+  image to its parent note's Apple id (the same id we import by) and drops it into
+  the matching vault note. Not built yet.
 - **Nested Apple folders flatten** to their leaf folder name.
 
 ## Flags reference
