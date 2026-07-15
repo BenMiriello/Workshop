@@ -105,6 +105,10 @@ class Project(BaseModel):
     created: str
     last_touched: str
     claude_session: str | None = None
+    # Additive GitHub binding (Phase G1). Absent = a purely local project
+    # (today's behavior). Shape when present:
+    #   {provider, owner, name, remote_url, default_branch, connected_at}
+    repo: dict | None = None
 
 
 class CreateProjectIn(BaseModel):
@@ -114,6 +118,15 @@ class CreateProjectIn(BaseModel):
     template: str = "blank"
     sensitivity: Sensitivity = "shareable"
     brief: str = ""
+    # None = auto (on for real templates, off for blank/scratch). True/False
+    # forces it. Provisions a private GitHub repo right after the local git init.
+    create_repo: bool | None = None
+
+
+class ConnectGithubIn(BaseModel):
+    mode: Literal["create", "bind"]
+    remote_url: str | None = None
+    scratch: bool | None = None
 
 
 class ImportProjectIn(BaseModel):
@@ -270,6 +283,38 @@ def _git_init(target: Path) -> None:
     )
 
 
+def _is_scratch_template(template: str) -> bool:
+    """A blank/scratch scaffold is treated as scratch: repo provisioning defaults
+    off and any created repo lands in the clean `workshop-` namespace."""
+    return (template or "").strip().lower() in ("", "blank", "scratch")
+
+
+def _assert_project_ignored(slug: str) -> None:
+    """The workshop tree must never track a project working tree or its .git.
+    `/projects/*` is gitignored; confirm it still holds after we touch the dir."""
+    workshop_root = PROJECTS_ROOT.parent
+    r = subprocess.run(
+        ["git", "-C", str(workshop_root), "check-ignore", f"projects/{slug}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if r.returncode != 0:
+        raise HTTPException(
+            500,
+            f"boundary violation: projects/{slug} is not gitignored by the workshop tree",
+        )
+
+
+def _repo_field(info: dict) -> dict:
+    return {
+        "provider": "github",
+        "owner": info["owner"],
+        "name": info["name"],
+        "remote_url": info["remote_url"],
+        "default_branch": info["default_branch"],
+        "connected_at": _now(),
+    }
+
+
 @router.post("/")
 async def create_project(body: CreateProjectIn) -> Project:
     slug = body.slug.strip().lower()
@@ -304,9 +349,64 @@ async def create_project(body: CreateProjectIn) -> Project:
         "last_touched": now,
         "claude_session": None,
     }
+
+    # Provision a private GitHub repo unless this is a scratch/blank scaffold
+    # (default off there). Owner is always BenMiriello; the repo is always
+    # private; a scratch project lands in the `workshop-` namespace.
+    scratch = _is_scratch_template(body.template)
+    want_repo = body.create_repo if body.create_repo is not None else (not scratch)
+    if want_repo:
+        from services import github
+        github.reject_veritus(slug, title)
+        base = github.repo_base_name(slug, scratch)
+        name = github.unique_repo_name(base)
+        info = github.create_repo(str(target), name)
+        record["repo"] = _repo_field(info)
+        _assert_project_ignored(slug)
+
     data.setdefault("projects", {})[slug] = record
     _save_registry(data)
     return Project(slug=slug, **record)
+
+
+@router.post("/{slug}/connect-github")
+async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
+    from services import github
+
+    raw = _ensure_project(slug)
+    proj_dir = Path(raw["dir"])
+    if not proj_dir.exists():
+        raise HTTPException(404, f"project directory missing: {proj_dir}")
+
+    try:
+        if body.mode == "create":
+            github.reject_veritus(slug, raw.get("title") or "")
+            # Unknown scratch-ness defaults to scratch: safer, keeps a clean
+            # `workshop-` namespace and never publishes a real repo by accident.
+            scratch = body.scratch if body.scratch is not None else True
+            base = github.repo_base_name(slug, scratch)
+            name = github.unique_repo_name(base)
+            info = github.create_repo(str(proj_dir), name)
+        elif body.mode == "bind":
+            if not (body.remote_url or "").strip():
+                raise HTTPException(400, "bind requires remote_url")
+            github.reject_veritus(body.remote_url)
+            info = github.bind_repo(str(proj_dir), body.remote_url.strip())
+        else:  # pragma: no cover - pydantic Literal blocks this
+            raise HTTPException(400, f"unknown mode: {body.mode}")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    raw["repo"] = _repo_field(info)
+    raw["last_touched"] = _now()
+    data = _load_registry()
+    data.setdefault("projects", {})[slug] = raw
+    _save_registry(data)
+
+    # The connect flow operated inside the project dir only; confirm the
+    # workshop tree still ignores it (no project .git leaked into the monorepo).
+    _assert_project_ignored(slug)
+    return Project(slug=slug, **raw)
 
 
 # ---- File access (Brief / TODO / Interventions) -----------------------------

@@ -74,8 +74,8 @@ def _validate_slug(value: str, label: str) -> str:
     return v
 
 
-def _project_dir(project_slug: str) -> Path:
-    """Locate the project's main directory via projects.json."""
+def _project_record(project_slug: str) -> dict:
+    """Return the registry record for a project (or raise)."""
     if not PROJECTS_REGISTRY.exists():
         raise ValueError(f"projects registry missing: {PROJECTS_REGISTRY}")
     try:
@@ -85,10 +85,33 @@ def _project_dir(project_slug: str) -> Path:
     p = (reg.get("projects") or {}).get(project_slug)
     if not p or not p.get("dir"):
         raise ValueError(f"project not found: {project_slug}")
+    return p
+
+
+def _project_dir(project_slug: str) -> Path:
+    """Locate the project's main directory via projects.json."""
+    p = _project_record(project_slug)
     pd = Path(p["dir"])
     if not pd.exists():
         raise ValueError(f"project directory missing: {pd}")
     return pd
+
+
+def _project_repo(project_slug: str) -> dict | None:
+    """Return the project's `repo` binding (Phase G1) or None if unbound."""
+    try:
+        return _project_record(project_slug).get("repo")
+    except ValueError:
+        return None
+
+
+def _canonical_branch(project_slug: str, project_dir: Path) -> str:
+    """The canonical branch name: the tracked `repo.default_branch` when the
+    project is bound to a GitHub remote, else the best-effort local guess."""
+    repo = _project_repo(project_slug)
+    if repo and repo.get("default_branch"):
+        return repo["default_branch"]
+    return _main_branch(project_dir)
 
 
 def _branch_name(project_slug: str, branch_slug: str) -> str:
@@ -220,7 +243,7 @@ def diff_branch(project_slug: str, branch_slug: str) -> dict:
     branch_slug = _validate_slug(branch_slug, "branch_slug")
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
-    main = _main_branch(project_dir)
+    main = _canonical_branch(project_slug, project_dir)
     base = f"{main}...{branch}"
     short = subprocess.run(
         ["git", "-C", str(project_dir), "diff", "--shortstat", base],
@@ -257,7 +280,26 @@ def merge_branch(project_slug: str, branch_slug: str, *, message: str = "") -> d
     branch_slug = _validate_slug(branch_slug, "branch_slug")
     project_dir = _project_dir(project_slug)
     branch = _branch_name(project_slug, branch_slug)
-    main = _main_branch(project_dir)
+    main = _canonical_branch(project_slug, project_dir)
+
+    # Bound projects merge through the remote: the branch was published (pushed
+    # + PR opened), so squash-merge the PR and delete the remote branch, then
+    # fast-forward the local main. This runs AFTER the reviewer/operator gate
+    # (the same gate that authorizes any merge). Unbound projects keep the
+    # local-only merge below.
+    repo = _project_repo(project_slug)
+    if repo:
+        from services import github
+        try:
+            github.merge_pr(str(project_dir), head=branch, base=main)
+        except ValueError as e:
+            return {"ok": False, "reason": str(e)[:400]}
+        head = subprocess.run(
+            ["git", "-C", str(project_dir), "rev-parse", "HEAD"],
+            env=_git_env(), capture_output=True, text=True, timeout=10,
+        ).stdout.strip()
+        _reap_worktree(project_dir, project_slug, branch_slug, branch)
+        return {"ok": True, "commit": head}
 
     # Make sure we're operating from main in the project's main worktree.
     co = subprocess.run(
@@ -290,7 +332,12 @@ def merge_branch(project_slug: str, branch_slug: str, *, message: str = "") -> d
         env=_git_env(), capture_output=True, text=True, timeout=10,
     ).stdout.strip()
 
-    # Reap worktree + branch on success.
+    _reap_worktree(project_dir, project_slug, branch_slug, branch)
+    return {"ok": True, "commit": head}
+
+
+def _reap_worktree(project_dir: Path, project_slug: str, branch_slug: str, branch: str) -> None:
+    """Remove the branch worktree and delete its local ref after a merge."""
     target = _branch_path(project_slug, branch_slug)
     subprocess.run(
         ["git", "-C", str(project_dir), "worktree", "remove", "--force", str(target)],
@@ -304,7 +351,6 @@ def merge_branch(project_slug: str, branch_slug: str, *, message: str = "") -> d
         ["git", "-C", str(project_dir), "branch", "-D", branch],
         env=_git_env(), capture_output=True, text=True, timeout=15,
     )
-    return {"ok": True, "commit": head}
 
 
 def discard_branch(project_slug: str, branch_slug: str) -> dict:
@@ -325,6 +371,41 @@ def discard_branch(project_slug: str, branch_slug: str) -> dict:
         env=_git_env(), capture_output=True, text=True, timeout=15,
     )
     return {"ok": True}
+
+
+def publish_branch(project_slug: str, branch_slug: str, *,
+                   title: str = "", body: str = "") -> dict:
+    """Push the branch to origin and open a PR against the canonical branch.
+
+    OUTWARD-FACING: pushes to GitHub and opens a PR. Only valid for a project
+    bound to a GitHub remote. Runs `git push -u origin wt/<slug>/<branch>` then
+    `gh pr create` via github.open_pr. Returns {branch, remote_url, pr}.
+    """
+    project_slug = _validate_slug(project_slug, "project_slug")
+    branch_slug = _validate_slug(branch_slug, "branch_slug")
+    project_dir = _project_dir(project_slug)
+    repo = _project_repo(project_slug)
+    if not repo:
+        raise ValueError("project is not connected to GitHub; connect it first")
+    branch = _branch_name(project_slug, branch_slug)
+    remote_url = repo["remote_url"]
+    base = repo.get("default_branch") or _main_branch(project_dir)
+
+    push = subprocess.run(
+        ["git", "-C", str(project_dir), "push", "-u", "origin", branch],
+        env=_git_env(), capture_output=True, text=True, timeout=180,
+    )
+    if push.returncode != 0:
+        raise ValueError(f"git push failed: {(push.stderr or push.stdout or '').strip()[:300]}")
+
+    from services import github
+    pr_title = title.strip() or f"{branch_slug} ({project_slug})"
+    pr_body = body.strip() or f"Publishes {branch} into {base}."
+    pr = github.open_pr(
+        str(project_dir), remote=remote_url, base=base, head=branch,
+        title=pr_title, body=pr_body,
+    )
+    return {"branch": branch, "remote_url": remote_url, "base": base, "pr": pr}
 
 
 def branch_dir(project_slug: str, branch_slug: str) -> Path:

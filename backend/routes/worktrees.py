@@ -25,6 +25,11 @@ class _MergeIn(BaseModel):
     message: str = ""
 
 
+class _PublishIn(BaseModel):
+    title: str = ""
+    body: str = ""
+
+
 @router.get("/{project_slug}")
 async def list_for_project(project_slug: str):
     try:
@@ -58,6 +63,17 @@ async def merge(project_slug: str, branch_slug: str, body: _MergeIn):
     if not result.get("ok"):
         raise HTTPException(409, result.get("reason") or "merge failed")
     return result
+
+
+@router.post("/{project_slug}/{branch_slug}/publish")
+async def publish(project_slug: str, branch_slug: str, body: _PublishIn):
+    """Push the branch to origin and open a PR (bound projects only)."""
+    try:
+        return worktrees.publish_branch(
+            project_slug, branch_slug, title=body.title, body=body.body,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @router.delete("/{project_slug}/{branch_slug}")
