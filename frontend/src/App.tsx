@@ -28,6 +28,7 @@ import { BirdsScopeProvider } from "./pages/apps/birds/scope";
 import BirdsShell from "./pages/apps/birds/BirdsShell";
 import { RecorderProvider } from "./pages/apps/birds/recorder";
 import Home from "./pages/Home";
+import Work from "./pages/Work";
 import Jobs from "./pages/Jobs";
 import JobDetail from "./pages/JobDetail";
 import Usage from "./pages/Usage";
@@ -107,6 +108,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
+          <Route path="/work" element={<Work />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/jobs/:id" element={<JobDetail />} />
           <Route path="/usage" element={<Usage />} />

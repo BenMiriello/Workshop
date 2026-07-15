@@ -47,6 +47,7 @@ const NODES: Record<string, RouteNode> = {
   "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
+  "/work": { label: "Work" },
   "/jobs": { label: "Jobs" },
   "/usage": { label: "Usage" },
   "/chats": { label: "Chats" },
@@ -351,16 +352,16 @@ export function AppGroupNav() {
 // row — the current section is already named in the breadcrumb, so nothing is
 // lost. CSS toggles which of the two renders at the breakpoint.
 // Per ADR-008: use first, build second, workers third, config last. Matches
-// frequency of operator use. Jobs is the "workers" view (the work-queue every
-// autonomous sweep + manual run lands in); it was previously reachable only via
-// a button on Agents and Home, so background work had no home in the nav.
+// frequency of operator use. Work is the "workers" view: its Tickets tab is the
+// cross-scope task list (the queue every parked to-do lands in) and its Runs tab
+// is the Jobs feed (every autonomous sweep + manual run). /jobs stays reachable.
 const SECTIONS = [
   { to: "/", label: "Home", icon: HomeIcon },
   { to: "/chats", label: "Chats", icon: MessagesSquare },
   { to: "/projects", label: "Projects", icon: FolderGit2 },
   { to: "/apps", label: "Apps", icon: LayoutGrid },
   { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/jobs", label: "Jobs", icon: ListChecks },
+  { to: "/work", label: "Work", icon: ListChecks },
   { to: "/usage", label: "Usage", icon: Gauge },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];

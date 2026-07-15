@@ -13,6 +13,7 @@ Scope is the thread's context binding; a provider only writes its own scope
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -21,12 +22,21 @@ from services import tasks
 # ```task-patch\n{...}\n``` — same fence style as the budget plan-patch.
 _PATCH_BLOCK = re.compile(r"```task-patch\s*\n(.*?)\n```", re.DOTALL)
 
+# The workshop-root task store (the top-level `.tasks.json`). This is the scope
+# for tickets parked at the root, distinct from the `workshop` PROJECT under
+# projects/. Overridable for tests / alternate checkouts; the default is this
+# checkout's repo root (backend/services -> parents[2]).
+WORKSHOP_ROOT = Path(os.environ.get(
+    "WORKSHOP_ROOT", str(Path(__file__).resolve().parents[2])))
+
 
 def root_for_context(context_key: str | None) -> Path | None:
     """The task-store directory for a chat's context binding, or None if the
     binding has no task scope (general / app chats)."""
     if not context_key:
         return None
+    if context_key == "workshop":
+        return WORKSHOP_ROOT
     if context_key.startswith("project:"):
         from services import build_agents
         return build_agents._project_dir(context_key.split(":", 1)[1])

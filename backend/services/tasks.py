@@ -737,6 +737,7 @@ def update(
     blocked_reason: str | None = None,
     acceptance: dict | None = None,
     max_attempts: int | None = None,
+    effort: str | None = None,
     job_id: str | None = None,
     evidence: dict | None = None,
     awaiting: dict | None = None,
@@ -801,6 +802,9 @@ def update(
             found["acceptance"] = acceptance or None
         if max_attempts is not None:
             found["max_attempts"] = _as_int_or_none(max_attempts)
+        if effort is not None:
+            # Additive: an empty string clears the hint back to None.
+            found["effort"] = effort or None
         if awaiting is not None:
             found["awaiting"] = ({"question": str(awaiting.get("question") or "").strip(),
                                   "since": awaiting.get("since") or _now()}

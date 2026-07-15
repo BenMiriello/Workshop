@@ -1,0 +1,244 @@
+"""Scope-generic Task API (the "Work" surface, plan D4 / sub-decision b).
+
+The task store is per-tree: the workshop root, every project, every registry
+assistant scope, and every build agent all keep their own `.tasks.json`. Before
+this route there was no cross-scope view, so work parked in an agent scope or the
+root was invisible in the UI. This aggregates every scope's tasks into one feed
+and exposes CRUD on a single task by its scope-qualified id.
+
+Terminology: the store, CLI, and API all say `task`. The UI may call these
+"tickets" in prose, but every identifier here stays `task`.
+
+Scope keys mirror `task_scope.root_for_context`:
+  workshop        -> the top-level `.tasks.json`
+  project:<slug>  -> projects/<slug>
+  agent:<slug>    -> .runtime/agent-scopes/<slug> (assistant runtime)
+  build:<slug>    -> a build agent's linked project dir or its own cwd
+
+Cross-scope listing is cheap: `tasks.list_tasks` reconciles, and reconcile
+short-circuits on an unchanged export hash, so a sweep across scopes does no work
+when nothing moved.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from services import tasks, task_scope, task_dedup, jobs, build_agents, ownership
+
+router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+_PROJECTS_REGISTRY = Path(os.environ.get(
+    "WORKSHOP_PROJECTS_REGISTRY", str(ownership._RUNTIME / "projects.json")))
+_AGENT_SCOPES_DIR = ownership._RUNTIME / "agent-scopes"
+
+
+# ---- Scope resolution ------------------------------------------------------
+
+def _root_for_scope(scope: str | None) -> Path | None:
+    """Resolve a scope key to its task-store root. `task_scope` owns every kind
+    (workshop / project: / agent: / build:); an unknown scope returns None."""
+    if not scope:
+        return None
+    return task_scope.root_for_context(scope)
+
+
+def _project_slugs() -> list[str]:
+    if not _PROJECTS_REGISTRY.exists():
+        return []
+    try:
+        reg = json.loads(_PROJECTS_REGISTRY.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+    return list((reg.get("projects") or {}).keys())
+
+
+def _scope_roots() -> list[tuple[str, Path]]:
+    """Every task scope that actually has a store, deduped by resolved path so a
+    build agent sharing a project's tree is not counted twice. Priority order:
+    workshop root, projects, assistant scopes, build agents. Only a scope with an
+    existing `.tasks.json` or `TODO.md` is surfaced, keeping the sweep cheap and
+    non-destructive (no scope is created just by listing)."""
+    seen: set[str] = set()
+    order: list[tuple[str, Path]] = []
+
+    def add(scope: str, root: Path | None) -> None:
+        if root is None:
+            return
+        try:
+            rp = root.resolve()
+        except OSError:
+            return
+        if not rp.exists():
+            return
+        if not (rp / tasks.STORE_NAME).exists() and not (rp / tasks.EXPORT_NAME).exists():
+            return
+        key = str(rp)
+        if key in seen:
+            return
+        seen.add(key)
+        order.append((scope, rp))
+
+    add("workshop", _root_for_scope("workshop"))
+    for slug in _project_slugs():
+        add(f"project:{slug}", _root_for_scope(f"project:{slug}"))
+    if _AGENT_SCOPES_DIR.exists():
+        for d in sorted(_AGENT_SCOPES_DIR.iterdir()):
+            if d.is_dir():
+                add(f"agent:{d.name}", d)
+    for a in build_agents.list_agents():
+        slug = a.get("slug")
+        if slug:
+            add(f"build:{slug}", _root_for_scope(f"build:{slug}"))
+    return order
+
+
+# ---- Aggregate list --------------------------------------------------------
+
+@router.get("")
+async def list_all(
+    status: str | None = None,
+    scope: str | None = None,
+    include_done: bool = True,
+) -> dict:
+    """Tasks across every scope, each tagged with its resolved `scope` key.
+    Optional filters: `status` (one of the seven task statuses) and `scope`
+    (restrict to a single scope key)."""
+    out: list[dict] = []
+    scopes = 0
+    for skey, root in _scope_roots():
+        if scope and skey != scope:
+            continue
+        scopes += 1
+        try:
+            items = tasks.list_tasks(root, include_done=include_done)
+        except Exception:
+            continue
+        for t in items:
+            if status and t.get("status") != status:
+                continue
+            rec = dict(t)
+            rec["scope"] = skey
+            out.append(rec)
+    return {"tasks": out, "count": len(out), "scopes": scopes}
+
+
+@router.get("/scopes")
+async def list_scopes() -> dict:
+    """The scope keys that currently have a task store, for the create/filter
+    controls. Cheap directory + registry scan, no task load."""
+    return {"scopes": [skey for skey, _ in _scope_roots()]}
+
+
+# ---- Create ----------------------------------------------------------------
+
+class TaskCreateIn(BaseModel):
+    scope: str = Field(min_length=1)
+    text: str = Field(min_length=1, max_length=4000)
+    priority: int = 0
+
+
+@router.post("")
+async def create(body: TaskCreateIn) -> dict:
+    """File a task into a scope through the dedup path, so a manual ticket
+    dedupes against open tasks exactly like a chat-filed one. Returns the task
+    plus the dedup decision (exact | merge | related | distinct)."""
+    root = _root_for_scope(body.scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {body.scope}")
+    try:
+        res = task_dedup.dedup_add(
+            root,
+            text=body.text,
+            priority=int(body.priority or 0),
+            source={"kind": "operator", "ref": "work-ui"},
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    task = dict(res["task"]) if res.get("task") else None
+    if task is not None:
+        task["scope"] = body.scope
+    return {
+        "task": task,
+        "decision": res.get("decision"),
+        "matched_id": res.get("matched_id"),
+        "cosine": res.get("cosine"),
+        "message": res.get("message"),
+    }
+
+
+# ---- Single task -----------------------------------------------------------
+
+class TaskPatchIn(BaseModel):
+    status: str | None = None
+    text: str | None = None
+    priority: int | None = None
+    assignee: str | None = None
+    effort: str | None = None
+
+
+@router.get("/{scope}/{task_id}")
+async def get_one(scope: str, task_id: str) -> dict:
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    t = tasks.get_task(root, task_id)
+    if t is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    rec = dict(t)
+    rec["scope"] = scope
+    return rec
+
+
+@router.patch("/{scope}/{task_id}")
+async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    if all(v is None for v in (body.status, body.text, body.priority, body.assignee, body.effort)):
+        raise HTTPException(400, "no fields to update")
+    try:
+        t = tasks.update(
+            root, task_id,
+            status=body.status,
+            text=body.text,
+            priority=body.priority,
+            assignee=body.assignee,
+            effort=body.effort,
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if t is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    rec = dict(t)
+    rec["scope"] = scope
+    return rec
+
+
+@router.delete("/{scope}/{task_id}")
+async def delete_one(scope: str, task_id: str) -> dict:
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    if not tasks.remove(root, task_id):
+        raise HTTPException(404, f"task not found: {task_id}")
+    return {"deleted": True}
+
+
+@router.get("/{scope}/{task_id}/jobs")
+async def task_jobs(scope: str, task_id: str) -> dict:
+    """The Jobs (runs) this task produced, enriched like the /jobs feed so each
+    run carries its title, status, and receipt summary."""
+    recs = jobs.read(task_id=task_id, limit=200)
+    try:
+        from routes.jobs import _enrich, _name_map
+        names = _name_map()
+        cache: dict = {}
+        enriched = [_enrich(r, names, cache) for r in recs]
+    except Exception:
+        enriched = recs
+    return {"jobs": enriched, "count": len(enriched)}

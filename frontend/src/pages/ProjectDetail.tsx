@@ -45,6 +45,12 @@ import {
   type StatusKind,
 } from "../ui";
 import { useEditMode } from "../ui";
+import {
+  type TaskStatus,
+  TASK_STATUSES,
+  taskStatusKind,
+  taskStatusLabel,
+} from "../lib/tasks";
 import { useCrumbLabel } from "../components/appNav";
 import { chatApi, type ThreadSummary } from "../lib/chat";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
@@ -63,8 +69,6 @@ type Worktree = {
   branch: string;
   dir: string;
 };
-
-type TaskStatus = "todo" | "doing" | "done" | "blocked";
 
 type Task = {
   id: string;
@@ -117,14 +121,9 @@ const stateKind = (s?: string): StatusKind => {
   }
 };
 
-const TASK_STATUS_KIND: Record<TaskStatus, StatusKind> = {
-  todo: "stopped",
-  doing: "running",
-  done: "ok",
-  blocked: "danger",
-};
-
-const TASK_STATUSES: TaskStatus[] = ["todo", "doing", "done", "blocked"];
+// Task status type + status-to-kind map + labels now come from lib/tasks (the
+// single source of truth). This page previously knew only four of the seven
+// statuses and rendered a broken StatusDot for in_review / parked / cancelled.
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
@@ -239,18 +238,21 @@ function SpawnAgentModal({
 // ---- Tasks section ----------------------------------------------------------
 function TaskRow({
   task,
+  slug,
   childrenOf,
   depth,
   onStatus,
   onDelete,
 }: {
   task: Task;
+  slug: string;
   childrenOf: (parent: string | null, owner: string) => Task[];
   depth: number;
   onStatus: (id: string, status: TaskStatus) => void;
   onDelete: (task: Task) => void;
 }) {
   const kids = childrenOf(task.id, task.owner);
+  const firstLine = (task.text || "").split("\n")[0];
   return (
     <li>
       <Row wrap style={{ paddingLeft: `calc(${depth} * var(--space-5))`, paddingTop: "var(--space-2)", paddingBottom: "var(--space-2)", borderBottom: "1px solid var(--border)" }}>
@@ -261,10 +263,10 @@ function TaskRow({
           style={{ width: "9rem" }}
         >
           {TASK_STATUSES.map((s) => (
-            <option key={s} value={s}>{s}</option>
+            <option key={s} value={s}>{taskStatusLabel(s)}</option>
           ))}
         </Select>
-        <StatusDot status={TASK_STATUS_KIND[task.status]}>{task.status}</StatusDot>
+        <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
         <span
           style={{
             flex: "1 1 16rem",
@@ -272,8 +274,16 @@ function TaskRow({
             color: task.status === "done" ? "var(--muted)" : "inherit",
           }}
         >
-          {task.text}
+          {firstLine}
         </span>
+        <Link
+          to={`/work?scope=${encodeURIComponent(`project:${slug}`)}`}
+          className="ws-bc__link"
+          title="Open this project's tickets in Work"
+          style={{ fontSize: "var(--fs-sm)", whiteSpace: "nowrap" }}
+        >
+          View in Work
+        </Link>
         <Button size="sm" variant="danger-ghost" icon aria-label="Delete task" onClick={() => onDelete(task)}>
           <Trash2 aria-hidden />
         </Button>
@@ -281,7 +291,7 @@ function TaskRow({
       {kids.length > 0 && (
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {kids.map((k) => (
-            <TaskRow key={k.id} task={k} childrenOf={childrenOf} depth={depth + 1} onStatus={onStatus} onDelete={onDelete} />
+            <TaskRow key={k.id} task={k} slug={slug} childrenOf={childrenOf} depth={depth + 1} onStatus={onStatus} onDelete={onDelete} />
           ))}
         </ul>
       )}
@@ -957,6 +967,7 @@ export default function ProjectDetail() {
                           <TaskRow
                             key={t.id}
                             task={t}
+                            slug={slug}
                             childrenOf={childrenOf}
                             depth={0}
                             onStatus={setTaskStatus}
