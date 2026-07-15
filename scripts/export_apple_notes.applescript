@@ -1,6 +1,7 @@
 -- export_apple_notes.applescript
 --
--- Dumps EVERY Apple Note to ~/AppleNotesExport/<Folder>/<Title>.html, one file
+-- Dumps every Apple Note IN THE FOLDER named by `targetFolder` below (default
+-- "Notes") to ~/AppleNotesExport/<Folder>/<Title>.html, one file
 -- per note, each with a metadata header comment the Workshop importer reads
 -- (stable note id, title, folder, dates). Run it on your Mac:
 --
@@ -88,8 +89,16 @@ do shell script "mkdir -p " & quoted form of exportRoot
 set exportedCount to 0
 set usedNames to {} -- track "<folder>/<name>" to de-collide same-titled notes
 
+-- Scope the export to a single Apple Notes folder. Set to "" to export every
+-- note in every folder (the old behavior).
+set targetFolder to "Notes"
+
 tell application "Notes"
-	set allNotes to every note
+	if targetFolder is "" then
+		set allNotes to every note
+	else
+		set allNotes to notes of folder targetFolder
+	end if
 end tell
 
 repeat with theNote in allNotes
