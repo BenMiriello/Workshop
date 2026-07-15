@@ -206,24 +206,48 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   # only way to meter real token spend for the usage ledger. --max-turns bounds
   # within-iter cost.
   set +e
+  # </dev/null so claude doesn't wait on (and warn about) stdin — that warning
+  # would otherwise be merged into ITER_OUT by 2>&1 and corrupt the JSON.
   timeout "$PER_ITER_TIMEOUT" "$CLAUDE" $CONTINUE_FLAG -p "$ITER_PROMPT" \
     --output-format json \
     --max-turns "$MAX_TURNS_PER_ITER" \
-    >"$ITER_OUT" 2>&1
+    </dev/null >"$ITER_OUT" 2>&1
   CLAUDE_EXIT=$?
   set -e
 
-  # Sum this iteration's real context+output tokens (input + cache read/creation
-  # + output) into the run total. Best-effort: a non-JSON error blob yields 0.
+  # Sum this iteration's real context+output tokens (usage.input_tokens +
+  # cache_read + cache_creation + output_tokens) into the run total. Robust to a
+  # stray non-JSON line (e.g. a warning) landing in the file via 2>&1: try whole,
+  # then the line carrying "usage", then from the first result object.
   ITER_TOKENS=$(python3 -c "
-import json, sys
+import json
+tok = 0
 try:
-    d = json.load(open('$ITER_OUT'))
-    u = d.get('usage') or {}
-    print(int(u.get('input_tokens',0)) + int(u.get('cache_read_input_tokens',0))
-          + int(u.get('cache_creation_input_tokens',0)) + int(u.get('output_tokens',0)))
+    txt = open('$ITER_OUT').read()
+    obj = None
+    try:
+        obj = json.loads(txt)
+    except Exception:
+        for line in txt.splitlines():
+            line = line.strip()
+            if line.startswith('{') and '\"usage\"' in line:
+                try:
+                    obj = json.loads(line); break
+                except Exception:
+                    pass
+        if obj is None:
+            i = txt.find('{\"type\"')
+            if i >= 0:
+                try:
+                    obj = json.loads(txt[i:])
+                except Exception:
+                    obj = None
+    u = (obj or {}).get('usage') or {}
+    tok = (int(u.get('input_tokens', 0)) + int(u.get('cache_read_input_tokens', 0))
+           + int(u.get('cache_creation_input_tokens', 0)) + int(u.get('output_tokens', 0)))
 except Exception:
-    print(0)
+    tok = 0
+print(tok)
 " 2>/dev/null || echo 0)
   RUN_TOKENS=$((RUN_TOKENS + ITER_TOKENS))
 
