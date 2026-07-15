@@ -137,12 +137,22 @@ export const chatApi = {
   // Turn this chat into a self-contained background task (Stage 4). Files a
   // ticket into a project's queue (the chat's scope, else the workshop queue),
   // distilling the conversation when no explicit text is given.
-  spawnTask: (id: string, body?: { text?: string; project?: string }) =>
+  spawnTask: (id: string, body?: { text?: string; project?: string; run?: boolean }) =>
     fetch(`/api/chat/threads/${id}/spawn-task`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
-    }).then(j<{ task: { id: string; text: string; status: string }; scope: string; thread_id: string }>),
+    }).then(
+      j<{
+        task: { id: string; text: string; status: string };
+        scope: string;
+        thread_id: string;
+        decision?: string;
+        message?: string;
+        job_id?: string;
+        run_error?: string;
+      }>,
+    ),
 
   // Real context-window usage for the composer meter: the backend assembles the
   // actual prompt (persona + live app context + windowed history) and counts it.

@@ -3,9 +3,10 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
-  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff,
+  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
+import { scopeLabel } from "../lib/tasks";
 import {
   chatApi,
   type ChatMsg,
@@ -366,18 +367,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
-  // "Turn into task": files the chat as a background ticket (Stage 4).
-  const [spawning, setSpawning] = useState(false);
-  const [spawnMsg, setSpawnMsg] = useState<{ ok: boolean; text: string; scope: string } | null>(null);
-  const spawnTaskFromChat = useCallback(async () => {
+  // File the chat as a tracked ticket (Stage 4). Two affordances: File ticket
+  // (queue it for the dispatcher) and File and run (open a Job + launch a worker
+  // now). When a run starts, the server appends a persistent job-status card to
+  // the thread; we reload the messages so it shows immediately.
+  const [spawning, setSpawning] = useState<false | "file" | "run">(false);
+  const [spawnMsg, setSpawnMsg] = useState<
+    { ok: true; text: string; scope: string; ran: boolean; jobId?: string; runError?: string }
+    | { ok: false; text: string }
+    | null
+  >(null);
+  const spawnTaskFromChat = useCallback(async (run: boolean) => {
     if (!activeId || spawning) return;
-    setSpawning(true);
+    setSpawning(run ? "run" : "file");
     setSpawnMsg(null);
     try {
-      const r = await chatApi.spawnTask(activeId);
-      setSpawnMsg({ ok: true, text: r.task.text, scope: r.scope });
+      const r = await chatApi.spawnTask(activeId, { run });
+      if (run && r.job_id) {
+        try {
+          const t = await chatApi.getThread(activeId);
+          setMessages(t.messages);
+        } catch { /* the card still shows on the next reload */ }
+      }
+      setSpawnMsg({ ok: true, text: r.task.text, scope: r.scope, ran: !!r.job_id, jobId: r.job_id, runError: r.run_error });
     } catch {
-      setSpawnMsg({ ok: false, text: "Could not create a task from this chat.", scope: "" });
+      setSpawnMsg({ ok: false, text: "Could not create a task from this chat." });
     } finally {
       setSpawning(false);
     }
@@ -1135,12 +1149,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {activeId && (
         <button
           className="chat-tb__btn"
-          onClick={spawnTaskFromChat}
-          title="Turn this chat into a background task"
-          aria-label="Turn into task"
-          aria-busy={spawning}
+          onClick={() => void spawnTaskFromChat(false)}
+          disabled={spawning !== false}
+          title="File this chat as a tracked ticket"
+          aria-label="File ticket"
+          aria-busy={spawning === "file"}
         >
-          {spawning ? <Loader size={16} aria-hidden className="ws-spin" /> : <ListPlus size={16} aria-hidden />}
+          {spawning === "file" ? <Loader size={16} aria-hidden className="ws-spin" /> : <ListPlus size={16} aria-hidden />}
+        </button>
+      )}
+      {activeId && (
+        <button
+          className="chat-tb__btn"
+          onClick={() => void spawnTaskFromChat(true)}
+          disabled={spawning !== false}
+          title="File this chat as a ticket and run it now"
+          aria-label="File and run"
+          aria-busy={spawning === "run"}
+        >
+          {spawning === "run" ? <Loader size={16} aria-hidden className="ws-spin" /> : <Play size={16} aria-hidden />}
         </button>
       )}
       {slug && (
@@ -1612,8 +1639,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <span className="chat-spawn-note__body">
             {spawnMsg.ok ? (
               <>
-                Filed as a background task in <strong>{spawnMsg.scope}</strong>.{" "}
-                <a href="/jobs">Track it in Jobs</a>.{" "}
+                {spawnMsg.ran ? (
+                  <>Filed and running in <strong>{scopeLabel(spawnMsg.scope)}</strong>. The live status is in the card below.{" "}</>
+                ) : spawnMsg.runError ? (
+                  <>Filed in <strong>{scopeLabel(spawnMsg.scope)}</strong>, but could not run now: {spawnMsg.runError}.{" "}</>
+                ) : (
+                  <>Filed as a ticket in <strong>{scopeLabel(spawnMsg.scope)}</strong>.{" "}</>
+                )}
+                <a href={`/work?scope=${encodeURIComponent(spawnMsg.scope)}`}>View in Work</a>.{" "}
                 <span className="ws-muted">{spawnMsg.text.slice(0, 140)}{spawnMsg.text.length > 140 ? "…" : ""}</span>
               </>
             ) : (

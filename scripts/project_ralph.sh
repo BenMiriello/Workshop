@@ -13,12 +13,18 @@
 # never drift.
 #
 # Usage:
-#   project_ralph.sh <slug> [--max-wall SEC] [--max-tasks N]
+#   project_ralph.sh <slug> [--max-wall SEC] [--max-tasks N] [--task-id ID]
+#
+# --task-id runs exactly ONE task (skips next-ready selection, implies
+# --max-tasks 1): a chat/UI "run now" launcher. Everything else (flock, budget
+# admission, lease/fence, receipt) is identical to a normal sweep.
 #
 # Exit codes:
 #   0  — ran (queue drained, budget hit, or nothing to do)
 #   2  — project not found / autonomy off / global off-switch
 #   4  — startup failure
+#   6  run-now (--task-id): requested task not found in the scope
+#   7  run-now (--task-id): requested task not claimable (not todo, or claimed)
 
 set -u
 
@@ -39,6 +45,7 @@ RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
 DEFAULT_MAX_ATTEMPTS=3   # per-task attempt cap (sweep runs) when the task sets no max_attempts
 FORCE=0              # manual operator-triggered run bypasses the global off-switch
 JOB_ID=""            # adopt an already-open Job (manual run) instead of creating one
+TASK_ID_ARG=""       # --task-id: run exactly this one task (run-now), skip next-ready
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,11 +54,14 @@ while [[ $# -gt 0 ]]; do
     --max-wall)  MAX_WALL="$2"; shift 2 ;;
     --max-tasks) MAX_TASKS="$2"; shift 2 ;;
     --job-id)    JOB_ID="$2"; shift 2 ;;
+    --task-id)   TASK_ID_ARG="$2"; shift 2 ;;
     --force)     FORCE=1; shift ;;
     *)           SLUG="$1"; shift ;;
   esac
 done
 ASSIGNEE_FLAG=(); [[ -n "$ASSIGNEE" ]] && ASSIGNEE_FLAG=(--assignee "$ASSIGNEE")
+# A run-now targets exactly one task; never let it drain the queue.
+[[ -n "$TASK_ID_ARG" ]] && MAX_TASKS=1
 
 # Job store shim (services.jobs). Run from the repo root so `backend.services`
 # is importable regardless of this script's caller cwd. The run-state of a sweep
@@ -291,8 +301,28 @@ while (( n < MAX_TASKS )); do
     break
   fi
 
-  # Dependency-aware, assignee-scoped next task (reconciles the store first).
-  NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
+  # Task selection. A normal sweep asks for the dependency-aware next ready task.
+  # A run-now (--task-id) targets exactly that id: read its record, require it to
+  # be `todo` (anything else means another sweep owns it or it is not runnable),
+  # and let the atomic claim below be the final authority. Both reconcile first.
+  if [[ -n "$TASK_ID_ARG" ]]; then
+    NEXT=$(python3 "$PTASKS" list-json "$DIR" --include-done 2>>"$LOG" \
+             | jq -c --arg id "$TASK_ID_ARG" 'map(select(.id==$id)) | .[0] // empty' 2>>"$LOG")
+    if [[ -z "$NEXT" ]]; then
+      log "run-now: task $TASK_ID_ARG not found in $DIR"
+      job_finish "$JOB_ID" cancelled "$DONE" "$FAILED"
+      exit 6
+    fi
+    RUN_NOW_STATUS=$(jf "$NEXT" status)
+    if [[ "$RUN_NOW_STATUS" != "todo" ]]; then
+      log "run-now: task $TASK_ID_ARG not claimable (status=$RUN_NOW_STATUS)"
+      job_finish "$JOB_ID" cancelled "$DONE" "$FAILED"
+      exit 7
+    fi
+  else
+    # Dependency-aware, assignee-scoped next task (reconciles the store first).
+    NEXT=$(python3 "$PTASKS" next-ready "$DIR" "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
+  fi
   TASK_ID=$(jf "$NEXT" id)
   TASK_TEXT=$(jf "$NEXT" text)
   if [[ -z "$TASK_ID" ]]; then
@@ -331,8 +361,14 @@ while (( n < MAX_TASKS )); do
   CLAIMED=$(python3 "$PTASKS" claim "$DIR" "$TASK_ID" "$CHILD_JOB" --pid $$ "${ASSIGNEE_FLAG[@]}" 2>>"$LOG")
   CLAIMED_ID=$(jf "$CLAIMED" id)
   if [[ -z "$CLAIMED_ID" ]]; then
-    log "task=$TASK_ID already claimed elsewhere — skipping"
+    log "task=$TASK_ID already claimed elsewhere, skipping"
     job_finish_child "$CHILD_JOB" cancelled 0
+    # A run-now can only mean this exact task; if it was claimed out from under us
+    # between the precheck and here, report not-claimable rather than looping.
+    if [[ -n "$TASK_ID_ARG" ]]; then
+      job_finish "$JOB_ID" cancelled "$DONE" "$FAILED"
+      exit 7
+    fi
     continue
   fi
   ATTEMPTS=$(jf "$CLAIMED" attempts); [[ -z "$ATTEMPTS" ]] && ATTEMPTS=1

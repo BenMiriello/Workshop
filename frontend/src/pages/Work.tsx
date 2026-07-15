@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { RefreshCw, Plus, Pencil, Trash2, ArrowUpRight } from "lucide-react";
+import { RefreshCw, Plus, Pencil, Trash2, ArrowUpRight, Play } from "lucide-react";
 import {
   Button,
   Card,
@@ -370,6 +370,8 @@ function EditTicket({
   const [flash, setFlash] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [runBusy, setRunBusy] = useState(false);
+  const [runNote, setRunNote] = useState<string | null>(null);
 
   const idPath = `${encodeURIComponent(scope)}/${encodeURIComponent(task.id)}`;
 
@@ -436,8 +438,37 @@ function EditTicket({
     }
   }, [idPath, onChanged]);
 
+  // Run this ticket now: open a Job + launch a single-task worker (no cron wait).
+  // A busy tree returns 409, surfaced inline as a status line (not a dialog).
+  const runNow = useCallback(async () => {
+    setRunBusy(true);
+    setRunNote(null);
+    setErr(null);
+    try {
+      const r = await fetch(`/api/tasks/${idPath}/run`, { method: "POST" });
+      if (r.status === 409) {
+        const e = await r.json().catch(() => ({}));
+        setRunNote(e.detail || "A sweep is already running against this scope. Try again when it finishes.");
+        return;
+      }
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setRunNote("Run started. It appears under Runs below.");
+      // Keep the drawer open (do NOT call onChanged, which closes it): just
+      // refetch this ticket's linked runs so the new one shows immediately.
+      const jr = await fetch(`/api/tasks/${idPath}/jobs`)
+        .then((x) => (x.ok ? x.json() : { jobs: [] }))
+        .catch(() => ({ jobs: [] }));
+      setJobs(jr.jobs ?? []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunBusy(false);
+    }
+  }, [idPath]);
+
   const href = scopeHref(scope);
   const evidence = current.evidence ?? [];
+  const canRun = current.status === "todo";
 
   return (
     <Modal
@@ -456,6 +487,11 @@ function EditTicket({
             <Button variant="danger-ghost" onClick={() => setConfirmDel(true)}>
               <Trash2 aria-hidden /> Delete
             </Button>
+            {canRun && (
+              <Button loading={runBusy} onClick={runNow}>
+                <Play aria-hidden /> Run now
+              </Button>
+            )}
             <Button variant="primary" onClick={() => { setDraft(toDraft(current)); setEditing(true); }}>
               <Pencil aria-hidden /> Edit
             </Button>
@@ -524,6 +560,7 @@ function EditTicket({
               <p className="ws-muted" style={{ margin: 0 }}>Blocked: {current.blocked_reason}</p>
             )}
             {flash && <p className="ws-muted" style={{ margin: 0 }}>Saved.</p>}
+            {runNote && <p className="ws-muted" style={{ margin: 0 }}>{runNote}</p>}
             {err && <p className="ws-field__error">{err}</p>}
 
             <div>

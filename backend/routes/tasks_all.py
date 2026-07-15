@@ -21,8 +21,11 @@ when nothing moved.
 """
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -35,6 +38,10 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 _PROJECTS_REGISTRY = Path(os.environ.get(
     "WORKSHOP_PROJECTS_REGISTRY", str(ownership._RUNTIME / "projects.json")))
 _AGENT_SCOPES_DIR = ownership._RUNTIME / "agent-scopes"
+
+# The sweep launcher (project_ralph.sh) and the repo root Popen runs from.
+_WORKSHOP_ROOT = task_scope.WORKSHOP_ROOT
+_SCRIPTS_ROOT = _WORKSHOP_ROOT / "scripts"
 
 
 # ---- Scope resolution ------------------------------------------------------
@@ -140,6 +147,7 @@ class TaskCreateIn(BaseModel):
     scope: str = Field(min_length=1)
     text: str = Field(min_length=1, max_length=4000)
     priority: int = 0
+    effort: str | None = None  # s|m|l hint; set post-create, never a gate
 
 
 @router.post("")
@@ -160,6 +168,15 @@ async def create(body: TaskCreateIn) -> dict:
     except ValueError as e:
         raise HTTPException(400, str(e))
     task = dict(res["task"]) if res.get("task") else None
+    # `effort` is a hint the create path did not carry; stamp it on a freshly
+    # created task (not a merge, which would overwrite the existing one's).
+    if task is not None and body.effort and res.get("decision") not in ("exact", "merge"):
+        try:
+            updated = tasks.update(root, task["id"], effort=body.effort)
+            if updated:
+                task = dict(updated)
+        except ValueError:
+            pass
     if task is not None:
         task["scope"] = body.scope
     return {
@@ -242,3 +259,123 @@ async def task_jobs(scope: str, task_id: str) -> dict:
     except Exception:
         enriched = recs
     return {"jobs": enriched, "count": len(enriched)}
+
+
+# ---- Run now ---------------------------------------------------------------
+# Chat/UI "run this task now": open a Job and launch a detached single-task sweep
+# (project_ralph.sh --task-id) so work starts in seconds instead of waiting for
+# the ~20-minute cron. The sweep owns claim/lease/fence/acceptance/receipt/budget
+# admission; --force marks a deliberate operator action that legitimately bypasses
+# the paused-autonomy flag, exactly like the existing per-project run endpoint.
+
+
+def _sweep_dir_str(scope: str) -> str | None:
+    """The DIR string the sweep keys its per-tree flock on, matching how
+    project_ralph.sh resolves it: a project sweep reads the registry `dir` string
+    verbatim; a --dir sweep uses the path we pass. Returns None for an unknown
+    scope. Used only for the busy pre-check; a mismatch degrades to launching and
+    letting the sweep's own flock abort cleanly, never to a wrong answer."""
+    if scope.startswith("project:"):
+        slug = scope.split(":", 1)[1]
+        try:
+            reg = json.loads(_PROJECTS_REGISTRY.read_text())
+            d = ((reg.get("projects") or {}).get(slug) or {}).get("dir")
+            if d:
+                return str(d)
+        except (json.JSONDecodeError, OSError):
+            pass
+    root = _root_for_scope(scope)
+    return str(root) if root is not None else None
+
+
+def _tree_busy(dir_str: str) -> bool:
+    """True when a sweep already holds this tree's flock. Mirrors the exact lock
+    path project_ralph.sh derives (md5 of `echo "$DIR"`, first 12 hex chars) and
+    probes it non-blocking. The probe releases immediately; the launched sweep
+    re-locks and aborts cleanly if we lose the (tiny) race."""
+    digest = hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
+    lock = Path(f"/tmp/workshop-project-ralph-{digest}.lock")
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def launch_task_run(scope: str, task_id: str) -> dict:
+    """Open a manual Job and Popen a detached single-task sweep against `scope`
+    for exactly `task_id`. Shared by the /tasks run endpoint and the chat
+    spawn-and-run path so the Popen pattern lives in one place.
+
+    Scope -> launcher (dir resolved via task_scope.root_for_context):
+      project:<slug> -> project_ralph.sh <slug> --force --job-id --task-id
+      workshop       -> ... --dir <workshop root> --force --job-id --task-id
+      agent:<slug>   -> ... --dir <scope root> --assignee agent:<slug> --force ...
+      build:<slug>   -> ... --dir <build agent root> --force --job-id --task-id
+
+    Raises HTTPException(409) when a sweep already holds the tree, (400) on an
+    unknown scope, (500) when the driver is missing. Returns {ok, job_id, scope,
+    task_id}."""
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    script = _SCRIPTS_ROOT / "project_ralph.sh"
+    if not script.exists():
+        raise HTTPException(500, f"driver missing: {script}")
+
+    dir_str = _sweep_dir_str(scope)
+    if dir_str and _tree_busy(dir_str):
+        raise HTTPException(409, f"a sweep is already running against {scope}; try again when it finishes")
+
+    start_kwargs: dict = {"trigger": "manual", "status": "running", "task_id": task_id}
+    if scope.startswith("project:"):
+        slug = scope.split(":", 1)[1]
+        start_kwargs["project_slug"] = slug
+        cmd_tail = [slug]
+    elif scope == "workshop":
+        start_kwargs["project_slug"] = "workshop"
+        cmd_tail = ["--dir", str(root)]
+    elif scope.startswith("agent:"):
+        slug = scope.split(":", 1)[1]
+        start_kwargs["agent_id"] = f"agent:{slug}"
+        cmd_tail = ["--dir", str(root), "--assignee", f"agent:{slug}"]
+    elif scope.startswith("build:"):
+        cmd_tail = ["--dir", str(root)]
+    else:
+        raise HTTPException(400, f"scope not runnable: {scope}")
+
+    job = jobs.start(**start_kwargs)
+    try:
+        log_dir = root / ".runtime"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        logf: object = open(log_dir / "ralph.log", "a")  # noqa: SIM115 (handed to child)
+    except OSError:
+        logf = subprocess.DEVNULL
+    cmd = ["bash", str(script), *cmd_tail, "--force", "--job-id", job["id"], "--task-id", task_id]
+    subprocess.Popen(
+        cmd,
+        cwd=str(_WORKSHOP_ROOT),
+        stdout=logf,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    return {"ok": True, "job_id": job["id"], "scope": scope, "task_id": task_id}
+
+
+@router.post("/{scope}/{task_id}/run")
+async def run_task(scope: str, task_id: str) -> dict:
+    """Run exactly this task now. 409 if a sweep already holds the tree. Single
+    operator: no confirmation gate, no allowlist."""
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    if tasks.get_task(root, task_id) is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    return launch_task_run(scope, task_id)

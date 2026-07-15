@@ -21,7 +21,8 @@ export type UiCardFieldType =
   | "textarea"
   | "template"
   | "sensitivity"
-  | "select";
+  | "select"
+  | "taskscope"; // a select the client fills from GET /api/tasks/scopes
 
 export type UiCardSelectOption = { value: string; label: string };
 
@@ -53,11 +54,21 @@ export type UiCardSpec = {
   title?: string;
   fields?: UiCardField[];
   actions?: UiCardAction[];
+  // Server-emitted `job-status` cards carry these instead of fields: the live
+  // run to poll, and where it came from (for the links).
+  job_id?: string;
+  task_id?: string;
+  scope?: string;
 };
 
 // Kinds the client knows how to render as a live, interactive card. Anything
-// else falls back to an inert (read-only, no-button) card.
-export const KNOWN_KINDS = new Set<string>(["project-proposal"]);
+// else falls back to an inert (read-only, no-button) card. `job-status` is
+// rendered by a dedicated poller (see UiCard.tsx), not the generic form path.
+export const KNOWN_KINDS = new Set<string>([
+  "project-proposal",
+  "task-proposal",
+  "job-status",
+]);
 
 // ---- Handler contract ------------------------------------------------------
 export type CardState = {
@@ -73,7 +84,16 @@ export type UiCardCtx = {
 };
 
 export type CardResult =
-  | { status: "success"; slug?: string; title?: string; note?: string; actions?: UiCardAction[] }
+  | {
+      status: "success";
+      slug?: string;
+      title?: string;
+      note?: string;
+      actions?: UiCardAction[];
+      // Extra card values to stash so follow-up actions can read them (e.g. the
+      // job id a run produced, consumed by `viewRun`).
+      values?: Record<string, string>;
+    }
   | { status: "error"; message: string }
   | { status: "dismiss" }
   | { status: "noop" };
@@ -155,10 +175,125 @@ const moveChatToProject: UiCardHandler = async (state, ctx) => {
 
 const dismiss: UiCardHandler = async () => ({ status: "dismiss" });
 
+// ---- task-proposal handlers ------------------------------------------------
+// A task-proposal card scopes work into a tracked ticket. `addTasks` files it;
+// `addTasksAndRun` files it and starts a worker immediately (the run endpoint).
+// The store, CLI, and API all say `task`; the UI prose says "ticket".
+
+type CreatedTask = {
+  task?: { id?: string; text?: string } | null;
+  decision?: string;
+  message?: string;
+};
+
+async function fileTicket(v: Record<string, string>): Promise<CreatedTask> {
+  const scope = (v.scope || "workshop").trim();
+  const text = (v.text || "").trim();
+  const priority = Number(v.priority || "0") || 0;
+  const effort = (v.effort || "").trim();
+  const r = await fetch("/api/tasks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scope, text, priority, effort: effort || null }),
+  });
+  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+  return (await r.json()) as CreatedTask;
+}
+
+const addTasks: UiCardHandler = async (state) => {
+  const scope = (state.values.scope || "workshop").trim();
+  if (!(state.values.text || "").trim()) {
+    return { status: "error", message: "Add a ticket title first." };
+  }
+  try {
+    const j = await fileTicket(state.values);
+    const decided = j.decision && j.decision !== "distinct" ? ` (${j.message ?? j.decision})` : "";
+    return {
+      status: "success",
+      note: `Filed a ticket in ${scope}${decided}.`,
+      values: { scope } as Record<string, string>,
+      actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
+    };
+  } catch (e) {
+    return { status: "error", message: String(e) };
+  }
+};
+
+const addTasksAndRun: UiCardHandler = async (state) => {
+  const scope = (state.values.scope || "workshop").trim();
+  if (!(state.values.text || "").trim()) {
+    return { status: "error", message: "Add a ticket title first." };
+  }
+  let created: CreatedTask;
+  try {
+    created = await fileTicket(state.values);
+  } catch (e) {
+    return { status: "error", message: String(e) };
+  }
+  const taskId = created.task?.id;
+  if (!taskId) {
+    return { status: "error", message: "Ticket filed but no id was returned." };
+  }
+  if (created.decision === "merge" || created.decision === "exact") {
+    return {
+      status: "success",
+      note: `Merged into an existing ticket in ${scope}; did not start a new run.`,
+      values: { scope } as Record<string, string>,
+      actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
+    };
+  }
+  const rr = await fetch(
+    `/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(taskId)}/run`,
+    { method: "POST" },
+  );
+  if (!rr.ok) {
+    let detail = `${rr.status}`;
+    try {
+      const e = await rr.json();
+      detail = e.detail || detail;
+    } catch {
+      /* non-JSON body */
+    }
+    // The ticket IS filed; only the immediate run failed (commonly a busy tree).
+    return {
+      status: "success",
+      note: `Filed the ticket in ${scope}, but could not run it now: ${detail}`,
+      values: { scope } as Record<string, string>,
+      actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
+    };
+  }
+  const run = await rr.json();
+  return {
+    status: "success",
+    note: `Filed and running in ${scope}.`,
+    values: { scope, __job_id: String(run.job_id || "") } as Record<string, string>,
+    actions: [
+      { id: "viewRun", label: "View run", variant: "primary" },
+      { id: "openWork", label: "Open in Work" },
+    ],
+  };
+};
+
+const openWork: UiCardHandler = async (state, ctx) => {
+  const scope = (state.values.scope || "").trim();
+  ctx.navigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work");
+  return { status: "noop" };
+};
+
+const viewRun: UiCardHandler = async (state, ctx) => {
+  const jid = (state.values.__job_id || "").trim();
+  ctx.navigate(jid ? `/jobs/${encodeURIComponent(jid)}` : "/work");
+  return { status: "noop" };
+};
+
 export const UI_CARD_ACTIONS: Record<string, UiCardHandler> = {
   createProject,
   openProject,
   moveChatToProject,
+  addTasks,
+  addTasksAndRun,
+  openWork,
+  viewRun,
   dismiss,
 };
 

@@ -122,6 +122,38 @@ UI_CARD_PROTOCOL = (
     "card per reply."
 )
 
+# The `task-proposal` ui-card: how a chat scopes work into a TRACKED ticket
+# instead of doing it inline. Described to the general + build/project personas so
+# those models may emit it (the ui-card protocol requires a kind be described
+# before use). The SERVER emits the companion `job-status` card after a run, so
+# that one is deliberately NOT described to the model.
+TASK_PROPOSAL_CARD = (
+    "=== TASK PROPOSAL CARD (task-proposal) ===\n"
+    "To turn work into a tracked ticket instead of doing it in the conversation, "
+    "emit ONE `ui-card` of kind `task-proposal`. The operator reviews it and "
+    "clicks File ticket (queue it) or File and run (start a worker now). Fields:\n"
+    "  - scope: type `taskscope` (a select the client fills with the available "
+    "scopes; prefill `value` with this chat's own scope when it has one, else "
+    "`workshop`).\n"
+    "  - text: type `textarea`. The FIRST line is the ticket title, the rest is "
+    "the description. State the concrete goal, files, and acceptance so a worker "
+    "can act without seeing this chat.\n"
+    "  - priority: type `text` (a number; higher runs first, default 0).\n"
+    "  - effort: type `select` with options s / m / l (your rough size estimate, "
+    "a hint only).\n"
+    "Actions: `addTasks` (file it), `addTasksAndRun` (file it and run now), "
+    "`dismiss`. Emit it only when there is real work to scope, never as decoration."
+)
+
+# Build/project triage rule (sub-decision a): the model, not a code threshold,
+# decides inline-vs-delegate, with the operator's click as the tiebreaker.
+TASK_PROPOSAL_BUILD_RULE = (
+    "TRIAGE: answer questions and make single-file trivial edits inline while the "
+    "operator is watching. For anything multi-step, multi-file, or that should "
+    "survive this conversation, emit a task-proposal card instead of doing it "
+    "inline; the operator's click (File ticket vs File and run) is the tiebreaker."
+)
+
 # Skill loader protocol (Phase 5). Data-mode assistants see the available skill
 # names + descriptions ambiently (in the cache-stable prefix); to pull a skill's
 # FULL instructions they emit this fenced block and the backend feeds the body
@@ -552,7 +584,8 @@ class ContextProvider:
             "and brief. Use short paragraphs or tight bullet lists. No emojis.\n\n"
             "Below each turn you may be given live snapshots from the operator's installed apps "
             "(accounts, budget, location, commute, etc.) — read what's given to you before "
-            "answering, and DON'T make up numbers when real ones are right there."
+            "answering, and DON'T make up numbers when real ones are right there.\n\n"
+            + TASK_PROPOSAL_CARD
         )
 
     def live_context(self) -> str:
@@ -714,7 +747,8 @@ class ProjectContextProvider(ContextProvider):
             "(verbs: set-status <id> done, add \"text\", block <id> \"reason\", "
             "note <id> \"text\", next-ready). When the operator gives a non-trivial "
             "direction, append a one-line decision note to PROJECT.md.\n\n"
-            f"Project-local agent rules:\n\n{rules or '(none)'}"
+            + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
+            + f"Project-local agent rules:\n\n{rules or '(none)'}"
         )
 
     def live_context(self) -> str:
@@ -778,7 +812,8 @@ class BuildAgentContextProvider(ContextProvider):
             "over Bash (set-status <id> done, add \"text\", block <id> \"reason\", "
             "note <id> \"text\", next-ready). When the operator gives a non-trivial "
             "direction, append a one-line decision note to PROJECT.md.\n\n"
-            f"Build-agent rules:\n\n{rules or '(none)'}"
+            + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
+            + f"Build-agent rules:\n\n{rules or '(none)'}"
         )
 
     def live_context(self) -> str:

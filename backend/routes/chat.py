@@ -100,6 +100,7 @@ class SpawnTask(BaseModel):
     text: str | None = None       # explicit task text; else distilled from the chat
     project: str | None = None    # target project slug; else the chat's own scope
     acceptance: dict | None = None
+    run: bool = False             # file AND run now (open a Job, launch a worker)
 
 
 def _resolve_model(
@@ -246,23 +247,29 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     lost when the conversation scrolls away. Scope: an explicit `project`, else the
     chat's own binding, else the workshop root queue (a general chat has nowhere
     of its own to file to)."""
-    from pathlib import Path
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
 
+    # Resolve a canonical scope KEY (workshop / project:<slug> / agent:<slug> /
+    # build:<slug>) so the same key both files the task AND drives the run
+    # launcher. An explicit project wins; else the chat's own binding when it has
+    # a task scope; else the workshop root queue (a general chat has none of its
+    # own to file to yet).
     root = None
-    scope_label = None
+    scope_key = None
     if body.project:
-        root = task_scope.root_for_context(f"project:{body.project}")
-        scope_label = body.project
+        scope_key = f"project:{body.project}"
+        root = task_scope.root_for_context(scope_key)
     if root is None:
         ctx = t.get("context_key")
-        root = task_scope.root_for_context(ctx)
-        scope_label = ctx
+        resolved = task_scope.root_for_context(ctx)
+        if resolved is not None:
+            scope_key = ctx
+            root = resolved
     if root is None:
-        root = Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
-        scope_label = "workshop"
+        scope_key = "workshop"
+        root = task_scope.root_for_context("workshop")
 
     text = (body.text or "").strip()
     if not text:
@@ -279,15 +286,58 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         root, text=text, acceptance=acceptance,
         source={"kind": "chat", "ref": thread_id},
     )
-    return {
+    resp = {
         "task": result["task"],
-        "scope": scope_label,
+        "scope": scope_key,
         "thread_id": thread_id,
         "decision": result["decision"],
         "matched_id": result.get("matched_id"),
         "cosine": result.get("cosine"),
         "message": result["message"],
     }
+
+    # File AND run: launch a worker now for a freshly filed task. Never run a
+    # merge/exact (it folded into an existing task; running that would be a
+    # surprise re-run of unrelated work). The launcher opens the Job; we then
+    # server-append a job-status ui-card so the live run persists in the thread
+    # across reloads with zero new transport.
+    if body.run and result["decision"] not in ("merge", "exact"):
+        task_rec = result.get("task") or {}
+        task_id = task_rec.get("id")
+        if task_id and scope_key:
+            from routes.tasks_all import launch_task_run
+            try:
+                run_res = launch_task_run(scope_key, task_id)
+            except HTTPException as e:
+                resp["run_error"] = e.detail
+            else:
+                job_id = run_res["job_id"]
+                resp["job_id"] = job_id
+                _append_job_status_card(thread_id, job_id, scope_key, task_id, task_rec)
+    return resp
+
+
+def _append_job_status_card(
+    thread_id: str, job_id: str, scope: str, task_id: str, task_rec: dict
+) -> None:
+    """Persist the live run as an assistant message carrying a ```ui-card
+    `job-status` block. The SERVER emits this card (never the model): the client
+    polls the Job and renders the lifecycle inline, and the message survives a
+    reload. Best-effort; a store hiccup must not fail the spawn."""
+    title = (task_rec.get("text") or "").split("\n", 1)[0].strip()[:80] or "the task"
+    card = {
+        "id": f"job-{job_id}",
+        "kind": "job-status",
+        "title": "Background run",
+        "job_id": job_id,
+        "task_id": task_id,
+        "scope": scope,
+    }
+    content = f'Running "{title}" now.\n\n```ui-card\n' + _json.dumps(card) + "\n```"
+    try:
+        chat_store.append_message(thread_id, "assistant", content, meta={"job_status": True})
+    except Exception as e:
+        log.warning("job-status card append failed: %s", e)
 
 
 @router.post("/threads/{thread_id}/rescope")

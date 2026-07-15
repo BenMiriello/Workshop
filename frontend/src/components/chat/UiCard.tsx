@@ -13,7 +13,7 @@
 // thread re-renders each card in edit state from the stored block; createProject
 // handles 409 so a re-submit after reload stays safe. No server-side card state.
 import { useEffect, useMemo, useState } from "react";
-import { CircleCheck, MinusCircle, Sparkles } from "lucide-react";
+import { CircleCheck, MinusCircle, Sparkles, ArrowUpRight, ListChecks } from "lucide-react";
 import {
   Button,
   Card,
@@ -26,9 +26,12 @@ import {
   Skeleton,
   Stack,
   StateBlock,
+  StatusPill,
   Textarea,
   type SegmentedOption,
 } from "../../ui";
+import { scopeLabel } from "../../lib/tasks";
+import { type Job, jobStatusKind } from "../../lib/jobs";
 import {
   KNOWN_KINDS,
   UI_CARD_ACTIONS,
@@ -173,6 +176,71 @@ function TemplateField({
   );
 }
 
+// ---- Scope field: self-fetching select over the task scopes ----------------
+// Mirrors TemplateField's four-state fetch. The task-proposal card uses it so
+// the model does not have to enumerate scopes; the prefilled `value` (this
+// chat's own scope) stays selected as long as it is one of the returned scopes.
+function TaskScopeField({
+  field,
+  value,
+  onChange,
+}: {
+  field: UiCardField;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [scopes, setScopes] = useState<string[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const label = field.label || "Scope";
+
+  useEffect(() => {
+    let cancelled = false;
+    setErr(null);
+    setScopes(null);
+    fetch("/api/tasks/scopes")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${r.status}`))))
+      .then((j: { scopes?: string[] }) => {
+        if (cancelled) return;
+        const list = j.scopes ?? [];
+        // Always keep the prefilled scope selectable even if it has no store yet.
+        const withValue = value && !list.includes(value) ? [value, ...list] : list;
+        setScopes(withValue.length ? withValue : ["workshop"]);
+      })
+      .catch((e) => { if (!cancelled) setErr(String(e)); });
+    return () => { cancelled = true; };
+  }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (err) {
+    return (
+      <Field label={label}>
+        <StateBlock
+          variant="error"
+          title="Couldn't load scopes."
+          hint={<span className="ws-mono">GET /api/tasks/scopes</span>}
+          action={<Button size="sm" variant="ghost" onClick={() => setReloadKey((k) => k + 1)}>Retry</Button>}
+        />
+      </Field>
+    );
+  }
+  if (scopes === null) {
+    return (
+      <Field label={label}>
+        <Skeleton width="100%" />
+      </Field>
+    );
+  }
+  return (
+    <Field label={label} help={field.help}>
+      <Select value={value || scopes[0]} onChange={(e) => onChange(e.target.value)}>
+        {scopes.map((s) => (
+          <option key={s} value={s}>{scopeLabel(s)}</option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
 const SENSITIVITY_OPTIONS: SegmentedOption<string>[] = [
   { value: "private", label: "Private" },
   { value: "shareable", label: "Shareable" },
@@ -206,6 +274,8 @@ function CardField({
       );
     case "template":
       return <TemplateField field={field} value={value} onChange={onChange} />;
+    case "taskscope":
+      return <TaskScopeField field={field} value={value} onChange={onChange} />;
     case "sensitivity":
       return (
         <Field label={label} help={help}>
@@ -272,6 +342,134 @@ function ActionButtons({
   );
 }
 
+// ---- job-status: the live run lifecycle, rendered inline -------------------
+// The SERVER appends this card after a File-and-run. Given a job_id, it polls
+// GET /api/jobs/{id} until the run reaches a terminal status, then surfaces the
+// receipt highlights (from the per-task CHILD job, which carries the receipt the
+// coordinator job does not) plus links to the Job and the originating ticket.
+
+const RUNNING_STATES = new Set(["running", "queued"]);
+
+function jobDuration(job: Job): string {
+  if (!job.started_at) return "";
+  const start = new Date(job.started_at).getTime();
+  const end = job.ended_at ? new Date(job.ended_at).getTime() : NaN;
+  if (isNaN(start) || isNaN(end)) return "";
+  const secs = Math.max(0, Math.round((end - start) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+function jobReceipt(job: Job | null): { kind: string } & Record<string, unknown> | null {
+  if (!job) return null;
+  const ev = job.evidence;
+  if (ev && typeof ev === "object" && !Array.isArray(ev) && (ev as Record<string, unknown>).kind === "receipt") {
+    return ev as { kind: string } & Record<string, unknown>;
+  }
+  return null;
+}
+
+function JobStatusCard({ spec, ctx }: { spec: UiCardSpec; ctx: UiCardCtx }) {
+  const jobId = spec.job_id || "";
+  const scope = spec.scope || "";
+  const [job, setJob] = useState<Job | null>(null);
+  const [child, setChild] = useState<Job | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let live = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
+        if (!r.ok) throw new Error(`${r.status}`);
+        const j: Job = await r.json();
+        if (!live) return;
+        setJob(j);
+        setErr(null);
+        const terminal = j.status ? !RUNNING_STATES.has(j.status) : false;
+        if (terminal) {
+          // The receipt lives on the per-task CHILD job, not this coordinator.
+          try {
+            const cr = await fetch(`/api/jobs?parent_id=${encodeURIComponent(jobId)}&limit=5`);
+            if (cr.ok) {
+              const cj = await cr.json();
+              const kids: Job[] = cj.jobs || [];
+              if (live) setChild(kids.find((k) => jobReceipt(k)) || kids[0] || null);
+            }
+          } catch {
+            /* child lookup is best-effort */
+          }
+        } else {
+          timer = window.setTimeout(poll, 5000);
+        }
+      } catch (e) {
+        if (!live) return;
+        setErr(String(e));
+        timer = window.setTimeout(poll, 5000);
+      }
+    };
+    void poll();
+    return () => { live = false; if (timer) window.clearTimeout(timer); };
+  }, [jobId]);
+
+  const status = job?.status || "queued";
+  const running = RUNNING_STATES.has(status);
+  const receipt = jobReceipt(child);
+  const files = Array.isArray(receipt?.files) ? (receipt!.files as unknown[]).length : 0;
+  const commits = Array.isArray(receipt?.commits) ? (receipt!.commits as unknown[]).length : 0;
+  const summaryRaw = (typeof receipt?.summary === "string" ? receipt!.summary : "")
+    || child?.summary || job?.summary || job?.error || "";
+  const summary = summaryRaw.split("\n")[0]?.slice(0, 200) || "";
+  const dur = job ? jobDuration(job) : "";
+
+  return (
+    <Card>
+      <Stack gap="sm">
+        <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
+          <ListChecks size={16} strokeWidth={1.8} aria-hidden />
+          <span className="ws-card__title">{spec.title || "Background run"}</span>
+          <StatusPill status={jobStatusKind(status)}>
+            {running ? "running" : status}
+          </StatusPill>
+          {dur && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{dur}</span>}
+        </Row>
+        {err && !job && (
+          <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>Waiting for the run to appear.</span>
+        )}
+        {!running && (files > 0 || commits > 0) && (
+          <Row wrap style={{ gap: "var(--space-3)" }}>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+              {files} file{files === 1 ? "" : "s"} changed
+            </span>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+              {commits} commit{commits === 1 ? "" : "s"}
+            </span>
+          </Row>
+        )}
+        {!running && summary && (
+          <span style={{ fontSize: "var(--fs-sm)" }}>{summary}</span>
+        )}
+        <Row wrap style={{ gap: "var(--space-2)" }}>
+          <Button size="sm" variant="ghost" onClick={() => ctx.navigate(`/jobs/${encodeURIComponent(jobId)}`)}>
+            View job <ArrowUpRight size={14} aria-hidden />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => ctx.navigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work")}
+          >
+            Open ticket <ArrowUpRight size={14} aria-hidden />
+          </Button>
+        </Row>
+      </Stack>
+    </Card>
+  );
+}
+
 export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: string; ctx: UiCardCtx }) {
   const fields = useMemo(() => spec?.fields ?? [], [spec]);
   const [values, setValues] = useState<Record<string, string>>(() => {
@@ -297,6 +495,7 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
       const result = await handler({ spec, values }, ctx);
       if (result.status === "success") {
         if (result.slug) setValues((prev) => ({ ...prev, slug: result.slug as string }));
+        if (result.values) setValues((prev) => ({ ...prev, ...result.values }));
         setSuccess({ slug: result.slug, title: result.title, note: result.note, actions: result.actions });
         setPhase("success");
       } else if (result.status === "dismiss") {
@@ -336,6 +535,11 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
         </Stack>
       </Card>
     );
+  }
+
+  // Server-emitted live-run card: its own poller, not the generic form path.
+  if (spec.kind === "job-status") {
+    return <JobStatusCard spec={spec} ctx={ctx} />;
   }
 
   if (phase === "dismissed") {
