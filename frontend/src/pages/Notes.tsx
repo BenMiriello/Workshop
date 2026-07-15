@@ -43,7 +43,7 @@ type Note = {
 
 type NotesResp = { notes: Note[]; count: number; scopes?: number };
 
-// A doc from the read-only docs index (GET /api/docs). Notes are editable scoped
+// A doc from the read-only docs index (GET /api/documents). Notes are editable scoped
 // knowledge; docs are committed markdown under docs/, surfaced read-only here so
 // the operator sees notes and documents from one place (notes-system plan N3).
 type Doc = {
@@ -554,7 +554,7 @@ function EditNote({
 
 // ---- Documents (read-only docs/ index) -------------------------------------
 
-// The read-only bridge to the committed docs/ tree (GET /api/docs). Plans and
+// The read-only bridge to the committed docs/ tree (GET /api/documents). Plans and
 // decision records stay versioned markdown; this view only indexes and opens
 // them so the operator discovers documents alongside notes. No editing here.
 function Documents() {
@@ -567,7 +567,7 @@ function Documents() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch("/api/docs");
+      const r = await fetch("/api/documents");
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
     } catch (e) {
@@ -603,7 +603,7 @@ function Documents() {
       <StateBlock
         variant="error"
         title="Couldn't load documents"
-        hint={<><code>/api/docs</code> ({err})</>}
+        hint={<><code>/api/documents</code> ({err})</>}
         action={<Button size="sm" onClick={refresh}>Retry</Button>}
       />
     );
@@ -683,7 +683,7 @@ function DocViewer({ doc, onClose }: { doc: Doc; onClose: () => void }) {
     let live = true;
     setLoading(true);
     setErr(null);
-    fetch(`/api/docs/file?path=${encodeURIComponent(doc.path)}`)
+    fetch(`/api/documents/file?path=${encodeURIComponent(doc.path)}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
         return r.json();

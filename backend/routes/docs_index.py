@@ -18,7 +18,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
 
-router = APIRouter(prefix="/docs", tags=["docs"])
+# Prefix is /documents, not /docs: FastAPI's built-in Swagger UI already owns
+# /docs (served at /api/docs behind the edge), which would shadow the list route.
+router = APIRouter(prefix="/documents", tags=["docs"])
 
 _HEADING_RE = re.compile(r"^\s*#\s+(.+?)\s*$")
 
