@@ -135,7 +135,11 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         # _run_turn handles multi.)
         if out:
             # Return a sentinel meaning "multi"; the caller iterates outputs.
-            return ("_multi", {"events": out})
+            # Carry this message's usage so the driver can track the real context
+            # size (input + cached input tokens) of the latest model call — the
+            # honest "how full is the window" signal that also drops after an
+            # in-session /compact, unlike counting the stored transcript.
+            return ("_multi", {"events": out, "usage": msg.get("usage")})
         return ("meta", ev)
     if t == "user":
         # Tool result reply (we don't need to surface tool results to the UI
@@ -152,10 +156,25 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
             "duration_ms": ev.get("duration_ms"),
             "total_cost_usd": ev.get("total_cost_usd"),
+            "usage": ev.get("usage"),
         })
     if t == "system":
         return ("meta", {"subtype": ev.get("subtype")})
     return ("meta", {"type": t})
+
+
+def _ctx_tokens_from_usage(u: object) -> int:
+    """Real context size from a Claude usage block: the input the model actually
+    read = fresh input + cache-read + cache-creation tokens. This is what fills the
+    window; it drops after an in-session /compact, which counting the stored
+    transcript never does. Output tokens are not context, so they're excluded."""
+    if not isinstance(u, dict):
+        return 0
+    return (
+        int(u.get("input_tokens") or 0)
+        + int(u.get("cache_read_input_tokens") or 0)
+        + int(u.get("cache_creation_input_tokens") or 0)
+    )
 
 
 def _summarize_tool_input(inp: dict) -> str:
@@ -366,7 +385,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
 
     path = _journal_dir(turn.id) / "stream.jsonl"
     deadline = (meta.get("started") or time.time()) + float(meta.get("timeout_s", 900))
-    state = {"compacted": False, "saw_result": False}
+    state = {"compacted": False, "saw_result": False, "last_ctx": 0}
     buf = ""
     offset = 0
     last_persist = 0.0
@@ -404,8 +423,20 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 elif k2 == "tool":
                     _seg_tool(p2.get("name"), p2.get("input")); saw_tool = True
                 _push(turn, k2, p2)
+            # Track the latest assistant call's context size (preferred signal —
+            # it's the exact input the final model call read).
+            ctx = _ctx_tokens_from_usage(payload.get("usage"))
+            if ctx:
+                state["last_ctx"] = ctx
         elif kind == "result":
             state["saw_result"] = True
+            # Fallback only: the result usage can be a per-turn SUM across tool
+            # rounds, so it overcounts the window. Use it only if no assistant
+            # message reported usage.
+            if not state.get("last_ctx"):
+                ctx = _ctx_tokens_from_usage(payload.get("usage"))
+                if ctx:
+                    state["last_ctx"] = ctx
             _push(turn, "result", payload)
         else:
             if kind == "text":
@@ -465,10 +496,12 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         rc = proc.returncode if proc.returncode is not None else -1
     else:
         rc = 0 if state["saw_result"] else -1
-    await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"])
+    await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
+                         context_tokens=int(state.get("last_ctx") or 0))
 
 
-async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool) -> None:
+async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
+                         context_tokens: int = 0) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 900))
@@ -549,6 +582,15 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         )
     except Exception as e:
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)
+    # Record the real context occupancy reported by the model this turn, so the
+    # composer meter reflects the live window (and its post-compaction drop)
+    # instead of the ever-growing stored transcript. Only on a successful turn
+    # with a real reading; a failed/timed-out turn keeps the prior value.
+    if context_tokens > 0 and not is_error:
+        try:
+            chat_store.set_thread_context_tokens(turn.thread_id, context_tokens)
+        except Exception as e:
+            log.debug("turn %s: context-token persist failed: %s", turn.id, e)
     try:
         build_agents.touch(turn.agent_slug)
         # Turn is over: drop the persisted "running" ratchet back to idle so the

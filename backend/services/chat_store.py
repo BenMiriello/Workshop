@@ -247,6 +247,19 @@ def finalize_streaming_assistant(
     return m
 
 
+def set_thread_context_tokens(thread_id: str, tokens: int) -> dict | None:
+    """Persist the real context occupancy (input + cached input tokens) the model
+    reported on the latest turn. The composer meter prefers this over estimating
+    from the stored transcript, because it reflects the live window and drops
+    after an in-session /compact. Stored at the thread level (current occupancy,
+    not per-message)."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread["context_tokens"] = max(0, int(tokens))
+    return _write(thread)
+
+
 def rename_thread(thread_id: str, title: str) -> dict | None:
     thread = get_thread(thread_id)
     if thread is None:

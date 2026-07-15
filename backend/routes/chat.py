@@ -524,19 +524,37 @@ def _window_for(model: str | None) -> int:
 
 @router.get("/threads/{thread_id}/context")
 async def thread_context(thread_id: str):
-    """Real context-window usage for the composer meter: assembles the SAME prompt
-    a turn would send (role preamble + persona + live app context + custom prompt +
-    the windowed transcript) and reports its size against the model's window. This
-    is far closer than counting visible messages, because it includes the persona
-    and the live app-context injection the client can't see. No local Claude
-    tokenizer, so ~4 chars/token; on resumed build sessions the true size lives in
-    the model session, so treat build chats as approximate."""
+    """Real context-window usage for the composer meter.
+
+    Preferred source: the actual context size the model reported on the latest
+    turn (input + cached-input tokens), persisted as `context_tokens`. This is the
+    truth for BOTH build/session chats and data chats, and it DROPS after an
+    in-session or threshold /compact instead of climbing forever with the stored
+    transcript (the bug that pinned long, repeatedly compacted chats at 100%).
+
+    Fallback (a thread that has not completed a streamed turn yet): estimate from
+    the same prompt a turn WOULD send. For data providers that compact, that is
+    only `summary + the uncompacted tail`, never the whole transcript, so the
+    estimate already respects compaction too. ~4 chars/token (no local Claude
+    tokenizer)."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    history = t.get("messages", [])
     model = _resolve_model(None, t, provider)
+    window = _window_for(model)
+
+    stored = t.get("context_tokens")
+    if isinstance(stored, (int, float)) and stored > 0:
+        used = int(stored)
+        return {
+            "used_tokens": used,
+            "window_tokens": window,
+            "pct": min(100, round(used / window * 100)),
+            "model": model,
+            "source": "measured",
+        }
+
     tools_active, tool_summary = chat_context.capability_for(
         provider, enable_chat_tools=ENABLE_CHAT_TOOLS
     )
@@ -547,14 +565,24 @@ async def thread_context(thread_id: str):
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
     )
-    prompt = _build_prompt(provider, history, "", preamble=preamble)
+    # Mirror what a real turn sends. Data providers fold the oldest turns into a
+    # running summary (see _maybe_compact); only the summary + the tail after
+    # `compacted_through` actually go to the model, so count that, not everything.
+    history = t.get("messages", [])
+    summary = ""
+    if not is_build_mode:
+        ct = int(t.get("compacted_through", 0) or 0)
+        if 0 <= ct <= len(history):
+            history = history[ct:]
+        summary = t.get("summary", "") or ""
+    prompt = _build_prompt(provider, history, "", preamble=preamble, summary=summary)
     used = max(1, round(len(prompt) / 4))
-    window = _window_for(model)
     return {
         "used_tokens": used,
         "window_tokens": window,
         "pct": min(100, round(used / window * 100)),
         "model": model,
+        "source": "estimated",
     }
 
 
