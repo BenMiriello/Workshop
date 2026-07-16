@@ -159,6 +159,83 @@ def _write_index(scope_key: str, entries: dict) -> None:
     _atomic_write(_index_path(scope_key), "\n".join(lines) + "\n")
 
 
+# --- index cap (Claude Code 200-line always-loaded rule) ---------------------
+# The MEMORY.md index is the always-loaded layer: a fresh worker reads it into
+# its stable prefix every turn, and Claude Code loads only the first 200 lines of
+# a MEMORY.md, so an unbounded index silently truncates (and bloats the cached
+# prefix). enforce_index_cap keeps it bounded by demoting the least-recently-
+# referenced notes into a linked archive: their bodies move under an `archive/`
+# subdir (out of the top-level note glob, so they leave the ambient index and the
+# search corpus) and a single `memory-archive` note catalogs them with links, so
+# nothing is lost and the detail stays one hop away (progressive disclosure).
+# Purely additive: it adds a function and one best-effort call in put_note, and
+# changes no existing signature or search/recall path.
+ARCHIVE_NOTE_ID = "memory-archive"
+_INDEX_HEADER_LINES = 2  # "# Knowledge index" + blank line, per _write_index
+
+
+def enforce_index_cap(scope_key: str, max_lines: int = 200) -> dict:
+    """Bound a scope's MEMORY.md index to ``max_lines`` total lines. When it is
+    over, demote the least-recently-referenced notes (oldest file mtime first)
+    into the ``archive/`` subdir and catalog them in the ``memory-archive`` note,
+    trimming the index so the always-loaded layer stays bounded. Returns
+    {"scope", "demoted", "index_lines"}. A cheap no-op while under the cap."""
+    _parse_scope(scope_key)
+    entries = _read_index(scope_key)
+    total = _INDEX_HEADER_LINES + len(entries)
+    if total <= max_lines:
+        return {"scope": scope_key, "demoted": 0, "index_lines": total}
+
+    d = scope_dir(scope_key)
+
+    def _recency(note_id: str) -> float:
+        f = d / f"{note_id}.md"
+        try:
+            return f.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    # The archive note itself is never demoted; leave room for its own index line.
+    demotable = sorted((nid for nid in entries if nid != ARCHIVE_NOTE_ID), key=_recency)
+    keep = max(0, max_lines - _INDEX_HEADER_LINES - 1)
+    to_demote = demotable[: max(0, len(demotable) - keep)]
+    if not to_demote:
+        return {"scope": scope_key, "demoted": 0, "index_lines": total}
+
+    archive_dir = d / "archive"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    catalog_lines: list[str] = []
+    for nid in to_demote:
+        meta = entries.get(nid) or {}
+        title = meta.get("title") or nid
+        hook = meta.get("hook") or ""
+        src = d / f"{nid}.md"
+        if src.exists():
+            os.replace(src, archive_dir / f"{nid}.md")
+        line = f"- [{title}](archive/{nid}.md)"
+        catalog_lines.append(f"{line} - {hook}" if hook else line)
+        entries.pop(nid, None)
+
+    # Append (never rewrite) the demoted lines into the archive note body.
+    archive_path = d / f"{ARCHIVE_NOTE_ID}.md"
+    if archive_path.exists():
+        body = archive_path.read_text().rstrip("\n") + "\n"
+    else:
+        body = ("# Demoted memory archive\n\n"
+                "Notes demoted from the always-loaded index to keep it bounded. "
+                "Bodies live under archive/; recall them by title when needed.\n\n")
+    body += "\n".join(catalog_lines) + "\n"
+    _atomic_write(archive_path, body)
+
+    entries[ARCHIVE_NOTE_ID] = {
+        "title": "Demoted memory archive",
+        "hook": "notes demoted from the index (progressive disclosure)",
+    }
+    _write_index(scope_key, entries)
+    return {"scope": scope_key, "demoted": len(to_demote),
+            "index_lines": _INDEX_HEADER_LINES + len(entries)}
+
+
 # --- note read helpers -------------------------------------------------------
 def list_notes(scope_key: str) -> list[dict]:
     """[{id, title, hook, updated}] for the scope. Parses MEMORY.md, falls back
@@ -237,6 +314,13 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     idx = _read_index(scope_key)
     idx[note_id] = {"title": (title or note_id).strip(), "hook": (hook or "").strip()}
     _write_index(scope_key, idx)
+
+    # Keep the always-loaded index bounded (Claude Code 200-line rule). Best-effort:
+    # a demotion failure must never fail the note write that just succeeded.
+    try:
+        enforce_index_cap(scope_key)
+    except Exception:
+        log.debug("index cap enforcement skipped for %s", scope_key, exc_info=True)
 
     return {"scope": scope_key, "note_id": note_id}
 
