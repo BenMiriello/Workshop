@@ -232,7 +232,7 @@ publish_or_park() {  # $1=branch_slug $2=title $3=body
   local out; out=$(publish_task_worktree "$1" "$2" "$3")
   if [[ "$out" == "conflict" ]]; then
     python3 "$PTASKS" note "$DIR" "$TASK_ID" "publish conflict: branch does not rebase cleanly onto the canonical base; parked (not looping)" --kind acceptance >/dev/null 2>>"$LOG"
-    python3 "$PTASKS" set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+    ptasks_tx set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" || true
     job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
     PARKED=$((PARKED+1))
     log "task=$TASK_ID PARKED (publish conflict)"
@@ -270,6 +270,26 @@ for k in sys.argv[1].split('.'):
     if cur is None: break
 print('' if cur is None else cur)
 " "$2" 2>/dev/null
+}
+
+# Run a token-fenced task transition (set-status/block that carries
+# --expect-claim-token) and detect a FENCE rejection: project_tasks.py prints a
+# task object with an id when the write applied, or {} when it was a no-op because
+# the claim was displaced (an operator edit bumped the generation, or a liveness
+# reclaim reassigned the task) or the task vanished. On a fence we log clearly and
+# return 1 so the caller can treat it as a lost claim WITHOUT clobbering the state
+# the operator/reclaimer set; a normal transition returns 0 (Fix 1). Logs only to
+# the file (never stdout), so it is safe inside command-substituted callers like
+# release_or_block whose stdout is captured.
+ptasks_tx() {  # $@ = project_tasks.py verb + args (must include --expect-claim-token)
+  local out id
+  out=$(python3 "$PTASKS" "$@" 2>>"$LOG")
+  id=$(jf "$out" id)
+  if [[ -z "$id" ]]; then
+    echo "[$(ts)] [project_ralph] claim fenced/no-op (operator edit or reclaim displaced this run): $*" >> "$LOG"
+    return 1
+  fi
+  return 0
 }
 
 # Run a task's command-acceptance spec inside the scope dir. Echoes PASS/FAIL and
@@ -449,13 +469,13 @@ release_or_block() {  # $1=task_id $2=attempts $3=cap $4=reason-verb
   # released + reassigned the task to a newer sweep, the token mismatches and the
   # transition is a no-op instead of clobbering live work.
   if (( $2 >= $3 )); then
-    python3 "$PTASKS" block "$DIR" "$1" "$4 after $2 attempt(s) (cap $3)" \
-      --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+    ptasks_tx block "$DIR" "$1" "$4 after $2 attempt(s) (cap $3)" \
+      --expect-claim-token "${CLAIM_TOKEN:-}" || true
     log "task=$1 BLOCKED: $4 after $2/$3 attempts"
     echo blocked
   else
-    python3 "$PTASKS" set-status "$DIR" "$1" todo \
-      --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+    ptasks_tx set-status "$DIR" "$1" todo \
+      --expect-claim-token "${CLAIM_TOKEN:-}" || true
     log "task=$1 released to todo ($4; attempt $2/$3)"
     echo retry
   fi
@@ -614,8 +634,12 @@ while (( n < MAX_TASKS )); do
   # `claude -p`, which honors it as the default-model override). Set only for the
   # non-default efforts so a standard/null task's environment is untouched.
   [[ -n "$EFF_MODEL" ]] && export ANTHROPIC_MODEL="$EFF_MODEL"
+  # Pass the claim identity so ralph.sh heartbeats this task's lease from inside its
+  # loop (Fix 2). --store-dir is the project DIR (where .tasks.json lives) even in
+  # worktree mode, where --dir is the isolated worktree. The heartbeat presents
+  # CLAIM_TOKEN so it composes with the Fix-1 fence.
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" >> "$LOG" 2>&1
   RC=$?
   set -e
   [[ -n "$EFF_MODEL" ]] && unset ANTHROPIC_MODEL
@@ -664,9 +688,12 @@ while (( n < MAX_TASKS )); do
         if (( ACC_RC == 0 )); then
           if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
             python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance passed: $ACC_SPEC" --kind acceptance >/dev/null 2>>"$LOG"
-            python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-            note_receipt_ref
-            DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE (command acceptance ok)"
+            if ptasks_tx set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
+              note_receipt_ref
+              DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE (command acceptance ok)"
+            else
+              job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"; log "task=$TASK_ID done write fenced (claim displaced); left as operator/reclaim set it"
+            fi
           fi
         else
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "command acceptance FAILED (exit $ACC_RC): $ACC_SPEC :: $(echo "$ACC_OUT" | tr '\n' ' ' | head -c 300)" --kind acceptance >/dev/null 2>>"$LOG"
@@ -676,26 +703,32 @@ while (( n < MAX_TASKS )); do
       elif [[ "$ACC_KIND" == "operator" ]]; then
         if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
           python3 "$PTASKS" note "$DIR" "$TASK_ID" "worker completed; awaiting operator approval" --kind acceptance >/dev/null 2>>"$LOG"
-          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-          note_receipt_ref
-          IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID -> in_review (operator gate)"
+          if ptasks_tx set-status "$DIR" "$TASK_ID" in_review --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
+            note_receipt_ref
+            IN_REVIEW=$((IN_REVIEW+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID -> in_review (operator gate)"
+          else
+            job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"; log "task=$TASK_ID in_review write fenced (claim displaced); left as operator/reclaim set it"
+          fi
         fi
       else
         if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
-          python3 "$PTASKS" set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
-          note_receipt_ref
-          DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE"
+          if ptasks_tx set-status "$DIR" "$TASK_ID" done --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}"; then
+            note_receipt_ref
+            DONE=$((DONE+1)); job_finish_child "$CHILD_JOB" done "$RC" "$EVIDENCE"; log "task=$TASK_ID DONE"
+          else
+            job_finish_child "$CHILD_JOB" cancelled "$RC" "$EVIDENCE"; log "task=$TASK_ID done write fenced (claim displaced); left as operator/reclaim set it"
+          fi
         fi
       fi
       ;;
-    3) python3 "$PTASKS" block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
+    3) ptasks_tx block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" || true; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
     5)
       # Environment failure (API outage / auth), NOT task failure: give the
       # attempt back and STOP the sweep so we do not hammer a down API. The sweep
       # still tallies a failure so the circuit breaker cools this scope off for a
       # window (it keys on tasks_failed). (review F4)
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "environment failure (API/auth); attempt restored, sweep backing off" --kind acceptance >/dev/null 2>>"$LOG"
-      python3 "$PTASKS" set-status "$DIR" "$TASK_ID" todo --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" >/dev/null 2>>"$LOG"
+      ptasks_tx set-status "$DIR" "$TASK_ID" todo --restore-attempt --expect-claim-token "${CLAIM_TOKEN:-}" || true
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; FAILED=$((FAILED+1))
       log "task=$TASK_ID ENV FAILURE: released (attempt restored); stopping sweep to back off"
       rm -f "$RECEIPT_FILE" 2>/dev/null || true

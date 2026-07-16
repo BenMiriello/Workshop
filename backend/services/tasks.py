@@ -22,8 +22,11 @@ Canonical Task (version 2)::
       "blocked_reason": str | None,
       "awaiting": {"question": str, "since": iso}|None,  # operator input this task waits on
       "attempts": int,                 # worker runs spent on this task (cap enforcement)
-      "claim_token": int | None,       # monotonic fencing token, bumped every claim
+      "claim_token": int | None,       # monotonic fencing generation, bumped every
+                                       # (re)claim AND on any operator edit to a
+                                       # claimed task (Kleppmann fencing token)
       "lease_until": iso | None,       # claim lease; set while doing, cleared on release
+      "last_heartbeat": iso | None,    # worker's last lease renewal (missed -> reclaim)
       "claim_pid": int | None,         # pid of the sweep that holds the claim (liveness)
       "job_ids": [str],                # executions that worked this task
       "evidence": [{"kind": str, "ref": str, "ts": iso}],
@@ -62,11 +65,17 @@ STATUSES = {"todo", "doing", "in_review", "blocked", "parked", "done", "cancelle
 TERMINAL = {"done", "cancelled"}
 DEFAULT_OWNER = "operator"  # canonical assignee for the human
 
-# Self-healing (design 2d): a claim carries a lease so a crashed/killed sweep
-# never strands a task in `doing` forever. Default lease is ~2x the per-task wall
-# budget handed to ralph.sh (RALPH_MAX_WALL=1200s), i.e. ~40 min. A `doing` task
-# past its lease whose claiming pid is dead is reclaimable. Env-overridable.
-LEASE_TTL_SEC = int(os.environ.get("WORKSHOP_TASK_LEASE_TTL_SEC", "2400"))
+# Self-healing (design 2d + Fix 2): a claim carries a lease so a crashed/killed
+# sweep never strands a task in `doing` forever, but a HEALTHY-but-slow worker must
+# never be reclaimed out from under itself. A single ralph iteration is one
+# `claude -p` turn that can run minutes (per-iter timeout up to ~1500s), so a fixed
+# wall-clock lease sized to a "typical" run spuriously reclaims a slow tick. The
+# lease is therefore sized as a MISSED-HEARTBEAT window, not a total-runtime guess:
+# the worker renews it from inside ralph.sh's loop (see heartbeat()), and reclaim
+# fires only when now - last_heartbeat exceeds this TTL. Default 3600s (60 min) is
+# generous: it comfortably clears the longest single iteration + reviewer gap while
+# the worker heartbeats every iteration (well under 50% of TTL). Env-overridable.
+LEASE_TTL_SEC = int(os.environ.get("WORKSHOP_TASK_LEASE_TTL_SEC", "3600"))
 # Attempt cap used by reclaim when a task carries no per-task max_attempts.
 # Mirrors project_ralph.sh DEFAULT_MAX_ITER so shell and store agree.
 RECLAIM_ATTEMPT_CAP = int(os.environ.get("WORKSHOP_TASK_ATTEMPT_CAP", "3"))
@@ -252,8 +261,13 @@ def _normalize(task: dict) -> dict:
         "blocked_reason": task.get("blocked_reason") or None,
         "awaiting": task.get("awaiting") if isinstance(task.get("awaiting"), dict) else None,
         "attempts": _as_int(task.get("attempts"), 0),
+        # claim_token is a per-task monotonic generation counter. Forward-migrate
+        # losslessly: a missing token or a legacy UUID/unstructured value coerces to
+        # None here and is read as generation 0 by the fence (_as_int(...,0)), so the
+        # next claim starts incrementing from 1. No store needs rewriting on load.
         "claim_token": _as_int_or_none(task.get("claim_token")),
         "lease_until": task.get("lease_until") or None,
+        "last_heartbeat": task.get("last_heartbeat") or None,
         "claim_pid": _as_int_or_none(task.get("claim_pid")),
         "job_ids": [str(j) for j in (task.get("job_ids") or []) if j],
         "evidence": [e for e in (task.get("evidence") or []) if isinstance(e, dict)],
@@ -578,18 +592,39 @@ def get_task(root: Path, task_id: str, *, owner: str | None = None) -> dict | No
 
 
 def _is_stale_claim(t: dict, now_dt: datetime, ttl: int) -> bool:
-    """A `doing` task is a stale claim (crashed/killed sweep) when its lease has
-    expired AND the process that holds the claim is no longer alive. A legacy
-    claim with no recorded lease falls back to `updated` + ttl."""
+    """A `doing` task is a stale claim (crashed/killed/hung sweep) when either:
+
+      (a) dead-pid fast path: the process that recorded the claim is provably gone
+          (a pid that _pid_alive reports dead). A crashed sweep is reclaimed at once,
+          without waiting for the heartbeat window to lapse.
+      (b) missed heartbeat: the worker has not renewed its lease within `ttl`
+          (now - last_heartbeat > ttl). A slow-but-alive worker heartbeats from
+          inside ralph.sh's loop, so it is never reclaimed; only a hung/dead worker
+          lets last_heartbeat go stale (Fix 2).
+
+    A legacy claim written before heartbeats (no last_heartbeat) falls back to the
+    original lease/`updated` + ttl window, still guarded by pid liveness, so old
+    stores behave exactly as before."""
     if t.get("status") != "doing":
         return False
+    pid = t.get("claim_pid")
+    # (a) Dead-pid fast path: a recorded-but-dead pid means the sweep crashed; its
+    # last heartbeat (however recent) is moot. A None/unparseable pid is NOT an
+    # instant reclaim here (a claim with no recorded pid must not be yanked from a
+    # live worker); it is handled by the heartbeat / legacy-lease windows below.
+    if pid is not None and not _pid_alive(pid):
+        return True
+    # (b) Missed-heartbeat window (new claims). Fresh heartbeat -> alive -> keep.
+    hb = _parse_iso(t.get("last_heartbeat"))
+    if hb is not None:
+        return (now_dt - hb) > timedelta(seconds=ttl)
+    # Legacy claim (pre-heartbeat store): original lease/`updated` + ttl behavior.
     eff = _parse_iso(t.get("lease_until"))
     if eff is None:
         u = _parse_iso(t.get("updated"))
         eff = (u + timedelta(seconds=ttl)) if u else None
     if eff is None or now_dt < eff:
         return False
-    pid = t.get("claim_pid")
     if pid is not None and _pid_alive(pid):
         return False  # sweep is legitimately still working; lease was conservative
     return True
@@ -754,7 +789,16 @@ def update(
     newer sweep, so this stale caller's finalize is rejected (returns None) rather
     than clobbering live work (2d). Any transition OUT of ``doing`` releases the
     claim (clears lease + pid) so a waiting task never freezes a dispatch slot and
-    is never mistaken for a crash."""
+    is never mistaken for a crash.
+
+    Fix 1 (fencing generation): a token-bearing (worker) write is fence-checked as
+    above and never bumps the generation. A NO-token write (operator / panel / chat)
+    is never blocked, but when it MATERIALLY edits a task a worker currently holds
+    (status was ``doing`` with a live claim), it INVALIDATES that generation by
+    bumping ``claim_token``, so the displaced worker's next token-bearing write is
+    fenced out instead of the operator being blocked. A no-token evidence-only
+    append (a `note`) or a job-id link is not a material edit and does not bump, so
+    a worker's own untokened notes never self-fence its finalize."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if text is not None:
@@ -774,6 +818,15 @@ def update(
         if expect_claim_token is not None and \
                 _as_int(found.get("claim_token"), 0) != int(expect_claim_token):
             return None  # fenced: task was reclaimed + reassigned to a newer sweep
+        # Fix 1: does a live worker currently hold this task? Captured BEFORE any
+        # field change (a status transition out of `doing` below would otherwise
+        # hide it). A no-token material edit to such a task bumps the generation at
+        # the end so the worker is fenced out.
+        _held_by_worker = (found.get("status") == "doing"
+                           and found.get("claim_token") is not None)
+        _material_edit = any(v is not None for v in (
+            status, text, assignee, priority, depends_on, blocked_reason,
+            acceptance, max_attempts, effort, awaiting))
         if status is not None:
             found["status"] = status
             # Leaving a waiting state clears the operator-input payload; nothing
@@ -823,6 +876,13 @@ def update(
             ev = dict(evidence)
             ev.setdefault("ts", _now())
             found["evidence"].append(ev)
+        # Fix 1: an operator/no-token MATERIAL edit to a task a worker holds
+        # invalidates that worker's generation. Token-bearing writes never reach
+        # here with a bump (they matched the fence and must NOT advance it);
+        # note-only / job-id-only no-token writes are not material, so a worker's
+        # own untokened notes never fence its subsequent tokened finalize.
+        if expect_claim_token is None and _held_by_worker and _material_edit:
+            found["claim_token"] = _as_int(found.get("claim_token"), 0) + 1
         found["updated"] = _now()
         _persist(root, tasks)
         return found
@@ -851,10 +911,43 @@ def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,
         found["lease_until"] = (
             datetime.now(timezone.utc) + timedelta(seconds=ttl)
         ).isoformat(timespec="seconds")
+        # Seed the heartbeat at claim time so a fresh claim is never mistaken for a
+        # missed heartbeat before the worker's first renewal lands (Fix 2).
+        found["last_heartbeat"] = _now()
         found["claim_pid"] = _as_int_or_none(pid)
         if job_id and job_id not in found["job_ids"]:
             found["job_ids"].append(job_id)
         found["updated"] = _now()
+        _persist(root, tasks)
+        return found
+
+
+def heartbeat(root: Path, task_id: str, claim_token: int | None, *,
+              assignee: str | None = None, ttl: int = LEASE_TTL_SEC) -> dict | None:
+    """Renew a claimed task's lease from inside a running worker (Fix 2). Presents
+    the worker's ``claim_token`` as a fence so it composes with Fix 1: a heartbeat
+    whose generation does not match the task's current ``claim_token`` is a no-op
+    (the worker was displaced by an operator edit or a liveness reclaim, so it no
+    longer owns the task). On a match, refreshes ``last_heartbeat`` and extends
+    ``lease_until`` = now + ttl, so a slow-but-alive worker is never reclaimed.
+    Returns the task, or None if it is not found / not ``doing`` / fenced. Does not
+    bump ``updated`` (a heartbeat is liveness, not a content edit)."""
+    with _locked(root):
+        tasks = _load(root)
+        found = None
+        for t in tasks:
+            if t["id"] == task_id and _match_assignee(t, assignee):
+                found = t
+                break
+        if found is None or found.get("status") != "doing":
+            return None
+        if _as_int(found.get("claim_token"), 0) != _as_int(claim_token, 0):
+            return None  # fenced: this is no longer this worker's claim generation
+        now = _now()
+        found["last_heartbeat"] = now
+        found["lease_until"] = (
+            datetime.now(timezone.utc) + timedelta(seconds=ttl)
+        ).isoformat(timespec="seconds")
         _persist(root, tasks)
         return found
 

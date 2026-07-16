@@ -17,6 +17,7 @@ Verbs (all take a scope directory as the first positional):
       [--effort s|m|l] [--discovered-from id] [--provenance KEY] [--source KIND]
   set-status <dir> <id> <status> [--job-id J] [--reason R] [--expect-claim-token T]
   claim <dir> <id> <job_id> [--assignee A] [--pid PID]
+  heartbeat <dir> <id> <claim_token>  renew a claimed task's lease (fenced by token)
   note <dir> <id> "evidence text" [--kind KIND] [--ref REF]
   block <dir> <id> "reason" [--expect-claim-token T]
   set-awaiting <dir> <id> "question"  set/clear the operator-input payload
@@ -55,6 +56,7 @@ def _slim(t: dict | None) -> dict:
         "touches": t.get("touches", []),
         "claim_token": t.get("claim_token"),
         "lease_until": t.get("lease_until"),
+        "last_heartbeat": t.get("last_heartbeat"),
         "claim_pid": t.get("claim_pid"),
     }
 
@@ -104,6 +106,10 @@ def main(argv: list[str]) -> int:
     sp.add_argument("task_id"); sp.add_argument("job_id"); sp.add_argument("--assignee", default=None)
     sp.add_argument("--pid", default=None)
 
+    sp = sub.add_parser("heartbeat"); scope(sp)
+    sp.add_argument("task_id"); sp.add_argument("claim_token")
+    sp.add_argument("--assignee", default=None)
+
     sp = sub.add_parser("note"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("text")
     sp.add_argument("--kind", default="note"); sp.add_argument("--ref", default=None)
@@ -146,6 +152,11 @@ def main(argv: list[str]) -> int:
         if a.cmd == "claim":
             t = tasks.claim(root, a.task_id, a.job_id, assignee=a.assignee,
                             pid=_opt_int(a.pid))
+            print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "heartbeat":
+            t = tasks.heartbeat(root, a.task_id, _opt_int(a.claim_token),
+                                assignee=a.assignee)
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "note":

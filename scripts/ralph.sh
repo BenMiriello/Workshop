@@ -46,6 +46,7 @@ done
 unset _c
 AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
 REVIEWER=$WORKSHOP/scripts/reviewer.sh
+PTASKS=$WORKSHOP/scripts/project_tasks.py
 
 ts() { date -Iseconds; }
 
@@ -59,6 +60,12 @@ MAX_TURNS_PER_ITER=6
 BILL_PROJECT=""   # --bill-project <scope>: record this run's tokens to the usage ledger
 LEARN_SCOPE_ARG=""  # --learn-scope <scope>: the learnings scope (project:/agent:/workshop)
 RECEIPT_PATH=""   # --receipt <path>: best-effort JSON receipt of this run's work product
+# Claim identity for the task-store heartbeat (Fix 2). Set by project_ralph.sh when
+# this run drives a claimed task; empty for a standalone/manual ralph (no heartbeat).
+TASK_ID=""        # --task-id <id>: the claimed task this run works
+CLAIM_TOKEN=""    # --claim-token <n>: the claim generation, presented to fence the beat
+STORE_DIR=""      # --store-dir <dir>: scope dir whose .tasks.json holds the claim
+                  # (the project dir; differs from --dir in worktree mode)
 RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
 
 while [[ $# -gt 0 ]]; do
@@ -70,9 +77,33 @@ while [[ $# -gt 0 ]]; do
     --bill-project)  BILL_PROJECT="$2"; shift 2 ;;
     --learn-scope)   LEARN_SCOPE_ARG="$2"; shift 2 ;;
     --receipt)       RECEIPT_PATH="$2"; shift 2 ;;
+    --task-id)       TASK_ID="$2"; shift 2 ;;
+    --claim-token)   CLAIM_TOKEN="$2"; shift 2 ;;
+    --store-dir)     STORE_DIR="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
 done
+
+# The heartbeat targets the task STORE, which lives in the project dir even when
+# this run drives an isolated worktree (--dir), so default it to the tree we drive.
+[[ -z "$STORE_DIR" ]] && STORE_DIR="$DIR"
+
+# Renew the claimed task's lease so a slow-but-alive worker is never reclaimed
+# mid-iteration (Fix 2). Best-effort and inert unless project_ralph passed the
+# claim identity. Presents the claim token so it is fenced by Fix 1: once an
+# operator edit or a liveness reclaim displaces this run, the heartbeat becomes a
+# no-op (as will the final write), which we log but do not treat as fatal.
+heartbeat_task() {
+  [[ -z "$TASK_ID" || -z "$CLAIM_TOKEN" || -z "$STORE_DIR" ]] && return 0
+  local out hb_id
+  out=$(python3 "$PTASKS" heartbeat "$STORE_DIR" "$TASK_ID" "$CLAIM_TOKEN" 2>>"$LOG")
+  hb_id=$(printf '%s' "$out" | python3 -c "import json,sys
+try: print((json.load(sys.stdin) or {}).get('id') or '')
+except Exception: print('')" 2>/dev/null || echo "")
+  if [[ -z "$hb_id" ]]; then
+    log "heartbeat no-op for task=$TASK_ID (claim displaced/reclaimed?); continuing best-effort"
+  fi
+}
 
 # Per-tree log + reviewer scoping. A project run (DIR != WORKSHOP) logs into the
 # project's own .runtime and reviews the project's git repo via REVIEWER_ROOT.
@@ -256,6 +287,11 @@ PREV_DIFF_SIG="";   SAME_DIFF_COUNT=0
 
 while (( iter < MAX_ITER )); do
   iter=$((iter + 1))
+
+  # Renew the task-store lease at the TOP of each iteration, before the (possibly
+  # multi-minute) claude turn below, so the reclaimer sees a fresh heartbeat well
+  # inside the TTL for the whole iteration. Inert for a standalone ralph (Fix 2).
+  heartbeat_task
 
   # Wall-time check.
   ELAPSED=$(( $(date +%s) - START_EPOCH ))
