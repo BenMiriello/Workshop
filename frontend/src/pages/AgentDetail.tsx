@@ -26,6 +26,7 @@ import {
 } from "../ui";
 import { type Job, jobStatusKind } from "../lib/jobs";
 import GrantPicker from "../components/GrantPicker";
+import TaskPanel from "../components/TaskPanel";
 import { useCrumbLabel } from "../components/appNav";
 import {
   EVENT_SOURCES,
@@ -192,7 +193,7 @@ function TriggerEditor({
 }
 
 // ---------------------------------------------------------------------------
-// Create form (runtime picker) — the real /agents/new flow
+// Create form (runtime picker) - the real /agents/new flow
 // ---------------------------------------------------------------------------
 type CreateRuntime = "assistant" | "builder";
 const CREATE_RUNTIME: SegmentedOption<CreateRuntime>[] = [
@@ -758,6 +759,13 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             </Stack>
           )}
         </section>
+
+        {/* --- Tasks (the agent's work queue, canonical cross-scope store) --- */}
+        <TaskPanel
+          scope={isBuilder ? `build:${agent.slug}` : `agent:${agent.slug}`}
+          variant="section"
+          heading="Tasks"
+        />
 
         {/* --- Job history --- */}
         <section>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle } from "lucide-react";
+import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListTodo, ArrowUpRight } from "lucide-react";
 import {
   Button,
   Card,
@@ -24,7 +24,7 @@ import { type Job, jobStatusKind } from "../lib/jobs";
 // When a job is awaiting_input its evidence is a list of the tasks it stopped
 // on, each carrying a plain-language question. That case gets a dedicated,
 // actionable section at the top (approve / send back / unblock / cancel) so the
-// operator can see WHAT is waited on, WHERE it ran, and resolve it in place —
+// operator can see WHAT is waited on, WHERE it ran, and resolve it in place -
 // not just read a raw JSON blob.
 
 type WaitingTask = {
@@ -61,6 +61,14 @@ function ranSummary(job: Job): string {
 }
 
 const statusKind = jobStatusKind;
+
+// The task-store scope a job worked in, for a "View task" deep-link into Work.
+function scopeForJob(job: Job): string | null {
+  if (job.project_slug && job.project_slug !== "workshop") return `project:${job.project_slug}`;
+  if (job.project_slug === "workshop") return "workshop";
+  if (job.agent_id && job.agent_id.startsWith("agent:")) return job.agent_id;
+  return null;
+}
 
 function fmtTs(ts?: string): string {
   if (!ts) return "";
@@ -218,6 +226,7 @@ export default function JobDetail() {
   const { id = "" } = useParams();
   const nav = useNavigate();
   const [job, setJob] = useState<Job | null>(null);
+  const [children, setChildren] = useState<Job[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -237,6 +246,14 @@ export default function JobDetail() {
       }
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setJob(await r.json());
+      // A coordinator sweep has child Jobs (one per task it ran); fetch them so
+      // the sweep detail can nest them. A leaf run simply returns none.
+      try {
+        const cr = await fetch(`/api/jobs?parent_id=${encodeURIComponent(id)}&limit=100`);
+        setChildren(cr.ok ? ((await cr.json()).jobs ?? []) : []);
+      } catch {
+        setChildren([]);
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -484,6 +501,45 @@ export default function JobDetail() {
             </Stack>
           </Card>
         </section>
+
+        {children && children.length > 0 && (
+          <section>
+            <SectionLabel>Child runs</SectionLabel>
+            <Card style={{ padding: "var(--space-3)" }}>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {children.map((c) => {
+                  const cscope = scopeForJob(c);
+                  return (
+                    <li key={c.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
+                      <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                        <StatusPill status={statusKind(c.status)}>{c.status ?? "unknown"}</StatusPill>
+                        <span style={{ flex: "1 1 12rem", wordBreak: "break-word" }}>{c.title || c.task_text || c.id}</span>
+                        {cscope && (
+                          <button
+                            type="button"
+                            className="ws-bc__link"
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
+                            onClick={() => nav(`/work?scope=${encodeURIComponent(cscope)}`)}
+                          >
+                            <ListTodo aria-hidden size={12} /> task
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="ws-bc__link"
+                          style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
+                          onClick={() => nav(`/jobs/${encodeURIComponent(c.id)}`)}
+                        >
+                          View run <ArrowUpRight aria-hidden size={12} />
+                        </button>
+                      </Row>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          </section>
+        )}
 
         {job.error && (
           <section>

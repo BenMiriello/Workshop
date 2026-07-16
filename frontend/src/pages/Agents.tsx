@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks } from "lucide-react";
+import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Gauge } from "lucide-react";
+import type { ReactNode } from "react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
+  Badge,
   Button,
   Card,
   CardGrid,
@@ -18,9 +20,29 @@ import {
   StatusDot,
   Tag,
   Toggle,
+  catFor,
   type StatusKind,
 } from "../ui";
 import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTriggers";
+
+// Roster item enriched with the O6/O7 autonomy fields the backend now returns on
+// GET /api/agents/ (autonomy preset + role + depth). Kept local so the shared
+// UnifiedAgent type is untouched; every existing UnifiedAgent field still applies.
+type Preset = "off" | "on-demand" | "scheduled" | "continuous";
+type RosterAgent = UnifiedAgent & {
+  autonomy?: Preset;
+  role?: string | null;
+  depth?: "quick" | "standard" | "deep";
+  fanout?: "off" | "read-only";
+};
+
+function presetIcon(p: Preset): ReactNode {
+  const props = { size: 12, strokeWidth: 1.8, "aria-hidden": true, style: { verticalAlign: "middle", marginRight: "0.3rem" } };
+  if (p === "continuous") return <RotateCw {...props} />;
+  if (p === "scheduled") return <Clock {...props} />;
+  if (p === "on-demand") return <Play {...props} />;
+  return <Power {...props} />;
+}
 import AutonomyControls from "../components/AutonomyControls";
 
 type SupervisorStatus = {
@@ -180,7 +202,7 @@ function NewBuilderModal({
 
 export default function Agents() {
   const nav = useNavigate();
-  const [agents, setAgents] = useState<UnifiedAgent[] | null>(null);
+  const [agents, setAgents] = useState<RosterAgent[] | null>(null);
   const [build, setBuild] = useState<BuildAgent[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -198,7 +220,7 @@ export default function Agents() {
         fetch("/api/jobs?limit=200"),
       ]);
       if (!aR.ok) throw new Error(`${aR.status} ${await aR.text()}`);
-      setAgents(await aR.json());
+      setAgents((await aR.json()) as RosterAgent[]);
       setBuild(bR.ok ? await bR.json() : []);
       setProjects(pR.ok ? await pR.json() : []);
       setJobs(jR.ok ? (await jR.json()).jobs || [] : []);
@@ -222,7 +244,7 @@ export default function Agents() {
   }, [loadAll, loadSup]);
 
   // Autonomy = the cron/Ralph background loop. Enabling clears the disable flag;
-  // disabling re-creates it. Live control — the cron scripts check it each tick.
+  // disabling re-creates it. Live control, the cron scripts check it each tick.
   const setAutonomy = async (enabled: boolean) => {
     setAutonomyBusy(true);
     try {
@@ -342,6 +364,15 @@ export default function Agents() {
                       <Tag hue={isBuilder ? "turquoise" : "violet"}>{a.runtime}</Tag>
                     </Row>
                     <p className="ws-card__meta">{a.purpose || (isBuilder ? (a.project_slug ? `linked to ${a.project_slug}` : "freestanding") : "assistant")}</p>
+                    {(a.autonomy || a.role || a.depth) && (
+                      <Row wrap style={{ gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
+                        {a.autonomy && <Badge>{presetIcon(a.autonomy)}{a.autonomy}</Badge>}
+                        {a.role && <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>}
+                        {a.depth && (
+                          <Badge><Gauge size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{a.depth}</Badge>
+                        )}
+                      </Row>
+                    )}
                     <p className="ws-card__meta">{triggerSummary(a.triggers)}</p>
                     <p className="ws-card__meta ws-muted">
                       {lastJob ? (

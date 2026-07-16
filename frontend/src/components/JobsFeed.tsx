@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare } from "lucide-react";
+import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown, ListTodo } from "lucide-react";
 import {
   Button,
   Card,
@@ -11,12 +11,22 @@ import {
   Skeleton,
   StateBlock,
   StatusPill,
+  StatusDot,
   Tag,
   Segmented,
   catFor,
   type SegmentedOption,
 } from "../ui";
 import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
+
+// The task-store scope a job worked in, for a "View task" deep-link into Work.
+// Mirrors routes/jobs._scope_root_for_job: project_slug wins, else an agent id.
+function scopeForJob(job: Job): string | null {
+  if (job.project_slug && job.project_slug !== "workshop") return `project:${job.project_slug}`;
+  if (job.project_slug === "workshop") return "workshop";
+  if (job.agent_id && job.agent_id.startsWith("agent:")) return job.agent_id;
+  return null;
+}
 
 // The Jobs feed: one list for every bounded execution (cron task, drained
 // event, project sweep, supervisor heartbeat, manual run). Reads /api/jobs
@@ -89,6 +99,16 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>("all");
+  // Which coordinator sweeps have their child-Job group expanded.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpanded = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -166,13 +186,66 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
       />
     );
   } else {
+    // Sweep -> child-Job hierarchy. A coordinator sweep has no parent_id; child
+    // Jobs carry parent_id (set by project_ralph.sh). Group children under the
+    // sweep they belong to, but only when that sweep is present in this list;
+    // otherwise the child stays top-level so nothing silently disappears. With no
+    // parent/child links this degrades to exactly the previous flat feed.
+    const parentIds = new Set(jobs.filter((j) => !j.parent_id).map((j) => j.id));
+    const childrenByParent = new Map<string, Job[]>();
+    for (const j of jobs) {
+      if (j.parent_id && parentIds.has(j.parent_id)) {
+        const arr = childrenByParent.get(j.parent_id) ?? [];
+        arr.push(j);
+        childrenByParent.set(j.parent_id, arr);
+      }
+    }
+    const topLevel = jobs.filter((j) => !(j.parent_id && parentIds.has(j.parent_id)));
+
+    const childRow = (child: Job) => {
+      const cscope = scopeForJob(child);
+      return (
+        <li key={child.id} style={{ listStyle: "none" }}>
+          <div
+            role="link"
+            tabIndex={0}
+            onClick={() => nav(`/jobs/${encodeURIComponent(child.id)}`)}
+            style={{
+              display: "flex", alignItems: "baseline", gap: "var(--space-2)",
+              padding: "var(--space-2) 0", cursor: "pointer",
+              borderBottom: "1px solid var(--border)",
+            }}
+          >
+            <StatusDot status={statusKind(child.status)}>{child.status ?? "unknown"}</StatusDot>
+            <span style={{ flex: "1 1 8rem", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {child.title || child.task_text || child.id}
+            </span>
+            {cscope && (
+              <span
+                role="link"
+                tabIndex={0}
+                className="ws-bc__link"
+                title="View this task in Work"
+                onClick={(e) => { e.stopPropagation(); nav(`/work?scope=${encodeURIComponent(cscope)}`); }}
+                style={{ fontSize: "var(--fs-xs)", display: "inline-flex", alignItems: "center", gap: "var(--space-1)" }}
+              >
+                <ListTodo aria-hidden size={12} /> task
+              </span>
+            )}
+          </div>
+        </li>
+      );
+    };
+
     body = (
       <CardGrid className="ws-jobs-grid">
-        {jobs.map((job) => {
+        {topLevel.map((job) => {
           const bind = bindingLabel(job);
           const dur = duration(job);
+          const kids = childrenByParent.get(job.id);
+          const isOpen = expanded.has(job.id);
           return (
-            <li key={job.id}>
+            <li key={job.id} style={kids ? { flexDirection: "column" } : undefined}>
               <Card
                 interactive
                 compact
@@ -211,11 +284,29 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
                   {(job.trigger_label || job.trigger) && (
                     <Tag hue={catFor(job.trigger || "")}>{job.trigger_label || job.trigger}</Tag>
                   )}
+                  {kids && (
+                    <button
+                      type="button"
+                      className="ws-bc__link"
+                      aria-expanded={isOpen}
+                      title={isOpen ? "Hide child runs" : "Show child runs"}
+                      onClick={(e) => { e.stopPropagation(); toggleExpanded(job.id); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
+                    >
+                      {isOpen ? <ChevronDown aria-hidden size={14} /> : <ChevronRight aria-hidden size={14} />}
+                      {kids.length} child {kids.length === 1 ? "run" : "runs"}
+                    </button>
+                  )}
                 </div>
                 <span className="ws-job-card__meta ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                   {job.error || metaLine(job, dur)}
                 </span>
               </Card>
+              {kids && isOpen && (
+                <ul style={{ listStyle: "none", margin: "var(--space-2) 0 0", padding: "0 0 0 var(--space-3)", borderLeft: "1px solid var(--border)" }}>
+                  {kids.map((child) => childRow(child))}
+                </ul>
+              )}
             </li>
           );
         })}

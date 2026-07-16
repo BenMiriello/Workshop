@@ -1,0 +1,566 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw, Plus, Pencil, Trash2, Check, CornerDownLeft } from "lucide-react";
+import {
+  Button,
+  Card,
+  ConfirmDialog,
+  Field,
+  Input,
+  Select,
+  SectionLabel,
+  Skeleton,
+  StateBlock,
+  StatusPill,
+  Stack,
+  Row,
+  Textarea,
+  Toggle,
+} from "../ui";
+import {
+  type Task,
+  type TaskStatus,
+  TASK_STATUSES,
+  taskStatusKind,
+  taskStatusLabel,
+  title as taskTitle,
+  description as taskDescription,
+  joinText,
+} from "../lib/tasks";
+
+// Reusable task panel over the canonical cross-scope Task API. It renders EVERY
+// shipped status (todo/doing/in_review/blocked/parked/done/cancelled) through the
+// shared status map, so one component serves build:, project:, and agent: scopes
+// (the Work page owns the full-page Tickets surface; this is the compact,
+// embeddable sibling used inside a chat drawer and on the Agent detail page).
+//
+// Reads  GET  /api/tasks?scope=<scope>
+// Writes POST /api/tasks                          (create)
+//        PATCH /api/tasks/<scope>/<id>            (edit + one-click Approve)
+//        DELETE /api/tasks/<scope>/<id>           (delete)
+//        POST /api/jobs/<jobId>/tasks/<id>/action (awaiting reply, reused from
+//                                                   the JobDetail "Needs input")
+//
+// The operator is the review gate: an in_review task gets a one-click Approve
+// (PATCH status=done); an awaiting task gets an inline answer box that resolves
+// the run's bound task the same way the Job detail page does.
+
+export type TaskPanelProps = {
+  // The task-store scope key: "workshop" | "project:<slug>" | "agent:<slug>" |
+  // "build:<slug>". Every read/write is scoped to it.
+  scope: string;
+  // Optional client-side narrowing to one assignee (e.g. "agent:<slug>"). The
+  // scope already selects the store; this filters within it when a store is
+  // shared. Omit to show every task in the scope.
+  assignee?: string | null;
+  // Bump to force a refetch (the chat bumps this when a turn ends so freshly
+  // filed tasks appear without a manual refresh).
+  refetchKey?: number;
+  // Drawer gate: when explicitly false the panel renders nothing (the chat
+  // toolbar owns the open/close toggle). Defaults to open.
+  open?: boolean;
+  // Report the count of not-done, not-cancelled tasks up for a toolbar badge.
+  onCount?: (openCount: number) => void;
+  // "drawer" = compact, scroll-capped body inside the chat panel (default).
+  // "section" = a page section with its own heading, for the Agent detail page.
+  variant?: "drawer" | "section";
+  // Heading for the "section" variant.
+  heading?: string;
+};
+
+const OVERFLOW_AT = 100;
+const POLL_MS = 6000;
+
+type EditDraft = {
+  title: string;
+  description: string;
+  status: TaskStatus;
+  priority: string;
+  effort: string;
+  assignee: string;
+};
+
+function toDraft(t: Task): EditDraft {
+  return {
+    title: taskTitle(t),
+    description: taskDescription(t),
+    status: (t.status ?? "todo") as TaskStatus,
+    priority: String(t.priority ?? 0),
+    effort: t.effort ?? "",
+    assignee: t.assignee ?? "",
+  };
+}
+
+function isOpenStatus(status?: string): boolean {
+  return status !== "done" && status !== "cancelled";
+}
+
+export default function TaskPanel({
+  scope,
+  assignee,
+  refetchKey = 0,
+  open = true,
+  onCount,
+  variant = "drawer",
+  heading,
+}: TaskPanelProps) {
+  const [tasks, setTasks] = useState<Task[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [showDone, setShowDone] = useState(false);
+
+  // Create
+  const [newText, setNewText] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addErr, setAddErr] = useState<string | null>(null);
+
+  // Per-row edit (edit-mode: fields commit on explicit Save, never on change)
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<EditDraft | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [rowErr, setRowErr] = useState<string | null>(null);
+
+  // Approve / awaiting-reply / delete in flight
+  const [acting, setActing] = useState<string | null>(null);
+  const [replyId, setReplyId] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [confirmDel, setConfirmDel] = useState<Task | null>(null);
+
+  const endpoint = `/api/tasks?scope=${encodeURIComponent(scope)}`;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch(endpoint);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const j = (await r.json()) as { tasks?: Task[] };
+      setTasks(j.tasks ?? []);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [endpoint]);
+
+  useEffect(() => {
+    void load();
+  }, [load, refetchKey]);
+
+  // Poll while a sweep is actively working this scope (a task in `doing`), so the
+  // panel reflects a running run without the operator refreshing. Idle scopes do
+  // no polling. Refetch-on-demand (load) stays the primary path.
+  const anyDoing = (tasks ?? []).some((t) => t.status === "doing");
+  const loadRef = useRef(load);
+  loadRef.current = load;
+  useEffect(() => {
+    if (!open || !anyDoing) return;
+    const id = window.setInterval(() => void loadRef.current(), POLL_MS);
+    return () => window.clearInterval(id);
+  }, [open, anyDoing]);
+
+  const scoped = assignee != null ? (tasks ?? []).filter((t) => (t.assignee ?? "") === assignee) : (tasks ?? []);
+  const openCount = scoped.filter((t) => isOpenStatus(t.status)).length;
+
+  useEffect(() => {
+    if (onCount) onCount(openCount);
+  }, [onCount, openCount]);
+
+  const visibleAll = showDone ? scoped : scoped.filter((t) => isOpenStatus(t.status));
+  const overflow = visibleAll.length > OVERFLOW_AT;
+  const visible = overflow ? visibleAll.slice(0, OVERFLOW_AT) : visibleAll;
+
+  // ---- writes --------------------------------------------------------------
+
+  const add = useCallback(async () => {
+    const text = newText.trim();
+    if (!text || adding) return;
+    setAdding(true);
+    setAddErr(null);
+    try {
+      const r = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope, text, priority: 0 }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setNewText("");
+      await load();
+    } catch (e) {
+      setAddErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAdding(false);
+    }
+  }, [newText, adding, scope, load]);
+
+  const beginEdit = useCallback((t: Task) => {
+    setRowErr(null);
+    setReplyId(null);
+    setEditingId(t.id);
+    setDraft(toDraft(t));
+  }, []);
+
+  const cancelEdit = useCallback(() => {
+    setEditingId(null);
+    setDraft(null);
+    setRowErr(null);
+  }, []);
+
+  const saveEdit = useCallback(
+    async (t: Task) => {
+      if (!draft) return;
+      setSavingId(t.id);
+      setRowErr(null);
+      try {
+        const body = {
+          text: joinText(draft.title, draft.description),
+          status: draft.status,
+          priority: Number(draft.priority) || 0,
+          effort: draft.effort,
+          assignee: draft.assignee.trim() || null,
+        };
+        const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        setEditingId(null);
+        setDraft(null);
+        await load();
+      } catch (e) {
+        setRowErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [draft, scope, load],
+  );
+
+  const approve = useCallback(
+    async (t: Task) => {
+      setActing(`approve:${t.id}`);
+      setRowErr(null);
+      try {
+        const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: "done" }),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        await load();
+      } catch (e) {
+        setRowErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setActing(null);
+      }
+    },
+    [scope, load],
+  );
+
+  // Resolve an awaiting task by answering its question. Reuses the same job/task
+  // action endpoint the Job detail "Needs your input" section uses, carrying the
+  // operator's answer as the note (recorded as evidence, clears the awaiting
+  // payload). in_review sends the work back for rework with the answer; a blocked
+  // task is unblocked back into the queue.
+  const sendReply = useCallback(
+    async (t: Task) => {
+      const answer = replyText.trim();
+      if (!answer) return;
+      const jobId = t.job_ids && t.job_ids.length > 0 ? t.job_ids[t.job_ids.length - 1] : null;
+      if (!jobId) {
+        setRowErr("No run is linked to this task, so its question can't be answered here. Resolve it from the run under Jobs.");
+        return;
+      }
+      const action = t.status === "in_review" ? "reject" : "unblock";
+      setActing(`reply:${t.id}`);
+      setRowErr(null);
+      try {
+        const r = await fetch(
+          `/api/jobs/${encodeURIComponent(jobId)}/tasks/${encodeURIComponent(t.id)}/action`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ action, note: answer }),
+          },
+        );
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        setReplyId(null);
+        setReplyText("");
+        await load();
+      } catch (e) {
+        setRowErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setActing(null);
+      }
+    },
+    [replyText, load],
+  );
+
+  const del = useCallback(
+    async (t: Task) => {
+      setActing(`delete:${t.id}`);
+      setRowErr(null);
+      try {
+        const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}`, {
+          method: "DELETE",
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        setConfirmDel(null);
+        await load();
+      } catch (e) {
+        setRowErr(e instanceof Error ? e.message : String(e));
+        setConfirmDel(null);
+      } finally {
+        setActing(null);
+      }
+    },
+    [scope, load],
+  );
+
+  // ---- rendering -----------------------------------------------------------
+
+  if (open === false) return null;
+
+  const setField = <K extends keyof EditDraft>(k: K, v: EditDraft[K]) =>
+    setDraft((d) => (d ? { ...d, [k]: v } : d));
+
+  const editRow = (t: Task) => {
+    if (!draft) return null;
+    const original = toDraft(t);
+    const dirty = JSON.stringify(draft) !== JSON.stringify(original);
+    return (
+      <Stack gap="sm">
+        <Field label="Title" htmlFor={`tp-title-${t.id}`}>
+          <Input id={`tp-title-${t.id}`} value={draft.title} onChange={(e) => setField("title", e.target.value)} data-autofocus />
+        </Field>
+        <Field label="Description" htmlFor={`tp-desc-${t.id}`} optional>
+          <Textarea id={`tp-desc-${t.id}`} rows={3} value={draft.description} onChange={(e) => setField("description", e.target.value)} />
+        </Field>
+        <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+          <Field label="Status" htmlFor={`tp-status-${t.id}`}>
+            <Select id={`tp-status-${t.id}`} value={draft.status} onChange={(e) => setField("status", e.target.value as TaskStatus)}>
+              {TASK_STATUSES.map((s) => (
+                <option key={s} value={s}>{taskStatusLabel(s)}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Priority" htmlFor={`tp-prio-${t.id}`}>
+            <Input id={`tp-prio-${t.id}`} type="number" value={draft.priority} onChange={(e) => setField("priority", e.target.value)} style={{ maxWidth: "6rem" }} />
+          </Field>
+          <Field label="Effort" htmlFor={`tp-effort-${t.id}`}>
+            <Select id={`tp-effort-${t.id}`} value={draft.effort} onChange={(e) => setField("effort", e.target.value)}>
+              <option value="">none</option>
+              <option value="s">s</option>
+              <option value="m">m</option>
+              <option value="l">l</option>
+            </Select>
+          </Field>
+          <Field label="Assignee" htmlFor={`tp-assignee-${t.id}`} help="operator or agent:<slug>">
+            <Input id={`tp-assignee-${t.id}`} value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)} placeholder="operator" style={{ maxWidth: "12rem" }} />
+          </Field>
+        </Row>
+        {rowErr && <p className="ws-field__error">{rowErr}</p>}
+        {dirty && <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>Unsaved changes.</p>}
+        <Row wrap style={{ gap: "var(--space-2)" }}>
+          <Button size="sm" variant="primary" loading={savingId === t.id} disabled={!dirty} onClick={() => void saveEdit(t)}>Save</Button>
+          <Button size="sm" variant="ghost" onClick={cancelEdit} disabled={savingId === t.id}>Cancel</Button>
+        </Row>
+      </Stack>
+    );
+  };
+
+  const viewRow = (t: Task) => {
+    const awaiting = t.awaiting?.question ? t.awaiting.question : null;
+    const busyApprove = acting === `approve:${t.id}`;
+    const busyReply = acting === `reply:${t.id}`;
+    const anyBusy = acting?.endsWith(`:${t.id}`) ?? false;
+    return (
+      <Stack gap="sm">
+        <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+          <StatusPill status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusPill>
+          <span style={{ flex: "1 1 12rem", fontWeight: 600, wordBreak: "break-word" }}>{taskTitle(t) || "(untitled)"}</span>
+        </Row>
+        <Row wrap style={{ gap: "var(--space-3)" }}>
+          {typeof t.priority === "number" && t.priority !== 0 && (
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>priority {t.priority}</span>
+          )}
+          {t.effort && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>effort {t.effort}</span>}
+          {t.assignee && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{t.assignee}</span>}
+          {t.depends_on && t.depends_on.length > 0 && (
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>depends on {t.depends_on.length}</span>
+          )}
+        </Row>
+        {t.blocked_reason && (
+          <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>Blocked: {t.blocked_reason}</p>
+        )}
+        {awaiting && (
+          <Card compact style={{ padding: "var(--space-3)", background: "var(--bg-inset)" }}>
+            <Stack gap="sm">
+              <span style={{ fontSize: "var(--fs-sm)" }}>{awaiting}</span>
+              {replyId === t.id ? (
+                <Row wrap style={{ gap: "var(--space-2)", alignItems: "flex-end" }}>
+                  <Input
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder="Type your answer"
+                    aria-label="Answer this question"
+                    style={{ flex: "1 1 14rem" }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void sendReply(t);
+                      }
+                    }}
+                  />
+                  <Button size="sm" variant="primary" loading={busyReply} disabled={!replyText.trim()} onClick={() => void sendReply(t)}>
+                    <CornerDownLeft aria-hidden /> Send
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setReplyId(null); setReplyText(""); }} disabled={busyReply}>Cancel</Button>
+                </Row>
+              ) : (
+                <Row>
+                  <Button size="sm" onClick={() => { setReplyId(t.id); setReplyText(""); setRowErr(null); }} disabled={anyBusy}>
+                    Answer
+                  </Button>
+                </Row>
+              )}
+            </Stack>
+          </Card>
+        )}
+        <Row wrap style={{ gap: "var(--space-2)" }}>
+          {t.status === "in_review" && (
+            <Button size="sm" variant="primary" loading={busyApprove} disabled={anyBusy} onClick={() => void approve(t)}>
+              <Check aria-hidden /> Approve
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={() => beginEdit(t)} disabled={anyBusy}>
+            <Pencil aria-hidden /> Edit
+          </Button>
+          <Button size="sm" variant="danger-ghost" onClick={() => { setRowErr(null); setConfirmDel(t); }} disabled={anyBusy}>
+            <Trash2 aria-hidden /> Delete
+          </Button>
+        </Row>
+        {rowErr && editingId !== t.id && replyId !== t.id && (
+          <p className="ws-field__error">{rowErr}</p>
+        )}
+      </Stack>
+    );
+  };
+
+  let body: JSX.Element;
+  if (err) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't load tasks"
+        hint={<><code>{endpoint}</code> ({err})</>}
+        action={<Button size="sm" onClick={() => void load()}>Retry</Button>}
+      />
+    );
+  } else if (tasks === null) {
+    body = (
+      <Stack gap="sm" aria-busy="true">
+        <Skeleton width="80%" />
+        <Skeleton width="60%" />
+        <Skeleton width="70%" />
+      </Stack>
+    );
+  } else if (visibleAll.length === 0) {
+    body = (
+      <StateBlock
+        title={openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status)) ? "No open tasks" : "No tasks yet"}
+        hint={
+          openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status))
+            ? "Every task here is done or cancelled. Turn on Show done to see them, or add a new one below."
+            : "Add a task below, or the worker files tasks here as it plans and works."
+        }
+      />
+    );
+  } else {
+    body = (
+      <>
+        {overflow && (
+          <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+            Showing the first {OVERFLOW_AT} of {visibleAll.length} tasks. Narrow by status from the Work page to see the rest.
+          </p>
+        )}
+        <ul className="chat-tasks__list">
+          {visible.map((t) => (
+            <li key={t.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
+              {editingId === t.id ? editRow(t) : viewRow(t)}
+            </li>
+          ))}
+        </ul>
+      </>
+    );
+  }
+
+  const toolbar = (
+    <div className="chat-tasks__toolbar" style={{ justifyContent: "space-between" }}>
+      <Toggle checked={showDone} onChange={setShowDone} label="Show done" />
+      <Button size="sm" variant="ghost" onClick={() => void load()} loading={loading} aria-label="Refresh tasks" title="Refresh">
+        <RefreshCw aria-hidden /> Refresh
+      </Button>
+    </div>
+  );
+
+  const addRow = (
+    <div className="chat-tasks__add">
+      <Input
+        value={newText}
+        placeholder="Add a task..."
+        onChange={(e) => setNewText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void add();
+          }
+        }}
+        aria-label="New task"
+      />
+      <Button variant="primary" icon onClick={() => void add()} disabled={adding || !newText.trim()} aria-label="Add task" title="Add task">
+        <Plus aria-hidden />
+      </Button>
+    </div>
+  );
+
+  const confirmDialog = (
+    <ConfirmDialog
+      open={confirmDel !== null}
+      onCancel={() => setConfirmDel(null)}
+      onConfirm={() => confirmDel && void del(confirmDel)}
+      busy={acting === `delete:${confirmDel?.id}`}
+      title="Delete this task?"
+      body={<>This removes <strong>{confirmDel ? (taskTitle(confirmDel) || "the task") : "the task"}</strong> from this scope. It can't be undone. Linked run history is kept.</>}
+      confirmLabel="Delete task"
+    />
+  );
+
+  const inner = (
+    <Stack gap="sm">
+      {toolbar}
+      {addErr && <p className="ws-field__error">{addErr}</p>}
+      {body}
+      {addRow}
+    </Stack>
+  );
+
+  if (variant === "section") {
+    return (
+      <section>
+        <Row between wrap style={{ alignItems: "baseline" }}>
+          <SectionLabel>{heading ?? "Tasks"}</SectionLabel>
+        </Row>
+        <Card style={{ padding: "var(--space-3)" }}>{inner}</Card>
+        {confirmDialog}
+      </section>
+    );
+  }
+
+  return (
+    <div className="chat-tasks">
+      <div className="chat-tasks__body">{inner}</div>
+      {confirmDialog}
+    </div>
+  );
+}

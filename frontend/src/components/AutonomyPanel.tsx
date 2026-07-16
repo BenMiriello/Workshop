@@ -1,17 +1,37 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
+  ChevronDown, ChevronRight, Gauge, GitFork, HelpCircle, SlidersHorizontal,
+} from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill,
-  Skeleton, Input, Field, ActionBar, Tag, catFor, useEditMode, type StatusKind,
+  Skeleton, Input, Field, ActionBar, Tag, Toggle, Segmented, catFor,
+  useEditMode, type StatusKind, type SegmentedOption,
 } from "../ui";
 
-// Per-project autonomy = a project's OWN Ralph loop over its OWN TODO.md + git
-// repo (scripts/project_ralph.sh). The config surface is now a unified trigger
-// list (services.triggers), not a single mode switch: the operator composes the
-// triggers that fire this project's work. `loop` carries an iteration cap so an
-// unattended loop is bounded. Writes go through PUT /{slug}/autonomy as a config
-// write: edit-mode + explicit Save (never commit-on-change). A manual "Run now"
-// is a deliberate foreground sweep and is a separate button.
+// Autonomy = how a scope (a project OR an agent) decides when to work its own
+// task queue through the Ralph loop. The PRIMARY control is a preset (Section
+// 10.4 of orchestration-and-autonomy.md), not a raw trigger list:
+//
+//   off         no automatic runs; manual "Run now" only
+//   on-demand   swept only by an explicit "Run now"
+//   scheduled   swept on a cron cadence when work is ready
+//   continuous  swept every tick while work is ready, bounded by limits
+//
+// depth (quick/standard/deep) and fanout (off/read-only) tune each sweep; limits
+// bound a continuous loop. All of these are a CONFIG write: edit-mode + explicit
+// Save (never commit-on-change per the design system). The raw expanded trigger
+// list stays reachable under an "Advanced" disclosure for the operator who wants
+// it. A manual "Run now" is a deliberate foreground sweep and stays a button.
+//
+// The panel serves BOTH scopes off one prop set: a project (default) writes the
+// preset directly to PUT /projects/{slug}/autonomy; an agent expands the preset
+// to triggers and writes PUT /agents/{id}. The project callsite keeps working
+// unchanged; agent scope is opt-in via the optional `scope`/`agentId` props.
+
+type Preset = "off" | "on-demand" | "scheduled" | "continuous";
+type Depth = "quick" | "standard" | "deep";
+type Fanout = "off" | "read-only";
 
 type TriggerKind = "manual" | "cron" | "event" | "loop";
 
@@ -24,6 +44,15 @@ type Trigger = {
   completion_gate?: string;
 };
 
+type Limits = { max_iterations?: number; budget?: { max_wall_s?: number }; completion_gate?: string };
+
+type Queue = {
+  ready?: number; doing?: number; in_review?: number;
+  blocked?: number; parked?: number; todo?: number;
+};
+
+type Awaiting = { id: string; status?: string; text?: string; question?: string; since?: string };
+
 type Job = {
   id: string;
   status?: string;
@@ -35,14 +64,65 @@ type Job = {
 } | null;
 
 type Autonomy = {
+  autonomy: Preset;
+  depth: Depth;
+  fanout: Fanout;
+  limits: Limits;
   triggers: Trigger[];
-  mode: string;
-  updated: string | null;
-  running: boolean;
-  last_run: Job;
+  queue?: Queue;
+  awaiting?: Awaiting[];
+  mode?: string;
+  updated?: string | null;
+  running?: boolean;
+  last_run?: Job;
+};
+
+type PrimaryDraft = {
+  preset: Preset;
+  depth: Depth;
+  fanout: Fanout;
+  cron: string;
+  maxIterations: string;
+  budget: string;
 };
 
 const KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "custom"];
+
+const PRESET_OPTIONS: SegmentedOption<Preset>[] = [
+  { value: "off", label: "Off" },
+  { value: "on-demand", label: "On demand" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "continuous", label: "Continuous" },
+];
+
+const DEPTH_OPTIONS: SegmentedOption<Depth>[] = [
+  { value: "quick", label: "Quick" },
+  { value: "standard", label: "Standard" },
+  { value: "deep", label: "Deep" },
+];
+
+const PRESET_DESC: Record<Preset, string> = {
+  off: "No automatic runs. Manual Run now only.",
+  "on-demand": "Runs only when you press Run now.",
+  scheduled: "Runs on a cron schedule when work is ready.",
+  continuous: "Sweeps every tick while work is ready, bounded by limits.",
+};
+
+const DEPTH_DESC: Record<Depth, string> = {
+  quick: "Shallow passes, fast turnaround.",
+  standard: "Balanced effort per task.",
+  deep: "Thorough, more iterations per task.",
+};
+
+function isPreset(v: unknown): v is Preset {
+  return v === "off" || v === "on-demand" || v === "scheduled" || v === "continuous";
+}
+function isDepth(v: unknown): v is Depth {
+  return v === "quick" || v === "standard" || v === "deep";
+}
+function isFanout(v: unknown): v is Fanout {
+  return v === "off" || v === "read-only";
+}
 
 function fmtTs(ts?: string | null): string {
   if (!ts) return "";
@@ -57,6 +137,39 @@ function jobKind(status?: string): StatusKind {
   if (status === "awaiting_input") return "warn";
   return "stopped";
 }
+
+function cronFromTriggers(triggers?: Trigger[]): string {
+  const cron = (triggers || []).find((t) => t.kind === "cron");
+  return cron?.cron_expression ?? "";
+}
+
+// Client mirror of backend triggers.preset_to_triggers, used for the agent
+// scope (whose PUT accepts a trigger list, not a preset). The project scope
+// sends the preset directly and lets the backend expand it.
+function presetToTriggers(preset: Preset, cron: string, limits: Limits): Trigger[] {
+  if (preset === "continuous") {
+    return [{
+      kind: "loop",
+      max_iterations: limits.max_iterations ?? 20,
+      budget: limits.budget ?? { max_wall_s: 3000 },
+      completion_gate: limits.completion_gate ?? "reviewer",
+    }];
+  }
+  if (preset === "scheduled") return [{ kind: "cron", cron_expression: cron || "" }];
+  if (preset === "on-demand") return [{ kind: "manual" }];
+  return [];
+}
+
+function draftLimits(draft: PrimaryDraft): Limits {
+  const limits: Limits = {};
+  const mi = draft.maxIterations.trim();
+  if (mi) limits.max_iterations = Math.max(1, Number(mi) || 1);
+  const bg = draft.budget.trim();
+  if (bg) limits.budget = { max_wall_s: Math.max(1, Number(bg) || 1) };
+  return limits;
+}
+
+// ---- Advanced (raw trigger list) helpers -----------------------------------
 
 function newTrigger(kind: TriggerKind): Trigger {
   if (kind === "cron") return { kind, cron_expression: "" };
@@ -79,26 +192,63 @@ function triggerSummary(t: Trigger): string {
   return "manual run only";
 }
 
-export default function AutonomyPanel({ slug }: { slug: string }) {
+// ---- Component -------------------------------------------------------------
+
+export default function AutonomyPanel({
+  slug,
+  scope = "project",
+  agentId,
+}: {
+  slug: string;
+  // Which scope this panel governs. Defaults to "project" so the existing
+  // project callsite keeps its exact behavior. "agent" points the same UI at
+  // the agent autonomy endpoints instead.
+  scope?: "project" | "agent";
+  // Agent identifier for scope === "agent". Falls back to `slug` when omitted,
+  // so a caller can pass the agent id as `slug` alone if it prefers.
+  agentId?: string;
+}) {
+  const scopeId = scope === "agent" ? (agentId ?? slug) : slug;
+  const getUrl = scope === "agent"
+    ? `/api/agents/${encodeURIComponent(scopeId)}`
+    : `/api/projects/${encodeURIComponent(slug)}/autonomy`;
+  const putUrl = getUrl;
+  const runUrl = `/api/projects/${encodeURIComponent(slug)}/autonomy/run`;
+
   const [cfg, setCfg] = useState<Autonomy | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const timer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const r = await fetch(`/api/projects/${slug}/autonomy`);
+      const r = await fetch(getUrl);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setCfg(await r.json());
+      const raw = await r.json();
+      const cfgNext: Autonomy = {
+        autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
+        depth: isDepth(raw.depth) ? raw.depth : "standard",
+        fanout: isFanout(raw.fanout) ? raw.fanout : "read-only",
+        limits: (raw.limits && typeof raw.limits === "object") ? raw.limits : {},
+        triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
+        queue: raw.queue,
+        awaiting: Array.isArray(raw.awaiting) ? raw.awaiting : [],
+        mode: raw.mode,
+        updated: raw.updated ?? null,
+        running: !!raw.running,
+        last_run: raw.last_run ?? null,
+      };
+      setCfg(cfgNext);
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [slug]);
+  }, [getUrl]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -109,11 +259,55 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
     return () => { if (timer.current) window.clearInterval(timer.current); };
   }, [running, load]);
 
-  const edit = useEditMode<{ triggers: Trigger[] }>(
+  // Primary preset config: the main control. Edit-mode + explicit Save.
+  const primaryModel = useMemo<PrimaryDraft>(() => ({
+    preset: cfg?.autonomy ?? "off",
+    depth: cfg?.depth ?? "standard",
+    fanout: cfg?.fanout ?? "read-only",
+    cron: cronFromTriggers(cfg?.triggers),
+    maxIterations: cfg?.limits?.max_iterations != null ? String(cfg.limits.max_iterations) : "",
+    budget: cfg?.limits?.budget?.max_wall_s != null ? String(cfg.limits.budget.max_wall_s) : "",
+  }), [cfg]);
+
+  const pedit = useEditMode<PrimaryDraft>(primaryModel, async (draft) => {
+    setSaveErr(null);
+    const limits = draftLimits(draft);
+    let body: unknown;
+    if (scope === "agent") {
+      body = {
+        triggers: presetToTriggers(draft.preset, draft.cron, limits),
+        depth: draft.depth,
+        fanout: draft.fanout,
+        limits,
+      };
+    } else {
+      body = {
+        preset: draft.preset,
+        cron: draft.preset === "scheduled" ? draft.cron : undefined,
+        depth: draft.depth,
+        fanout: draft.fanout,
+        limits,
+      };
+    }
+    const r = await fetch(putUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const msg = `${r.status} ${await r.text()}`;
+      setSaveErr(msg);
+      throw new Error(msg);
+    }
+    await load();
+  });
+
+  // Advanced raw trigger list: the escape hatch. Writes the { triggers } path.
+  const aedit = useEditMode<{ triggers: Trigger[] }>(
     { triggers: cfg?.triggers ?? [] },
     async (draft) => {
       setSaveErr(null);
-      const r = await fetch(`/api/projects/${slug}/autonomy`, {
+      const r = await fetch(putUrl, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ triggers: draft.triggers }),
@@ -131,7 +325,7 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
     setBusy(true);
     setSaveErr(null);
     try {
-      const r = await fetch(`/api/projects/${slug}/autonomy/run`, { method: "POST" });
+      const r = await fetch(runUrl, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setTimeout(load, 1200);
       setTimeout(load, 3500);
@@ -140,176 +334,361 @@ export default function AutonomyPanel({ slug }: { slug: string }) {
     } finally {
       setBusy(false);
     }
-  }, [slug, load]);
+  }, [runUrl, load]);
 
-  const triggers = edit.editing ? edit.draft.triggers : (cfg?.triggers ?? []);
+  const anyEditing = pedit.editing || aedit.editing;
 
+  // Advanced trigger editor operations.
+  const advTriggers = aedit.editing ? aedit.draft.triggers : (cfg?.triggers ?? []);
   const addTrigger = (kind: TriggerKind) => {
-    edit.set("triggers", [...edit.draft.triggers, newTrigger(kind)]);
+    aedit.set("triggers", [...aedit.draft.triggers, newTrigger(kind)]);
   };
   const removeTrigger = (idx: number) => {
-    edit.set("triggers", edit.draft.triggers.filter((_, i) => i !== idx));
+    aedit.set("triggers", aedit.draft.triggers.filter((_, i) => i !== idx));
   };
   const patchTrigger = (idx: number, patch: Partial<Trigger>) => {
-    edit.set("triggers", edit.draft.triggers.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
+    aedit.set("triggers", aedit.draft.triggers.map((t, i) => (i === idx ? { ...t, ...patch } : t)));
   };
 
   const last = cfg?.last_run ?? null;
+  const preset = cfg?.autonomy ?? "off";
+
+  // Queue counts as small StatusPill badges (color is a signal: ready = ok,
+  // in progress = running, in review = warn, blocked = danger).
+  const q = cfg?.queue;
+  const queueItems: { key: string; label: string; count: number; status: StatusKind }[] = q ? [
+    { key: "ready", label: "ready", count: q.ready ?? 0, status: "ok" },
+    { key: "doing", label: "in progress", count: q.doing ?? 0, status: "running" },
+    { key: "in_review", label: "in review", count: q.in_review ?? 0, status: "warn" },
+    { key: "blocked", label: "blocked", count: q.blocked ?? 0, status: "danger" },
+  ] : [];
+  const anyQueue = queueItems.some((i) => i.count > 0);
+  const awaiting = cfg?.awaiting ?? [];
 
   return (
     <section style={{ marginBottom: "var(--space-6)" }}>
       <Row between style={{ marginBottom: "var(--space-3)" }}>
         <SectionLabel icon={<Repeat aria-hidden />}>Autonomy</SectionLabel>
         <Row wrap style={{ gap: "var(--space-2)" }}>
-          {cfg && (
+          {cfg && (scope === "project" ? (
             <StatusPill status={running ? "running" : jobKind(last?.status)}>
               {running ? "running" : (last?.status ?? "never run")}
             </StatusPill>
-          )}
+          ) : (
+            <Tag hue={catFor(preset)}>{preset}</Tag>
+          ))}
           <Button size="sm" variant="ghost" onClick={load}>
             <RefreshCw aria-hidden /> Refresh
           </Button>
-          {!edit.editing && (
-            <Button size="sm" variant="ghost" onClick={edit.begin} disabled={!cfg}>
-              Edit triggers
+          {!anyEditing && (
+            <Button size="sm" variant="ghost" onClick={pedit.begin} disabled={!cfg}>
+              <SlidersHorizontal aria-hidden /> Edit
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="primary"
-            loading={busy && !running}
-            disabled={busy || running || edit.editing}
-            onClick={runNow}
-          >
-            <Play aria-hidden /> Run now
-          </Button>
+          {scope === "project" && (
+            <Button
+              size="sm"
+              variant="primary"
+              loading={busy && !running}
+              disabled={busy || running || anyEditing}
+              onClick={runNow}
+            >
+              <Play aria-hidden /> Run now
+            </Button>
+          )}
         </Row>
       </Row>
 
       <Card>
         {loading && !cfg ? (
-          <Stack gap="sm"><Skeleton width="55%" /><Skeleton width="40%" /></Stack>
+          <Stack gap="sm"><Skeleton width="55%" /><Skeleton width="40%" /><Skeleton width="30%" /></Stack>
         ) : err && !cfg ? (
           <StateBlock
             variant="error"
             title="Couldn't load autonomy config"
-            hint={<code>GET /api/projects/{slug}/autonomy: {err}</code>}
+            hint={<code>GET {getUrl}: {err}</code>}
             action={<Button size="sm" onClick={load}>Retry</Button>}
           />
         ) : (
           <Stack>
-            <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-              Triggers decide when this project works its own <span className="ws-mono">TODO.md</span> through the
-              Ralph loop against its git repo. With no triggers it only runs on <strong>Run now</strong>. A{" "}
-              <span className="ws-mono">loop</span> trigger makes it eligible for unattended background sweeps,
-              bounded by its iteration cap.
-            </p>
+            {/* ---- Primary preset control ---- */}
+            {pedit.editing ? (
+              <Stack>
+                <Field label="Autonomy" help={PRESET_DESC[pedit.draft.preset]}>
+                  <Segmented
+                    ariaLabel="Autonomy preset"
+                    options={PRESET_OPTIONS}
+                    value={pedit.draft.preset}
+                    onChange={(v) => pedit.set("preset", v)}
+                  />
+                </Field>
 
-            {triggers.length === 0 && !edit.editing && (
-              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                No triggers. Manual runs only.
-              </p>
-            )}
+                {pedit.draft.preset === "scheduled" && (
+                  <Field label="Cron expression" htmlFor="autonomy-cron" help="Standard 5-field cron. Sweeps fire on this cadence when work is ready.">
+                    <Input
+                      id="autonomy-cron"
+                      value={pedit.draft.cron}
+                      placeholder="0 */6 * * *"
+                      onChange={(e) => pedit.set("cron", e.target.value)}
+                    />
+                  </Field>
+                )}
 
-            <Stack gap="sm">
-              {triggers.map((t, i) => (
-                <Row key={i} between wrap style={{ gap: "var(--space-2)", alignItems: "flex-start" }}>
-                  <Row style={{ gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
-                    <Tag hue={catFor(t.kind)}>{t.kind}</Tag>
-                    {!edit.editing && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{triggerSummary(t)}</span>
-                    )}
-                    {edit.editing && t.kind === "cron" && (
-                      <Field label="Cron expression" htmlFor={`cron-${i}`}>
-                        <Input
-                          id={`cron-${i}`}
-                          value={t.cron_expression ?? ""}
-                          placeholder="0 */6 * * *"
-                          onChange={(e) => patchTrigger(i, { cron_expression: e.target.value })}
-                        />
-                      </Field>
-                    )}
-                    {edit.editing && t.kind === "event" && (
-                      <Field label="Sources (comma separated)" htmlFor={`ev-${i}`} help={KNOWN_SOURCES.join(", ")}>
-                        <Input
-                          id={`ev-${i}`}
-                          value={(t.event_sources ?? []).join(", ")}
-                          placeholder="plaid, github"
-                          onChange={(e) => patchTrigger(i, {
-                            event_sources: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
-                          })}
-                        />
-                      </Field>
-                    )}
-                    {edit.editing && t.kind === "loop" && (
-                      <Field label="Iteration cap (tasks per sweep)" htmlFor={`loop-${i}`}>
-                        <Input
-                          id={`loop-${i}`}
-                          type="number"
-                          min={1}
-                          value={t.max_iterations ?? 20}
-                          onChange={(e) => patchTrigger(i, { max_iterations: Math.max(1, Number(e.target.value) || 1) })}
-                        />
-                      </Field>
-                    )}
-                  </Row>
-                  {edit.editing && (
-                    <Button size="sm" variant="ghost" onClick={() => removeTrigger(i)} aria-label={`Remove ${t.kind} trigger`}>
-                      <X aria-hidden /> Remove
-                    </Button>
+                <Field label={<><Gauge size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Depth</>} help={DEPTH_DESC[pedit.draft.depth]}>
+                  <Segmented
+                    ariaLabel="Sweep depth"
+                    options={DEPTH_OPTIONS}
+                    value={pedit.draft.depth}
+                    onChange={(v) => pedit.set("depth", v)}
+                  />
+                </Field>
+
+                <Field label={<><GitFork size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Fan-out</>} help="Allow read-only fan-out to helper agents during a sweep.">
+                  <Toggle
+                    checked={pedit.draft.fanout === "read-only"}
+                    onChange={(next) => pedit.set("fanout", next ? "read-only" : "off")}
+                    label={<span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{pedit.draft.fanout === "read-only" ? "read-only" : "off"}</span>}
+                  />
+                </Field>
+
+                <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+                  <Field label="Max iterations" htmlFor="autonomy-maxiter" help="Task cap per continuous sweep.">
+                    <Input
+                      id="autonomy-maxiter"
+                      type="number"
+                      min={1}
+                      value={pedit.draft.maxIterations}
+                      placeholder="20"
+                      onChange={(e) => pedit.set("maxIterations", e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Budget (seconds)" htmlFor="autonomy-budget" help="Wall-clock bound per sweep.">
+                    <Input
+                      id="autonomy-budget"
+                      type="number"
+                      min={1}
+                      value={pedit.draft.budget}
+                      placeholder="3000"
+                      onChange={(e) => pedit.set("budget", e.target.value)}
+                    />
+                  </Field>
+                </Row>
+
+                {saveErr && (
+                  <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{saveErr}</p>
+                )}
+
+                <ActionBar flash={pedit.flash ? "Saved" : undefined}>
+                  <Button size="sm" variant="primary" onClick={pedit.save} loading={pedit.saving} disabled={!pedit.dirty}>
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => { setSaveErr(null); pedit.cancel(); }}>
+                    Cancel
+                  </Button>
+                </ActionBar>
+              </Stack>
+            ) : (
+              <Stack gap="sm">
+                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                  <Tag hue={catFor(preset)}>{preset}</Tag>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{PRESET_DESC[preset]}</span>
+                </Row>
+                <Row wrap style={{ gap: "var(--space-4)" }}>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    <Gauge size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
+                    depth: <strong>{cfg?.depth ?? "standard"}</strong>
+                  </span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    <GitFork size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
+                    fan-out: <strong>{cfg?.fanout ?? "read-only"}</strong>
+                  </span>
+                  {preset === "scheduled" && cronFromTriggers(cfg?.triggers) && (
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                      <Clock size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
+                      {cronFromTriggers(cfg?.triggers)}
+                    </span>
+                  )}
+                  {(cfg?.limits?.max_iterations != null || cfg?.limits?.budget?.max_wall_s != null) && (
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                      limits: {cfg?.limits?.max_iterations != null ? `${cfg.limits.max_iterations} iters` : ""}
+                      {cfg?.limits?.max_iterations != null && cfg?.limits?.budget?.max_wall_s != null ? ", " : ""}
+                      {cfg?.limits?.budget?.max_wall_s != null ? `${cfg.limits.budget.max_wall_s}s` : ""}
+                    </span>
                   )}
                 </Row>
-              ))}
+                {cfg?.updated && (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Updated {fmtTs(cfg.updated)}</span>
+                )}
+                {scope === "project" && running && last?.trigger && (
+                  <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                    Sweep running (trigger <span className="ws-mono">{last.trigger}</span>, started {fmtTs(last.started_at)}).
+                  </p>
+                )}
+                {scope === "project" && !running && last && (
+                  <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                    Last run {fmtTs(last.started_at)}: {last.status}
+                    {typeof last.tasks_done === "number" ? `, ${last.tasks_done} done` : ""}
+                    {typeof last.tasks_failed === "number" && last.tasks_failed > 0 ? `, ${last.tasks_failed} failed` : ""}.
+                  </p>
+                )}
+              </Stack>
+            )}
+
+            {/* ---- Queue counts ---- */}
+            <Stack gap="sm">
+              <SectionLabel>Queue</SectionLabel>
+              {q ? (
+                anyQueue ? (
+                  <Row wrap style={{ gap: "var(--space-2)" }}>
+                    {queueItems.filter((i) => i.count > 0).map((i) => (
+                      <StatusPill key={i.key} status={i.status}>{i.count} {i.label}</StatusPill>
+                    ))}
+                  </Row>
+                ) : (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Queue clear. No ready, in-progress, in-review, or blocked tasks.</span>
+                )
+              ) : (
+                <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>No queue data for this scope.</span>
+              )}
             </Stack>
 
-            {edit.editing && (
-              <Row wrap style={{ gap: "var(--space-2)" }}>
-                <Button size="sm" variant="ghost" onClick={() => addTrigger("cron")}>
-                  {triggerIcon("cron")} Add cron
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => addTrigger("event")}>
-                  {triggerIcon("event")} Add event
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => addTrigger("loop")}>
-                  {triggerIcon("loop")} Add loop
-                </Button>
-              </Row>
+            {/* ---- Awaiting operator input (read-only here) ---- */}
+            {awaiting.length > 0 && (
+              <Stack gap="sm">
+                <SectionLabel icon={<HelpCircle aria-hidden />}>Awaiting your input</SectionLabel>
+                {awaiting.map((a) => (
+                  <div
+                    key={a.id}
+                    style={{
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--radius-md)",
+                      padding: "var(--space-3)",
+                    }}
+                  >
+                    <Row wrap style={{ gap: "var(--space-2)", alignItems: "center", marginBottom: "var(--space-1)" }}>
+                      <StatusPill status="warn">awaiting</StatusPill>
+                      {a.text && <span style={{ fontSize: "var(--fs-sm)" }}>{a.text}</span>}
+                    </Row>
+                    {a.question && <p style={{ fontSize: "var(--fs-sm)", margin: "0 0 var(--space-1)" }}>{a.question}</p>}
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                      {a.since ? `since ${fmtTs(a.since)}. ` : ""}Reply from the task panel.
+                    </span>
+                  </div>
+                ))}
+              </Stack>
             )}
 
-            {saveErr && (
-              <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{saveErr}</p>
-            )}
+            {/* ---- Advanced disclosure: raw expanded trigger list ---- */}
+            <div>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowAdvanced((s) => !s)}
+                aria-expanded={showAdvanced}
+              >
+                {showAdvanced ? <ChevronDown aria-hidden /> : <ChevronRight aria-hidden />} Advanced triggers
+              </Button>
 
-            {!edit.editing && cfg?.updated && (
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                Triggers set {fmtTs(cfg.updated)}
-              </span>
-            )}
+              {showAdvanced && (
+                <Stack gap="sm" style={{ marginTop: "var(--space-3)" }}>
+                  <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
+                    The raw trigger list the preset expands to. Editing here writes the trigger list
+                    directly, and the preset above is re-derived from it.
+                  </p>
 
-            {!edit.editing && running && last?.trigger && (
-              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Sweep running (trigger <span className="ws-mono">{last.trigger}</span>, started {fmtTs(last.started_at)}).
-              </p>
-            )}
+                  {advTriggers.length === 0 && !aedit.editing ? (
+                    <StateBlock
+                      title="No triggers"
+                      hint={<span>This preset expands to no automatic trigger. Use <strong>Edit triggers</strong> to compose them by hand, or set a preset above.</span>}
+                    />
+                  ) : (
+                    <Stack gap="sm">
+                      {advTriggers.map((t, i) => (
+                        <Row key={i} between wrap style={{ gap: "var(--space-2)", alignItems: "flex-start" }}>
+                          <Row style={{ gap: "var(--space-2)", alignItems: "center", flexWrap: "wrap" }}>
+                            <Tag hue={catFor(t.kind)}>{t.kind}</Tag>
+                            {!aedit.editing && (
+                              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{triggerSummary(t)}</span>
+                            )}
+                            {aedit.editing && t.kind === "cron" && (
+                              <Field label="Cron expression" htmlFor={`cron-${i}`}>
+                                <Input
+                                  id={`cron-${i}`}
+                                  value={t.cron_expression ?? ""}
+                                  placeholder="0 */6 * * *"
+                                  onChange={(e) => patchTrigger(i, { cron_expression: e.target.value })}
+                                />
+                              </Field>
+                            )}
+                            {aedit.editing && t.kind === "event" && (
+                              <Field label="Sources (comma separated)" htmlFor={`ev-${i}`} help={KNOWN_SOURCES.join(", ")}>
+                                <Input
+                                  id={`ev-${i}`}
+                                  value={(t.event_sources ?? []).join(", ")}
+                                  placeholder="plaid, github"
+                                  onChange={(e) => patchTrigger(i, {
+                                    event_sources: e.target.value.split(",").map((s) => s.trim()).filter(Boolean),
+                                  })}
+                                />
+                              </Field>
+                            )}
+                            {aedit.editing && t.kind === "loop" && (
+                              <Field label="Iteration cap (tasks per sweep)" htmlFor={`loop-${i}`}>
+                                <Input
+                                  id={`loop-${i}`}
+                                  type="number"
+                                  min={1}
+                                  value={t.max_iterations ?? 20}
+                                  onChange={(e) => patchTrigger(i, { max_iterations: Math.max(1, Number(e.target.value) || 1) })}
+                                />
+                              </Field>
+                            )}
+                          </Row>
+                          {aedit.editing && (
+                            <Button size="sm" variant="ghost" onClick={() => removeTrigger(i)} aria-label={`Remove ${t.kind} trigger`}>
+                              <X aria-hidden /> Remove
+                            </Button>
+                          )}
+                        </Row>
+                      ))}
+                    </Stack>
+                  )}
 
-            {!edit.editing && !running && last && (
-              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Last run {fmtTs(last.started_at)}: {last.status}
-                {typeof last.tasks_done === "number" ? `, ${last.tasks_done} done` : ""}
-                {typeof last.tasks_failed === "number" && last.tasks_failed > 0 ? `, ${last.tasks_failed} failed` : ""}.
-              </p>
-            )}
-
-            {edit.editing && (
-              <ActionBar flash={edit.flash ? "Saved" : undefined}>
-                <Button size="sm" variant="primary" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
-                  Save
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => { setSaveErr(null); edit.cancel(); }}>
-                  Cancel
-                </Button>
-              </ActionBar>
-            )}
+                  {aedit.editing ? (
+                    <>
+                      <Row wrap style={{ gap: "var(--space-2)" }}>
+                        <Button size="sm" variant="ghost" onClick={() => addTrigger("cron")}>
+                          {triggerIcon("cron")} Add cron
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => addTrigger("event")}>
+                          {triggerIcon("event")} Add event
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => addTrigger("loop")}>
+                          {triggerIcon("loop")} Add loop
+                        </Button>
+                      </Row>
+                      {saveErr && (
+                        <p style={{ color: "var(--danger)", fontSize: "var(--fs-sm)", margin: 0 }}>{saveErr}</p>
+                      )}
+                      <ActionBar flash={aedit.flash ? "Saved" : undefined}>
+                        <Button size="sm" variant="primary" onClick={aedit.save} loading={aedit.saving} disabled={!aedit.dirty}>
+                          Save triggers
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setSaveErr(null); aedit.cancel(); }}>
+                          Cancel
+                        </Button>
+                      </ActionBar>
+                    </>
+                  ) : (
+                    <Row>
+                      <Button size="sm" variant="ghost" onClick={aedit.begin} disabled={!cfg || pedit.editing}>
+                        Edit triggers
+                      </Button>
+                    </Row>
+                  )}
+                </Stack>
+              )}
+            </div>
           </Stack>
         )}
       </Card>

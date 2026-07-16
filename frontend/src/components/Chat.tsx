@@ -5,8 +5,9 @@ import {
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
 } from "lucide-react";
-import { ConfirmDialog, StateBlock, Skeleton, Input, Toggle, Button, Select, Markdown } from "../ui";
+import { ConfirmDialog, StateBlock, Button, Markdown } from "../ui";
 import { scopeLabel } from "../lib/tasks";
+import TaskPanel from "./TaskPanel";
 import {
   chatApi,
   type ChatMsg,
@@ -14,8 +15,6 @@ import {
   type Thread,
   type ThreadSummary,
   type Provider,
-  type AgentTask,
-  type AgentTaskStatus,
   shortHttpError,
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
@@ -31,9 +30,9 @@ import { type UiCardCtx } from "./chat/uiCardActions";
 // mode = "build" → POST /threads/{id}/turns + EventSource /turns/{id}/stream
 //
 // variant controls chrome:
-//   "dock"  — floating bottom-sheet contents
-//   "panel" — inline, fills its host region (build IDE chat column)
-//   "full"  — full-page, centred, fills the viewport (FocusedChat route)
+//   "dock"  - floating bottom-sheet contents
+//   "panel" - inline, fills its host region (build IDE chat column)
+//   "full"  - full-page, centred, fills the viewport (FocusedChat route)
 //
 // All variants share ONE compact toolbar (conversation picker + new/delete +
 // tasks + model + expand) so nothing stacks into wasted vertical rows, and the
@@ -68,13 +67,19 @@ function buildSlug(contextKey: string): string | null {
   return contextKey.startsWith("build:") ? contextKey.slice("build:".length) : null;
 }
 
-const TASK_STATUSES: AgentTaskStatus[] = ["todo", "doing", "done", "blocked"];
-const TASK_STATUS_LABELS: Record<AgentTaskStatus, string> = {
-  todo: "To do",
-  doing: "Doing",
-  done: "Done",
-  blocked: "Blocked",
-};
+// The task-store scope a chat maps to, or null when the chat has no task queue
+// (general chat, app docks). build/project/agent chats all get the shared
+// TaskPanel; the contextKey IS the scope key for those.
+function taskScopeFor(contextKey: string): string | null {
+  if (
+    contextKey.startsWith("build:") ||
+    contextKey.startsWith("project:") ||
+    contextKey.startsWith("agent:")
+  ) {
+    return contextKey;
+  }
+  return null;
+}
 
 const MODEL_LABELS: Record<string, string> = {
   "claude-opus-4-8": "Opus 4.8",
@@ -86,7 +91,7 @@ function modelLabel(id: string): string {
   return MODEL_LABELS[id] ?? id;
 }
 
-// "12s" under a minute, "1m 05s" beyond — for the live working indicator.
+// "12s" under a minute, "1m 05s" beyond - for the live working indicator.
 function formatElapsed(s: number): string {
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
@@ -263,7 +268,7 @@ function AnswerBody({
   );
 }
 
-// The "work" of an assistant turn — its tool calls + interim text. On the most
+// The "work" of an assistant turn - its tool calls + interim text. On the most
 // recent turn the latest few steps stay inline and older ones fold into a
 // re-openable accordion; on older turns all of it folds away (just the answer
 // shows). Tool calls themselves stay individually expandable (ToolChip).
@@ -338,14 +343,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const messagesRef = useRef<ChatMsg[]>(messages);
   messagesRef.current = messages;
   // Composer text is a persisted draft (survives reload, syncs across tabs /
-  // devices) keyed by this chat's contextKey — see lib/draftSync.
+  // devices) keyed by this chat's contextKey - see lib/draftSync.
   const [input, setInput] = useDraft(contextKey);
   const [streaming, setStreaming] = useState(false);
   // A build turn's SSE dropped and we're re-attaching to the still-running turn
-  // (proxy/idle timeouts mid-turn are normal on long turns) — the working
+  // (proxy/idle timeouts mid-turn are normal on long turns) - the working
   // indicator stays up and says "reconnecting" instead of the turn going dead.
   const [reconnecting, setReconnecting] = useState(false);
-  // Seconds elapsed on the live turn — drives the "Working… 12s" indicator.
+  // Seconds elapsed on the live turn - drives the "Working… 12s" indicator.
   const [elapsed, setElapsed] = useState(0);
   // Composer focus: drives mobile keyboard chrome (drop the bottom padding so
   // there's no dead row between the buttons and the keyboard) + scroll pinning.
@@ -398,12 +403,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [activeId, spawning]);
   const [slashSel, setSlashSel] = useState(0);
   const slug = buildSlug(contextKey);
+  const taskScope = taskScopeFor(contextKey);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const finishingRef = useRef(false);
-  // Whether the log is scrolled to (near) the bottom — so focus/keyboard/viewport
+  // Whether the log is scrolled to (near) the bottom - so focus/keyboard/viewport
   // changes only re-pin when the user was already following the latest messages.
   const atBottomRef = useRef(true);
   // Stream resilience: count consecutive reconnect attempts (reset on any event
@@ -466,11 +472,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // same message log. The engine (mic/STT/TTS/barge-in over a warm worker) drives
   // input + spoken replies; we render its in-flight turn as normal bubbles and
   // fold the finished turn into `messages` once the worker persists it (both
-  // interfaces write the SAME thread — see useVoiceSession + voice_worker).
+  // interfaces write the SAME thread - see useVoiceSession + voice_worker).
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState(false);
   // The just-finished spoken exchange, held locally so the overlay keeps showing
-  // the user+assistant bubbles while the thread refetch is in flight — no frame
+  // the user+assistant bubbles while the thread refetch is in flight - no frame
   // where the exchange vanishes then pops back (D4). Cleared once the refetch has
   // landed the persisted messages, so the swap into the log is a single commit.
   const [settling, setSettling] = useState<{ user: string; assistant: string } | null>(null);
@@ -490,15 +496,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const toggleVoice = useCallback(() => {
     // Unlock audio HERE, in the click gesture (Phase 6.2). The lifecycle effect
     // that calls vsession.start() is NOT a user gesture, so priming there would
-    // not satisfy the autoplay policy — a later held-draft release (which fires
+    // not satisfy the autoplay policy - a later held-draft release (which fires
     // outside any gesture) would still be blocked. This click is the gesture.
     unlockAudio();
     setVoiceOn((on) => !on);
   }, []);
 
   // Drive the engine from voiceOn (not the toggle) so that if the session object
-  // is recreated mid-conversation — e.g. the model changes, which rebuilds the
-  // reply path — voice re-starts on the new session instead of silently going
+  // is recreated mid-conversation - e.g. the model changes, which rebuilds the
+  // reply path - voice re-starts on the new session instead of silently going
   // deaf. Turning off (or unmounting / switching session) stops the mic.
   useEffect(() => {
     if (!voiceOn) return;
@@ -516,7 +522,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [voiceOn, voiceSettings, vsession]);
 
   // Esc interrupts the assistant mid-speech while voice is on (the settings sheet,
-  // when open, owns Esc to close itself — handled by Modal).
+  // when open, owns Esc to close itself - handled by Modal).
   useEffect(() => {
     if (!voiceOn) return;
     const onKey = (e: KeyboardEvent) => {
@@ -554,7 +560,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // until the persisted turn has landed (the worker persists a beat after playback)
   // and swap `messages` + clear `settling` in ONE commit. The poll is ref-driven,
   // not tied to the effect's cleanup, so the next turn starting (a benign
-  // listening→thinking transition) can't cancel an in-flight settle — turn N stays
+  // listening→thinking transition) can't cancel an in-flight settle - turn N stays
   // on screen (as the settling overlay, above turn N+1's live overlay) until its
   // messages land.
   const settlePollRef = useRef<{ cancelled: boolean } | null>(null);
@@ -567,7 +573,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       if (handle.cancelled) return;
       if (msgs) setMessages(msgs);
       // Only clear if this settle is still the active one (a newer turn may have
-      // taken over) — the swap into the log is a single commit either way.
+      // taken over) - the swap into the log is a single commit either way.
       setSettling((s) => (settlePollRef.current === handle ? null : s));
       if (settlePollRef.current === handle) settlePollRef.current = null;
       void refreshThreads();
@@ -683,7 +689,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       });
       es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm
       es.addEventListener("error", (e) => {
-        // An in-band error EVENT (carries data) — surface its detail. This is a
+        // An in-band error EVENT (carries data) - surface its detail. This is a
         // turn-level error from the server, NOT a connection drop (that's
         // es.onerror below, which has no data).
         try {
@@ -721,7 +727,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       es.addEventListener("end", finish);
 
       // Connection dropped (proxy idle-timeout, network blip, backend hiccup).
-      // Do NOT finalize blindly — that is what made turns look like they "just
+      // Do NOT finalize blindly - that is what made turns look like they "just
       // stopped". Check whether the turn actually completed server-side; if it's
       // still running, re-attach (the server replays the turn's events from the
       // start), keeping the working indicator up. Give up only after
@@ -736,8 +742,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           const t = await chatApi.getThread(threadId);
           const last = t.messages[t.messages.length - 1];
           const stillRunning = !!(last && last.role === "assistant" && last.meta?.streaming);
-          if (!stillRunning) { void finish(); return; } // turn really ended — sync + stop
-        } catch { /* network error — assume the turn is still running and retry */ }
+          if (!stillRunning) { void finish(); return; } // turn really ended - sync + stop
+        } catch { /* network error - assume the turn is still running and retry */ }
         if (reconnectsRef.current >= MAX_RECONNECTS) { void finish(); return; }
         reconnectsRef.current += 1;
         setReconnecting(true);
@@ -747,7 +753,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       };
       es.onerror = () => {
         // Only a CLOSED socket is terminal; CONNECTING means the browser is
-        // already auto-retrying (with Last-Event-ID) — let it.
+        // already auto-retrying (with Last-Event-ID) - let it.
         if (es.readyState === EventSource.CLOSED) void handleDrop();
       };
     },
@@ -865,7 +871,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    // Grow to fit content, capped at the CSS max-height (3 rows) — read it so
+    // Grow to fit content, capped at the CSS max-height (3 rows) - read it so
     // the JS cap can't drift from the stylesheet; beyond that it scrolls.
     const max = parseFloat(getComputedStyle(el).maxHeight) || 96;
     el.style.height = `${Math.min(el.scrollHeight, max)}px`;
@@ -919,7 +925,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sendBuild = useCallback(async (text: string) => {
     setStreaming(true);
     setPendingSegments([]);
-    turnStartRef.current = Date.now(); // fresh turn — anchor the elapsed clock now
+    turnStartRef.current = Date.now(); // fresh turn - anchor the elapsed clock now
     const isFirst = messages.length <= 1;
     try {
       let id = activeId;
@@ -1008,8 +1014,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   // ---- Slash commands ------------------------------------------------------
   // Two kinds:
-  //   • "local"       — a Workshop chat action handled here (new chat, etc.).
-  //   • "passthrough" — a Claude Code command (/compact, /cost, /context, …)
+  //   • "local"       - a Workshop chat action handled here (new chat, etc.).
+  //   • "passthrough" - a Claude Code command (/compact, /cost, /context, …)
   //                     forwarded RAW to the agent's claude session, where the CLI
   //                     executes it natively. Build agents only (data/assistant
   //                     agents are Letta-backed, not claude sessions). Any "/x"
@@ -1024,10 +1030,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     { name: "new", desc: "Start a new chat", available: true, kind: "local", run: () => newChat() },
     { name: "clear", desc: "Start a fresh chat (alias of new)", available: true, kind: "local", run: () => newChat() },
     { name: "delete", desc: "Delete the current chat", available: !!activeId, kind: "local", run: () => { if (activeId) setConfirmDeleteId(activeId); } },
-    { name: "tasks", desc: "Toggle the task list", available: !!slug, kind: "local", run: () => setTasksOpen((o) => !o) },
+    { name: "tasks", desc: "Toggle the task list", available: !!taskScope, kind: "local", run: () => setTasksOpen((o) => !o) },
     { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, kind: "local", run: () => popOut() },
     { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => { setInput("/"); inputRef.current?.focus(); } },
-    // Claude Code commands — forwarded to the agent's session (build agents only).
+    // Claude Code commands - forwarded to the agent's session (build agents only).
     { name: "compact", desc: "Summarize + compact the conversation to free up context", available: build, kind: "passthrough" },
     { name: "context", desc: "Show what's currently in the context window", available: build, kind: "passthrough" },
     { name: "cost", desc: "Show token usage and plan limits", available: build, kind: "passthrough" },
@@ -1101,7 +1107,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         </button>
       )}
       {/* Build agents: from the focused chat, open the full workbench (files /
-          editor / preview / diff). Only in the full chat — inside the workbench
+          editor / preview / diff). Only in the full chat - inside the workbench
           itself the chat is already embedded, so the button would be redundant. */}
       {effectiveMode === "build" && slug && variant === "full" && (
         <button
@@ -1170,7 +1176,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           {spawning === "run" ? <Loader size={16} aria-hidden className="ws-spin" /> : <Play size={16} aria-hidden />}
         </button>
       )}
-      {slug && (
+      {taskScope && (
         <button
           className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
           onClick={() => setTasksOpen((o) => !o)}
@@ -1320,10 +1326,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       ))}
       {/* Live spoken turn: the just-sent utterance + the streaming reply, rendered
           as normal bubbles. The heard / speaking / pending caption cue is the one
-          voice-specific touch — it lives INSIDE a standard assistant bubble. When
+          voice-specific touch - it lives INSIDE a standard assistant bubble. When
           the turn finishes it does NOT vanish: it's held in `settling` (plain
           bubbles) until the refetch lands the persisted messages, then swaps once
-          into the log (D4 — no vanish-then-pop). Muted (captions-only) replies
+          into the log (D4 - no vanish-then-pop). Muted (captions-only) replies
           stay in `thinking` the whole time and stream their captions here too. */}
       {/* The settling exchange (the just-finished turn) renders ABOVE the live
           overlay so a fast follow-up turn never hides it: turn N stays put as
@@ -1379,12 +1385,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   );
 
-  const taskPanel = slug ? (
-    <AgentTaskPanel
-      slug={slug}
+  const taskPanel = taskScope ? (
+    <TaskPanel
+      scope={taskScope}
       refetchKey={taskRefetchKey}
       open={tasksOpen}
       onCount={setOpenTaskCount}
+      variant="drawer"
     />
   ) : null;
 
@@ -1393,7 +1400,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const streamingBuild = streaming;
 
   // Context usage below the composer. Prefer the backend's REAL count (it
-  // assembles the actual prompt — persona + live app context + windowed history),
+  // assembles the actual prompt - persona + live app context + windowed history),
   // refetched when a turn settles; fall back to a client estimate if unavailable.
   const [serverCtx, setServerCtx] = useState<{ used: number; window: number } | null>(null);
   useEffect(() => {
@@ -1439,7 +1446,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   );
 
   // Voice affordances for the composer: the state "orb" doubles as interrupt (when
-  // speaking) / send-now (when listening). The orb NEVER shows a Mic glyph — that
+  // speaking) / send-now (when listening). The orb NEVER shows a Mic glyph - that
   // was the confusing twin of the mic-mute button (D6). It uses AudioLines
   // (listening, with the level halo), Loader (thinking/connecting), Square
   // (speaking, the stop affordance), and AlertTriangle (error/idle-unexpectedly).
@@ -1463,7 +1470,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     voiceErrored ? "Voice error"
     : vsnap.state === "speaking" ? "Stop"
     : vsnap.state === "listening" ? "Send now"
-    : vsnap.state === "thinking" ? "Cancel — scrap that"
+    : vsnap.state === "thinking" ? "Cancel - scrap that"
     : vsnap.state === "connecting" ? "Starting" : "Listening";
 
   // The single voice status surface, above the composer (replaces the ghost line).
@@ -1550,7 +1557,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {/* Voice mode: a mode of THIS chat (same thread + log), toggled in place.
             When on, the state orb, mic mute, reply mute, and settings sit here;
             when off, just the slash button. Build chats build by talking; data
-            chats converse — either way it's the same conversation. */}
+            chats converse - either way it's the same conversation. */}
         {/* The voice cluster (orb, mic-mute, reply-mute, gear) shares a subtle
             background pill so it reads as one group, distinct from the exit
             toggle and Send that sit outside it. */}
@@ -1617,7 +1624,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         {/* While a build turn streams, Send (queues the next message) sits to the
             left of Stop. Otherwise just Send. */}
         {/* onMouseDown preventDefault: don't let tapping an action button blur the
-            textarea — on mobile that closes the keyboard, the layout jumps, and the
+            textarea - on mobile that closes the keyboard, the layout jumps, and the
             tap lands where the button no longer is (the "send needs two taps" bug). */}
         <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim()} aria-label="Send (Enter)" title={streamingBuild ? "Send (queues until the current turn finishes)" : "Send (Enter)"}>
           <CornerDownLeft size={16} aria-hidden />
@@ -1678,196 +1685,4 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return <div className="ws-chat-full">{panelInner}</div>;
   }
   return panelInner;
-}
-
-// ---- Per-agent task panel (build chats only) -------------------------------
-// The toolbar owns the open/close toggle + count badge; this renders only the
-// drawer body when open, and reports the open-task count up for the badge.
-function AgentTaskPanel({
-  slug, refetchKey, open, onCount,
-}: {
-  slug: string;
-  refetchKey: number;
-  open: boolean;
-  onCount: (n: number) => void;
-}) {
-  const [showDone, setShowDone] = useState(false);
-  const [tasks, setTasks] = useState<AgentTask[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
-  const [adding, setAdding] = useState(false);
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      setTasks(await chatApi.listAgentTasks(slug, showDone));
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }, [slug, showDone]);
-
-  useEffect(() => { void load(); }, [load, refetchKey]);
-  useEffect(() => { onCount(tasks.filter((t) => t.status !== "done").length); }, [tasks, onCount]);
-
-  const setStatus = useCallback(
-    async (id: string, status: AgentTaskStatus) => {
-      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
-      try {
-        await chatApi.updateAgentTask(slug, id, { status });
-      } catch (e) {
-        setErr(String(e));
-      } finally {
-        void load();
-      }
-    },
-    [slug, load],
-  );
-
-  const remove = useCallback(
-    async (id: string) => {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
-      try {
-        await chatApi.deleteAgentTask(slug, id);
-      } catch (e) {
-        setErr(String(e));
-      } finally {
-        void load();
-      }
-    },
-    [slug, load],
-  );
-
-  const add = useCallback(async () => {
-    const text = draft.trim();
-    if (!text || adding) return;
-    setAdding(true);
-    setErr(null);
-    try {
-      await chatApi.addAgentTask(slug, text);
-      setDraft("");
-      await load();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setAdding(false);
-    }
-  }, [draft, adding, slug, load]);
-
-  if (!open) return null;
-
-  const OVERFLOW = 100;
-  const visible = tasks.slice(0, OVERFLOW);
-
-  let body: React.ReactNode;
-  if (loading) {
-    body = (
-      <div className="chat-tasks__list" aria-busy="true">
-        <Skeleton width="80%" />
-        <Skeleton width="60%" />
-        <Skeleton width="70%" />
-      </div>
-    );
-  } else if (err) {
-    body = (
-      <StateBlock
-        variant="error"
-        title="Couldn't load tasks."
-        hint={
-          <>
-            <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>
-              GET /api/agents/build/{slug}/tasks
-            </span>
-            <div style={{ marginTop: "var(--space-2)" }}>
-              <Button size="sm" variant="ghost" onClick={() => { setLoading(true); void load(); }}>
-                Retry
-              </Button>
-            </div>
-          </>
-        }
-      />
-    );
-  } else if (tasks.length === 0) {
-    body = (
-      <StateBlock
-        title="No tasks yet."
-        hint="Add one below, or the agent will add tasks as it works on them here."
-      />
-    );
-  } else {
-    body = (
-      <>
-        <ul className="chat-tasks__list">
-          {visible.map((t) => (
-            <li key={t.id} className={`chat-task${t.status === "done" ? " chat-task--done" : ""}`}>
-              <Select
-                className="chat-task__status"
-                value={t.status}
-                onChange={(e) => setStatus(t.id, e.target.value as AgentTaskStatus)}
-                aria-label={`Status for ${t.text}`}
-                title="Task status"
-              >
-                {TASK_STATUSES.map((s) => (
-                  <option key={s} value={s}>{TASK_STATUS_LABELS[s]}</option>
-                ))}
-              </Select>
-              <span className="chat-task__text">{t.text}</span>
-              <Button
-                size="sm"
-                variant="ghost"
-                icon
-                onClick={() => remove(t.id)}
-                aria-label={`Delete task ${t.text}`}
-                title="Delete task"
-              >
-                <X aria-hidden />
-              </Button>
-            </li>
-          ))}
-        </ul>
-        {tasks.length > OVERFLOW && (
-          <div className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-            Showing the first {OVERFLOW} of {tasks.length} tasks.
-          </div>
-        )}
-      </>
-    );
-  }
-
-  return (
-    <div className="chat-tasks">
-      <div className="chat-tasks__body">
-        <div className="chat-tasks__toolbar">
-          <Toggle checked={showDone} onChange={setShowDone} label="Show done" />
-        </div>
-        {body}
-        <div className="chat-tasks__add">
-          <Input
-            value={draft}
-            placeholder="Add a task..."
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void add();
-              }
-            }}
-            aria-label="New task"
-          />
-          <Button
-            variant="primary"
-            icon
-            onClick={() => void add()}
-            disabled={adding || !draft.trim()}
-            aria-label="Add task"
-            title="Add task"
-          >
-            <Plus aria-hidden />
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
 }
