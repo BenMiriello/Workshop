@@ -77,6 +77,13 @@ type EditDraft = {
   priority: string;
   effort: string;
   assignee: string;
+  // Advanced fields (persisted via the same PATCH). acceptanceKind "" = none;
+  // acceptanceSpec only matters for the "command" kind. maxAttempts + dependsOn
+  // are text inputs coerced on save.
+  acceptanceKind: string;
+  acceptanceSpec: string;
+  maxAttempts: string;
+  dependsOn: string;
 };
 
 function toDraft(t: Task): EditDraft {
@@ -87,6 +94,10 @@ function toDraft(t: Task): EditDraft {
     priority: String(t.priority ?? 0),
     effort: t.effort ?? "",
     assignee: t.assignee ?? "",
+    acceptanceKind: t.acceptance?.kind ?? "",
+    acceptanceSpec: t.acceptance?.spec ?? "",
+    maxAttempts: t.max_attempts != null ? String(t.max_attempts) : "",
+    dependsOn: (t.depends_on ?? []).join(", "),
   };
 }
 
@@ -211,13 +222,33 @@ export default function TaskPanel({
       setSavingId(t.id);
       setRowErr(null);
       try {
-        const body = {
+        // Acceptance: an empty kind clears the gate (backend reads kind "" as
+        // clear); "command" carries its spec, the others ignore it.
+        const acceptance =
+          draft.acceptanceKind === ""
+            ? { kind: "" }
+            : {
+                kind: draft.acceptanceKind,
+                spec: draft.acceptanceKind === "command" ? draft.acceptanceSpec.trim() || null : null,
+              };
+        // depends_on: comma/whitespace separated task ids; [] clears them.
+        const depends_on = draft.dependsOn
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        // max_attempts: a set number caps worker runs; blank leaves it unchanged
+        // (the store has no clear path once set).
+        const maxAttemptsNum = Number.parseInt(draft.maxAttempts, 10);
+        const body: Record<string, unknown> = {
           text: joinText(draft.title, draft.description),
           status: draft.status,
           priority: Number(draft.priority) || 0,
           effort: draft.effort,
           assignee: draft.assignee.trim() || null,
+          acceptance,
+          depends_on,
         };
+        if (Number.isFinite(maxAttemptsNum)) body.max_attempts = maxAttemptsNum;
         const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}`, {
           method: "PATCH",
           headers: { "content-type": "application/json" },
@@ -359,6 +390,28 @@ export default function TaskPanel({
             <Input id={`tp-assignee-${t.id}`} value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)} placeholder="operator" style={{ maxWidth: "12rem" }} />
           </Field>
         </Row>
+        <SectionLabel>Advanced</SectionLabel>
+        <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+          <Field label="Acceptance" htmlFor={`tp-accept-${t.id}`} help="gate before this task can finish">
+            <Select id={`tp-accept-${t.id}`} value={draft.acceptanceKind} onChange={(e) => setField("acceptanceKind", e.target.value)}>
+              <option value="">none</option>
+              <option value="reviewer">reviewer pass</option>
+              <option value="command">command exits 0</option>
+              <option value="operator">operator approves</option>
+            </Select>
+          </Field>
+          {draft.acceptanceKind === "command" && (
+            <Field label="Command" htmlFor={`tp-accept-spec-${t.id}`} help="must exit 0 to pass">
+              <Input id={`tp-accept-spec-${t.id}`} value={draft.acceptanceSpec} onChange={(e) => setField("acceptanceSpec", e.target.value)} placeholder="pytest -q" style={{ minWidth: "12rem" }} />
+            </Field>
+          )}
+          <Field label="Max attempts" htmlFor={`tp-maxatt-${t.id}`} optional help="worker runs before parking">
+            <Input id={`tp-maxatt-${t.id}`} type="number" min={1} value={draft.maxAttempts} onChange={(e) => setField("maxAttempts", e.target.value)} style={{ maxWidth: "6rem" }} />
+          </Field>
+        </Row>
+        <Field label="Depends on" htmlFor={`tp-deps-${t.id}`} optional help="comma-separated task ids; gates readiness">
+          <Input id={`tp-deps-${t.id}`} value={draft.dependsOn} onChange={(e) => setField("dependsOn", e.target.value)} placeholder="task id, task id" />
+        </Field>
         {rowErr && <p className="ws-field__error">{rowErr}</p>}
         {dirty && <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>Unsaved changes.</p>}
         <Row wrap style={{ gap: "var(--space-2)" }}>

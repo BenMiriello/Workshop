@@ -38,6 +38,27 @@ export type TaskEvidence = {
   [k: string]: unknown;
 };
 
+// Acceptance gate the worker must clear before a task can finish. Matches the
+// store's shape (backend services/tasks.py): reviewer = a reviewer pass judges
+// it; command = `spec` is a shell command that must exit 0; operator = the human
+// approves. `spec` only carries meaning for the command kind.
+export type TaskAcceptanceKind = "reviewer" | "command" | "operator";
+
+export type TaskAcceptance = {
+  kind: TaskAcceptanceKind;
+  spec?: string | null;
+};
+
+// UI labels for the acceptance kinds (kept beside the type so no screen re-derives).
+const TASK_ACCEPTANCE_LABEL: Record<TaskAcceptanceKind, string> = {
+  reviewer: "reviewer pass",
+  command: "command exits 0",
+  operator: "operator approves",
+};
+
+export const taskAcceptanceLabel = (kind?: string): string =>
+  TASK_ACCEPTANCE_LABEL[(kind ?? "") as TaskAcceptanceKind] ?? String(kind ?? "");
+
 export type Task = {
   id: string;
   text: string;
@@ -48,6 +69,8 @@ export type Task = {
   priority?: number;
   effort?: string | null;
   depends_on?: string[];
+  acceptance?: TaskAcceptance | null;
+  max_attempts?: number | null;
   blocked_reason?: string | null;
   job_ids?: string[];
   evidence?: TaskEvidence[];

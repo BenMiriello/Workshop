@@ -284,12 +284,24 @@ async def create(body: TaskCreateIn) -> dict:
 
 # ---- Single task -----------------------------------------------------------
 
+class TaskAcceptanceIn(BaseModel):
+    # Mirrors the store's acceptance shape (services/tasks.py Canonical Task):
+    # {"kind": "reviewer"|"command"|"operator", "spec": str|None}. `spec` carries
+    # the command line when kind == "command"; reviewer/operator ignore it.
+    kind: str
+    spec: str | None = None
+
+
 class TaskPatchIn(BaseModel):
     status: str | None = None
     text: str | None = None
     priority: int | None = None
     assignee: str | None = None
     effort: str | None = None
+    # Advanced fields tasks.update() already supports; None leaves each unchanged.
+    acceptance: TaskAcceptanceIn | None = None
+    max_attempts: int | None = None
+    depends_on: list[str] | None = None
 
 
 @router.get("/{scope}/{task_id}")
@@ -305,13 +317,31 @@ async def get_one(scope: str, task_id: str) -> dict:
     return rec
 
 
+_ACCEPTANCE_KINDS = {"reviewer", "command", "operator"}
+
+
 @router.patch("/{scope}/{task_id}")
 async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     root = _root_for_scope(scope)
     if root is None:
         raise HTTPException(400, f"unknown scope: {scope}")
-    if all(v is None for v in (body.status, body.text, body.priority, body.assignee, body.effort)):
+    if all(v is None for v in (
+        body.status, body.text, body.priority, body.assignee, body.effort,
+        body.acceptance, body.max_attempts, body.depends_on,
+    )):
         raise HTTPException(400, "no fields to update")
+    # Acceptance: an empty/none kind clears it (falsy dict -> store sets None); a
+    # real kind must be one of the three the store recognizes. tasks.update reads
+    # None as "leave unchanged", so only forward a value when one was sent.
+    acceptance_arg = None
+    if body.acceptance is not None:
+        kind = (body.acceptance.kind or "").strip()
+        if kind in ("", "none"):
+            acceptance_arg = {}  # falsy -> update() clears acceptance to None
+        elif kind in _ACCEPTANCE_KINDS:
+            acceptance_arg = {"kind": kind, "spec": body.acceptance.spec}
+        else:
+            raise HTTPException(400, f"acceptance kind must be one of {sorted(_ACCEPTANCE_KINDS)} or none")
     try:
         t = tasks.update(
             root, task_id,
@@ -320,6 +350,9 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             priority=body.priority,
             assignee=body.assignee,
             effort=body.effort,
+            acceptance=acceptance_arg,
+            max_attempts=body.max_attempts,
+            depends_on=body.depends_on,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
