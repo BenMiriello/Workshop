@@ -35,6 +35,7 @@ the existing entry's provenance.
 """
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import os
@@ -49,10 +50,31 @@ from services import knowledge
 # Global guardrails scope key.
 GLOBAL = "global"
 
-# How many entries a memory block renders (from the tail, oldest-first within
-# that window) so an injected block stays bounded. The corpus is small; this is
-# a ceiling, not an expected size.
-_MAX_BLOCK_ENTRIES = 60
+# How many entries a memory block renders so an injected block stays bounded by
+# count. The corpus is small; this is a ceiling, not an expected size. The token
+# budget below is the harder cap: whichever binds first wins.
+_MAX_BLOCK_ENTRIES = int(os.environ.get("LEARNINGS_BLOCK_MAX_ENTRIES", "60"))
+
+# Fixed prompt-token budget for one injected block, approximated at ~4 chars per
+# token (_approx_tokens). This is the anti-rot cap: no matter how many long
+# learnings a scope accumulates, the injected block cannot exceed this, so it
+# cannot bloat and rot the prompt. Env-overridable.
+_BLOCK_TOKEN_BUDGET = int(os.environ.get("LEARNINGS_BLOCK_TOKEN_BUDGET", "700"))
+
+# Retrieval tracking is throttled so per-render bookkeeping stays disk-light: an
+# entry's retrieval_count is persisted at most once per this window per scope
+# (renders inside the window bump nothing on disk). The signal is "retrieved in
+# roughly this many recent windows", which is all age-out needs.
+_RETRIEVAL_THROTTLE_SEC = int(os.environ.get("LEARNINGS_RETRIEVAL_THROTTLE_SEC", "3600"))
+
+# Age-out: an entry is a candidate for demotion when it has not been retrieved
+# (or, never retrieved, not been created) within this many days AND has low
+# reinforcement (provenance count below _AGEOUT_MIN_PROVENANCE) AND a low
+# retrieval count (below _AGEOUT_MIN_RETRIEVAL). Recently-retrieved OR
+# well-reinforced entries are always kept. Archived, never hard-deleted.
+_AGEOUT_DAYS = float(os.environ.get("LEARNINGS_AGEOUT_DAYS", "90"))
+_AGEOUT_MIN_PROVENANCE = int(os.environ.get("LEARNINGS_AGEOUT_MIN_PROVENANCE", "2"))
+_AGEOUT_MIN_RETRIEVAL = int(os.environ.get("LEARNINGS_AGEOUT_MIN_RETRIEVAL", "1"))
 
 # Near-duplicate threshold on canonical token-set Jaccard.
 _NEAR_DUP_JACCARD = 0.85
@@ -122,6 +144,52 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     return inter / len(a | b)
 
 
+# --- ranking + token budget --------------------------------------------------
+def _approx_tokens(text: str) -> int:
+    """Cheap token estimate (~4 chars/token). Good enough to hold a prompt block
+    under a fixed budget without pulling in a tokenizer dependency."""
+    return (len(text or "") + 3) // 4
+
+
+def _parse_ts(s: str) -> float:
+    """Epoch seconds for a `_now()`-shaped UTC stamp. timegm keeps it UTC so the
+    absolute age-out comparison against time.time() is correct."""
+    try:
+        return calendar.timegm(time.strptime(s, "%Y-%m-%dT%H:%M:%SZ"))
+    except (ValueError, TypeError):
+        return 0.0
+
+
+_SEVERITY_NUM = {"high": 1.0, "critical": 1.0, "med": 0.5, "medium": 0.5, "low": 0.2}
+
+
+def _severity_num(sev) -> float:
+    if isinstance(sev, (int, float)):
+        try:
+            return max(0.0, min(1.0, float(sev)))
+        except (ValueError, TypeError):
+            return 0.0
+    return _SEVERITY_NUM.get(str(sev or "").strip().lower(), 0.0)
+
+
+def _recency_ts(e: dict) -> float:
+    """When the entry last mattered: last retrieval if any, else creation."""
+    return _parse_ts(e.get("last_retrieved") or e.get("created_at") or "")
+
+
+def _entry_value(e: dict, newest_ts: float, oldest_ts: float) -> float:
+    """Rank score in ~[0, 3.5]: recency + reinforcement + severity + retrieval.
+    Most-recent, most-reinforced, highest-severity entries score highest and so
+    survive the token budget; the rest are dropped into the "+N more" remainder."""
+    span = (newest_ts - oldest_ts) or 1.0
+    recency = (_recency_ts(e) - oldest_ts) / span  # 0..1, newer is higher
+    prov = len(e.get("provenance") or [])
+    reinforce = min(prov, 5) / 5.0                  # 0..1, saturates at 5
+    severity = _severity_num(e.get("severity"))     # 0..1
+    retr = min(int(e.get("retrieval_count", 0) or 0), 10) / 10.0  # 0..1
+    return recency + reinforce + severity + 0.5 * retr
+
+
 # --- IO ----------------------------------------------------------------------
 def _read(scope_key: str) -> list[dict]:
     p = _path(scope_key)
@@ -155,6 +223,23 @@ def _append_line(scope_key: str, entry: dict) -> None:
     p = _path(scope_key)
     with p.open("a") as f:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def _archive_path(scope_key: str) -> Path:
+    d = _dir() / "archive"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / (_valid_scope(scope_key).replace(":", "-") + ".jsonl")
+
+
+def _archive_append(scope_key: str, entries: list[dict]) -> None:
+    """Append demoted/merged-away entries to the scope's archive JSONL so history
+    stays inspectable (age-out demotes, it does not destroy)."""
+    if not entries:
+        return
+    p = _archive_path(scope_key)
+    with p.open("a") as f:
+        for e in entries:
+            f.write(json.dumps(e, sort_keys=True) + "\n")
 
 
 def _now() -> str:
@@ -305,19 +390,94 @@ def list_learnings(scope: str = GLOBAL) -> list[dict]:
     return _read(_valid_scope(scope))
 
 
-def memory_block(scope: str = GLOBAL, *, max_entries: int = _MAX_BLOCK_ENTRIES) -> str:
+def _persist_retrieval(scope: str, entries: list[dict], selected_ids: set[str]) -> None:
+    """Throttled retrieval bookkeeping: bump retrieval_count / last_retrieved for
+    the entries that made it into the rendered block. Persists at most once per
+    _RETRIEVAL_THROTTLE_SEC per scope (checked via the store file's mtime) so a
+    hot prompt path does not churn the disk. Best-effort; never breaks a render."""
+    try:
+        p = _path(scope)
+        now = time.time()
+        if p.exists() and (now - p.stat().st_mtime) < _RETRIEVAL_THROTTLE_SEC:
+            return
+        stamp = _now()
+        touched = False
+        for e in entries:
+            if e.get("id") in selected_ids:
+                e["retrieval_count"] = int(e.get("retrieval_count", 0) or 0) + 1
+                e["last_retrieved"] = stamp
+                touched = True
+        if touched:
+            _write_all(scope, entries)
+    except Exception:
+        pass
+
+
+def memory_block(
+    scope: str = GLOBAL,
+    *,
+    max_entries: int = _MAX_BLOCK_ENTRIES,
+    max_tokens: int = _BLOCK_TOKEN_BUDGET,
+    track: bool = True,
+) -> str:
     """A compact block of a scope's learnings for prompt injection, or "" when
-    empty. Oldest-first (append order) so adding a learning extends the tail and
-    leaves the earlier bytes stable for prompt caching. Bounded to the most
-    recent `max_entries`."""
+    empty.
+
+    Two hard caps keep the block from bloating and rotting the prompt: at most
+    `max_entries` bullets AND at most `max_tokens` approximate tokens
+    (`_approx_tokens`, ~4 chars/token). Entries are ranked by value (recency +
+    reinforcement/provenance count + severity + recent retrieval) and the highest
+    scorers are kept until either cap binds; the rest collapse into a trailing
+    `- +N more` remainder line. Kept bullets render in append (oldest-first)
+    order so a stable prefix survives for prompt caching.
+
+    When `track` is set (default), the entries included in the render have their
+    retrieval_count / last_retrieved bumped, throttled to stay disk-light. Pass
+    `track=False` for a pure read (e.g. previews) that must not touch the store.
+    """
     try:
         entries = _read(_valid_scope(scope))
+        scope = _valid_scope(scope)
     except Exception:
         return ""
     if not entries:
         return ""
-    window = entries[-max_entries:]
-    return "\n".join(f"- {e['text']}" for e in window)
+
+    total = len(entries)
+    tss = [_recency_ts(e) for e in entries]
+    newest_ts, oldest_ts = max(tss), min(tss)
+    order = {id(e): i for i, e in enumerate(entries)}  # append position
+
+    ranked = sorted(
+        entries,
+        key=lambda e: (_entry_value(e, newest_ts, oldest_ts), order[id(e)]),
+        reverse=True,
+    )
+
+    selected: list[dict] = []
+    used_tokens = 0
+    for e in ranked:
+        if len(selected) >= max_entries:
+            break
+        cost = _approx_tokens("- " + e.get("text", ""))
+        if used_tokens + cost > max_tokens:
+            continue  # try smaller lower-ranked entries rather than overflow
+        selected.append(e)
+        used_tokens += cost
+
+    if not selected:
+        return ""
+
+    remainder = total - len(selected)
+    selected.sort(key=lambda e: order[id(e)])  # render oldest-first, cache-stable
+    lines = [f"- {e['text']}" for e in selected]
+    if remainder > 0:
+        lines.append(f"- +{remainder} more")
+
+    if track:
+        _persist_retrieval(scope, entries, {e.get("id") for e in selected})
+
+    return "\n".join(lines)
 
 
 def distill_skill(
@@ -375,6 +535,137 @@ def distill_skill(
     return skills.put_skill(scope, name, description, body)
 
 
+# --- at-rest maintenance -----------------------------------------------------
+def _merge_cluster(members: list[dict]) -> dict:
+    """Collapse near-duplicate entries into one. Keeps the best-phrased text (the
+    member with the most provenance, tie-break longest), the UNION of provenance
+    and tags, the earliest creation, the latest retrieval, summed retrieval
+    count, and the highest severity. No signal is lost: the merged entry carries
+    every source that any duplicate carried."""
+    best = max(members, key=lambda e: (len(e.get("provenance") or []), len(e.get("text", ""))))
+    text = best.get("text", "")
+
+    prov: list[dict] = []
+    seen: set = set()
+    for e in members:
+        for pv in (e.get("provenance") or []):
+            key = (pv.get("source"), pv.get("at"))
+            if key in seen:
+                continue
+            seen.add(key)
+            prov.append(pv)
+
+    tags: list[str] = []
+    for e in members:
+        for t in (e.get("tags") or []):
+            if t not in tags:
+                tags.append(t)
+
+    created = min((e.get("created_at") for e in members if e.get("created_at")),
+                  default=best.get("created_at"))
+    last_ret = max((e.get("last_retrieved") for e in members if e.get("last_retrieved")),
+                   default=None)
+    retr = sum(int(e.get("retrieval_count", 0) or 0) for e in members)
+    sev = max((e.get("severity") for e in members if e.get("severity") is not None),
+              key=_severity_num, default=None)
+
+    h = _canon_hash(text)
+    merged = {**best, "text": text, "id": best.get("id") or h, "hash": h,
+              "tags": tags, "provenance": prov, "created_at": created,
+              "retrieval_count": retr}
+    if last_ret:
+        merged["last_retrieved"] = last_ret
+    if sev is not None:
+        merged["severity"] = sev
+    return merged
+
+
+def merge_duplicates(scope: str = GLOBAL, *, threshold: float | None = None) -> dict:
+    """Maintenance pass: collapse near-duplicate learnings already sitting in a
+    scope's store (append-time dedup only catches dups present when a learning
+    lands; this catches historical dups that accreted around it). Reuses the
+    exact canonical-hash + `_jaccard` >= `_NEAR_DUP_JACCARD` test and the
+    provenance-merge rule. Non-destructive: distinct learnings are left alone and
+    every merged entry keeps the union of its duplicates' provenance.
+
+    Returns {scope, before, after, merged}. Rewrites the store only if something
+    actually merged."""
+    scope = _valid_scope(scope)
+    thr = _NEAR_DUP_JACCARD if threshold is None else threshold
+    entries = _read(scope)
+
+    clusters: list[dict] = []
+    for e in entries:
+        ts = _token_set(e.get("text", ""))
+        h = e.get("hash") or _canon_hash(e.get("text", ""))
+        placed = False
+        for c in clusters:
+            if c["hash"] == h or _jaccard(ts, c["tokens"]) >= thr:
+                c["members"].append(e)
+                placed = True
+                break
+        if not placed:
+            clusters.append({"hash": h, "tokens": ts, "members": [e]})
+
+    merged_count = 0
+    out: list[dict] = []
+    for c in clusters:
+        if len(c["members"]) == 1:
+            out.append(c["members"][0])
+        else:
+            merged_count += len(c["members"]) - 1
+            out.append(_merge_cluster(c["members"]))
+
+    if merged_count:
+        _write_all(scope, out)
+    return {"scope": scope, "before": len(entries), "after": len(out), "merged": merged_count}
+
+
+def prune_stale(
+    scope: str = GLOBAL,
+    *,
+    max_age_days: float | None = None,
+    min_provenance: int | None = None,
+    min_retrieval: int | None = None,
+) -> dict:
+    """Maintenance pass: demote learnings that have stopped earning their place.
+    An entry is aged out only when it is stale (not retrieved, or never retrieved
+    then not created, within `max_age_days`) AND weakly reinforced (provenance
+    count below `min_provenance`) AND seldom retrieved (retrieval_count below
+    `min_retrieval`). Anything recently retrieved OR well-reinforced OR
+    frequently retrieved is kept, so a durable guardrail never ages out.
+
+    Demoted entries are appended to the scope's archive JSONL (with archived_at /
+    archived_reason) rather than deleted, so history stays inspectable and a
+    revived pattern can be found. Thresholds are env-overridable (_AGEOUT_*) and
+    param-overridable. Returns {scope, before, kept, archived}."""
+    scope = _valid_scope(scope)
+    max_age_days = _AGEOUT_DAYS if max_age_days is None else max_age_days
+    min_provenance = _AGEOUT_MIN_PROVENANCE if min_provenance is None else min_provenance
+    min_retrieval = _AGEOUT_MIN_RETRIEVAL if min_retrieval is None else min_retrieval
+
+    entries = _read(scope)
+    cutoff = time.time() - max_age_days * 86400.0
+    keep: list[dict] = []
+    demoted: list[dict] = []
+    for e in entries:
+        recent = _recency_ts(e) >= cutoff
+        reinforced = len(e.get("provenance") or []) >= min_provenance
+        retrieved = int(e.get("retrieval_count", 0) or 0) >= min_retrieval
+        if recent or reinforced or retrieved:
+            keep.append(e)
+        else:
+            arch = dict(e)
+            arch["archived_at"] = _now()
+            arch["archived_reason"] = "aged-out: stale and low-reinforcement"
+            demoted.append(arch)
+
+    if demoted:
+        _archive_append(scope, demoted)
+        _write_all(scope, keep)
+    return {"scope": scope, "before": len(entries), "kept": len(keep), "archived": len(demoted)}
+
+
 # --- CLI ---------------------------------------------------------------------
 # `python -m services.learnings <verb> ...` (run with PYTHONPATH=backend). Lets a
 # later autonomous pass, a cron hook, or the operator record/list/distill without
@@ -404,6 +695,15 @@ def _main(argv: list[str]) -> int:
     p_blk = sub.add_parser("block", help="print the injection block for a scope")
     p_blk.add_argument("--scope", default=GLOBAL)
 
+    p_mrg = sub.add_parser("merge", help="collapse near-duplicate stored learnings")
+    p_mrg.add_argument("--scope", default=GLOBAL)
+
+    p_prune = sub.add_parser("prune", help="archive stale, low-reinforcement learnings")
+    p_prune.add_argument("--scope", default=GLOBAL)
+    p_prune.add_argument("--max-age-days", dest="max_age_days", type=float, default=None)
+    p_prune.add_argument("--min-provenance", dest="min_provenance", type=int, default=None)
+    p_prune.add_argument("--min-retrieval", dest="min_retrieval", type=int, default=None)
+
     p_di = sub.add_parser("distill", help="distill in-scope patterns into a SKILL.md")
     p_di.add_argument("--scope", required=True)
     p_di.add_argument("--name", required=True)
@@ -423,6 +723,13 @@ def _main(argv: list[str]) -> int:
             print(f"{e['id']}  {e['text']}  [src:{e.get('source')} tags:{','.join(e.get('tags') or [])}]")
     elif args.verb == "block":
         print(memory_block(args.scope))
+    elif args.verb == "merge":
+        print(json.dumps(merge_duplicates(args.scope)))
+    elif args.verb == "prune":
+        print(json.dumps(prune_stale(
+            args.scope, max_age_days=args.max_age_days,
+            min_provenance=args.min_provenance, min_retrieval=args.min_retrieval,
+        )))
     elif args.verb == "distill":
         print(json.dumps(distill_skill(
             args.scope, args.name, args.description,
