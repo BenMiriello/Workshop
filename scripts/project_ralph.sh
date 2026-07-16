@@ -42,6 +42,16 @@ MAX_TASKS=20         # cap tasks per sweep
 RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
 RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
                          # distinct from the per-task ATTEMPT cap below (review F13)
+# Per-task EFFORT -> inner-loop cap + model tier (O6/O7-config). A task carries an
+# `effort` hint (quick|standard|deep, s|m|l accepted as aliases). standard / null /
+# absent keeps EXACTLY today's default (RALPH_INNER_MAX_ITER, no model override);
+# quick lowers the cap + picks a fast model; deep raises the cap + picks a strong
+# model. Model tiers are env-overridable and passed to ralph.sh via ANTHROPIC_MODEL
+# (the claude CLI's default-model override) since ralph.sh takes no --model flag.
+RALPH_ITER_QUICK="${RALPH_ITER_QUICK:-3}"
+RALPH_ITER_DEEP="${RALPH_ITER_DEEP:-12}"
+RALPH_MODEL_QUICK="${RALPH_MODEL_QUICK:-claude-haiku-4-5}"
+RALPH_MODEL_DEEP="${RALPH_MODEL_DEEP:-claude-opus-4-8}"
 DEFAULT_MAX_ATTEMPTS=3   # per-task attempt cap (sweep runs) when the task sets no max_attempts
 CONCURRENT_WORKTREES_MAX=${CONCURRENT_WORKTREES_MAX:-2}  # bound on task-worktrees in flight
                          # (worktree mode only). Sequential today (see the G3 block);
@@ -569,15 +579,32 @@ while (( n < MAX_TASKS )); do
   ALLOW_NO_DIFF=0
   [[ "$ACC_KIND" == "command" || "$ACC_KIND" == "operator" ]] && ALLOW_NO_DIFF=1
 
+  # Per-task effort -> inner-loop cap + model tier. Absent/standard = today's
+  # default (RALPH_INNER_MAX_ITER, no model override); quick/deep adjust both.
+  EFFORT=$(jf "$NEXT" effort)
+  EFF_MAX_ITER="$RALPH_INNER_MAX_ITER"
+  EFF_MODEL=""
+  case "$EFFORT" in
+    quick|q|s) EFF_MAX_ITER="$RALPH_ITER_QUICK"; EFF_MODEL="$RALPH_MODEL_QUICK" ;;
+    deep|d|l)  EFF_MAX_ITER="$RALPH_ITER_DEEP";  EFF_MODEL="$RALPH_MODEL_DEEP" ;;
+    *)         : ;;  # standard | m | null | absent -> defaults, unchanged
+  esac
+  [[ -n "$EFF_MODEL" ]] && log "task=$TASK_ID effort=$EFFORT -> max-iter=$EFF_MAX_ITER model=$EFF_MODEL"
+
   # ralph writes its structured receipt (reviewer/summary/iterations/tokens) here;
   # we merge it with the git facts below and attach it to the child Job's evidence.
   # pid+job-unique so concurrent sweeps never collide on the transport file.
   RECEIPT_FILE="$RUNTIME/receipt-$CHILD_JOB-$$.json"
 
+  # A deep/quick task overrides the model tier via ANTHROPIC_MODEL (ralph.sh runs
+  # `claude -p`, which honors it as the default-model override). Set only for the
+  # non-default efforts so a standard/null task's environment is untouched.
+  [[ -n "$EFF_MODEL" ]] && export ANTHROPIC_MODEL="$EFF_MODEL"
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$RALPH_INNER_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" >> "$LOG" 2>&1
   RC=$?
   set -e
+  [[ -n "$EFF_MODEL" ]] && unset ANTHROPIC_MODEL
 
   # Structured receipt for the child Job's evidence: git-derived commits/head vs
   # the pre-run BASELINE, merged with ralph's receipt file. Attached on ALL

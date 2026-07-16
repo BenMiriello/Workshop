@@ -28,6 +28,7 @@ set -u
 WORKSHOP=/home/clawd-a/workshop
 AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
 PROJECT_RALPH=$WORKSHOP/scripts/project_ralph.sh
+MEMORY_KEEPER=$WORKSHOP/scripts/memory_keeper_run.sh
 LOG=$WORKSHOP/.runtime/dispatch.log
 
 ts() { date -Iseconds; }
@@ -215,6 +216,57 @@ for slug, p in sorted(projects.items()):
     if proj_started >= MAX_PROJECT_SWEEPS:
         break
     autonomy = p.get("autonomy") or {}
+
+    # --- Preset-aware dispatch (O6/O7-config) ---------------------------------
+    # A scope with an explicit `autonomy` PRESET is dispatched by the preset's
+    # rule: off / on-demand are never background-swept (only an explicit Run-now
+    # sweeps them); scheduled sweeps on its cron cadence when ready; continuous
+    # sweeps every tick when ready (today's behavior). A scope with NO preset
+    # field falls through to the EXISTING mode/trigger logic below, byte-for-byte
+    # unchanged, so an unbound project sweeps exactly as before.
+    preset = autonomy.get("preset")
+    if preset is not None:
+        if preset in ("off", "on-demand"):
+            continue
+        fired_keys = []
+        if preset == "scheduled":
+            due = False
+            for t in (autonomy.get("triggers") or []):
+                if t.get("kind") == "cron":
+                    key = f"project:{slug}:cron:{t.get('cron_expression','')}"
+                    if triggers.due(t.get("cron_expression", ""), state.get(key), now):
+                        due = True
+                        fired_keys.append(key)
+            if not due:
+                continue
+        elif preset != "continuous":
+            continue
+        pdir = p.get("dir")
+        if not pdir or not Path(pdir).is_dir():
+            continue
+        root = Path(pdir)
+        if running_job(project_slug=slug):
+            continue
+        opened, cb_reason = circuit_open(f"project:{slug}", project_slug=slug)
+        if opened:
+            print(f"skip-circuit\tproject:{slug}\t{cb_reason}", file=sys.stderr)
+            continue
+        if awaiting_unchanged(slug, root):
+            continue
+        if not has_ready(root):
+            continue
+        ok, reason = usage_ledger.can_admit(slug)
+        if not ok:
+            print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
+            continue
+        plan.append(("project", slug, ""))
+        # Consume the cron firing only now that it is actually dispatched (F16).
+        _pf = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        for _k in fired_keys:
+            state[_k] = _pf
+        proj_started += 1
+        continue
+
     trigs = triggers.project_triggers(autonomy)
     if not any(t.get("kind") == "loop" for t in trigs):
         continue
@@ -269,8 +321,26 @@ for a in agents:
     if not fire:
         continue
     if runtime != "builder":
-        # Assistant-runtime background execution = a data-tier turn runner; that
-        # is a later phase. Log and skip so we do not silently drop it.
+        # Assistant-runtime CONSOLIDATION dispatch (O6): the memory-consolidation
+        # organ is the one assistant agent the dispatcher drives. An agent with
+        # `role: memory` whose cron trigger is due runs one memory_keeper_run.sh
+        # pass (detached), honoring MAX_AGENT_SWEEPS + the usage budget. Every
+        # other assistant agent remains skipped exactly as before.
+        if a.get("role") == "memory":
+            ok, reason = usage_ledger.can_admit(f"agent:{slug}")
+            if not ok:
+                print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
+                continue
+            pslug = a.get("project_slug")
+            scope_key = f"project:{pslug}" if pslug else "workshop"
+            plan.append(("memory", scope_key, f"agent:{slug}"))
+            _fire_ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+            for _k in fired_cron_keys:
+                state[_k] = _fire_ts
+            agent_started += 1
+            continue
+        # Other assistant-runtime agents: non-code data-tier turn runner is a
+        # later phase. Log and skip so we do not silently drop it.
         print(f"skip-assistant\t{slug}\t", file=sys.stderr)
         continue
     # Resolve the builder's scope dir (linked project dir else its cwd).
@@ -325,6 +395,9 @@ while IFS=$'\t' read -r TYPE SCOPE ASSIGNEE; do
   elif [[ "$TYPE" == "agent" ]]; then
     log "launch agent sweep: dir=$SCOPE assignee=$ASSIGNEE"
     setsid nohup "$PROJECT_RALPH" --dir "$SCOPE" --assignee "$ASSIGNEE" >/dev/null 2>&1 &
+  elif [[ "$TYPE" == "memory" ]]; then
+    log "launch memory consolidation: scope=$SCOPE assignee=$ASSIGNEE"
+    setsid nohup bash "$MEMORY_KEEPER" "$SCOPE" >/dev/null 2>&1 &
   fi
   COUNT=$((COUNT+1))
 done <<< "$PLAN"

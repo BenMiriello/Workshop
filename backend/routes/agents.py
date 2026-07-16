@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
-from services import build_agents, dev_servers, jobs, agents_registry
+from services import build_agents, dev_servers, jobs, agents_registry, triggers
 
 router = APIRouter()
 
@@ -38,6 +38,10 @@ async def list_agents():
             "purpose": a.get("purpose"),
             "triggers": a.get("triggers") or [],
             "limits": a.get("limits") or {},
+            "autonomy": triggers.triggers_to_preset(a.get("triggers") or []),
+            "role": a.get("role"),
+            "depth": a.get("depth") or "standard",
+            "fanout": a.get("fanout") or "read-only",
             "capabilities": a.get("capabilities") or [],
             "memory": a.get("memory"),
             "project_slug": a.get("project_slug"),
@@ -555,15 +559,86 @@ async def memory_effective_query(persona_path: str = ""):
     return resolve_memory_tree(persona_path)
 
 
+def _agent_scope_root(rec: dict) -> _P | None:
+    """The tree this agent's tasks live in: its linked project dir, else a
+    builder's own cwd. Assistant agents with no project link have no code tree,
+    so their queue snapshot is empty."""
+    pslug = rec.get("project_slug")
+    if pslug:
+        pd = build_agents._project_dir(pslug)
+        if pd is not None:
+            return _P(pd)
+    if rec.get("runtime") == "builder" and rec.get("cwd"):
+        return _P(rec["cwd"])
+    return None
+
+
+def _agent_queue_snapshot(rec: dict) -> dict:
+    """Queue counts (`ready`/`doing`/`in_review`/`blocked`) + pending `awaiting`
+    payloads for an agent's scope. Mirrors the project autonomy snapshot; returns
+    zeros when the agent has no resolvable task tree."""
+    empty = {"queue": {"ready": 0, "doing": 0, "in_review": 0, "blocked": 0,
+                       "parked": 0, "todo": 0}, "awaiting": []}
+    root = _agent_scope_root(rec)
+    if root is None:
+        return empty
+    try:
+        items = tasks.list_tasks(root, include_done=True)
+    except Exception:
+        return empty
+    by_id = {t.get("id"): t for t in items}
+    tally = {"todo": 0, "doing": 0, "in_review": 0, "blocked": 0,
+             "parked": 0, "done": 0, "cancelled": 0}
+    awaiting: list[dict] = []
+    ready = 0
+    for t in items:
+        st = t.get("status")
+        if st in tally:
+            tally[st] += 1
+        if st == "todo":
+            deps = t.get("depends_on") or []
+            if all((by_id.get(d) or {}).get("status") in tasks.TERMINAL
+                   for d in deps if d in by_id):
+                ready += 1
+        aw = t.get("awaiting")
+        if isinstance(aw, dict) and aw.get("question"):
+            awaiting.append({
+                "id": t.get("id"),
+                "status": st,
+                "text": (t.get("text") or "").split("\n")[0][:140],
+                "question": aw.get("question"),
+                "since": aw.get("since"),
+            })
+    return {
+        "queue": {
+            "ready": ready,
+            "doing": tally["doing"],
+            "in_review": tally["in_review"],
+            "blocked": tally["blocked"],
+            "parked": tally["parked"],
+            "todo": tally["todo"],
+        },
+        "awaiting": awaiting,
+    }
+
+
 @router.get("/{agent_id}")
 async def get_agent(agent_id: str):
     """Unified detail, resolved from the registry (by slug, routing id, or linked
     id). The assistant persona/instructions live in the definition body; there is
-    no separate Letta memory layer to enrich from."""
+    no separate Letta memory layer to enrich from. Enriched with the autonomy
+    preset (classified from the agent's triggers) plus the scope's queue counts
+    and any pending `awaiting` prompts."""
     rec = agents_registry.get(agent_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
-    return rec
+    snap = _agent_queue_snapshot(rec)
+    return {
+        **rec,
+        "autonomy": triggers.triggers_to_preset(rec.get("triggers") or []),
+        "queue": snap["queue"],
+        "awaiting": snap["awaiting"],
+    }
 
 
 class AgentDefinitionUpdate(BaseModel):
@@ -572,6 +647,9 @@ class AgentDefinitionUpdate(BaseModel):
     triggers: list[dict] | None = None
     limits: dict | None = None
     capabilities: list[str] | None = None
+    role: str | None = None            # role taxonomy tag (e.g. "memory")
+    depth: str | None = None           # effort tier: quick | standard | deep
+    fanout: str | None = None          # off | read-only
     definition: str | None = None  # the markdown body (persona / instructions)
 
 
@@ -593,6 +671,9 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
             triggers_list=body.triggers,
             limits=body.limits,
             capabilities=body.capabilities,
+            role=body.role,
+            depth=body.depth,
+            fanout=body.fanout,
             body=body.definition,
         )
     except KeyError:

@@ -595,6 +595,15 @@ RUNNING_STALE_S = 7200
 
 
 class TriggersIn(BaseModel):
+    # Preset shape (primary, O6/O7-config): an autonomy preset + effort/fan-out
+    # knobs + budget limits, expanded to triggers under the hood. The raw
+    # `triggers` list remains the "advanced" escape hatch; when both are present,
+    # an explicit preset wins.
+    preset: str | None = None
+    cron: str | None = None
+    depth: str | None = None
+    fanout: str | None = None
+    limits: dict | None = None
     triggers: list[dict] = Field(default_factory=list)
 
 
@@ -603,6 +612,51 @@ def _stored_triggers(autonomy: dict) -> list[dict]:
     if stored is not None:
         return [triggers.normalize(t) for t in stored]
     return triggers.project_triggers(autonomy)
+
+
+def _queue_snapshot(root: Path) -> dict:
+    """The scope's task-queue counts + any pending operator prompts. `ready`
+    counts todo tasks whose dependencies are all terminal (the same predicate
+    `next_ready` uses); the rest are a status tally. `awaiting` surfaces the
+    per-task `awaiting` payloads a sweep parks for operator input."""
+    try:
+        items = tasks.list_tasks(root, include_done=True)
+    except Exception:
+        items = []
+    by_id = {t.get("id"): t for t in items}
+    tally = {"todo": 0, "doing": 0, "in_review": 0, "blocked": 0,
+             "parked": 0, "done": 0, "cancelled": 0}
+    awaiting: list[dict] = []
+    ready = 0
+    for t in items:
+        st = t.get("status")
+        if st in tally:
+            tally[st] += 1
+        if st == "todo":
+            deps = t.get("depends_on") or []
+            if all((by_id.get(d) or {}).get("status") in tasks.TERMINAL
+                   for d in deps if d in by_id):
+                ready += 1
+        aw = t.get("awaiting")
+        if isinstance(aw, dict) and aw.get("question"):
+            awaiting.append({
+                "id": t.get("id"),
+                "status": st,
+                "text": (t.get("text") or "").split("\n")[0][:140],
+                "question": aw.get("question"),
+                "since": aw.get("since"),
+            })
+    return {
+        "queue": {
+            "ready": ready,
+            "doing": tally["doing"],
+            "in_review": tally["in_review"],
+            "blocked": tally["blocked"],
+            "parked": tally["parked"],
+            "todo": tally["todo"],
+        },
+        "awaiting": awaiting,
+    }
 
 
 def _run_state(slug: str) -> tuple[bool, dict | None]:
@@ -632,30 +686,72 @@ async def get_autonomy(slug: str) -> dict:
     autonomy = raw.get("autonomy") or {}
     trigs = _stored_triggers(autonomy)
     running, last = _run_state(slug)
+    # Preset is the primary control; prefer a stored one, else classify the
+    # trigger list so pre-preset configs still display correctly.
+    preset = autonomy.get("preset") or triggers.triggers_to_preset(trigs)
+    snap = _queue_snapshot(_project_dir(slug))
     return {
+        "autonomy": preset,
+        "depth": autonomy.get("depth") or "standard",
+        "fanout": autonomy.get("fanout") or "read-only",
+        "limits": autonomy.get("limits") or {},
         "triggers": trigs,
         "mode": triggers.project_mode_from_triggers(trigs),
         "updated": autonomy.get("updated"),
         "running": running,
         "last_run": last,
+        "queue": snap["queue"],
+        "awaiting": snap["awaiting"],
     }
 
 
 @router.put("/{slug}/autonomy")
 async def put_autonomy(slug: str, body: TriggersIn) -> dict:
-    try:
-        norm = [triggers.normalize(t) for t in body.triggers]
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    # Preset shape wins when present; otherwise fall back to the raw trigger list
+    # (the advanced escape hatch, and the pre-O6 request shape, unchanged).
+    if body.preset is not None:
+        if body.preset not in triggers.PRESETS:
+            raise HTTPException(400, f"unknown autonomy preset: {body.preset}")
+        norm = triggers.preset_to_triggers(body.preset, cron=body.cron, limits=body.limits)
+        preset = body.preset
+    else:
+        try:
+            norm = [triggers.normalize(t) for t in body.triggers]
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        preset = triggers.triggers_to_preset(norm)
     data = _load_registry()
     proj = (data.get("projects") or {}).get(slug)
     if not proj:
         raise HTTPException(404, f"project not found: {slug}")
     mode = triggers.project_mode_from_triggers(norm)
-    proj["autonomy"] = {"mode": mode, "triggers": norm, "updated": _now()}
+    depth = body.depth if body.depth in ("quick", "standard", "deep") else \
+        ((proj.get("autonomy") or {}).get("depth") or "standard")
+    fanout = body.fanout if body.fanout in ("off", "read-only") else \
+        ((proj.get("autonomy") or {}).get("fanout") or "read-only")
+    limits = body.limits if body.limits is not None else \
+        ((proj.get("autonomy") or {}).get("limits") or {})
+    proj["autonomy"] = {
+        "mode": mode,
+        "preset": preset,
+        "depth": depth,
+        "fanout": fanout,
+        "limits": limits,
+        "triggers": norm,
+        "updated": _now(),
+    }
     _save_registry(data)
     running, _ = _run_state(slug)
-    return {"triggers": norm, "mode": mode, "updated": proj["autonomy"]["updated"], "running": running}
+    return {
+        "autonomy": preset,
+        "depth": depth,
+        "fanout": fanout,
+        "limits": limits,
+        "triggers": norm,
+        "mode": mode,
+        "updated": proj["autonomy"]["updated"],
+        "running": running,
+    }
 
 
 @router.post("/{slug}/autonomy/run")

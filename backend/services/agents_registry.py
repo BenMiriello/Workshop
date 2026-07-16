@@ -60,6 +60,25 @@ CHANNEL_MAP = Path(os.environ.get(
 RUNTIMES = ("builder", "assistant")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
+# Role taxonomy + per-agent effort/fan-out knobs (Phase O6/O7-config). All three
+# are optional frontmatter fields with safe defaults, surfaced in the parsed
+# record and re-serialized on write. `role` is a free-form tag (e.g. "memory",
+# "builder", "researcher") that TYPES an agent without changing how it is
+# assigned work (assignment stays `assignee=agent:<slug>`). `depth` is the effort
+# tier a sweep runs the agent at; `fanout` bounds native subagent use.
+DEPTHS = ("quick", "standard", "deep")
+FANOUTS = ("off", "read-only")
+DEFAULT_DEPTH = "standard"
+DEFAULT_FANOUT = "read-only"
+
+
+def _coerce_depth(v: object) -> str:
+    return v if v in DEPTHS else DEFAULT_DEPTH
+
+
+def _coerce_fanout(v: object) -> str:
+    return v if v in FANOUTS else DEFAULT_FANOUT
+
 # Kept in sync with routes/agents.py KNOWN_SOURCES — the event-source vocabulary
 # the subscriptions file is partitioned by.
 KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "custom"]
@@ -138,6 +157,9 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "capabilities": fm.get("capabilities") or [],
         "triggers": triggers.definition_triggers(fm),
         "limits": fm.get("limits") or dict(DEFAULT_LIMITS),
+        "role": fm.get("role") or None,
+        "depth": _coerce_depth(fm.get("depth")),
+        "fanout": _coerce_fanout(fm.get("fanout")),
         "memory": fm.get("memory"),
         "project_slug": fm.get("project_slug") or project_slug,
         "letta_agent_id": letta_id,
@@ -163,6 +185,9 @@ def _record_from_build_state(slug: str, raw: dict) -> dict:
         "capabilities": [],
         "triggers": [],
         "limits": dict(DEFAULT_LIMITS),
+        "role": None,
+        "depth": DEFAULT_DEPTH,
+        "fanout": DEFAULT_FANOUT,
         "memory": None,
         "project_slug": project_slug,
         "letta_agent_id": None,
@@ -333,7 +358,8 @@ def _path_for(slug: str, project_slug: str | None) -> Path:
 def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               triggers_list: list, limits: dict, memory: Any,
               project_slug: str | None, letta_agent_id: str | None,
-              retired: bool = False) -> dict:
+              role: str | None = None, depth: str | None = None,
+              fanout: str | None = None, retired: bool = False) -> dict:
     fm: dict[str, Any] = {
         "name": name,
         "runtime": runtime,
@@ -343,6 +369,14 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
         "limits": limits or dict(DEFAULT_LIMITS),
         "memory": memory,
     }
+    # Only emit the role-taxonomy fields when they carry non-default information,
+    # so a fresh definition file is not littered with `depth: standard` noise.
+    if role:
+        fm["role"] = role
+    if depth is not None and _coerce_depth(depth) != DEFAULT_DEPTH:
+        fm["depth"] = depth
+    if fanout is not None and _coerce_fanout(fanout) != DEFAULT_FANOUT:
+        fm["fanout"] = fanout
     if project_slug:
         fm["project_slug"] = project_slug
     if letta_agent_id:
@@ -356,7 +390,8 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
            capabilities: list | None = None, triggers_list: list | None = None,
            limits: dict | None = None, memory: Any = None,
            project_slug: str | None = None, letta_agent_id: str | None = None,
-           body: str = "") -> dict:
+           role: str | None = None, depth: str | None = None,
+           fanout: str | None = None, body: str = "") -> dict:
     slug = slug.strip().lower()
     if not SLUG_RE.match(slug):
         raise ValueError("slug must be kebab-case alphanumeric, start with a letter, max 64 chars")
@@ -368,7 +403,8 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
     fm = _build_fm(runtime=runtime, name=name, purpose=purpose,
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
-                   project_slug=project_slug, letta_agent_id=letta_agent_id)
+                   project_slug=project_slug, letta_agent_id=letta_agent_id,
+                   role=role, depth=depth, fanout=fanout)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_emit(fm, body))
     regenerate_subscriptions()
@@ -378,10 +414,15 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
 def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            triggers_list: list | None = None, limits: dict | None = None,
            capabilities: list | None = None, memory: Any = None,
-           body: str | None = None) -> dict:
+           role: str | None = None, depth: str | None = None,
+           fanout: str | None = None, body: str | None = None) -> dict:
     """Write changes to the definition file. If the agent has no definition file
     yet (e.g. a builder synthesized from build_agents.json), one is created from
-    the current record. Regenerates the event-subscriptions file afterward."""
+    the current record. Regenerates the event-subscriptions file afterward.
+
+    role/depth/fanout follow the same convention as the other setters: None
+    leaves the field untouched (so a plain triggers edit never disturbs a role),
+    a value writes it."""
     rec = get(slug)
     if rec is None:
         raise KeyError(slug)
@@ -395,6 +436,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             capabilities=rec.get("capabilities") or [], triggers_list=rec.get("triggers") or [],
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
             project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
+            role=rec.get("role"), depth=rec.get("depth"), fanout=rec.get("fanout"),
         )
         existing_body = rec.get("definition") or ""
 
@@ -410,6 +452,22 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
         fm["capabilities"] = capabilities
     if memory is not None:
         fm["memory"] = memory
+    if role is not None:
+        # empty string clears the role tag; a value sets it.
+        if role:
+            fm["role"] = role
+        else:
+            fm.pop("role", None)
+    if depth is not None:
+        if _coerce_depth(depth) == DEFAULT_DEPTH:
+            fm.pop("depth", None)
+        else:
+            fm["depth"] = depth
+    if fanout is not None:
+        if _coerce_fanout(fanout) == DEFAULT_FANOUT:
+            fm.pop("fanout", None)
+        else:
+            fm["fanout"] = fanout
     new_body = existing_body if body is None else body
 
     fm.setdefault("runtime", rec["runtime"])

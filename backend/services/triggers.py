@@ -211,6 +211,94 @@ def project_mode_from_triggers(triggers: list[dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Autonomy PRESET model (Phase O6/O7-config)
+# ---------------------------------------------------------------------------
+# The operator-facing autonomy control is a single preset, not a raw trigger
+# list. A preset expands DETERMINISTICALLY into the concrete trigger list (plus
+# a budget bundle carried on the loop trigger). This is the new PRIMARY control;
+# the old `autonomy.mode {off, manual, continuous}` still works as a back-compat
+# shadow (see mode_to_preset / preset_to_mode below).
+#
+#   preset        triggers      dispatcher behavior                    default for
+#   ----------    ----------    ------------------------------------   -----------
+#   off           []            never background-swept                 assistant/general/app chats
+#   on-demand     [manual]      swept only by an explicit "Run now"    project + builder scopes
+#   scheduled     [cron]        swept on the cron cadence when ready   opt-in per scope
+#   continuous    [loop]        swept every tick when ready, bounded   opt-in per scope
+#
+# The empty-list encoding of `off` (rather than a lone manual trigger) keeps the
+# inverse `triggers_to_preset` unambiguous and matches project_mode_from_triggers
+# (empty -> off). A manual "Run now" never consults triggers to decide whether it
+# may run (it uses --force), so `off` losing its manual trigger changes nothing
+# about the operator's ability to launch a sweep by hand.
+
+PRESETS = ("off", "on-demand", "scheduled", "continuous")
+
+_PRESET_TO_MODE = {
+    "off": "off",
+    "on-demand": "manual",
+    "scheduled": "scheduled",
+    "continuous": "continuous",
+}
+_MODE_TO_PRESET = {
+    "off": "off",
+    "manual": "on-demand",
+    "scheduled": "scheduled",
+    "continuous": "continuous",
+}
+
+
+def preset_to_mode(preset: str | None) -> str:
+    """Back-compat: the old `autonomy.mode` value a preset shadows."""
+    return _PRESET_TO_MODE.get(preset or "off", "off")
+
+
+def mode_to_preset(mode: str | None) -> str:
+    """Back-compat: the preset an existing `autonomy.mode` maps to."""
+    return _MODE_TO_PRESET.get(mode or "off", "off")
+
+
+def preset_to_triggers(preset: str | None, *, cron: str | None = None,
+                       limits: dict | None = None) -> list[dict]:
+    """Expand an autonomy preset into its concrete trigger list + budget bundle.
+
+    `cron` supplies the expression for `scheduled`. `limits` (a dict with any of
+    `max_iterations`, `budget`, `completion_gate`) tunes the `continuous` loop's
+    bound; absent values fall back to the loop defaults. Unknown presets are
+    treated as `off`."""
+    preset = preset or "off"
+    lim = limits or {}
+    if preset == "continuous":
+        return [make_trigger(
+            "loop",
+            max_iterations=lim.get("max_iterations"),
+            budget=lim.get("budget"),
+            completion_gate=lim.get("completion_gate"),
+        )]
+    if preset == "scheduled":
+        return [make_trigger("cron", cron_expression=cron or "")]
+    if preset == "on-demand":
+        return [make_trigger("manual")]
+    # off (and any unknown value): no automatic trigger; never background-swept.
+    return []
+
+
+def triggers_to_preset(triggers: list[dict] | None) -> str:
+    """Best-effort inverse of `preset_to_triggers`: classify an existing trigger
+    list back to a preset so stored configs display correctly. A loop trigger is
+    `continuous`; a cron trigger is `scheduled`; a manual-only list is
+    `on-demand`; an empty list is `off`."""
+    kinds = {(t or {}).get("kind") for t in (triggers or [])}
+    if "loop" in kinds:
+        return "continuous"
+    if "cron" in kinds:
+        return "scheduled"
+    if "manual" in kinds:
+        return "on-demand"
+    return "off"
+
+
+# ---------------------------------------------------------------------------
 # Agent adapter — Letta metadata (Phase 1) -> triggers
 # ---------------------------------------------------------------------------
 # Phase 2 will call this same function with definition frontmatter instead of
