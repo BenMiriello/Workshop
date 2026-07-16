@@ -20,10 +20,14 @@ mkdir -p "$WORKSHOP/.runtime"
 source /home/clawd-a/workshop/scripts/pause_guard.sh
 workshop_pause_guard "$WORKSHOP/.runtime/pause.log" "daily_todo_digest"
 
-# Counts
-UNBLOCKED=$(grep -c '^\[ \]' "$TODO" 2>/dev/null || echo 0)
-INPROG=$(grep -c '^\[~\]' "$TODO" 2>/dev/null || echo 0)
-TOTAL_DONE=$(grep -c '^\[x\]' "$TODO" 2>/dev/null || echo 0)
+# Counts from the canonical task store (post-O7 root migration). The old
+# ^[ ] / [~] / [x] prose greps no longer match the regenerated TODO.md
+# projection (now dash-prefixed, status-based), so read the store by status.
+read -r C_TODO C_DOING C_IN_REVIEW C_BLOCKED C_PARKED C_DONE C_CANCELLED C_TOTAL \
+  < <(bash "$WORKSHOP/scripts/root_task_counts.sh")
+UNBLOCKED=${C_TODO:-0}
+INPROG=$(( ${C_DOING:-0} + ${C_IN_REVIEW:-0} ))
+TOTAL_DONE=${C_DONE:-0}
 
 # Done since last digest — read previous count from state file
 PREV_DONE=0
@@ -48,5 +52,5 @@ echo "$DIGEST" >> "$NOTIFY"
   echo "  Done       [x] : $TOTAL_DONE  (+$DELTA_DONE since last digest)"
   echo ""
   echo "Next 3 unblocked items:"
-  grep '^\[ \]' "$TODO" 2>/dev/null | head -3 | sed 's/^/  /'
+  grep '^- \[ \]' "$TODO" 2>/dev/null | head -3 | sed 's/^/  /'
 } > "$WORKSHOP/.runtime/last-digest.txt"

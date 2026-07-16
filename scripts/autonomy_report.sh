@@ -30,11 +30,15 @@ workshop_pause_guard "$WORKSHOP/.runtime/pause.log" "autonomy_report"
 NOW_ISO=$(date -Iseconds)
 SINCE_EPOCH=$(date -d 'yesterday' +%s)
 
-# Count [x] vs [ ] vs [~] vs [proposed] in TODO.md.
-OPEN=$(grep -c '^\[ \]' "$WORKSHOP/TODO.md" 2>/dev/null); OPEN=${OPEN:-0}
-DONE=$(grep -c '^\[x\]' "$WORKSHOP/TODO.md" 2>/dev/null); DONE=${DONE:-0}
-BLOCKED=$(grep -c '^\[~\]' "$WORKSHOP/TODO.md" 2>/dev/null); BLOCKED=${BLOCKED:-0}
-PROPOSED=$(grep -c '^\[proposed\]' "$WORKSHOP/TODO.md" 2>/dev/null); PROPOSED=${PROPOSED:-0}
+# Queue counts from the canonical task store (post-O7 root migration). The old
+# ^[ ] / [x] / [~] / [proposed] prose greps no longer match the regenerated
+# store-backed TODO.md; read status counts from the store instead.
+read -r C_TODO C_DOING C_IN_REVIEW C_BLOCKED C_PARKED C_DONE C_CANCELLED C_TOTAL \
+  < <(bash "$WORKSHOP/scripts/root_task_counts.sh")
+OPEN=${C_TODO:-0}
+DONE=${C_DONE:-0}
+BLOCKED=${C_BLOCKED:-0}
+IN_REVIEW=${C_IN_REVIEW:-0}
 
 # Job stats in last 24h, sourced from the unified Job store (.runtime/jobs.jsonl).
 # Every bounded execution (cron task, drained event, project sweep, heartbeat) is
@@ -89,13 +93,24 @@ PYEOF
   read -r JOBS_TOTAL_24H JOBS_DONE_24H JOBS_FAILED_24H EVENTS_24H <<<"$STATS"
 fi
 
-# Last completed task title (for "latest activity" line).
-LAST_ACTIVITY=$(grep -E '^\[20' "$WORKSHOP/TODO.md" 2>/dev/null | head -1 | head -c 200)
+# Last completed task title (for "latest activity" line), from the store.
+LAST_ACTIVITY=$(PYTHONPATH=$WORKSHOP/backend "$WORKSHOP/backend/.venv/bin/python" - <<'PYEOF' 2>/dev/null
+from pathlib import Path
+try:
+    from services import tasks
+    done = [t for t in tasks.list_tasks(Path('/home/clawd-a/workshop')) if t.get('status') == 'done']
+    done.sort(key=lambda t: t.get('updated') or '', reverse=True)
+    if done:
+        print((done[0].get('text') or '').splitlines()[0][:200])
+except Exception:
+    pass
+PYEOF
+)
 
 # Write the report line into notify-masini.txt.
 {
   printf '[%s] DAILY AUTONOMY REPORT — 24h summary\n' "$NOW_ISO"
-  printf '  Queue: open=%d done=%d blocked=%d proposed=%d\n' "$OPEN" "$DONE" "$BLOCKED" "$PROPOSED"
+  printf '  Queue: open=%d in_review=%d blocked=%d done=%d\n' "$OPEN" "$IN_REVIEW" "$BLOCKED" "$DONE"
   printf '  Jobs: total=%d done=%d failed=%d\n' "$JOBS_TOTAL_24H" "$JOBS_DONE_24H" "$JOBS_FAILED_24H"
   printf '  Events processed: %d\n' "$EVENTS_24H"
   if [[ -n "$LAST_ACTIVITY" ]]; then
