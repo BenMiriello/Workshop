@@ -67,6 +67,15 @@ MAX_AGENT_SWEEPS = 1
 # scope backs off further. State is a simple counter file in .runtime for operator
 # visibility; the count itself is recomputed from the Jobs log each tick (source
 # of truth = jobs.jsonl), so it never drifts.
+#
+# HALF-OPEN PROBE (a2ff6437): the cool-off does NOT fully reopen the flow, which
+# would just re-trigger the failure storm. When the cool-off elapses the breaker
+# goes HALF-OPEN and admits EXACTLY ONE probe sweep for the scope. The sweep runs
+# detached, so its result is read on a LATER tick from the Jobs log: the first
+# completed sweep newer than the probe baseline CLOSES the breaker if it made
+# progress (not a failed sweep), or RE-OPENS it with a fresh (longer) cool-off if
+# it only failed. Until that probe resolves the scope admits nothing else. The
+# per-scope phase + probe marker live in the same circuit-breaker.json store.
 CB_THRESHOLD = 3
 CB_BASE_SEC = 600      # 10 min after the threshold is first crossed
 CB_MAX_SEC = 7200      # 2 h ceiling
@@ -112,10 +121,29 @@ def _failed_sweep(j: dict) -> bool:
         return False
 
 
-def circuit_open(scope_key: str, **flt) -> tuple[bool, str]:
-    """Return (open, reason). Counts the leading run of failed sweeps for the
-    scope; once it reaches CB_THRESHOLD, the scope is skipped until the cool-off
-    window (from the most recent failure) elapses. Records state for visibility."""
+def _parse_iso(s):
+    """Parse an ISO8601 timestamp to an aware UTC datetime, or None."""
+    try:
+        dt = datetime.fromisoformat(s)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def circuit_open(scope_key: str, **flt) -> tuple[bool, str, bool]:
+    """Return (open, reason, half_open). Three persisted phases per scope:
+      - CLOSED: leading failed-sweep run < CB_THRESHOLD -> normal dispatch
+        (open=False, half_open=False).
+      - OPEN: run >= threshold and NOW is inside the cool-off from the most
+        recent failure -> scope skipped (open=True).
+      - HALF-OPEN: cool-off elapsed -> admit EXACTLY ONE probe sweep
+        (open=False, half_open=True). The caller marks it in-flight via
+        cb_mark_probe once it actually dispatches. Because the probe runs
+        detached, its outcome is read on a LATER tick: the first completed sweep
+        newer than the probe baseline closes the breaker if it made progress, or
+        re-opens it (fresh, longer cool-off) if it only failed."""
     sweeps = _coordinator_sweeps(**flt)
     n = 0
     last_ended = None
@@ -126,25 +154,72 @@ def circuit_open(scope_key: str, **flt) -> tuple[bool, str]:
                 last_ended = j.get("ended_at")
         else:
             break
+
+    # Resolve a probe admitted on an earlier tick. The caller checks running_job()
+    # before us, so an unfinished (still-running) probe never reaches here; if we
+    # are here with an in-flight marker, either the probe completed or its process
+    # died without writing a Job.
+    probe = (CB_STATE.get(scope_key) or {}).get("probe") or {}
+    if probe.get("in_flight"):
+        newest = sweeps[0] if sweeps else None
+        newest_end = _parse_iso(newest.get("ended_at")) if newest else None
+        baseline = _parse_iso(probe.get("baseline_ended"))
+        if newest is not None and newest_end is not None and (
+                baseline is None or newest_end > baseline):
+            if not _failed_sweep(newest):
+                # Probe SUCCEEDED (the sweep made progress) -> close.
+                CB_STATE.pop(scope_key, None)
+                return False, "", False
+            # Probe FAILED -> fall through to the open computation below, which
+            # now counts this fresh failure and restarts the cool-off from it.
+        else:
+            # No sweep newer than the baseline: the prior admit produced no Job
+            # (process died, or a downstream gate blocked it). Re-admit one probe.
+            return False, "half-open: re-admitting probe (no prior result)", True
+
     if n < CB_THRESHOLD or not last_ended:
         CB_STATE.pop(scope_key, None)
-        return False, ""
+        return False, "", False
     cooldown = min(CB_BASE_SEC * (2 ** (n - CB_THRESHOLD)), CB_MAX_SEC)
-    try:
-        end_dt = datetime.fromisoformat(last_ended)
-    except (TypeError, ValueError):
-        return False, ""
-    if end_dt.tzinfo is None:
-        end_dt = end_dt.replace(tzinfo=timezone.utc)
+    end_dt = _parse_iso(last_ended)
+    if end_dt is None:
+        return False, "", False
     open_until = end_dt + timedelta(seconds=cooldown)
+    if NOW < open_until:
+        CB_STATE[scope_key] = {
+            "phase": "open",
+            "consecutive_failures": n,
+            "opened_at": end_dt.isoformat(),
+            "open_until": open_until.isoformat(),
+            "updated": NOW.isoformat(),
+            "probe": {"in_flight": False},
+        }
+        return True, f"{n} consecutive failed sweeps; cooling off until {open_until.isoformat()}", False
+    # Cool-off elapsed -> HALF-OPEN: admit exactly one probe sweep. baseline_ended
+    # is the newest failed sweep at admit time; any sweep newer than it is the
+    # probe's result, read on a later tick.
     CB_STATE[scope_key] = {
+        "phase": "half_open",
         "consecutive_failures": n,
+        "opened_at": end_dt.isoformat(),
         "open_until": open_until.isoformat(),
         "updated": NOW.isoformat(),
+        "probe": {"in_flight": False, "baseline_ended": last_ended},
     }
-    if NOW < open_until:
-        return True, f"{n} consecutive failed sweeps; cooling off until {open_until.isoformat()}"
-    return False, ""
+    return False, f"half-open: admitting one probe after cool-off ({n} prior failures)", True
+
+
+def cb_mark_probe(scope_key: str) -> None:
+    """Record that a half-open probe sweep was actually dispatched, so the NEXT
+    tick reads its outcome instead of admitting another. Called only after the
+    sweep is appended to the plan."""
+    ent = CB_STATE.get(scope_key)
+    if not ent:
+        return
+    probe = ent.setdefault("probe", {})
+    probe["in_flight"] = True
+    probe["admitted_at"] = NOW.isoformat()
+    ent["updated"] = NOW.isoformat()
 
 def load_state() -> dict:
     try:
@@ -247,7 +322,7 @@ for slug, p in sorted(projects.items()):
         root = Path(pdir)
         if running_job(project_slug=slug):
             continue
-        opened, cb_reason = circuit_open(f"project:{slug}", project_slug=slug)
+        opened, cb_reason, cb_half_open = circuit_open(f"project:{slug}", project_slug=slug)
         if opened:
             print(f"skip-circuit\tproject:{slug}\t{cb_reason}", file=sys.stderr)
             continue
@@ -260,6 +335,8 @@ for slug, p in sorted(projects.items()):
             print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
             continue
         plan.append(("project", slug, ""))
+        if cb_half_open:
+            cb_mark_probe(f"project:{slug}")
         # Consume the cron firing only now that it is actually dispatched (F16).
         _pf = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         for _k in fired_keys:
@@ -278,7 +355,7 @@ for slug, p in sorted(projects.items()):
     root = Path(pdir)
     if running_job(project_slug=slug):
         continue
-    opened, cb_reason = circuit_open(f"project:{slug}", project_slug=slug)
+    opened, cb_reason, cb_half_open = circuit_open(f"project:{slug}", project_slug=slug)
     if opened:
         print(f"skip-circuit\tproject:{slug}\t{cb_reason}", file=sys.stderr)
         continue
@@ -291,6 +368,8 @@ for slug, p in sorted(projects.items()):
         print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
         continue
     plan.append(("project", slug, ""))
+    if cb_half_open:
+        cb_mark_probe(f"project:{slug}")
     proj_started += 1
 
 # --- Agent cron/loop triggers (builder runtime) ----------------------------
@@ -359,7 +438,7 @@ for a in agents:
         continue
     if running_job(agent_id=f"agent:{slug}"):
         continue
-    opened, cb_reason = circuit_open(f"agent:{slug}", agent_id=f"agent:{slug}")
+    opened, cb_reason, cb_half_open = circuit_open(f"agent:{slug}", agent_id=f"agent:{slug}")
     if opened:
         print(f"skip-circuit\tagent:{slug}\t{cb_reason}", file=sys.stderr)
         continue
@@ -370,6 +449,8 @@ for a in agents:
         print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
         continue
     plan.append(("agent", str(root), f"agent:{slug}"))
+    if cb_half_open:
+        cb_mark_probe(f"agent:{slug}")
     # Consume the cron firing ONLY now that it is actually dispatched; a firing
     # skipped by any gate above stays "due" for the next tick instead of being
     # silently lost until the next cron occurrence. (review F16)
