@@ -25,6 +25,9 @@
 #   3  — classifier block hit
 #   4  — startup failure
 #   5  — environment failure on iter 1 (API outage/auth): release, do NOT burn an attempt
+#   6  : in-run no-progress / thrash park: the run was making no progress (same
+#        reviewer rejection or a near-identical diff repeated, or the per-run token
+#        budget was exceeded), so it was stopped MID-RUN. The caller release/blocks.
 
 set -u
 
@@ -194,6 +197,9 @@ iter=0
 exit_code=1
 last_reviewer_json='{"reasons":["initial-iteration-not-yet-run"]}'
 LAST_ITER_OUT=""   # path of the most recent iteration's --output-format json envelope
+LAST_RESULT=""     # last NON-EMPTY worker .result text seen, so the receipt summary
+                   # is never blank when the task is accepted even if the FINAL
+                   # iteration exited nonzero with a partial/absent envelope (Fix 2)
 # Session id captured from iteration 1's result envelope, so iterations >=2 resume
 # THIS run's own session (--resume) instead of the cwd's most-recent session
 # (--continue), which could grab a chat's session started in $DIR between iters
@@ -211,6 +217,31 @@ from services import usage_ledger
 print(int(usage_ledger.load_config().get('nominal_task_tokens') or 150000))
 " 2>/dev/null) || echo 150000)
 [[ -z "$NOMINAL_TOKENS" ]] && NOMINAL_TOKENS=150000
+
+# In-run no-progress / thrash guards (Fix 3). The sweep-level circuit breaker only
+# sees a run's terminal tally; it cannot catch thrash WITHIN one run. These stop a
+# run mid-flight (exit 6 -> caller release/blocks) when it is churning without
+# progress. Thresholds are deliberately conservative so a healthy multi-iteration
+# task (which makes a DIFFERENT change and/or clears a reason each tick) never
+# trips; all are env-overridable.
+#   - RALPH_THRASH_SAME_REJECT: consecutive rejections with the SAME normalized
+#     reason set that trip the guard (default 2).
+#   - RALPH_THRASH_SAME_DIFF: consecutive iterations whose cumulative diff is
+#     byte-identical that trip the guard (default 2).
+# Tool-call-signature repetition is intentionally NOT tracked: with
+# --output-format json (not stream-json) ralph sees only the final envelope, not
+# individual tool calls, so a tool-call counter here could not work. We rely on the
+# diff and reject-reason signals, which do not need per-tool visibility.
+RALPH_THRASH_SAME_REJECT="${RALPH_THRASH_SAME_REJECT:-2}"
+RALPH_THRASH_SAME_DIFF="${RALPH_THRASH_SAME_DIFF:-2}"
+# Per-run cumulative-token allowance (admission-only budget cannot stop a runaway
+# already in flight). Derived from the effort-scaled iteration cap so a deep task
+# gets a larger allowance than a quick one; a generous factor keeps it clear of a
+# normal run. Env RALPH_MAX_RUN_TOKENS overrides the derived value; 0 disables.
+RALPH_RUN_TOKEN_FACTOR="${RALPH_RUN_TOKEN_FACTOR:-3}"
+MAX_RUN_TOKENS="${RALPH_MAX_RUN_TOKENS:-$(( MAX_ITER * NOMINAL_TOKENS * RALPH_RUN_TOKEN_FACTOR ))}"
+PREV_REJECT_SIG=""; SAME_REJECT_COUNT=0
+PREV_DIFF_SIG="";   SAME_DIFF_COUNT=0
 
 while (( iter < MAX_ITER )); do
   iter=$((iter + 1))
@@ -327,6 +358,33 @@ except Exception:
 print(tok)
 " 2>/dev/null || echo 0)
   RUN_TOKENS=$((RUN_TOKENS + ITER_TOKENS))
+
+  # Capture this iteration's final assistant text (.result) and remember the last
+  # NON-EMPTY one, so the receipt summary is never blank when the task is accepted
+  # even if the FINAL iteration exited nonzero with a partial envelope (Fix 2).
+  # Same tolerant parse ladder as the token/session parses above.
+  ITER_RESULT=$(python3 -c "
+import json
+res = ''
+try:
+    txt = open('$ITER_OUT').read()
+    obj = None
+    try:
+        obj = json.loads(txt)
+    except Exception:
+        i = txt.find('{\"type\"')
+        if i >= 0:
+            try:
+                obj = json.loads(txt[i:])
+            except Exception:
+                obj = None
+    if isinstance(obj, dict):
+        res = obj.get('result') or ''
+except Exception:
+    res = ''
+print(res[:1500])
+" 2>/dev/null || echo "")
+  [[ -n "$ITER_RESULT" ]] && LAST_RESULT="$ITER_RESULT"
 
   # Capture the session id from the result envelope once (iter 1), so iter >=2 can
   # --resume THIS run's session rather than --continue the cwd's newest one. (F12)
@@ -473,6 +531,64 @@ except Exception:
       fi
     done <<< "$RUN_REASONS"
   fi
+
+  # --- In-run no-progress / thrash guards (Fix 3) -------------------------------
+  # Reached only on a NON-passing iteration (a passing iter already broke out with
+  # exit 0 above), so a healthy run never touches this. Each guard stops the run
+  # mid-flight with exit 6 so the caller release/blocks the task with a reason.
+
+  # (a) Cumulative per-run token budget. Admission gating cannot stop a run already
+  #     burning tokens; this can. RUN_TOKENS is the weighted spend accumulated above.
+  if (( MAX_RUN_TOKENS > 0 && RUN_TOKENS > MAX_RUN_TOKENS )); then
+    log "no-progress PARK: run token budget exceeded (RUN_TOKENS=$RUN_TOKENS > $MAX_RUN_TOKENS) at iter=$iter"
+    exit_code=6
+    break
+  fi
+
+  # (b) Same reviewer rejection twice (or more) in a row. Normalize reasons: drop
+  #     trailing :N counts (so new_stubs:3 == new_stubs:2) and sort, so only a
+  #     genuinely repeated reason set trips, not a re-ordered or re-counted one.
+  REJECT_SIG=$(echo "$REVIEWER_JSON" | python3 -c "
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+rs = sorted({re.sub(r':\d+$', '', str(r)) for r in d.get('reasons', []) if str(r).strip()})
+print('|'.join(rs))
+" 2>/dev/null || echo "")
+  if [[ -n "$REJECT_SIG" && "$REJECT_SIG" == "$PREV_REJECT_SIG" ]]; then
+    SAME_REJECT_COUNT=$((SAME_REJECT_COUNT + 1))
+  else
+    SAME_REJECT_COUNT=1
+  fi
+  PREV_REJECT_SIG="$REJECT_SIG"
+  if [[ -n "$REJECT_SIG" ]] && (( SAME_REJECT_COUNT >= RALPH_THRASH_SAME_REJECT )); then
+    log "no-progress PARK: same reviewer rejection x$SAME_REJECT_COUNT (reasons=$REJECT_SIG) at iter=$iter"
+    exit_code=6
+    break
+  fi
+
+  # (c) Near-identical diff twice (or more) in a row: the worker keeps producing the
+  #     same change (byte-identical cumulative diff vs baseline) that the reviewer
+  #     keeps rejecting, i.e. it is stuck. Signature = tracked+staged diff plus the
+  #     untracked-file name+size set, hashed. A run making real progress changes the
+  #     diff each tick, so this never trips on healthy work.
+  DIFF_SIG=$( { git diff "$BASELINE" 2>/dev/null; git diff --cached "$BASELINE" 2>/dev/null; \
+                git ls-files --others --exclude-standard 2>/dev/null | while IFS= read -r f; do \
+                  [[ -f "$f" ]] && printf '%s %s\n' "$f" "$(wc -c < "$f" 2>/dev/null)"; done; } \
+              | sha1sum | cut -d' ' -f1)
+  if [[ -n "$DIFF_SIG" && "$DIFF_SIG" == "$PREV_DIFF_SIG" ]]; then
+    SAME_DIFF_COUNT=$((SAME_DIFF_COUNT + 1))
+  else
+    SAME_DIFF_COUNT=1
+  fi
+  PREV_DIFF_SIG="$DIFF_SIG"
+  if (( SAME_DIFF_COUNT >= RALPH_THRASH_SAME_DIFF )); then
+    log "no-progress PARK: near-identical diff x$SAME_DIFF_COUNT at iter=$iter"
+    exit_code=6
+    break
+  fi
 done
 
 if (( iter >= MAX_ITER && exit_code == 1 )); then
@@ -499,6 +615,7 @@ if [[ -n "$RECEIPT_PATH" ]]; then
   ( RECEIPT_PATH="$RECEIPT_PATH" EXIT_CODE="$exit_code" ITERATIONS="$iter" \
     TOKENS="$RUN_TOKENS" SESSION_ID="$SESSION_ID" \
     REVIEWER_JSON="$last_reviewer_json" LAST_ITER_OUT="$LAST_ITER_OUT" \
+    LAST_RESULT="$LAST_RESULT" \
     python3 - <<'PYEOF'
 import json, os
 path = os.environ["RECEIPT_PATH"]
@@ -522,6 +639,21 @@ if last_out and os.path.isfile(last_out):
             summary = (obj.get("result") or "")[:1200]
     except Exception:
         summary = ""
+# Fix 2: never leave the summary blank when the task was accepted. On a
+# nonzero-but-accepted final iteration the envelope may be partial (empty
+# .result), so fall back to the last NON-EMPTY .result captured mid-run, then to a
+# trimmed raw tail of the final output. The default PASS path (final .result
+# present) keeps the exact summary it had before.
+exit_code = int(os.environ.get("EXIT_CODE") or 0)
+if not summary:
+    summary = (os.environ.get("LAST_RESULT") or "")[:1200]
+if not summary and exit_code == 0 and last_out and os.path.isfile(last_out):
+    try:
+        raw = open(last_out, encoding="utf-8", errors="replace").read().strip()
+        if raw:
+            summary = raw[-800:]
+    except Exception:
+        pass
 try:
     reviewer = json.loads(os.environ.get("REVIEWER_JSON") or "null")
 except Exception:

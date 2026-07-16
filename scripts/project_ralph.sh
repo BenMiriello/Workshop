@@ -576,8 +576,22 @@ while (( n < MAX_TASKS )); do
   # none). Forward REVIEWER_ALLOW_NO_DIFF to ralph -> reviewer for those kinds only;
   # a reviewer-acceptance code task never gets it, so its no_diff gate is unchanged.
   # (review F18)
+  # EXPLICIT no-diff opt-in (Fix 1 escape hatch): a task that deliberately produces
+  # no committed diff (external side effect only) sets acceptance.allow_no_diff true.
+  # This is the ONLY signal that exempts a run from the committed-work done-gate
+  # below (the acceptance KIND does not), so a `command`/`operator` task that was
+  # expected to commit real work but did not can no longer slip through to done.
+  EXPLICIT_NO_DIFF=0
+  case "$(jf "$NEXT" acceptance.allow_no_diff | tr '[:upper:]' '[:lower:]')" in
+    true|1|yes) EXPLICIT_NO_DIFF=1 ;;
+  esac
+  # REVIEWER_ALLOW_NO_DIFF exempts reviewer.sh's tracked-file no_diff check. Keep
+  # today's behavior EXACTLY (command/operator acceptance auto-exempt, so a
+  # legitimately-no-tracked-diff task does not fail the reviewer), and also honor an
+  # explicit flag. This is the reviewer gate only; the commit gate is separate.
   ALLOW_NO_DIFF=0
   [[ "$ACC_KIND" == "command" || "$ACC_KIND" == "operator" ]] && ALLOW_NO_DIFF=1
+  [[ "$EXPLICIT_NO_DIFF" == "1" ]] && ALLOW_NO_DIFF=1
 
   # Per-task effort -> inner-loop cap + model tier. Absent/standard = today's
   # default (RALPH_INNER_MAX_ITER, no model override); quick/deep adjust both.
@@ -612,6 +626,11 @@ while (( n < MAX_TASKS )); do
   HEAD=$(cd "$WORK_DIR" && git rev-parse HEAD 2>/dev/null || echo "")
   COMMITS=$(cd "$WORK_DIR" && git rev-list --reverse "$BASELINE..$HEAD" 2>/dev/null || echo "")
   EVIDENCE=$(build_receipt_evidence "$RECEIPT_FILE" "$BASELINE" "$HEAD" "$COMMITS")
+  # Did the run land a REAL commit between the pre-run baseline and HEAD in the
+  # scope dir? This (not the reviewer's working-tree status) is the source of truth
+  # for the committed-work done-gate (Fix 1).
+  COMMITTED=0
+  [[ -n "$(printf '%s' "$COMMITS" | tr -d '[:space:]')" ]] && COMMITTED=1
   # One task-side evidence entry pointing at the child Job (the ticket timeline
   # links to the run rather than duplicating the receipt payload).
   note_receipt_ref() { python3 "$PTASKS" note "$DIR" "$TASK_ID" "$CHILD_JOB" --kind receipt --ref "$CHILD_JOB" >/dev/null 2>>"$LOG"; }
@@ -625,7 +644,22 @@ while (( n < MAX_TASKS )); do
       # conflict parks the task and returns non-zero, skipping the done/in_review
       # transition (park, do not loop). On publish success it augments $EVIDENCE
       # with the branch + pr so the child Job receipt carries them.
-      if [[ "$ACC_KIND" == "command" && -n "$ACC_SPEC" ]]; then
+      #
+      # Committed-work done-gate (Fix 1): the reviewer / acceptance command can pass
+      # on an UNCOMMITTED working tree (e.g. `test -f X` against a file the worker
+      # created but never committed), which would land the task `done` with an empty
+      # receipt. A task may reach done/in_review only if the run produced a real
+      # commit, UNLESS it is an explicitly-flagged no-diff task (acceptance
+      # .allow_no_diff true, an external-side-effect task). Otherwise release/block
+      # with a clear reason instead of marking it done. A normal task that commits
+      # real work has COMMITTED=1 and falls straight through to the paths below,
+      # byte-identical to today.
+      if (( COMMITTED == 0 )) && [[ "$EXPLICIT_NO_DIFF" != "1" ]]; then
+        python3 "$PTASKS" note "$DIR" "$TASK_ID" "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)" --kind acceptance >/dev/null 2>>"$LOG"
+        if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "acceptance passed but no work was committed")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+        job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+        log "task=$TASK_ID NOT done: acceptance passed but nothing was committed"
+      elif [[ "$ACC_KIND" == "command" && -n "$ACC_SPEC" ]]; then
         set +e; ACC_OUT=$(run_acceptance_cmd "$ACC_SPEC"); ACC_RC=$?; set -e
         if (( ACC_RC == 0 )); then
           if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
@@ -666,6 +700,14 @@ while (( n < MAX_TASKS )); do
       log "task=$TASK_ID ENV FAILURE: released (attempt restored); stopping sweep to back off"
       rm -f "$RECEIPT_FILE" 2>/dev/null || true
       break ;;
+    6)
+      # rc=6 (in-run no-progress / thrash): ralph stopped the run MID-FLIGHT because
+      # it was churning without progress (same reviewer rejection or a near-identical
+      # diff repeated, or the per-run token budget was blown). Release/block with a
+      # human reason so the Work UI shows WHY it stopped rather than a bare failure.
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "no progress within the run (repeated rejection / near-identical diff, or run token budget exceeded); stopped mid-run" --kind acceptance >/dev/null 2>>"$LOG"
+      if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "no progress (thrash) within the run")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
     1|2)
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
       # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop
