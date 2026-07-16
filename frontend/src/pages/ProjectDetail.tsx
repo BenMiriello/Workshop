@@ -911,6 +911,10 @@ export default function ProjectDetail() {
         )}
       </section>
 
+      {/* --- Autonomy (per-project Ralph loop): kept prominent, right under the
+             project header/chat so per-project autonomy is immediately visible. --- */}
+      <AutonomyPanel slug={slug} />
+
       {/* --- Build agents on this project --- */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
@@ -1490,9 +1494,6 @@ export default function ProjectDetail() {
 
       {/* --- App (multi-service runner) --- */}
       <AppServicesPanel slug={slug} />
-
-      {/* --- Autonomy (per-project Ralph loop) --- */}
-      <AutonomyPanel slug={slug} />
 
       {/* --- Environment / secrets registry --- */}
       <EnvironmentPanel slug={slug} />

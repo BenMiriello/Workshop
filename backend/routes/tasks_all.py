@@ -141,6 +141,100 @@ async def list_scopes() -> dict:
     return {"scopes": [skey for skey, _ in _scope_roots()]}
 
 
+# ---- Autonomy scopes (central management surface) --------------------------
+# One row per manageable autonomy scope: every project + every registry agent.
+# The per-scope autonomy endpoints (routes.projects.get_autonomy and the agent
+# detail endpoint) own the preset/queue/run summaries; this route reuses those
+# exact helpers so the central Autonomy surface can never disagree with the
+# per-scope panels. Lives under this router (prefix /tasks) at
+# GET /api/tasks/autonomy-scopes, since tasks_all is the mounted router here.
+
+
+def _last_run_summary(last: dict | None) -> dict | None:
+    """A run down to the three fields the central list shows (id/status/ended)."""
+    if not last:
+        return None
+    return {
+        "id": last.get("id"),
+        "status": last.get("status"),
+        "ended_at": last.get("ended_at"),
+    }
+
+
+def _agent_run_state(agent_id: str) -> tuple[bool, dict | None]:
+    """(running, last_job) for an agent scope, derived from the Job store the
+    same way the project run-state is."""
+    recs = jobs.read(agent_id=agent_id, limit=1)
+    last = recs[0] if recs else None
+    running = bool(last and last.get("status") == "running")
+    return running, last
+
+
+@router.get("/autonomy-scopes")
+async def autonomy_scopes() -> dict:
+    """Every manageable autonomy scope, summarized consistently with the
+    per-scope autonomy endpoints. Each row:
+      {scope_key, kind, title, preset, depth, running,
+       queue:{ready,doing,in_review,blocked}, awaiting_count,
+       last_run:{id,status,ended_at}|null}
+    Bounded: one pass over the projects registry + the agents roster."""
+    # Lazy imports keep this route free of any module-load ordering concern with
+    # the project/agent routers (neither imports tasks_all, so there is no cycle).
+    from routes import projects as projects_route
+    from routes import agents as agents_route
+    from services import agents_registry, triggers
+
+    rows: list[dict] = []
+
+    # ---- Projects ----
+    reg = projects_route._load_registry()
+    for slug, raw in (reg.get("projects") or {}).items():
+        if raw.get("state") == "retired":
+            continue
+        autonomy = raw.get("autonomy") or {}
+        trigs = projects_route._stored_triggers(autonomy)
+        preset = autonomy.get("preset") or triggers.triggers_to_preset(trigs)
+        running, last = projects_route._run_state(slug)
+        snap = projects_route._queue_snapshot(projects_route._project_dir(slug))
+        q = snap["queue"]
+        rows.append({
+            "scope_key": f"project:{slug}",
+            "kind": "project",
+            "title": raw.get("title") or slug,
+            "preset": preset,
+            "depth": autonomy.get("depth") or "standard",
+            "running": running,
+            "queue": {"ready": q["ready"], "doing": q["doing"],
+                      "in_review": q["in_review"], "blocked": q["blocked"]},
+            "awaiting_count": len(snap["awaiting"]),
+            "last_run": _last_run_summary(last),
+        })
+
+    # ---- Agents (assistant + builder registry agents, incl. memory-keeper) ----
+    for rec in agents_registry.list_agents():
+        slug = rec.get("slug")
+        if not slug:
+            continue
+        preset = triggers.triggers_to_preset(rec.get("triggers") or [])
+        snap = agents_route._agent_queue_snapshot(rec)
+        q = snap["queue"]
+        running, last = _agent_run_state(rec.get("id") or slug)
+        rows.append({
+            "scope_key": f"agent:{slug}",
+            "kind": "agent",
+            "title": rec.get("name") or slug,
+            "preset": preset,
+            "depth": rec.get("depth") or "standard",
+            "running": running,
+            "queue": {"ready": q["ready"], "doing": q["doing"],
+                      "in_review": q["in_review"], "blocked": q["blocked"]},
+            "awaiting_count": len(snap["awaiting"]),
+            "last_run": _last_run_summary(last),
+        })
+
+    return {"scopes": rows, "count": len(rows)}
+
+
 # ---- Create ----------------------------------------------------------------
 
 class TaskCreateIn(BaseModel):
