@@ -15,7 +15,12 @@ Canonical Task (version 2)::
       "parent": str | None,
       "priority": int,                 # higher first; default 0
       "depends_on": [task_id],         # gates readiness
-      "acceptance": {"kind": "reviewer"|"command"|"operator", "spec": str|None}|None,
+      "acceptance": {"kind": "reviewer"|"command"|"operator", "spec": str|None,
+                     # optional machine-checkable assertions run by the gate; ALL
+                     # must pass. Each: {"desc": str, "cmd": str, "expect": "exit0"|str}
+                     # (expect "exit0" => command exits 0; any other string => that
+                     # substring must appear in the command's stdout).
+                     "criteria": [{"desc": str, "cmd": str, "expect": str}]}|None,
       "max_attempts": int | None,      # per-task cap on worker RUNS (sweep attempts);
                                        # distinct from ralph's inner iteration cap.
                                        # Legacy stores' `max_iterations` reads in.
@@ -231,6 +236,38 @@ def _assignee_from_legacy(task: dict) -> str | None:
     return owner if str(owner).startswith("agent:") else f"agent:{owner}"
 
 
+def _normalize_acceptance(acc) -> dict | None:
+    """Coerce a stored acceptance into a well-formed record, losslessly. Preserves
+    every existing key (kind/spec/allow_no_diff/...) verbatim so callers that read
+    them are unaffected, and only re-shapes the optional ``criteria`` list of
+    machine-checkable assertions. Each criterion normalizes to
+    ``{"desc", "cmd", "expect"}``: a criterion with no ``cmd`` is dropped, ``desc``
+    defaults to the ``cmd``, and ``expect`` defaults to ``"exit0"``. A missing or
+    empty criteria list => the key is removed (missing means none), so a task with
+    no assertions round-trips exactly as before this field existed."""
+    if not isinstance(acc, dict):
+        return None
+    out = dict(acc)
+    raw = out.get("criteria")
+    norm: list[dict] = []
+    if isinstance(raw, list):
+        for c in raw:
+            if not isinstance(c, dict):
+                continue
+            cmd = str(c.get("cmd") or "").strip()
+            if not cmd:
+                continue
+            desc = str(c.get("desc") or cmd).strip()
+            expect = c.get("expect")
+            expect = str(expect).strip() if expect not in (None, "") else "exit0"
+            norm.append({"desc": desc, "cmd": cmd, "expect": expect})
+    if norm:
+        out["criteria"] = norm
+    else:
+        out.pop("criteria", None)
+    return out or None
+
+
 def _normalize(task: dict) -> dict:
     """Coerce a stored record into a well-formed canonical Task (defensive
     against hand edits and forward-migrating v1 records losslessly)."""
@@ -239,9 +276,7 @@ def _normalize(task: dict) -> dict:
         status = "done" if task.get("done") else "todo"
     now = _now()
     assignee = _assignee_from_legacy(task)
-    acceptance = task.get("acceptance")
-    if not isinstance(acceptance, dict):
-        acceptance = None
+    acceptance = _normalize_acceptance(task.get("acceptance"))
     src = task.get("source")
     if not isinstance(src, dict):
         src = {"kind": "operator", "ref": None}

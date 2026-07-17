@@ -32,6 +32,7 @@ WORKSHOP=/home/clawd-a/workshop
 AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
 AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
 RALPH=$WORKSHOP/scripts/ralph.sh
+REVIEWER=$WORKSHOP/scripts/reviewer.sh
 PTASKS=$WORKSHOP/scripts/project_tasks.py
 
 SLUG=""
@@ -300,6 +301,100 @@ run_acceptance_cmd() {  # $1=spec
   rc=$?
   echo "$out" | tail -c 800
   return $rc
+}
+
+# Execute a task's machine-checkable acceptance criteria (grounded completion
+# gate) in the work tree and enforce that ALL pass. Reads the pre-extracted spec
+# ($CRIT_SPEC_FILE / $CRIT_COUNT), runs each cmd in WORK_DIR, and decides pass per
+# criterion: exit 0 when expect is "exit0" (default), else the expected substring
+# must appear in the command's stdout. Captures per-criterion {criterion, cmd,
+# expect, pass, evidence(exit code + stdout/stderr tail)}, records ONE task-evidence
+# note (kind=criteria) so the receipt/Work UI shows exactly what was checked, writes
+# the executed results to $CRIT_RESULTS_FILE, then SURFACES those results to
+# reviewer.sh (REVIEWER_CRITERIA_FILE) so the completion gate reflects executed
+# evidence, not a self-report. Sets globals CRIT_PRESENT (0/1), CRIT_ALL_PASS (0/1),
+# CRIT_FAIL_DESC (first failing criterion). A task with no criteria is a no-op
+# (CRIT_PRESENT=0), leaving the existing gate byte-identical.
+eval_criteria() {
+  CRIT_PRESENT=0; CRIT_ALL_PASS=1; CRIT_FAIL_DESC=""
+  (( CRIT_COUNT > 0 )) || return 0
+  CRIT_PRESENT=1
+  CRIT_RESULTS_FILE="$RUNTIME/criteria-results-$CHILD_JOB-$$.json"
+  local status
+  status=$(cd "$WORK_DIR" && CRIT_SPEC_FILE="$CRIT_SPEC_FILE" \
+             CRIT_RESULTS_FILE="$CRIT_RESULTS_FILE" python3 - <<'PYEOF' 2>>"$LOG"
+import json, os, subprocess
+try:
+    crit = json.load(open(os.environ["CRIT_SPEC_FILE"]))
+    if not isinstance(crit, list):
+        crit = []
+except Exception:
+    crit = []
+results = []
+all_pass = True
+first_fail = ""
+for c in crit:
+    if not isinstance(c, dict):
+        continue
+    cmd = str(c.get("cmd") or "").strip()
+    if not cmd:
+        continue
+    desc = str(c.get("desc") or cmd).strip()
+    expect = str(c.get("expect") or "exit0").strip()
+    try:
+        p = subprocess.run(["bash", "-lc", cmd], capture_output=True,
+                           text=True, timeout=120)
+        rc, so, se = p.returncode, (p.stdout or ""), (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        rc, so, se = 124, "", "criterion timed out after 120s"
+    except Exception as e:
+        rc, so, se = 1, "", f"criterion execution error: {e}"
+    if expect == "exit0":
+        passed = (rc == 0)
+    else:
+        passed = (expect in so)
+    tail = (so + (("\n" + se) if se else "")).strip()
+    results.append({"criterion": desc, "cmd": cmd, "expect": expect,
+                    "pass": bool(passed), "evidence": f"exit={rc}; " + tail[-300:]})
+    if not passed and not first_fail:
+        first_fail = desc
+    all_pass = all_pass and passed
+try:
+    json.dump(results, open(os.environ["CRIT_RESULTS_FILE"], "w"))
+except Exception:
+    pass
+print("PASS" if (all_pass and results) else "FAIL\t" + (first_fail or "no criteria executed"))
+PYEOF
+)
+  case "$status" in
+    PASS)    CRIT_ALL_PASS=1 ;;
+    FAIL*)   CRIT_ALL_PASS=0; CRIT_FAIL_DESC="${status#FAIL}"; CRIT_FAIL_DESC="${CRIT_FAIL_DESC#	}" ;;
+    *)       CRIT_ALL_PASS=0; CRIT_FAIL_DESC="criteria evaluation error" ;;
+  esac
+  # Record what was actually checked as durable task evidence (kind=criteria).
+  local summary
+  summary=$(CRIT_RESULTS_FILE="$CRIT_RESULTS_FILE" python3 -c "
+import json, os
+try: r = json.load(open(os.environ['CRIT_RESULTS_FILE']))
+except Exception: r = []
+n_ok = len([c for c in r if c.get('pass')])
+parts = [('ok' if c.get('pass') else 'FAIL') + ': ' + str(c.get('criterion'))[:80] for c in r]
+print(f'{n_ok}/{len(r)} acceptance criteria passed | ' + ' ; '.join(parts))
+" 2>>"$LOG")
+  [[ -n "$summary" ]] && python3 "$PTASKS" note "$DIR" "$TASK_ID" "$summary" --kind criteria >/dev/null 2>>"$LOG"
+  # Surface the EXECUTED results to reviewer.sh so the gate reflects the diff PLUS
+  # what actually ran (never the worker's self-report). Best-effort, informational:
+  # the hard enforcement below keys on CRIT_ALL_PASS, so a reviewer hiccup here can
+  # never wrongly PASS a task; this call records the criteria-aware verdict for the
+  # Work UI and proves the reviewer judged executed evidence.
+  local rjson rcomplete rreasons
+  rjson=$(REVIEWER_CRITERIA_FILE="$CRIT_RESULTS_FILE" REVIEWER_ROOT="$WORK_DIR" \
+          REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$REVIEWER" "$BASELINE" 2>>"$LOG")
+  rcomplete=$(jf "$rjson" complete)
+  rreasons=$(printf '%s' "$rjson" | python3 -c "import json,sys
+try: print(', '.join(json.load(sys.stdin).get('reasons',[])))
+except Exception: print('')" 2>/dev/null)
+  log "task=$TASK_ID criteria-aware reviewer: complete=$rcomplete reasons=${rreasons:-none}"
 }
 
 # Subscription auth; defend against accidental API-key auth.
@@ -630,6 +725,22 @@ while (( n < MAX_TASKS )); do
   # pid+job-unique so concurrent sweeps never collide on the transport file.
   RECEIPT_FILE="$RUNTIME/receipt-$CHILD_JOB-$$.json"
 
+  # Machine-checkable acceptance criteria (grounded gate). Extract the task's
+  # criteria list to a spec file the success leg executes. CRIT_COUNT=0 (absent /
+  # empty / malformed) makes the criteria gate a pure no-op, so a task without
+  # assertions runs exactly as before. pid+job-unique like the receipt file.
+  CRIT_SPEC_FILE="$RUNTIME/criteria-spec-$CHILD_JOB-$$.json"
+  CRIT_COUNT=$(printf '%s' "$NEXT" | CRIT_SPEC_FILE="$CRIT_SPEC_FILE" python3 -c "
+import json, os, sys
+try: d = json.load(sys.stdin)
+except Exception: d = {}
+crit = ((d.get('acceptance') or {}).get('criteria')) or []
+crit = [c for c in crit if isinstance(c, dict) and str(c.get('cmd') or '').strip()]
+open(os.environ['CRIT_SPEC_FILE'], 'w').write(json.dumps(crit))
+print(len(crit))
+" 2>>"$LOG" || echo 0)
+  [[ -z "$CRIT_COUNT" ]] && CRIT_COUNT=0
+
   # A deep/quick task overrides the model tier via ANTHROPIC_MODEL (ralph.sh runs
   # `claude -p`, which honors it as the default-model override). Set only for the
   # non-default efforts so a standard/null task's environment is untouched.
@@ -683,7 +794,22 @@ while (( n < MAX_TASKS )); do
         if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "acceptance passed but no work was committed")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
         job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
         log "task=$TASK_ID NOT done: acceptance passed but nothing was committed"
-      elif [[ "$ACC_KIND" == "command" && -n "$ACC_SPEC" ]]; then
+      else
+      # Grounded acceptance-criteria gate (O4+): EXECUTE the task's machine-checkable
+      # assertions in the work tree, record what was checked, and require ALL to pass
+      # before any done/in_review transition. eval_criteria also surfaces the executed
+      # results to reviewer.sh. A task with NO criteria is a pure no-op (CRIT_PRESENT=0),
+      # so the kind routing below is byte-identical to before for those tasks. Criteria
+      # combine with the existing gate: reviewer-kind => criteria pass AND ralph's
+      # reviewer approved (RC=0 here); command-kind WITH criteria => the criteria ARE
+      # the check (the extra ACC_SPEC run is skipped, guarded by CRIT_PRESENT==0).
+      eval_criteria
+      if (( CRIT_PRESENT == 1 && CRIT_ALL_PASS == 0 )); then
+        python3 "$PTASKS" note "$DIR" "$TASK_ID" "acceptance criterion failed: ${CRIT_FAIL_DESC}" --kind acceptance >/dev/null 2>>"$LOG"
+        if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "acceptance criterion failed: ${CRIT_FAIL_DESC}")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
+        job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+        log "task=$TASK_ID NOT done: acceptance criterion failed (${CRIT_FAIL_DESC})"
+      elif [[ "$ACC_KIND" == "command" && -n "$ACC_SPEC" ]] && (( CRIT_PRESENT == 0 )); then
         set +e; ACC_OUT=$(run_acceptance_cmd "$ACC_SPEC"); ACC_RC=$?; set -e
         if (( ACC_RC == 0 )); then
           if publish_or_park "$WT_BRANCH_SLUG" "$PR_TITLE" "$PR_BODY"; then
@@ -720,6 +846,7 @@ while (( n < MAX_TASKS )); do
           fi
         fi
       fi
+      fi
       ;;
     3) ptasks_tx block "$DIR" "$TASK_ID" "classifier block" --expect-claim-token "${CLAIM_TOKEN:-}" || true; BLOCKED=$((BLOCKED+1)); job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"; log "task=$TASK_ID BLOCKED (classifier)" ;;
     5)
@@ -752,7 +879,10 @@ while (( n < MAX_TASKS )); do
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
   esac
   # Receipt file is transport, not storage: attached to the Job above, drop it.
-  rm -f "$RECEIPT_FILE" 2>/dev/null || true
+  # The criteria spec/results files are likewise transport (recorded as task
+  # evidence + Job receipt already), so drop them too.
+  rm -f "$RECEIPT_FILE" "${CRIT_SPEC_FILE:-}" "${CRIT_RESULTS_FILE:-}" 2>/dev/null || true
+  CRIT_SPEC_FILE=""; CRIT_RESULTS_FILE=""
   sleep 1
 done
 

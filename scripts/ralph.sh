@@ -514,6 +514,10 @@ print(sid)
   fi
 
   # Run reviewer regardless of sentinel — sentinel is necessary but not sufficient.
+  # The reviewer is handed ONLY the tree + baseline: it judges the committed DIFF and
+  # (via REVIEWER_CRITERIA_FILE, set by project_ralph.sh) the executed acceptance
+  # criteria. The worker's own $ITER_RESULT/.result summary is deliberately NOT passed
+  # in, so the worker cannot bias its own completion verdict (self-preference).
   set +e
   REVIEWER_JSON=$(REVIEWER_ROOT="$DIR" "$REVIEWER" "$BASELINE" 2>>"$LOG")
   REVIEWER_EXIT=$?

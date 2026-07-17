@@ -13,8 +13,12 @@ Verbs (all take a scope directory as the first positional):
   next-ready <dir> [--assignee A]     dependency-aware next ready task
   list-json <dir> [--assignee A] [--include-done]
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
-      [--touches glob,glob] [--acceptance-cmd CMD] [--max-attempts N]
-      [--effort s|m|l] [--discovered-from id] [--provenance KEY] [--source KIND]
+      [--touches glob,glob] [--acceptance-cmd CMD] [--criterion 'desc::cmd::expect']
+      [--max-attempts N] [--effort s|m|l] [--discovered-from id] [--provenance KEY]
+      [--source KIND]
+      # --criterion is repeatable and attaches a machine-checkable assertion the
+      # gate EXECUTES (exit0 by default, or an expected stdout substring). The
+      # 'desc::' and '::expect' segments are optional: 'cmd' alone => exit0 gate.
   set-status <dir> <id> <status> [--job-id J] [--reason R] [--expect-claim-token T]
   claim <dir> <id> <job_id> [--assignee A] [--pid PID]
   heartbeat <dir> <id> <claim_token>  renew a claimed task's lease (fenced by token)
@@ -40,6 +44,27 @@ from services import tasks  # noqa: E402
 
 def _csv(v: str | None) -> list[str]:
     return [x.strip() for x in (v or "").split(",") if x.strip()]
+
+
+def _parse_criterion(raw: str) -> dict | None:
+    """Parse a `desc::cmd::expect` criterion string into {desc, cmd, expect}.
+
+    Segments are optional: `cmd` alone => {desc: cmd, cmd, expect: exit0};
+    `desc::cmd` => expect defaults to exit0; `desc::cmd::expect` sets all three.
+    When 3+ segments are present the FIRST is desc and the LAST is expect, so a
+    cmd containing `::` still parses. A blank cmd yields None (dropped)."""
+    parts = [p for p in (raw or "").split("::")]
+    if len(parts) >= 3:
+        desc, expect = parts[0].strip(), parts[-1].strip()
+        cmd = "::".join(parts[1:-1]).strip()
+    elif len(parts) == 2:
+        desc, cmd, expect = parts[0].strip(), parts[1].strip(), ""
+    else:
+        cmd = (parts[0] if parts else "").strip()
+        desc, expect = "", ""
+    if not cmd:
+        return None
+    return {"desc": desc or cmd, "cmd": cmd, "expect": expect or "exit0"}
 
 
 def _slim(t: dict | None) -> dict:
@@ -89,6 +114,9 @@ def main(argv: list[str]) -> int:
     sp.add_argument("--assignee", default=None)
     sp.add_argument("--touches", default=None)
     sp.add_argument("--acceptance-cmd", default=None)
+    sp.add_argument("--criterion", action="append", default=None,
+                    help="repeatable machine-checkable assertion 'desc::cmd::expect' "
+                         "(expect defaults to exit0; a bare 'cmd' is allowed)")
     sp.add_argument("--max-attempts", type=int, default=None)
     sp.add_argument("--effort", default=None)
     sp.add_argument("--discovered-from", default=None)
@@ -133,6 +161,12 @@ def main(argv: list[str]) -> int:
             return 0
         if a.cmd == "add":
             acceptance = {"kind": "command", "spec": a.acceptance_cmd} if a.acceptance_cmd else None
+            criteria = [c for c in (_parse_criterion(r) for r in (a.criterion or [])) if c]
+            if criteria:
+                # A criteria-carrying task with no explicit command acceptance stays
+                # reviewer-kind: the assertions run alongside the reviewer's diff gate.
+                acceptance = acceptance or {"kind": "reviewer", "spec": None}
+                acceptance["criteria"] = criteria
             t = tasks.add(
                 root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
                 assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,

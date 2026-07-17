@@ -10,8 +10,13 @@
 #     "diff_files": N,
 #     "stub_hits":  [{file, line, marker}, ...],   // NEW stubs only
 #     "typecheck":  {"py": "ok|fail|skipped", "ts": "ok|fail|skipped"},
+#     "criteria":   [{criterion, cmd, expect, pass, evidence}, ...],  // executed, if any
 #     "reasons":    [string, ...]
 #   }
+#
+# This gate judges the DIFF and executed evidence ONLY. The worker's own
+# self-report/summary is never passed in (it is not read here), so a worker cannot
+# talk the reviewer into approving incomplete work (self-preference bias).
 #
 # `complete: true` requires ALL of:
 #   - non-empty diff (something changed), UNLESS REVIEWER_ALLOW_NO_DIFF=1, set by
@@ -20,6 +25,8 @@
 #   - zero NEW stub markers introduced (preexisting stubs in unchanged code are OK)
 #   - python typecheck passes on changed .py files (uses backend venv mypy if present)
 #   - typescript tsc --noEmit passes on changed .ts/.tsx files
+#   - every executed acceptance criterion passed, when REVIEWER_CRITERIA_FILE points
+#     at a JSON results array (machine-checkable assertions run by project_ralph.sh)
 #
 # Conservative: if a check can't run (no tooling), it's "skipped" — counted as pass.
 # Strict-mode (REVIEWER_STRICT=1) flips skipped to fail.
@@ -188,9 +195,43 @@ if [[ -x "$WORKSHOP/scripts/check_pluggable_apps.sh" ]]; then
   fi
 fi
 
+# 4.7 Executed-criteria results (optional). A task can carry machine-checkable
+#     acceptance assertions; project_ralph.sh EXECUTES them in the scope dir and
+#     passes the RESULTS here via REVIEWER_CRITERIA_FILE. Surfacing them makes the
+#     reviewer judge the DIFF plus what was actually executed, never the worker's
+#     own self-report/summary (which is NOT part of this reviewer's context at all).
+#     Absent/unreadable file => behavior is exactly as before this field existed.
+CRITERIA_JSON='[]'
+CRIT_FAIL_COUNT=0
+CRIT_FAIL_DESC=""
+if [[ -n "${REVIEWER_CRITERIA_FILE:-}" && -r "${REVIEWER_CRITERIA_FILE:-}" ]]; then
+  if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if isinstance(d,list) else 1)" "$REVIEWER_CRITERIA_FILE" 2>/dev/null; then
+    CRITERIA_JSON=$(cat "$REVIEWER_CRITERIA_FILE")
+    IFS=$'\t' read -r CRIT_FAIL_COUNT CRIT_FAIL_DESC < <(python3 - "$REVIEWER_CRITERIA_FILE" <<'PYEOF'
+import json, sys
+try:
+    r = json.load(open(sys.argv[1]))
+    if not isinstance(r, list):
+        r = []
+except Exception:
+    r = []
+fails = [c for c in r if isinstance(c, dict) and not c.get("pass")]
+desc = str(fails[0].get("criterion") or fails[0].get("desc") or "criterion") if fails else ""
+# keep the reason single-line so the line-based reasons parser is not corrupted
+print(f"{len(fails)}\t{desc.splitlines()[0][:120] if desc else ''}")
+PYEOF
+)
+  fi
+fi
+
 # 5. Decide.
 REASONS=()
 COMPLETE="true"
+
+if (( CRIT_FAIL_COUNT > 0 )); then
+  REASONS+=("criteria_failed:${CRIT_FAIL_DESC}")
+  COMPLETE="false"
+fi
 
 if [[ "$DESIGN_CHECK" == "fail" ]]; then
   REASONS+=("design_violations")
@@ -237,12 +278,18 @@ REASONS_JSON=$(printf '%s\n' "${REASONS[@]:-}" | python3 -c "import json,sys; r=
 # Emit JSON. Build via env vars + Python decoding so shell quoting is safe.
 COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
-export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL
+export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
 # evidence. project_ralph.sh reads this into the persisted receipt.
 files = [l for l in os.environ.get("CHANGED_ALL", "").splitlines() if l.strip()][:200]
+try:
+    criteria = json.loads(os.environ.get("CRITERIA_JSON") or "[]")
+    if not isinstance(criteria, list):
+        criteria = []
+except Exception:
+    criteria = []
 out = {
     "complete":  bool(int(os.environ["COMPLETE_BOOL"])),
     "diff_files": int(os.environ["DIFF_FILES"]),
@@ -251,6 +298,9 @@ out = {
     "typecheck": {"py": os.environ["PY_CHECK"], "ts": os.environ["TS_CHECK"]},
     "design":    os.environ["DESIGN_CHECK"],
     "pluggable_apps": os.environ["APPS_CHECK"],
+    # executed machine-checkable acceptance assertions (empty unless the caller
+    # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
+    "criteria":  criteria,
     "reasons":   json.loads(os.environ["REASONS_JSON"]),
     "ts":        os.environ["TS_NOW"],
     "baseline":  os.environ["BASELINE"],
