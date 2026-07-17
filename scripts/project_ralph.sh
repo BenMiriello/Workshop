@@ -542,12 +542,32 @@ fi
 
 # The scope tokens are billed to in the usage ledger: the project slug for a
 # project sweep, else the agent assignee, else the tree name. The dispatcher and
-# this loop both admit against this scope's rolling-window budget.
+# this loop both admit against this scope's rolling-window budget, so this key
+# must stay EXACTLY what dispatch_triggers.sh admits against (a bare slug for a
+# project, `agent:<slug>` for an agent) — prefixing it here would split one
+# scope's budget across two ledger keys and silently double it.
 BILL_SCOPE="${SLUG:-$ASSIGNEE}"; [[ -z "$BILL_SCOPE" ]] && BILL_SCOPE="$(basename "$DIR")"
+
+# The LEARNINGS scope is a different namespace from the billing key, and this is
+# where F3 bit: learnings/knowledge require a PREFIXED scope (`project:<slug>`,
+# `agent:<slug>`, `app:<name>`, `workshop`). A bare billing slug like `demo-x` is
+# rejected by learnings._valid_scope, so every per-project lesson and every
+# reviewer rejection fell back to `global` — and chat_context injects `global`
+# into EVERY scope's prompt, so one project's mistakes leaked into every agent
+# everywhere. Emit the prefixed form HERE, at the source, instead of leaving
+# ralph.sh to guess that a bare token means a project (it cannot know; an
+# unbound --dir sweep's basename is not a project).
+learn_scope_for() {
+  if [[ -n "$SLUG" ]]; then echo "project:$SLUG"
+  elif [[ -n "$ASSIGNEE" ]]; then echo "$ASSIGNEE"   # already carries `agent:`
+  else echo "project:$(basename "$DIR")"
+  fi
+}
+LEARN_SCOPE="$(learn_scope_for)"
 
 
 START_EPOCH=$(date +%s)
-log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
+log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE learn_scope=$LEARN_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
 
 # The canonical branch for a bound project: the tracked default_branch, else the
 # same main/master/HEAD detection worktrees.py falls back to. Used by
@@ -775,7 +795,7 @@ print(len(crit))
   # worktree mode, where --dir is the isolated worktree. The heartbeat presents
   # CLAIM_TOKEN so it composes with the Fix-1 fence.
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" WORKSHOP_GRANT_TOKEN="$GRANT_TOKEN" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" WORKSHOP_GRANT_TOKEN="$GRANT_TOKEN" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --learn-scope "$LEARN_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" >> "$LOG" 2>&1
   RC=$?
   set -e
   [[ -n "$EFF_MODEL" ]] && unset ANTHROPIC_MODEL
