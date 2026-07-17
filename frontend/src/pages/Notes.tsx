@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { RefreshCw, Plus, Pencil, Trash2, FileText } from "lucide-react";
+import { RefreshCw, Plus, Pencil, Trash2, FileText, ShieldCheck } from "lucide-react";
 import {
   Button,
   Card,
@@ -54,14 +54,31 @@ type Doc = {
 };
 type DocsResp = { docs: Doc[]; count: number };
 
+// One note in the ~/notes vault, served through the Store door
+// (POST /api/stores/notes:vault/read). The vault is a plain folder of Markdown a
+// real Obsidian opens; the Store URI is what makes it addressable by a grant.
+type VaultNote = { path: string; title: string; size?: number; modified?: number };
+// What the door returns. `tier` is "operator" for us — the operator is served
+// ungated, verbatim, with no policy consulted and no broker call. The gate this
+// page's data passes through is on an agent job's perimeter, not on the human.
+type StoreRead = {
+  uri: string;
+  verb: string;
+  mode: string;
+  tier: string;
+  items: VaultNote[];
+  count: number;
+};
+
 const OVERFLOW_AT = 100;
 
 // Filter view: all scopes or one scope. The Segmented over scopes would grow
 // unbounded (a scope per project + agent), so scope is a Select. The Segmented
 // switches between the editable Notes list and the read-only Documents index.
-type Tab = "notes" | "docs";
+type Tab = "notes" | "vault" | "docs";
 const TABS: SegmentedOption<Tab>[] = [
   { value: "notes", label: "Notes" },
+  { value: "vault", label: "Vault" },
   { value: "docs", label: "Documents" },
 ];
 
@@ -267,6 +284,8 @@ export default function Notes() {
       </div>
       {tab === "docs" ? (
         <Documents />
+      ) : tab === "vault" ? (
+        <VaultNotes />
       ) : (
         <>
           {notice && (
@@ -557,6 +576,149 @@ function EditNote({
 // The read-only bridge to the committed docs/ tree (GET /api/documents). Plans and
 // decision records stay versioned markdown; this view only indexes and opens
 // them so the operator discovers documents alongside notes. No editing here.
+// ---- Vault -----------------------------------------------------------------
+// The ~/notes vault, read through the Store door rather than through a route of
+// the notes app's own. That is the point: the notes app no longer owns its gate.
+// Whether the vault is reachable, by whom, and how narrowly, is a policy record
+// in backend/store-policies.json, keyed by URI — outside the folder it protects,
+// so a `write` grant on the vault can never rewrite the vault's own gate.
+//
+// The operator is not gated by any of it. This page sends no identity, so the
+// door serves it verbatim without consulting a policy or calling a broker; an
+// agent reaching the same URI gets adjudicated once and handed a narrow grant.
+function VaultNotes() {
+  const [data, setData] = useState<StoreRead | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const [applied, setApplied] = useState("");
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch("/api/stores/notes:vault/read", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: applied.trim()
+          ? JSON.stringify({ verb: "search", selector: { query: applied.trim() } })
+          : JSON.stringify({ verb: "list", selector: {} }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setData(await r.json());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [applied]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const items = data?.items ?? [];
+  const overflow = items.length > OVERFLOW_AT;
+  const shown = overflow ? items.slice(0, OVERFLOW_AT) : items;
+
+  let body: JSX.Element;
+  if (err) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't read the vault"
+        hint={<><code>/api/stores/notes:vault/read</code> ({err})</>}
+        action={<Button size="sm" onClick={refresh}>Retry</Button>}
+      />
+    );
+  } else if (!data) {
+    body = (
+      <CardGrid>
+        {[0, 1, 2, 3].map((i) => (
+          <Card key={i}>
+            <Stack gap="sm">
+              <Skeleton width="60%" />
+              <Skeleton width="40%" />
+            </Stack>
+          </Card>
+        ))}
+      </CardGrid>
+    );
+  } else if (items.length === 0) {
+    body = (
+      <StateBlock
+        title={applied ? "Nothing in the vault matches" : "The vault is empty"}
+        hint={
+          applied ? (
+            <>Clear the search to list every note in <code>~/notes</code>.</>
+          ) : (
+            <>The vault is a plain folder of Markdown at <code>~/notes</code> that Obsidian opens untouched. Add a <code>.md</code> file there and it shows up here.</>
+          )
+        }
+        action={applied ? <Button size="sm" onClick={() => { setQuery(""); setApplied(""); }}>Clear search</Button> : undefined}
+      />
+    );
+  } else {
+    body = (
+      <>
+        {overflow && (
+          <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>
+            Showing the first {OVERFLOW_AT} of {items.length}. Search to narrow the list.
+          </p>
+        )}
+        <CardGrid>
+          {shown.map((n) => (
+            <li key={n.path}>
+              <Card compact>
+                <Stack gap="sm">
+                  <Row style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                    <FileText size={14} aria-hidden />
+                    <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.path}</span>
+                  </Row>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{n.path}</span>
+                </Stack>
+              </Card>
+            </li>
+          ))}
+        </CardGrid>
+      </>
+    );
+  }
+
+  return (
+    <Stack gap="lg">
+      <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+        <Field label="Search" inline>
+          <form
+            onSubmit={(e) => { e.preventDefault(); setApplied(query); }}
+            style={{ display: "flex", gap: "var(--space-2)" }}
+          >
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find in the vault"
+              aria-label="Search the vault"
+            />
+            <Button size="sm" type="submit">Search</Button>
+          </form>
+        </Field>
+        <Button size="sm" onClick={refresh} loading={loading}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
+      </Row>
+      <SectionLabel>
+        <ShieldCheck size={14} aria-hidden /> workshop://store/notes/vault
+      </SectionLabel>
+      <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginTop: "calc(-1 * var(--space-2))" }}>
+        Read through the Store door. You are served verbatim and ungated; an agent
+        reaching this same URI is adjudicated against the policy record and handed a
+        narrow, expiring grant.
+      </p>
+      {body}
+    </Stack>
+  );
+}
+
 function Documents() {
   const [data, setData] = useState<DocsResp | null>(null);
   const [err, setErr] = useState<string | null>(null);

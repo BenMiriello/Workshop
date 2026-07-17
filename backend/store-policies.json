@@ -1,0 +1,62 @@
+{
+  "_comment": [
+    "Store access policy: the operator's declared MAXIMUM per Store URI. Read by",
+    "services/policy.py; enforced against a broker verdict by services/broker.py.",
+    "Operator-owned, backend-managed, same posture as grants.json.",
+    "",
+    "This file lives OUTSIDE every store it protects, deliberately: a sidecar in",
+    "the folder would make the gate writable by the party it gates, and `write` on",
+    "a notes folder is the most ordinary grant we mint.",
+    "",
+    "An EMPTY policies list means every Store is `open`, which means exactly the",
+    "behavior before any of this existed. A record is opt-in, per store, and the",
+    "operator is never gated by one — these bound an agent job's PERIMETER.",
+    "",
+    "Fields: verbs_max / topics_allow / topics_deny / requesters_allow /",
+    "response_modes / fields_max are PROGRAMMATIC and checked in code after the",
+    "broker returns. rules_text is prose handed to the broker as guidance. The",
+    "asymmetry is the safety argument: prose can only narrow, because widening is",
+    "checked against the programmatic fields the model never touches."
+  ],
+  "policies": [
+    {
+      "store_uri": "workshop://store/notes/vault",
+      "subtree": true,
+      "tier": "mediated",
+      "verbs_max": ["read", "list", "search"],
+      "topics_allow": [
+        "project planning",
+        "meeting notes",
+        "technical decisions",
+        "task and ticket context"
+      ],
+      "topics_deny": [
+        "personal account numbers",
+        "credentials and API keys",
+        "medical and health details",
+        "private journal entries"
+      ],
+      "requesters_allow": ["agent:*"],
+      "response_modes": ["filtered", "redacted"],
+      "default_response_mode": "filtered",
+      "grant_ttl_s": 900,
+      "adjudicator_min_tier": "sonnet",
+      "rules_text": "The vault is the operator's own thinking, not a corpus. An agent may reach the working parts of it (planning, decisions, the context behind a ticket) and not the personal parts. Prefer filtered whole notes over redacted spans: selection is safer than rewriting. No verb writes, ever, through this record."
+    },
+    {
+      "store_uri": "workshop://store/finance/transactions",
+      "subtree": false,
+      "tier": "mediated",
+      "verbs_max": ["search", "list"],
+      "topics_allow": ["recurring bills", "merchant names", "payment confirmation"],
+      "topics_deny": ["account numbers", "balances", "income"],
+      "requesters_allow": ["agent:*"],
+      "response_modes": ["filtered"],
+      "default_response_mode": "filtered",
+      "fields_max": ["date", "amount", "merchant_name"],
+      "grant_ttl_s": 600,
+      "adjudicator_min_tier": "opus",
+      "rules_text": "Never release a balance. Confirming that a payment happened is fine. 'Did the electric bill post' is a payment-confirmation question; 'how much is in checking' is not, however it is phrased."
+    }
+  ]
+}
