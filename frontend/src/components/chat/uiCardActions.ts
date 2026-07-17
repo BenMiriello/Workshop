@@ -14,6 +14,8 @@
 // why `createProject` treats 409 (slug already exists) as a success-ish state,
 // so a second submit after reload is safe and idempotent.
 
+import type { TaskProposalSpec } from "@shared/types";
+
 // ---- Wire shape (matches the A.1 contract) ---------------------------------
 export type UiCardFieldType =
   | "text"
@@ -186,9 +188,39 @@ type CreatedTask = {
   message?: string;
 };
 
+// The structured spec sections a task-proposal card may carry, in the order
+// they compose into the ticket body. Names mirror TaskProposalSpec
+// (shared/types.ts); the label is the human prefix written into the task text.
+const SPEC_SECTIONS: { key: keyof TaskProposalSpec; label: string }[] = [
+  { key: "objective", label: "Objective" },
+  { key: "output", label: "Output" },
+  { key: "entry_points", label: "Start from" },
+  { key: "boundaries", label: "Boundaries" },
+];
+
+// Compose a card's editable values into the filed ticket body: the title as the
+// first line, then each filled spec section on its own line. Backward-compatible
+// by design: when no structured field is present it falls back to the plain
+// `text` field (title line + description), or a bare title, so an older or
+// minimal proposal still files unchanged.
+export function composeTaskText(v: Record<string, string>): string {
+  const sections = SPEC_SECTIONS
+    .map((s) => ({ ...s, value: (v[s.key] || "").trim() }))
+    .filter((s) => s.value.length > 0);
+  const rawText = (v.text || "").trim();
+  const title = (v.title || "").trim() || rawText.split("\n")[0]?.trim() || "";
+  if (sections.length === 0) {
+    // No structured spec: use the plain text body, else just the title.
+    return rawText || title;
+  }
+  const lines = [title || "Untitled task", ""];
+  for (const s of sections) lines.push(`${s.label}: ${s.value}`);
+  return lines.join("\n").trim();
+}
+
 async function fileTicket(v: Record<string, string>): Promise<CreatedTask> {
   const scope = (v.scope || "workshop").trim();
-  const text = (v.text || "").trim();
+  const text = composeTaskText(v);
   const priority = Number(v.priority || "0") || 0;
   const effort = (v.effort || "").trim();
   const r = await fetch("/api/tasks", {
@@ -202,7 +234,7 @@ async function fileTicket(v: Record<string, string>): Promise<CreatedTask> {
 
 const addTasks: UiCardHandler = async (state) => {
   const scope = (state.values.scope || "workshop").trim();
-  if (!(state.values.text || "").trim()) {
+  if (!composeTaskText(state.values).trim()) {
     return { status: "error", message: "Add a ticket title first." };
   }
   try {
@@ -221,7 +253,7 @@ const addTasks: UiCardHandler = async (state) => {
 
 const addTasksAndRun: UiCardHandler = async (state) => {
   const scope = (state.values.scope || "workshop").trim();
-  if (!(state.values.text || "").trim()) {
+  if (!composeTaskText(state.values).trim()) {
     return { status: "error", message: "Add a ticket title first." };
   }
   let created: CreatedTask;

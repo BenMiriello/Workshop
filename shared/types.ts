@@ -91,6 +91,24 @@ export type ProjectRepo = {
   connected_at: string;
 };
 
+// The structured spec a `task-proposal` ui-card composes into a filed task's
+// body (see frontend UiCard.tsx / uiCardActions.ts). The distiller (backend
+// chat_context.py TASK_PROPOSAL_CARD) fills these so a worker can act on the
+// ticket text alone. All fields optional and backward-compatible: a proposal
+// carrying only a title (or a plain `text` body) still files fine.
+export type TaskEffort = "quick" | "standard" | "deep";
+
+export type TaskProposalSpec = {
+  scope?: string;
+  title?: string;
+  objective?: string; // one crisp sentence: the concrete outcome
+  output?: string; // done-looks-like: the artifact, format, or acceptance
+  entry_points?: string; // where to start: files, functions, or commands
+  boundaries?: string; // explicit out-of-scope / do-not-touch
+  priority?: number;
+  effort?: TaskEffort;
+};
+
 export type Project = {
   slug: string;
   title: string;
