@@ -192,6 +192,15 @@ def register_builtin_stores() -> None:
     declare("commute", "data", runtime / "commute", type="Commute")
     declare("secrets", "env", runtime / "secrets", type="Secret")
 
+    # The notes vault (~/notes). Declared in place: the vault stays a plain folder
+    # of Markdown that real Obsidian opens untouched. Registering it makes it
+    # ADDRESSABLE — until now it was the one live data set with no URI, so no
+    # grant could name it and no per-folder policy could be expressed about it.
+    # The path comes from permissions.NOTES_VAULT_ROOT, which reads the same
+    # WORKSHOP_NOTES_VAULT override notes_vault.vault_root() reads.
+    from services import permissions
+    declare("notes", "vault", permissions.NOTES_VAULT_ROOT, type="Note")
+
     # Per-owner stores (single-user: the operator's runtime dir).
     user_dir = _operator_runtime_dir()
     if user_dir is not None:
