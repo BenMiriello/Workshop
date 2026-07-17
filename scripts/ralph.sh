@@ -66,6 +66,8 @@ TASK_ID=""        # --task-id <id>: the claimed task this run works
 CLAIM_TOKEN=""    # --claim-token <n>: the claim generation, presented to fence the beat
 STORE_DIR=""      # --store-dir <dir>: scope dir whose .tasks.json holds the claim
                   # (the project dir; differs from --dir in worktree mode)
+RUN_ID=""         # --run <job_id>: the child Job (attempt) id, for usage-ledger
+                  # attribution (role/task_id/run). Empty for a standalone ralph.
 RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
 
 while [[ $# -gt 0 ]]; do
@@ -80,6 +82,7 @@ while [[ $# -gt 0 ]]; do
     --task-id)       TASK_ID="$2"; shift 2 ;;
     --claim-token)   CLAIM_TOKEN="$2"; shift 2 ;;
     --store-dir)     STORE_DIR="$2"; shift 2 ;;
+    --run)           RUN_ID="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
 done
@@ -518,8 +521,16 @@ print(sid)
   # (via REVIEWER_CRITERIA_FILE, set by project_ralph.sh) the executed acceptance
   # criteria. The worker's own $ITER_RESULT/.result summary is deliberately NOT passed
   # in, so the worker cannot bias its own completion verdict (self-preference).
+  # Pass the bill scope + attribution so reviewer.sh meters its OWN auxiliary
+  # claude spend (if it performs an LLM review) against the worker's scope, tagged
+  # role=reviewer. Inert for a standalone ralph (BILL_PROJECT empty) and for the
+  # deterministic gate (no reviewer claude envelope to meter). (research rec 5)
   set +e
-  REVIEWER_JSON=$(REVIEWER_ROOT="$DIR" "$REVIEWER" "$BASELINE" 2>>"$LOG")
+  REVIEWER_JSON=$(REVIEWER_ROOT="$DIR" \
+    REVIEWER_BILL_SCOPE="${BILL_PROJECT:-}" \
+    REVIEWER_BILL_TASK_ID="${TASK_ID:-}" \
+    REVIEWER_BILL_RUN="${RUN_ID:-}" \
+    "$REVIEWER" "$BASELINE" 2>>"$LOG")
   REVIEWER_EXIT=$?
   set -e
   last_reviewer_json="$REVIEWER_JSON"
@@ -650,9 +661,16 @@ fi
 # admission gate can enforce the rolling-window budget. Best-effort; never blocks
 # the exit. Only autonomous (billed) runs record — a bare manual ralph does not.
 if [[ -n "$BILL_PROJECT" && "$RUN_TOKENS" -gt 0 ]]; then
+  # Attribution (research rec 3): role=worker plus the task/run ids this run knows,
+  # so worker spend is distinguishable from the reviewer's auxiliary spend in the
+  # same scope. task-id / run are added only when set (a standalone sweep may lack
+  # a job id), keeping the record backward-compatible.
+  BILL_ATTR=(--role worker)
+  [[ -n "$TASK_ID" ]] && BILL_ATTR+=(--task-id "$TASK_ID")
+  [[ -n "$RUN_ID" ]] && BILL_ATTR+=(--run "$RUN_ID")
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
-     --project "$BILL_PROJECT" --tokens "$RUN_TOKENS" >/dev/null 2>&1) || true
-  log "billed $RUN_TOKENS tokens to usage ledger (scope=$BILL_PROJECT)"
+     --project "$BILL_PROJECT" --tokens "$RUN_TOKENS" "${BILL_ATTR[@]}" >/dev/null 2>&1) || true
+  log "billed $RUN_TOKENS tokens to usage ledger (scope=$BILL_PROJECT role=worker task=${TASK_ID:-none} run=${RUN_ID:-none})"
 fi
 
 log "=== done iter=$iter exit_code=$exit_code (tokens=$RUN_TOKENS) ==="

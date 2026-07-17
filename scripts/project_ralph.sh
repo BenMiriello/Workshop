@@ -387,9 +387,16 @@ print(f'{n_ok}/{len(r)} acceptance criteria passed | ' + ' ; '.join(parts))
   # the hard enforcement below keys on CRIT_ALL_PASS, so a reviewer hiccup here can
   # never wrongly PASS a task; this call records the criteria-aware verdict for the
   # Work UI and proves the reviewer judged executed evidence.
+  # Pass the bill scope + attribution so this criteria-aware reviewer pass meters
+  # its own auxiliary claude spend (if any) against the worker's scope, role=reviewer.
+  # Inert for the deterministic gate (no reviewer claude envelope). (research rec 5)
   local rjson rcomplete rreasons
   rjson=$(REVIEWER_CRITERIA_FILE="$CRIT_RESULTS_FILE" REVIEWER_ROOT="$WORK_DIR" \
-          REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$REVIEWER" "$BASELINE" 2>>"$LOG")
+          REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" \
+          REVIEWER_BILL_SCOPE="${BILL_SCOPE:-}" \
+          REVIEWER_BILL_TASK_ID="${TASK_ID:-}" \
+          REVIEWER_BILL_RUN="${CHILD_JOB:-}" \
+          "$REVIEWER" "$BASELINE" 2>>"$LOG")
   rcomplete=$(jf "$rjson" complete)
   rreasons=$(printf '%s' "$rjson" | python3 -c "import json,sys
 try: print(', '.join(json.load(sys.stdin).get('reasons',[])))
@@ -750,7 +757,7 @@ print(len(crit))
   # worktree mode, where --dir is the isolated worktree. The heartbeat presents
   # CLAIM_TOKEN so it composes with the Fix-1 fence.
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" >> "$LOG" 2>&1
   RC=$?
   set -e
   [[ -n "$EFF_MODEL" ]] && unset ANTHROPIC_MODEL

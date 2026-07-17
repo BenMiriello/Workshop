@@ -154,10 +154,28 @@ def test_can_admit_denies_when_scope_over_allowance(ledger):
 
 def test_can_admit_default_config_only_app_cap_gates(ledger):
     now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
-    cfg = {"app_total": 400, "nominal_task_tokens": 10, "projects": {}}
+    # fraction 1.0 isolates this test to the app-cap-only path (its intent);
+    # the interactive-headroom reserve is exercised by its own test.
+    cfg = {"app_total": 400, "nominal_task_tokens": 10, "projects": {},
+           "autonomy_budget_fraction": 1.0}
     ul.BUDGET_CONFIG_PATH.write_text(__import__("json").dumps(cfg))
     # Default weights/floors: a lone scope's allowance == app_total, so a scope
     # well under the app cap is admitted (per-scope allocation does not bite).
     ledger.record("solo", 300, ts=_iso(now - timedelta(hours=1)))
     ok, _ = ul.can_admit("solo", now=now)
     assert ok is True
+
+
+def test_can_admit_reserves_interactive_headroom(ledger):
+    # With the default 0.65 fraction, autonomous work is admitted only under the
+    # reserved ceiling (app_total * fraction), leaving room for operator chats.
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    cfg = {"app_total": 1000, "nominal_task_tokens": 10, "projects": {},
+           "autonomy_budget_fraction": 0.65}
+    ul.BUDGET_CONFIG_PATH.write_text(__import__("json").dumps(cfg))
+    ledger.record("solo", 500, ts=_iso(now - timedelta(hours=1)))
+    ok, _ = ul.can_admit("solo", now=now)
+    assert ok is True  # 500 < 650 ceiling
+    ledger.record("solo", 200, ts=_iso(now - timedelta(minutes=30)))
+    ok, reason = ul.can_admit("solo", now=now)
+    assert ok is False and "headroom" in reason  # 700 > 650 ceiling

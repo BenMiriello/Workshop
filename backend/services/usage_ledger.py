@@ -56,9 +56,21 @@ _DEFAULT_CONFIG = {
     # overshoots (we can't know a task's real cost until it runs). Admission
     # refuses once app_used + this reserve would exceed app_total.
     "nominal_task_tokens": 150_000,
+    # Fraction of the app-wide budget autonomous work may consume. The remainder
+    # is reserved so the operator's interactive chats always have headroom.
+    # Autonomous admission (can_admit) is gated at this fraction; interactive
+    # chats are never recorded here, so they are free to use the whole budget.
+    # Env WORKSHOP_AUTONOMY_BUDGET_FRACTION overrides this (clamped). (research rec 2)
+    "autonomy_budget_fraction": 0.65,
     "default_project": {"weight": 1.0, "floor": 0, "ceil": None},
     "projects": {},
 }
+
+# Clamp bounds for the autonomy budget fraction: never below a floor that would
+# starve autonomy entirely, never above the full budget (which would leave no
+# interactive headroom at all).
+_FRACTION_MIN = 0.1
+_FRACTION_MAX = 1.0
 
 
 def _now() -> datetime:
@@ -81,10 +93,17 @@ def _parse_ts(s: str) -> float | None:
 # ---------------------------------------------------------------------------
 
 def record(project: str | None, tokens: int, *, agent: str | None = None,
-           job_id: str | None = None, ts: str | None = None) -> None:
+           job_id: str | None = None, ts: str | None = None,
+           task_id: str | None = None, run: str | None = None,
+           role: str | None = None) -> None:
     """Append one usage entry. `project` is the scope the tokens are billed to
     (None -> "unbound"). Safe for concurrent shell + backend writers (append is
-    atomic for small lines)."""
+    atomic for small lines).
+
+    Optional attribution (all backward-compatible; older entries omitting them
+    still load): `task_id` (the ticket the spend served), `run` (the Job/attempt
+    id), and `role` ("worker" | "reviewer") so the same scope's worker and
+    auxiliary reviewer spend are distinguishable for postmortems. (research rec 3)"""
     entry = {
         "ts": ts or _ts_iso(),
         "project": project or "unbound",
@@ -94,6 +113,12 @@ def record(project: str | None, tokens: int, *, agent: str | None = None,
         entry["agent"] = agent
     if job_id:
         entry["job_id"] = job_id
+    if task_id:
+        entry["task_id"] = task_id
+    if run:
+        entry["run"] = run
+    if role:
+        entry["role"] = role
     LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER_PATH.open("a") as f:
         f.write(json.dumps(entry) + "\n")
@@ -163,6 +188,22 @@ def load_config() -> dict:
         except (json.JSONDecodeError, OSError):
             pass
     return dict(_DEFAULT_CONFIG)
+
+
+def _autonomy_budget_fraction(cfg: dict) -> float:
+    """Fraction of the app-wide budget autonomous work may consume before it
+    yields to reserved interactive headroom. Env WORKSHOP_AUTONOMY_BUDGET_FRACTION
+    wins over the config value; both are clamped to a sane range so a bad value
+    can neither starve autonomy nor erase the operator's headroom. (research rec 2)"""
+    raw = os.environ.get("WORKSHOP_AUTONOMY_BUDGET_FRACTION")
+    if raw is None or str(raw).strip() == "":
+        raw = cfg.get("autonomy_budget_fraction",
+                      _DEFAULT_CONFIG["autonomy_budget_fraction"])
+    try:
+        frac = float(raw)
+    except (TypeError, ValueError):
+        frac = _DEFAULT_CONFIG["autonomy_budget_fraction"]
+    return max(_FRACTION_MIN, min(_FRACTION_MAX, frac))
 
 
 def _project_params(cfg: dict, slug: str) -> dict:
@@ -290,11 +331,14 @@ def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str
     """Whether one more autonomous sweep/task may start in `scope` (a project
     slug or agent label). Returns (ok, reason).
 
-    The app-wide cap is the runaway guard; a per-project `ceil` (when set) caps
-    one scope's borrow. We refuse once less than one nominal task's worth of
-    app-wide headroom remains, so a task never starts on a sliver of budget and
-    overshoots the ceiling (its true cost is unknown until it runs). Chats are
-    never recorded here, so this never gates interactive chat."""
+    Autonomous work is admitted only up to a RESERVED FRACTION of the app-wide
+    budget (default ~0.65), leaving the rest free for the operator's interactive
+    chats; autonomous work always yields to that headroom. A per-project `ceil`
+    (when set) caps one scope's borrow. We refuse once less than one nominal
+    task's worth of the autonomous ceiling remains, so a task never starts on a
+    sliver of budget and overshoots (its true cost is unknown until it runs).
+    Chats are never recorded here, so this never gates interactive chat, and the
+    reserved headroom is theirs to use in full. (research rec 2)"""
     cfg = load_config()
     usage = window_usage(now)
     app_total = float(cfg.get("app_total") or 0)
@@ -307,8 +351,16 @@ def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str
     # that calls admit from inside its own loop counts itself here, which only
     # makes the reserve more conservative: safe.) (review F8a)
     reserve = nominal * (1 + _inflight_coordinator_sweeps())
-    if usage["app"] + reserve > app_total:
-        return False, f"app budget exhausted: {usage['app']}/{int(app_total)} tokens in {usage['window_s']//3600}h (reserve {int(reserve)})"
+    # Autonomous admission ceiling = fraction of the app total. The remainder is
+    # interactive headroom (never consumed by autonomous work). At fraction 1.0
+    # this collapses to the old full-budget runaway guard.
+    fraction = _autonomy_budget_fraction(cfg)
+    autonomous_ceiling = app_total * fraction
+    if usage["app"] + reserve > autonomous_ceiling:
+        return False, (
+            f"interactive headroom reserved: autonomous budget {int(round(fraction * 100))}% used "
+            f"({usage['app']}/{int(autonomous_ceiling)} tokens in {usage['window_s']//3600}h; "
+            f"app cap {int(app_total)}, reserve {int(reserve)})")
     if scope:
         used_scope = usage["by_project"].get(scope, 0)
         ceil = _project_params(cfg, scope).get("ceil")
@@ -341,13 +393,17 @@ def _main(argv: list[str]) -> int:
     r.add_argument("--tokens", type=int, required=True)
     r.add_argument("--agent", default=None)
     r.add_argument("--job-id", default=None)
+    r.add_argument("--task-id", default=None)
+    r.add_argument("--run", default=None)
+    r.add_argument("--role", default=None)
     a = sub.add_parser("admit")  # exit 0 = admit, 1 = deny (for shell gating)
     a.add_argument("--project", default=None)
     sub.add_parser("status")
     sub.add_parser("prune")
     args = ap.parse_args(argv)
     if args.cmd == "record":
-        record(args.project, args.tokens, agent=args.agent, job_id=args.job_id)
+        record(args.project, args.tokens, agent=args.agent, job_id=args.job_id,
+               task_id=args.task_id, run=args.run, role=args.role)
     elif args.cmd == "admit":
         ok, reason = can_admit(args.project)
         print(json.dumps({"ok": ok, "reason": reason}))

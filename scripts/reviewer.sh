@@ -310,3 +310,64 @@ PYEOF
 
 # Also log a one-liner for humans.
 echo "[$(ts)] complete=$COMPLETE diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK reasons=${REASONS[*]:-none}" >> "$LOG"
+
+# 6. Meter the reviewer's OWN auxiliary claude spend (research rec 5). When this
+#    reviewer performs an LLM review, its `claude --output-format json` envelope is
+#    handed here via REVIEWER_CLAUDE_OUT; when a bill scope is set (REVIEWER_BILL_SCOPE,
+#    passed by ralph.sh / project_ralph.sh for an autonomous run) we sum that
+#    envelope's tokens the SAME weighted way ralph.sh does and record them to the
+#    usage ledger against the WORKER's scope, tagged role=reviewer. This closes the
+#    auxiliary reviewer cost the research flags as the 15x multiplier, so it counts
+#    against the same rolling-window budget as the worker instead of running free.
+#    Inert when REVIEWER_BILL_SCOPE is unset (a manual reviewer run bills nothing) or
+#    when there is no reviewer claude envelope (the deterministic checks above spend
+#    no Claude tokens, so nothing is recorded). Never affects the JSON verdict above.
+if [[ -n "${REVIEWER_BILL_SCOPE:-}" && -n "${REVIEWER_CLAUDE_OUT:-}" && -f "${REVIEWER_CLAUDE_OUT:-}" ]]; then
+  REV_TOKENS=$(python3 - "$REVIEWER_CLAUDE_OUT" <<'PYEOF'
+import json, sys
+tok = 0
+try:
+    txt = open(sys.argv[1]).read()
+    obj = None
+    try:
+        obj = json.loads(txt)
+    except Exception:
+        for line in txt.splitlines():
+            line = line.strip()
+            if line.startswith('{') and '"usage"' in line:
+                try:
+                    obj = json.loads(line); break
+                except Exception:
+                    pass
+        if obj is None:
+            i = txt.find('{"type"')
+            if i >= 0:
+                try:
+                    obj = json.loads(txt[i:])
+                except Exception:
+                    obj = None
+    u = (obj or {}).get('usage') or {}
+    # Same weighted ladder as ralph.sh: cache reads at 0.1 (the subscription rate
+    # limits count a cache read far below a fresh token), everything else at parity.
+    tok = (int(u.get('input_tokens', 0))
+           + int(0.1 * int(u.get('cache_read_input_tokens', 0)))
+           + int(u.get('cache_creation_input_tokens', 0))
+           + int(u.get('output_tokens', 0)))
+except Exception:
+    tok = 0
+print(tok)
+PYEOF
+)
+  if [[ -n "$REV_TOKENS" && "$REV_TOKENS" -gt 0 ]]; then
+    REV_ATTR=(--role reviewer)
+    [[ -n "${REVIEWER_BILL_TASK_ID:-}" ]] && REV_ATTR+=(--task-id "$REVIEWER_BILL_TASK_ID")
+    [[ -n "${REVIEWER_BILL_RUN:-}" ]] && REV_ATTR+=(--run "$REVIEWER_BILL_RUN")
+    (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger record \
+       --project "$REVIEWER_BILL_SCOPE" --tokens "$REV_TOKENS" "${REV_ATTR[@]}" >/dev/null 2>&1) || true
+    echo "[$(ts)] reviewer metered $REV_TOKENS tokens (scope=$REVIEWER_BILL_SCOPE role=reviewer task=${REVIEWER_BILL_TASK_ID:-none} run=${REVIEWER_BILL_RUN:-none})" >> "$LOG"
+  fi
+fi
+
+# The reviewer's contract is "exits 0 always" (consumers parse the JSON verdict),
+# so return 0 regardless of the optional metering block's trailing test status.
+exit 0
