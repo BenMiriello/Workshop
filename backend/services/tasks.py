@@ -37,7 +37,10 @@ Canonical Task (version 2)::
       "evidence": [{"kind": str, "ref": str, "ts": iso}],
       "source": {"kind": "operator"|"chat"|"agent"|"autogen", "ref": str|None},
       "provenance": str | None,        # stable dedupe key
-      "touches": [str],                # path globs this task writes (fan-out safety)
+      "touches": [str],                # path globs this task writes (fan-out safety).
+                                       # ENFORCED: a run that writes outside them
+                                       # blocks the task (see enforce_touches).
+                                       # [] = unrestricted (the default).
       "discovered_from": str | None,   # task id that spawned this follow-up
       "effort": str | None,            # "s"|"m"|"l" hint
       "created": iso, "updated": iso
@@ -318,6 +321,106 @@ def _normalize(task: dict) -> dict:
     # working until they migrate to `assignee`.
     rec["owner"] = rec["assignee"] or DEFAULT_OWNER
     return rec
+
+
+# --- touches: the task's fan-out boundary -----------------------------------
+# `touches` has been in the schema since v2, documented as "fan-out safety", and
+# read by NOTHING — every worker path could write anywhere regardless. It is now
+# enforced: a task that DECLARES what it writes may only cause writes matching one
+# of its globs, and a run that strays outside them blocks the task with an
+# evidence line instead of landing.
+#
+# touches == [] means UNRESTRICTED. That is the default and today's behavior for
+# every task in every store; the gate is opt-in per task, exactly as the field
+# always advertised. This is not a permission system for the operator — it is a
+# task saying what it is about, and the sweep holding it to that.
+_GLOB_MAGIC = re.compile(r"[*?\[]")
+
+
+def _glob_to_re(pattern: str) -> re.Pattern:
+    """Compile ONE path glob with the semantics people expect from a .gitignore /
+    tsconfig include: `*` and `?` do not cross a directory separator, `**` does.
+
+    A pattern with no magic at all names a path prefix (`backend` covers
+    `backend/services/tasks.py`), which is what a hand-written `touches: [backend]`
+    obviously means."""
+    p = pattern.strip().strip("/")
+    if not _GLOB_MAGIC.search(p):
+        # Plain path: itself or anything under it.
+        return re.compile(rf"{re.escape(p)}(?:/.*)?\Z")
+    out: list[str] = []
+    i = 0
+    while i < len(p):
+        c = p[i]
+        if p.startswith("**/", i):
+            out.append(r"(?:.*/)?")   # zero or more leading dirs
+            i += 3
+        elif p.startswith("**", i):
+            out.append(r".*")
+            i += 2
+        elif c == "*":
+            out.append(r"[^/]*")
+            i += 1
+        elif c == "?":
+            out.append(r"[^/]")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def _norm_rel(path: str) -> str:
+    """A repo-relative POSIX path, however the caller spelled it."""
+    return str(path or "").strip().replace("\\", "/").lstrip("./").lstrip("/")
+
+
+def _check_touches(root: Path, tid: str, path: str) -> bool:
+    """May this task cause a write to `path`? True when it may.
+
+    Unrestricted (True) when the task declares no `touches`, and — deliberately —
+    when the task is unknown: this gate exists to hold a task to its own stated
+    boundary, not to become a second, silent way for work to fail."""
+    task = get_task(root, tid)
+    if task is None:
+        return True
+    globs = [g for g in (task.get("touches") or []) if str(g).strip()]
+    if not globs:
+        return True
+    rel = _norm_rel(path)
+    if not rel:
+        return True
+    return any(_glob_to_re(str(g)).match(rel) for g in globs)
+
+
+def touches_violations(root: Path, tid: str, paths: list[str]) -> list[str]:
+    """Every path in `paths` this task was not supposed to write. Empty list when
+    the task is unrestricted or every path is in bounds."""
+    return [p for p in paths if p and not _check_touches(root, tid, p)]
+
+
+def enforce_touches(root: Path, tid: str, paths: list[str], *,
+                    job_id: str | None = None,
+                    expect_claim_token: int | None = None) -> list[str]:
+    """Hold a run to its task's declared `touches`. Returns the violating paths
+    (empty = nothing to do).
+
+    On a violation: record ONE evidence line naming what strayed and BLOCK the
+    task. Blocking (not failing) is the right terminal state — the work happened
+    but landed outside what the ticket said it was about, which is a decision for
+    the operator, not something a retry fixes."""
+    bad = touches_violations(root, tid, paths)
+    if not bad:
+        return []
+    task = get_task(root, tid)
+    globs = [str(g) for g in ((task or {}).get("touches") or [])]
+    shown = ", ".join(bad[:8]) + (f" (+{len(bad) - 8} more)" if len(bad) > 8 else "")
+    reason = (f"touches violation: wrote outside the task's declared globs "
+              f"[{', '.join(globs)}] -> {shown}")
+    update(root, tid, evidence={"kind": "touches", "ref": reason}, job_id=job_id)
+    update(root, tid, status="blocked", blocked_reason=reason,
+           expect_claim_token=expect_claim_token)
+    return bad
 
 
 def _as_int(v, default: int) -> int:

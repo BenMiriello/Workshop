@@ -815,6 +815,28 @@ print(len(crit))
   # links to the run rather than duplicating the receipt payload).
   note_receipt_ref() { python3 "$PTASKS" note "$DIR" "$TASK_ID" "$CHILD_JOB" --kind receipt --ref "$CHILD_JOB" >/dev/null 2>>"$LOG"; }
 
+  # Touches gate: hold the run to what the TASK said it writes. $EVIDENCE.files is
+  # the committed diff vs the pre-run baseline (bookkeeping paths already filtered
+  # out by build_receipt_evidence), i.e. what this run actually landed. A task with
+  # no `touches` is unrestricted, so this is a pure no-op for every task that does
+  # not opt in — which is all of them today. Checked BEFORE the acceptance legs: a
+  # run that wrote outside its lane does not get to be `done` on its way past.
+  TOUCH_FILES=$(printf '%s' "$EVIDENCE" | jq -r '.files[]?' 2>/dev/null)
+  if [[ -n "$TOUCH_FILES" ]]; then
+    TOUCH_OUT=$(printf '%s\n' "$TOUCH_FILES" | python3 "$PTASKS" check-touches "$DIR" "$TASK_ID" \
+                  --job-id "$CHILD_JOB" --expect-claim-token "${CLAIM_TOKEN:-}" 2>>"$LOG")
+    if [[ "$TOUCH_OUT" == *'"blocked": true'* ]]; then
+      # enforce_touches already recorded the evidence line and blocked the task.
+      BLOCKED=$((BLOCKED+1))
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+      log "task=$TASK_ID BLOCKED: touches violation $(printf '%s' "$TOUCH_OUT" | jq -c '.violations' 2>/dev/null)"
+      rm -f "$RECEIPT_FILE" "${CRIT_SPEC_FILE:-}" "${CRIT_RESULTS_FILE:-}" 2>/dev/null || true
+      CRIT_SPEC_FILE=""; CRIT_RESULTS_FILE=""
+      sleep 1
+      continue
+    fi
+  fi
+
   case "$RC" in
     0)
       # ralph's reviewer gate passed. Apply the task's own acceptance policy.

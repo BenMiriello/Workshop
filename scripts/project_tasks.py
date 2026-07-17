@@ -25,6 +25,10 @@ Verbs (all take a scope directory as the first positional):
   note <dir> <id> "evidence text" [--kind KIND] [--ref REF]
   block <dir> <id> "reason" [--expect-claim-token T]
   set-awaiting <dir> <id> "question"  set/clear the operator-input payload
+  check-touches <dir> <id> [--expect-claim-token T]
+      read a newline-separated file list on STDIN and hold the run to the task's
+      declared `touches` globs: prints {"violations": [...], "blocked": bool}. A
+      task with no `touches` is unrestricted, so this prints an empty list.
 
 Every command prints JSON on stdout (a task object, a list, or {} / {"error":...}).
 """
@@ -149,6 +153,11 @@ def main(argv: list[str]) -> int:
     sp = sub.add_parser("set-awaiting"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("question")
 
+    sp = sub.add_parser("check-touches"); scope(sp)
+    sp.add_argument("task_id")
+    sp.add_argument("--job-id", default=None)
+    sp.add_argument("--expect-claim-token", default=None)
+
     a = p.parse_args(argv[1:])
     root: Path = a.dir
 
@@ -205,6 +214,13 @@ def main(argv: list[str]) -> int:
         if a.cmd == "set-awaiting":
             t = tasks.update(root, a.task_id, awaiting={"question": a.question})
             print(json.dumps(_slim(t)))
+            return 0
+        if a.cmd == "check-touches":
+            files = [l.strip() for l in sys.stdin.read().splitlines() if l.strip()]
+            bad = tasks.enforce_touches(
+                root, a.task_id, files, job_id=a.job_id,
+                expect_claim_token=_opt_int(a.expect_claim_token))
+            print(json.dumps({"violations": bad, "blocked": bool(bad)}))
             return 0
     except ValueError as e:
         print(json.dumps({"error": str(e)}))
