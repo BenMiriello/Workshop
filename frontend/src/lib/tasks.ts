@@ -97,6 +97,29 @@ const LATITUDE_SOURCE_LABEL: Record<LatitudeSource, string> = {
 export const latitudeSourceLabel = (source?: string): string =>
   LATITUDE_SOURCE_LABEL[(source ?? "") as LatitudeSource] ?? String(source ?? "");
 
+// What a stopped task is asking for. One shape for every reason work stops — a
+// permission, a missing resource, an ambiguous ticket — so one surface answers
+// all of them. `kind` is an open slug, not a union: the named kinds are the ones
+// with a producer today, not the boundary of what can stop a job.
+export type BlockRequest = {
+  question?: string;
+  since?: string;
+  kind?: string;
+  ask?: string;
+  why?: string | null;
+  unblocks_if?: string | null;
+  options?: string[] | null;
+  default?: string | null;
+  // Present => the ask names a resource and a verb, so a grant can be prefilled
+  // from it. Absent => the answer is a judgment, so the review offers a rule.
+  proposal?: { uri: string; verb: string } | null;
+  raised_by?: string | null;
+  // Groups a mass-block: every task carrying the same key is one answer.
+  dedupe_key?: string | null;
+  context?: Record<string, unknown>;
+  dismissed?: boolean;
+};
+
 export type Task = {
   id: string;
   text: string;
@@ -118,7 +141,11 @@ export type Task = {
   job_ids?: string[];
   evidence?: TaskEvidence[];
   source?: { kind?: string; ref?: string | null };
-  awaiting?: { question?: string; since?: string } | null;
+  awaiting?: BlockRequest | null;
+  // The SAME record as `awaiting`, under the name the Review surface uses for it
+  // (the API projects it; the store keeps one record). Present whenever the task
+  // carries a block request.
+  blocked_request?: BlockRequest | null;
   created?: string;
   updated?: string;
   // Attached by the cross-scope API (routes/tasks_all): the resolved scope key
