@@ -14,6 +14,7 @@ from deps_user import (
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
 from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index
+from routes import stores as stores_routes
 from services import app_registry
 import asyncio
 import logging
@@ -109,6 +110,9 @@ app.include_router(base_apps.router, prefix="/base-apps", tags=["base-apps"], de
 # until Phase 5; this is the real grants router (/grants, /grants/mint,
 # /grants/revoke, /stores).
 app.include_router(grants.router, dependencies=_OPERATOR)
+# The Store catalog + the one door onto a Store's contents (/stores). The operator
+# is served ungated here; the gate is on a caller that says it is an agent.
+app.include_router(stores_routes.router, dependencies=_OPERATOR)
 app.include_router(backlog.router, dependencies=_OPERATOR)
 app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)

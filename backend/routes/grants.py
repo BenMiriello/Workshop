@@ -2,14 +2,13 @@
 
 The authz surface split out of base_apps.py. Serves both the existing app-level
 grants document (cross-app + guest access) and the Phase-4 resource-scoped grants
-(per-invocation capability tokens over Stores), plus the Store catalog the broker
-picks from.
+(per-invocation capability tokens over Stores). The Store catalog and the read/
+write door moved to routes/stores.py, which owns everything /stores.
 
   GET  /grants          app-level doc + resource grants
   PUT  /grants          replace the app-level doc (validated)
   POST /grants/mint      mint a scoped grant over a Store, returns the token
   POST /grants/revoke    revoke a scoped grant by token/id
-  GET  /stores?type=     the declared Store catalog, optionally filtered by type
 
 base_apps.py keeps a thin `/base-apps/grants` alias (GET/PUT) until Phase 5, so
 the existing frontend caller keeps working while pages repoint here.
@@ -92,31 +91,3 @@ async def revoke_grant(body: RevokeIn):
     if not token:
         raise HTTPException(400, "token or id required")
     return {"revoked": permissions.revoke(token)}
-
-
-# --------------------------------------------------------------------------- #
-# Store catalog (the broker's menu).
-# --------------------------------------------------------------------------- #
-@router.get("/stores")
-async def list_stores(type: str | None = None):
-    """The declared Store catalog, optionally filtered by `type`. Registers from
-    every source on each read so a newly-installed app's stores show up.
-    {"stores": [...], "types": [...]}."""
-    stores.register_all()
-    return {
-        "stores": [s.to_dict() for s in stores.list(type=type)],
-        "types": stores.types(),
-    }
-
-
-@router.get("/stores/export")
-async def export_store(uri: str):
-    """Serialize a Store to a portable artifact directory and return its path.
-    Read-only over the source (never moves/deletes/chmods). 404 if the store is
-    not declared. {"uri": ..., "path": ...}."""
-    stores.register_all()
-    try:
-        path = stores.export(uri)
-    except KeyError as e:
-        raise HTTPException(404, str(e))
-    return {"uri": uri, "path": path}

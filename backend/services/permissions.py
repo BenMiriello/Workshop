@@ -700,6 +700,13 @@ def _resolve_grant(token_or_grant: Any) -> dict[str, Any] | None:
     return None
 
 
+def get_resource_grant(token_or_grant: Any) -> dict[str, Any] | None:
+    """The canonical grant record behind a token, or None. A provider that has
+    already passed `check()` uses this to read the caveats it must apply (the
+    `filter` caveat and the response mode the broker recorded)."""
+    return _resolve_grant(token_or_grant)
+
+
 def mint_grant(
     *,
     from_app: str,
