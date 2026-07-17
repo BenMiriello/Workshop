@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Gauge, Compass } from "lucide-react";
+import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Gauge, Compass, FileStack } from "lucide-react";
 import type { ReactNode } from "react";
 import type { BuildAgent, Project } from "@shared/types";
 import {
@@ -14,7 +14,9 @@ import {
   PageHeader,
   Row,
   SectionLabel,
+  Segmented,
   Select,
+  Skeleton,
   Stack,
   StateBlock,
   StatusDot,
@@ -205,6 +207,183 @@ function NewBuilderModal({
   );
 }
 
+// --- Templates + groups (P4) ------------------------------------------------
+// A template is a file, not a registered agent: nothing in the list below is
+// running or dispatched. Picking one FORKS it into a real agent, and the fork is
+// independent — there is no sync back, by design.
+
+type AgentTemplate = {
+  template: string;
+  template_version: number;
+  description: string;
+  name: string;
+  role: string | null;
+  purpose: string;
+  triggers: UnifiedAgent["triggers"];
+};
+type TemplateGroup = {
+  name: string;
+  description: string;
+  members: { template: string }[];
+  scope_defaults?: { autonomy?: string; depth?: string };
+};
+type TemplateCatalog = { templates: AgentTemplate[]; groups: TemplateGroup[] };
+
+function FromTemplateModal({
+  open, projects, onCancel, onDone,
+}: {
+  open: boolean;
+  projects: Project[] | null;
+  onCancel: () => void;
+  onDone: (slug: string | null) => void;
+}) {
+  const [cat, setCat] = useState<TemplateCatalog | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [tab, setTab] = useState<"templates" | "groups">("templates");
+  const [pick, setPick] = useState<string>("");
+  const [projectSlug, setProjectSlug] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setCat(null);
+    setLoadErr(null);
+    fetch("/api/agents/templates")
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        return r.json();
+      })
+      .then((c: TemplateCatalog) => setCat(c))
+      .catch((e) => setLoadErr(String(e)));
+  }, [open]);
+
+  const items = cat ? (tab === "templates" ? cat.templates : cat.groups) : [];
+  const keyOf = (i: AgentTemplate | TemplateGroup) =>
+    "template" in i ? i.template : i.name;
+
+  const submit = async () => {
+    if (!pick) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const body = tab === "templates"
+        ? { template: pick, project: projectSlug || null }
+        : { group: pick, project: projectSlug || null };
+      const r = await fetch(`/api/agents/${tab === "templates" ? "from-template" : "adopt-group"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const res = await r.json();
+      if (tab === "groups") {
+        const skipped = (res.skipped || []) as { template: string; reason: string }[];
+        if (skipped.length && !(res.adopted || []).length) {
+          setErr(skipped.map((s) => `${s.template}: ${s.reason}`).join("; "));
+          return;
+        }
+        onDone(null);
+      } else {
+        onDone(res.slug);
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onCancel} title="Create from template" size="lg">
+      <Stack>
+        <p className="ws-muted">
+          A template is a starting definition, not a subscription. Picking one copies
+          it into a real agent you own and can edit; later changes to the template do
+          not reach the copy.
+        </p>
+        <Segmented
+          value={tab}
+          onChange={(v) => { setTab(v as "templates" | "groups"); setPick(""); }}
+          options={[
+            { value: "templates", label: "Templates" },
+            { value: "groups", label: "Groups" },
+          ]}
+        />
+        {loadErr ? (
+          <StateBlock
+            variant="error"
+            title="Couldn't load templates"
+            hint={<code>/api/agents/templates</code>}
+          />
+        ) : !cat ? (
+          <Stack><Skeleton /><Skeleton /><Skeleton /></Stack>
+        ) : items.length === 0 ? (
+          <StateBlock
+            title={`No ${tab} shipped`}
+            hint={<span>Add a definition to <code>agents/_templates/</code> (or a group JSON to <code>agents/_templates/groups/</code>) and it appears here.</span>}
+          />
+        ) : (
+          // Overflow: the catalog is small by design (two groups, not five), but
+          // it scrolls rather than growing the dialog past the viewport.
+          <div style={{ maxHeight: "22rem", overflowY: "auto" }}>
+            <Stack>
+              {items.map((i) => {
+                const k = keyOf(i);
+                const selected = pick === k;
+                return (
+                  <Card
+                    key={k}
+                    interactive
+                    onClick={() => setPick(k)}
+                    aria-pressed={selected}
+                    style={selected ? { outline: "2px solid var(--accent)" } : undefined}
+                  >
+                    <Row between>
+                      <h2 className="ws-card__title">
+                        <FileStack size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
+                        {"template" in i ? i.name : i.name}
+                      </h2>
+                      {"template" in i
+                        ? i.role && <Tag hue={catFor(`role:${i.role}`)}>{i.role}</Tag>
+                        : <Badge>{i.members.length} {i.members.length === 1 ? "agent" : "agents"}</Badge>}
+                    </Row>
+                    <p className="ws-card__meta">{i.description}</p>
+                    {"template" in i ? (
+                      <p className="ws-card__meta ws-muted">{triggerSummary(i.triggers)} · v{i.template_version}</p>
+                    ) : (
+                      <p className="ws-card__meta ws-muted">
+                        {i.members.length
+                          ? i.members.map((m) => m.template).join(" · ")
+                          : "no resident agents"}
+                      </p>
+                    )}
+                  </Card>
+                );
+              })}
+            </Stack>
+          </div>
+        )}
+        <Field label="Scope" help="Which scope the agent lives in and reads notes for.">
+          <Select value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} disabled={busy}>
+            <option value="">Workshop (user scope)</option>
+            {projects?.map((p) => (
+              <option key={p.slug} value={p.slug}>{p.title}</option>
+            ))}
+          </Select>
+        </Field>
+        {err && <StateBlock variant="error" title="Couldn't create from template" hint={<code>{err}</code>} />}
+        <Row end>
+          <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
+          <Button variant="primary" onClick={submit} disabled={busy || !pick} loading={busy}>
+            {tab === "templates" ? "Create agent" : "Adopt group"}
+          </Button>
+        </Row>
+      </Stack>
+    </Modal>
+  );
+}
+
 export default function Agents() {
   const nav = useNavigate();
   const [agents, setAgents] = useState<RosterAgent[] | null>(null);
@@ -215,6 +394,7 @@ export default function Agents() {
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
   const [autonomyBusy, setAutonomyBusy] = useState(false);
   const [spawning, setSpawning] = useState(false);
+  const [templating, setTemplating] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -295,6 +475,9 @@ export default function Agents() {
             </Link>
             <Button variant="ghost" size="sm" onClick={() => setSpawning(true)}>
               <Plus aria-hidden /> New builder
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setTemplating(true)}>
+              <FileStack aria-hidden /> From template
             </Button>
             <Link to="/jobs">
               <Button variant="ghost" size="sm"><ListChecks aria-hidden /> Jobs</Button>
@@ -429,6 +612,17 @@ export default function Agents() {
         onCancel={() => setSpawning(false)}
         onCreated={(slug) => { setSpawning(false); nav(`/agents/${encodeURIComponent(slug)}/chat`); }}
         onNewProject={() => { setSpawning(false); nav("/projects/new"); }}
+      />
+
+      <FromTemplateModal
+        open={templating}
+        projects={projects}
+        onCancel={() => setTemplating(false)}
+        onDone={(slug) => {
+          setTemplating(false);
+          loadAll();
+          if (slug) nav(`/agents/${encodeURIComponent(slug)}`);
+        }}
       />
     </div>
   );

@@ -113,6 +113,12 @@ class Project(BaseModel):
     # existing single-dir sweep behavior; the dispatcher consults this flag to
     # decide whether to allocate a per-task worktree. Absent reads as false.
     concurrent_worktrees: bool = False
+    # The project's RESIDENT agent slugs. `[]` is the default for a new project
+    # and is deliberate, not a placeholder (ask A4): the project loop is not an
+    # agent, so a project is fully workable with nobody resident. Populated by
+    # adopting a template group. Definition files stay the source of truth for
+    # what an agent IS; this is the scope's roster of who lives here.
+    agents: list[str] = []
 
 
 class CreateProjectIn(BaseModel):
@@ -376,6 +382,18 @@ async def create_project(body: CreateProjectIn) -> Project:
         "last_touched": now,
         "claude_session": None,
         "concurrent_worktrees": False,
+        # ZERO resident agents, explicitly (ask A4 / roles report 5.6). A new
+        # project gets its autonomy preset and the project loop, and the project
+        # loop IS NOT AN AGENT — it is project_ralph.sh sweeping the scope, which
+        # needs no definition file. Three agents per new project, most of which
+        # the operator never looks at and most of which would triage an empty
+        # notes folder, is a machine for generating noise and cost.
+        #
+        # This is written as `[]` rather than left absent so the default is a
+        # decision on the record, not an accident of a missing field. The upgrade
+        # is one click: adopt the `tended` group when the project actually starts
+        # accumulating notes (POST /api/agents/adopt-group).
+        "agents": [],
     }
 
     # Provision a private GitHub repo unless this is a scratch/blank scaffold

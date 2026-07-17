@@ -61,6 +61,29 @@ CHANNEL_MAP = Path(os.environ.get(
 RUNTIMES = ("builder", "assistant")
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
+# Shipped agent TEMPLATES (final-plan P4 / roles report 5.1). Tracked source, not
+# instance state: a template is never registered and never runs — `list_agents`
+# globs `agents/*.md` non-recursively, so nothing in here is ever dispatched. It
+# is forked into an instance (see `fork_from_template`), and the fork is what
+# runs. `.gitignore` carves `!/agents/_templates/` out of `/agents/*` for exactly
+# this, mirroring `projects/_templates/`.
+TEMPLATES_DIR = Path(os.environ.get(
+    "WORKSHOP_AGENT_TEMPLATES_DIR", str(USER_AGENTS_DIR / "_templates")))
+GROUPS_DIR = TEMPLATES_DIR / "groups"
+
+# Frontmatter that belongs to the TEMPLATE, not to the instance it produces. It
+# is stripped on fork and replaced by a single `template: <slug>@<version>` line.
+_TEMPLATE_ONLY_FM = ("template", "template_version", "description")
+
+# Roles the shell dispatches on a schedule read the WHOLE scope, so two of them
+# on one scope would both read the same notes past the same watermark and both
+# file the same tasks — the dedupe path would spend its life covering for a
+# configuration error. This is a uniqueness constraint on a key (the same class of
+# thing as a slug being unique), not a permission wall: makers are exempt, because
+# several makers on a scope is the concurrency case, already governed by `touches`
+# disjointness and the claim fence.
+SINGLETON_ROLES = ("triager", "keeper")
+
 # Role taxonomy + per-agent effort/fan-out knobs (Phase O6/O7-config). All three
 # are optional frontmatter fields with safe defaults, surfaced in the parsed
 # record and re-serialized on write. `role` TYPES an agent: it selects which
@@ -232,6 +255,12 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "fanout": _coerce_fanout(fm.get("fanout")),
         "latitude": _coerce_latitude(fm.get("latitude")),
         "memory": fm.get("memory"),
+        # Fork provenance: `<template-slug>@<version>` when this instance came
+        # from a template. A LABEL, not a link — nothing syncs from it, and
+        # nothing reads it to decide behavior. It exists so a future "your
+        # instance is based on v1, v3 is out" nudge is possible without a
+        # propagation engine (roles report 5.3: do not build sync now).
+        "template": fm.get("template"),
         "project_slug": fm.get("project_slug") or project_slug,
         "letta_agent_id": letta_id,
         "scope": scope,
@@ -261,6 +290,7 @@ def _record_from_build_state(slug: str, raw: dict) -> dict:
         "fanout": DEFAULT_FANOUT,
         "latitude": None,
         "memory": None,
+        "template": None,
         "project_slug": project_slug,
         "letta_agent_id": None,
         "scope": "project" if project_slug else "user",
@@ -432,7 +462,7 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               project_slug: str | None, letta_agent_id: str | None,
               role: str | None = None, depth: str | None = None,
               fanout: str | None = None, latitude: str | None = None,
-              retired: bool = False) -> dict:
+              template: str | None = None, retired: bool = False) -> dict:
     fm: dict[str, Any] = {
         "name": name,
         "runtime": runtime,
@@ -457,6 +487,8 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
     valid_latitude = _validate_latitude(latitude)
     if valid_latitude and valid_latitude != DEFAULT_LATITUDE:
         fm["latitude"] = valid_latitude
+    if template:
+        fm["template"] = template
     if project_slug:
         fm["project_slug"] = project_slug
     if letta_agent_id:
@@ -466,13 +498,37 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
     return fm
 
 
+def scope_key_for(project_slug: str | None) -> str:
+    """The scope an agent's shell dispatch reads, matching the dispatcher's own
+    rule (`dispatch_triggers.sh`): a project-linked agent works its project's
+    scope, everything else works the workshop scope."""
+    return f"project:{project_slug}" if project_slug else "workshop"
+
+
+def _assert_role_unique(role: str | None, project_slug: str | None,
+                        *, exclude_slug: str | None = None) -> None:
+    """At most one `triager` and one `keeper` per scope. Raises ValueError naming
+    the incumbent, so adopting a group twice is idempotent-by-refusal rather than
+    quietly doubling a scope's triage."""
+    if role not in SINGLETON_ROLES:
+        return
+    scope = scope_key_for(project_slug)
+    for a in list_agents():
+        if a.get("slug") == exclude_slug or a.get("role") != role:
+            continue
+        if scope_key_for(a.get("project_slug")) == scope:
+            raise ValueError(
+                f"{scope} already has a {role} ({a['slug']}); one {role} per scope"
+            )
+
+
 def create(*, slug: str, runtime: str, name: str, purpose: str = "",
            capabilities: list | None = None, triggers_list: list | None = None,
            limits: dict | None = None, memory: Any = None,
            project_slug: str | None = None, letta_agent_id: str | None = None,
            role: str | None = None, depth: str | None = None,
            fanout: str | None = None, latitude: str | None = None,
-           body: str = "") -> dict:
+           template: str | None = None, body: str = "") -> dict:
     slug = slug.strip().lower()
     if not SLUG_RE.match(slug):
         raise ValueError("slug must be kebab-case alphanumeric, start with a letter, max 64 chars")
@@ -480,12 +536,14 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
         raise ValueError(f"runtime must be one of {RUNTIMES}")
     if get(slug) is not None:
         raise ValueError(f"agent already exists: {slug}")
+    _assert_role_unique(_validate_role(role), project_slug)
     path = _path_for(slug, project_slug)
     fm = _build_fm(runtime=runtime, name=name, purpose=purpose,
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
                    project_slug=project_slug, letta_agent_id=letta_agent_id,
-                   role=role, depth=depth, fanout=fanout, latitude=latitude)
+                   role=role, depth=depth, fanout=fanout, latitude=latitude,
+                   template=template)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_emit(fm, body))
     regenerate_subscriptions()
@@ -540,6 +598,10 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
         # role raises rather than writing an agent no handler will ever pick up).
         valid_role = _validate_role(role)
         if valid_role:
+            # Re-tagging an agent into a singleton role is the other way a scope
+            # could grow a second triager, so the constraint is checked on both
+            # write paths, not just create.
+            _assert_role_unique(valid_role, rec.get("project_slug"), exclude_slug=real_slug)
             fm["role"] = valid_role
         else:
             fm.pop("role", None)
@@ -591,6 +653,167 @@ def retire(slug: str) -> None:
         fm["retired"] = True
         path.write_text(_emit(fm, body))
         regenerate_subscriptions()
+
+
+# ---------------------------------------------------------------------------
+# Templates and template groups (final-plan P4 / roles report 5.1-5.6)
+# ---------------------------------------------------------------------------
+# A template is a plain agent definition (frontmatter + body) plus three
+# template-only fields, so it is readable, diffable, and testable as the thing it
+# produces. Adopting one FORKS it: the copy is independent and edits are local.
+#
+# There is deliberately NO SYNC ENGINE. The stated cost is that template
+# improvements do not propagate; the `template: <slug>@<version>` stamp makes a
+# future "v3 is out" nudge possible. A propagation engine for one operator and a
+# handful of agents is exactly the cruft the rules forbid — re-adopt or hand-edit,
+# both take a minute. An edited LINK, by contrast, would silently leak one
+# project's edit into every other project that adopted the same template, which is
+# the worst available surprise.
+
+def _template_path(slug: str) -> Path:
+    if not SLUG_RE.match((slug or "").strip().lower()):
+        raise ValueError(f"invalid template slug: {slug!r}")
+    return TEMPLATES_DIR / f"{slug.strip().lower()}.md"
+
+
+def list_templates() -> list[dict]:
+    """The shipped templates: [{template, template_version, description, name,
+    role, runtime, triggers, purpose}]. Never registry members."""
+    out: list[dict] = []
+    if not TEMPLATES_DIR.is_dir():
+        return out
+    for p in sorted(TEMPLATES_DIR.glob("*.md")):
+        fm, body = _parse(p.read_text())
+        out.append({
+            "template": fm.get("template") or p.stem,
+            "template_version": int(fm.get("template_version") or 1),
+            "description": fm.get("description") or "",
+            "name": fm.get("name") or p.stem,
+            "runtime": fm.get("runtime") if fm.get("runtime") in RUNTIMES else "assistant",
+            "role": _coerce_role(fm.get("role")),
+            "purpose": fm.get("purpose") or "",
+            "triggers": triggers.definition_triggers(fm),
+            "definition": body.strip(),
+        })
+    return out
+
+
+def get_template(slug: str) -> dict | None:
+    for t in list_templates():
+        if t["template"] == (slug or "").strip().lower():
+            return t
+    return None
+
+
+def list_groups() -> list[dict]:
+    """The shipped template GROUPS. A group is not an array: it carries a member
+    list WITH per-member overrides plus `scope_defaults` the adopting scope takes
+    on. Two are shipped, not a catalog — `minimal` (the default, no agents) and
+    `tended` (triager + keeper, the one-click upgrade)."""
+    out: list[dict] = []
+    if not GROUPS_DIR.is_dir():
+        return out
+    for p in sorted(GROUPS_DIR.glob("*.json")):
+        try:
+            g = json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not isinstance(g, dict):
+            continue
+        g.setdefault("name", p.stem)
+        g.setdefault("members", [])
+        g.setdefault("scope_defaults", {})
+        out.append(g)
+    return out
+
+
+def get_group(name: str) -> dict | None:
+    for g in list_groups():
+        if g.get("name") == (name or "").strip().lower():
+            return g
+    return None
+
+
+def fork_from_template(template_slug: str, target_slug: str,
+                       project_slug: str | None = None,
+                       overrides: dict | None = None) -> dict:
+    """Copy a template's definition into a scope as an independent agent.
+
+    FORK, NOT LINK: nothing about the returned agent reads back to the template
+    afterward. The only trace is a `template: <slug>@<version>` frontmatter stamp,
+    which is provenance for a human, not a pointer for a machine.
+
+    `overrides` may set any of name / purpose / triggers / limits / role / depth /
+    fanout / latitude / definition (the body). Everything it does not name comes
+    from the template verbatim.
+    """
+    path = _template_path(template_slug)
+    if not path.exists():
+        raise ValueError(f"unknown template: {template_slug}")
+    fm, body = _parse(path.read_text())
+    ov = overrides or {}
+
+    version = int(fm.get("template_version") or 1)
+    stamp = f"{fm.get('template') or template_slug}@{version}"
+    for k in _TEMPLATE_ONLY_FM:
+        fm.pop(k, None)
+
+    return create(
+        slug=target_slug,
+        runtime=ov.get("runtime") or (fm.get("runtime") if fm.get("runtime") in RUNTIMES else "assistant"),
+        name=ov.get("name") or fm.get("name") or target_slug,
+        purpose=ov.get("purpose") if ov.get("purpose") is not None else (fm.get("purpose") or ""),
+        capabilities=ov.get("capabilities") if ov.get("capabilities") is not None else (fm.get("capabilities") or []),
+        triggers_list=ov.get("triggers") if ov.get("triggers") is not None else triggers.definition_triggers(fm),
+        limits=ov.get("limits") if ov.get("limits") is not None else (fm.get("limits") or dict(DEFAULT_LIMITS)),
+        memory=ov.get("memory") if ov.get("memory") is not None else fm.get("memory"),
+        project_slug=project_slug,
+        role=ov.get("role") if ov.get("role") is not None else fm.get("role"),
+        depth=ov.get("depth") if ov.get("depth") is not None else fm.get("depth"),
+        fanout=ov.get("fanout") if ov.get("fanout") is not None else fm.get("fanout"),
+        latitude=ov.get("latitude") if ov.get("latitude") is not None else fm.get("latitude"),
+        template=stamp,
+        body=ov.get("definition") if ov.get("definition") is not None else body,
+    )
+
+
+def adopt_group(name: str, project_slug: str | None = None) -> dict:
+    """Fork every member of a group into a scope, applying each member's
+    overrides. Returns {group, scope_defaults, adopted: [...], skipped: [...]}.
+
+    Idempotent by the one-per-(scope, role) constraint rather than by a bespoke
+    check: adopting `tended` twice refuses the second triager and reports it as
+    skipped, so the operator gets one triager and a plain explanation instead of
+    two agents racing the same watermark.
+
+    `scope_defaults` is RETURNED, not applied here — the registry owns agent
+    definitions, not the project registry. The route that adopts on a project's
+    behalf applies them.
+    """
+    g = get_group(name)
+    if g is None:
+        raise ValueError(f"unknown template group: {name}")
+    adopted: list[dict] = []
+    skipped: list[dict] = []
+    taken = all_slugs()
+    for m in g.get("members") or []:
+        tpl = (m or {}).get("template")
+        if not tpl:
+            continue
+        target = m.get("slug") or mint_slug(f"{project_slug}-{tpl}" if project_slug else tpl, taken)
+        try:
+            rec = fork_from_template(tpl, target, project_slug, m.get("overrides") or {})
+        except ValueError as e:
+            skipped.append({"template": tpl, "reason": str(e)})
+            continue
+        taken.add(rec["slug"])
+        adopted.append(rec)
+    return {
+        "group": g.get("name"),
+        "scope_defaults": g.get("scope_defaults") or {},
+        "adopted": adopted,
+        "skipped": skipped,
+    }
 
 
 # ---------------------------------------------------------------------------

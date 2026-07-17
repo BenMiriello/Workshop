@@ -124,4 +124,8 @@ export type Project = {
   claude_session: string | null;
   repo?: ProjectRepo;
   concurrent_worktrees?: boolean;
+  // Resident agent slugs. A new project bootstraps with `[]`, on purpose: the
+  // project loop is not an agent, so nothing needs to live here for the project
+  // to be worked. Adopting a template group populates it.
+  agents?: string[];
 };

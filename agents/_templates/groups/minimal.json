@@ -1,0 +1,9 @@
+{
+  "name": "minimal",
+  "description": "No resident agents. The default for a new project: the project loop is not an agent, so nothing here needs a definition file for the project to be worked.",
+  "members": [],
+  "scope_defaults": {
+    "autonomy": "on-demand",
+    "depth": "standard"
+  }
+}

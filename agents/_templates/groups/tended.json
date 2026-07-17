@@ -1,0 +1,20 @@
+{
+  "name": "tended",
+  "description": "A project that keeps its own notes and memory in order. The one-click upgrade from minimal, taken when a scope starts accumulating notes.",
+  "members": [
+    {
+      "template": "note-triager",
+      "overrides": {
+        "triggers": [{ "kind": "cron", "cron_expression": "0 9 * * *" }]
+      }
+    },
+    {
+      "template": "memory-keeper",
+      "overrides": {}
+    }
+  ],
+  "scope_defaults": {
+    "autonomy": "on-demand",
+    "depth": "standard"
+  }
+}

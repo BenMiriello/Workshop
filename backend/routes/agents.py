@@ -21,6 +21,120 @@ class AgentCreate(BaseModel):
     human: str = ""
 
 
+# ---- Templates + groups (P4) -----------------------------------------------
+# Declared BEFORE `GET /{agent_id}` so a literal path never has to compete with
+# the slug wildcard.
+
+class FromTemplateIn(BaseModel):
+    template: str
+    slug: str | None = None       # minted from the template's name when absent
+    project: str | None = None    # project scope; absent = the user scope
+    overrides: dict = Field(default_factory=dict)
+
+
+class AdoptGroupIn(BaseModel):
+    group: str
+    project: str | None = None
+
+
+@router.get("/templates")
+async def list_agent_templates():
+    """The shipped agent templates and template groups. Templates are files, not
+    registry members: nothing here is registered or dispatched until it is forked
+    (POST /agents/from-template)."""
+    return {
+        "templates": agents_registry.list_templates(),
+        "groups": agents_registry.list_groups(),
+    }
+
+
+@router.post("/from-template")
+async def create_agent_from_template(body: FromTemplateIn):
+    """Fork a template into a real agent. The copy is independent — the only
+    trace of its origin is a `template: <slug>@<version>` stamp in frontmatter.
+    Nothing syncs afterward, by design (roles report 5.3)."""
+    tpl = agents_registry.get_template(body.template)
+    if tpl is None:
+        raise HTTPException(404, f"unknown template: {body.template}")
+    slug = (body.slug or "").strip().lower() or agents_registry.mint_slug(
+        f"{body.project}-{tpl['template']}" if body.project else tpl["template"])
+    try:
+        return agents_registry.fork_from_template(
+            body.template, slug, body.project, body.overrides)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/adopt-group")
+async def adopt_agent_group(body: AdoptGroupIn):
+    """Adopt a template group into a scope: fork each member with its overrides,
+    then apply the group's `scope_defaults` to the project's autonomy record.
+    Adopting twice is a no-op for members that would violate the one-per-(scope,
+    role) constraint; they come back in `skipped` with the incumbent named."""
+    try:
+        res = agents_registry.adopt_group(body.group, body.project)
+    except ValueError as e:
+        raise HTTPException(404, str(e))
+    res["scope_applied"] = _apply_group_to_project(
+        body.project, res.get("scope_defaults") or {},
+        [a["slug"] for a in res.get("adopted") or []])
+    return res
+
+
+def _apply_group_to_project(project_slug: str | None, defaults: dict,
+                            adopted: list[str]) -> bool:
+    """Land a group's non-agent half on the project record: its `scope_defaults`
+    (autonomy preset + depth) and the adopted slugs on the scope's resident roster.
+    A group carries settings, not just a member list (ask D4); this is where the
+    settings half goes. No project named, nothing to apply (a user-scope adoption
+    has no project record to write).
+
+    The autonomy record is the same shape PUT /projects/{slug}/autonomy writes, so
+    the preset expands into its trigger list exactly as it does there — a group
+    must not be able to produce a project state the autonomy page cannot read."""
+    if not project_slug or (not defaults and not adopted):
+        return False
+    preset = defaults.get("autonomy")
+    depth = defaults.get("depth")
+    if preset is not None and preset not in triggers.PRESETS:
+        raise HTTPException(400, f"unknown autonomy preset in group: {preset}")
+    from routes import projects as projects_route
+    data = projects_route._load_registry()
+    proj = (data.get("projects") or {}).get(project_slug)
+    if not proj:
+        raise HTTPException(404, f"project not found: {project_slug}")
+    autonomy = dict(proj.get("autonomy") or {})
+    if preset is not None:
+        norm = triggers.preset_to_triggers(preset, limits=autonomy.get("limits") or None)
+        autonomy.update({
+            "preset": preset,
+            "mode": triggers.project_mode_from_triggers(norm),
+            "triggers": norm,
+        })
+    if depth in ("quick", "standard", "deep"):
+        autonomy["depth"] = depth
+    proj["autonomy"] = autonomy
+    roster = [s for s in (proj.get("agents") or []) if isinstance(s, str)]
+    proj["agents"] = roster + [s for s in adopted if s not in roster]
+    projects_route._save_registry(data)
+    return True
+
+
+def _drop_from_project_roster(rec: dict) -> None:
+    """Take a retired agent off its project's resident roster, so the roster is
+    the scope's live residents rather than everyone who ever lived here."""
+    slug, project_slug = rec.get("slug"), rec.get("project_slug")
+    if not slug or not project_slug:
+        return
+    from routes import projects as projects_route
+    data = projects_route._load_registry()
+    proj = (data.get("projects") or {}).get(project_slug)
+    if not proj or slug not in (proj.get("agents") or []):
+        return
+    proj["agents"] = [s for s in proj["agents"] if s != slug]
+    projects_route._save_registry(data)
+
+
 @router.get("/")
 async def list_agents():
     """One unified roster: every Agent across both scopes and both runtimes,
@@ -722,6 +836,7 @@ async def delete_agent(agent_id: str):
     if rec is None:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     agents_registry.retire(rec["slug"])
+    _drop_from_project_roster(rec)
     return {"ok": True, "retired": rec["slug"]}
 
 

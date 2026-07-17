@@ -77,10 +77,16 @@ registry-bundles/
 # config; the app-level grants.json seed stays tracked, this does not.
 /backend/resource-grants.json
 /commute/schedule.json
-# User-scope agent definition files (declarative registry of record, but they
+# User-scope agent definition INSTANCES (declarative registry of record, but they
 # hold the operator's personas/config) are instance state. Project-scoped agent
 # defs live under /projects/* and are already ignored above.
-/agents/
+#
+# `/agents/*` ignores the CONTENTS rather than the directory, because git cannot
+# re-include anything under an excluded directory — the same shape `/projects/*`
+# + `!/projects/_templates/` uses. The shipped agent TEMPLATES are source (they
+# are forked into instances, never run in place), so they are tracked.
+/agents/*
+!/agents/_templates/
 /commute/legs.json
 /commute/targets.json
 /commute/sources/registry.json
