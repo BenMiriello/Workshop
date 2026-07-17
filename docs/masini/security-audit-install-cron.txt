@@ -1,0 +1,19 @@
+# Nightly security-regression check — install (run as clawd-a)
+#
+# The audit script exits non-zero on any regression. This cron runs it at 03:30
+# daily and, only if something FAILED, pushes a one-line alert to the operator's
+# Discord via the Workshop backend notify endpoint (localhost, same host).
+#
+# Install:
+#   crontab -e        # then paste the line below
+# Verify:
+#   crontab -l
+#
+# (crontab install is classifier-sensitive for the agent; the operator or the
+#  clawd-a supervisor session installs this. The script itself is safe to run
+#  by hand anytime: bash ~/clawdbot/security/audit.sh)
+
+30 3 * * *  out=$(bash /home/clawd-a/clawdbot/security/audit.sh 2>&1); if [ $? -ne 0 ]; then fails=$(printf '%s' "$out" | grep -c FAIL); curl -s -X POST http://127.0.0.1:8000/tools/notify_operator -H 'Content-Type: application/json' -d "{\"body\":{\"message\":\"🔒 nightly security audit: $fails regression(s) — run: bash ~/clawdbot/security/audit.sh\"}}" >/dev/null; fi
+
+# If the backend notify route isn't desired, swap the curl for appending to a log:
+#   ... ; printf '%s\n' "$out" >> /home/clawd-a/clawdbot/security/audit.log
