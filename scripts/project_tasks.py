@@ -27,6 +27,15 @@ Verbs (all take a scope directory as the first positional):
   heartbeat <dir> <id> <claim_token>  renew a claimed task's lease (fenced by token)
   note <dir> <id> "evidence text" [--kind KIND] [--ref REF]
   block <dir> <id> "reason" [--expect-claim-token T]
+      [--kind K] [--ask "..."] [--unblocks-if "..."] [--dedupe-key KEY]
+      [--proposal-uri URI --proposal-verb read|write|append] [--raised-by REF]
+      # The structured request the Review tab answers. `reason` alone still works
+      # (a plain block). --kind is an open slug (permission|resource|input|
+      # decision|missing-info|dependency|environment|other, or a new one): the set
+      # is a seed, not a boundary. A --proposal-uri + --proposal-verb pair makes
+      # the ask machine-checkable, so the review can offer a prefilled grant
+      # instead of asking the operator to author one. --dedupe-key groups a
+      # mass-block so ten tasks stopped by one rule are answered once.
   set-awaiting <dir> <id> "question"  set/clear the operator-input payload
   check-touches <dir> <id> [--expect-claim-token T]
       read a newline-separated file list on STDIN and hold the run to the task's
@@ -157,6 +166,13 @@ def main(argv: list[str]) -> int:
     sp = sub.add_parser("block"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("reason")
     sp.add_argument("--expect-claim-token", default=None)
+    sp.add_argument("--kind", default=None)
+    sp.add_argument("--ask", default=None)
+    sp.add_argument("--unblocks-if", default=None)
+    sp.add_argument("--proposal-uri", default=None)
+    sp.add_argument("--proposal-verb", default=None, choices=(None, "read", "write", "append"))
+    sp.add_argument("--dedupe-key", default=None)
+    sp.add_argument("--raised-by", default=None)
 
     sp = sub.add_parser("set-awaiting"); scope(sp)
     sp.add_argument("task_id"); sp.add_argument("question")
@@ -216,7 +232,26 @@ def main(argv: list[str]) -> int:
             print(json.dumps(_slim(t)))
             return 0
         if a.cmd == "block":
+            # `reason` is the human line and stays exactly as it was. --ask (and
+            # friends) additionally attach the STRUCTURED request the Review tab
+            # acts on: what would unblock this, and — when the ask names a uri and
+            # a verb — a grant the operator can approve in one click. Omit them and
+            # the block is what it always was.
+            request = None
+            if a.ask or a.kind:
+                request = {
+                    "kind": a.kind or "other",
+                    "ask": a.ask or a.reason,
+                    "question": a.ask or a.reason,
+                    "why": a.reason,
+                    "unblocks_if": a.unblocks_if,
+                    "dedupe_key": a.dedupe_key,
+                    "raised_by": a.raised_by,
+                }
+                if a.proposal_uri and a.proposal_verb:
+                    request["proposal"] = {"uri": a.proposal_uri, "verb": a.proposal_verb}
             t = tasks.update(root, a.task_id, status="blocked", blocked_reason=a.reason,
+                             blocked_request=request,
                              expect_claim_token=_opt_int(a.expect_claim_token))
             print(json.dumps(_slim(t)))
             return 0

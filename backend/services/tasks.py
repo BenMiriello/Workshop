@@ -24,8 +24,8 @@ Canonical Task (version 2)::
       "max_attempts": int | None,      # per-task cap on worker RUNS (sweep attempts);
                                        # distinct from ralph's inner iteration cap.
                                        # Legacy stores' `max_iterations` reads in.
-      "blocked_reason": str | None,
-      "awaiting": {"question": str, "since": iso}|None,  # operator input this task waits on
+      "blocked_reason": str | None,   # the human line. UNCHANGED, still first-class.
+      "awaiting": {...}|None,          # THE block record. See "The block record" below.
       "attempts": int,                 # worker runs spent on this task (cap enforcement)
       "claim_token": int | None,       # monotonic fencing generation, bumped every
                                        # (re)claim AND on any operator edit to a
@@ -53,10 +53,52 @@ Canonical Task (version 2)::
       "created": iso, "updated": iso
     }
 
+The block record (P2)
+---------------------
+A task stops for many reasons: a permission it does not have, a missing resource,
+an ambiguous spec at ``strict`` latitude, a contradiction. All of them are the
+SAME primitive — ``awaiting`` — widened in place rather than given a sibling
+status or a parallel record. ``awaiting`` was ``{"question", "since"}``; a bare
+question cannot say *what would unblock me* in a form the system can check, so it
+now carries::
+
+    "awaiting": {
+      "question": str,       # EXISTING. the human sentence; still first-class.
+      "since": iso,          # EXISTING.
+      "kind": str,           # short slug: permission|resource|input|decision|
+                             # missing-info|dependency|environment|other. OPEN,
+                             # deliberately not an enum: a closed set fails on the
+                             # first unanticipated reason to stop.
+      "ask": str,            # the request itself (defaults to `question`)
+      "why": str | None,     # why the task cannot proceed without an answer
+      "unblocks_if": str | None,   # what would resolve it, in one line
+      "options": [str]|None, # kind=decision: what the worker would choose between
+      "default": str | None, # what it WOULD do at a higher latitude
+      "proposal": {"uri": str, "verb": str}|None,   # the machine-checkable ask.
+                             # Present => a grant can be prefilled from the block;
+                             # absent => the answer is a judgment, so a textual
+                             # rule is what the review offers instead.
+      "raised_by": str|None, # "job:<id>" / "reviewer" / "gate"
+      "dedupe_key": str|None,# groups a mass-block: 10 tasks stopped by one rule
+                             # answer together, in one gesture.
+      "context": {...},      # free-form detail for the reviewer's eyes
+      "dismissed": bool,     # operator left the block in place and took it off
+                             # the review queue. NOT a status: the task is still
+                             # blocked, it is just not being asked about.
+    }
+
+Every field is additive, so a stored ``{"question", "since"}`` record keeps
+working unchanged and older readers keep rendering the question. ``blocked_reason``
+is untouched and still carries the human line, so blocked tasks written before
+this and the ``[!]`` TODO.md box both behave exactly as they did.
+
 Backward compatibility: records carry an ``owner`` field mirroring ``assignee``
 so existing readers (frontend task panel, per-agent endpoints) keep working while
 callers migrate. Legacy ``owner`` on read maps to ``assignee`` (an agent slug
-becomes ``agent:<slug>``; ``operator`` stays).
+becomes ``agent:<slug>``; ``operator`` stays). ``blocked_request`` mirrors
+``awaiting`` the same way: it is the name the plan, the API and the Review tab use
+for the structured request, projected on read from the ONE stored record. There is
+no second record to keep in sync.
 """
 from __future__ import annotations
 
@@ -279,6 +321,73 @@ def _normalize_acceptance(acc) -> dict | None:
     return out or None
 
 
+# --- the block record --------------------------------------------------------
+# `awaiting` is the general escalation primitive: whatever stopped the task — a
+# permission, a missing fixture, an ambiguous ticket, a contradiction — writes the
+# same record, so one review surface serves all of them. The producers (the gate,
+# the worker at `strict` latitude, the reviewer's block-for-decision verdict, the
+# harness) differ; the record does not.
+
+# A `kind` is a short slug, validated as a slug and NOT against a fixed list. The
+# named kinds are the seed set, not the boundary — a closed enum would reject the
+# first reason to stop that nobody anticipated, which is exactly the case a block
+# loop exists to catch. These are the ones that have a producer today.
+BLOCK_KINDS = ("permission", "resource", "input", "decision", "missing-info",
+               "dependency", "environment", "other")
+_KIND_RE = re.compile(r"[a-z][a-z0-9-]{0,31}\Z")
+_VALID_PROPOSAL_VERBS = ("read", "write", "append")
+
+
+def _slug_or(value, default: str) -> str:
+    v = str(value or "").strip().lower()
+    return v if _KIND_RE.fullmatch(v) else default
+
+
+def _normalize_awaiting(payload) -> dict | None:
+    """Coerce a block record into canonical shape, or None when there is nothing
+    to ask (no `ask`/`question` => no block record; that is how a caller clears
+    one).
+
+    Legacy `{"question": ..., "since": ...}` records normalize losslessly: `ask`
+    mirrors the question and `kind` reads as `input`, which is what a bare
+    `awaiting` has always meant (operator input this task waits on)."""
+    if not isinstance(payload, dict):
+        return None
+    question = str(payload.get("question") or "").strip()
+    ask = str(payload.get("ask") or "").strip() or question
+    question = question or ask
+    if not ask:
+        return None
+    proposal = payload.get("proposal")
+    if isinstance(proposal, dict):
+        uri = str(proposal.get("uri") or "").strip()
+        verb = str(proposal.get("verb") or "").strip().lower()
+        # A proposal is the machine-checkable half of the ask; a half-formed one
+        # would prefill a grant over nothing, so it degrades to "no proposal" (a
+        # judgment call) rather than to a broken prefill.
+        proposal = {"uri": uri, "verb": verb} if uri and verb in _VALID_PROPOSAL_VERBS else None
+    else:
+        proposal = None
+    options = [str(o).strip() for o in (payload.get("options") or []) if str(o).strip()]
+    context = payload.get("context")
+    rec = {
+        "question": question,
+        "since": str(payload.get("since") or _now()),
+        "kind": _slug_or(payload.get("kind"), "input"),
+        "ask": ask,
+        "why": str(payload.get("why") or "").strip() or None,
+        "unblocks_if": str(payload.get("unblocks_if") or "").strip() or None,
+        "options": options or None,
+        "default": str(payload.get("default") or "").strip() or None,
+        "proposal": proposal,
+        "raised_by": str(payload.get("raised_by") or "").strip() or None,
+        "dedupe_key": str(payload.get("dedupe_key") or "").strip() or None,
+        "context": context if isinstance(context, dict) else {},
+        "dismissed": bool(payload.get("dismissed")),
+    }
+    return rec
+
+
 def _normalize(task: dict) -> dict:
     """Coerce a stored record into a well-formed canonical Task (defensive
     against hand edits and forward-migrating v1 records losslessly)."""
@@ -305,7 +414,7 @@ def _normalize(task: dict) -> dict:
         "max_attempts": _as_int_or_none(
             task.get("max_attempts", task.get("max_iterations"))),
         "blocked_reason": task.get("blocked_reason") or None,
-        "awaiting": task.get("awaiting") if isinstance(task.get("awaiting"), dict) else None,
+        "awaiting": _normalize_awaiting(task.get("awaiting")),
         "attempts": _as_int(task.get("attempts"), 0),
         # claim_token is a per-task monotonic generation counter. Forward-migrate
         # losslessly: a missing token or a legacy UUID/unstructured value coerces to
@@ -332,6 +441,10 @@ def _normalize(task: dict) -> dict:
     # `owner` mirror keeps legacy readers (frontend panel, per-agent endpoints)
     # working until they migrate to `assignee`.
     rec["owner"] = rec["assignee"] or DEFAULT_OWNER
+    # `blocked_request` mirror: the same ONE record under the name the API and the
+    # Review tab use for it. Projected, never stored (see the module docstring), so
+    # it cannot drift from `awaiting`.
+    rec["blocked_request"] = rec["awaiting"]
     return rec
 
 
@@ -932,6 +1045,7 @@ def update(
     job_id: str | None = None,
     evidence: dict | None = None,
     awaiting: dict | None = None,
+    blocked_request: dict | None = None,
     bump_attempt: bool = False,
     restore_attempt: bool = False,
     expect_claim_token: int | None = None,
@@ -985,7 +1099,7 @@ def update(
                            and found.get("claim_token") is not None)
         _material_edit = any(v is not None for v in (
             status, text, assignee, priority, depends_on, blocked_reason,
-            acceptance, max_attempts, effort, latitude, awaiting))
+            acceptance, max_attempts, effort, latitude, awaiting, blocked_request))
         if status is not None:
             found["status"] = status
             # Leaving a waiting state clears the operator-input payload; nothing
@@ -1021,10 +1135,19 @@ def update(
             # Additive: an empty string clears the override back to None, which
             # means INHERIT from the scope — not "standard" (latitude.py).
             found["latitude"] = latitude or None
-        if awaiting is not None:
-            found["awaiting"] = ({"question": str(awaiting.get("question") or "").strip(),
-                                  "since": awaiting.get("since") or _now()}
-                                 if awaiting.get("question") else None)
+        # `awaiting` and `blocked_request` are two names for ONE record (module
+        # docstring). Both write here, through the same normalizer, so a caller
+        # that thinks in questions and a caller that thinks in structured requests
+        # cannot produce two different shapes. An empty ask clears the record.
+        req = blocked_request if blocked_request is not None else awaiting
+        if req is not None:
+            found["awaiting"] = _normalize_awaiting(req)
+        # Keep the mirror true for THIS call's return value. `found` came from a
+        # normalized load, so its `blocked_request` is the pre-update projection
+        # until it is re-derived here — exactly the discipline `owner`/`assignee`
+        # already follow above. A reader of the returned record must never see a
+        # block request the task no longer carries.
+        found["blocked_request"] = found.get("awaiting")
         if bump_attempt:
             found["attempts"] = _as_int(found.get("attempts"), 0) + 1
         if restore_attempt:

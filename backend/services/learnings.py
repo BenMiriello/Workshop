@@ -367,6 +367,159 @@ def record(
     return {"id": entry["id"], "scope": scope, "recorded": True, "deduped": False}
 
 
+# --- promotion: prose that proved itself becomes an enforced predicate --------
+# Textual rules rot: they accumulate, they are advisory, and every job pays
+# attention cost for all of them. Some of them are not judgments at all — they are
+# grants the operator typed as prose because prose was the easy box. Promotion is
+# the path out, and it costs nothing new to detect, because dedup ALREADY attaches
+# each re-derivation's source to the existing entry's provenance (see Dedup, above).
+# So provenance IS the stability counter: a rule re-derived from N independent
+# blocks has been independently confirmed N times.
+#
+# Nothing here mints anything. A candidate is a PROMPT for the operator in the
+# Review tab; the operator owns rules, and an auto-minted grant would be the system
+# granting itself authority — the one thing this loop exists to prevent.
+
+# Provenance sources written by the review path are `review:<scope>:<task_id>`, so
+# the ORIGIN is `review` and the TAIL makes two entries from two different blocks
+# distinct. Three entries from re-answering the same block is one confirmation, not
+# three, which is exactly what "independent" has to mean for the counter to be
+# worth anything.
+_BLOCK_ORIGIN = "review"
+_PROMOTE_MIN_SOURCES = int(os.environ.get("LEARNINGS_PROMOTE_MIN_SOURCES", "3"))
+
+
+def _promoted_path() -> Path:
+    return _dir() / "promoted.jsonl"
+
+
+def _read_promoted() -> list[dict]:
+    p = _promoted_path()
+    if not p.exists():
+        return []
+    out: list[dict] = []
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("hash"):
+            out.append(obj)
+    return out
+
+
+def _write_promoted(rows: list[dict]) -> None:
+    p = _promoted_path()
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text("\n".join(json.dumps(r, sort_keys=True) for r in rows) + ("\n" if rows else ""))
+    os.replace(tmp, p)
+
+
+def _find(scope: str, hash_: str) -> dict | None:
+    for e in _read(_valid_scope(scope)):
+        if e.get("hash") == hash_ or e.get("id") == hash_:
+            return e
+    return None
+
+
+def block_origin_sources(entry: dict) -> list[str]:
+    """The DISTINCT block-origin provenance sources on an entry, oldest first.
+    Each one is a different block that independently produced this same rule."""
+    seen: list[str] = []
+    for p in entry.get("provenance") or []:
+        src = str((p or {}).get("source") or "")
+        if src.split(":", 1)[0] != _BLOCK_ORIGIN:
+            continue
+        if src not in seen:
+            seen.append(src)
+    return seen
+
+
+def promote_when_stable(scope: str, hash: str) -> bool:  # noqa: A002 (plan names it `hash`)
+    """Has this learning proved itself enough to PROPOSE making it enforced?
+
+    True when the entry carries >= `_PROMOTE_MIN_SOURCES` independent block-origin
+    provenance entries — i.e. the same rule was re-derived from three different
+    blocks and answered the same way three times. Recording a candidate is
+    idempotent: it is a row in `learnings/promoted.jsonl`, which the Review tab
+    reads as an operator prompt.
+
+    Returns False (and writes nothing) below the threshold or for an unknown
+    entry. It NEVER mints a grant: promotion is proposed here and performed only
+    by the operator, from the Review tab.
+    """
+    scope = _valid_scope(scope)
+    entry = _find(scope, hash)
+    if entry is None:
+        return False
+    sources = block_origin_sources(entry)
+    if len(sources) < _PROMOTE_MIN_SOURCES:
+        return False
+    rows = _read_promoted()
+    for r in rows:
+        if r.get("scope") == scope and r.get("hash") == entry["hash"]:
+            # Already a candidate (or already promoted): refresh the evidence
+            # count so the card shows how many times it has now held.
+            if r.get("state") == "candidate" and r.get("sources") != sources:
+                r["sources"] = sources
+                r["proposed_at"] = _now()
+                _write_promoted(rows)
+            return r.get("state") == "candidate"
+    rows.append({
+        "hash": entry["hash"],
+        "scope": scope,
+        "text": entry.get("text", ""),
+        "sources": sources,
+        "state": "candidate",
+        "proposed_at": _now(),
+        "grant_id": None,
+    })
+    _write_promoted(rows)
+    return True
+
+
+def promotion_candidates() -> list[dict]:
+    """Every rule currently proposed for promotion, across scopes (newest first).
+    The Review tab's second list."""
+    rows = [r for r in _read_promoted() if r.get("state") == "candidate"]
+    rows.sort(key=lambda r: str(r.get("proposed_at") or ""), reverse=True)
+    return rows
+
+
+def mark_promoted(scope: str, hash: str, grant_id: str) -> dict | None:  # noqa: A002
+    """Record that the operator promoted a rule to an enforced grant.
+
+    The prose STAYS (marked `promoted`), because an enforced rule without its
+    rationale in context produces jobs that fail against a wall they do not
+    understand. The floor and the explanation are different artifacts.
+
+    Returns the updated candidate row, or None when there is no such candidate."""
+    scope = _valid_scope(scope)
+    entry = _find(scope, hash)
+    rows = _read_promoted()
+    hit = None
+    for r in rows:
+        if r.get("scope") == scope and r.get("hash") == hash:
+            hit = r
+            break
+    if hit is None or entry is None:
+        return None
+    hit["state"] = "promoted"
+    hit["grant_id"] = str(grant_id)
+    hit["promoted_at"] = _now()
+    _write_promoted(rows)
+    entries = _read(scope)
+    for e in entries:
+        if e.get("hash") == hash:
+            e["promoted"] = str(grant_id)
+            break
+    _write_all(scope, entries)
+    return hit
+
+
 def record_feedback(
     text: str,
     *,

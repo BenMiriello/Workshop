@@ -945,7 +945,17 @@ print(len(crit))
       # block is legible without re-deriving what was ambiguous.
       BLOCK_REASON=$(jq -r '.reviewer.blocked_reason // empty' "$RECEIPT_FILE" 2>/dev/null)
       [[ -z "$BLOCK_REASON" ]] && BLOCK_REASON="latitude:strict-and-ambiguous"
+      # The block also carries a STRUCTURED request so the Review tab can act on
+      # it rather than just display a sentence. kind=decision: the gate could not
+      # establish completeness, so what it needs is a call, not a permission. The
+      # ambiguity list is the dedupe key, so a rule that stopped ten tasks the same
+      # way is answered once.
+      BLOCK_AMBIG=$(jq -r '(.reviewer.ambiguous // []) | join(",")' "$RECEIPT_FILE" 2>/dev/null)
       ptasks_tx block "$DIR" "$TASK_ID" "$BLOCK_REASON" \
+        --kind decision --ask "$BLOCK_REASON" \
+        --unblocks-if "the operator confirms completeness, or says what to check instead" \
+        --dedupe-key "latitude-strict:${BLOCK_AMBIG:-unknown}" \
+        --raised-by "reviewer" \
         --expect-claim-token "${CLAIM_TOKEN:-}" || true
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "$BLOCK_REASON" --kind acceptance >/dev/null 2>>"$LOG"
       log "task=$TASK_ID BLOCKED for decision (strict latitude): $BLOCK_REASON"

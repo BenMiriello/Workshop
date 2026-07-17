@@ -26,13 +26,14 @@ import hashlib
 import json
 import os
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services import (tasks, task_scope, task_dedup, jobs, build_agents, ownership,
-                      latitude as latitude_svc)
+                      knowledge, learnings, permissions, latitude as latitude_svc)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -424,6 +425,223 @@ async def task_jobs(scope: str, task_id: str) -> dict:
     except Exception:
         enriched = recs
     return {"jobs": enriched, "count": len(enriched)}
+
+
+# ---- Review (the block loop) -----------------------------------------------
+# Work that stopped on its own is reviewed here. This is a DASHBOARD behind the
+# stop, not a gate in front of the work: nothing routes through it, nothing waits
+# on it for permission to start, and deleting the whole surface would not stop a
+# single task from running. It exists because a task that blocked needs an answer
+# to become runnable again, and the answer needs somewhere to be given.
+#
+# Five verbs, each ending the review of that block. Job resume is deliberately not
+# among them: the Task is the durable state, the blocked job's context is stale by
+# construction (it was assembled before the operator spent an hour deciding), and
+# `tasks.update` already released the lease when the task blocked. A released task
+# is simply `todo`, and the next sweep claims it fresh, reading the ticket, the
+# evidence trail, and the answer.
+
+
+class TaskReviewIn(BaseModel):
+    # approve | deny | grant-and-continue | mint-rule | dismiss
+    action: str = Field(min_length=1)
+    # The operator's sentence. Recorded as evidence on every verb: it is what the
+    # next attempt reads to know what was decided and why.
+    note: str | None = None
+    # grant-and-continue: defaults come from the block's `proposal`, so the common
+    # case is one click with an empty body.
+    store_uri: str | None = None
+    verbs: list[str] | None = None
+    subtree: bool | None = None
+    ttl_hours: float | None = None
+    # mint-rule
+    rule: str | None = None
+    # Defaults to the task's own scope. `global` is a deliberate act, never a
+    # default: a global learning taxes every job in every scope forever.
+    rule_scope: str | None = None
+
+
+_REVIEW_ACTIONS = ("approve", "deny", "grant-and-continue", "mint-rule", "dismiss")
+
+
+def _learnings_scope(scope: str) -> str:
+    """The learnings scope a task's scope mints into. `knowledge.scope_for_context`
+    owns the mapping (a build agent linked to a project shares that project's
+    scope), so a rule lands where that scope's chats and sweeps will read it."""
+    return knowledge.scope_for_context(scope)
+
+
+def _grantee(task: dict, scope: str) -> str:
+    """Who the grant is minted FOR. The task's delegate when it has one, else the
+    scope itself. Descriptive: `permissions.check` gates on the token, the uri and
+    the verb, so this records intent rather than enforcing it."""
+    a = str(task.get("assignee") or "").strip()
+    return a if a.startswith("agent:") else scope
+
+
+@router.post("/{scope}/{task_id}/review")
+async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
+    """Answer a blocked task. Returns {action, task, grant?, learning?, promotion?}.
+
+    approve            release the block; the task is `todo` and runs again.
+    deny               the work should not happen; the task is cancelled.
+    grant-and-continue mint the standing grant the block asked for, then release.
+    mint-rule          record the standing answer as a learning IN THE TASK'S
+                       SCOPE, then release (the rule IS the answer).
+    dismiss            leave the block in place, off the review queue.
+    """
+    action = (body.action or "").strip()
+    if action not in _REVIEW_ACTIONS:
+        raise HTTPException(400, f"action must be one of {list(_REVIEW_ACTIONS)}")
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    task = tasks.get_task(root, task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+
+    request = task.get("awaiting") or {}
+    note = (body.note or "").strip()
+    out: dict = {"action": action}
+
+    if action == "dismiss":
+        # Not a status: the task stays blocked. It just stops being asked about.
+        if not request:
+            raise HTTPException(400, "nothing to dismiss: this task carries no block request")
+        updated = tasks.update(root, task_id, blocked_request={**request, "dismissed": True})
+        if note:
+            updated = tasks.update(root, task_id,
+                                   evidence={"kind": "review", "ref": f"dismissed: {note}"})
+
+    elif action == "deny":
+        reason = note or "denied in review"
+        tasks.update(root, task_id, evidence={"kind": "review", "ref": f"denied: {reason}"})
+        updated = tasks.update(root, task_id, status="cancelled", blocked_reason=reason)
+
+    else:
+        # approve / grant-and-continue / mint-rule all RELEASE. Everything durable
+        # they create happens first, so a mint failure never releases a task on a
+        # promise it did not keep.
+        if action == "grant-and-continue":
+            proposal = request.get("proposal") or {}
+            store_uri = (body.store_uri or proposal.get("uri") or "").strip()
+            verbs = body.verbs or ([proposal["verb"]] if proposal.get("verb") else [])
+            if not store_uri:
+                raise HTTPException(400, "grant-and-continue needs a store_uri (the block proposed none)")
+            caveats: dict = {}
+            if body.ttl_hours:
+                caveats["expiry"] = (
+                    datetime.now(timezone.utc) + timedelta(hours=float(body.ttl_hours))
+                ).isoformat()
+            try:
+                grant = permissions.mint_grant(
+                    from_app="operator",
+                    to=_grantee(task, scope),
+                    store_uri=store_uri,
+                    verbs=verbs,
+                    caveats=caveats,
+                    subtree=bool(body.subtree),
+                )
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            out["grant"] = grant
+            # The grant id lands on the TASK, in the evidence trail the next
+            # attempt reads. No second journal: evidence already records what the
+            # loop needs to know.
+            tasks.update(root, task_id, evidence={
+                "kind": "grant",
+                "ref": f"{grant['id']} — {', '.join(grant['verbs'])} on {store_uri}"
+                       + (f" — {note}" if note else ""),
+            })
+
+        elif action == "mint-rule":
+            rule = (body.rule or note).strip()
+            if not rule:
+                raise HTTPException(400, "mint-rule needs rule text")
+            lscope = (body.rule_scope or "").strip() or _learnings_scope(scope)
+            # The provenance source carries the ORIGIN (`review`) and the BLOCK it
+            # came from, so two answers to two different blocks count as two
+            # independent confirmations and re-answering one block does not.
+            try:
+                rec = learnings.record(rule, source=f"review:{scope}:{task_id}",
+                                       scope=lscope, tags=["block"])
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            out["learning"] = rec
+            out["promotion"] = learnings.promote_when_stable(lscope, rec["id"])
+            tasks.update(root, task_id, evidence={
+                "kind": "review",
+                "ref": f"rule ({lscope}): {rule}",
+            })
+
+        elif note:
+            tasks.update(root, task_id, evidence={"kind": "review", "ref": f"approved: {note}"})
+
+        # Release. `restore_attempt`: the block was ANSWERED, not failed — a task
+        # that stopped to ask a good question twice must not be parked as though it
+        # had failed twice. Clearing `blocked_reason` and the request is what
+        # `status=todo` already does (tasks.update).
+        updated = tasks.update(root, task_id, status="todo", blocked_reason="",
+                               restore_attempt=True)
+
+    if updated is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    rec = dict(updated)
+    rec["scope"] = scope
+    out["task"] = _with_latitude(rec, scope)
+    return out
+
+
+# ---- Promotion (prose that proved itself) ----------------------------------
+
+
+@router.get("/promotion-candidates")
+async def promotion_candidates() -> dict:
+    """Textual rules that have now been re-derived from enough independent blocks
+    to be worth enforcing. A PROMPT, never an action already taken: nothing here
+    mints anything until the operator says so."""
+    rows = learnings.promotion_candidates()
+    return {"candidates": rows, "count": len(rows)}
+
+
+class PromoteIn(BaseModel):
+    scope: str = Field(min_length=1)     # the LEARNINGS scope the rule lives in
+    hash: str = Field(min_length=1)
+    store_uri: str = Field(min_length=1)
+    verbs: list[str]
+    subtree: bool = False
+    ttl_hours: float | None = None
+
+
+@router.post("/promote")
+async def promote(body: PromoteIn) -> dict:
+    """Promote a proven textual rule to an enforced grant. The operator's click is
+    the only thing that can reach this: prose becomes a predicate because someone
+    who owns the rules decided it should.
+
+    The prose is kept and marked `promoted`, so a job that hits the wall still
+    reads why it is there."""
+    caveats: dict = {}
+    if body.ttl_hours:
+        caveats["expiry"] = (
+            datetime.now(timezone.utc) + timedelta(hours=float(body.ttl_hours))
+        ).isoformat()
+    try:
+        grant = permissions.mint_grant(
+            from_app="operator",
+            to=body.scope,
+            store_uri=body.store_uri,
+            verbs=body.verbs,
+            caveats=caveats,
+            subtree=bool(body.subtree),
+        )
+        row = learnings.mark_promoted(body.scope, body.hash, grant["id"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if row is None:
+        permissions.revoke(grant["id"])
+        raise HTTPException(404, f"no promotion candidate: {body.scope}/{body.hash}")
+    return {"promoted": row, "grant": grant}
 
 
 # ---- Run now ---------------------------------------------------------------
