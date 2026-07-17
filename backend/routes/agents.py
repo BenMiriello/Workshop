@@ -647,7 +647,8 @@ class AgentDefinitionUpdate(BaseModel):
     triggers: list[dict] | None = None
     limits: dict | None = None
     capabilities: list[str] | None = None
-    role: str | None = None            # role taxonomy tag (e.g. "memory")
+    role: str | None = None            # closed enum: maker|reviewer|triager|keeper|broker
+                                       # ("" clears it; unknown -> 400)
     depth: str | None = None           # effort tier: quick | standard | deep
     fanout: str | None = None          # off | read-only
     definition: str | None = None  # the markdown body (persona / instructions)

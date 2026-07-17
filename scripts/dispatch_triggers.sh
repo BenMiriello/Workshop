@@ -14,11 +14,10 @@
 #     already running, and it is not a still-unchanged awaiting_input scope.
 #     Cap: one project sweep per tick (cost bound; the per-scope flock makes it
 #     safe to raise later).
-#   - Agent cron/loop triggers (builder runtime): fire a scope sweep when a cron
-#     trigger is due (vs .runtime/trigger-state.json) or a loop trigger's scope
-#     has ready tasks. Cap: one agent sweep per tick. Assistant-runtime agents
-#     need a data-tier turn runner (not the ralph sweep); logged + skipped here
-#     for a later phase.
+#   - Agent cron/loop triggers: fire when a cron trigger is due (vs
+#     .runtime/trigger-state.json) or a loop trigger's scope has ready tasks, then
+#     route by the agent's ROLE through ROLE_HANDLERS (see below). Cap: one agent
+#     sweep per tick.
 #
 # Honors the global AUTONOMY_DISABLED flag (skips entirely). Never blocks: each
 # sweep is launched detached (setsid) and returns immediately.
@@ -39,8 +38,9 @@ if [[ -f "$AUTONOMY_FLAG" ]]; then
   exit 0
 fi
 
-# The decision engine prints one dispatch per line: "TYPE\tSCOPE\tASSIGNEE".
+# The decision engine prints one dispatch per line: "TYPE\tSCOPE\tASSIGNEE\tTOKEN".
 # TYPE=project -> SCOPE is a slug; TYPE=agent -> SCOPE is a dir, ASSIGNEE=agent:slug.
+# TOKEN is the in-scope grant the job carries (agent dispatches only; empty else).
 PLAN=$(cd "$WORKSHOP" && python3 - <<'PYEOF'
 import json, os, sys
 from datetime import datetime, timedelta, timezone
@@ -48,6 +48,7 @@ from pathlib import Path
 
 sys.path.insert(0, "/home/clawd-a/workshop/backend")
 from services import tasks, jobs, triggers, agents_registry, usage_ledger  # noqa: E402
+from services import dispatch_grants  # noqa: E402
 
 WORKSHOP = Path("/home/clawd-a/workshop")
 STATE_PATH = WORKSHOP / ".runtime" / "trigger-state.json"
@@ -334,7 +335,7 @@ for slug, p in sorted(projects.items()):
         if not ok:
             print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
             continue
-        plan.append(("project", slug, ""))
+        plan.append(("project", slug, "", ""))
         if cb_half_open:
             cb_mark_probe(f"project:{slug}")
         # Consume the cron firing only now that it is actually dispatched (F16).
@@ -367,23 +368,137 @@ for slug, p in sorted(projects.items()):
     if not ok:
         print(f"skip-budget\tproject:{slug}\t{reason}", file=sys.stderr)
         continue
-    plan.append(("project", slug, ""))
+    plan.append(("project", slug, "", ""))
     if cb_half_open:
         cb_mark_probe(f"project:{slug}")
     proj_started += 1
 
-# --- Agent cron/loop triggers (builder runtime) ----------------------------
+# --- Agent cron/loop triggers: the ROLE dispatch table ---------------------
+# Before this table the dispatcher hardcoded `if a.get("role") == "memory"` and
+# printed skip-assistant for everything else, so FIVE registered agents with live
+# triggers never ran once. An agent's `role` (closed enum, validated in
+# agents_registry) now selects its handler:
+#
+#   keeper   -> one memory_keeper_run.sh consolidation pass (what `role: memory`
+#               did; the alias still resolves here, so memory-keeper.md is
+#               untouched and keeps running).
+#   maker    -> the bounded ralph sweep over the agent's scope (what a builder
+#               already did; now reachable by role, not only by runtime).
+#   triager  -> plans a triage pass. The triager RUNNER does not exist yet (it is
+#               P4/D5), so this returns None and says skip-no-runner rather than
+#               inventing a fake dispatch.
+#   reviewer -> same: reviewer.sh is a gate inside a sweep, not a standalone
+#               runner. No dispatch until one exists.
+#   broker   -> NEVER dispatches. A broker is demand-only: it is called when
+#               something needs adjudication, it does not wake up on a timer.
+#
+# Default (no role): builder runtime -> maker; assistant runtime -> the assistant
+# loop (still unbuilt; skip-assistant, as before).
+#
+# Each handler takes (a, slug, ctx) and returns (type, scope, assignee) or None.
+# A handler owns ALL of its own gates (liveness, circuit breaker, readiness,
+# budget), so returning a candidate means the dispatch is certain — that is what
+# lets the shared tail below commit the cron firing and the probe mark exactly
+# when work actually launches (F16).
 agent_started = 0
 try:
     agents = agents_registry.list_agents()
 except Exception:
     agents = []
 
+
+def _budget_ok(slug: str) -> bool:
+    ok, reason = usage_ledger.can_admit(f"agent:{slug}")
+    if not ok:
+        print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
+    return ok
+
+
+def _dispatch_keeper(a, slug, ctx):
+    """Memory consolidation (O6). One pass for the agent's scope."""
+    if not _budget_ok(slug):
+        return None
+    pslug = a.get("project_slug")
+    scope_key = f"project:{pslug}" if pslug else "workshop"
+    return ("memory", scope_key, f"agent:{slug}")
+
+
+def _dispatch_maker(a, slug, ctx):
+    """The bounded ralph sweep over the agent's own scope dir."""
+    from services import build_agents
+    try:
+        rec = build_agents.get_agent(slug)
+    except Exception:
+        return None
+    if not rec:
+        return None
+    pslug = rec.get("project_slug")
+    root = None
+    if pslug:
+        root = build_agents._project_dir(pslug)
+    if root is None and rec.get("cwd"):
+        root = Path(rec["cwd"])
+    if root is None or not Path(root).is_dir():
+        return None
+    if running_job(agent_id=f"agent:{slug}"):
+        return None
+    opened, cb_reason, cb_half_open = circuit_open(f"agent:{slug}", agent_id=f"agent:{slug}")
+    if opened:
+        print(f"skip-circuit\tagent:{slug}\t{cb_reason}", file=sys.stderr)
+        return None
+    if not has_ready(Path(root), assignee=f"agent:{slug}"):
+        return None
+    if not _budget_ok(slug):
+        return None
+    ctx["half_open"] = cb_half_open
+    ctx["scope_key"] = f"project:{pslug}" if pslug else f"agent:{slug}"
+    ctx["scope_path"] = str(root)
+    return ("agent", str(root), f"agent:{slug}")
+
+
+def _dispatch_triager(a, slug, ctx):
+    """Route inbound work into tasks. The runner is P4/D5; until it exists this
+    plans nothing rather than fabricating a dispatch."""
+    print(f"skip-no-runner\ttriager\t{slug}", file=sys.stderr)
+    return None
+
+
+def _dispatch_reviewer(a, slug, ctx):
+    """Judge someone else's work. reviewer.sh runs INSIDE a sweep as its
+    completion gate; there is no standalone reviewer runner to dispatch to yet."""
+    print(f"skip-no-runner\treviewer\t{slug}", file=sys.stderr)
+    return None
+
+
+def _dispatch_assistant_loop(a, slug, ctx):
+    """The non-code data-tier turn runner: still unbuilt. Logged, not dropped."""
+    print(f"skip-assistant\t{slug}\t", file=sys.stderr)
+    return None
+
+
+ROLE_HANDLERS = {
+    "keeper": _dispatch_keeper,
+    "triager": _dispatch_triager,
+    "reviewer": _dispatch_reviewer,
+    "maker": _dispatch_maker,
+    # broker: absent on purpose. Demand-only, never dispatched.
+}
+
+
+def _handler_for(a):
+    """The handler an agent's role selects, or None when it must not dispatch."""
+    role = a.get("role")            # already coerced by agents_registry (alias-resolved)
+    if role == "broker":
+        return None
+    if role in ROLE_HANDLERS:
+        return ROLE_HANDLERS[role]
+    return _dispatch_maker if a.get("runtime") == "builder" else _dispatch_assistant_loop
+
+
 for a in agents:
     if agent_started >= MAX_AGENT_SWEEPS:
         break
     slug = a.get("slug")
-    runtime = a.get("runtime")
     trigs = a.get("triggers") or []
     if not slug or not trigs:
         continue
@@ -399,57 +514,33 @@ for a in agents:
             fire = fire or True  # loop fires when the scope has ready tasks (checked below)
     if not fire:
         continue
-    if runtime != "builder":
-        # Assistant-runtime CONSOLIDATION dispatch (O6): the memory-consolidation
-        # organ is the one assistant agent the dispatcher drives. An agent with
-        # `role: memory` whose cron trigger is due runs one memory_keeper_run.sh
-        # pass (detached), honoring MAX_AGENT_SWEEPS + the usage budget. Every
-        # other assistant agent remains skipped exactly as before.
-        if a.get("role") == "memory":
-            ok, reason = usage_ledger.can_admit(f"agent:{slug}")
-            if not ok:
-                print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
-                continue
-            pslug = a.get("project_slug")
-            scope_key = f"project:{pslug}" if pslug else "workshop"
-            plan.append(("memory", scope_key, f"agent:{slug}"))
-            _fire_ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-            for _k in fired_cron_keys:
-                state[_k] = _fire_ts
-            agent_started += 1
-            continue
-        # Other assistant-runtime agents: non-code data-tier turn runner is a
-        # later phase. Log and skip so we do not silently drop it.
-        print(f"skip-assistant\t{slug}\t", file=sys.stderr)
+
+    handler = _handler_for(a)
+    if handler is None:
         continue
-    # Resolve the builder's scope dir (linked project dir else its cwd).
-    from services import build_agents
-    try:
-        rec = build_agents.get_agent(slug)
-    except Exception:
+    ctx = {"half_open": False, "scope_key": None, "scope_path": None}
+    candidate = handler(a, slug, ctx)
+    if candidate is None:
         continue
-    pslug = rec.get("project_slug")
-    root = None
-    if pslug:
-        root = build_agents._project_dir(pslug)
-    if root is None and rec.get("cwd"):
-        root = Path(rec["cwd"])
-    if root is None or not Path(root).is_dir():
-        continue
-    if running_job(agent_id=f"agent:{slug}"):
-        continue
-    opened, cb_reason, cb_half_open = circuit_open(f"agent:{slug}", agent_id=f"agent:{slug}")
-    if opened:
-        print(f"skip-circuit\tagent:{slug}\t{cb_reason}", file=sys.stderr)
-        continue
-    if not has_ready(Path(root), assignee=f"agent:{slug}"):
-        continue
-    ok, reason = usage_ledger.can_admit(f"agent:{slug}")
-    if not ok:
-        print(f"skip-budget\tagent:{slug}\t{reason}", file=sys.stderr)
-        continue
-    plan.append(("agent", str(root), f"agent:{slug}"))
-    if cb_half_open:
+    typ, scope, assignee = candidate
+
+    # The job's in-scope grant: an agent is not the operator, so it carries what
+    # it was handed rather than inheriting the operator's ambient reach. GENEROUS
+    # by design — read+write over its OWN scope, i.e. exactly what it already
+    # reaches. Best-effort: a mint failure must never wedge the dispatcher, it
+    # just means the sweep runs without a token (today's behavior).
+    token = ""
+    if typ == "agent":
+        try:
+            token = dispatch_grants.mint_in_scope_grant(
+                slug, ctx["scope_key"] or f"agent:{slug}",
+                scope_path=ctx["scope_path"],
+            )["id"]
+        except Exception as e:
+            print(f"grant-mint-failed\tagent:{slug}\t{e}", file=sys.stderr)
+
+    plan.append((typ, scope, assignee, token))
+    if ctx["half_open"]:
         cb_mark_probe(f"agent:{slug}")
     # Consume the cron firing ONLY now that it is actually dispatched; a firing
     # skipped by any gate above stays "due" for the next tick instead of being
@@ -461,21 +552,21 @@ for a in agents:
 
 save_state(state)
 cb_save(CB_STATE)
-for typ, scope, assignee in plan:
-    print(f"{typ}\t{scope}\t{assignee}")
+for typ, scope, assignee, token in plan:
+    print(f"{typ}\t{scope}\t{assignee}\t{token}")
 PYEOF
 )
 
 # Launch each planned sweep detached so the tick never blocks on a sweep.
 COUNT=0
-while IFS=$'\t' read -r TYPE SCOPE ASSIGNEE; do
+while IFS=$'\t' read -r TYPE SCOPE ASSIGNEE TOKEN; do
   [[ -z "$TYPE" ]] && continue
   if [[ "$TYPE" == "project" ]]; then
     log "launch project sweep: $SCOPE"
     setsid nohup "$PROJECT_RALPH" "$SCOPE" >/dev/null 2>&1 &
   elif [[ "$TYPE" == "agent" ]]; then
-    log "launch agent sweep: dir=$SCOPE assignee=$ASSIGNEE"
-    setsid nohup "$PROJECT_RALPH" --dir "$SCOPE" --assignee "$ASSIGNEE" >/dev/null 2>&1 &
+    log "launch agent sweep: dir=$SCOPE assignee=$ASSIGNEE grant=${TOKEN:0:8}"
+    setsid nohup "$PROJECT_RALPH" --dir "$SCOPE" --assignee "$ASSIGNEE" --grant-token "${TOKEN:-}" >/dev/null 2>&1 &
   elif [[ "$TYPE" == "memory" ]]; then
     log "launch memory consolidation: scope=$SCOPE assignee=$ASSIGNEE"
     setsid nohup bash "$MEMORY_KEEPER" "$SCOPE" >/dev/null 2>&1 &

@@ -60,20 +60,37 @@ CONCURRENT_WORKTREES_MAX=${CONCURRENT_WORKTREES_MAX:-2}  # bound on task-worktre
 FORCE=0              # manual operator-triggered run bypasses the global off-switch
 JOB_ID=""            # adopt an already-open Job (manual run) instead of creating one
 TASK_ID_ARG=""       # --task-id: run exactly this one task (run-now), skip next-ready
+GRANT_TOKEN=""       # --grant-token: the in-scope resource grant the dispatcher
+                     # minted for THIS job (services/dispatch_grants.py). A sweep
+                     # is an `agent` identity, not the operator, so its reach is
+                     # handed to it rather than ambient. Empty for a manual run:
+                     # the operator's own Run-now is the operator, never gated.
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --dir)       DIR_ARG="$2"; shift 2 ;;
-    --assignee)  ASSIGNEE="$2"; shift 2 ;;
-    --max-wall)  MAX_WALL="$2"; shift 2 ;;
-    --max-tasks) MAX_TASKS="$2"; shift 2 ;;
-    --job-id)    JOB_ID="$2"; shift 2 ;;
-    --task-id)   TASK_ID_ARG="$2"; shift 2 ;;
-    --force)     FORCE=1; shift ;;
-    *)           SLUG="$1"; shift ;;
+    --dir)         DIR_ARG="$2"; shift 2 ;;
+    --assignee)    ASSIGNEE="$2"; shift 2 ;;
+    --max-wall)    MAX_WALL="$2"; shift 2 ;;
+    --max-tasks)   MAX_TASKS="$2"; shift 2 ;;
+    --job-id)      JOB_ID="$2"; shift 2 ;;
+    --task-id)     TASK_ID_ARG="$2"; shift 2 ;;
+    --grant-token) GRANT_TOKEN="$2"; shift 2 ;;
+    --force)       FORCE=1; shift ;;
+    *)             SLUG="$1"; shift ;;
   esac
 done
 ASSIGNEE_FLAG=(); [[ -n "$ASSIGNEE" ]] && ASSIGNEE_FLAG=(--assignee "$ASSIGNEE")
+
+# The grant dies with the job. Its expiry caveat already bounds it, but a token
+# that outlives its sweep is reach nobody is using, so revoke on EVERY exit path
+# (including the early aborts above the main loop). Idempotent + best-effort.
+revoke_grant() {
+  [[ -z "$GRANT_TOKEN" ]] && return 0
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
+     python3 -m services.dispatch_grants revoke "$GRANT_TOKEN" >/dev/null 2>&1) || true
+  GRANT_TOKEN=""
+}
+trap revoke_grant EXIT
 # A run-now targets exactly one task; never let it drain the queue.
 [[ -n "$TASK_ID_ARG" ]] && MAX_TASKS=1
 
@@ -528,8 +545,9 @@ fi
 # this loop both admit against this scope's rolling-window budget.
 BILL_SCOPE="${SLUG:-$ASSIGNEE}"; [[ -z "$BILL_SCOPE" ]] && BILL_SCOPE="$(basename "$DIR")"
 
+
 START_EPOCH=$(date +%s)
-log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
+log "=== sweep start slug=$SLUG dir=$DIR mode=$MODE job=$JOB_ID scope=$BILL_SCOPE grant=${GRANT_TOKEN:0:8} max_wall=${MAX_WALL}s max_tasks=$MAX_TASKS bound=$REPO_BOUND worktrees=$WT_ENABLED ==="
 
 # The canonical branch for a bound project: the tracked default_branch, else the
 # same main/master/HEAD detection worktrees.py falls back to. Used by
@@ -757,7 +775,7 @@ print(len(crit))
   # worktree mode, where --dir is the isolated worktree. The heartbeat presents
   # CLAIM_TOKEN so it composes with the Fix-1 fence.
   set +e
-  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" >> "$LOG" 2>&1
+  REVIEWER_ALLOW_NO_DIFF="$ALLOW_NO_DIFF" WORKSHOP_GRANT_TOKEN="$GRANT_TOKEN" "$RALPH" "$TASK_TEXT" --dir "$WORK_DIR" --baseline-rev "$BASELINE" --max-iter "$EFF_MAX_ITER" --max-wall "$RALPH_MAX_WALL" --bill-project "$BILL_SCOPE" --receipt "$RECEIPT_FILE" --store-dir "$DIR" --task-id "$TASK_ID" --claim-token "${CLAIM_TOKEN:-}" --run "$CHILD_JOB" >> "$LOG" 2>&1
   RC=$?
   set -e
   [[ -n "$EFF_MODEL" ]] && unset ANTHROPIC_MODEL

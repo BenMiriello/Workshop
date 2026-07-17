@@ -56,7 +56,16 @@ RESOURCE_GRANTS_PATH = Path(os.environ.get(
 # The verbs a resource grant may carry, per Phase 4.
 _VERBS = ("read", "write", "append")
 
+# The notes vault. Durable user data OUTSIDE the repo working tree, so it is not
+# reachable by "it's in the tree, therefore it's fair game" reasoning — it has to
+# be addressed as a Store to be reachable at all (services/stores.py registers it;
+# services/notes_vault.py owns the filesystem access). Same env override
+# notes_vault.vault_root() honors, so the two can never point at different dirs.
+NOTES_VAULT_ROOT = Path(os.environ.get(
+    "WORKSHOP_NOTES_VAULT", str(Path.home() / "notes")))
+
 OPERATOR = "operator"
+AGENT = "agent"
 
 # Sensitivities at which a guest may even be considered for read access. `private`
 # apps are operator-only and never readable by a guest, regardless of grants.
@@ -73,7 +82,16 @@ class Identity:
 
     kind == "operator": the fully-trusted operator (the default). Never gated.
     kind == "guest":    an external/shared-boundary caller, identified by `id`.
-                        Guests are the ONLY callers that authz actually gates.
+    kind == "agent":    an UNATTENDED background process (`id` is the agent slug),
+                        e.g. a dispatched sweep. It holds zero ambient authority:
+                        it reaches exactly what the dispatcher minted it a grant
+                        for, and nothing else.
+
+    Guests and agents are the callers authz actually gates. `operator` is not the
+    human's name for themselves — it is an authority assignment on a running
+    process, and the human's own process is always assigned it. Bounding a
+    program that ingests hostile input (an inbound Discord message, a scraped
+    page, a note body) is not a gate on the operator.
     """
 
     __slots__ = ("kind", "id")
@@ -85,6 +103,15 @@ class Identity:
     @property
     def is_operator(self) -> bool:
         return self.kind == OPERATOR
+
+    @property
+    def is_agent(self) -> bool:
+        return self.kind == AGENT
+
+    @property
+    def grant_subject(self) -> str:
+        """How this identity is named on a grant's `to` side ("agent:<slug>")."""
+        return f"{self.kind}:{self.id}" if self.id else self.kind
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"Identity(kind={self.kind!r}, id={self.id!r})"
@@ -103,9 +130,13 @@ def resolve_identity(value: Any = None) -> Identity:
       * an existing Identity        -> returned as-is
       * "guest:<id>" / a dict with  -> a guest identity (guests come later from a
         {"kind": "guest", "id": ...}   token; we only need the shape now)
+      * "agent:<slug>" / a dict with-> an unattended background process
+        {"kind": "agent", "id": ...}   (the dispatcher names its sweeps this way)
 
     This never raises — an unparseable value falls back to the operator, because
     failing closed on the operator's own access is exactly the cruft forbidden.
+    An agent identity is never inferred: a caller has to SAY it is one, which the
+    dispatcher does explicitly. Nothing accidentally demotes itself.
     """
     if isinstance(value, Identity):
         return value
@@ -116,6 +147,9 @@ def resolve_identity(value: Any = None) -> Identity:
         if kind == "guest":
             gid = value.get("id")
             return Identity("guest", str(gid) if gid is not None else None)
+        if kind == AGENT:
+            aid = value.get("id")
+            return Identity(AGENT, str(aid) if aid is not None else None)
         return OPERATOR_IDENTITY
     if isinstance(value, str):
         v = value.strip()
@@ -124,6 +158,9 @@ def resolve_identity(value: Any = None) -> Identity:
         if v.startswith("guest:"):
             gid = v.split(":", 1)[1].strip()
             return Identity("guest", gid or None)
+        if v.startswith("agent:"):
+            aid = v.split(":", 1)[1].strip()
+            return Identity(AGENT, aid or None)
         # Bare unknown string: be permissive, treat as operator.
         return OPERATOR_IDENTITY
     return OPERATOR_IDENTITY
@@ -282,12 +319,20 @@ def capability_permitted(
     grant row (and 'rw' for a write). Same-app use (from_app == to_app) for the
     operator is trivially permitted; for a guest it still flows through the
     guest's capability grant on that app via `authorize` — this helper is the
-    cross-app grant check specifically."""
+    cross-app grant check specifically.
+
+    Agent: no ambient authority. A grant row addressed TO the agent
+    ("agent:<slug>") is the only thing that permits it."""
     ident = resolve_identity(identity)
     if ident.is_operator:
         return True
     if doc is None:
         doc = load_grants()
+    if ident.is_agent:
+        return _grant_permits(
+            doc, frm=from_app, to=ident.grant_subject, capability=capability,
+            need_write=need_write,
+        )
     return _grant_permits(
         doc, frm=from_app, to=to_app, capability=capability, need_write=need_write
     )
@@ -346,6 +391,13 @@ def authorize(
         yields "confirm"; an allow policy yields "allow".
       * Cross-app capability use (capability passed AND its providing app differs
         from `app_id`) additionally requires a grant row (from provider -> app_id).
+
+    AGENT (an unattended background process — zero ambient authority):
+      * Reads and writes both require a grant row addressed to "agent:<slug>"
+        (writes additionally require mode 'rw'). Unmatched -> "deny". Sensitivity
+        does not gate an agent (it is not an external caller); the grant does.
+      * An agent NEVER gets "confirm": there is no human in its loop to confirm.
+        A confirm-policy action resolves to allow-if-granted, deny otherwise.
     """
     ident = resolve_identity(identity)
     actions = app_actions(app_id)
@@ -355,9 +407,21 @@ def authorize(
         # Honor an explicit per-app confirm opt-in; otherwise allow.
         return "confirm" if policy == "confirm" else "allow"
 
-    # ---- guest path (the boundary) ----
     if doc is None:
         doc = load_grants()
+
+    if ident.is_agent:
+        caps = app_capabilities(app_id)
+        gate_cap = capability or (caps["provides"][0] if caps["provides"] else None)
+        if gate_cap is None:
+            return "deny"
+        need_write = not _is_read_action(app_id, action)
+        return "allow" if _grant_permits(
+            doc, frm=app_id, to=ident.grant_subject, capability=gate_cap,
+            need_write=need_write,
+        ) else "deny"
+
+    # ---- guest path (the boundary) ----
 
     sensitivity = app_sensitivity(app_id)
     is_read = _is_read_action(app_id, action)
@@ -410,7 +474,9 @@ def reachable_apps(identity: Any, app_id: str, doc: dict[str, Any] | None = None
 
     Operator: itself + every app it `needs` whose provider exists (operator can
     reach anything it declares a need for; default-permissive). Guest: itself +
-    apps reachable via an actual grant row to `app_id`."""
+    apps reachable via an actual grant row to `app_id`. Agent: itself + the
+    providers named on grant rows addressed to the agent itself (its minted
+    reach, never the app manifest's declared needs)."""
     ident = resolve_identity(identity)
     result = {app_id}
 
@@ -429,8 +495,9 @@ def reachable_apps(identity: Any, app_id: str, doc: dict[str, Any] | None = None
             if row.get("to") == app_id:
                 result.add(row.get("from"))
     else:
+        subject = ident.grant_subject if ident.is_agent else app_id
         for row in doc.get("grants", []):
-            if row.get("to") == app_id:
+            if row.get("to") == subject:
                 result.add(row.get("from"))
 
     return sorted(result)
@@ -644,16 +711,37 @@ def mint_grant(
     return grant
 
 
+def _within(child_uri: str, parent_uri: str, parent_subtree: bool) -> bool:
+    """Is `child_uri` inside the parent grant's reach? Exact match always; a
+    subtree parent additionally covers anything under its prefix. Same rule
+    `check()` enforces per invocation, so attenuation and enforcement agree."""
+    if child_uri == parent_uri:
+        return True
+    if not parent_subtree:
+        return False
+    return child_uri.startswith(parent_uri.rstrip("/") + "/")
+
+
 def attenuate(
     token_or_grant: Any,
     *,
+    store_uri: str | None = None,
     verbs: list[str] | None = None,
+    subtree: bool | None = None,
     caveats: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Derive a NARROWER grant from an existing one and persist it. Verbs may only
-    be a subset of the parent's; caveats merge over the parent's. Returns the new
-    grant (a new id/token). Raises if the parent is unknown or the requested
-    verbs are not a subset."""
+    """Derive a NARROWER grant from an existing one and persist it.
+
+    This is the one direction authority is allowed to move: every axis may only
+    shrink.
+      * `store_uri` must lie INSIDE the parent's reach (the parent's exact uri, or
+        under it when the parent is a subtree grant). Widening raises.
+      * `verbs` must be a subset of the parent's.
+      * `subtree` may narrow True -> False, never widen False -> True.
+      * `caveats` merge over the parent's, so a child can add an expiry but never
+        drop one the parent carried.
+    Returns the new grant (a new id/token). Raises if the parent is unknown or the
+    request would widen it on any axis."""
     parent = _resolve_grant(token_or_grant)
     if parent is None:
         raise ValueError("cannot attenuate: unknown grant")
@@ -666,14 +754,26 @@ def attenuate(
         new_verbs = req
     if not new_verbs:
         raise ValueError("attenuated grant must retain at least one verb")
+
+    new_uri = parent["store_uri"] if store_uri is None else str(store_uri)
+    if not _within(new_uri, parent["store_uri"], bool(parent.get("subtree"))):
+        raise ValueError(
+            f"attenuated store_uri must be within the parent grant: "
+            f"{new_uri!r} is not inside {parent['store_uri']!r}"
+        )
+
+    new_subtree = bool(parent.get("subtree")) if subtree is None else bool(subtree)
+    if new_subtree and not parent.get("subtree"):
+        raise ValueError("cannot attenuate an exact grant into a subtree grant")
+
     merged_caveats = {**parent.get("caveats", {}), **(caveats or {})}
     return mint_grant(
         from_app=parent["from"],
         to=parent["to"],
-        store_uri=parent["store_uri"],
+        store_uri=new_uri,
         verbs=new_verbs,
         caveats=merged_caveats,
-        subtree=parent["subtree"],
+        subtree=new_subtree,
     )
 
 

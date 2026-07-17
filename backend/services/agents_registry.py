@@ -62,14 +62,30 @@ SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 # Role taxonomy + per-agent effort/fan-out knobs (Phase O6/O7-config). All three
 # are optional frontmatter fields with safe defaults, surfaced in the parsed
-# record and re-serialized on write. `role` is a free-form tag (e.g. "memory",
-# "builder", "researcher") that TYPES an agent without changing how it is
-# assigned work (assignment stays `assignee=agent:<slug>`). `depth` is the effort
-# tier a sweep runs the agent at; `fanout` bounds native subagent use.
+# record and re-serialized on write. `role` TYPES an agent: it selects which
+# HANDLER the dispatcher runs for it (scripts/dispatch_triggers.sh ROLE_HANDLERS),
+# it does not change how work is assigned (assignment stays
+# `assignee=agent:<slug>`). `depth` is the effort tier a sweep runs the agent at;
+# `fanout` bounds native subagent use.
 DEPTHS = ("quick", "standard", "deep")
 FANOUTS = ("off", "read-only")
 DEFAULT_DEPTH = "standard"
 DEFAULT_FANOUT = "read-only"
+
+# CLOSED ENUM (final-plan P0). `role` used to be a free-form tag, which meant a
+# typo (`role: memoy`) silently disabled an agent's dispatch handler instead of
+# failing — the memory-keeper's entire consolidation path hung off an exact string
+# match. Roles are now coerced on read and REJECTED on write.
+#   maker    — does the work (the ralph sweep). The default for a builder.
+#   reviewer — judges someone else's work.
+#   triager  — routes/curates inbound work into tasks.
+#   keeper   — consolidates memory (the memory-keeper organ).
+#   broker   — adjudicates resource access on DEMAND. Never dispatched.
+ROLES = ("maker", "reviewer", "triager", "keeper", "broker")
+
+# Back-compat: `role: memory` predates the enum and is live on agents/memory-keeper.md.
+# It reads as `keeper` so an existing definition keeps dispatching unchanged.
+ROLE_ALIASES = {"memory": "keeper"}
 
 
 def _coerce_depth(v: object) -> str:
@@ -78,6 +94,37 @@ def _coerce_depth(v: object) -> str:
 
 def _coerce_fanout(v: object) -> str:
     return v if v in FANOUTS else DEFAULT_FANOUT
+
+
+def _coerce_role(v: object) -> str | None:
+    """Read-side coercion: a canonical role, or None (no role -> default dispatch).
+
+    Aliases resolve to their canonical name. Anything else (unset, junk, a typo)
+    is None, which the dispatcher reads as "use the runtime's default handler".
+    Writes go through `_validate_role`, which raises instead of coercing, so a
+    typo can only ever enter the tree by hand-editing a definition file."""
+    if not isinstance(v, str):
+        return None
+    r = v.strip().lower()
+    r = ROLE_ALIASES.get(r, r)
+    return r if r in ROLES else None
+
+
+def _validate_role(v: object) -> str | None:
+    """Write-side validation: canonical role, or None for unset/empty. Raises
+    ValueError on an unknown role so create/update surface a 400 rather than
+    silently writing an inert agent."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError(f"role must be a string, one of {ROLES}")
+    r = v.strip().lower()
+    if not r:
+        return None
+    r = ROLE_ALIASES.get(r, r)
+    if r not in ROLES:
+        raise ValueError(f"unknown role {v!r}; must be one of {ROLES}")
+    return r
 
 # Kept in sync with routes/agents.py KNOWN_SOURCES — the event-source vocabulary
 # the subscriptions file is partitioned by.
@@ -157,7 +204,7 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "capabilities": fm.get("capabilities") or [],
         "triggers": triggers.definition_triggers(fm),
         "limits": fm.get("limits") or dict(DEFAULT_LIMITS),
-        "role": fm.get("role") or None,
+        "role": _coerce_role(fm.get("role")),
         "depth": _coerce_depth(fm.get("depth")),
         "fanout": _coerce_fanout(fm.get("fanout")),
         "memory": fm.get("memory"),
@@ -371,8 +418,9 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
     }
     # Only emit the role-taxonomy fields when they carry non-default information,
     # so a fresh definition file is not littered with `depth: standard` noise.
-    if role:
-        fm["role"] = role
+    valid_role = _validate_role(role)
+    if valid_role:
+        fm["role"] = valid_role
     if depth is not None and _coerce_depth(depth) != DEFAULT_DEPTH:
         fm["depth"] = depth
     if fanout is not None and _coerce_fanout(fanout) != DEFAULT_FANOUT:
@@ -453,9 +501,11 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
     if memory is not None:
         fm["memory"] = memory
     if role is not None:
-        # empty string clears the role tag; a value sets it.
-        if role:
-            fm["role"] = role
+        # empty string clears the role tag; a value sets it (validated: an unknown
+        # role raises rather than writing an agent no handler will ever pick up).
+        valid_role = _validate_role(role)
+        if valid_role:
+            fm["role"] = valid_role
         else:
             fm.pop("role", None)
     if depth is not None:
