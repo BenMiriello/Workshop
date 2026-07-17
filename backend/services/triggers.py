@@ -158,7 +158,13 @@ def make_trigger(
         raise ValueError(f"unknown trigger kind: {kind!r}")
     t: dict[str, Any] = {"kind": kind}
     if kind == "cron":
+        # An empty expression is never due, so it disables the agent outright.
+        # Keep the field permissive (the editor PUTs a blank row before the
+        # operator types an expression) but mark it, so the dispatcher can say
+        # so out loud instead of skipping in silence.
         t["cron_expression"] = cron_expression or ""
+        if not t["cron_expression"]:
+            t["disabled_reason"] = "cron trigger has no expression"
     elif kind == "event":
         t["event_sources"] = list(event_sources or [])
     elif kind == "loop":
@@ -173,7 +179,10 @@ def normalize(raw: dict) -> dict:
     canonical shape, filling defaults for loops."""
     return make_trigger(
         raw.get("kind", "manual"),
-        cron_expression=raw.get("cron_expression"),
+        # `cron` is the spelling every hand-authored definition on disk uses
+        # (agents/*.md). Reading only `cron_expression` silently produced an
+        # empty expression, and due("") is False, so those agents never fired.
+        cron_expression=raw.get("cron_expression") or raw.get("cron"),
         event_sources=raw.get("event_sources"),
         max_iterations=raw.get("max_iterations"),
         budget=raw.get("budget"),
