@@ -2,12 +2,13 @@
 // trigger shape emitted by backend/services/triggers.py (kind manual|cron|event
 // |loop). Used by the Agents roster and the Agent detail surface.
 
-export type TriggerKind = "manual" | "cron" | "event" | "loop";
+export type TriggerKind = "manual" | "cron" | "event" | "discord" | "loop";
 
 export type Trigger = {
   kind: TriggerKind;
   cron_expression?: string;
   event_sources?: string[];
+  channels?: string[];
   max_iterations?: number;
   budget?: { max_wall_s?: number };
   completion_gate?: string;
@@ -45,6 +46,10 @@ export function triggerSummary(triggers?: Trigger[]): string {
     .map((t) => {
       if (t.kind === "cron") return `Cron ${t.cron_expression || "(unset)"}`;
       if (t.kind === "event") return `Event: ${(t.event_sources || []).join(", ") || "(none)"}`;
+      if (t.kind === "discord") {
+        const ch = t.channels || [];
+        return `Discord: ${ch.length ? `${ch.length} channel${ch.length > 1 ? "s" : ""}` : "no channels (inert)"}`;
+      }
       if (t.kind === "loop") return `Continuous loop (max ${t.max_iterations ?? "?"} iters)`;
       return "Manual";
     })

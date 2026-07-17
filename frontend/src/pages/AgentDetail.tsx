@@ -68,6 +68,7 @@ const TRIGGER_KINDS: SegmentedOption<TriggerKind>[] = [
   { value: "manual", label: "Manual" },
   { value: "cron", label: "Cron" },
   { value: "event", label: "Event" },
+  { value: "discord", label: "Discord" },
   { value: "loop", label: "Loop" },
 ];
 
@@ -98,6 +99,7 @@ function TriggerEditor({
     const base: Trigger = { kind };
     if (kind === "cron") base.cron_expression = triggers[i].cron_expression || "";
     if (kind === "event") base.event_sources = triggers[i].event_sources || [];
+    if (kind === "discord") base.channels = triggers[i].channels || [];
     if (kind === "loop") {
       base.max_iterations = triggers[i].max_iterations ?? 20;
       base.budget = triggers[i].budget ?? { max_wall_s: 3000 };
@@ -155,6 +157,29 @@ function TriggerEditor({
                   />
                 ))}
               </Row>
+            </div>
+          )}
+          {t.kind === "discord" && (
+            <div style={{ marginTop: "var(--space-3)" }}>
+              <Field label="Channel IDs" htmlFor={`channels-${i}`}>
+                <Input
+                  id={`channels-${i}`}
+                  className="ws-mono"
+                  value={(t.channels || []).join(", ")}
+                  onChange={(e) =>
+                    update(i, {
+                      channels: e.target.value
+                        .split(/[\s,]+/)
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                  placeholder="327927866052444164"
+                />
+              </Field>
+              <p className="ws-muted" style={{ marginTop: "var(--space-2)" }}>
+                Discord channel snowflakes this agent answers. Empty means subscribed to nothing (inert).
+              </p>
             </div>
           )}
           {t.kind === "loop" && (
