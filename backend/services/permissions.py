@@ -53,8 +53,28 @@ RESOURCE_GRANTS_PATH = Path(os.environ.get(
     str(Path(__file__).resolve().parent.parent / "resource-grants.json"),
 ))
 
-# The verbs a resource grant may carry, per Phase 4.
-_VERBS = ("read", "write", "append")
+# The verbs a resource grant may carry.
+#
+#   list    enumerate ids, names, titles, tags, mtimes in the subtree. No bodies.
+#   search  run a query against bodies and return which items match.
+#   read    read an item's body.
+#   append / write  unchanged.
+#
+# `list` without `read` and `read` without `list` are BOTH coherent states (an
+# index agent needs names and not contents; a worker handed one note id needs that
+# note and no enumeration power), which is why both verbs are real. There is
+# deliberately no `exists` verb: `exists(x)` is `list` filtered to a singleton, so
+# it adds no expressive power but does add a cheap oracle — an agent denied `list`
+# could probe it in a loop and reconstruct the index one guess at a time.
+#
+# THE SEARCH LEAK RULE: `search` without `read` returns ids/titles/match counts and
+# no snippets, because a snippet IS a body and would leak exactly what `read` was
+# withheld for. `search` with `read` may return snippets. Mechanical, enforced by
+# the provider (services/stores.py), never a broker judgment.
+_VERBS = ("read", "list", "search", "append", "write")
+
+# Public alias — services/policy.py validates an operator's verbs_max against it.
+VERBS = _VERBS
 
 # The notes vault. Durable user data OUTSIDE the repo working tree, so it is not
 # reachable by "it's in the tree, therefore it's fair game" reasoning — it has to
