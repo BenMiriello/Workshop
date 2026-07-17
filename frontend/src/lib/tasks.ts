@@ -59,6 +59,44 @@ const TASK_ACCEPTANCE_LABEL: Record<TaskAcceptanceKind, string> = {
 export const taskAcceptanceLabel = (kind?: string): string =>
   TASK_ACCEPTANCE_LABEL[(kind ?? "") as TaskAcceptanceKind] ?? String(kind ?? "");
 
+// ---- latitude ---------------------------------------------------------------
+// What a worker may do WHERE THE TICKET DOES NOT SAY (backend services/latitude.py).
+// Not effort (that is depth) and not blast radius (that is `touches` + grants,
+// which are enforced and which latitude never widens).
+export type Latitude = "strict" | "standard" | "open";
+
+export const LATITUDES: Latitude[] = ["strict", "standard", "open"];
+export const DEFAULT_LATITUDE: Latitude = "standard";
+
+const LATITUDE_DESC: Record<Latitude, string> = {
+  strict: "Where the ticket does not say, ask. Blocks often.",
+  standard: "Decides reversible things and records them; blocks on irreversible ones.",
+  open: "Pursues the goal, decides freely within the enforced floor, reports at the end.",
+};
+
+export const latitudeDesc = (v?: string): string =>
+  LATITUDE_DESC[(v ?? "") as Latitude] ?? "";
+
+// Where an effective latitude came from. This travels WITH the value everywhere
+// it is shown: null means inherit, so a value rendered without its source is how
+// an inherited setting gets mistaken for a deliberate one.
+export type LatitudeSource = "invocation" | "task" | "scope" | "default";
+
+export type EffectiveLatitude = {
+  value: Latitude;
+  source: LatitudeSource;
+};
+
+const LATITUDE_SOURCE_LABEL: Record<LatitudeSource, string> = {
+  invocation: "set for this run",
+  task: "set on this ticket",
+  scope: "inherited from the scope",
+  default: "the default",
+};
+
+export const latitudeSourceLabel = (source?: string): string =>
+  LATITUDE_SOURCE_LABEL[(source ?? "") as LatitudeSource] ?? String(source ?? "");
+
 export type Task = {
   id: string;
   text: string;
@@ -68,6 +106,11 @@ export type Task = {
   parent?: string | null;
   priority?: number;
   effort?: string | null;
+  // The ticket's OWN override. null/absent = inherit from the scope; it is NOT
+  // "standard". Read `effective_latitude` to know what a run would actually use.
+  latitude?: Latitude | null;
+  // Resolved by the API (invocation > task > scope > default), with its source.
+  effective_latitude?: EffectiveLatitude;
   depends_on?: string[];
   acceptance?: TaskAcceptance | null;
   max_attempts?: number | null;

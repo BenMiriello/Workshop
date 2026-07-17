@@ -42,6 +42,9 @@ async def list_agents():
             "role": a.get("role"),
             "depth": a.get("depth") or "standard",
             "fanout": a.get("fanout") or "read-only",
+            # null = inherit, and it must stay null over the wire: defaulting it
+            # here would make an unset agent look like a deliberate `standard`.
+            "latitude": a.get("latitude"),
             "capabilities": a.get("capabilities") or [],
             "memory": a.get("memory"),
             "project_slug": a.get("project_slug"),
@@ -651,6 +654,9 @@ class AgentDefinitionUpdate(BaseModel):
                                        # ("" clears it; unknown -> 400)
     depth: str | None = None           # effort tier: quick | standard | deep
     fanout: str | None = None          # off | read-only
+    latitude: str | None = None        # decision rights: strict | standard | open
+                                       # ("" or "standard" clears it to inherit;
+                                       # unknown -> 400)
     definition: str | None = None  # the markdown body (persona / instructions)
 
 
@@ -675,6 +681,7 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
             role=body.role,
             depth=body.depth,
             fanout=body.fanout,
+            latitude=body.latitude,
             body=body.definition,
         )
     except KeyError:

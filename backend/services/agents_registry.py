@@ -46,6 +46,7 @@ import yaml
 
 from services import triggers
 from services import build_agents as _build_agents
+from services import latitude as _latitude
 
 WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
 USER_AGENTS_DIR = Path(os.environ.get(
@@ -72,6 +73,16 @@ FANOUTS = ("off", "read-only")
 DEFAULT_DEPTH = "standard"
 DEFAULT_FANOUT = "read-only"
 
+# `latitude` is decision rights, NOT effort — it is what the worker may do where
+# the ticket does not say (services/latitude.py owns the enum + the cascade).
+# Distinct from `depth`, which is the effort budget: `strict` + `deep` (think
+# hard, then ask) and `open` + `quick` (do the obvious thing, don't ask) are both
+# coherent. Unlike depth/fanout, the parsed record keeps None rather than
+# defaulting, because None means INHERIT: this agent scope is one level of the
+# cascade, not the bottom of it.
+LATITUDES = _latitude.LATITUDES
+DEFAULT_LATITUDE = _latitude.DEFAULT_LATITUDE
+
 # CLOSED ENUM (final-plan P0). `role` used to be a free-form tag, which meant a
 # typo (`role: memoy`) silently disabled an agent's dispatch handler instead of
 # failing — the memory-keeper's entire consolidation path hung off an exact string
@@ -94,6 +105,18 @@ def _coerce_depth(v: object) -> str:
 
 def _coerce_fanout(v: object) -> str:
     return v if v in FANOUTS else DEFAULT_FANOUT
+
+
+def _coerce_latitude(v: object) -> str | None:
+    """Read-side: a canonical latitude, or None meaning inherit from the cascade.
+    Writes go through `_validate_latitude`, which raises instead of coercing."""
+    return _latitude.coerce(v)
+
+
+def _validate_latitude(v: object) -> str | None:
+    """Write-side: raises ValueError on an unknown latitude so create/update
+    surface a 400 rather than writing a value no sweep will honor."""
+    return _latitude.validate(v)
 
 
 def _coerce_role(v: object) -> str | None:
@@ -207,6 +230,7 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "role": _coerce_role(fm.get("role")),
         "depth": _coerce_depth(fm.get("depth")),
         "fanout": _coerce_fanout(fm.get("fanout")),
+        "latitude": _coerce_latitude(fm.get("latitude")),
         "memory": fm.get("memory"),
         "project_slug": fm.get("project_slug") or project_slug,
         "letta_agent_id": letta_id,
@@ -235,6 +259,7 @@ def _record_from_build_state(slug: str, raw: dict) -> dict:
         "role": None,
         "depth": DEFAULT_DEPTH,
         "fanout": DEFAULT_FANOUT,
+        "latitude": None,
         "memory": None,
         "project_slug": project_slug,
         "letta_agent_id": None,
@@ -406,7 +431,8 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               triggers_list: list, limits: dict, memory: Any,
               project_slug: str | None, letta_agent_id: str | None,
               role: str | None = None, depth: str | None = None,
-              fanout: str | None = None, retired: bool = False) -> dict:
+              fanout: str | None = None, latitude: str | None = None,
+              retired: bool = False) -> dict:
     fm: dict[str, Any] = {
         "name": name,
         "runtime": runtime,
@@ -425,6 +451,12 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
         fm["depth"] = depth
     if fanout is not None and _coerce_fanout(fanout) != DEFAULT_FANOUT:
         fm["fanout"] = fanout
+    # Same emit-only-when-non-default rule, and here it is correctness rather
+    # than tidiness: an emitted `latitude: standard` is indistinguishable from a
+    # deliberate choice, so it would out-rank nothing but would read as set.
+    valid_latitude = _validate_latitude(latitude)
+    if valid_latitude and valid_latitude != DEFAULT_LATITUDE:
+        fm["latitude"] = valid_latitude
     if project_slug:
         fm["project_slug"] = project_slug
     if letta_agent_id:
@@ -439,7 +471,8 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
            limits: dict | None = None, memory: Any = None,
            project_slug: str | None = None, letta_agent_id: str | None = None,
            role: str | None = None, depth: str | None = None,
-           fanout: str | None = None, body: str = "") -> dict:
+           fanout: str | None = None, latitude: str | None = None,
+           body: str = "") -> dict:
     slug = slug.strip().lower()
     if not SLUG_RE.match(slug):
         raise ValueError("slug must be kebab-case alphanumeric, start with a letter, max 64 chars")
@@ -452,7 +485,7 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
                    capabilities=capabilities or [], triggers_list=triggers_list or [],
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
                    project_slug=project_slug, letta_agent_id=letta_agent_id,
-                   role=role, depth=depth, fanout=fanout)
+                   role=role, depth=depth, fanout=fanout, latitude=latitude)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_emit(fm, body))
     regenerate_subscriptions()
@@ -463,14 +496,15 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            triggers_list: list | None = None, limits: dict | None = None,
            capabilities: list | None = None, memory: Any = None,
            role: str | None = None, depth: str | None = None,
-           fanout: str | None = None, body: str | None = None) -> dict:
+           fanout: str | None = None, latitude: str | None = None,
+           body: str | None = None) -> dict:
     """Write changes to the definition file. If the agent has no definition file
     yet (e.g. a builder synthesized from build_agents.json), one is created from
     the current record. Regenerates the event-subscriptions file afterward.
 
-    role/depth/fanout follow the same convention as the other setters: None
-    leaves the field untouched (so a plain triggers edit never disturbs a role),
-    a value writes it."""
+    role/depth/fanout/latitude follow the same convention as the other setters:
+    None leaves the field untouched (so a plain triggers edit never disturbs a
+    role), a value writes it."""
     rec = get(slug)
     if rec is None:
         raise KeyError(slug)
@@ -485,6 +519,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
             project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
             role=rec.get("role"), depth=rec.get("depth"), fanout=rec.get("fanout"),
+            latitude=rec.get("latitude"),
         )
         existing_body = rec.get("definition") or ""
 
@@ -518,6 +553,15 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             fm.pop("fanout", None)
         else:
             fm["fanout"] = fanout
+    if latitude is not None:
+        # "" clears the scope's latitude (back to inherit); `standard` is never
+        # emitted, so setting the default clears it too — a scope that stored its
+        # default would read as set while behaving exactly like unset.
+        valid_latitude = _validate_latitude(latitude)
+        if valid_latitude and valid_latitude != DEFAULT_LATITUDE:
+            fm["latitude"] = valid_latitude
+        else:
+            fm.pop("latitude", None)
     new_body = existing_body if body is None else body
 
     fm.setdefault("runtime", rec["runtime"])

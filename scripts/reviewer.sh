@@ -10,6 +10,10 @@
 #     "diff_files": N,
 #     "stub_hits":  [{file, line, marker}, ...],   // NEW stubs only
 #     "typecheck":  {"py": "ok|fail|skipped", "ts": "ok|fail|skipped"},
+#     "verdict":    "approve|reject|block-for-decision",
+#     "latitude":   "strict|standard|open",
+#     "ambiguous":  [string, ...],                 // checks that COULD NOT run
+#     "blocked_reason": string|null,
 #     "criteria":   [{criterion, cmd, expect, pass, evidence}, ...],  // executed, if any
 #     "reasons":    [string, ...]
 #   }
@@ -30,6 +34,19 @@
 #
 # Conservative: if a check can't run (no tooling), it's "skipped" — counted as pass.
 # Strict-mode (REVIEWER_STRICT=1) flips skipped to fail.
+#
+# LATITUDE (exported by ralph.sh, resolved through services/latitude.py) decides
+# what happens when this gate WOULD APPROVE but a check that APPLIED could not
+# actually run — the reviewer's honest "I don't know". Counting that as a pass is
+# the default and is right for `standard`/`open`. At `strict` it is exactly the
+# wrong answer: strict means "when it is not established, ask". So a strict sweep
+# with an applicable-but-unrun check returns verdict `block-for-decision` and a
+# `blocked_reason` naming the ambiguity; project_ralph.sh flips the task to
+# `blocked` with that reason instead of banking an unverified done.
+#
+# "Applicable but unrun" is narrower than "skipped": a skip because no .py file
+# changed is not an ambiguity, it is a non-question. Only a check with real input
+# and no tooling to judge it counts.
 #
 # Usage:
 #   reviewer.sh [baseline-rev]        # default baseline = HEAD
@@ -52,6 +69,15 @@ mkdir -p "$(dirname "$LOG")"
 ts() { date -Iseconds; }
 
 cd "$ROOT" 2>/dev/null || { echo '{"complete":false,"reasons":["root_unreachable"]}'; exit 0; }
+
+# Checks that HAD input to judge but no tooling to judge it with — the reviewer's
+# "I don't know" (see the LATITUDE note above). Empty on a normal run.
+AMBIGUOUS=()
+LATITUDE_VAL=${LATITUDE:-standard}
+case "$LATITUDE_VAL" in
+  strict|standard|open) ;;
+  *) LATITUDE_VAL="standard" ;;
+esac
 
 # 1. Collect changed files vs baseline. Include staged + unstaged + untracked.
 CHANGED_TRACKED=$(git diff --name-only "$BASELINE" 2>/dev/null || true)
@@ -146,6 +172,10 @@ if [[ -n "$PY_FILES" ]]; then
     else
       PY_CHECK="fail"
     fi
+  else
+    # Python changed and neither mypy nor the venv python exists: this gate has
+    # an opinion it cannot form.
+    AMBIGUOUS+=("py_typecheck_unavailable")
   fi
 fi
 
@@ -165,6 +195,8 @@ if [[ -n "$TS_FILES" ]]; then
         TS_CHECK="fail"
       fi
     fi
+  elif echo "$TS_FILES" | grep -q '^frontend/'; then
+    AMBIGUOUS+=("ts_typecheck_unavailable")
   fi
 fi
 
@@ -180,6 +212,8 @@ if printf '%s\n' "$CHANGED_ALL" | grep -qE '^frontend/src/.*\.tsx$'; then
     else
       DESIGN_CHECK="fail"
     fi
+  else
+    AMBIGUOUS+=("design_check_unavailable")
   fi
 fi
 
@@ -273,12 +307,35 @@ if [[ "$STRICT" == "1" ]]; then
   [[ "$TS_CHECK" == "skipped" ]] && { REASONS+=("ts_typecheck_unavailable_strict"); COMPLETE="false"; }
 fi
 
+# 5. Verdict. Three outcomes, not two:
+#   reject             — a hard check failed. The worker can see what and iterate;
+#                        an ambiguity elsewhere is not the interesting fact here,
+#                        so a reject stays a reject at every latitude.
+#   block-for-decision — the gate would APPROVE, but only because a check that
+#                        applied could not run, and this sweep is `strict`. Strict
+#                        means ask rather than assume: the task blocks and the
+#                        operator decides. This is a correct outcome, not a failure.
+#   approve            — everything that applied passed.
+VERDICT="approve"
+BLOCKED_REASON=""
+if [[ "$COMPLETE" != "true" ]]; then
+  VERDICT="reject"
+elif [[ "$LATITUDE_VAL" == "strict" && ${#AMBIGUOUS[@]} -gt 0 ]]; then
+  COMPLETE="false"
+  VERDICT="block-for-decision"
+  AMBIG_LIST=$(IFS=,; echo "${AMBIGUOUS[*]}")
+  BLOCKED_REASON="latitude:strict-and-ambiguous: the gate could not verify ${AMBIG_LIST}, so completeness is unestablished; a strict sweep asks rather than assumes"
+  REASONS+=("block_for_decision:$AMBIG_LIST")
+fi
+
 REASONS_JSON=$(printf '%s\n' "${REASONS[@]:-}" | python3 -c "import json,sys; r=[l.strip() for l in sys.stdin if l.strip()]; print(json.dumps(r))")
+AMBIGUOUS_JSON=$(printf '%s\n' "${AMBIGUOUS[@]:-}" | python3 -c "import json,sys; r=[l.strip() for l in sys.stdin if l.strip()]; print(json.dumps(r))")
 
 # Emit JSON. Build via env vars + Python decoding so shell quoting is safe.
 COMPLETE_BOOL=$([[ "$COMPLETE" == "true" ]] && echo 1 || echo 0)
 TS_NOW=$(ts)
 export COMPLETE_BOOL DIFF_FILES STUB_HITS_JSON PY_CHECK TS_CHECK DESIGN_CHECK APPS_CHECK REASONS_JSON TS_NOW BASELINE CHANGED_ALL CRITERIA_JSON
+export VERDICT BLOCKED_REASON LATITUDE_VAL AMBIGUOUS_JSON
 python3 - <<'PYEOF'
 import json, os
 # The changed-file list, capped so a huge diff cannot bloat the receipt/Job
@@ -302,6 +359,12 @@ out = {
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,
     "reasons":   json.loads(os.environ["REASONS_JSON"]),
+    # The verdict the caller acts on. `block-for-decision` carries the ambiguity
+    # in `blocked_reason`, verbatim, so the block is legible without re-deriving it.
+    "verdict":   os.environ["VERDICT"],
+    "latitude":  os.environ["LATITUDE_VAL"],
+    "ambiguous": json.loads(os.environ["AMBIGUOUS_JSON"]),
+    "blocked_reason": os.environ.get("BLOCKED_REASON") or None,
     "ts":        os.environ["TS_NOW"],
     "baseline":  os.environ["BASELINE"],
 }
@@ -309,7 +372,7 @@ print(json.dumps(out))
 PYEOF
 
 # Also log a one-liner for humans.
-echo "[$(ts)] complete=$COMPLETE diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK reasons=${REASONS[*]:-none}" >> "$LOG"
+echo "[$(ts)] complete=$COMPLETE verdict=$VERDICT latitude=$LATITUDE_VAL diff=$DIFF_FILES stubs=$STUB_COUNT py=$PY_CHECK ts=$TS_CHECK design=$DESIGN_CHECK apps=$APPS_CHECK ambiguous=${AMBIGUOUS[*]:-none} reasons=${REASONS[*]:-none}" >> "$LOG"
 
 # 6. Meter the reviewer's OWN auxiliary claude spend (research rec 5). When this
 #    reviewer performs an LLM review, its `claude --output-format json` envelope is

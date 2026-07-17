@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
-  ChevronDown, ChevronRight, Gauge, GitFork, HelpCircle, SlidersHorizontal,
+  ChevronDown, ChevronRight, Gauge, GitFork, HelpCircle, SlidersHorizontal, Compass,
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill,
   Skeleton, Input, Field, ActionBar, Tag, Toggle, Segmented, catFor,
   useEditMode, type StatusKind, type SegmentedOption,
 } from "../ui";
+import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
 
 // Autonomy = how a scope (a project OR an agent) decides when to work its own
 // task queue through the Ralph loop. The PRIMARY control is a preset (Section
@@ -18,7 +19,10 @@ import {
 //   scheduled   swept on a cron cadence when work is ready
 //   continuous  swept every tick while work is ready, bounded by limits
 //
-// depth (quick/standard/deep) and fanout (off/read-only) tune each sweep; limits
+// depth (quick/standard/deep) and fanout (off/read-only) tune each sweep;
+// latitude (strict/standard/open) sets what a sweep may do WHERE THE TICKET DOES
+// NOT SAY — decision rights, not effort, and never a widening of what the run is
+// allowed to write (that is `touches` + grants, which are enforced); limits
 // bound a continuous loop. All of these are a CONFIG write: edit-mode + explicit
 // Save (never commit-on-change per the design system). The raw expanded trigger
 // list stays reachable under an "Advanced" disclosure for the operator who wants
@@ -67,6 +71,9 @@ type Autonomy = {
   autonomy: Preset;
   depth: Depth;
   fanout: Fanout;
+  // null = this scope sets none, so work here inherits the default. Kept null
+  // (never defaulted to "standard") so the scope never claims a setting it lacks.
+  latitude: Latitude | null;
   limits: Limits;
   triggers: Trigger[];
   queue?: Queue;
@@ -81,6 +88,10 @@ type PrimaryDraft = {
   preset: Preset;
   depth: Depth;
   fanout: Fanout;
+  // The draft carries the default rather than null: the control always shows a
+  // position. Saving `standard` clears the stored value back to null, which is
+  // the same behavior — the scope stops asserting a latitude.
+  latitude: Latitude;
   cron: string;
   maxIterations: string;
   budget: string;
@@ -100,6 +111,11 @@ const DEPTH_OPTIONS: SegmentedOption<Depth>[] = [
   { value: "standard", label: "Standard" },
   { value: "deep", label: "Deep" },
 ];
+
+const LATITUDE_OPTIONS: SegmentedOption<Latitude>[] = LATITUDES.map((v) => ({
+  value: v,
+  label: v.charAt(0).toUpperCase() + v.slice(1),
+}));
 
 const PRESET_DESC: Record<Preset, string> = {
   off: "No automatic runs. Manual Run now only.",
@@ -122,6 +138,9 @@ function isDepth(v: unknown): v is Depth {
 }
 function isFanout(v: unknown): v is Fanout {
   return v === "off" || v === "read-only";
+}
+function isLatitude(v: unknown): v is Latitude {
+  return v === "strict" || v === "standard" || v === "open";
 }
 
 function fmtTs(ts?: string | null): string {
@@ -232,6 +251,7 @@ export default function AutonomyPanel({
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
         depth: isDepth(raw.depth) ? raw.depth : "standard",
         fanout: isFanout(raw.fanout) ? raw.fanout : "read-only",
+        latitude: isLatitude(raw.latitude) ? raw.latitude : null,
         limits: (raw.limits && typeof raw.limits === "object") ? raw.limits : {},
         triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
         queue: raw.queue,
@@ -264,6 +284,7 @@ export default function AutonomyPanel({
     preset: cfg?.autonomy ?? "off",
     depth: cfg?.depth ?? "standard",
     fanout: cfg?.fanout ?? "read-only",
+    latitude: cfg?.latitude ?? DEFAULT_LATITUDE,
     cron: cronFromTriggers(cfg?.triggers),
     maxIterations: cfg?.limits?.max_iterations != null ? String(cfg.limits.max_iterations) : "",
     budget: cfg?.limits?.budget?.max_wall_s != null ? String(cfg.limits.budget.max_wall_s) : "",
@@ -278,6 +299,7 @@ export default function AutonomyPanel({
         triggers: presetToTriggers(draft.preset, draft.cron, limits),
         depth: draft.depth,
         fanout: draft.fanout,
+        latitude: draft.latitude,
         limits,
       };
     } else {
@@ -286,6 +308,7 @@ export default function AutonomyPanel({
         cron: draft.preset === "scheduled" ? draft.cron : undefined,
         depth: draft.depth,
         fanout: draft.fanout,
+        latitude: draft.latitude,
         limits,
       };
     }
@@ -443,6 +466,18 @@ export default function AutonomyPanel({
                   />
                 </Field>
 
+                <Field
+                  label={<><Compass size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Latitude</>}
+                  help={latitudeDesc(pedit.draft.latitude)}
+                >
+                  <Segmented
+                    ariaLabel="Sweep latitude"
+                    options={LATITUDE_OPTIONS}
+                    value={pedit.draft.latitude}
+                    onChange={(v) => pedit.set("latitude", v)}
+                  />
+                </Field>
+
                 <Field label={<><GitFork size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Fan-out</>} help="Allow read-only fan-out to helper agents during a sweep.">
                   <Toggle
                     checked={pedit.draft.fanout === "read-only"}
@@ -497,6 +532,13 @@ export default function AutonomyPanel({
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     <Gauge size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
                     depth: <strong>{cfg?.depth ?? "standard"}</strong>
+                  </span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    <Compass size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
+                    {/* Says "(default)" when this scope sets none, so an inherited
+                        value is never mistaken for one the operator chose here. */}
+                    latitude: <strong>{cfg?.latitude ?? DEFAULT_LATITUDE}</strong>
+                    {cfg?.latitude ? "" : " (default)"}
                   </span>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     <GitFork size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />

@@ -24,7 +24,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import tasks, jobs, triggers
+from services import tasks, jobs, triggers, latitude as latitude_svc
 
 router = APIRouter()
 
@@ -603,6 +603,9 @@ class TriggersIn(BaseModel):
     cron: str | None = None
     depth: str | None = None
     fanout: str | None = None
+    # Decision rights for work in this tree: strict | standard | open. Null (or
+    # "standard", which is never stored) means inherit — see services/latitude.py.
+    latitude: str | None = None
     limits: dict | None = None
     triggers: list[dict] = Field(default_factory=list)
 
@@ -694,6 +697,9 @@ async def get_autonomy(slug: str) -> dict:
         "autonomy": preset,
         "depth": autonomy.get("depth") or "standard",
         "fanout": autonomy.get("fanout") or "read-only",
+        # Stays null when unset: this scope is one level of the latitude cascade,
+        # not the bottom of it, so a defaulted value here would read as a choice.
+        "latitude": latitude_svc.coerce(autonomy.get("latitude")),
         "limits": autonomy.get("limits") or {},
         "triggers": trigs,
         "mode": triggers.project_mode_from_triggers(trigs),
@@ -731,11 +737,23 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
         ((proj.get("autonomy") or {}).get("fanout") or "read-only")
     limits = body.limits if body.limits is not None else \
         ((proj.get("autonomy") or {}).get("limits") or {})
+    # Emit-only-when-non-default (latitude.py): `standard` is stored as null so a
+    # scope never claims a setting it does not have. An unknown value is a 400.
+    if body.latitude is not None:
+        try:
+            lat = latitude_svc.validate(body.latitude)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    else:
+        lat = latitude_svc.coerce((proj.get("autonomy") or {}).get("latitude"))
+    if lat == latitude_svc.DEFAULT_LATITUDE:
+        lat = None
     proj["autonomy"] = {
         "mode": mode,
         "preset": preset,
         "depth": depth,
         "fanout": fanout,
+        "latitude": lat,
         "limits": limits,
         "triggers": norm,
         "updated": _now(),
@@ -746,6 +764,7 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
         "autonomy": preset,
         "depth": depth,
         "fanout": fanout,
+        "latitude": lat,
         "limits": limits,
         "triggers": norm,
         "mode": mode,

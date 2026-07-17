@@ -43,6 +43,13 @@ Canonical Task (version 2)::
                                        # [] = unrestricted (the default).
       "discovered_from": str | None,   # task id that spawned this follow-up
       "effort": str | None,            # "s"|"m"|"l" hint
+      "latitude": str | None,          # "strict"|"standard"|"open" — what the
+                                       # worker may do where THIS ticket does not
+                                       # say. None means INHERIT (not "standard"):
+                                       # the cascade is invocation > task > scope
+                                       # > DEFAULT_LATITUDE, so a stored default
+                                       # here would silently undo a strict scope.
+                                       # See services/latitude.py.
       "created": iso, "updated": iso
     }
 
@@ -63,6 +70,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from services import latitude as _latitude
 from services import todos
 
 # in_review = worker finished, operator is the gate; cancelled = dropped.
@@ -314,6 +322,10 @@ def _normalize(task: dict) -> dict:
         "touches": [str(t) for t in (task.get("touches") or []) if t],
         "discovered_from": task.get("discovered_from") or None,
         "effort": task.get("effort") or None,
+        # Round-trips as None (inherit) when unset OR when the stored value is
+        # junk: coercing a typo to "standard" would look like a deliberate
+        # per-task default and silently undo a strict scope (latitude.py).
+        "latitude": _latitude.coerce(task.get("latitude")),
         "created": str(task.get("created") or now),
         "updated": str(task.get("updated") or now),
     }
@@ -863,12 +875,16 @@ def add(
     touches: list[str] | None = None,
     discovered_from: str | None = None,
     effort: str | None = None,
+    latitude: str | None = None,
     source: dict | None = None,
     provenance: str | None = None,
 ) -> dict:
     text = (text or "").strip()
     if not text:
         raise ValueError("text required")
+    # Validated (not coerced) on the write path: an unknown value raises so the
+    # caller sees a 400 instead of persisting a field the cascade will ignore.
+    latitude = _latitude.validate(latitude)
     if status not in STATUSES:
         status = "todo"
     with _locked(root):
@@ -889,6 +905,7 @@ def add(
             "depends_on": depends_on or [], "acceptance": acceptance,
             "max_attempts": max_attempts, "touches": touches or [],
             "discovered_from": discovered_from, "effort": effort,
+            "latitude": latitude,
             "source": source or {"kind": "operator", "ref": None},
             "provenance": provenance, "created": now, "updated": now,
         })
@@ -911,6 +928,7 @@ def update(
     acceptance: dict | None = None,
     max_attempts: int | None = None,
     effort: str | None = None,
+    latitude: str | None = None,
     job_id: str | None = None,
     evidence: dict | None = None,
     awaiting: dict | None = None,
@@ -943,6 +961,9 @@ def update(
         text = text.strip()
         if not text:
             raise ValueError("text required")
+    if latitude is not None:
+        # "" clears the override back to inherit; an unknown value raises.
+        latitude = _latitude.validate(latitude) or ""
     scope = assignee if assignee is not None else owner
     with _locked(root):
         tasks = _load(root)
@@ -964,7 +985,7 @@ def update(
                            and found.get("claim_token") is not None)
         _material_edit = any(v is not None for v in (
             status, text, assignee, priority, depends_on, blocked_reason,
-            acceptance, max_attempts, effort, awaiting))
+            acceptance, max_attempts, effort, latitude, awaiting))
         if status is not None:
             found["status"] = status
             # Leaving a waiting state clears the operator-input payload; nothing
@@ -996,6 +1017,10 @@ def update(
         if effort is not None:
             # Additive: an empty string clears the hint back to None.
             found["effort"] = effort or None
+        if latitude is not None:
+            # Additive: an empty string clears the override back to None, which
+            # means INHERIT from the scope — not "standard" (latitude.py).
+            found["latitude"] = latitude or None
         if awaiting is not None:
             found["awaiting"] = ({"question": str(awaiting.get("question") or "").strip(),
                                   "since": awaiting.get("since") or _now()}

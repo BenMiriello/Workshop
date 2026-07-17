@@ -935,6 +935,22 @@ print(len(crit))
       python3 "$PTASKS" note "$DIR" "$TASK_ID" "no progress within the run (repeated rejection / near-identical diff, or run token budget exceeded); stopped mid-run" --kind acceptance >/dev/null 2>>"$LOG"
       if [[ "$(release_or_block "$TASK_ID" "$ATTEMPTS" "$MAX_ATTEMPTS" "no progress (thrash) within the run")" == "blocked" ]]; then BLOCKED=$((BLOCKED+1)); else FAILED=$((FAILED+1)); fi
       job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
+    7)
+      # rc=7 (block-for-decision): a `strict` sweep whose gate could not establish
+      # completeness (reviewer.sh). Strict means ask rather than assume, so this
+      # BLOCKS for the operator instead of retrying: the ambiguity is in the
+      # environment, and another attempt re-runs the same unavailable check. Not
+      # release_or_block — the attempt cap is about a task that keeps failing, and
+      # this task did not fail. The reviewer's own reason travels verbatim so the
+      # block is legible without re-deriving what was ambiguous.
+      BLOCK_REASON=$(jq -r '.reviewer.blocked_reason // empty' "$RECEIPT_FILE" 2>/dev/null)
+      [[ -z "$BLOCK_REASON" ]] && BLOCK_REASON="latitude:strict-and-ambiguous"
+      ptasks_tx block "$DIR" "$TASK_ID" "$BLOCK_REASON" \
+        --expect-claim-token "${CLAIM_TOKEN:-}" || true
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "$BLOCK_REASON" --kind acceptance >/dev/null 2>>"$LOG"
+      log "task=$TASK_ID BLOCKED for decision (strict latitude): $BLOCK_REASON"
+      BLOCKED=$((BLOCKED+1))
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE" ;;
     1|2)
       # rc=1 (iteration cap) / rc=2 (wall cap): the run did NOT converge. Finish
       # the child FAILED and count it in tasks_failed so a pure-timeout thrash loop

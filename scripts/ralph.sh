@@ -17,6 +17,7 @@
 #
 # Usage:
 #   ralph.sh "<task description>" [--baseline-rev <rev>] [--max-iter N] [--max-wall S]
+#            [--latitude strict|standard|open]
 #
 # Exit codes:
 #   0  — reviewer approved (COMPLETE)
@@ -28,6 +29,9 @@
 #   6  : in-run no-progress / thrash park: the run was making no progress (same
 #        reviewer rejection or a near-identical diff repeated, or the per-run token
 #        budget was exceeded), so it was stopped MID-RUN. The caller release/blocks.
+#   7  — reviewer returned `block-for-decision`: a strict-latitude run whose gate
+#        could not establish completeness. The caller blocks the task with the
+#        reviewer's reason and lets the operator decide. Re-firing cannot fix it.
 
 set -u
 
@@ -69,6 +73,9 @@ STORE_DIR=""      # --store-dir <dir>: scope dir whose .tasks.json holds the cla
 RUN_ID=""         # --run <job_id>: the child Job (attempt) id, for usage-ledger
                   # attribution (role/task_id/run). Empty for a standalone ralph.
 RUN_TOKENS=0      # accumulated real tokens (input+cache+output) across iterations
+LATITUDE_ARG=""   # --latitude <strict|standard|open>: the INVOCATION level of the
+                  # latitude cascade (invocation > task > scope > default). Empty
+                  # = this run states no preference and inherits.
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -83,6 +90,7 @@ while [[ $# -gt 0 ]]; do
     --claim-token)   CLAIM_TOKEN="$2"; shift 2 ;;
     --store-dir)     STORE_DIR="$2"; shift 2 ;;
     --run)           RUN_ID="$2"; shift 2 ;;
+    --latitude)      LATITUDE_ARG="$2"; shift 2 ;;
     *)               TASK="$1"; shift ;;
   esac
 done
@@ -220,6 +228,61 @@ learn_block() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
      python3 -m services.learnings block --scope "$1" 2>/dev/null) || true
 }
+
+# --- Latitude: what this run may do where the ticket does not say ------------
+# Resolved HERE, at claim time, through the one cascade every reader shares
+# (services/latitude.py): invocation > task > scope > "standard". First non-null
+# wins; a null at any level means INHERIT, never "standard". The scope level is
+# the scope that OWNS THE TREE this task lives in (LEARN_SCOPE is that key, in
+# its prefixed form after P0's F3 fix) — an agent with `latitude: open` in its
+# own frontmatter does not import that permissiveness into a project the operator
+# marked strict.
+#
+# Exported as LATITUDE so both the `claude -p` env and reviewer.sh see the same
+# resolved value; reviewer.sh blocks instead of guessing when it is `strict`.
+LATITUDE_JSON=$( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.latitude \
+  resolve --scope "$LEARN_SCOPE" \
+  ${TASK_ID:+--store-dir "$STORE_DIR" --task-id "$TASK_ID"} \
+  ${LATITUDE_ARG:+--invocation "$LATITUDE_ARG"} 2>>"$LOG") || true)
+LATITUDE=$(printf '%s' "$LATITUDE_JSON" | python3 -c "import json,sys
+try: print((json.load(sys.stdin) or {}).get('latitude') or 'standard')
+except Exception: print('standard')" 2>/dev/null || echo "standard")
+LATITUDE_SOURCE=$(printf '%s' "$LATITUDE_JSON" | python3 -c "import json,sys
+try: print((json.load(sys.stdin) or {}).get('source') or 'default')
+except Exception: print('default')" 2>/dev/null || echo "default")
+export LATITUDE
+log "latitude=$LATITUDE (source=$LATITUDE_SOURCE scope=${LEARN_SCOPE:-none} task=${TASK_ID:-none})"
+
+# The persona paragraph. Latitude is ADVISORY policy ABOVE the enforced floor:
+# it never widens what `touches` and the grants allow, it only says what to do
+# with the residue the ticket left unspecified.
+LATITUDE_RULE_strict="STRICT: do what the ticket says and nothing more. Where the
+ticket does not say, ASK — do not decide. Raise the question with
+\`project_tasks.py set-awaiting\` (or block the task with a specific reason) and
+stop; a block is a correct outcome here, not a failure."
+LATITUDE_RULE_standard="STANDARD: decide REVERSIBLE things yourself and record the
+choice as task evidence (\`project_tasks.py note\`). BLOCK on anything
+irreversible, on anything outside the task's declared \`touches\`, and on any hard
+gate."
+LATITUDE_RULE_open="OPEN: pursue the goal. Decide freely within the enforced floor
+(\`touches\` + your grants still bind you absolutely) and report the decisions you
+made at the end, in the task evidence."
+LATITUDE_RULE_VAR="LATITUDE_RULE_$LATITUDE"
+RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
+
+## Latitude for THIS run: $LATITUDE
+Latitude is what you are authorized to do WHERE THE TICKET DOES NOT SAY. Every
+ticket underspecifies something; this is the standing policy for that residue.
+${!LATITUDE_RULE_VAR}
+
+REVERSIBLE means: a later \`git revert\` or a one-line edit fully undoes it, there
+is no external side effect, and no third party has observed it. Adding a file is
+reversible. Adding a dependency others will install, pushing a branch, sending a
+message, deleting a store: NOT reversible.
+
+Latitude never widens the enforced floor. It is advice about decisions, not
+permission: no latitude value lets you write outside the task's \`touches\` or
+outside a grant. Those are enforced and they win."
 GLOBAL_LEARN=$(learn_block global)
 SCOPE_LEARN=""
 if [[ -n "$LEARN_SCOPE" && "$LEARN_SCOPE" != "global" ]]; then
@@ -539,7 +602,20 @@ print(sid)
     continue
   fi
   COMPLETE=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(int(json.load(sys.stdin).get('complete', False)))" 2>/dev/null || echo 0)
-  log "iter $iter reviewer.complete=$COMPLETE"
+  VERDICT=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('verdict') or 'reject')" 2>/dev/null || echo reject)
+  log "iter $iter reviewer.complete=$COMPLETE verdict=$VERDICT"
+
+  # block-for-decision: the gate would have approved but could not verify what it
+  # needed to, and this run is `strict`, so the answer is "ask", not "assume".
+  # Terminal for the run — another iteration re-runs the same unavailable check.
+  # The caller (project_ralph.sh) reads the reason out of the receipt and blocks
+  # the task with it.
+  if [[ "$VERDICT" == "block-for-decision" ]]; then
+    BLOCK_REASON=$(echo "$REVIEWER_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('blocked_reason') or 'latitude:strict-and-ambiguous')" 2>/dev/null || echo "latitude:strict-and-ambiguous")
+    log "BLOCK-FOR-DECISION at iter $iter: $BLOCK_REASON"
+    exit_code=7
+    break
+  fi
 
   if (( SAW_SENTINEL == 1 && COMPLETE == 1 )); then
     log "PASS — sentinel + reviewer approval"

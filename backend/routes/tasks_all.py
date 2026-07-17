@@ -31,7 +31,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import tasks, task_scope, task_dedup, jobs, build_agents, ownership
+from services import (tasks, task_scope, task_dedup, jobs, build_agents, ownership,
+                      latitude as latitude_svc)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -52,6 +53,32 @@ def _root_for_scope(scope: str | None) -> Path | None:
     if not scope:
         return None
     return task_scope.root_for_context(scope)
+
+
+def _with_latitude(rec: dict, scope: str, cache: dict[str, str | None] | None = None) -> dict:
+    """Stamp the EFFECTIVE latitude and its source onto an outgoing task.
+
+    The stored `latitude` stays exactly as it is (null = inherit); this ADDS the
+    resolved view the UI needs. The source travels with the value because an
+    inherited value that renders as if it were set is precisely how the
+    null-means-inherit bug becomes invisible on screen."""
+    if cache is None:
+        scope_lat = latitude_svc.scope_latitude(scope)
+    else:
+        if scope not in cache:
+            cache[scope] = latitude_svc.scope_latitude(scope)
+        scope_lat = cache[scope]
+    # `resolve` reads the scope through the registry; feed it the cached value by
+    # short-circuiting the chain here so a 200-task list does one read per scope.
+    value = latitude_svc.coerce(rec.get("latitude"))
+    if value:
+        source = "task"
+    elif scope_lat:
+        value, source = scope_lat, "scope"
+    else:
+        value, source = latitude_svc.DEFAULT_LATITUDE, "default"
+    rec["effective_latitude"] = {"value": value, "source": source}
+    return rec
 
 
 def _project_slugs() -> list[str]:
@@ -117,6 +144,7 @@ async def list_all(
     (restrict to a single scope key)."""
     out: list[dict] = []
     scopes = 0
+    lat_cache: dict[str, str | None] = {}
     for skey, root in _scope_roots():
         if scope and skey != scope:
             continue
@@ -130,7 +158,7 @@ async def list_all(
                 continue
             rec = dict(t)
             rec["scope"] = skey
-            out.append(rec)
+            out.append(_with_latitude(rec, skey, lat_cache))
     return {"tasks": out, "count": len(out), "scopes": scopes}
 
 
@@ -242,6 +270,8 @@ class TaskCreateIn(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     priority: int = 0
     effort: str | None = None  # s|m|l hint; set post-create, never a gate
+    # strict|standard|open, or null to inherit from the scope (latitude.py).
+    latitude: str | None = None
 
 
 @router.post("")
@@ -264,15 +294,20 @@ async def create(body: TaskCreateIn) -> dict:
     task = dict(res["task"]) if res.get("task") else None
     # `effort` is a hint the create path did not carry; stamp it on a freshly
     # created task (not a merge, which would overwrite the existing one's).
-    if task is not None and body.effort and res.get("decision") not in ("exact", "merge"):
+    # `latitude` rides the same post-create stamp: an override belongs to the new
+    # ticket, and a merge must not silently retune the ticket it merged into.
+    if task is not None and (body.effort or body.latitude) and \
+            res.get("decision") not in ("exact", "merge"):
         try:
-            updated = tasks.update(root, task["id"], effort=body.effort)
+            updated = tasks.update(root, task["id"], effort=body.effort,
+                                   latitude=body.latitude)
             if updated:
                 task = dict(updated)
-        except ValueError:
-            pass
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     if task is not None:
         task["scope"] = body.scope
+        _with_latitude(task, body.scope)
     return {
         "task": task,
         "decision": res.get("decision"),
@@ -298,6 +333,8 @@ class TaskPatchIn(BaseModel):
     priority: int | None = None
     assignee: str | None = None
     effort: str | None = None
+    # "" clears the override back to inherit; an unknown value is a 400.
+    latitude: str | None = None
     # Advanced fields tasks.update() already supports; None leaves each unchanged.
     acceptance: TaskAcceptanceIn | None = None
     max_attempts: int | None = None
@@ -314,7 +351,7 @@ async def get_one(scope: str, task_id: str) -> dict:
         raise HTTPException(404, f"task not found: {task_id}")
     rec = dict(t)
     rec["scope"] = scope
-    return rec
+    return _with_latitude(rec, scope)
 
 
 _ACCEPTANCE_KINDS = {"reviewer", "command", "operator"}
@@ -327,7 +364,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
         raise HTTPException(400, f"unknown scope: {scope}")
     if all(v is None for v in (
         body.status, body.text, body.priority, body.assignee, body.effort,
-        body.acceptance, body.max_attempts, body.depends_on,
+        body.latitude, body.acceptance, body.max_attempts, body.depends_on,
     )):
         raise HTTPException(400, "no fields to update")
     # Acceptance: an empty/none kind clears it (falsy dict -> store sets None); a
@@ -350,6 +387,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             priority=body.priority,
             assignee=body.assignee,
             effort=body.effort,
+            latitude=body.latitude,
             acceptance=acceptance_arg,
             max_attempts=body.max_attempts,
             depends_on=body.depends_on,
@@ -360,7 +398,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
         raise HTTPException(404, f"task not found: {task_id}")
     rec = dict(t)
     rec["scope"] = scope
-    return rec
+    return _with_latitude(rec, scope)
 
 
 @router.delete("/{scope}/{task_id}")

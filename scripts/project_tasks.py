@@ -14,8 +14,11 @@ Verbs (all take a scope directory as the first positional):
   list-json <dir> [--assignee A] [--include-done]
   add <dir> "text" [--priority N] [--depends-on id,id] [--assignee A]
       [--touches glob,glob] [--acceptance-cmd CMD] [--criterion 'desc::cmd::expect']
-      [--max-attempts N] [--effort s|m|l] [--discovered-from id] [--provenance KEY]
-      [--source KIND]
+      [--max-attempts N] [--effort s|m|l] [--latitude strict|standard|open]
+      [--discovered-from id] [--provenance KEY] [--source KIND]
+      # --latitude is what the worker may do where THIS ticket does not say.
+      # Omit it to INHERIT the scope's setting (that is not the same as
+      # `--latitude standard`, which pins the default onto the ticket).
       # --criterion is repeatable and attaches a machine-checkable assertion the
       # gate EXECUTES (exit0 by default, or an expected stdout substring). The
       # 'desc::' and '::expect' segments are optional: 'cmd' alone => exit0 gate.
@@ -44,6 +47,7 @@ _BACKEND = Path(__file__).resolve().parent.parent / "backend"
 sys.path.insert(0, str(_BACKEND))
 
 from services import tasks  # noqa: E402
+from services.latitude import LATITUDES as _LATITUDES  # noqa: E402
 
 
 def _csv(v: str | None) -> list[str]:
@@ -83,6 +87,9 @@ def _slim(t: dict | None) -> dict:
         "attempts": t.get("attempts", 0), "awaiting": t.get("awaiting"),
         "blocked_reason": t.get("blocked_reason"),
         "touches": t.get("touches", []),
+        "effort": t.get("effort"),
+        # null = inherit from the scope; ralph.sh resolves the cascade itself.
+        "latitude": t.get("latitude"),
         "claim_token": t.get("claim_token"),
         "lease_until": t.get("lease_until"),
         "last_heartbeat": t.get("last_heartbeat"),
@@ -123,6 +130,7 @@ def main(argv: list[str]) -> int:
                          "(expect defaults to exit0; a bare 'cmd' is allowed)")
     sp.add_argument("--max-attempts", type=int, default=None)
     sp.add_argument("--effort", default=None)
+    sp.add_argument("--latitude", default=None, choices=(None, *_LATITUDES))
     sp.add_argument("--discovered-from", default=None)
     sp.add_argument("--provenance", default=None)
     sp.add_argument("--source", default="agent")
@@ -180,6 +188,7 @@ def main(argv: list[str]) -> int:
                 root, text=a.text, priority=a.priority, depends_on=_csv(a.depends_on),
                 assignee=a.assignee, touches=_csv(a.touches), acceptance=acceptance,
                 max_attempts=a.max_attempts, effort=a.effort,
+                latitude=a.latitude,
                 discovered_from=a.discovered_from, provenance=a.provenance,
                 source={"kind": a.source, "ref": None},
             )
