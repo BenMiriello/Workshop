@@ -93,8 +93,18 @@ class AppSpec:
 
 # --------------------------------------------------------------------------- #
 # Finance / Budget MCP: the plaid server the finance & budget chat assistants
-# use for on-demand transaction lookup. Path is home-relative (no operator-
-# specific absolute path baked into platform code); override with the env var.
+# use for on-demand transaction lookup.
+#
+# The source now lives IN-TREE at backend/mcp/plaid/ (final-plan PM.4): it used
+# to be sourced from ~/clawdbot/plaid-mcp/, outside the repo, which made it
+# undiffable and tied a first-class platform capability to the lifetime of the
+# masini bridge's home directory. Repo-relative, so a fresh clone gets it after
+# one `npm install` in that dir; override with the env var.
+#
+# NOT moved: the secrets it reads. `~/.config/clawdbot/plaid-auth.env` (creds)
+# and `~/.config/clawdbot/plaid-tokens.json` (per-bank access tokens, mode 0600)
+# keep their host-level paths — server.js reads them from there directly. Code
+# moves into the repo; secrets never do.
 # --------------------------------------------------------------------------- #
 _PLAID_MCP = {
     "plaid": {
@@ -102,7 +112,7 @@ _PLAID_MCP = {
         "command": "node",
         "args": [os.environ.get(
             "WORKSHOP_PLAID_MCP",
-            str(Path.home() / "clawdbot" / "plaid-mcp" / "server.js"),
+            str(Path(__file__).resolve().parents[1] / "mcp" / "plaid" / "server.js"),
         )],
     },
 }
