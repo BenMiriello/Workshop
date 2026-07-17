@@ -28,6 +28,7 @@ WORKSHOP=/home/clawd-a/workshop
 AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
 PROJECT_RALPH=$WORKSHOP/scripts/project_ralph.sh
 MEMORY_KEEPER=$WORKSHOP/scripts/memory_keeper_run.sh
+TRIAGER=$WORKSHOP/scripts/triager_run.sh
 LOG=$WORKSHOP/.runtime/dispatch.log
 
 ts() { date -Iseconds; }
@@ -384,9 +385,10 @@ for slug, p in sorted(projects.items()):
 #               untouched and keeps running).
 #   maker    -> the bounded ralph sweep over the agent's scope (what a builder
 #               already did; now reachable by role, not only by runtime).
-#   triager  -> plans a triage pass. The triager RUNNER does not exist yet (it is
-#               P4/D5), so this returns None and says skip-no-runner rather than
-#               inventing a fake dispatch.
+#   triager  -> one note-triage pass over the agent's scope (triager_run.sh): the
+#               notes modified since the scope's watermark are each decided
+#               task/link/escalate/none. Gated on a stat-only ready predicate, so
+#               a scope with no new notes costs nothing.
 #   reviewer -> same: reviewer.sh is a gate inside a sweep, not a standalone
 #               runner. No dispatch until one exists.
 #   broker   -> NEVER dispatches. A broker is demand-only: it is called when
@@ -457,10 +459,31 @@ def _dispatch_maker(a, slug, ctx):
 
 
 def _dispatch_triager(a, slug, ctx):
-    """Route inbound work into tasks. The runner is P4/D5; until it exists this
-    plans nothing rather than fabricating a dispatch."""
-    print(f"skip-no-runner\ttriager\t{slug}", file=sys.stderr)
-    return None
+    """One note-triage pass over the agent's scope (P4/D5, the ant).
+
+    Gates, in cost order: the READY PREDICATE first (a stat-only scan for notes
+    modified since the scope's triage watermark), because a scope with nothing new
+    must cost a directory listing and not a budget check, a Job read, or a model
+    call; then liveness; then budget. A triager over a quiet scope is a no-op that
+    never wakes anything up.
+
+    No circuit breaker here: a triage pass files tasks, it does not work them, so
+    it produces no coordinator sweep Job for the breaker to count. Its own
+    termination bound is the per-pass note/task caps inside the runner."""
+    pslug = a.get("project_slug")
+    scope_key = f"project:{pslug}" if pslug else "workshop"
+    try:
+        from services import triager
+        if not triager.has_due_notes(scope_key):
+            return None
+    except Exception as e:
+        print(f"triage-predicate-failed\tagent:{slug}\t{e}", file=sys.stderr)
+        return None
+    if running_job(agent_id=f"agent:{slug}"):
+        return None
+    if not _budget_ok(slug):
+        return None
+    return ("triage", scope_key, f"agent:{slug}")
 
 
 def _dispatch_reviewer(a, slug, ctx):
@@ -570,6 +593,11 @@ while IFS=$'\t' read -r TYPE SCOPE ASSIGNEE TOKEN; do
   elif [[ "$TYPE" == "memory" ]]; then
     log "launch memory consolidation: scope=$SCOPE assignee=$ASSIGNEE"
     setsid nohup bash "$MEMORY_KEEPER" "$SCOPE" >/dev/null 2>&1 &
+  elif [[ "$TYPE" == "triage" ]]; then
+    # The agent slug carries the definition body whose `## Rules` section the pass
+    # runs BEFORE the model, so it travels with the dispatch.
+    log "launch note triage: scope=$SCOPE assignee=$ASSIGNEE"
+    setsid nohup bash "$TRIAGER" "$SCOPE" --agent "${ASSIGNEE#agent:}" >/dev/null 2>&1 &
   fi
   COUNT=$((COUNT+1))
 done <<< "$PLAN"

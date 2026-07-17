@@ -342,12 +342,19 @@ def dedup_add(
     depends_on: list[str] | None = None,
     acceptance: dict | None = None,
     touches: list[str] | None = None,
+    provenance: str | None = None,
 ) -> dict:
     """Create a task from a chat, deduped against open tasks in this scope.
 
     Returns {decision, task, matched_id, cosine, message} where `task` is the
     canonical existing task (on merge) or the newly created one (related/distinct),
     and `message` is a short operator-facing line the chat can surface.
+
+    `provenance` overrides the default dedupe key (the canonical text hash) when
+    the caller has a STABLER identity for the work than its wording — a triager
+    passes `note:<scope>:<id>`, so re-filing the same note is idempotent in
+    `tasks.add` even if the model phrases the task differently on a later pass.
+    Omitted (the chat path), the canonical hash is used exactly as before.
 
     - merge/exact: no new task; the matched task gets an evidence entry carrying
       the new chat's provenance (the signal is preserved, not dropped).
@@ -360,6 +367,7 @@ def dedup_add(
         raise ValueError("text required")
     src = source or {"kind": "chat", "ref": None}
     src_ref = src.get("ref") or "chat"
+    prov = provenance or canonical_hash(text)
 
     d = decide(text, _open_tasks(root))
     decision = d["decision"]
@@ -390,7 +398,7 @@ def dedup_add(
             root, text=text, priority=priority, depends_on=depends_on or [],
             acceptance=acceptance, touches=touches or [],
             discovered_from=matched_id, source=src,
-            provenance=canonical_hash(text),
+            provenance=prov,
         )
         # Evidence on BOTH sides so the link is navigable either direction.
         tasks.update(root, task["id"],
@@ -406,13 +414,14 @@ def dedup_add(
             "message": f"created task {task['id']}, linked related to {matched_id}{cpart}",
         }
 
-    # distinct. provenance = canonical hash so two chats filing the same text
-    # concurrently collapse atomically under the store lock (TOCTOU: both decide
-    # "distinct" before either commits; add() returns the first under the lock).
+    # distinct. provenance defaults to the canonical hash so two chats filing the
+    # same text concurrently collapse atomically under the store lock (TOCTOU:
+    # both decide "distinct" before either commits; add() returns the first under
+    # the lock). A caller-supplied key (a note id) collapses the same way.
     task = tasks.add(
         root, text=text, priority=priority, depends_on=depends_on or [],
         acceptance=acceptance, touches=touches or [], source=src,
-        provenance=canonical_hash(text),
+        provenance=prov,
     )
     return {
         "decision": "distinct",
