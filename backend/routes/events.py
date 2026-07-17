@@ -32,7 +32,8 @@ SUBSCRIPTIONS = Path(os.environ.get(
 
 # Sources we will actively accept. Unknown sources are still logged but
 # get an explicit "unknown_source" flag so we can audit untrusted callers.
-KNOWN_SOURCES = {"plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "birdnet", "custom"}
+KNOWN_SOURCES = {"plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles",
+                 "birdnet", "discord", "custom"}
 
 
 def _load_subscriptions() -> dict[str, list[str]]:

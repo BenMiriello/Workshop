@@ -5,6 +5,9 @@ One vocabulary describes when any Agent or Project runs. A trigger has a `kind`:
     manual  — only runs when a person presses "run now"
     cron    — runs on a cron schedule (carries `cron_expression`)
     event   — runs when a subscribed source fires (carries `event_sources`)
+    discord — runs when an inbound Discord message lands on a named channel
+              (carries `channels`). A narrow spelling of `event` over the
+              `discord` source; see the note below.
     loop    — an unattended self-refiring loop; carries `max_iterations`,
               `budget`, and a `completion_gate` reference (the reviewer that
               decides "done") so the loop is bounded and cannot run forever.
@@ -12,13 +15,29 @@ One vocabulary describes when any Agent or Project runs. A trigger has a `kind`:
 Normalized trigger shape (a plain dict, JSON-friendly):
 
     {
-      "kind": "manual" | "cron" | "event" | "loop",
+      "kind": "manual" | "cron" | "event" | "discord" | "loop",
       "cron_expression": "<expr>",   # kind == cron
       "event_sources": ["plaid"],    # kind == event
+      "channels": ["1506..."],       # kind == discord
       "max_iterations": 20,          # kind == loop
       "budget": {"max_wall_s": 3000},# kind == loop
       "completion_gate": "reviewer"  # kind == loop
     }
+
+Why `discord` is its own kind rather than `event` + `event_sources: [discord]`
+(final-plan PM.2): an `event` trigger fans an agent out over a WHOLE source, but
+a Discord agent is per-CHANNEL — masini answers the operator's channels and must
+not wake on every guild message. The `channels` list is the part `event_sources`
+cannot express. It reduces to the same delivery path: the bridge POSTs the
+inbound envelope to `/events/discord`, it lands in `.runtime/events.jsonl`, and
+`agents_registry.regenerate_subscriptions` wires the subscription — so no new
+transport, only a new selector.
+
+DISPATCH NOTE. `discord` is deliberately NOT a kind the cron dispatcher fires:
+`scripts/dispatch_triggers.sh` only fires `cron` (when due) and `loop` (when the
+scope has ready tasks). A `discord` trigger is armed by an inbound message or it
+is armed by nothing at all — which is what makes declaring one on an agent inert
+until something actually posts a Discord event to the bus.
 
 Phase 1 backing stores are adapted, not replaced:
 
@@ -40,7 +59,12 @@ from datetime import datetime, timedelta, timezone
 
 from services import jobs
 
-KINDS = ("manual", "cron", "event", "loop")
+KINDS = ("manual", "cron", "event", "discord", "loop")
+
+# The event-bus source name a `discord` trigger subscribes to. Kept as a constant
+# because three files have to agree on the spelling (this module, the
+# subscriptions writer in agents_registry, and the bridge's POST target).
+DISCORD_SOURCE = "discord"
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +173,7 @@ def make_trigger(
     *,
     cron_expression: str | None = None,
     event_sources: list[str] | None = None,
+    channels: list[str] | None = None,
     max_iterations: int | None = None,
     budget: dict | None = None,
     completion_gate: str | None = None,
@@ -157,7 +182,18 @@ def make_trigger(
     if kind not in KINDS:
         raise ValueError(f"unknown trigger kind: {kind!r}")
     t: dict[str, Any] = {"kind": kind}
-    if kind == "cron":
+    if kind == "discord":
+        # Channel ids are Discord snowflakes; carry them as strings. YAML happily
+        # parses a bare 19-digit snowflake as an int, and an int would never
+        # match the string chat_id the bridge posts, so coerce rather than trust
+        # the frontmatter's type.
+        t["channels"] = [str(c) for c in (channels or [])]
+        if not t["channels"]:
+            # Same rule as an empty cron expression: a trigger that can never
+            # match is disabled, and it says so out loud instead of being wired
+            # to nothing in silence.
+            t["disabled_reason"] = "discord trigger has no channels"
+    elif kind == "cron":
         # An empty expression is never due, so it disables the agent outright.
         # Keep the field permissive (the editor PUTs a blank row before the
         # operator types an expression) but mark it, so the dispatcher can say
@@ -184,6 +220,7 @@ def normalize(raw: dict) -> dict:
         # empty expression, and due("") is False, so those agents never fired.
         cron_expression=raw.get("cron_expression") or raw.get("cron"),
         event_sources=raw.get("event_sources"),
+        channels=raw.get("channels"),
         max_iterations=raw.get("max_iterations"),
         budget=raw.get("budget"),
         completion_gate=raw.get("completion_gate"),

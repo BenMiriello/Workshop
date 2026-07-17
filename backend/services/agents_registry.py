@@ -173,8 +173,10 @@ def _validate_role(v: object) -> str | None:
     return r
 
 # Kept in sync with routes/agents.py KNOWN_SOURCES — the event-source vocabulary
-# the subscriptions file is partitioned by.
-KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles", "custom"]
+# the subscriptions file is partitioned by. `discord` is the source a `discord`
+# trigger subscribes to (final-plan PM.2); it is fed by scripts/masini_event_bridge.py.
+KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles",
+                 triggers.DISCORD_SOURCE, "custom"]
 
 DEFAULT_LIMITS = {
     "max_iterations": triggers.DEFAULT_LOOP_MAX_ITERATIONS,
@@ -847,6 +849,20 @@ def regenerate_subscriptions() -> dict:
                 for src in t.get("event_sources") or []:
                     if src in fresh and aid not in fresh[src]:
                         fresh[src].append(aid)
+            elif t.get("kind") == triggers.DISCORD_SOURCE:
+                # A `discord` trigger subscribes its agent to the `discord`
+                # source. `channels` narrows WHICH messages should wake it, but
+                # the subscriptions file is a source->agent_ids index with no
+                # room for a selector, so the channel filter is applied by the
+                # consumer against the event body, not here. A trigger the
+                # normalizer disabled (no channels) is not wired at all — it can
+                # never match, so subscribing it would only produce wakeups the
+                # consumer must then throw away.
+                if t.get("disabled_reason"):
+                    continue
+                src = triggers.DISCORD_SOURCE
+                if src in fresh and aid not in fresh[src]:
+                    fresh[src].append(aid)
 
     out: dict[str, Any] = {}
     for k, v in existing.items():
