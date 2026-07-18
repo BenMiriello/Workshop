@@ -60,6 +60,10 @@ LOG="$WORKSHOP/.runtime/queue-runner.log"
 PIDFILE="$WORKSHOP/.runtime/queue-runner.pid"
 AUTONOMY_FLAG="$WORKSHOP/.runtime/AUTONOMY_DISABLED"
 RALPH="$WORKSHOP/scripts/project_ralph.sh"
+# Touching this file interrupts the idle sleep and starts the next sweep
+# immediately. Tasks enqueued via the API or letta tools write it; the runner
+# clears it on wake. The poll is kept as the recovery path for missed signals.
+WAKE_FILE="$WORKSHOP/.runtime/queue-runner.wake"
 
 mkdir -p "$WORKSHOP/.runtime"
 ts() { date -Iseconds; }
@@ -115,5 +119,15 @@ while :; do
     fi
   fi
   (( ONCE == 1 )) && break
-  sleep "$POLL"
+  # Interruptible idle: check for a wake signal every second, fall through
+  # after POLL seconds so we also recover from any missed signals.
+  _idle_end=$(( SECONDS + POLL ))
+  while (( SECONDS < _idle_end )); do
+    sleep 1
+    if [[ -f "$WAKE_FILE" ]]; then
+      rm -f "$WAKE_FILE"
+      log "woken early by enqueue signal"
+      break
+    fi
+  done
 done
