@@ -4,6 +4,7 @@ import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
+  UserPlus,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Button, Markdown } from "../ui";
 import { scopeLabel } from "../lib/tasks";
@@ -361,6 +362,64 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Live assistant turn: ordered segments built from the SSE stream.
   const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // P4: participants on the active thread. Populated from getThread + the
+  // /participants routes; canonical form is `agent:<slug>`. Empty on threads
+  // that have never been assigned an agent.
+  const [participants, setParticipants] = useState<string[]>([]);
+  const [showAddParticipant, setShowAddParticipant] = useState(false);
+  const [addParticipantSlug, setAddParticipantSlug] = useState("");
+
+  const addParticipant = useCallback(async (slug: string) => {
+    const s = slug.trim();
+    if (!activeId || !s) return;
+    try {
+      const r = await fetch(`/api/chat/threads/${encodeURIComponent(activeId)}/participants`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slug: s }),
+      });
+      if (r.ok) {
+        const t = await r.json();
+        setParticipants(t.participants ?? []);
+      }
+    } finally {
+      setAddParticipantSlug("");
+      setShowAddParticipant(false);
+    }
+  }, [activeId]);
+
+  const removeParticipant = useCallback(async (p: string) => {
+    if (!activeId) return;
+    const slug = p.startsWith("agent:") ? p.slice(6) : p;
+    const r = await fetch(`/api/chat/threads/${encodeURIComponent(activeId)}/participants/${encodeURIComponent(slug)}`, {
+      method: "DELETE",
+    });
+    if (r.ok) {
+      const t = await r.json();
+      setParticipants(t.participants ?? []);
+    }
+  }, [activeId]);
+
+  // Whenever the active thread changes, pull its participants list so the
+  // toolbar chips reflect the current chat rather than the previous one.
+  useEffect(() => {
+    if (!activeId) {
+      setParticipants([]);
+      setShowAddParticipant(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const t = await chatApi.getThread(activeId);
+        if (!cancelled) setParticipants(((t as unknown) as { participants?: string[] }).participants ?? []);
+      } catch {
+        if (!cancelled) setParticipants([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeId]);
 
   // Messages typed while a build turn is streaming are queued (a session can't
   // run two turns at once) and sent automatically when the turn finishes. They
@@ -1173,6 +1232,49 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         <button className="chat-tb__btn" onClick={() => setConfirmDeleteId(activeId)} title="Delete chat" aria-label="Delete chat">
           <Trash2 size={16} aria-hidden />
         </button>
+      )}
+      {/* P4: participants control. Renders each agent currently in this chat
+          as a small removable tag, plus a compact "Add" input to invite
+          another agent by slug. An agent in a chat is a property of the
+          chat, not its scope. */}
+      {activeId && (
+        <>
+          {participants.map((p) => {
+            const slug = p.startsWith("agent:") ? p.slice(6) : p;
+            return (
+              <button
+                key={p}
+                className="chat-tb__btn"
+                title={`Remove ${slug} from this chat`}
+                aria-label={`Remove participant ${slug}`}
+                onClick={() => void removeParticipant(p)}
+              >
+                <span style={{ fontSize: "var(--fs-xs)" }}>{slug}</span>
+                <X size={12} aria-hidden style={{ marginLeft: "0.2rem" }} />
+              </button>
+            );
+          })}
+          <button
+            className="chat-tb__btn"
+            title="Add an agent to this chat"
+            aria-label="Add agent"
+            onClick={() => setShowAddParticipant((v) => !v)}
+          >
+            <UserPlus size={16} aria-hidden />
+          </button>
+          {showAddParticipant && (
+            <input
+              className="chat-tb__select"
+              type="text"
+              placeholder="agent slug"
+              value={addParticipantSlug}
+              onChange={(e) => setAddParticipantSlug(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addParticipant(addParticipantSlug); } }}
+              style={{ width: "8rem" }}
+              autoFocus
+            />
+          )}
+        </>
       )}
       {activeId && (
         <button
