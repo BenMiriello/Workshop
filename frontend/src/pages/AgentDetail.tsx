@@ -575,6 +575,37 @@ function ExistingAgent({ agentId }: { agentId: string }) {
 
   const personaValue = useMemo(() => agent?.definition ?? "", [agent]);
 
+  // P2: start a new chat with this agent as a participant. Chats live in the
+  // scope where work happens (project:X for a project-linked agent, workshop
+  // otherwise); the agent joins as a participant per the new entity model.
+  // We navigate to /chat/<context_key>?thread=<new-id> so FocusedChat resumes
+  // the freshly-created thread instead of opening a blank one.
+  const startChatWithAgent = async (a: AgentDetailData) => {
+    const contextKey = a.project_slug ? `project:${a.project_slug}` : "general";
+    try {
+      const r = await fetch("/api/chat/threads", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          context_key: contextKey,
+          title: `Chat with ${a.name || a.slug}`,
+          participants: [`agent:${a.slug}`],
+        }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const t = await r.json();
+      nav(`/chat/${encodeURIComponent(contextKey)}?thread=${encodeURIComponent(t.id)}`);
+    } catch (e) {
+      // Fall back to the legacy shortcut if the create failed for any reason;
+      // FocusedChat will open on the legacy agent:<slug> route rather than
+      // silently leaving the operator on AgentDetail.
+      nav(`/chat/${encodeURIComponent(`agent:${a.slug}`)}`);
+      // The console error is enough here — the operator sees the chat land.
+      // eslint-disable-next-line no-console
+      console.error("start-chat-with-agent failed:", e);
+    }
+  };
+
   const beginEdit = () => {
     if (!agent) return;
     setDName(agent.name || "");
@@ -670,7 +701,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                 <MessageSquare aria-hidden /> Open work pane
               </Button>
             ) : (
-              <Button size="sm" variant="primary" onClick={() => nav(`/chat/${encodeURIComponent(`agent:${agent.slug}`)}`)}>
+              <Button size="sm" variant="primary" onClick={() => void startChatWithAgent(agent)}>
                 <MessageSquare aria-hidden /> Chat
               </Button>
             )}
