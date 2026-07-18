@@ -51,20 +51,28 @@ def create_thread(
     scope: str | None = None,
     scope_locked: bool = False,
     mode: str = "orchestrated",
+    participants: list[str] | None = None,
 ) -> dict:
     tid = uuid.uuid4().hex
-    # Entity-model 2026-07-18 §7 fields (C11):
-    # - scope: the Scope this chat lives in (workshop / project:X / app:Y /
-    #   agent:Z). Derived from context_key when not passed.
+    # Entity-model 2026-07-18 §7 fields (C11, P1):
+    # - scope: the Scope this chat lives in (workshop / project:X / app:Y).
     # - scope_locked: refuses to re-scope silently; the UI must confirm.
     # - mode: orchestrated (the default; general flow) or direct (bypasses the
     #   orchestrator persona and talks straight to the assistant).
+    # - participants: agent slugs (as `agent:<slug>`) in this chat. Under the
+    #   new model an Agent is a PARTICIPANT of a chat, not the chat's home.
+    #   A legacy `agent:<slug>` context_key back-fills this list on read so old
+    #   chats still surface the agent inline.
+    resolved_scope = scope or _scope_from_context_key(context_key or "general")
+    parts = _normalize_participants(participants) if participants is not None \
+        else _participants_from_context_key(context_key or "general")
     thread = {
         "id": tid,
         "context_key": context_key or "general",
-        "scope": scope or _scope_from_context_key(context_key or "general"),
+        "scope": resolved_scope,
         "scope_locked": bool(scope_locked),
         "mode": mode if mode in ("orchestrated", "direct") else "orchestrated",
+        "participants": parts,
         "agent_id": agent_id,
         # Per-thread model preference (full model id) chosen via the composer's
         # model picker. None = fall back to the provider default at call time.
@@ -75,6 +83,43 @@ def create_thread(
         "messages": [],
     }
     return _write(thread)
+
+
+def _normalize_participants(raw) -> list[str]:
+    """Coerce any incoming participant list into canonical `agent:<slug>` form.
+    Drops empties, dedupes preserving first-seen order. Bare slugs are namespaced
+    to `agent:` since that is the only participant kind today (per entity-model
+    §7.1 the operator is always implicit; agents are the explicit list)."""
+    if not isinstance(raw, (list, tuple)):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in raw:
+        if not isinstance(p, str):
+            continue
+        s = p.strip()
+        if not s:
+            continue
+        if ":" not in s:
+            s = f"agent:{s}"
+        if s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def _participants_from_context_key(context_key: str) -> list[str]:
+    """Legacy chats keyed by `agent:<slug>` back-fill their participants list
+    from that prefix. Same for `build:<slug>` (a build is a runtime, not a
+    separate scope kind). Everything else starts empty."""
+    if not context_key or ":" not in context_key:
+        return []
+    kind, rest = context_key.split(":", 1)
+    if kind == "agent":
+        return [context_key]
+    if kind == "build":
+        return [f"agent:{rest}"]
+    return []
 
 
 def _scope_from_context_key(context_key: str) -> str:
@@ -121,6 +166,48 @@ def set_thread_mode(thread_id: str, mode: str) -> dict | None:
     return _write(thread)
 
 
+def set_thread_participants(thread_id: str, participants: list[str]) -> dict | None:
+    """Overwrite the participants list. Normalized on write; empty list is a
+    valid "no agent in this chat" state. C11/P1: agents are participants of a
+    chat, not the chat's home. Returns updated thread or None if missing."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread["participants"] = _normalize_participants(participants)
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
+def add_thread_participant(thread_id: str, participant: str) -> dict | None:
+    """Add one participant to a thread. Idempotent (already-present is a no-op).
+    Namespaces a bare slug to `agent:<slug>` for consistency with the store."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    parts = _normalize_participants(thread.get("participants") or [])
+    canon = _normalize_participants([participant])
+    for c in canon:
+        if c not in parts:
+            parts.append(c)
+    thread["participants"] = parts
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
+def remove_thread_participant(thread_id: str, participant: str) -> dict | None:
+    """Remove one participant. Idempotent (missing is a no-op)."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    canon = _normalize_participants([participant])
+    if not canon:
+        return thread
+    target = canon[0]
+    thread["participants"] = [p for p in _normalize_participants(thread.get("participants") or []) if p != target]
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
 def set_thread_model(thread_id: str, model: str | None) -> dict | None:
     """Persist the per-thread model preference (full model id, or None to clear).
     Returns the updated thread, or None if the thread is missing."""
@@ -137,9 +224,26 @@ def get_thread(thread_id: str) -> dict | None:
     if not p.exists():
         return None
     try:
-        return json.loads(p.read_text())
+        t = json.loads(p.read_text())
     except (json.JSONDecodeError, OSError):
         return None
+    if not isinstance(t, dict):
+        return None
+    # Back-fill the entity-model fields on read for legacy threads (P1 / C11).
+    # Persisted-vs-derived is not observable to callers: an unset stored field
+    # reads as the derived value. The next write persists the derived value.
+    ck = t.get("context_key", "general")
+    if not t.get("scope"):
+        t["scope"] = _scope_from_context_key(ck)
+    if "scope_locked" not in t:
+        t["scope_locked"] = False
+    if not t.get("mode"):
+        t["mode"] = "orchestrated"
+    if t.get("participants") is None:
+        t["participants"] = _participants_from_context_key(ck)
+    else:
+        t["participants"] = _normalize_participants(t.get("participants"))
+    return t
 
 
 def list_threads(context_key: str | None = None) -> list[dict]:
@@ -172,12 +276,16 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         out.append({
             "id": t["id"],
             "context_key": ck,
-            # Entity-model 2026-07-18 §7 fields (C11). Existing threads without
-            # a stored scope/mode lift them from the legacy context_key so a
-            # data migration isn't needed; new writes persist them explicitly.
+            # Entity-model 2026-07-18 §7 fields (C11, P1). Existing threads
+            # without stored scope/mode/participants lift them from the legacy
+            # context_key so a data migration isn't needed; new writes persist
+            # them explicitly.
             "scope": t.get("scope") or _scope_from_context_key(ck),
             "scope_locked": bool(t.get("scope_locked", False)),
             "mode": t.get("mode") or "orchestrated",
+            "participants": _normalize_participants(t.get("participants"))
+                if t.get("participants") is not None
+                else _participants_from_context_key(ck),
             "agent_id": t.get("agent_id"),
             "model": t.get("model"),
             "title": title,

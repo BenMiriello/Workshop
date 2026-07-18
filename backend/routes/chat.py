@@ -78,6 +78,14 @@ class CreateThread(BaseModel):
     context_key: str = "general"
     title: str = ""
     agent_id: str | None = None
+    # Entity-model 2026-07-18 §7 (P1). An agent joins the chat as a participant,
+    # not as its home scope. Optional at create; UI can add/remove after.
+    participants: list[str] | None = None
+    scope: str | None = None
+
+
+class ParticipantIn(BaseModel):
+    slug: str
 
 
 class PostMessage(BaseModel):
@@ -171,8 +179,30 @@ async def remove_draft(key: str):
 @router.post("/threads")
 async def new_thread(body: CreateThread):
     return chat_store.create_thread(
-        context_key=body.context_key, title=body.title, agent_id=body.agent_id
+        context_key=body.context_key, title=body.title, agent_id=body.agent_id,
+        scope=body.scope, participants=body.participants,
     )
+
+
+@router.post("/threads/{thread_id}/participants")
+async def add_participant(thread_id: str, body: ParticipantIn):
+    """Add an agent to an existing chat as a participant (P1). Idempotent:
+    already-present is a no-op. The slug is namespaced to `agent:<slug>` if
+    bare; other participant kinds are not defined yet."""
+    t = chat_store.add_thread_participant(thread_id, body.slug)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return t
+
+
+@router.delete("/threads/{thread_id}/participants/{slug}")
+async def remove_participant(thread_id: str, slug: str):
+    """Remove an agent from an existing chat (P1). Idempotent: missing is a
+    no-op. The `agent:` prefix is optional on the URL."""
+    t = chat_store.remove_thread_participant(thread_id, slug)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return t
 
 
 @router.get("/threads/{thread_id}")
