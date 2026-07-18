@@ -254,8 +254,15 @@ for line in sys.stdin:
   (cd "$DIR" && printf '%s\n' "$new_paths" | while IFS= read -r p; do
      [[ -n "$p" ]] && git add -- "$p"
    done) || return 0
+  # `--only -- <paths>`: commit EXACTLY the paths we selected, ignoring whatever
+  # else sits in the index. A bare `git commit` takes the whole index, so a file
+  # a previous task's worker ran `git add` on (and never committed) rides along
+  # into THIS task's commit — which happened: 465 lines of one ticket's docs
+  # landed inside the next ticket's commit, and the touches gate then correctly
+  # blocked that ticket for writing outside its lane.
   (cd "$DIR" && git -c user.name='ralph' -c user.email='ralph@workshop.local' \
-     commit -q -m "ralph: $(echo "$TASK" | head -c 72 | tr '\n' ' ')" >>"$LOG" 2>&1) || return 0
+     commit -q --only -m "ralph: $(echo "$TASK" | head -c 72 | tr '\n' ' ')" \
+     -- $(printf '%s ' $new_paths) >>"$LOG" 2>&1) || return 0
   n=$(printf '%s\n' "$new_paths" | grep -c . || true)
   log "auto-committed $n file(s) the worker left uncommitted"
   "$WORKSHOP/scripts/log_learning.sh" \

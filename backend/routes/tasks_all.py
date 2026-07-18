@@ -309,6 +309,12 @@ async def create(body: TaskCreateIn) -> dict:
     if task is not None:
         task["scope"] = body.scope
         _with_latitude(task, body.scope)
+    # Signal the resident queue runner so it wakes immediately instead of
+    # waiting out the full poll interval.
+    try:
+        (_WORKSHOP_ROOT / ".runtime" / "queue-runner.wake").touch()
+    except OSError:
+        pass
     return {
         "task": task,
         "decision": res.get("decision"),
