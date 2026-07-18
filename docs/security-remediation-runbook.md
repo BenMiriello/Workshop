@@ -31,6 +31,31 @@ Feasibility here is good — prereqs already present: `/etc/subuid` + `/etc/subg
    fill it (there is a prior disk-full incident). Do not run the cutover on vfs.
 2. Confirm disk headroom after: `df -h /`.
 
+**STATUS 2026-07-18 — cutover LARGELY DONE, one root step remains.** The first attempt ran the
+rootless setup + backend steps as `benmiriello` by mistake, but `sudo gpasswd -d clawd-a docker`
+still executed. clawd-a (as itself) has since: installed `fuse-overlayfs` (done by operator),
+installed + started **rootless docker for clawd-a** (`/run/user/1003/docker.sock`, overlayfs, linger
+on), repointed `workshop-backend.service` to that socket (drop-in no longer uses `sg docker`), and
+restarted it — backend is healthy, loopback-bound, and `container_runtime.available()` is True, so the
+app runner works on rootless. **Boundary verified on the rootless daemon:** a container's
+`cat /etc/shadow` and reading simonsays's `0700` home both return Permission denied.
+
+⚠ **REMAINING (root):** the running systemd user-manager `user@1003.service` was started (at boot)
+while clawd-a was still in `docker`, so it and its child services (incl. the backend, and any agent
+turn the backend spawns) still carry the stale `docker` group and can still reach the root socket.
+Flush it:
+```
+sudo systemctl restart user@1003.service      # or: reboot
+```
+After that: `grep Groups /proc/$(systemctl --user show -p MainPID --value workshop-backend.service)/status`
+should NOT list `994`, and the boundary is fully closed. (Cron-spawned agent turns already lack the
+stale group — they get groups fresh from PAM — so only backend-spawned turns are the residual until
+the flush.) Two follow-ups: **migrate `ws_gengui`** off the root daemon onto rootless (it still runs
+on the root daemon; the app runner will rebuild it on rootless when next started — or remove the old
+container and restart the app from the UI), and a **stray rootless docker daemon was created for
+`benmiriello`** during the misfire (`~benmiriello/.config/systemd/user/docker.service`) — harmless,
+disable it with `systemctl --user disable --now docker` as benmiriello if unintended.
+
 **Confirmed facts for this host (2026-07-18):** `unprivileged_userns_clone=1`, `max_user_namespaces`
 high → rootless is viable; 192G free; **only ONE** clawd-a app-runner container is on the root daemon
 (`ws_gengui-frontend-1`), so the migration is that single app. `dockerd-rootless-setuptool.sh check`
