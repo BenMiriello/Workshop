@@ -31,27 +31,46 @@ Feasibility here is good — prereqs already present: `/etc/subuid` + `/etc/subg
    fill it (there is a prior disk-full incident). Do not run the cutover on vfs.
 2. Confirm disk headroom after: `df -h /`.
 
-**Cutover steps (do in one sitting, verify each):**
-```
-# 1. (as clawd-a) install + start the rootless daemon
-dockerd-rootless-setuptool.sh install
-systemctl --user enable --now docker            # user-level dockerd
-docker --context=rootless run --rm hello-world  # verify it works
+**Confirmed facts for this host (2026-07-18):** `unprivileged_userns_clone=1`, `max_user_namespaces`
+high → rootless is viable; 192G free; **only ONE** clawd-a app-runner container is on the root daemon
+(`ws_gengui-frontend-1`), so the migration is that single app. `dockerd-rootless-setuptool.sh check`
+currently aborts "rootful Docker is accessible" — expected; that check passes once the group is
+dropped (step 5), or run it with `--force` to preview.
 
-# 2. Point the backend at the rootless socket instead of the root socket.
-#    Edit the drop-in: ~/.config/systemd/user/workshop-backend.service.d/docker-group.conf
-#    - remove the `sg docker -c "..."` wrapper (no longer need the group)
-#    - add:  Environment=DOCKER_HOST=unix:///run/user/1003/docker.sock
-#    - ExecStart back to a plain: .venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+**Cutover steps (do in one sitting; run as `clawd-a` except the two 🔴 root lines):**
+```
+# 0. 🔴 (root) install fuse-overlayfs so rootless uses overlay, not the disk-heavy vfs driver
+sudo apt-get install -y fuse-overlayfs
+
+# 1. (clawd-a) install + start the rootless daemon (does NOT touch the system daemon)
+dockerd-rootless-setuptool.sh install --force
+systemctl --user enable --now docker
+export DOCKER_HOST=unix:///run/user/1003/docker.sock
+docker info --format '{{.SecurityOptions}}'   # expect rootless + overlay2 (not vfs)
+docker run --rm hello-world                    # verify
+
+# 2. Point the backend at the rootless socket. Edit
+#    ~/.config/systemd/user/workshop-backend.service.d/docker-group.conf :
+#      - drop the `sg docker -c "..."` wrapper; ExecStart becomes a plain:
+#        ExecStart=/home/clawd-a/workshop/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+#      - add: Environment=DOCKER_HOST=unix:///run/user/1003/docker.sock
 systemctl --user daemon-reload && systemctl --user restart workshop-backend.service
 
-# 3. Recreate any clawd-a app-runner apps on the rootless daemon (they currently live on the
-#    root daemon). For each app: bring it down on the old daemon, `up` via the app runner.
+# 3. Migrate the one app to the rootless daemon:
+#    - on the ROOT daemon:  docker rm -f ws_gengui-frontend-1   (or `compose down` for its project)
+#    - re-launch it through the Workshop app runner (which now targets the rootless socket),
+#      or `docker --host unix:///run/user/1003/docker.sock compose -p ws_gengui up -d` from its dir.
+#    Confirm the app is healthy on rootless before continuing.
 
-# 4. 🔴 Only after the app runner is confirmed working on rootless: drop the group.
+# 4. Confirm the backend app runner works on rootless (create/stop a throwaway app from the UI).
+
+# 5. 🔴 (root) drop the group — now the raw root socket is gone for clawd-a:
 sudo gpasswd -d clawd-a docker
-#    Log clawd-a out / restart its user services so running processes lose the group.
+#    Then restart clawd-a's user services / re-login so running processes lose the group.
 ```
+**Note the app runner keeps working** — it just talks to the rootless socket instead of the root one;
+agents keep the ability to run apps. What changes is that container-root now maps to `clawd-a`, not
+host root.
 **Verify the boundary held:** as clawd-a, `docker run --rm -v /home:/mnt alpine cat /mnt/simonsays/…`
 should now be permission-denied (rootless can't read another user's 0700 home), and
 `cat /etc/shadow` inside a container should fail.
@@ -139,6 +158,19 @@ The exposed/crash-looping containers are now stopped (clawd-a did this). Before 
 move the vendor OAuth / AWS / `ADMIN_PASSWORD` / `SECRET_KEY` / `RESEND_API_KEY` values out of the
 committed compose env into a non-committed `env_file` (0600) or a secret store. Compose lives at
 `~/workshop/infra/open-wearables/repo`.
+
+### SEC-G1 — Fine-grained GitHub PAT (approved) 👤
+Move the veritus boundary into the credential, not just the code. The current global git credential
+is a **classic PAT** (`repo, read:org`) — broad enough to reach `veritusagent`.
+1. GitHub → Settings → Developer settings → **Fine-grained tokens** → Generate: **Resource owner =
+   your personal account only** (NOT any org), Repository access = All personal repos (or select),
+   Permissions → Repository → **Contents: Read and write**, **Metadata: Read** (add Pull requests:
+   Read/write if the auto-PR flow is used). No org/`read:org` scope.
+2. Re-point gh to it: `echo <NEW_TOKEN> | gh auth login --with-token` (or
+   `gh auth refresh`), then `gh auth status` should show the fine-grained token.
+3. `git -C ~/workshop push` (or a project push) once to confirm the helper works.
+This drops `read:org` and makes veritus unreachable by the token itself, not only by `reject_veritus`
+in code.
 
 ### M1 — Letta `/v1` password (low priority)
 clawd-a's letta `:8283` is loopback-only and the password is weak + visible to docker-group members
