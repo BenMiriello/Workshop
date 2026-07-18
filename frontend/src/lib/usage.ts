@@ -29,6 +29,7 @@ export type UsagePoint = { t: string } & Record<string, number | string>;
 
 export type UsageSeries = {
   window_s: number;
+  bin_s?: number; // width of each bin in seconds (per-interval usage)
   projects: string[];
   points: UsagePoint[];
 };

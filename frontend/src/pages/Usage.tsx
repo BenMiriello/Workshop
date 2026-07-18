@@ -197,8 +197,55 @@ export default function Usage() {
               )}
             </SectionLabel>
 
+            <div className="ws-stat-strip">
+              <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
+              <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
+              {edit.editing ? (
+                <Field label="Total cap" htmlFor="cap">
+                  <Input
+                    id="cap"
+                    type="number"
+                    min={1}
+                    step={100000}
+                    value={edit.draft.app_total}
+                    onChange={(e) => edit.set("app_total", Number(e.target.value) || 0)}
+                  />
+                </Field>
+              ) : (
+                <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
+              )}
+            </div>
+            {edit.editing && (
+              <ActionBar flash={edit.flash ? "Saved" : undefined}>
+                <Button size="sm" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={edit.cancel}>
+                  Cancel
+                </Button>
+              </ActionBar>
+            )}
+
+            <ProgressBar
+              value={data.app_used}
+              max={data.app_total}
+              status={kind}
+              label={
+                <>
+                  <span>
+                    {fmtTokens(data.app_used)} of {fmtTokens(data.app_total)} used this window
+                  </span>
+                  <span>
+                    {data.app_total > 0
+                      ? `${Math.round((data.app_used / data.app_total) * 100)}%`
+                      : "uncapped"}
+                  </span>
+                </>
+              }
+            />
+
             {series && series.points.length > 0 && series.projects.length > 0 && (
-              <ChartFrame style={{ width: "100%", height: 200 }}>
+              <ChartFrame style={{ width: "100%", height: 135 }}>
                 <ResponsiveContainer>
                   <LineChart data={series.points} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
@@ -206,7 +253,7 @@ export default function Usage() {
                       dataKey="t"
                       tickFormatter={clockTick}
                       tick={{ fontSize: 11, fill: "var(--muted)" }}
-                      minTickGap={28}
+                      minTickGap={40}
                     />
                     <YAxis
                       tickFormatter={(v) => fmtTokens(v as number)}
@@ -241,53 +288,6 @@ export default function Usage() {
                   </LineChart>
                 </ResponsiveContainer>
               </ChartFrame>
-            )}
-
-            <ProgressBar
-              value={data.app_used}
-              max={data.app_total}
-              status={kind}
-              label={
-                <>
-                  <span>
-                    {fmtTokens(data.app_used)} of {fmtTokens(data.app_total)} used this window
-                  </span>
-                  <span>
-                    {data.app_total > 0
-                      ? `${Math.round((data.app_used / data.app_total) * 100)}%`
-                      : "uncapped"}
-                  </span>
-                </>
-              }
-            />
-
-            <div className="ws-stat-strip">
-              <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
-              <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
-              {edit.editing ? (
-                <Field label="Total cap" htmlFor="cap">
-                  <Input
-                    id="cap"
-                    type="number"
-                    min={1}
-                    step={100000}
-                    value={edit.draft.app_total}
-                    onChange={(e) => edit.set("app_total", Number(e.target.value) || 0)}
-                  />
-                </Field>
-              ) : (
-                <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
-              )}
-            </div>
-            {edit.editing && (
-              <ActionBar flash={edit.flash ? "Saved" : undefined}>
-                <Button size="sm" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
-                  Save
-                </Button>
-                <Button size="sm" variant="ghost" onClick={edit.cancel}>
-                  Cancel
-                </Button>
-              </ActionBar>
             )}
           </Stack>
         </section>
