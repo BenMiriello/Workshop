@@ -19,6 +19,10 @@ class AgentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=64)
     persona: str = ""
     human: str = ""
+    role: str | None = None          # closed enum: maker|reviewer|triager|keeper|broker
+    latitude: str | None = None      # strict | standard | open (null = inherit)
+    autonomy: str | None = None      # reactive | supervised | autonomous (null = reactive)
+    project_slug: str | None = None  # links this agent into a project scope
 
 
 # ---- Templates + groups (P4) -----------------------------------------------
@@ -153,6 +157,11 @@ async def list_agents():
             "triggers": a.get("triggers") or [],
             "limits": a.get("limits") or {},
             "autonomy": triggers.triggers_to_preset(a.get("triggers") or []),
+            # Per-agent autonomy MODE (autonomy-model 2026-07-18): the target
+            # field name is `autonomy`, but until C7 rewrites AutonomyPanel to
+            # read this shape, we surface it under `autonomy_mode` so nothing
+            # breaks. Coherence-migration C7 flips the frontend + backend swap.
+            "autonomy_mode": a.get("autonomy") or "reactive",
             "role": a.get("role"),
             "depth": a.get("depth") or "standard",
             "fanout": a.get("fanout") or "read-only",
@@ -753,6 +762,9 @@ async def get_agent(agent_id: str):
     return {
         **rec,
         "autonomy": triggers.triggers_to_preset(rec.get("triggers") or []),
+        # See list_agents comment. Autonomy-model per-agent MODE lives here until
+        # C7 flips the field name.
+        "autonomy_mode": rec.get("autonomy") or "reactive",
         "queue": snap["queue"],
         "awaiting": snap["awaiting"],
     }
@@ -771,6 +783,9 @@ class AgentDefinitionUpdate(BaseModel):
     latitude: str | None = None        # decision rights: strict | standard | open
                                        # ("" or "standard" clears it to inherit;
                                        # unknown -> 400)
+    autonomy: str | None = None        # per-agent mode: reactive | supervised | autonomous
+                                       # (autonomy-model 2026-07-18; "" or the
+                                       # reactive default clears the emitted field)
     definition: str | None = None  # the markdown body (persona / instructions)
 
 
@@ -796,6 +811,7 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
             depth=body.depth,
             fanout=body.fanout,
             latitude=body.latitude,
+            autonomy=body.autonomy,
             body=body.definition,
         )
     except KeyError:
@@ -821,6 +837,10 @@ async def create_agent(body: AgentCreate):
             runtime="assistant",
             name=body.name,
             memory="notes",
+            role=body.role,
+            latitude=body.latitude,
+            autonomy=body.autonomy,
+            project_slug=body.project_slug,
             body="\n\n".join(parts),
         )
     except ValueError as e:

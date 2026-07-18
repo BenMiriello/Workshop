@@ -388,6 +388,56 @@ def definition_triggers(defn: dict | None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Effective autonomy: the per-agent mode with the workshop override overlaid
+# ---------------------------------------------------------------------------
+# The autonomy-model doc (§4) folds the workshop-level override on top of the
+# per-agent field with a single two-step read: if the override says engaged,
+# every scope answers `reactive`; otherwise the agent's own field wins.
+#
+# We deliberately do NOT mutate the agent's stored `autonomy` when the override
+# engages — the field is authoritative, the override is an overlay. Clearing
+# the override restores each agent's declared behavior without a restore log.
+
+def effective_autonomy(agent_slug: str, *, registry=None, override=None) -> str:
+    """Return one of AUTONOMY_MODES for this agent, honoring the workshop
+    override.
+
+    `registry` and `override` are injection seams for tests; production code
+    passes neither and the module resolves both. Any exception during resolution
+    returns `reactive` (fail-closed matches autonomy-model §6 "override file is
+    corrupt")."""
+    try:
+        if override is None:
+            from services import autonomy_override as _ov
+            state = _ov.read()
+        else:
+            state = override
+        if isinstance(state, dict) and state.get("engaged"):
+            return "reactive"
+    except Exception:
+        # An unreadable overlay is treated as engaged per autonomy-model §6.
+        return "reactive"
+
+    try:
+        if registry is None:
+            from services import agents_registry as _reg
+            rec = _reg.get(agent_slug)
+        else:
+            rec = registry.get(agent_slug)
+        if rec is None:
+            return "reactive"
+        mode = rec.get("autonomy") or "reactive"
+        if mode in AUTONOMY_MODES:
+            return mode
+    except Exception:
+        pass
+    return "reactive"
+
+
+AUTONOMY_MODES = ("reactive", "supervised", "autonomous")
+
+
+# ---------------------------------------------------------------------------
 # Dispatch — a firing trigger creates a Job
 # ---------------------------------------------------------------------------
 

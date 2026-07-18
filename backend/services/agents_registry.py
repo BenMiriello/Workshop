@@ -106,6 +106,18 @@ DEFAULT_FANOUT = "read-only"
 LATITUDES = _latitude.LATITUDES
 DEFAULT_LATITUDE = _latitude.DEFAULT_LATITUDE
 
+# CLOSED ENUM (autonomy-model 2026-07-18). Governs whether the dispatcher may
+# fire this agent on its declared triggers, and whether a completed run commits
+# straight to `done` or lands in `in_review` for operator approval.
+#   reactive   — never runs in the background. Only manual invocation.
+#   supervised — runs on trigger; surfaces results in `in_review` before commit.
+#   autonomous — runs on trigger; commits results directly (subject to reviewer gate).
+# Default `reactive` per §1.1: background execution is opt-in. Existing agents
+# with declared triggers keep working via the compat path in dispatch (C5 will
+# flip to strict enforcement).
+AUTONOMY = ("reactive", "supervised", "autonomous")
+DEFAULT_AUTONOMY = "reactive"
+
 # CLOSED ENUM (final-plan P0). `role` used to be a free-form tag, which meant a
 # typo (`role: memoy`) silently disabled an agent's dispatch handler instead of
 # failing — the memory-keeper's entire consolidation path hung off an exact string
@@ -171,6 +183,34 @@ def _validate_role(v: object) -> str | None:
     if r not in ROLES:
         raise ValueError(f"unknown role {v!r}; must be one of {ROLES}")
     return r
+
+
+def _coerce_autonomy(v: object) -> str:
+    """Read-side: a canonical autonomy mode, or DEFAULT_AUTONOMY on anything else.
+
+    Anything not in AUTONOMY (unset, junk, a typo) reads as `reactive`. Reactive
+    is the safe default: an agent that does not declare an autonomy mode does
+    not run in the background."""
+    if isinstance(v, str):
+        a = v.strip().lower()
+        if a in AUTONOMY:
+            return a
+    return DEFAULT_AUTONOMY
+
+
+def _validate_autonomy(v: object) -> str:
+    """Write-side: canonical autonomy mode. Raises ValueError on an unknown value
+    so create/update surface a 400 rather than silently defaulting."""
+    if v is None:
+        return DEFAULT_AUTONOMY
+    if not isinstance(v, str):
+        raise ValueError(f"autonomy must be a string, one of {AUTONOMY}")
+    a = v.strip().lower()
+    if not a:
+        return DEFAULT_AUTONOMY
+    if a not in AUTONOMY:
+        raise ValueError(f"unknown autonomy {v!r}; must be one of {AUTONOMY}")
+    return a
 
 # Kept in sync with routes/agents.py KNOWN_SOURCES — the event-source vocabulary
 # the subscriptions file is partitioned by. `discord` is the source a `discord`
@@ -256,6 +296,7 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "depth": _coerce_depth(fm.get("depth")),
         "fanout": _coerce_fanout(fm.get("fanout")),
         "latitude": _coerce_latitude(fm.get("latitude")),
+        "autonomy": _coerce_autonomy(fm.get("autonomy")),
         "memory": fm.get("memory"),
         # Fork provenance: `<template-slug>@<version>` when this instance came
         # from a template. A LABEL, not a link — nothing syncs from it, and
@@ -291,6 +332,7 @@ def _record_from_build_state(slug: str, raw: dict) -> dict:
         "depth": DEFAULT_DEPTH,
         "fanout": DEFAULT_FANOUT,
         "latitude": None,
+        "autonomy": DEFAULT_AUTONOMY,
         "memory": None,
         "template": None,
         "project_slug": project_slug,
@@ -464,6 +506,7 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               project_slug: str | None, letta_agent_id: str | None,
               role: str | None = None, depth: str | None = None,
               fanout: str | None = None, latitude: str | None = None,
+              autonomy: str | None = None,
               template: str | None = None, retired: bool = False) -> dict:
     fm: dict[str, Any] = {
         "name": name,
@@ -489,6 +532,13 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
     valid_latitude = _validate_latitude(latitude)
     if valid_latitude and valid_latitude != DEFAULT_LATITUDE:
         fm["latitude"] = valid_latitude
+    # Emit `autonomy` only when the agent has opted OUT of the reactive default.
+    # An emitted `autonomy: reactive` would read as a deliberate choice but behave
+    # exactly like unset, muddying the signal that the operator explicitly wants
+    # this agent to stay hands-off.
+    valid_autonomy = _validate_autonomy(autonomy) if autonomy is not None else None
+    if valid_autonomy and valid_autonomy != DEFAULT_AUTONOMY:
+        fm["autonomy"] = valid_autonomy
     if template:
         fm["template"] = template
     if project_slug:
@@ -530,6 +580,7 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
            project_slug: str | None = None, letta_agent_id: str | None = None,
            role: str | None = None, depth: str | None = None,
            fanout: str | None = None, latitude: str | None = None,
+           autonomy: str | None = None,
            template: str | None = None, body: str = "") -> dict:
     slug = slug.strip().lower()
     if not SLUG_RE.match(slug):
@@ -545,6 +596,7 @@ def create(*, slug: str, runtime: str, name: str, purpose: str = "",
                    limits=limits or dict(DEFAULT_LIMITS), memory=memory,
                    project_slug=project_slug, letta_agent_id=letta_agent_id,
                    role=role, depth=depth, fanout=fanout, latitude=latitude,
+                   autonomy=autonomy,
                    template=template)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_emit(fm, body))
@@ -557,6 +609,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            capabilities: list | None = None, memory: Any = None,
            role: str | None = None, depth: str | None = None,
            fanout: str | None = None, latitude: str | None = None,
+           autonomy: str | None = None,
            body: str | None = None) -> dict:
     """Write changes to the definition file. If the agent has no definition file
     yet (e.g. a builder synthesized from build_agents.json), one is created from
@@ -579,7 +632,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             limits=rec.get("limits") or dict(DEFAULT_LIMITS), memory=rec.get("memory"),
             project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
             role=rec.get("role"), depth=rec.get("depth"), fanout=rec.get("fanout"),
-            latitude=rec.get("latitude"),
+            latitude=rec.get("latitude"), autonomy=rec.get("autonomy"),
         )
         existing_body = rec.get("definition") or ""
 
@@ -626,6 +679,14 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             fm["latitude"] = valid_latitude
         else:
             fm.pop("latitude", None)
+    if autonomy is not None:
+        # Same rule: "" or the reactive default clears the emitted field so a
+        # background-off agent is unambiguously a default agent.
+        valid_autonomy = _validate_autonomy(autonomy)
+        if valid_autonomy and valid_autonomy != DEFAULT_AUTONOMY:
+            fm["autonomy"] = valid_autonomy
+        else:
+            fm.pop("autonomy", None)
     new_body = existing_body if body is None else body
 
     fm.setdefault("runtime", rec["runtime"])
