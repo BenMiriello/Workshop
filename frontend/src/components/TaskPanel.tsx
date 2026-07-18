@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, Plus, Pencil, Trash2, Check, CornerDownLeft, Compass } from "lucide-react";
+import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
 import {
   Button,
   Card,
@@ -307,6 +307,32 @@ export default function TaskPanel({
     [scope, load],
   );
 
+  // Blocked-row review verbs (B4 / C16). Hits the same POST /review endpoint
+  // that the Work tab's Review pane uses. `approve` releases the block back to
+  // todo; `deny` cancels; `dismiss` keeps the block but drops it off the queue
+  // so it stops being asked about. Grant-and-continue and mint-rule require
+  // extra input and stay in Work.tsx's Review tab.
+  const reviewVerb = useCallback(
+    async (t: Task, action: "approve" | "deny" | "dismiss") => {
+      setActing(`review:${t.id}`);
+      setRowErr(null);
+      try {
+        const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}/review`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action }),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        await load();
+      } catch (e) {
+        setRowErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        setActing(null);
+      }
+    },
+    [scope, load],
+  );
+
   // Resolve an awaiting task by answering its question. Reuses the same job/task
   // action endpoint the Job detail "Needs your input" section uses, carrying the
   // operator's answer as the note (recorded as evidence, clears the awaiting
@@ -549,6 +575,24 @@ export default function TaskPanel({
             <Button size="sm" variant="primary" loading={busyApprove} disabled={anyBusy} onClick={() => void approve(t)}>
               <Check aria-hidden /> Approve
             </Button>
+          )}
+          {/* Blocked tickets: expose the review verbs inline. Grant-and-continue
+              and mint-rule need extra input, so they stay in Work.tsx Review
+              tab; the three one-click verbs (approve = release, deny = cancel,
+              dismiss = stop asking) surface here so the panel is actionable
+              without a page hop. (B4 / C16.) */}
+          {t.status === "blocked" && (
+            <>
+              <Button size="sm" variant="primary" disabled={anyBusy} onClick={() => void reviewVerb(t, "approve")}>
+                <Check aria-hidden /> Release
+              </Button>
+              <Button size="sm" variant="ghost" disabled={anyBusy} onClick={() => void reviewVerb(t, "dismiss")}>
+                Dismiss
+              </Button>
+              <Button size="sm" variant="danger-ghost" disabled={anyBusy} onClick={() => void reviewVerb(t, "deny")}>
+                <X aria-hidden /> Deny
+              </Button>
+            </>
           )}
           <Button size="sm" variant="ghost" onClick={() => beginEdit(t)} disabled={anyBusy}>
             <Pencil aria-hidden /> Edit
