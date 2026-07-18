@@ -218,18 +218,34 @@ function TriggerEditor({
 }
 
 // ---------------------------------------------------------------------------
-// Create form (runtime picker) - the real /agents/new flow
+// Create form (role picker) — the real /agents/new flow
 // ---------------------------------------------------------------------------
-type CreateRuntime = "assistant" | "builder";
-const CREATE_RUNTIME: SegmentedOption<CreateRuntime>[] = [
-  { value: "assistant", label: "Assistant" },
-  { value: "builder", label: "Builder" },
+// Post-2026-07-18: agents are keyed by role, not runtime. Runtime is derived:
+// role=maker + a linked project produces a `builder` runtime (Claude Code coding
+// session); anything else is an `assistant`. Broker is closed to interactive
+// creation per primitive-roles §2 (demand-only, no runner needed).
+
+type CreateRole = "none" | "maker" | "reviewer" | "triager" | "keeper";
+const CREATE_ROLE: SegmentedOption<CreateRole>[] = [
+  { value: "none", label: "None" },
+  { value: "maker", label: "Maker" },
+  { value: "reviewer", label: "Reviewer" },
+  { value: "triager", label: "Triager" },
+  { value: "keeper", label: "Keeper" },
 ];
+
+const ROLE_DESC: Record<CreateRole, string> = {
+  none: "A named agent with no gated role. Free-form.",
+  maker: "Creates artifacts. With a project link, spawns as a Claude Code coding session (builder).",
+  reviewer: "Judges someone else's output. Cannot self-approve.",
+  triager: "Routes and classifies inbound work into tickets. Writes no artifacts.",
+  keeper: "Maintains one designated store (per-scope memory keeper).",
+};
 
 function CreateAgent() {
   const nav = useNavigate();
   useCrumbLabel("New agent");
-  const [runtime, setRuntime] = useState<CreateRuntime>("assistant");
+  const [role, setRole] = useState<CreateRole>("none");
   const [name, setName] = useState("");
   const [purpose, setPurpose] = useState("");
   const [persona, setPersona] = useState("");
@@ -242,29 +258,20 @@ function CreateAgent() {
   useEffect(() => {
     fetch("/api/projects/")
       .then((r) => (r.ok ? r.json() : []))
-      .then((p: Project[]) => {
-        setProjects(p);
-        if (p.length) setProjectSlug(p[0].slug);
-      })
+      .then((p: Project[]) => setProjects(p))
       .catch(() => setProjects([]));
   }, []);
+
+  // maker + project => Claude Code coding session (builder runtime); everything
+  // else => assistant runtime. Kept as a derived value, never a separate control.
+  const isBuilderPath = role === "maker" && !!projectSlug;
 
   const submit = async () => {
     if (!name.trim()) return;
     setBusy(true);
     setErr(null);
     try {
-      if (runtime === "assistant") {
-        const r = await fetch("/api/agents/", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim(), persona, human }),
-        });
-        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-        const a = await r.json();
-        nav(`/agents/${encodeURIComponent(a.id)}`);
-      } else {
-        if (!projectSlug) throw new Error("pick a project for the agent");
+      if (isBuilderPath) {
         const slug = slugify(name.trim());
         const r = await fetch("/api/agents/build", {
           method: "POST",
@@ -274,6 +281,22 @@ function CreateAgent() {
         if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
         const a = await r.json();
         nav(`/agents/${encodeURIComponent(a.slug)}/chat`);
+      } else {
+        const body: Record<string, unknown> = {
+          name: name.trim(),
+          persona,
+          human,
+        };
+        if (role !== "none") body.role = role;
+        if (projectSlug) body.project_slug = projectSlug;
+        const r = await fetch("/api/agents/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+        const a = await r.json();
+        nav(`/agents/${encodeURIComponent(a.id)}`);
       }
     } catch (e) {
       setErr(String(e));
@@ -284,7 +307,7 @@ function CreateAgent() {
 
   return (
     <div style={{ maxWidth: 720 }}>
-      <PageHeader title="New agent" sub="One Agent concept. Pick a runtime." />
+      <PageHeader title="New agent" sub="Pick a role. Everything else is defaulted; you can tune later." />
       {err && (
         <div style={{ marginBottom: "var(--space-4)" }}>
           <StateBlock variant="error" title="Couldn't create agent" hint={<code>{err}</code>} />
@@ -292,39 +315,41 @@ function CreateAgent() {
       )}
       <Stack>
         <div>
-          <SectionLabel>Runtime</SectionLabel>
-          <Segmented options={CREATE_RUNTIME} value={runtime} onChange={setRuntime} ariaLabel="Runtime" />
+          <SectionLabel>Role</SectionLabel>
+          <Segmented options={CREATE_ROLE} value={role} onChange={setRole} ariaLabel="Role" />
           <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginTop: "var(--space-2)" }}>
-            {runtime === "assistant"
-              ? "An assistant agent with its own instructions and notes."
-              : "A Claude Code coding session scoped to a project."}
+            {ROLE_DESC[role]}
           </p>
         </div>
         <Field label="Name" required htmlFor="new-name">
           <Input id="new-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         </Field>
-        {runtime === "assistant" ? (
-          <>
-            <Field label="Persona" htmlFor="new-persona">
-              <Textarea id="new-persona" className="ws-mono" value={persona} onChange={(e) => setPersona(e.target.value)} rows={8} />
-            </Field>
-            <Field label="Human (operator context)" htmlFor="new-human">
-              <Textarea id="new-human" className="ws-mono" value={human} onChange={(e) => setHuman(e.target.value)} rows={6} />
-            </Field>
-          </>
+        <Field
+          label="For project"
+          help={
+            role === "maker"
+              ? "A maker linked to a project spawns as a Claude Code coding session (builder)."
+              : "Optional. Links this agent to a project scope."
+          }
+        >
+          <Select value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} disabled={!projects}>
+            <option value="">(workshop scope)</option>
+            {projects?.map((p) => (
+              <option key={p.slug} value={p.slug}>{p.title}</option>
+            ))}
+          </Select>
+        </Field>
+        {isBuilderPath ? (
+          <Field label="Purpose" help="One sentence: what is this agent working on?">
+            <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. build the landing hero" />
+          </Field>
         ) : (
           <>
-            <Field label="Project" required>
-              <Select value={projectSlug} onChange={(e) => setProjectSlug(e.target.value)} disabled={!projects}>
-                {!projects && <option value="">Loading…</option>}
-                {projects && projects.length === 0 && <option value="">No projects yet</option>}
-                {projects?.map((p) => (
-                  <option key={p.slug} value={p.slug}>{p.title}</option>
-                ))}
-              </Select>
+            <Field label="Persona" htmlFor="new-persona" help="The prompt / behavior of this agent.">
+              <Textarea id="new-persona" className="ws-mono" value={persona} onChange={(e) => setPersona(e.target.value)} rows={8} />
             </Field>
-            <Field label="Purpose" help="One sentence: what is this agent working on?">
-              <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. build the landing hero" />
+            <Field label="Human (operator context)" htmlFor="new-human" help="What the agent should know about you.">
+              <Textarea id="new-human" className="ws-mono" value={human} onChange={(e) => setHuman(e.target.value)} rows={6} />
             </Field>
           </>
         )}
