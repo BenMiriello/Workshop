@@ -22,37 +22,41 @@ import { chatApi, type ThreadSummary } from "../lib/chat";
 // conversation is never lost just because you navigated away from its context.
 
 function contextLabel(key: string): string {
-  if (!key || key === "general") return "General";
+  if (!key || key === "general") return "Workshop";
   if (!key.includes(":")) return `App · ${key}`; // app chats bind a bare app id
   const [kind, rest] = key.split(":", 2);
   if (kind === "project") return `Project · ${rest}`;
-  if (kind === "build") return `Builder · ${rest}`;
-  if (kind === "agent") return `Agent · ${rest}`;
+  // Both build: and agent: are Agent scopes; the runtime distinction is
+  // plumbing per entity-model 2026-07-18 §6. Label them the same in the
+  // chat list; the AgentDetail is where runtime shows.
+  if (kind === "build" || kind === "agent") return `Agent · ${rest}`;
   if (kind === "app") return `App · ${rest}`;
   return key;
 }
 
-// Classify a context key into the coarse buckets the Segmented filter exposes.
-// App chats bind a BARE app id (finance, budget, ...), not `app:<id>`; a bare
-// non-general key is therefore an app. agent: threads are assistants.
-type ContextKind = "general" | "project" | "build" | "agent" | "app" | "other";
+// Classify a context key into scope kinds (per entity-model §2 scope
+// addressing: workshop / project:<slug> / app:<name> / agent:<slug>). App chats
+// bind a BARE app id (finance, budget, ...), not `app:<id>`; a bare non-general
+// key is an app. build: and agent: both collapse to "agent" — they are two
+// runtimes of the same scope kind.
+type ContextKind = "workshop" | "project" | "agent" | "app" | "other";
 function contextKind(key: string): ContextKind {
-  if (!key || key === "general") return "general";
+  if (!key || key === "general") return "workshop";
   if (!key.includes(":")) return "app"; // bare app id
   const kind = key.split(":", 1)[0];
-  if (kind === "project" || kind === "build" || kind === "agent" || kind === "app") return kind;
+  if (kind === "project" || kind === "app") return kind;
+  if (kind === "build" || kind === "agent") return "agent";
   return "other";
 }
 
-// The context-kind view filter. Commits on change (a view preference).
-type FilterKind = "all" | "general" | "project" | "build" | "agent" | "app";
+// Scope-kind view filter (C17). Commits on change (a view preference).
+type FilterKind = "all" | "workshop" | "project" | "app" | "agent";
 const KIND_OPTIONS: SegmentedOption<FilterKind>[] = [
   { value: "all", label: "All" },
-  { value: "general", label: "General" },
+  { value: "workshop", label: "Workshop" },
   { value: "project", label: "Projects" },
-  { value: "build", label: "Builders" },
-  { value: "agent", label: "Assistants" },
   { value: "app", label: "Apps" },
+  { value: "agent", label: "Agents" },
 ];
 
 // Cap the rendered list so a large history never mounts unbounded (design rule
