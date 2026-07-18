@@ -15,19 +15,37 @@ from services import usage_ledger
 router = APIRouter(prefix="/usage", tags=["usage"])
 
 
+# Selectable reporting windows. "5h" is the budget window (the only one with a
+# cap); the rest are reporting-only lookbacks. "all" spans the whole ledger.
+_WINDOWS: dict[str, int | None] = {
+    "5h": 5 * 3600,
+    "24h": 24 * 3600,
+    "7d": 7 * 24 * 3600,
+    "30d": 30 * 24 * 3600,
+    "all": None,  # resolved per-request from the oldest ledger entry
+}
+
+
+def _resolve_window(window: str) -> int:
+    if window not in _WINDOWS:
+        raise HTTPException(400, f"unknown window: {window} (want one of {', '.join(_WINDOWS)})")
+    return _WINDOWS[window] or usage_ledger.full_window_s()
+
+
 @router.get("")
-async def get_usage() -> dict:
-    """Snapshot of the trailing usage window: app-wide totals + per-project
-    share. Pure read over `.runtime/usage.jsonl` + `.runtime/usage-budget.json`;
-    no side effects."""
-    return usage_ledger.status()
+async def get_usage(window: str = "5h") -> dict:
+    """Snapshot of a trailing usage window: app-wide totals + per-project share.
+    Pure read over `.runtime/usage.jsonl` + `.runtime/usage-budget.json`; no side
+    effects. Only the 5h window carries a cap (`capped: true`); the longer
+    lookbacks are reporting-only and report totals with no allowance."""
+    return usage_ledger.status(window_s=_resolve_window(window))
 
 
 @router.get("/timeseries")
-async def get_usage_timeseries() -> dict:
-    """Cumulative per-project token usage sampled across the trailing rolling
-    window, for the line chart. Pure read; no side effects."""
-    return usage_ledger.timeseries()
+async def get_usage_timeseries(window: str = "5h") -> dict:
+    """Per-interval per-project token usage across a trailing window, for the
+    chart. Pure read; no side effects."""
+    return usage_ledger.timeseries(window_s=_resolve_window(window))
 
 
 class BudgetPatch(BaseModel):

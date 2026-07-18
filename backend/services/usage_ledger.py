@@ -348,10 +348,29 @@ def plan_budgets(used_by_project: dict[str, int], demanders: Iterable[str],
     return budget
 
 
-def status(now: datetime | None = None) -> dict:
-    """Operator-facing snapshot: app-wide + per-project used/allowance/share."""
+def full_window_s(now: datetime | None = None) -> int:
+    """Seconds spanning the whole ledger (oldest entry -> now), for an "all time"
+    view. Falls back to the standard window on an empty/unparseable ledger."""
+    entries = _read_entries()
+    stamps = [t for t in (_parse_ts(e.get("ts", "")) for e in entries) if t is not None]
+    if not stamps:
+        return WINDOW_S
+    span = int((now or _now()).timestamp() - min(stamps)) + 60  # +60 so the oldest row lands inside
+    return max(span, WINDOW_S)
+
+
+def status(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
+    """Operator-facing snapshot: app-wide + per-project used/allowance/share.
+
+    `window_s` widens the lookback for the reporting views (24h / 7d / 30d / all
+    time). The BUDGET, though, is defined as a rolling 5h cap — it is meaningless
+    against a 7-day total — so allowance/remaining are reported ONLY for the
+    standard window and are None otherwise. `capped` tells the caller which of the
+    two shapes it is holding, so nothing downstream can render a 5h cap as if it
+    bounded a 30-day total."""
     cfg = load_config()
-    usage = window_usage(now)
+    capped = window_s == WINDOW_S
+    usage = window_usage(now, window_s=window_s)
     used = usage["by_project"]
     # Treat every project with recent usage or config as a "demander" for the
     # share view (so the operator sees allowances even when nothing is pending).
@@ -363,15 +382,18 @@ def status(now: datetime | None = None) -> dict:
         allow = budgets.get(s, 0.0)
         projects[s] = {
             "used": u,
-            "allowance": round(allow),
-            "remaining": round(max(0.0, allow - u)),
+            "allowance": round(allow) if capped else None,
+            "remaining": round(max(0.0, allow - u)) if capped else None,
             "share_of_app": round(u / usage["app"], 3) if usage["app"] else 0.0,
         }
     return {
         "window_s": usage["window_s"],
-        "app_total": cfg.get("app_total"),
+        "capped": capped,
+        "app_total": cfg.get("app_total") if capped else None,
         "app_used": usage["app"],
-        "app_remaining": max(0, int(cfg.get("app_total", 0)) - usage["app"]),
+        "app_remaining": (
+            max(0, int(cfg.get("app_total", 0)) - usage["app"]) if capped else None
+        ),
         "projects": projects,
     }
 

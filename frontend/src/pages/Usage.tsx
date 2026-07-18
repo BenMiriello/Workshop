@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { RefreshCw, Gauge, FolderGit2, SlidersHorizontal, FolderCog } from "lucide-react";
+import { RefreshCw, Gauge, SlidersHorizontal, FolderCog } from "lucide-react";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   LineChart,
@@ -23,41 +21,65 @@ import {
   Input,
   Modal,
   PageHeader,
-  ProgressBar,
   SectionLabel,
+  Segmented,
   Skeleton,
   Stack,
+  StackedBar,
   Stat,
   StateBlock,
   Table,
   TableScroll,
   NumCell,
   useEditMode,
-  type StatusKind,
+  type SegmentedOption,
 } from "../ui";
-import { usageApi, fmtTokens, type UsageStatus, type UsageSeries } from "../lib/usage";
+import {
+  usageApi,
+  fmtTokens,
+  type UsageStatus,
+  type UsageSeries,
+  type UsageWindow,
+} from "../lib/usage";
 
-// The Usage page: the rolling-window token budget for autonomous background
-// work. Reads GET /api/usage (services.usage_ledger.status). Shows the app-wide
-// window (used / remaining / total) plus a per-project breakdown (used,
-// allowance, remaining, share). Interactive chat turns are never metered, so
-// they never appear here; only autonomous sweeps write tokens.
+// The Usage page. Reads GET /api/usage (services.usage_ledger.status) for a
+// selectable window: 5h / 24h / 7d / 30d / all time.
+//
+// Only the 5h window is the BUDGET window — the cap is defined as a rolling 5h
+// ceiling, so it is meaningless against a 7-day total. Every longer lookback is
+// reporting-only (`capped: false`), and the page changes shape accordingly:
+// allowance/remaining disappear and the bar reads as share-of-total rather than
+// a fraction of a cap. One bar on the page, below the chart: a single track
+// segmented by source, largest first.
+//
+// Chat turns ARE metered (role="chat"), reported but never counted against the
+// cap — admission already reserves interactive headroom, so gating on chat spend
+// too would double-count that reserve.
 
 const ENDPOINT = "/api/usage";
 
-// App-wide headroom -> one of the five status kinds. Green while there is room,
-// amber past 70% of the window cap, red past 90%.
-function headroomKind(used: number, total: number): StatusKind {
-  if (total <= 0) return "ok";
-  const frac = used / total;
-  if (frac >= 0.9) return "danger";
-  if (frac >= 0.7) return "warn";
-  return "ok";
-}
+const WINDOW_OPTIONS: SegmentedOption<UsageWindow>[] = [
+  { value: "5h", label: "5h" },
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
+  { value: "all", label: "All time" },
+];
 
-function windowLabel(windowS: number): string {
-  const hours = Math.round(windowS / 3600);
-  return `Rolling ${hours}-hour window`;
+// The subtitle has to carry the one thing that changes meaning with the window:
+// only 5h is the BUDGET window. Every longer lookback is reporting-only, so it
+// must not be described in terms of a cap the operator would then read the bar
+// against.
+function windowLabel(data: UsageStatus, win: UsageWindow): string {
+  if (data.capped) {
+    const hours = Math.round(data.window_s / 3600);
+    return `Rolling ${hours}-hour budget window`;
+  }
+  if (win === "all") {
+    const days = Math.max(1, Math.round(data.window_s / 86400));
+    return `All recorded usage (~${days} day${days === 1 ? "" : "s"} so far) — no cap applies`;
+  }
+  return `Trailing ${WINDOW_OPTIONS.find((o) => o.value === win)?.label ?? ""} — reporting only, no cap applies`;
 }
 
 // X-axis tick: an ISO timestamp -> a short local clock time (e.g. "3:40 PM").
@@ -70,8 +92,9 @@ function clockTick(iso: string): string {
 type Row = {
   slug: string;
   used: number;
-  allowance: number;
-  remaining: number;
+  // null on an uncapped window — no allowance exists to report there.
+  allowance: number | null;
+  remaining: number | null;
   share: number; // 0..1
 };
 
@@ -82,11 +105,15 @@ export default function Usage() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Which lookback we are reporting. A view preference, so it commits on change
+  // (design system: only config/money writes wait for an explicit Save).
+  const [win, setWin] = useState<UsageWindow>("5h");
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const [status, ts] = await Promise.all([usageApi.status(), usageApi.timeseries()]);
+      const [status, ts] = await Promise.all([usageApi.status(win), usageApi.timeseries(win)]);
       setData(status);
       setSeries(ts);
     } catch (e) {
@@ -94,7 +121,7 @@ export default function Usage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [win]);
 
   useEffect(() => {
     refresh();
@@ -128,9 +155,15 @@ export default function Usage() {
   const header = (
     <PageHeader
       title="Usage"
-      sub={data ? windowLabel(data.window_s) : undefined}
+      sub={data ? windowLabel(data, win) : undefined}
       actions={
         <>
+          <Segmented<UsageWindow>
+            ariaLabel="Usage window"
+            value={win}
+            onChange={setWin}
+            options={WINDOW_OPTIONS}
+          />
           <Button size="sm" variant="ghost" onClick={() => nav("/projects")}>
             <FolderCog aria-hidden /> Manage projects
           </Button>
@@ -183,14 +216,16 @@ export default function Usage() {
       </Stack>
     );
   } else {
-    const kind = headroomKind(data.app_used, data.app_total);
     body = (
       <Stack gap="lg">
         <section>
           <Stack gap="sm">
             <SectionLabel icon={<Gauge aria-hidden size={14} />}>
               App-wide window
-              {!edit.editing && (
+              {/* The cap is a property of the 5h budget window only, so the
+                  control to edit it appears only there — offering it on a 30-day
+                  view would imply that view is bounded by it. */}
+              {data.capped && !edit.editing && (
                 <Button size="sm" variant="ghost" onClick={edit.begin} style={{ marginLeft: "auto" }}>
                   <SlidersHorizontal aria-hidden /> Edit cap
                 </Button>
@@ -199,27 +234,15 @@ export default function Usage() {
 
             <div className="ws-stat-strip">
               <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
-              <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
-              <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
+              {data.capped && data.app_remaining != null && (
+                <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
+              )}
+              {data.capped && data.app_total != null ? (
+                <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
+              ) : (
+                <Stat label="Sources" value={String(rows.length)} sub="apps with usage" />
+              )}
             </div>
-
-            <ProgressBar
-              value={data.app_used}
-              max={data.app_total}
-              status={kind}
-              label={
-                <>
-                  <span>
-                    {fmtTokens(data.app_used)} of {fmtTokens(data.app_total)} used this window
-                  </span>
-                  <span>
-                    {data.app_total > 0
-                      ? `${Math.round((data.app_used / data.app_total) * 100)}%`
-                      : "uncapped"}
-                  </span>
-                </>
-              }
-            />
 
             {series && series.points.length > 0 && series.projects.length > 0 && (
               <ChartFrame style={{ width: "100%", height: 135 }}>
@@ -266,6 +289,37 @@ export default function Usage() {
                 </ResponsiveContainer>
               </ChartFrame>
             )}
+
+            {/* The one bar on this page, below the chart: a single track split by
+                app, largest first. When the window is capped the segments are
+                drawn against the cap so the bare remainder is real headroom;
+                uncapped, they fill the width and the bar reads as share of
+                total — the only honest shape when there is no limit to be a
+                fraction OF. */}
+            {rows.length > 0 && (
+              <StackedBar
+                segments={rows.map((r, i) => ({
+                  key: r.slug,
+                  value: r.used,
+                  color: CHART_SERIES[i % CHART_SERIES.length],
+                }))}
+                max={data.capped && data.app_total != null ? data.app_total : undefined}
+                label={
+                  <>
+                    <span>
+                      {data.capped && data.app_total != null
+                        ? `${fmtTokens(data.app_used)} of ${fmtTokens(data.app_total)} used this window`
+                        : `${fmtTokens(data.app_used)} total across ${rows.length} ${rows.length === 1 ? "source" : "sources"}`}
+                    </span>
+                    <span>
+                      {data.capped && data.app_total != null && data.app_total > 0
+                        ? `${Math.round((data.app_used / data.app_total) * 100)}%`
+                        : "no cap"}
+                    </span>
+                  </>
+                }
+              />
+            )}
           </Stack>
         </section>
 
@@ -302,81 +356,36 @@ export default function Usage() {
         </Modal>
 
         <section>
-          <SectionLabel icon={<FolderGit2 aria-hidden size={14} />}>Per project</SectionLabel>
           {rows.length === 0 ? (
             <StateBlock
-              title="No autonomous usage yet"
+              title="No usage in this window"
               hint={
                 <>
-                  Nothing has been billed to a project in this window. Autonomous sweeps append to{" "}
-                  <code>.runtime/usage.jsonl</code> (via <code>cron_agent.sh</code>, a project or
-                  agent Ralph sweep, or a drained event). Interactive chat is exempt, so it never
-                  appears here.
+                  Nothing has been billed in this window. Work appends to{" "}
+                  <code>.runtime/usage.jsonl</code> — autonomous sweeps (the queue runner, a project
+                  or agent Ralph sweep, a drained event) and interactive chat turns, which are
+                  recorded for reporting but never counted against the cap. Try a longer window.
                 </>
               }
             />
           ) : (
             <Stack gap="lg">
-              <ChartFrame style={{ width: "100%", height: Math.max(140, rows.length * 44 + 40) }}>
-                <ResponsiveContainer>
-                  <BarChart
-                    layout="vertical"
-                    data={rows}
-                    margin={{ top: 8, right: 8, left: 8, bottom: 0 }}
-                    barCategoryGap="30%"
-                  >
-                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                    <XAxis
-                      type="number"
-                      tickFormatter={(v) => fmtTokens(v as number)}
-                      tick={{ fontSize: 11, fill: "var(--muted)" }}
-                    />
-                    <YAxis
-                      type="category"
-                      dataKey="slug"
-                      width={110}
-                      tick={{ fontSize: 11, fill: "var(--muted)" }}
-                    />
-                    <Tooltip
-                      isAnimationActive={false}
-                      cursor={{ fill: "var(--border)", fillOpacity: 0.25 }}
-                      content={({ active, payload, label }: any) => (
-                        <ChartTooltip
-                          active={active}
-                          label={label}
-                          showName
-                          payload={payload ?? []}
-                          format={(v) => fmtTokens(v as number)}
-                        />
-                      )}
-                    />
-                    <Bar
-                      dataKey="used"
-                      name="Used"
-                      stackId="a"
-                      fill={CHART_SERIES[0]}
-                      isAnimationActive={false}
-                    />
-                    <Bar
-                      dataKey="remaining"
-                      name="Remaining"
-                      stackId="a"
-                      fill={CHART_SERIES[1]}
-                      isAnimationActive={false}
-                      radius={[0, 3, 3, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              </ChartFrame>
 
               <TableScroll>
                 <Table>
                   <thead>
                     <tr>
-                      <th>Project</th>
+                      <th>Source</th>
                       <th style={{ textAlign: "right" }}>Used</th>
-                      <th className="ws-col-optional" style={{ textAlign: "right" }}>Allowance</th>
-                      <th className="ws-col-optional" style={{ textAlign: "right" }}>Remaining</th>
+                      {/* Allowance/Remaining are 5h-budget concepts; on a longer
+                          lookback there is nothing to report, so the columns go
+                          away rather than render a blank or a borrowed number. */}
+                      {data.capped && (
+                        <>
+                          <th className="ws-col-optional" style={{ textAlign: "right" }}>Allowance</th>
+                          <th className="ws-col-optional" style={{ textAlign: "right" }}>Remaining</th>
+                        </>
+                      )}
                       <th style={{ textAlign: "right" }}>Share</th>
                     </tr>
                   </thead>
@@ -392,8 +401,16 @@ export default function Usage() {
                           </Link>
                         </td>
                         <NumCell>{fmtTokens(r.used)}</NumCell>
-                        <NumCell className="ws-col-optional">{fmtTokens(r.allowance)}</NumCell>
-                        <NumCell className="ws-col-optional">{fmtTokens(r.remaining)}</NumCell>
+                        {data.capped && (
+                          <>
+                            <NumCell className="ws-col-optional">
+                              {r.allowance != null ? fmtTokens(r.allowance) : "—"}
+                            </NumCell>
+                            <NumCell className="ws-col-optional">
+                              {r.remaining != null ? fmtTokens(r.remaining) : "—"}
+                            </NumCell>
+                          </>
+                        )}
                         <NumCell>{Math.round(r.share * 100)}%</NumCell>
                       </tr>
                     ))}

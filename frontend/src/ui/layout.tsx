@@ -162,6 +162,45 @@ export function Divider({ className }: { className?: string }) {
 // five status kinds (ok/running/stopped/warn/danger). Use for a bounded
 // quantity that fills toward a cap (usage vs budget, disk, quota) — not for a
 // pass/fail state (that is a StatusPill).
+// Stacked composition bar: one track, N categorical segments, largest first.
+// Use when a total is made of parts (usage by app) rather than a single value
+// against a limit — that is ProgressBar. `max` is optional: pass it when the
+// window has a cap, so the unfilled remainder shows as bare track; omit it and
+// the segments fill the width, reading as share-of-total (the correct shape for
+// a lookback window that has no cap).
+export function StackedBar({
+  segments,
+  max,
+  label,
+  className,
+}: {
+  segments: { key: string; value: number; color: string }[];
+  max?: number;
+  label?: ReactNode;
+  className?: string;
+}) {
+  const total = segments.reduce((a, s) => a + Math.max(0, s.value), 0);
+  const denom = max != null && max > 0 ? Math.max(max, total) : total;
+  return (
+    <div className={cx("ws-stackbar", className)}>
+      {label != null && <div className="ws-stackbar__label">{label}</div>}
+      <div className="ws-stackbar__track">
+        {denom > 0 &&
+          segments
+            .filter((s) => s.value > 0)
+            .map((s) => (
+              <div
+                key={s.key}
+                className="ws-stackbar__seg"
+                style={{ width: `${(s.value / denom) * 100}%`, background: s.color }}
+                title={`${s.key}: ${Math.round((s.value / (total || 1)) * 100)}%`}
+              />
+            ))}
+      </div>
+    </div>
+  );
+}
+
 export function ProgressBar({
   value,
   max,

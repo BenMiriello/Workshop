@@ -3,18 +3,26 @@
 // Interactive chat turns are never metered, so they never appear here; only
 // autonomous sweeps (cron, project/agent Ralph, drained events) write tokens.
 
+// Selectable lookback. Only "5h" is the BUDGET window; the rest are
+// reporting-only, because the cap is defined as a rolling 5h ceiling and is
+// meaningless against a 7-day total.
+export type UsageWindow = "5h" | "24h" | "7d" | "30d" | "all";
+
 export type ProjectUsage = {
   used: number;
-  allowance: number;
-  remaining: number;
+  // null on an uncapped window — there is no allowance to report, and a number
+  // here would be a 5h figure masquerading as a bound on a longer total.
+  allowance: number | null;
+  remaining: number | null;
   share_of_app: number; // 0..1 fraction of the window's app-wide usage
 };
 
 export type UsageStatus = {
   window_s: number; // trailing window length in seconds (18000 = 5h)
-  app_total: number; // app-wide token ceiling for the window
+  capped: boolean; // true only for the 5h budget window
+  app_total: number | null; // app-wide ceiling; null when uncapped
   app_used: number;
-  app_remaining: number;
+  app_remaining: number | null;
   projects: Record<string, ProjectUsage>;
 };
 
@@ -35,8 +43,8 @@ export type UsageSeries = {
 };
 
 export const usageApi = {
-  status: (): Promise<UsageStatus> =>
-    fetch("/api/usage").then(async (r) => {
+  status: (window: UsageWindow = "5h"): Promise<UsageStatus> =>
+    fetch(`/api/usage?window=${encodeURIComponent(window)}`).then(async (r) => {
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
       return r.json() as Promise<UsageStatus>;
     }),
@@ -49,8 +57,8 @@ export const usageApi = {
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
       return r.json() as Promise<UsageStatus>;
     }),
-  timeseries: (): Promise<UsageSeries> =>
-    fetch("/api/usage/timeseries").then(async (r) => {
+  timeseries: (window: UsageWindow = "5h"): Promise<UsageSeries> =>
+    fetch(`/api/usage/timeseries?window=${encodeURIComponent(window)}`).then(async (r) => {
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
       return r.json() as Promise<UsageSeries>;
     }),

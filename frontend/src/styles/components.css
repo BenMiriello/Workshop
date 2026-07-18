@@ -752,6 +752,20 @@ a.ws-btn { text-decoration: none; }
 .ws-progress__fill { height: 100%; background: var(--_solid, var(--accent)); border-radius: var(--radius-pill); transition: width var(--motion-med, 240ms) var(--ease-out, ease); }
 @media (prefers-reduced-motion: reduce) { .ws-progress__fill { transition: none; } }
 
+/* Stacked composition bar — one track, N categorical segments (largest first).
+   Shares the progress track's geometry so the two read as one family. Segment
+   colors are CATEGORICAL (the cat hues or chart series), never status hues: segments
+   distinguish apps, they do not signal health. When the window has a cap, the
+   unused remainder is left as bare track; when it does not, the segments fill
+   the full width and the bar reads as share-of-total. */
+.ws-stackbar { display: flex; flex-direction: column; gap: var(--space-2); }
+.ws-stackbar__label { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); font-size: var(--fs-sm); color: var(--muted); }
+.ws-stackbar__track { display: flex; height: 10px; background: var(--bg-inset); border-radius: var(--radius-pill); overflow: hidden; }
+.ws-stackbar__seg { height: 100%; min-width: 2px; transition: width var(--motion-med, 240ms) var(--ease-out, ease); }
+.ws-stackbar__seg:first-child { border-top-left-radius: var(--radius-pill); border-bottom-left-radius: var(--radius-pill); }
+.ws-stackbar__seg:last-child { border-top-right-radius: var(--radius-pill); border-bottom-right-radius: var(--radius-pill); }
+@media (prefers-reduced-motion: reduce) { .ws-stackbar__seg { transition: none; } }
+
 /* ---- CHARTS (recharts) --------------------------------------------------
    Charts inherit the system: muted axes, hairline grid, NO heavy frame, tonal
    fills. Series use the categorical suite (never status hues, so a line is
