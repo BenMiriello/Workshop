@@ -189,6 +189,63 @@ function fmtTs(ts?: string | null): string {
   });
 }
 
+// Stores hosted by this project (B11). Reads /api/stores?project=<slug>
+// which routes through stores.by_host on the backend (entity-model 2026-07-18
+// §8.3). Shows a compact list of tier + URI + name; grant edits still live
+// in Settings > Grants.
+type StoreSummary = {
+  uri: string;
+  owner_app: string;
+  name: string;
+  type: string | null;
+  host_project?: string | null;
+  tier: string;
+};
+function ProjectStoresSection({ slug }: { slug: string }) {
+  const [stores, setStores] = useState<StoreSummary[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    fetch(`/api/stores?project=${encodeURIComponent(slug)}`)
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`${r.status}`)))
+      .then((j) => setStores(j.stores ?? []))
+      .catch((e) => setErr(String(e)));
+  }, [slug]);
+  return (
+    <section style={{ marginBottom: "var(--space-6)" }}>
+      <SectionLabel icon={<Store aria-hidden />}>Storage and access</SectionLabel>
+      {err ? (
+        <StateBlock variant="error" title="Couldn't load stores" hint={<code>GET /api/stores?project={slug} ({err})</code>} />
+      ) : stores === null ? (
+        <Card><Skeleton width="40%" /></Card>
+      ) : stores.length === 0 ? (
+        <StateBlock
+          title="No project-hosted stores"
+          hint="This project has no registered Stores of its own. Agents linked to this project reach the workshop-scope substrate (knowledge, learnings, jobs) through their scope key, not through per-project stores."
+        />
+      ) : (
+        <Card compact style={{ padding: "var(--space-3)" }}>
+          <Stack gap="sm">
+            {stores.map((s) => (
+              <Row key={s.uri} between wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                  <Tag hue={catFor(s.tier)}>{s.tier}</Tag>
+                  <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{s.name}</span>
+                  {s.type && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{s.type}</span>}
+                </Row>
+                <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{s.uri}</span>
+              </Row>
+            ))}
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+              Grant edits + broker allowlist live in{" "}
+              <Link to="/settings/grants" style={{ color: "var(--accent)" }}>Settings &gt; Grants</Link>.
+            </span>
+          </Stack>
+        </Card>
+      )}
+    </section>
+  );
+}
+
 function SpawnAgentModal({
   open,
   onCancel,
@@ -1004,6 +1061,13 @@ export default function ProjectDetail() {
           </CardGrid>
         )}
       </section>
+
+      {/* --- Storage and access (B11) ---
+           Stores hosted by this project (entity-model 2026-07-18 §8.3). Uses
+           GET /api/stores?project=<slug> which routes through stores.by_host.
+           Read-only for now; tier + grants + allowlist edits still live in
+           Settings > Grants + Settings > Store policies. */}
+      <ProjectStoresSection slug={slug} />
 
       {/* --- Grants (capabilities held by this project's agents/scope) --- */}
       {/* Read-only view of resource-scoped grants (GET /api/grants) whose holder

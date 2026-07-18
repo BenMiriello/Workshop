@@ -49,13 +49,23 @@ def _tier(store_uri: str) -> str:
 
 
 @router.get("/stores")
-async def list_stores(type: str | None = None):
-    """The declared Store catalog with each Store's policy tier, optionally
-    filtered by `type`. Registers from every source on each read so a newly
-    installed app's stores show up. {"stores": [...], "types": [...]}."""
+async def list_stores(type: str | None = None, app: str | None = None, project: str | None = None):
+    """The declared Store catalog with each Store's policy tier.
+
+    `type` narrows by broker type (Note, Budget, Finance, ...).
+    `app` and `project` narrow by host (entity-model 2026-07-18 §8.3);
+    used by B11's "Storage and access" section inside App / Project detail.
+    Registers from every source on each read so a newly installed app's
+    stores show up. {"stores": [...], "types": [...]}."""
     stores.register_all()
+    if app or project:
+        matched = stores.by_host(app=app, project=project)
+    else:
+        matched = stores.list(type=type)
     out = []
-    for s in stores.list(type=type):
+    for s in matched:
+        if type is not None and s.type != type:
+            continue
         out.append({**s.to_dict(), "tier": _tier(s.uri)})
     return {"stores": out, "types": stores.types()}
 
