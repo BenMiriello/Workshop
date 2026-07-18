@@ -13,6 +13,23 @@ _MODEL_OPUS = "claude-opus-4-7"
 _CLAUDE_CLI = "/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude"
 _AUTH_ENV = "/home/clawd-a/.config/clawdbot/auth.env"
 
+# Recursion + cost caps (security-audit-2026-07-18 A4). These tools spawn full
+# agentic `claude -p` turns with Bash; caller-supplied max_turns/max_iter used to
+# be unbounded, and nothing stopped claude→claude→claude fan-out. A depth counter
+# rides in the child env so a spawned turn that calls these tools again is refused
+# past _MAX_DEPTH.
+_MAX_TURNS_CAP = 12
+_MAX_ITER_CAP = 8
+_MAX_DEPTH = 2
+
+
+def _too_deep() -> bool:
+    import os
+    try:
+        return int(os.environ.get("WORKSHOP_AGENT_DEPTH", "0") or 0) >= _MAX_DEPTH
+    except ValueError:
+        return False
+
 
 def _build_env() -> dict:
     """Subscription-only env: load CLAUDE_CODE_OAUTH_TOKEN from auth.env, drop API key."""
@@ -20,6 +37,12 @@ def _build_env() -> dict:
     from pathlib import Path
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
+    # Increment the recursion-depth counter for the spawned turn (A4).
+    try:
+        _d = int(os.environ.get("WORKSHOP_AGENT_DEPTH", "0") or 0)
+    except ValueError:
+        _d = 0
+    env["WORKSHOP_AGENT_DEPTH"] = str(_d + 1)
     p = Path(_AUTH_ENV)
     if p.is_file():
         try:
@@ -95,6 +118,12 @@ def cloud_run_claude(task: str, model: str = "haiku", redact_pii: bool = True, m
         values before return.
     """
     import subprocess
+    if _too_deep():
+        return "ERROR: recursion depth cap reached (WORKSHOP_AGENT_DEPTH >= %d)" % _MAX_DEPTH
+    try:
+        max_turns = max(1, min(int(max_turns), _MAX_TURNS_CAP))
+    except (TypeError, ValueError):
+        max_turns = 6
     model_id = {"haiku": _MODEL_HAIKU, "sonnet": _MODEL_SONNET, "opus": _MODEL_OPUS}.get(model.lower(), _MODEL_HAIKU)
 
     if redact_pii:
@@ -140,6 +169,12 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
     """
     import subprocess
     from pathlib import Path
+    if _too_deep():
+        return "blocked: recursion depth cap (WORKSHOP_AGENT_DEPTH >= %d)" % _MAX_DEPTH
+    try:
+        max_iter = max(1, min(int(max_iter), _MAX_ITER_CAP))
+    except (TypeError, ValueError):
+        max_iter = 6
     todo_path = Path("/home/clawd-a/workshop/TODO.md")
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"

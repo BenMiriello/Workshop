@@ -213,6 +213,11 @@ def generate(slug: str, manifest, project_dir: Path, host_port: int,
             "command": ["sh", "-c", cmd],
             "environment": env,
             "restart": "unless-stopped",
+            # Block in-container privilege escalation (setuid/gain-caps). Cheap,
+            # app-safe hardening. cap_drop:[ALL] + a non-root user are deferred
+            # (can break apps that bind low ports / expect root) — see SEC-A6.
+            # (security-audit-2026-07-18 A6)
+            "security_opt": ["no-new-privileges:true"],
         }
         if depends:
             svc["depends_on"] = depends
