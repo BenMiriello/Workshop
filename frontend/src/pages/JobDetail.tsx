@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListTodo, ArrowUpRight } from "lucide-react";
+import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListTodo, ListChecks, ArrowUpRight } from "lucide-react";
 import {
   Button,
   Card,
@@ -86,16 +86,6 @@ function duration(job: Job): string {
   const m = Math.floor(secs / 60);
   const s = secs % 60;
   return s ? `${m}m ${s}s` : `${m}m`;
-}
-
-function evidenceText(evidence: unknown): string {
-  if (evidence == null) return "";
-  if (typeof evidence === "string") return evidence;
-  try {
-    return JSON.stringify(evidence, null, 2);
-  } catch {
-    return String(evidence);
-  }
 }
 
 // The structured work-product receipt project_ralph.sh attaches to a child Job's
@@ -356,7 +346,7 @@ export default function JobDetail() {
     // failure (the Error section already renders the reason from the evidence).
     // A failed run still carries a receipt, so ReceiptView renders regardless of
     // job.error; only the generic <pre> is suppressed on failure.
-    const ev = (isAwaiting || job.error || receipt) ? "" : evidenceText(job.evidence);
+    // Evidence JSON dump retired in C14; the ev variable is gone with it.
     const budgetEntries = job.budget ? Object.entries(job.budget) : [];
     body = (
       <Stack>
@@ -492,10 +482,16 @@ export default function JobDetail() {
                   </Row>
                 )
               )}
-              {job.task_status && (
-                <Row style={{ gap: "var(--space-1)", alignItems: "center" }}>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>task status</span>
-                  <Tag hue={catFor(job.task_status)}>{job.task_status}</Tag>
+              {/* Linked ticket (C14). Prior UI showed job.task_status as a
+                  second status pill next to job.status. That created a "which
+                  one is the truth?" ambiguity; a run has one status, and the
+                  ticket has its own. Link to the ticket instead. */}
+              {(job as { task_id?: string }).task_id && (
+                <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
+                     onClick={() => nav(`/work?ticket=${encodeURIComponent((job as { task_id?: string }).task_id!)}`)}>
+                  <ListChecks aria-hidden />
+                  <span>Linked ticket</span>
+                  <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{(job as { task_id?: string }).task_id}</span>
                 </Row>
               )}
             </Stack>
@@ -582,21 +578,9 @@ export default function JobDetail() {
           </section>
         )}
 
-        {!isAwaiting && !receipt && (
-          <section>
-            <SectionLabel>Evidence</SectionLabel>
-            {ev ? (
-              <Card style={{ padding: "var(--space-3)" }}>
-                <pre style={{
-                  margin: 0, whiteSpace: "pre-wrap", overflow: "auto", maxHeight: "40vh",
-                  fontSize: "var(--fs-sm)",
-                }}>{ev}</pre>
-              </Card>
-            ) : (
-              <StateBlock title="No evidence recorded" hint="This job did not attach a proof-of-work payload." />
-            )}
-          </section>
-        )}
+        {/* Evidence JSON dump retired in C14: it was a raw JSON blob with no
+            mechanical consumer. Anything the operator needs is now surfaced
+            through the linked ticket, the receipt, or the child runs list. */}
       </Stack>
     );
   }
