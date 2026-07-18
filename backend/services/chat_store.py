@@ -34,8 +34,58 @@ def _path(thread_id: str) -> Path:
     return _chat_dir() / f"{thread_id}.json"
 
 
+def _promote_agent_scope_if_legacy(thread: dict) -> None:
+    """P5: quietly migrate a legacy `agent:<slug>` (or `build:<slug>`) chat to
+    workshop or project scope with the agent captured as a participant.
+
+    An agent chat under the old model had context_key = agent:<slug> and no
+    participants list. Under the new model an agent is a PARTICIPANT of a
+    chat that lives in workshop / project / app scope. Rewrite in place on
+    write so the store gradually drifts to the new shape without a data-
+    migration pass; if the resolver ever fails, the pre-promotion shape
+    keeps working (P1 back-fill).
+
+    Never touches a chat whose participants have been explicitly diverged
+    from the context_key (scope_locked = True, or a participants list that
+    is empty or has more than one entry, or an entry that doesn't match).
+    That way an operator-authored intentional agent:<slug>-scope chat stays
+    as-is."""
+    ck = thread.get("context_key", "")
+    if ":" not in ck:
+        return
+    kind, rest = ck.split(":", 1)
+    if kind not in ("agent", "build"):
+        return
+    if thread.get("scope_locked"):
+        return
+    parts = _normalize_participants(thread.get("participants") or [])
+    canon = f"agent:{rest}"
+    # Only promote when the participant list is exactly [that agent] (or the
+    # freshly back-filled derivation). Anything else was set on purpose.
+    if parts and parts != [canon]:
+        return
+    thread["participants"] = [canon]
+    # Try to pull the agent's project link so a project-scoped agent's chat
+    # lands in project:<slug>; otherwise land in workshop (general).
+    project_slug = None
+    try:
+        from services import agents_registry as _reg
+        rec = _reg.get(rest)
+        if rec is not None:
+            project_slug = rec.get("project_slug") or None
+    except Exception:
+        project_slug = None
+    if project_slug:
+        thread["context_key"] = f"project:{project_slug}"
+        thread["scope"] = f"project:{project_slug}"
+    else:
+        thread["context_key"] = "general"
+        thread["scope"] = "workshop"
+
+
 def _write(thread: dict) -> dict:
     _chat_dir().mkdir(parents=True, exist_ok=True)
+    _promote_agent_scope_if_legacy(thread)
     p = _path(thread["id"])
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(thread, indent=2) + "\n")
