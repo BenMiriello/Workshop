@@ -1119,34 +1119,56 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <PanelsTopLeft size={16} aria-hidden />
         </button>
       )}
-      {showProviderPicker && providers.length > 0 && effectiveMode === "data" && (
-        <select
-          className="chat-tb__select chat-tb__provider"
-          value={activeProvider}
-          onChange={(e) => setActiveProvider(e.target.value)}
-          title="Which assistant to talk to"
-          aria-label="Assistant"
-        >
-          {providers.map((p) => (
-            <option key={p.key} value={p.key}>{p.label}</option>
-          ))}
-        </select>
+      {/* Provider select (which assistant to talk to). Shown only when there
+          is a real choice; single-provider case renders as a plain label so
+          the toolbar stops reading as two identical dropdowns (C13). */}
+      {showProviderPicker && providers.length > 1 && effectiveMode === "data" && (
+        <>
+          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>Assistant:</span>
+          <select
+            className="chat-tb__select chat-tb__provider"
+            value={activeProvider}
+            onChange={(e) => setActiveProvider(e.target.value)}
+            title="Which assistant to talk to"
+            aria-label="Assistant"
+          >
+            {providers.map((p) => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
+          </select>
+        </>
       )}
-      <select
-        className="chat-tb__select chat-tb__thread"
-        value={activeId ?? ""}
-        onChange={(e) => (e.target.value ? openThread(e.target.value) : newChat())}
-        title="Conversation"
-        aria-label="Conversation"
-      >
-        <option value="">New chat</option>
-        {threads.map((t) => (
-          <option key={t.id} value={t.id}>{t.title}</option>
-        ))}
-      </select>
-      <button className="chat-tb__btn" onClick={newChat} title="New chat" aria-label="New chat">
-        <Plus size={16} aria-hidden />
-      </button>
+      {showProviderPicker && providers.length === 1 && effectiveMode === "data" && (
+        <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>
+          {providers[0].label}
+        </span>
+      )}
+      {/* Conversation select. When no threads exist, show a labeled button
+          instead of a one-item dropdown. The redundant Plus button that used
+          to sit beside this select is gone: the "New chat" option in the
+          dropdown is the same affordance. */}
+      {threads.length > 0 ? (
+        <>
+          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>Chat:</span>
+          <select
+            className="chat-tb__select chat-tb__thread"
+            value={activeId ?? ""}
+            onChange={(e) => (e.target.value ? openThread(e.target.value) : newChat())}
+            title="Conversation"
+            aria-label="Conversation"
+          >
+            <option value="">New chat</option>
+            {threads.map((t) => (
+              <option key={t.id} value={t.id}>{t.title}</option>
+            ))}
+          </select>
+        </>
+      ) : (
+        <button className="chat-tb__btn" onClick={newChat} title="Start a new chat" aria-label="New chat">
+          <Plus size={16} aria-hidden />
+          <span style={{ marginLeft: "var(--space-1)", fontSize: "var(--fs-xs)" }}>New chat</span>
+        </button>
+      )}
       {activeId && (
         <button className="chat-tb__btn" onClick={() => setConfirmDeleteId(activeId)} title="Delete chat" aria-label="Delete chat">
           <Trash2 size={16} aria-hidden />
@@ -1189,18 +1211,24 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         </button>
       )}
       <span className="chat-tb__spacer" />
-      {modelOptions.length > 0 && (
-        <select
-          className="chat-tb__select chat-tb__model"
-          value={selectedModel}
-          onChange={(e) => setSelectedModel(e.target.value)}
-          title="Model for this conversation"
-          aria-label="Model"
-        >
-          {modelOptions.map((id) => (
-            <option key={id} value={id}>{modelLabel(id)}</option>
-          ))}
-        </select>
+      {modelOptions.length > 1 && (
+        <>
+          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginRight: "var(--space-1)" }}>Model:</span>
+          <select
+            className="chat-tb__select chat-tb__model"
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            title="Model for this conversation"
+            aria-label="Model"
+          >
+            {modelOptions.map((id) => (
+              <option key={id} value={id}>{modelLabel(id)}</option>
+            ))}
+          </select>
+        </>
+      )}
+      {modelOptions.length === 1 && (
+        <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{modelLabel(modelOptions[0])}</span>
       )}
       {variant !== "full" && !hideExpand && (
         <button className="chat-tb__btn" onClick={popOut} title="Open full screen" aria-label="Open full screen">
