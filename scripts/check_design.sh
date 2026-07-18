@@ -34,6 +34,27 @@ if [[ "${1:-}" == "--added" ]]; then MODE="added"; REV="${2:-HEAD}"; fi
 
 cd "$WORKSHOP" || { echo "check_design: workshop unreachable"; exit 2; }
 
+# --- Notes-and-docs tiering (N5) -------------------------------------------
+# Mechanical guard against the flat-notes drift the notes-and-docs policy
+# forbids: a NOTES.md at repo root or per-project, or an INTERVENTIONS.md
+# outside build-agents/. The per-scope knowledge substrate + docs/ +
+# docs/decisions/ + scratch/ cover every real notes surface; a flat NOTES.md
+# creeps in when an agent forgets which tier it should be writing to.
+# See ADR 0010 and docs/platform-redesign/coherence-migration-plan-2026-07-18.md
+# section 8.5 N5.
+_flat_notes_hits=$(
+  ls "$WORKSHOP/NOTES.md" "$WORKSHOP/notes.md" 2>/dev/null
+  find "$WORKSHOP/projects" -maxdepth 2 -type f \( -iname 'NOTES.md' -o -iname 'INTERVENTIONS.md' \) 2>/dev/null
+  find "$WORKSHOP/apps"     -maxdepth 2 -type f -iname 'NOTES.md' 2>/dev/null
+)
+if [[ -n "$_flat_notes_hits" ]]; then
+  echo "NOTES TIERING VIOLATION — see ADR 0010 (docs/decisions/0010-notes-vault-is-read-only-to-agents.md)"
+  echo "the following flat notes surfaces are forbidden. Use per-scope"
+  echo "knowledge (services/knowledge.py), scratch/, docs/, or docs/decisions/ instead:"
+  echo "$_flat_notes_hits" | sed 's/^/  /'
+  exit 1
+fi
+
 # --- Foundation integrity (full mode only) ---------------------------------
 if [[ "$MODE" == "full" ]]; then
   miss=()
