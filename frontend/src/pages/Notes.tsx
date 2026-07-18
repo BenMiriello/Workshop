@@ -247,7 +247,7 @@ export default function Notes() {
             Showing the first {OVERFLOW_AT} of {notes.length} notes. Narrow by scope or search to see the rest.
           </p>
         )}
-        <CardGrid>
+        <CardGrid className="ws-notes-grid">
           {shown.map((n) => (
             <li key={`${n.scope}:${n.id}`}>
               <Card
@@ -255,13 +255,12 @@ export default function Notes() {
                 compact
                 onClick={() => { setNotice(null); setOpen({ mode: "edit", note: n }); }}
                 style={{ cursor: "pointer" }}
+                className="ws-note-card"
               >
                 <Stack gap="sm">
-                  <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.id}</span>
-                  {n.hook && (
-                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)", wordBreak: "break-word" }}>{n.hook}</span>
-                  )}
-                  <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                  <span className="ws-note-card__title">{n.title || n.id}</span>
+                  <span className="ws-note-card__hook">{n.hook || ""}</span>
+                  <Row wrap className="ws-note-card__footer" style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                     <Tag hue={catFor(n.scope || "workshop")}>{scopeLabel(n.scope)}</Tag>
                     {n.updated && (
                       <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(n.updated)}</span>
@@ -666,16 +665,16 @@ function VaultNotes() {
             Showing the first {OVERFLOW_AT} of {items.length}. Search to narrow the list.
           </p>
         )}
-        <CardGrid>
+        <CardGrid className="ws-notes-grid">
           {shown.map((n) => (
             <li key={n.path}>
-              <Card compact>
+              <Card compact className="ws-doc-card">
                 <Stack gap="sm">
                   <Row style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                     <FileText size={14} aria-hidden />
-                    <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{n.title || n.path}</span>
+                    <span className="ws-note-card__title">{n.title || n.path}</span>
                   </Row>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{n.path}</span>
+                  <span className="ws-doc-card__path">{n.path}</span>
                 </Stack>
               </Card>
             </li>
@@ -795,7 +794,7 @@ function Documents() {
         {sections.map((section) => (
           <div key={section || "top"}>
             <SectionLabel>{section || "Top level"}</SectionLabel>
-            <CardGrid>
+            <CardGrid className="ws-notes-grid">
               {(groups.get(section) ?? []).map((d) => (
                 <li key={d.path}>
                   <Card
@@ -803,13 +802,14 @@ function Documents() {
                     compact
                     onClick={() => setOpenDoc(d)}
                     style={{ cursor: "pointer" }}
+                    className="ws-doc-card"
                   >
                     <Stack gap="sm">
                       <Row style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                         <FileText size={14} aria-hidden />
-                        <span style={{ fontWeight: 600, wordBreak: "break-word" }}>{d.title}</span>
+                        <span className="ws-note-card__title">{d.title}</span>
                       </Row>
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", wordBreak: "break-all" }}>{d.path}</span>
+                      <span className="ws-doc-card__path">{d.path}</span>
                     </Stack>
                   </Card>
                 </li>

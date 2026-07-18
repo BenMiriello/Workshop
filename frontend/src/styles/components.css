@@ -281,6 +281,44 @@ a.ws-btn { text-decoration: none; }
 }
 .ws-project-card__when { margin-top: auto; padding-top: var(--space-2); }
 
+/* Notes grid: uniform card heights regardless of hook length. Title clamps
+   to one line, hook to two lines, and the footer (scope tag + timestamp)
+   sticks to the bottom so cards align across a row. Same technique as the
+   Projects grid — no bespoke pixel heights, just consistent line-clamp +
+   grid-auto-rows:1fr. */
+.ws-notes-grid { grid-auto-rows: 1fr; }
+.ws-notes-grid > li { display: flex; min-width: 0; }
+.ws-notes-grid > li > * { flex: 1 1 auto; min-width: 0; }
+.ws-note-card { width: 100%; display: flex; flex-direction: column; }
+.ws-note-card__title {
+  font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+}
+.ws-note-card__hook {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: var(--lh-tight, 1.4);
+  min-height: calc(var(--lh-tight, 1.4) * 2em);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  word-break: break-word;
+}
+.ws-note-card__footer { margin-top: auto; padding-top: var(--space-2); }
+/* Doc cards (docs section) share the same grid rules but only carry title +
+   path. Path clamps to one line so a deep tree can't spike a card taller. */
+.ws-doc-card { width: 100%; display: flex; flex-direction: column; }
+.ws-doc-card__path {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  margin-top: auto;
+  padding-top: var(--space-2);
+}
+
 /* Chat list cards (Chats page): the title row is fixed height; the snippet
    below is always rendered (even blank) and clamped to 2 lines so a card's
    height never depends on whether/how long last_message is. */
