@@ -45,13 +45,16 @@ export default function Shell() {
     [dispatcher],
   );
 
-  // Keep navigation inside the app on our origin; send anything else to Safari.
+  // Only our own origin renders in the WebView — it is the sole origin the native
+  // bridge (window.WorkshopNative) trusts. about:blank is the harmless internal
+  // empty document. Everything else — data:/about: variants, any off-origin page —
+  // must NOT load here, where it would inherit the bridge and could reach the
+  // Keychain device token; off-origin http(s) opens in Safari instead.
+  // (security-audit-2026-07-18 H6)
   const onShouldStart = useCallback(
     (req: { url: string }) => {
-      if (req.url.startsWith(webOrigin) || req.url.startsWith("about:") || req.url.startsWith("data:")) {
-        return true;
-      }
-      void Linking.openURL(req.url);
+      if (req.url.startsWith(webOrigin) || req.url === "about:blank") return true;
+      if (/^https?:\/\//i.test(req.url)) void Linking.openURL(req.url);
       return false;
     },
     [webOrigin],
@@ -73,16 +76,18 @@ export default function Shell() {
           <Pressable style={styles.btn} onPress={reload}>
             <Text style={styles.btnText}>Retry</Text>
           </Pressable>
-          <Pressable onPress={() => router.push("/debug")} hitSlop={12}>
-            <Text style={[styles.muted, styles.debugLink]}>Diagnostics</Text>
-          </Pressable>
+          {__DEV__ && (
+            <Pressable onPress={() => router.push("/debug")} hitSlop={12}>
+              <Text style={[styles.muted, styles.debugLink]}>Diagnostics</Text>
+            </Pressable>
+          )}
         </View>
       ) : (
         <>
           <WebView
             ref={webRef}
             source={{ uri: WEB_URL }}
-            originWhitelist={["*"]}
+            originWhitelist={[webOrigin]}
             injectedJavaScriptBeforeContentLoaded={injected}
             onMessage={onMessage}
             onShouldStartLoadWithRequest={onShouldStart}

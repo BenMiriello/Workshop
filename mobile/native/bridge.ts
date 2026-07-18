@@ -54,9 +54,17 @@ const ROUTES: Record<Capability, Record<string, Handler>> = {
     end: liveActivity.end,
   },
   secureStore: {
-    get: secureStore.get,
-    set: secureStore.set,
-    remove: secureStore.remove,
+    // Web may WRITE ONLY the device token — no read, no delete, no other key.
+    // Exposing get() to page JS reintroduced the exact bearer-exfil path the
+    // HttpOnly cookie closes; any same-origin XSS could read the token. Native
+    // producers call native/secureStore directly and keep full access.
+    // (security-audit-2026-07-18 H6)
+    set: (key: string, value: string) => {
+      if (key !== "ws-device-token") {
+        throw new Error("secureStore: web may only write ws-device-token");
+      }
+      return secureStore.set(key, value);
+    },
   },
 };
 

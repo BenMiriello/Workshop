@@ -14,6 +14,26 @@ import { clearToken, setDeviceToken } from "../native/auth";
 // the WebView error screen ("Diagnostics"), or route to /debug directly.
 
 export default function Debug() {
+  // Diagnostics — including the pasted-token field that writes the device
+  // credential — is a dev-only affordance and must not ship in release builds
+  // handling financial data. (security-audit-2026-07-18 L4)
+  if (!__DEV__) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} hitSlop={12}>
+            <Text style={styles.link}>Back</Text>
+          </Pressable>
+          <Text style={styles.title}>Diagnostics</Text>
+        </View>
+        <Text style={styles.muted}>Not available in release builds.</Text>
+      </SafeAreaView>
+    );
+  }
+  return <DebugPanel />;
+}
+
+function DebugPanel() {
   const [log, setLog] = useState<string[]>([]);
   const [tokenInput, setTokenInput] = useState("");
   const append = (s: string) => setLog((l) => [`${new Date().toLocaleTimeString()}  ${s}`, ...l].slice(0, 50));

@@ -32,7 +32,13 @@ export const CAP_METHODS = {
   speech: ["available", "transcribe", "speak", "stop"],
   localNotify: ["schedule", "cancel", "cancelAll", "permissionStatus", "requestPermission"],
   liveActivity: ["isSupported", "start", "update", "end"],
-  secureStore: ["get", "set", "remove"],
+  // Web-reachable surface is WRITE-ONLY (see the dispatcher, which also pins the
+  // key to ws-device-token). get/remove are deliberately NOT exposed to page JS:
+  // exposing get() let any script or same-origin XSS read the API bearer that the
+  // HttpOnly session cookie is specifically designed to keep out of JS reach.
+  // Native producers import native/secureStore directly and are unaffected.
+  // (security-audit-2026-07-18 H6)
+  secureStore: ["set"],
 } as const;
 
 export type Capability = keyof typeof CAP_METHODS;
@@ -208,9 +214,9 @@ export interface WorkshopNative {
   };
 
   secureStore: {
-    get(key: string): Promise<string | null>;
-    set(key: string, value: string): Promise<void>;
-    remove(key: string): Promise<void>;
+    /** Web may only persist the device token; the Keychain is not readable from
+     *  page JS (security-audit-2026-07-18 H6). */
+    set(key: "ws-device-token", value: string): Promise<void>;
   };
 }
 

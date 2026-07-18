@@ -56,7 +56,17 @@ async def lifespan(app: FastAPI):
             t.cancel()
 
 
-app = FastAPI(title="Workshop", lifespan=lifespan)
+# Interactive API docs (/docs, /redoc, /openapi.json) disclose the full route map.
+# Off by default; opt in with WORKSHOP_ENABLE_DOCS=1 for local dev.
+# (security-audit-2026-07-18 L3)
+_DOCS = os.environ.get("WORKSHOP_ENABLE_DOCS", "0").strip().lower() in {"1", "true", "yes"}
+app = FastAPI(
+    title="Workshop",
+    lifespan=lifespan,
+    docs_url="/docs" if _DOCS else None,
+    redoc_url="/redoc" if _DOCS else None,
+    openapi_url="/openapi.json" if _DOCS else None,
+)
 
 
 # Tailscale Serve mounts the backend directly at :443/, so paths from the

@@ -46,8 +46,11 @@ _DIST_ROOT = DIST.resolve()
 # them by origin would be the network-position anti-pattern this whole redesign
 # removed, and it broke the operator using those pages on the public web.
 _BLOCKED_PREFIXES = (
-    # internal / loopback-trusted machine endpoints (no user auth)
-    "/tools", "/relay", "/services", "/events", "/auto",
+    # internal / loopback-trusted machine endpoints (no user auth). NOTE the router
+    # prefix is "/auto-pr" (routes/auto_pr.py); "/auto" alone did NOT match it since
+    # blocking is segment-exact after normalize, so /api/auto-pr was proxied through
+    # and inherited loopback trust. Fixed 2026-07-18 (security-audit-2026-07-18 H1).
+    "/tools", "/relay", "/services", "/events", "/auto-pr",
     # unauthenticated / Basic ingest webhooks
     "/plaid/webhook",
     "/location/owntracks",
@@ -64,7 +67,14 @@ _BLOCKED_EXACT = frozenset({"/birds/analyze"})
 _DROP_REQ = {"host", "content-length", "connection", "keep-alive", "transfer-encoding"}
 _DROP_RESP = {"content-length", "connection", "keep-alive", "transfer-encoding", "content-encoding"}
 
-app = FastAPI(title="Workshop (public edge)")
+# No interactive docs on the internet-facing edge. (security-audit-2026-07-18 L3)
+_DOCS = os.environ.get("WORKSHOP_ENABLE_DOCS", "0").strip().lower() in {"1", "true", "yes"}
+app = FastAPI(
+    title="Workshop (public edge)",
+    docs_url="/docs" if _DOCS else None,
+    redoc_url="/redoc" if _DOCS else None,
+    openapi_url="/openapi.json" if _DOCS else None,
+)
 
 # SECURITY: use a raw transport, NOT httpx.AsyncClient. An AsyncClient keeps a
 # persistent cookie jar: it auto-stores every upstream `Set-Cookie` and replays
