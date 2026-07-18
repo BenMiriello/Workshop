@@ -524,6 +524,12 @@ for a in agents:
     slug = a.get("slug")
     trigs = a.get("triggers") or []
     if not slug or not trigs:
+        # A registered agent with NO triggers can never be dispatched. Silent
+        # until now, which is why all 20 builder agents were invisible: they
+        # carry `triggers: []`, so `maker` - a fully built handler - has never
+        # fired once. Say so, rather than dropping them without a word.
+        if slug and not trigs:
+                print(f"skip-no-triggers\t{slug}\t(role={a.get('role') or 'none'}; registered but undispatchable)", file=sys.stderr)
         continue
     fire = False
     fired_cron_keys = []  # committed to state only if this agent is dispatched (F16)
@@ -536,6 +542,17 @@ for a in agents:
         elif t.get("kind") == "loop":
             fire = fire or True  # loop fires when the scope has ready tasks (checked below)
     if not fire:
+        # Distinguish "not due yet" from "can NEVER fire here". This loop only
+        # matches `cron` and `loop`; an agent whose triggers are all some other
+        # kind is dropped every tick, forever, with no trace. That is why the
+        # triager (masini, trigger kind `discord`) has never run despite 530
+        # lines of implemented handler behind it - .runtime/triager/ does not
+        # exist. An unroutable trigger kind is a wiring bug, not a schedule.
+        kinds = {t.get("kind") for t in trigs}
+        if not (kinds & {"cron", "loop"}):
+            print(f"skip-unroutable\t{slug}\t(role={a.get('role') or 'none'} "
+                  f"trigger-kinds={sorted(k for k in kinds if k)}; dispatcher fires cron/loop only)",
+                  file=sys.stderr)
         continue
 
     handler = _handler_for(a)
