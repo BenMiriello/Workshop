@@ -1,6 +1,14 @@
 # Workshop Platform — v1 Design Plan (Overview)
 
-Status: **draft for operator review** · Date: 2026-06-14 · Author: clawd-a (supervisor)
+> **Superseded on 2026-07-18** by
+> [`docs/platform-redesign/entity-model-2026-07-18.md`](../platform-redesign/entity-model-2026-07-18.md)
+> (the canonical vocabulary and schema) and the phase docs that ride on top of
+> it (autonomy-model, latitude-model, primitive-roles, chat-scope-design,
+> chat-work-linkage, resource-access-interface-spec). This v1 doc set is kept
+> for historical reference only. Do not update it; do not treat its
+> assistant/builder axis as current — agents key off `role` now, not runtime.
+
+Status: **superseded (historical reference)** · Date: 2026-06-14 · Author: clawd-a (supervisor)
 
 This is the master plan for Workshop v1. It defines the conceptual model first
 (what the nouns are and how they relate), then points at the four companion docs

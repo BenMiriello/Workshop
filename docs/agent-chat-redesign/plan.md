@@ -1,5 +1,12 @@
 # Agent / chat / knowledge / project-builder redesign
 
+> **Superseded on 2026-07-18** by
+> [`docs/platform-redesign/entity-model-2026-07-18.md`](../platform-redesign/entity-model-2026-07-18.md)
+> and the phase docs on top of it. Assistant/builder as a runtime distinction
+> stays as plumbing but is no longer the agent-typing axis (role is). Letta was
+> removed in the 2026-07-15 Stage 9 teardown. Kept for historical reference;
+> do not update.
+
 Status: PLAN ONLY (2026-07-11). Not built. Research + design pass. Operator has locked the core
 decisions (below). Build starts at Phase 1 when the operator says go.
 
