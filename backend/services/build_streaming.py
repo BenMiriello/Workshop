@@ -177,6 +177,38 @@ def _ctx_tokens_from_usage(u: object) -> int:
     )
 
 
+def _usage_scope_for_turn(turn: "Turn") -> str:
+    """The ledger scope a chat turn bills to: a bare project slug, matching the
+    values autonomous sweeps already write ("workshop", "demo-x"). The knowledge
+    scope is the right source (it is what the chat's own learnings key on) but it
+    uses a "project:<slug>" form, so strip the prefix. Falls back to "workshop"
+    rather than raising — a scope lookup must never cost the operator a turn."""
+    try:
+        from services import chat_store, knowledge
+        t = chat_store.get_thread(turn.thread_id) or {}
+        scope = knowledge.scope_for_context(t.get("context_key") or "workshop")
+        if scope.startswith("project:"):
+            return scope.split(":", 1)[1]
+        return scope or "workshop"
+    except Exception:
+        return "workshop"
+
+
+def _spend_tokens_from_usage(u: object) -> int:
+    """Billable tokens from a usage block: everything the turn actually cost,
+    including output. Distinct from _ctx_tokens_from_usage, which answers "how
+    full is the window" and therefore excludes output on purpose. Spend and
+    occupancy are different questions and must not share a helper."""
+    if not isinstance(u, dict):
+        return 0
+    return (
+        int(u.get("input_tokens") or 0)
+        + int(u.get("cache_read_input_tokens") or 0)
+        + int(u.get("cache_creation_input_tokens") or 0)
+        + int(u.get("output_tokens") or 0)
+    )
+
+
 def _summarize_tool_input(inp: dict) -> str:
     """One-line preview for the UI. Long tool inputs (full file contents in
     a Write) shouldn't bloat the SSE stream — show file path + size only."""
@@ -428,8 +460,16 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             ctx = _ctx_tokens_from_usage(payload.get("usage"))
             if ctx:
                 state["last_ctx"] = ctx
+            # Spend accumulates across tool rounds: each assistant message is a
+            # separate API call and is billed separately. (Contrast last_ctx,
+            # which is overwritten because only the latest window size matters.)
+            state["spend_sum"] = int(state.get("spend_sum") or 0) + _spend_tokens_from_usage(payload.get("usage"))
         elif kind == "result":
             state["saw_result"] = True
+            # The result envelope's usage is the turn TOTAL across tool rounds.
+            # That overcounts the context window (hence the fallback-only use
+            # below) but it is exactly right for spend, so prefer it when present.
+            state["spend_result"] = _spend_tokens_from_usage(payload.get("usage"))
             # Fallback only: the result usage can be a per-turn SUM across tool
             # rounds, so it overcounts the window. Use it only if no assistant
             # message reported usage.
@@ -497,11 +537,12 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     else:
         rc = 0 if state["saw_result"] else -1
     await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
-                         context_tokens=int(state.get("last_ctx") or 0))
+                         context_tokens=int(state.get("last_ctx") or 0),
+                         spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0))
 
 
 async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
-                         context_tokens: int = 0) -> None:
+                         context_tokens: int = 0, spend_tokens: int = 0) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 900))
@@ -598,6 +639,25 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             chat_store.set_thread_context_tokens(turn.thread_id, context_tokens)
         except Exception as e:
             log.debug("turn %s: context-token persist failed: %s", turn.id, e)
+
+    # Meter the turn's SPEND. Reported, never gated: usage_ledger.can_admit
+    # reserves headroom on the assumption that interactive chat is invisible to
+    # the ledger, so metering chat AND gating on it would double-count that
+    # reserve. Recorded with role="chat" so chat spend stays separable from
+    # autonomous worker spend in every downstream view. Best-effort — a ledger
+    # hiccup must never fail a turn the operator already received.
+    if spend_tokens > 0:
+        try:
+            from services import usage_ledger
+            usage_ledger.record(
+                _usage_scope_for_turn(turn),
+                spend_tokens,
+                role="chat",
+                run=turn.id,
+                chat=turn.thread_id,
+            )
+        except Exception as e:
+            log.debug("turn %s: chat usage record failed: %s", turn.id, e)
     try:
         build_agents.touch(turn.agent_slug)
         # Turn is over: drop the persisted "running" ratchet back to idle so the

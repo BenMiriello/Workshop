@@ -40,6 +40,12 @@ POLL=60
 MAX_TASKS=3
 ONCE=0
 
+# Per-task wall budget in SECONDS (20 min). We EXPORT this to project_ralph.sh as
+# RALPH_MAX_WALL and also size the sweep budget from it, so the two can never
+# drift apart — the failure mode being fixed here is exactly a mismatch between
+# them. One number, both sides.
+PER_TASK_WALL="${PER_TASK_WALL:-1200}"
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir)       DIR="$2"; shift 2 ;;
@@ -93,7 +99,17 @@ while :; do
     # exited. (Reading the status instead would run the queue while paused.)
     if [[ "$( ( source "$WORKSHOP/scripts/pause_guard.sh"
                 workshop_pause_guard "$LOG" "queue_runner"; echo RUN ) )" == *RUN* ]]; then
-      bash "$RALPH" --dir "$DIR" --max-tasks "$MAX_TASKS" --max-wall 1500 >> "$LOG" 2>&1 || true
+      # Size the sweep budget to the task cap we are asking for. project_ralph.sh
+      # refuses to START a task it cannot finish inside the remaining budget
+      # (`REMAIN < RALPH_MAX_WALL + 30`), which is correct — but a budget smaller
+      # than MAX_TASKS * per-task means the sweep quits early and MAX_TASKS is
+      # never reachable. With a flat 1500s, any task over ~270s ended the sweep
+      # after ONE task, so the queue did ~1 real ticket per poll while claiming a
+      # cap of 3. Trivial tasks hid it (3 drained in one 97s sweep); real tickets
+      # take minutes and did not.
+      local_wall=$(( MAX_TASKS * PER_TASK_WALL + 120 ))
+      RALPH_MAX_WALL="$PER_TASK_WALL" \
+        bash "$RALPH" --dir "$DIR" --max-tasks "$MAX_TASKS" --max-wall "$local_wall" >> "$LOG" 2>&1 || true
     else
       log "paused by pause_guard; idling"
     fi

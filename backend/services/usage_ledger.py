@@ -95,7 +95,7 @@ def _parse_ts(s: str) -> float | None:
 def record(project: str | None, tokens: int, *, agent: str | None = None,
            job_id: str | None = None, ts: str | None = None,
            task_id: str | None = None, run: str | None = None,
-           role: str | None = None) -> None:
+           role: str | None = None, chat: str | None = None) -> None:
     """Append one usage entry. `project` is the scope the tokens are billed to
     (None -> "unbound"). Safe for concurrent shell + backend writers (append is
     atomic for small lines).
@@ -119,6 +119,10 @@ def record(project: str | None, tokens: int, *, agent: str | None = None,
         entry["run"] = run
     if role:
         entry["role"] = role
+    # The originating chat thread, for the per-chat usage breakdown. Only set by
+    # interactive turns (role="chat"); autonomous sweeps leave it absent.
+    if chat:
+        entry["chat"] = chat
     LEDGER_PATH.parent.mkdir(parents=True, exist_ok=True)
     with LEDGER_PATH.open("a") as f:
         f.write(json.dumps(entry) + "\n")

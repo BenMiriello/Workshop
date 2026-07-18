@@ -40,7 +40,12 @@ DIR_ARG=""           # --dir: sweep an explicit scope dir (agent scope / any tre
 ASSIGNEE=""          # --assignee agent:<slug>: claim only this delegate's (or unassigned) tasks
 MAX_WALL=3000        # 50 min total for a project sweep
 MAX_TASKS=20         # cap tasks per sweep
-RALPH_MAX_WALL=1200  # per-task wall budget handed to ralph.sh
+# Per-task wall budget (SECONDS) handed to ralph.sh. Env-overridable so a caller
+# that also sets --max-wall can keep the two consistent: the loop below refuses to
+# START a task it cannot finish inside the remaining sweep budget, so a sweep
+# budget smaller than MAX_TASKS * this value silently caps tasks-per-sweep at one.
+# See scripts/queue_runner.sh, which sets both from one number.
+RALPH_MAX_WALL="${RALPH_MAX_WALL:-1200}"
 RALPH_INNER_MAX_ITER=10  # FIXED inner ralph loop cap (iterations per attempt),
                          # distinct from the per-task ATTEMPT cap below (review F13)
 # Per-task EFFORT -> inner-loop cap + model tier (O6/O7-config). A task carries an
