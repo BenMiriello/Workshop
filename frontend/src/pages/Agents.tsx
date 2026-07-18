@@ -20,8 +20,8 @@ import {
   Stack,
   StateBlock,
   StatusDot,
+  StatusPill,
   Tag,
-  Toggle,
   catFor,
   type StatusKind,
 } from "../ui";
@@ -50,7 +50,6 @@ function presetIcon(p: Preset): ReactNode {
   if (p === "on-demand") return <Play {...props} />;
   return <Power {...props} />;
 }
-import AutonomyControls from "../components/AutonomyControls";
 
 type SupervisorStatus = {
   cron_autonomy: { disabled: boolean };
@@ -392,7 +391,6 @@ export default function Agents() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
-  const [autonomyBusy, setAutonomyBusy] = useState(false);
   const [spawning, setSpawning] = useState(false);
   const [templating, setTemplating] = useState(false);
 
@@ -428,18 +426,6 @@ export default function Agents() {
     return () => clearInterval(t);
   }, [loadAll, loadSup]);
 
-  // Autonomy = the cron/Ralph background loop. Enabling clears the disable flag;
-  // disabling re-creates it. Live control, the cron scripts check it each tick.
-  const setAutonomy = async (enabled: boolean) => {
-    setAutonomyBusy(true);
-    try {
-      await fetch(`/api/agents/autonomy/${enabled ? "enable" : "disable"}`, { method: "POST" });
-      loadSup();
-    } finally {
-      setAutonomyBusy(false);
-    }
-  };
-
   // Last Job per agent id, from a single jobs feed (most recent first already).
   const lastJobByAgent = useMemo(() => {
     const map = new Map<string, Job>();
@@ -467,7 +453,22 @@ export default function Agents() {
     <div>
       <PageHeader
         title="Agents"
-        sub={`${total} agent${total === 1 ? "" : "s"}`}
+        sub={
+          <Row wrap style={{ gap: "var(--space-3)" }}>
+            <span>{total} agent{total === 1 ? "" : "s"}</span>
+            {/* Read-only autonomy status pill (C6). The canonical toggle
+                lives on /settings; showing it here so the operator on the
+                roster page knows at a glance whether the workshop is
+                dispatching or paused. */}
+            {sup && (
+              <Link to="/settings" style={{ textDecoration: "none" }} title="Manage in Settings">
+                <StatusPill status={sup.cron_autonomy.disabled ? "stopped" : "running"}>
+                  autonomy {sup.cron_autonomy.disabled ? "off" : "on"}
+                </StatusPill>
+              </Link>
+            )}
+          </Row>
+        }
         actions={
           <Row wrap>
             <Link to="/agents/new">
@@ -487,13 +488,13 @@ export default function Agents() {
       />
 
       {sup && (() => {
-        // At-a-glance strip: builders live/idle split, assistants count, and the
-        // one live autonomy toggle (clears/creates .runtime/AUTONOMY_DISABLED).
+        // At-a-glance strip: builders live/idle + assistant count. Autonomy
+        // moved off this strip to the PageHeader pill (view-only) plus the
+        // canonical toggle on /settings (C6).
         const builders = agents.filter((a) => a.runtime === "builder");
         const assistants = agents.filter((a) => a.runtime === "assistant");
         const liveBuilds = builders.filter((a) => a.state === "running").length;
         const idleBuilds = builders.filter((a) => a.state !== "running").length;
-        const autonomyOn = !sup.cron_autonomy.disabled;
         const builderDot: StatusKind = liveBuilds > 0 ? "running" : "ok";
         return (
           <Card style={{ marginBottom: "var(--space-5)", padding: "var(--space-4)" }}>
@@ -505,18 +506,6 @@ export default function Agents() {
               <div>
                 <SectionLabel>Assistants</SectionLabel>
                 <Row><StatusDot status="ok">{assistants.length} {assistants.length === 1 ? "assistant" : "assistants"}</StatusDot></Row>
-              </div>
-              <div>
-                <SectionLabel>Autonomy</SectionLabel>
-                <Row>
-                  <StatusDot status={autonomyOn ? "running" : "stopped"}>{autonomyOn ? "On" : "Off"}</StatusDot>
-                  <Toggle
-                    checked={autonomyOn}
-                    disabled={autonomyBusy}
-                    onChange={(next) => setAutonomy(next)}
-                    label={<span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>background loop</span>}
-                  />
-                </Row>
               </div>
             </Row>
           </Card>
@@ -598,12 +587,9 @@ export default function Agents() {
         </CardGrid>
       )}
 
-      {/* Global autonomy pause + supervisor + Ollama/GPU broker controls. Moved
-          here from Settings (Phase 5): the fleet they govern lives on this page,
-          and the AUTONOMY_DISABLED switch stays reachable. */}
-      <div style={{ marginTop: "var(--space-7)" }}>
-        <AutonomyControls />
-      </div>
+      {/* Autonomy + GPU/Ollama controls moved back to Settings (C6). The read-
+          only status pill in the PageHeader shows the state at a glance and
+          links to the canonical toggle in /settings. */}
 
       <NewBuilderModal
         open={spawning}

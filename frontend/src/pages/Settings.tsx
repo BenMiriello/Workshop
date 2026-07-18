@@ -35,6 +35,7 @@ import { useAuth } from "../auth/AuthProvider";
 import Services from "./Services";
 import Events from "./Events";
 import { SettingsSection as Section, SettingsRow as Row } from "../components/AppSettings";
+import AutonomyControls from "../components/AutonomyControls";
 import { native } from "../native/bridge";
 import { useNative, useTrackingStatus } from "../native/useNative";
 import { startDeviceTracking, stopDeviceTracking } from "../native/location";
@@ -78,6 +79,7 @@ export default function Settings() {
       <PlatformSection />
       <HealthSection />
       <AgentsSection />
+      <AutonomyControls />
       <SystemSection />
     </div>
   );

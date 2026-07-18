@@ -21,10 +21,16 @@ type AutonomyStatus = {
     disabled_at: string | null;
     flag_path: string;
   };
-  // Whether a worker loop is actually RESIDENT. The flag above says only that
-  // work is permitted; it says nothing about whether anything is running, which
-  // is how this control used to report "enabled (Ralph fires every 20m)" while
-  // no worker existed at all.
+  // 2026-07-18 canonical off-switch: JSON overlay at .runtime/autonomy-override.json.
+  // The `disabled` boolean above is truthy if EITHER the legacy AUTONOMY_DISABLED
+  // flag file OR the overlay says engaged, so the row below stays a single truth
+  // for the operator; the toggle only ever writes to the overlay endpoint.
+  override?: {
+    engaged: boolean;
+    reason?: string | null;
+    engaged_at?: string | null;
+    engaged_by?: string | null;
+  };
   queue_runner?: {
     running: boolean;
     pid: number | null;
@@ -112,16 +118,6 @@ export default function AutonomyControls() {
     return () => clearInterval(t);
   }, [load]);
 
-  const post = useCallback(async (label: string, path: string) => {
-    setBusy(label);
-    try {
-      await fetch(path, { method: "POST" });
-      await load();
-    } finally {
-      setBusy(null);
-    }
-  }, [load]);
-
   const cronDisabled = !!auto?.cron_autonomy.disabled;
   const runnerRunning = !!auto?.queue_runner?.running;
   const allStopped = cronDisabled;
@@ -129,9 +125,15 @@ export default function AutonomyControls() {
   const onStopAll = async () => {
     setBusy("stop-all");
     try {
-      // Disable cron FIRST so nothing can reload models the moment after we
-      // unload them.
-      await fetch("/api/agents/autonomy/disable", { method: "POST" });
+      // Engage the override FIRST so nothing reloads a model right after we
+      // unload it. The override is the canonical off-switch (autonomy-model
+      // 2026-07-18 §1.2); the legacy AUTONOMY_DISABLED flag is preserved but
+      // not touched from the UI.
+      await fetch("/api/agents/autonomy/override", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "Stop all" }),
+      });
       await fetch("/api/ollama/unload", { method: "POST" });
       await load();
     } finally {
@@ -143,7 +145,7 @@ export default function AutonomyControls() {
   const onStartAll = async () => {
     setBusy("start-all");
     try {
-      await fetch("/api/agents/autonomy/enable", { method: "POST" });
+      await fetch("/api/agents/autonomy/override", { method: "DELETE" });
       await load();
     } finally {
       setBusy(null);
@@ -203,7 +205,26 @@ export default function AutonomyControls() {
               size="sm"
               variant={cronDisabled ? "default" : "danger-ghost"}
               disabled={busy != null}
-              onClick={() => post(cronDisabled ? "enable" : "disable", cronDisabled ? "/api/agents/autonomy/enable" : "/api/agents/autonomy/disable")}
+              onClick={async () => {
+                // Legacy AUTONOMY_DISABLED (if present) stays for the shell-
+                // script maintenance convention; the operator surface only ever
+                // writes the JSON overlay.
+                setBusy(cronDisabled ? "enable" : "disable");
+                try {
+                  if (cronDisabled) {
+                    await fetch("/api/agents/autonomy/override", { method: "DELETE" });
+                  } else {
+                    await fetch("/api/agents/autonomy/override", {
+                      method: "POST",
+                      headers: { "content-type": "application/json" },
+                      body: JSON.stringify({ reason: "Disabled from Settings" }),
+                    });
+                  }
+                  await load();
+                } finally {
+                  setBusy(null);
+                }
+              }}
             >
               {busy === "enable" ? "enabling…" : busy === "disable" ? "disabling…" : cronDisabled ? "Enable" : "Disable"}
             </Button>

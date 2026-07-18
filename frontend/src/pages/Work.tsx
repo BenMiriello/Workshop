@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  RefreshCw, Plus, Pencil, Trash2, ArrowUpRight, Play, Power,
+  RefreshCw, Plus, Pencil, Trash2, ArrowUpRight, Play,
   Check, X, KeyRound, BookOpen, EyeOff, ShieldCheck,
 } from "lucide-react";
 import {
@@ -23,14 +23,12 @@ import {
   Skeleton,
   StatusPill,
   StatusDot,
-  Toggle,
   Checkbox,
   Tag,
   catFor,
   type SegmentedOption,
 } from "../ui";
 import JobsFeed from "../components/JobsFeed";
-import AutonomyScopes from "../components/AutonomyScopes";
 import QueueRunner from "../components/QueueRunner";
 import { type Job, jobStatusKind } from "../lib/jobs";
 import {
@@ -47,22 +45,22 @@ import {
   scopeHref,
 } from "../lib/tasks";
 
-// The Work surface (plan D4 / sub-decision b): one nav item, four tabs.
-//   Tickets  — the cross-scope task list + detail drawer (the primary surface).
-//   Runs     — the existing Jobs feed, rendered from the shared JobsFeed.
-//   Review   — work that stopped on its own, and the answers that release it.
-//   Autonomy — how each scope processes work.
+// The Work surface (plan D4 / sub-decision b): one nav item, three tabs.
+//   Tickets — the cross-scope task list + detail drawer (the primary surface).
+//   Runs    — the existing Jobs feed, rendered from the shared JobsFeed.
+//   Review  — work that stopped on its own, and the answers that release it.
 // A ticket IS a task; every identifier stays `task`. /jobs stays a route.
-// Review is a fourth TAB rather than a /review route: work state must not split
+// Review is a third TAB rather than a /review route: work state must not split
 // across two pages, and this is already the multi-tab home of work state.
+// Autonomy moved off Work (C6): the canonical toggle lives on /settings; a
+// read-only pill on /agents shows current state.
 
-type Tab = "tickets" | "runs" | "review" | "autonomy";
+type Tab = "tickets" | "runs" | "review";
 
 const TABS: SegmentedOption<Tab>[] = [
   { value: "tickets", label: "Tickets" },
   { value: "runs", label: "Runs" },
   { value: "review", label: "Review" },
-  { value: "autonomy", label: "Autonomy" },
 ];
 
 const OVERFLOW_AT = 100;
@@ -670,89 +668,6 @@ function receiptLine(job: Job): string {
   return [filePart, base].filter(Boolean).join(" · ");
 }
 
-// ---- Autonomy tab ----------------------------------------------------------
-// The central autonomy surface: a prominent global master switch (the same
-// .runtime/AUTONOMY_DISABLED flag the Agents page toggles, via the shared
-// /api/agents/autonomy/{status,enable,disable} endpoints) over the per-scope
-// management list. OFF halts every background sweep; a manual Run now still
-// works, scope by scope.
-
-type SupStatus = { cron_autonomy?: { disabled?: boolean } } | null;
-
-function AutonomyTab() {
-  const [sup, setSup] = useState<SupStatus>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(async () => {
-    setErr(null);
-    try {
-      const r = await fetch("/api/agents/autonomy/status");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      setSup(await r.json());
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const setAutonomy = useCallback(async (enabled: boolean) => {
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await fetch(`/api/agents/autonomy/${enabled ? "enable" : "disable"}`, { method: "POST" });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      await load();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }, [load]);
-
-  const on = sup ? !sup.cron_autonomy?.disabled : null;
-
-  return (
-    <Stack>
-      <Card style={{ padding: "var(--space-4)" }}>
-        {err && !sup ? (
-          <StateBlock
-            variant="error"
-            title="Couldn't load the autonomy switch"
-            hint={<><code>/api/agents/autonomy/status</code> ({err})</>}
-            action={<Button size="sm" onClick={load}>Retry</Button>}
-          />
-        ) : sup === null ? (
-          <Stack gap="sm"><Skeleton width="40%" /><Skeleton width="60%" /></Stack>
-        ) : (
-          <Row between wrap style={{ gap: "var(--space-4)", alignItems: "center" }}>
-            <Stack gap="sm" style={{ minWidth: 0 }}>
-              <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                <Power size={16} strokeWidth={1.8} aria-hidden />
-                <span style={{ fontWeight: 600, fontSize: "var(--fs-md)" }}>Autonomous job processing</span>
-                <StatusPill status={on ? "running" : "stopped"}>{on ? "On" : "Off"}</StatusPill>
-              </Row>
-              <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                When off, no background sweeps fire across any scope. Manual Run now still works per scope.
-              </span>
-              {err && <span style={{ color: "var(--danger)", fontSize: "var(--fs-sm)" }}>{err}</span>}
-            </Stack>
-            <Toggle
-              checked={!!on}
-              disabled={busy}
-              onChange={(next) => setAutonomy(next)}
-              label={<span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{on ? "on" : "off"}</span>}
-            />
-          </Row>
-        )}
-      </Card>
-
-      <AutonomyScopes />
-    </Stack>
-  );
-}
-
 // ---- Review tab ------------------------------------------------------------
 // Work that stopped on its own, and the answers that let it continue. This is a
 // dashboard BEHIND the stop, not a gate in front of the work: nothing routes
@@ -1228,8 +1143,7 @@ export default function Work() {
       </div>
       {tab === "tickets" ? <TicketsTab />
         : tab === "runs" ? <JobsFeed hideHeader />
-        : tab === "review" ? <ReviewTab />
-        : <AutonomyTab />}
+        : <ReviewTab />}
     </div>
   );
 }
