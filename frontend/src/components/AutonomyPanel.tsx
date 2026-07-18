@@ -36,6 +36,11 @@ import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
 type Depth = "quick" | "standard" | "deep";
 type Fanout = "off" | "read-only";
+// autonomy-model 2026-07-18 §1.1. Per-agent field, controls whether the
+// dispatcher fires this agent's triggers in the background AND whether a
+// completed run commits directly to `done` or lands in `in_review`. Distinct
+// from the cadence preset above (which sets WHEN triggers fire).
+type AutonomyMode = "reactive" | "supervised" | "autonomous";
 
 type TriggerKind = "manual" | "cron" | "event" | "loop";
 
@@ -69,6 +74,9 @@ type Job = {
 
 type Autonomy = {
   autonomy: Preset;
+  // Per-agent autonomy mode from the 2026-07-18 model. Populated for scope=
+  // "agent"; ignored for scope="project" (project is a scope, not an agent).
+  autonomy_mode?: AutonomyMode;
   depth: Depth;
   fanout: Fanout;
   // null = this scope sets none, so work here inherits the default. Kept null
@@ -86,6 +94,9 @@ type Autonomy = {
 
 type PrimaryDraft = {
   preset: Preset;
+  // Agent-scope autonomy mode. For project scope this field is present but the
+  // control is not rendered and the Save path drops it.
+  autonomy_mode: AutonomyMode;
   depth: Depth;
   fanout: Fanout;
   // The draft carries the default rather than null: the control always shows a
@@ -105,6 +116,22 @@ const PRESET_OPTIONS: SegmentedOption<Preset>[] = [
   { value: "scheduled", label: "Scheduled" },
   { value: "continuous", label: "Continuous" },
 ];
+
+const AUTONOMY_MODE_OPTIONS: SegmentedOption<AutonomyMode>[] = [
+  { value: "reactive", label: "Reactive" },
+  { value: "supervised", label: "Supervised" },
+  { value: "autonomous", label: "Autonomous" },
+];
+
+const AUTONOMY_MODE_DESC: Record<AutonomyMode, string> = {
+  reactive: "Never runs in the background. Manual invocation only.",
+  supervised: "Fires on triggers; results land in Review before commit.",
+  autonomous: "Fires on triggers; results commit directly.",
+};
+
+function isAutonomyMode(v: unknown): v is AutonomyMode {
+  return v === "reactive" || v === "supervised" || v === "autonomous";
+}
 
 const DEPTH_OPTIONS: SegmentedOption<Depth>[] = [
   { value: "quick", label: "Quick" },
@@ -249,6 +276,7 @@ export default function AutonomyPanel({
       const raw = await r.json();
       const cfgNext: Autonomy = {
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
+        autonomy_mode: isAutonomyMode(raw.autonomy_mode) ? raw.autonomy_mode : "reactive",
         depth: isDepth(raw.depth) ? raw.depth : "standard",
         fanout: isFanout(raw.fanout) ? raw.fanout : "read-only",
         latitude: isLatitude(raw.latitude) ? raw.latitude : null,
@@ -282,6 +310,7 @@ export default function AutonomyPanel({
   // Primary preset config: the main control. Edit-mode + explicit Save.
   const primaryModel = useMemo<PrimaryDraft>(() => ({
     preset: cfg?.autonomy ?? "off",
+    autonomy_mode: cfg?.autonomy_mode ?? "reactive",
     depth: cfg?.depth ?? "standard",
     fanout: cfg?.fanout ?? "read-only",
     latitude: cfg?.latitude ?? DEFAULT_LATITUDE,
@@ -297,6 +326,7 @@ export default function AutonomyPanel({
     if (scope === "agent") {
       body = {
         triggers: presetToTriggers(draft.preset, draft.cron, limits),
+        autonomy: draft.autonomy_mode,
         depth: draft.depth,
         fanout: draft.fanout,
         latitude: draft.latitude,
@@ -437,9 +467,25 @@ export default function AutonomyPanel({
             {/* ---- Primary preset control ---- */}
             {pedit.editing ? (
               <Stack>
-                <Field label="Autonomy" help={PRESET_DESC[pedit.draft.preset]}>
+                {scope === "agent" && (
+                  <Field
+                    label="Autonomy mode"
+                    help={AUTONOMY_MODE_DESC[pedit.draft.autonomy_mode]}
+                  >
+                    <Segmented
+                      ariaLabel="Per-agent autonomy mode"
+                      options={AUTONOMY_MODE_OPTIONS}
+                      value={pedit.draft.autonomy_mode}
+                      onChange={(v) => pedit.set("autonomy_mode", v)}
+                    />
+                  </Field>
+                )}
+                <Field
+                  label={scope === "agent" ? "Trigger cadence" : "Autonomy"}
+                  help={PRESET_DESC[pedit.draft.preset]}
+                >
                   <Segmented
-                    ariaLabel="Autonomy preset"
+                    ariaLabel={scope === "agent" ? "Trigger cadence" : "Autonomy preset"}
                     options={PRESET_OPTIONS}
                     value={pedit.draft.preset}
                     onChange={(v) => pedit.set("preset", v)}
@@ -524,8 +570,16 @@ export default function AutonomyPanel({
               </Stack>
             ) : (
               <Stack gap="sm">
+                {scope === "agent" && cfg?.autonomy_mode && (
+                  <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                    <Tag hue={catFor(cfg.autonomy_mode)}>{cfg.autonomy_mode}</Tag>
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                      {AUTONOMY_MODE_DESC[cfg.autonomy_mode]}
+                    </span>
+                  </Row>
+                )}
                 <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  <Tag hue={catFor(preset)}>{preset}</Tag>
+                  <Tag hue={catFor(preset)}>{scope === "agent" ? `cadence: ${preset}` : preset}</Tag>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{PRESET_DESC[preset]}</span>
                 </Row>
                 <Row wrap style={{ gap: "var(--space-4)" }}>
