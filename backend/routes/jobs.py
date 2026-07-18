@@ -261,14 +261,29 @@ async def act_on_job_task(job_id: str, task_id: str, body: JobTaskAction) -> dic
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found in scope: {task_id}")
-    if require_from and task.get("status") != require_from:
-        raise HTTPException(
-            409, f"task is {task.get('status')}, not {require_from}; cannot {body.action}")
-    # Status change auto-clears the awaiting payload (update() drops it on exit
-    # from a waiting state). The operator note rides along as evidence.
-    updated = tasks.update(
-        root, task_id, status=new_status,
-        evidence={"kind": "operator", "ref": body.note} if body.note else None)
+    # Drift-tolerant transitions: a job.awaiting_input can outlive its task, since
+    # the task's status can be changed elsewhere (a /review verb, a direct
+    # tasks.update, another chat) without knowing which jobs are waiting on it. If
+    # the task landed in a TERMINAL state (done or cancelled) before the operator
+    # got here, the intended verb is already satisfied (or moot). Treat it as an
+    # idempotent no-op and fall through to the job-clear pass below, so Home's
+    # attention strip drops the ghost card instead of 409-ing forever.
+    current_status = task.get("status")
+    terminal = {"done", "cancelled"}
+    updated = task
+    if require_from and current_status != require_from:
+        if current_status in terminal:
+            # No transition needed; the operator's intent is already realized.
+            pass
+        else:
+            raise HTTPException(
+                409, f"task is {current_status}, not {require_from}; cannot {body.action}")
+    else:
+        # Status change auto-clears the awaiting payload (update() drops it on
+        # exit from a waiting state). The operator note rides along as evidence.
+        updated = tasks.update(
+            root, task_id, status=new_status,
+            evidence={"kind": "operator", "ref": body.note} if body.note else None)
 
     # If the operator has now answered every task this job was waiting on, the
     # job is no longer awaiting input: flip it to done so it drops off Home's
