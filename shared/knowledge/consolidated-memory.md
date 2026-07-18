@@ -19,3 +19,4 @@ Semantic facts folded in by the memory-keeper as itemized deltas (never a monoli
 - Autonomy toggle is not accessible on the Usage page UI
 - Filing a ticket is not progress until a run completes and finishes
 - System has broken autonomy/worker loop wiring and no UI path to enable it
+- Until the automated ticket system completes several tickets end-to-end reliably, default to manual work and in-conversation monitoring instead of filing

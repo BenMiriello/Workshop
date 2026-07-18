@@ -215,8 +215,20 @@ except Exception:
   fi
   now_dirty=$(cd "$DIR" && git status --porcelain 2>/dev/null | sed 's/^...//')
   new_paths=$(comm -13 <(printf '%s\n' "$PRERUN_DIRTY" | sort -u) \
-                       <(printf '%s\n' "$now_dirty" | sort -u) \
-              | grep -vE "$BOOKKEEPING_RE" || true)
+                       <(printf '%s\n' "$now_dirty" | sort -u) || true)
+
+  # Bookkeeping churn is excluded ONLY when the task did not explicitly ask for
+  # it. A ticket whose DELIVERABLE is data — e.g. "encode the prose dependencies
+  # into depends_on", whose entire output is .tasks.json — declares that file in
+  # `touches`, and stripping it here made such a ticket unwinnable: the worker
+  # did the work, the reviewer approved, and the done-gate then reported "nothing
+  # was committed" because the only changed file had been filtered out. Three
+  # attempts, then blocked, with the worker never at fault (observed on C2
+  # dbcd929e, 2026-07-18). An explicit lane is a deliberate statement of intent
+  # and outranks the default filter; without one the filter still applies.
+  if [[ -z "$(printf '%s' "$touches" | tr -d '[:space:]')" ]]; then
+    new_paths=$(printf '%s\n' "$new_paths" | grep -vE "$BOOKKEEPING_RE" || true)
+  fi
 
   # No declared lane (the common case for a design ticket, whose output is a doc
   # nobody listed in advance). Rather than decline and orphan finished work, fall

@@ -10,12 +10,13 @@
       "priority": 90,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
+      "max_attempts": null,
       "blocked_reason": null,
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [
@@ -37,9 +38,11 @@
       ],
       "discovered_from": null,
       "effort": "S",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
       "updated": "2026-07-15T13:32:54+00:00",
-      "owner": "operator"
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "bb01e3497ef4421285fb2b109c3ff390",
@@ -50,12 +53,13 @@
       "priority": 85,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
+      "max_attempts": null,
       "blocked_reason": null,
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [
@@ -75,25 +79,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
       "updated": "2026-07-15T13:06:42+00:00",
-      "owner": "operator"
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "cf32b0b2bc284257bba38902bc044ce2",
       "text": "Add in-run no-progress detection to the ralph worker loop: park the task when the reviewer rejects with substantially the same reasons twice, or two consecutive iterations produce near-identical diffs, or the same tool call repeats ~5 times. Add a per-run token allowance from the task effort class with a mid-run kill (admission-only budget control cannot stop a runaway run). Thrash happens inside a run; the sweep-level circuit breaker does not catch it. Ref: research #3, MAST FM-1.3.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 80,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "in-run no-progress/thrash detection shipped in ralph.sh (commit 7153476): same-reject/near-identical-diff/token-cap mid-run park",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -108,25 +115,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-16T20:46:32+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "a245d2ac696641188770d2f2016d2fec",
       "text": "Make claim_token a checked monotonic fence: a per-task generation counter incremented on each (re)claim, validated by compare-and-swap on every .tasks.json mutation (status change, note, completion), rejecting stale generations. A held-but-unchecked UUID does not prevent a resurrected zombie worker's late write from corrupting the store (Kleppmann). Ref: research #5.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 75,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "monotonic claim-token fence shipped + verified (commit)",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -140,25 +150,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-16T21:13:28+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "3928ccacdb4b4567914a7820d3fa8144",
       "text": "Size task leases for multi-minute LLM latency and renew them via an in-loop heartbeat at <50% of TTL emitted from inside the ralph iteration loop; reclaim only on missed heartbeats, not a fixed wall-clock guess, to avoid spurious reclaims of healthy-but-slow workers. Ref: research #6, Temporal AI-agent guidance.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 70,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "lease heartbeats + missed-heartbeat reclaim shipped + verified",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -173,25 +186,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-16T21:13:28+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "adffa912c9cb473c9baa3c45c323468e",
       "text": "Ground the ralph reviewer gate in executed acceptance checks: every distilled Task carries at least one machine-checkable acceptance assertion (command + expected outcome) where feasible; the reviewer runs them and returns per-criterion {criterion, pass, evidence} plus an overall gate; the worker's own summary/self-report is excluded from the reviewer's context (self-preference bias). Ungrounded LLM self-verification approves wrong work (ICLR'24). Ref: research #2,#6-item1.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 78,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "grounded reviewer acceptance (executed criteria + self-report exclusion) shipped + live-verified",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -205,25 +221,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-17T00:22:46+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "d7b2b25ca0134eeabff731e1ef393a2e",
       "text": "Upgrade the chat-to-Task distiller schema to emit Anthropic subagent fields: objective, output format, suggested tools/entry points, explicit boundaries (do not touch X), and an effort class mapped to iteration/token caps. Attacks the largest MAST failure category (specification, 41.8%) at task creation. Ref: research #2-item6,#8.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 65,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "chat-to-task distiller structured-spec upgrade shipped (commit aa4715e)",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -237,25 +256,28 @@
       ],
       "discovered_from": null,
       "effort": "S",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-17T00:22:46+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "419f5cbd80aa46a69229acd1c32a935a",
       "text": "Learnings-store hygiene to prevent the anti-context-rot mechanism becoming a context-rot source: a fixed prompt-token budget per scope for the injected memory block, near-duplicate merge, and age-out/demote of learnings that stop being retrieved. Ref: research #4-item4,#9.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 60,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "learnings hygiene (token budget + at-rest merge + age-out) shipped (commit 94e1c81)",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -270,25 +292,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-16T21:13:28+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "8ec3b0db236d441fbd966bc896c61560",
       "text": "Budget refinements: reserve interactive headroom (admit autonomous work only up to ~60-70% of the rolling 5h budget so operator chats always have room), and meter reviewer + distiller token spend against the same scope budget as the worker (the 15x multi-agent multiplier comes from the auxiliary calls nobody meters); attribution tags (project/task/run/role) on every recorded call. Ref: research #5,#10.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 62,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "budget refinements (headroom + reviewer metering seam + attribution) shipped + 12/12 tests",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -304,25 +329,28 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-17T00:35:49+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "a2ff643787d34a03bc81beaaf1aed2e5",
       "text": "Circuit breaker half-open probe: after cool-off, admit exactly one probe task for a scope and only close the breaker on its success; a timer-based full reopen just re-triggers the failure storm. Ref: research #11.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 55,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
-      "blocked_reason": null,
+      "max_attempts": null,
+      "blocked_reason": "circuit-breaker half-open probe shipped (commit d87d5d8)",
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -336,9 +364,11 @@
       ],
       "discovered_from": null,
       "effort": "S",
+      "latitude": null,
       "created": "2026-07-15T13:02:30+00:00",
-      "updated": "2026-07-15T13:02:30+00:00",
-      "owner": "operator"
+      "updated": "2026-07-16T21:13:28+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "5c9223c0596547e39212379f69be2e73",
@@ -349,15 +379,24 @@
       "priority": 72,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
+      "max_attempts": null,
       "blocked_reason": null,
       "awaiting": null,
       "attempts": 0,
-      "claim_token": null,
+      "claim_token": 1,
       "lease_until": null,
+      "last_heartbeat": "2026-07-18T20:32:26+00:00",
       "claim_pid": null,
-      "job_ids": [],
-      "evidence": [],
+      "job_ids": [
+        "job_1784406746153_ce7e"
+      ],
+      "evidence": [
+        {
+          "kind": "touches",
+          "ref": "touches violation: wrote outside the task's declared globs [backend/services/agents_registry.py, backend/routes/agents.py, scripts/dispatch_triggers.sh] -> docs/platform-redesign/_brief-agent-protocols-2026-07-16.md, docs/platform-redesign/agent-roles-research-2026-07-16.md, docs/platform-redesign/concept-schema-2026-07-16.md, docs/platform-redesign/final-plan-agent-generalize-and-masini-fold-2026-07-16.md, docs/platform-redesign/operator-asks-2026-07-16.md, docs/platform-redesign/resource-access-protocol-2026-07-16.md, docs/platform-redesign/scopedness-and-escalation-2026-07-16.md, docs/platform-redesign/synthesis-agent-protocols-2026-07-16.md (+7 more)",
+          "ts": "2026-07-18T20:34:09+00:00"
+        }
+      ],
       "source": {
         "kind": "agent",
         "ref": null
@@ -370,9 +409,11 @@
       ],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:09:07+00:00",
-      "updated": "2026-07-15T13:09:07+00:00",
-      "owner": "operator"
+      "updated": "2026-07-18T20:34:47+00:00",
+      "owner": "operator",
+      "blocked_request": null
     },
     {
       "id": "da801d52bbd44cd9a6a0c2d60afc1f5b",
@@ -383,12 +424,13 @@
       "priority": 20,
       "depends_on": [],
       "acceptance": null,
-      "max_iterations": null,
+      "max_attempts": null,
       "blocked_reason": null,
       "awaiting": null,
       "attempts": 0,
       "claim_token": null,
       "lease_until": null,
+      "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
       "evidence": [],
@@ -400,10 +442,2008 @@
       "touches": [],
       "discovered_from": null,
       "effort": "M",
+      "latitude": null,
       "created": "2026-07-15T13:16:15+00:00",
       "updated": "2026-07-15T13:16:15+00:00",
-      "owner": "operator"
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "4d999e769e99431f837b3473747d90a4",
+      "text": "Acceptance/reviewer should require committed work for a task to be marked done. Today a command acceptance like 'test -f X' passes on an uncommitted file, so a task goes done with an empty receipt (no commit). Ground the done-gate in a committed diff.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 2,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": "committed-work done-gate shipped (commit 7153476), live-verified: uncommitted acceptance now blocks not done",
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "agent",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-15T18:13:27+00:00",
+      "updated": "2026-07-16T20:46:22+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "486bda0c7f8f46d9b256a74ca3348b6f",
+      "text": "Receipt summary is empty when the worker exits nonzero but the reviewer passes (sentinel missed). Capture the final .result even on a nonzero-but-accepted iteration so the worklog is never blank.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 1,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": "receipt-summary fallback shipped in ralph.sh (commit 7153476)",
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "agent",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-15T18:13:27+00:00",
+      "updated": "2026-07-16T20:46:22+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "6f02e8dc6d0943b2a7c177fa308b056d",
+      "text": "Research and design comprehensive plan for Notes app permission system and agent interaction protocols: (1) audit existing platform docs/workshop-v1 architecture and agent/project model, (2) research and distill core agent role primitives from existing systems (orchestration, autonomy, communication patterns), (3) design folder-level permission model with AI-mediated smart LLM review for access decisions, (4) design generalized agent-to-app/agent-to-agent communication protocols with filtering/redaction/allowlist/transparency options, (5) propose autonomy and strictness settings for projects and jobs (well-scoped vs. exploratory, hands-on vs. hands-off, with inheritance from project to job level), (6) design operator review/approval flow for blocked requests supporting both programmatic rules and textual rules, (7) sketch UI mocks per Workshop Design System and backend architecture; identify which protocols generalize to other apps vs. Notes-specific; coordinate with fable subagent for ideation and research; document comprehensive plan with 2-3 implementation phases in docs/platform-redesign/, marking completion when all five design areas are fully scoped, phases are broken down with specific file/component changes identified, generalization/integration boundaries are explicit, existing systems integration points are mapped, and UI mockups follow Design System guidelines.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [
+        {
+          "kind": "related-from",
+          "ref": "1abc114feae847f6aa2bc618bb8eb0e4",
+          "ts": "2026-07-18T07:04:49+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "d18e3b6d08a847a19b6cf4b27f15b96c"
+      },
+      "provenance": "d61bfea72273ebdd9f071a9fb27548b2fbe3e223e7552a862cd9a017e3c281a2",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:02:59+00:00",
+      "updated": "2026-07-18T07:04:49+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "1abc114feae847f6aa2bc618bb8eb0e4",
+      "text": "Deep design pass: agent/app interaction protocols, Notes resource-access contract, scopedness + autonomy model\n\nObjective: Fold the operator's new notes into the existing 2026-07-16 platform-redesign material and produce one coherent, gap-filled plan (docs + ADRs + a filed, ordered set of build tickets) for the generalized agent/app interaction system, the resource-access protocol, task scopedness, and the autonomy model.\nOutput: Committed markdown: (1) a synthesis plan doc under docs/platform-redesign/ that reconciles the new notes with the eight 2026-07-16 docs (supersede/merge, don't duplicate); (2) per-thread design docs covering EACH of: generalized cross-app/agent RESOURCE-ACCESS PROTOCOL (hard API scoping + LLM-interface scoping; per-folder permission protocols; 0..N agents per scope with roles on-call/autonomous/write-only/read-only; external apps/agents request by search/name/other; mixed-permission = a smart LLM reviews the request against a strict topic allowlist and returns verbatim | filter-relevant | redact | deny, and 'no smart LLM available = deny'; generalized so it does NOT require the custom Notes app); BLOCKED-AND-ESCALATE flow (agent/job flags blocked-by-permission -> operator reviews -> edits programmatic OR textual rules / approves the request -> unblock); TASK SCOPEDNESS model (well-scoped-with-skills-and-rules vs goals-only 'figure it out'; a project-level setting that agents/jobs inherit); NOTE-DRIVEN WORK loop (leave a note general or in a project -> auto picked up -> a triage/'ant' agent ensures every new/updated note is addressed -> makes tickets or escalates; template worker agents with default sets/groups, editable per project); PRIMITIVE AGENT ROLES core set + how conductor/overseer agents interact across scopes (research-backed, distilled to a small core); AUTONOMY model (per-agent on/off that is configurable and is NOT global; PLUS a single global override off-switch that supersedes all individuals; individuals restore iff the override clears); and a UNIFIED, discoverable SETTINGS UI concept for who-interacts-with-whom (choosing coherently between agent- vs project- vs other-layer permission, and setting roles/contracts/rules) designed to the Workshop Design System. (3) ADRs under docs/decisions/ for the load-bearing choices (rules engine homegrown-lightweight vs OPA/Rego; interaction layer location; autonomy override semantics). (4) A filed, ORDERED set of build tickets (via task-patch) implementing the plan, each with Objective/Output/Start-from/Boundaries, so Phase 2+ proceeds without a manual gate.\nStart from: Read first: all docs/platform-redesign/*-2026-07-16.md (esp. resource-access-protocol, scopedness-and-escalation, agent-roles-research, synthesis-agent-protocols, final-plan-agent-generalize-and-masini-fold, concept-schema, operator-asks); docs/workshop-v1/00-overview.md and the agent/apps/chat docs there; backend/services/knowledge.py (Notes/knowledge store + scopes); backend/services/letta_tools/workshop.py (agent pipeline); TODO.md open tasks (agent-generalization + deferred autonomy decision); frontend/CLAUDE.md for the settings-UI concept. Research: blackboard/stigmergy 'ants' patterns, actor model, capability-based security, RBAC/ABAC, policy engines (OPA/Rego), MCP and contract-based interfaces.\nBoundaries: Design + docs + filed build tickets ONLY this phase; do NOT ship backend routes or UI yet. Do NOT duplicate or contradict the 2026-07-16 docs; supersede/merge and say which. Single-operator system: NO multi-tenant guardrails (no allowlists-as-security-theater, audit journals, mention-gating, rate-limiting, per-user perms) beyond what the resource-access protocol itself needs. Never touch the veritusagent org or mix it in. Autonomy is NOT a global per-agent setting (only the override is global). Keep the custom Notes app optional, not required.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 5,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T07:04:50+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784358290007_17b0"
+      ],
+      "evidence": [
+        {
+          "kind": "related-to",
+          "ref": "6f02e8dc6d0943b2a7c177fa308b056d",
+          "ts": "2026-07-18T07:04:49+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T07:06:01+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": "work-ui"
+      },
+      "provenance": "964fac55916deebb68bf644f8456380a3f2684c73598ba989ff90c7bbb4932dd",
+      "touches": [],
+      "discovered_from": "6f02e8dc6d0943b2a7c177fa308b056d",
+      "effort": "deep",
+      "latitude": null,
+      "created": "2026-07-18T07:04:49+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "71441ba478a048f7b46f1840e3044120",
+      "text": "Design the orchestration surface: canonical chat/ticket/run/agent entity model, lifecycle, and chat/job UI redesign\n\nObjective: Define one canonical entity model and lifecycle linking Chats, Tickets (with <=2-level sub-tickets and dependencies), Runs, and Agents, and redesign the chat/job UI around it so work filed from a chat surfaces back into that chat and every page uses one consistent, accurate status source.\nOutput: Committed markdown under docs/platform-redesign/: (1) a vocabulary+entity-model doc ratifying Chat/Ticket/Run/Agent (one word per concept) with each entity's states, fields, and cross-links; (2) a chat<->work linkage design covering: filed cards collapse in-place into a persistent auto-updating live-progress element (no re-offer of file/run after File-and-run), a per-kind 'auto-run this kind in future' toggle learned from File-and-run choices, an unobtrusive in-chat related-tasks/runs dropdown (active/queued first, done later), and a thin top slide-down drawer for major events (run done / needs input); (3) a run-status view design replacing the dead-end job/run pages: live 'what it's doing now', links to ticket/agent/chat, and 'edit in original chat' + 'edit in new chat' actions; a SINGLE canonical status source (remove redundant/inaccurate/stale pills) and a definition of what 'evidence' means or its removal; (4) a chat-toolbar audit + redesign: identify what the current list/play buttons and the double chat-name field actually do (read the component, report), turn ambiguous buttons into labeled menus, reclaim the space wasted by the up/down arrows; (5) the clarifying-question flow: ticket-maker surfaces questions back into the originating chat as a mini sub-chat card with stop/discuss controls that you stay in until cancel/submit; (6) the ticket-maker/sub-ticket system: store full request text, split into <=2-level sub-tickets with dependencies, roll sub-ticket completion back up, running as a sub-agent process outside the chat; (7) chat scoping design: chats carry a scope (workshop/project/app), auto-associate when one fits, re-scopable anytime with a light warning when live work remains in the old scope; (8) cross-chat access to in-scope tickets/runs/agents; all linked and auto-updating. Plus ADRs under docs/decisions/ for the load-bearing choices (entity model as first-class backend concepts; single canonical status source; sub-ticket depth cap of 2; auto-run-learning mechanism). Plus a filed, ORDERED set of build tickets (via task-patch) each with Objective/Output/Start-from/Boundaries, including the specific bugfixes (card duplication, pill consolidation, dead-end pages).\nStart from: Read the stored verbatim requirements note 'Orchestration-surface requirements (raw)' filed to workshop scope. Frontend: the chat page + its toolbar component, the card/task-proposal rendering, the jobs/runs and ticket pages under frontend/src/pages and frontend/src/lib (voiceSession/useVoiceSession are unrelated; find the chat + jobs components). Backend: the tickets/tasks store (.tasks.json + whatever serves it), the jobs/runs service, backend/services/letta_tools/workshop.py for the agent pipeline. Cross-read the eight docs/platform-redesign/*-2026-07-16.md and docs/workshop-v1/ so this stays consistent with the agent-interaction (Phase 1) work. frontend/CLAUDE.md for all UI.\nBoundaries: Design + docs + filed build tickets ONLY; do NOT ship backend or UI in this phase. Do NOT duplicate or contradict the 2026-07-16 docs or the Phase 1 pass; reference and stay consistent, note any supersede. Single-operator system: NO multi-tenant guardrails (no per-user perms, audit journals, mention-gating, rate-limiting, confirmation-prompt cruft). Cap sub-ticket depth at 2 levels. Do NOT touch the veritusagent org. Leave the voice-mode files alone.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 5,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T07:50:06+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784361005929_6944"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T07:51:33+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": "work-ui"
+      },
+      "provenance": "65b9d57f82a6d7e5c147474d50b35f9d8759d85bee958ce8fbbe68a95b054d46",
+      "touches": [],
+      "discovered_from": null,
+      "effort": "deep",
+      "latitude": null,
+      "created": "2026-07-18T07:50:05+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "ddaf8f6098e64a0ca9957b728bb07505",
+      "text": "Ratify canonical vocabulary + entity model + integration map\nObjective: Fix one word per concept (Chat, Ticket, Run, Agent), define each entity's states/fields/cross-links, and produce an integration map reconciling the eight docs/platform-redesign/*-2026-07-16.md so every later ticket builds on one model.\nOutput: docs/platform-redesign/ entity-model doc + ADR (docs/decisions/) for entity-model-as-first-class-backend-concepts; states which 2026-07-16 docs are superseded/merged.\nStart from: docs/platform-redesign/*-2026-07-16.md, docs/workshop-v1/00-overview.md, the 'Orchestration-surface requirements (raw)' note + its addendum, .tasks.json, backend/services/letta_tools/workshop.py, backend/services/knowledge.py.\nBoundaries: Design + docs only. Depends on: none (spine). Single-operator, no multi-tenant guardrails. Do not touch veritusagent or voice-mode files.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 100,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 2,
+      "claim_token": 5,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T18:28:14+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784386732141_1d4d",
+        "job_1784386780130_5b7d",
+        "job_1784386813763_b29f",
+        "job_1784399116139_5ba0",
+        "job_1784399293668_d587"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:00:12+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T18:26:11+00:00"
+        },
+        {
+          "kind": "receipt",
+          "ref": "job_1784399293668_d587",
+          "ts": "2026-07-18T18:35:49+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "62fc039248cdf3e4560583f55d59d852e5acf0ff673f4e754717faa7ffabdb68",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:50:19+00:00",
+      "updated": "2026-07-18T18:35:49+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "e7588e39c4f14fd1a0ed3d77e038af40",
+      "text": "Design the generalized resource-access protocol\nObjective: A workshop-wide contract for one app/agent to request another scope's resources via hard API scoping AND LLM-interface scoping: per-folder permission protocols, 0..N agents per scope (on-call/autonomous/write-only/read-only), request by search/name/other, and a mixed-permission mode where a smart LLM reviews the request against a strict topic allowlist and returns verbatim | filter-relevant | redact | deny (no smart LLM available = deny). Generalized so it does NOT require the custom Notes app.\nOutput: docs/platform-redesign/ protocol doc + ADR for the rules engine (homegrown-lightweight textual+programmatic vs OPA/Rego; default homegrown); an interface spec both apps implement.\nStart from: resource-access-protocol-2026-07-16.md, backend/services/knowledge.py (Notes scopes), the raw requirements note.\nBoundaries: Design + docs only. Depends on: T0 (entity model). Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 92,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": "acceptance passed but no work was committed after 3 attempt(s) (cap 3)",
+      "awaiting": null,
+      "attempts": 3,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T15:21:11+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784387547917_b5df",
+        "job_1784388008877_e512",
+        "job_1784388071606_e188"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:16:07+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:21:10+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:25:22+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "76c61699d503e9eaca29b0aa02e3a5b60830c77e48f22f36dada077cc7424ef2",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:50:26+00:00",
+      "updated": "2026-07-18T18:22:31+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "96c6639b4d164226a76d5efe100cba39",
+      "text": "Design the blocked-and-escalate flow\nObjective: When an agent/job is blocked by permission (or otherwise), it flags blocked, the operator reviews, edits the programmatic OR textual rules or approves the one-off request, and the work unblocks/resumes.\nOutput: docs/platform-redesign/ flow doc: block-signal shape, operator review surface, rule-edit vs one-off-approve paths, resume semantics. Must stay consistent with the clarifying-question flow (B5).\nStart from: scopedness-and-escalation-2026-07-16.md, the A1 protocol doc, the raw requirements note.\nBoundaries: Design + docs only. Depends on: A1. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 82,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T20:21:14+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784406074504_8e5d"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784406074504_8e5d",
+          "ts": "2026-07-18T20:25:45+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "eab68daa2d62ecde7375d9d483ae375e5214b5e480174557c0921da2ca4b1286",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:50:32+00:00",
+      "updated": "2026-07-18T20:25:45+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "23e3654db55c47cf95564c9e3de6ba9f",
+      "text": "Design the autonomy model\nObjective: Per-agent autonomy on/off that is configurable per agent and is NOT a global setting, PLUS a single global override off-switch that supersedes all individuals; each individual restores to its configured value iff the override clears.\nOutput: docs/platform-redesign/ autonomy doc + ADR for override semantics (override state machine, restore-on-clear). Defines where the setting lives and how a run reads it.\nStart from: the deferred-autonomy open task, concept-schema-2026-07-16.md, the raw requirements note.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 90,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T18:53:35+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784400815688_ee74"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784400815688_ee74",
+          "ts": "2026-07-18T18:57:35+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "2ae7bb20be9b1e579f9e64f144ffea41bcd099447656f18480ebb7015f707467",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:50:38+00:00",
+      "updated": "2026-07-18T18:57:35+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "8c3980edbbdf4ab48ddf01104a0b62e6",
+      "text": "Design primitive agent roles + note-driven triage loop\nObjective: Distill a small research-backed core set of primitive agent roles and how conductor/overseer agents interact across scopes; include the note-driven work loop (leave a note general or in a project -> auto picked up -> a triage 'ant' agent ensures every new/updated note is addressed -> makes tickets or escalates) and editable template worker agents with default sets/groups per project.\nOutput: docs/platform-redesign/ roles doc distilling agent-roles-research + synthesis-agent-protocols into a core set + cross-scope interaction model + the triage loop + a template-agent catalog.\nStart from: agent-roles-research-2026-07-16.md, synthesis-agent-protocols-2026-07-16.md, _brief-agent-protocols-2026-07-16.md, the raw requirements note. Research: blackboard/stigmergy patterns, actor model, capability-based security, RBAC/ABAC.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 88,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:12:24+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784401944326_28d7"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784401944326_28d7",
+          "ts": "2026-07-18T19:16:27+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "d255676a13dc550ca95ffc897dc18963d5eb25b2295b221ade89713d34202b02",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:50:45+00:00",
+      "updated": "2026-07-18T19:16:27+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "16f4ae6fb9b04bcb9058db2e1ae36cec",
+      "text": "Design the task-scopedness model\nObjective: Model the spectrum from well-scoped (skills + rules enforced) to goals-only ('figure it out'), as a project-level setting that agents/jobs inherit, with a per-agent/per-job override where sensible.\nOutput: docs/platform-redesign/ scopedness doc: the setting, its inheritance, how a run's guardrails change with it, and how it ties to skills/rules.\nStart from: scopedness-and-escalation-2026-07-16.md, the raw requirements note.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 86,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:57:02+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784404622091_ece1"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784404622091_ece1",
+          "ts": "2026-07-18T20:00:45+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "394c9ec763f259abc658884e5e06f790278ec5cd6110f0be97d3a05f21e1eef3",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:50:53+00:00",
+      "updated": "2026-07-18T20:00:45+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "495a4a2aafd945008fef553a27bd08a6",
+      "text": "Design the unified interaction/permission settings UI\nObjective: One discoverable, intuitive settings surface for who-interacts-with-whom: choosing coherently between agent- vs project- vs other-layer permission, and setting roles/contracts/rules, designed to the Workshop Design System.\nOutput: docs/platform-redesign/ UI concept (layout, src/ui components, all list/edit states) that presents the protocol (A1), autonomy (A3), roles (A4) and scopedness (A5) as one coherent surface. No implementation.\nStart from: the A1/A3/A4/A5 docs, frontend/CLAUDE.md, the frontend-design-system skill.\nBoundaries: Design + docs only. Depends on: A1, A3, A4, A5. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 70,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "48b0baf7f9631fcd168de51da2078d36e52fc670e64ae302940cd79f9443be2f",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:00+00:00",
+      "updated": "2026-07-18T07:51:00+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "de5890cadca742178536dc63fa2502cf",
+      "text": "Design chat<->work linkage\nObjective: Work filed from a chat surfaces back into that chat: a filed card collapses in-place into a persistent auto-updating live-progress element (no re-offer of file/run after File-and-run), a per-kind 'auto-run this kind in future' toggle learned from File-and-run choices, an unobtrusive in-chat related-work dropdown (active/queued first, done later), and a thin top slide-down drawer for major events (run done / needs input).\nOutput: docs/platform-redesign/ linkage doc + ADR for the auto-run-learning mechanism. Explicitly fixes the card-duplication bug (card must stop re-offering file/run after File-and-run).\nStart from: the raw requirements note, the chat page + card/task-proposal rendering under frontend/src (find the chat component; voiceSession/useVoiceSession are unrelated), .tasks.json + whatever serves it, the jobs/runs service.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 92,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": "acceptance passed but no work was committed after 3 attempt(s) (cap 3)",
+      "awaiting": null,
+      "attempts": 3,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T15:33:06+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784388383935_32e6",
+        "job_1784388496944_7537",
+        "job_1784388786742_9213"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:28:15+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:32:05+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T15:39:37+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "d494e71d9e184257f6f6c9b27f40996cc6d4dcc9c817c2312ebbcb968fb68718",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:09+00:00",
+      "updated": "2026-07-18T18:22:31+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "3faddf107f7147a2a81907186b2c802c",
+      "text": "Redesign the run-status view + single canonical status source\nObjective: Replace the dead-end job/run pages with a real run-status view (live 'what it's doing now', links to ticket/agent/chat, 'edit in original chat' + 'edit in new chat' actions), sourced from ONE canonical status (remove the redundant/inaccurate/stale pills), and define what 'evidence' means or remove it.\nOutput: docs/platform-redesign/ run-status doc + ADR for single-canonical-status-source; an audit of the current pills marking which to keep/kill.\nStart from: the jobs/runs + ticket pages under frontend/src/pages and frontend/src/lib, the jobs/runs service backend, the raw requirements note.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 90,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T18:57:36+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784401056456_e47a"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784401056456_e47a",
+          "ts": "2026-07-18T19:01:04+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "58ac385f0cddf9deed6758d264bcf65f0761a422562235cabda8891b935dcc37",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:17+00:00",
+      "updated": "2026-07-18T19:01:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "432411f6f75b486aa94dfcb858d3f2cc",
+      "text": "Audit + redesign the chat toolbar\nObjective: Determine what the current toolbar list/play buttons and the double chat-name field actually do (read the component and REPORT before changing anything), turn ambiguous buttons into labeled menus/dropdowns (a picker even when there is one option), and reclaim the space wasted by the up/down arrows in the picker fields.\nOutput: docs/platform-redesign/ toolbar audit-then-redesign doc: current behavior of each control, then the redesign to the Design System.\nStart from: the chat page toolbar component under frontend/src, frontend/CLAUDE.md.\nBoundaries: Design + docs only; MUST read and report current behavior before proposing changes. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 88,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:16:28+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784402188143_bfb0"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784402188143_bfb0",
+          "ts": "2026-07-18T19:19:35+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "5605eb5d92bfd50ae3c5ad43ef2438c31a2324fa7037fcbb4e9f732e221b981d",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:26+00:00",
+      "updated": "2026-07-18T19:19:35+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "1c816fa9d9b94f04b22c253ee76abc76",
+      "text": "Design the ticket-maker + sub-ticket engine\nObjective: A ticket-maker that stores the full request text, then decomposes into <=2-level sub-tickets with dependencies and rolls sub-ticket completion back up (a sub-agent system running outside the chat). Decomposition/scoping/thinking happens in the MAIN chat thread before the chat decides to make a run (this revises the earlier 'scope in the run' idea).\nOutput: docs/platform-redesign/ doc + ADR for the sub-ticket depth cap of 2 and the dependency/roll-up model; ticket schema additions (full request text, parent/child, depends-on, roll-up state).\nStart from: .tasks.json + its store/server, backend/services/letta_tools/workshop.py, the raw requirements note + addendum.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 90,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:01:07+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784401266647_396d"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784401266647_396d",
+          "ts": "2026-07-18T19:04:37+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "f4914ae56a252900363af765f8aee083220390844204c36d2abf8123cefdd804",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:37+00:00",
+      "updated": "2026-07-18T19:04:37+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "3677921e95b048bf9b1ecc600f8f85bf",
+      "text": "Design the clarifying-question flow\nObjective: When the ticket-maker or a run needs input, it surfaces the question back into the originating chat as a mini sub-chat card the operator stays in until cancel/submit, with stop/discuss controls, popping to the top of the chat when out of view; the main chat manages when the question is resolved.\nOutput: docs/platform-redesign/ doc for the in-chat mini sub-chat card (a cleaner, more complete take on Claude Code's inline prompt): states, controls, and how it links back to the run and to A2's blocked-and-escalate.\nStart from: the raw requirements note, the B1 linkage doc, the B4 ticket-maker doc, the A2 escalate doc.\nBoundaries: Design + docs only. Depends on: B1, B4. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 82,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T20:25:47+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784406347003_96bc"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784406347003_96bc",
+          "ts": "2026-07-18T20:28:25+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "518ef8bea4b725aff7f359319dc162f032fdce68fe375a4127b0897d9428f2c9",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:46+00:00",
+      "updated": "2026-07-18T20:28:25+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "b58f0fd1f8534379a5b66abb7cf8326f",
+      "text": "Design chat scoping + re-scope + cross-chat access\nObjective: Chats carry a scope (workshop/project/app), auto-associate when one clearly fits, and are re-scopable anytime; re-scoping while live work remains in the old scope shows a light warning worded like 'Move to X and disconnect from runs/agents/other outside this scope?' with Yes/Cancel. Other chats can view/interact with in-scope tickets/runs/agents; everything auto-updates.\nOutput: docs/platform-redesign/ doc: chat-scope model, auto-association heuristic, re-scope warning + disconnect semantics, cross-chat in-scope access, and auto-update wiring.\nStart from: the raw requirements note + addendum, the T0 entity model, the chat component under frontend/src.\nBoundaries: Design + docs only. Depends on: T0. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 88,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:19:37+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784402376865_da5c"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784402376865_da5c",
+          "ts": "2026-07-18T19:22:48+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "b6c595c34bb04e2ff94a11dd73915c140396c2e7658a77d6af0e66c233387a84",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:51:56+00:00",
+      "updated": "2026-07-18T19:22:48+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "8d34435892a541959e81a285159c303d",
+      "text": "Produce the ordered build-ticket set + migration/consistency plan\nObjective: From all design docs above, emit the ordered set of BUILD tickets (each with Objective/Output/Start-from/Boundaries and dependencies) and a migration plan ensuring no stale or unsynchronized UI or backend remains after the rebuild.\nOutput: A filed, dependency-ordered build-ticket set (via task-patch) + a docs/platform-redesign/ migration doc listing every existing surface that must change or be retired so nothing is left out of sync.\nStart from: all docs/platform-redesign/ docs produced by T0/A*/B*, and the current frontend pages + backend services they replace.\nBoundaries: Planning + filing build tickets only (no shipping this ticket). Depends on: all of T0/A*/B*. Single-operator. Don't touch veritusagent/voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 60,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "48d77386dfac4122500d65d09884af64a664e7839ec5d5f0e5a144f0ff44f8c6",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:52:07+00:00",
+      "updated": "2026-07-18T07:52:07+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "a5e43c880d064385ac25979eded47943",
+      "text": "B7: Shared-scope context + cross-chat editing with conflict detection/resolution\nObjective: Design how any chat in a scope can view and edit any ticket/run/agent/note in that same scope, with conflict detection and originating-context checks before any overwrite.\nOutput: Committed markdown under docs/platform-redesign/ defining (1) 'shared scope context' as a first-class concept referenced from T0's entity model: what is visible/editable across chats within one scope; (2) the edit path: before a chat overwrites an in-scope entity it must detect a conflicting concurrent change, load and read the originating chat's context for that entity, and surface the conflict/clarification back to the operator (reuse B5's clarifying mini-chat surface) rather than silently changing the plan; (3) conflict states and their resolution (accept mine / keep theirs / merge / ask), and what 'stale' means for an entity; (4) how this stays single-operator (no per-user perms - conflicts are between chats/agents, not users). Plus an ADR under docs/decisions/ for the conflict model. Emit ordered build sub-notes for the Z ticket to turn into build tickets.\nStart from: the requirements addendum note 'Orchestration-surface requirements addendum (re: shared scope + resilience + card links)', T0's entity model, B5 (clarifying mini-chat) and B6 (chat scoping/cross-chat access) so this extends rather than duplicates them.\nBoundaries: Design + docs only, no shipping. No multi-tenant/per-user permission guardrails - this is chat/agent-level conflict handling in a single-operator system. Do NOT contradict B5/B6; extend them. Cap sub-ticket depth at 2. Do not touch veritusagent or the voice-mode source files.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 4,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "05633b7c9a4c3010d4fa4ad2f37694bd24fe3a02f504cf405ff1d1911b0b7bbf",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:59:11+00:00",
+      "updated": "2026-07-18T07:59:11+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "44a35d6ee45c4b5e97ec4c784c9d8b0f",
+      "text": "B8: Resilience - compaction, model-switch, and voice-mode handling\nObjective: Design how an orchestrating chat and its runs survive an auto-compact or a model change mid-flight, and define at least lightweight handling for voice-mode chats.\nOutput: Committed markdown under docs/platform-redesign/ defining (1) durability contract: run/ticket/agent state lives on durable backend entities (per T0), never only in chat context, so a chat reconstitutes its live work after an auto-compact or model switch; what the chat re-hydrates from and how in-flight cards/live-progress elements re-attach; (2) model-switch handling: what must not break when the operator changes models mid-chat; (3) voice-mode handling: a reduced surface (fewer/no interactive cards, spoken confirmations, degraded-but-functional orchestration) so voice chats still file and track work; where the voice path diverges from the text path. Plus an ADR under docs/decisions/ for the durability/reconstitution model. Emit ordered build sub-notes for the Z ticket.\nStart from: the requirements addendum note, T0's entity model, B1 (card-collapse/live-progress) and B2 (run-status/single canonical status) so reconstitution reuses their elements. Read frontend voice-mode files ONLY to understand the current voice path; do not modify them.\nBoundaries: Design + docs only, no shipping. Do NOT modify the voice-mode source files (useVoiceSession.ts, voiceSession.ts) - read-only reference. No multi-tenant guardrails. Cap sub-ticket depth at 2. Do not touch veritusagent.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 4,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "b972cd9f434a8207fe0d5eb753f3d78ab797550322d0463c6aca0a7dff24a7b7",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T07:59:22+00:00",
+      "updated": "2026-07-18T07:59:22+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "3dcd693d206d43029228636f2a11ff5b",
+      "text": "Execute a deep fable review-and-refine pass over the orchestration surface entity model and the 16-ticket design set (T0\u2013Z) filed to the workshop queue in this turn. Entry points: the T0 ticket spec, the full 16-ticket set with dependencies, the three requirements addenda notes (orchestration-surface requirements raw, shared-scope context notes, resilience notes), and the eight existing docs/platform-redesign/*-2026-07-16.md docs plus docs/workshop-v1/. Work: read the entity model (Chat/Ticket/Run/Agent vocabulary, lifecycle, state fields, cross-links); trace dependencies (T0\u2192A/B threads\u2192Z) and verify eligibility rules; check for contradictions with the 2026-07-16 material; spot structural gaps (missing entity types, unspecified state transitions, unclear authority boundaries); and assess whether the 16-ticket breakdown is well-scoped, whether clarifying-question flow and blocked-and-escalate flow collide or compose cleanly, whether chat scoping + shared-scope cross-edits will actually work, and whether resilience (compaction, model switch, voice degradation) is addressed. Output: a refined entity-model doc (markdown under docs/platform-redesign/) with all changes ratified + inline notes explaining why, the 16-ticket specs updated to reflect refinements, a summary report (markdown) of what changed and why, and a verification checklist confirming (1) entity model is coherent and internally consistent, (2) all 16-ticket dependency edges are correct and sufficient, (3) all three addenda are incorporated, (4) no contradictions or supersedes with 2026-07-16 docs, (5) no ambiguity in the scoping or authority model. Done when: the model is ready for a worker to execute T0 and unblock the A/B threads with confidence.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "chat",
+        "ref": "d18e3b6d08a847a19b6cf4b27f15b96c"
+      },
+      "provenance": "f0ebf255e311e7cd113fc1231a0777cc681bf456604b7d04bcdbc773b26b92bd",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T08:09:47+00:00",
+      "updated": "2026-07-18T08:09:47+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "4cefccf5833a40899eff793f089569e6",
+      "text": "Design the note/learning capture model (what to capture, when, at what granularity)\nObjective: Define how the orchestrator and agents decide WHAT is worth writing to the knowledge/learning stores, at what granularity and scope, so capture reflects the load-bearing substance of a request or decision rather than latching onto the last salient phrase.\nOutput: A committed design doc under docs/platform-redesign/ that specifies: (1) capture triggers (durable preference/correction, decision+why, requirement dump, gotcha) vs non-triggers (transient task detail); (2) a coverage/importance heuristic so a multi-part design dump is captured in full at the right tier, not reduced to a one-liner; (3) how capture maps onto the existing three-tier notes-and-docs policy (scratch / scoped Notes / docs) and the learning-note vs note vs ADR distinction; (4) scope selection (workshop/project/app/agent); (5) the prompting/architecture changes needed so the assistant self-checks 'did I capture the weight of this' before emitting; (6) dedup/update-in-place instead of duplicate notes. Plus an ADR for the capture-importance model if load-bearing.\nStart from: shared/knowledge/notes-and-docs-policy note and the notes-and-docs skill; backend/services/knowledge.py; the learning-note/note prompt contracts in the orchestrator system prompt; the existing 2026-07-16 platform-redesign docs and T0's entity model.\nBoundaries: Design + docs only, no shipping. Depends on T0 (uses its scope/entity vocabulary). Single-operator system: no multi-tenant capture gating. Do not touch veritusagent or voice-mode files.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 5,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "fb48d52bd9c1f2e7c32c1d3bb549c65c0139de465c34d4f50564e7c41705d9e1",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T08:12:23+00:00",
+      "updated": "2026-07-18T08:12:23+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "8661a6a18dcf4589a5aa0df37da17311",
+      "text": "B0: Real \"Run queue\" control + visible queue state\nObjective: Ship one discoverable, design-system control that starts the workshop task queue and shows each ticket's live state, so starting work never depends on tribal knowledge or a chat command.\nOutput: A queue view in the frontend (routed in App.tsx + nav link) listing tickets with a single canonical status per ticket (queued / running / blocked-on-<dep> / done), a primary Run action that dispatches the top eligible ticket, and a backend endpoint wired in main.py that the worker loop hits. Blocked tickets show why (waiting on which dependency). Passes scripts/check_design.sh and tsc --noEmit.\nStart from: read the existing toolbar play/list controls (the ones flagged in B3) and the task-queue store these tickets file into; reuse src/ui primitives (Table, StatusPill, Button, StateBlock). Do NOT invent a new status vocabulary \u2014 five kinds only.\nBoundaries: build the button + honest status surface only; do not fold in the full B1/B2/B3 redesign, do not touch voice-mode files, do not add multi-tenant guardrails. Design + this one control ships; everything else in the 17-ticket set stays design-only.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 100,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 2,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T15:08:35+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784387314847_2d53"
+      ],
+      "evidence": [
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from work-ui: B0: Real Run-queue control + visible queue state\n\nObjective: Ship a visible queue surface with one obvious start action and honest per-ticket state, so starting work never depends on a terminal kick or a spoken keyword.\nOutput: A Run-queue view (design-system compliant) listing tickets with per-ticket state (queued / running / blocked-on-X / done), a single primary Start action that dispatches the top eligible ticket(s), and support for running multiple eligible tickets concurrently (not one-at-a-time). Blocked tickets show what they wait on. Wired end-to-end: clicking Start actually spawns a worker on eligible tickets. No unlabeled play/list buttons.\nStart from: The task-queue store the task-proposal/task-patch cards write to (confirm which service owns it before building). frontend/src/ui primitives + tokens.css. The existing unlabeled toolbar play/list controls flagged in B3. scripts/reviewer.sh + bash scripts/check_design.sh for the gate.\nBoundaries: Do not build the full toolbar redesign (that is B3) or the run-status detail view (B2) here; B0 is just the queue list + start control. Do not touch voice-mode files, the veritusagent org, or add multi-tenant guardrails. Reuse T0's entity/status vocabulary once it exists; do not invent a parallel status model.",
+          "ts": "2026-07-18T14:08:51+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "fa528544a2ec7ace632a2482f1b2d65f2f7d6aaa3d852970dc917ac5ee4e96dd",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T08:38:03+00:00",
+      "updated": "2026-07-18T15:09:53+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "98dd56e1d8af4f73b435a24c5474e570",
+      "text": "Dispatch smoke test: create the file docs/decisions/queue-dispatch-smoke.md containing exactly the single line: dispatch smoke test ok. Do nothing else.",
+      "status": "cancelled",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "acceptance": {
+        "kind": "command",
+        "spec": "file exists with the line",
+        "criteria": [
+          {
+            "desc": "file has the line",
+            "cmd": "cat docs/decisions/queue-dispatch-smoke.md",
+            "expect": "dispatch smoke test ok"
+          }
+        ]
+      },
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T14:50:33+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784386233413_bf20"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T14:50:59+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "docs/decisions/queue-dispatch-smoke.md"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T14:50:26+00:00",
+      "updated": "2026-07-18T14:55:20+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "6e534489cf234afdbbe05aa52245419c",
+      "text": "Queue drain test alpha: create the file docs/decisions/queue-drain-alpha.md containing exactly the single line: alpha ok. Do nothing else.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 130,
+      "depends_on": [],
+      "acceptance": {
+        "kind": "command",
+        "spec": "file exists",
+        "criteria": [
+          {
+            "desc": "line present",
+            "cmd": "cat docs/decisions/queue-drain-alpha.md",
+            "expect": "alpha ok"
+          }
+        ]
+      },
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T14:55:47+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784386547600_9fc7"
+      ],
+      "evidence": [
+        {
+          "kind": "criteria",
+          "ref": "1/1 acceptance criteria passed | ok: line present",
+          "ts": "2026-07-18T14:56:14+00:00"
+        },
+        {
+          "kind": "receipt",
+          "ref": "job_1784386547600_9fc7",
+          "ts": "2026-07-18T14:56:18+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "docs/decisions/queue-drain-alpha.md"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T14:55:20+00:00",
+      "updated": "2026-07-18T14:56:18+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "2b61fcceac0643b293664c2622c9a0d3",
+      "text": "Queue drain test bravo: create the file docs/decisions/queue-drain-bravo.md containing exactly the single line: bravo ok. Do nothing else.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 120,
+      "depends_on": [],
+      "acceptance": {
+        "kind": "command",
+        "spec": "file exists",
+        "criteria": [
+          {
+            "desc": "line present",
+            "cmd": "cat docs/decisions/queue-drain-bravo.md",
+            "expect": "bravo ok"
+          }
+        ]
+      },
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T14:56:19+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784386579767_69fd"
+      ],
+      "evidence": [
+        {
+          "kind": "criteria",
+          "ref": "1/1 acceptance criteria passed | ok: line present",
+          "ts": "2026-07-18T14:56:45+00:00"
+        },
+        {
+          "kind": "receipt",
+          "ref": "job_1784386579767_69fd",
+          "ts": "2026-07-18T14:56:49+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "docs/decisions/queue-drain-bravo.md"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T14:55:20+00:00",
+      "updated": "2026-07-18T14:56:49+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "5287338165ca4ea0b5598346d1400ee2",
+      "text": "Queue drain test charlie: create the file docs/decisions/queue-drain-charlie.md containing exactly the single line: charlie ok. Do nothing else.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 110,
+      "depends_on": [],
+      "acceptance": {
+        "kind": "command",
+        "spec": "file exists",
+        "criteria": [
+          {
+            "desc": "line present",
+            "cmd": "cat docs/decisions/queue-drain-charlie.md",
+            "expect": "charlie ok"
+          }
+        ]
+      },
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T14:56:50+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784386610452_88d7"
+      ],
+      "evidence": [
+        {
+          "kind": "criteria",
+          "ref": "1/1 acceptance criteria passed | ok: line present",
+          "ts": "2026-07-18T14:57:18+00:00"
+        },
+        {
+          "kind": "receipt",
+          "ref": "job_1784386610452_88d7",
+          "ts": "2026-07-18T14:57:23+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "docs/decisions/queue-drain-charlie.md"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T14:55:20+00:00",
+      "updated": "2026-07-18T14:57:23+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "86a2985a88eb4eb18958768055cb22e8",
+      "text": "Final loop check: create docs/decisions/queue-final-check.md containing exactly the single line: loop verified. Do nothing else.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 140,
+      "depends_on": [],
+      "acceptance": {
+        "kind": "command",
+        "spec": "file exists",
+        "criteria": [
+          {
+            "desc": "line",
+            "cmd": "cat docs/decisions/queue-final-check.md",
+            "expect": "loop verified"
+          }
+        ]
+      },
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T15:08:02+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784387282081_d3c8"
+      ],
+      "evidence": [
+        {
+          "kind": "criteria",
+          "ref": "1/1 acceptance criteria passed | ok: line",
+          "ts": "2026-07-18T15:08:28+00:00"
+        },
+        {
+          "kind": "receipt",
+          "ref": "job_1784387282081_d3c8",
+          "ts": "2026-07-18T15:08:33+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "docs/decisions/queue-final-check.md"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T15:07:56+00:00",
+      "updated": "2026-07-18T15:08:33+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "da952d265fb940658675acb5e4f46a76",
+      "text": "Add a by-chat usage view to the Usage page: stacked-area chart of the last 5 hours, no cap\n\nObjective: Add a grouping toggle to the Usage page (view usage by App, the current view, or by Chat) where the Chat view renders a stacked-area chart of per-chat usage over the last rolling 5 hours with no cap and no cap controls.\nOutput: Usage page has a By App / By Chat toggle. By Chat shows a stacked-area chart: each chat is a filled band stacked on the one below over a shared rolling-5h x-axis, following the contour of the band beneath it. A legend below the chart lists each chat name with its color swatch. No per-chat cap, no editable-cap control, no progress bars in this view. Existing By App view (caps, editable cap modal, per-interval spikes) is unchanged. Backend exposes per-chat usage for the last 5h. Built to the design system (src/ui primitives, tokens not hex, lucide not emoji); `bash scripts/check_design.sh --added HEAD` and `cd frontend && npx tsc --noEmit` both clean.\nStart from: Frontend: frontend/src/pages/Usage.tsx (current per-app cards + rolling-5h line chart + editable cap modal are the pattern to mirror/branch on the toggle). Backend: the usage endpoint feeding that page (grep backend/ for the per-app usage route; add or extend it to return per-chat series for the last 5h). Reuse the existing chart component if there is one; otherwise mirror its approach. Confirm what the existing usage pool is actually keyed by (app) before naming the toggle.\nBoundaries: Do not change the existing By App view or its cap logic. Do not add a cap, cap editor, or progress bar to the Chat view. Do not add multi-tenant guardrails. Do not touch unrelated pages. No new inline hex or emoji. Do not rebuild the public site unless the change is otherwise complete and verified (then scripts/build_workshop_public.sh, since it serves frontend/dist).",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from work-ui: Add a by-chat usage view to the Usage page: stacked-area chart of the last 5 hours, no cap\n\nObjective: Add a grouping toggle to the Usage page (view usage by App, the current view, or by Chat) where the Chat view renders a stacked-area chart of per-chat usage over the last rolling 5 hours with no cap and no cap controls.\nOutput: Usage page has a By App / By Chat toggle. By Chat shows a stacked-area chart: each chat is a filled band stacked on the one below over a shared rolling-5h x-axis, following the contour of the band beneath it. A legend below the chart lists each chat name with its color swatch. No per-chat cap, no editable-cap control, no progress bars in this view. Existing By App view (caps, editable cap modal, per-interval spikes) is unchanged. Backend exposes per-chat usage for the last 5h. Built to the design system (src/ui primitives, tokens not hex, lucide not emoji); `bash scripts/check_design.sh --added HEAD` and `cd frontend && npx tsc --noEmit` both clean.\nStart from: Frontend: frontend/src/pages/Usage.tsx (current per-app cards + rolling-5h line chart + editable cap modal are the pattern to mirror/branch on the toggle). Backend: the usage endpoint feeding that page (grep backend/ for the per-app usage route; add or extend it to return per-chat series for the last 5h). Reuse the existing chart component if there is one; otherwise mirror its approach. Confirm what the existing usage pool is actually keyed by (app) before naming the toggle.\nBoundaries: Do not change the existing By App view or its cap logic. Do not add a cap, cap editor, or progress bar to the Chat view. Do not add multi-tenant guardrails. Do not touch unrelated pages. No new inline hex or emoji. Do not rebuild the public site unless the change is otherwise complete and verified (then scripts/build_workshop_public.sh, since it serves frontend/dist).",
+          "ts": "2026-07-18T17:55:07+00:00"
+        },
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from work-ui: Add a by-chat usage view to the Usage page: stacked-area chart of the last 5 hours, no cap\n\nObjective: Add a grouping toggle to the Usage page (view usage by App, the current view, or by Chat) where the Chat view renders a stacked-area chart of per-chat usage over the last rolling 5 hours with no cap and no cap controls.\nOutput: Usage page has a By App / By Chat toggle. By Chat shows a stacked-area chart: each chat is a filled band stacked on the one below over a shared rolling-5h x-axis, following the contour of the band beneath it. A legend below the chart lists each chat name with its color swatch. No per-chat cap, no editable-cap control, no progress bars in this view. Existing By App view (caps, editable cap modal, per-interval spikes) is unchanged. Backend exposes per-chat usage for the last 5h. Built to the design system (src/ui primitives, tokens not hex, lucide not emoji); `bash scripts/check_design.sh --added HEAD` and `cd frontend && npx tsc --noEmit` both clean.\nStart from: Frontend: frontend/src/pages/Usage.tsx (current per-app cards + rolling-5h line chart + editable cap modal are the pattern to mirror/branch on the toggle). Backend: the usage endpoint feeding that page (grep backend/ for the per-app usage route; add or extend it to return per-chat series for the last 5h). Reuse the existing chart component if there is one; otherwise mirror its approach. Confirm what the existing usage pool is actually keyed by (app) before naming the toggle.\nBoundaries: Do not change the existing By App view or its cap logic. Do not add a cap, cap editor, or progress bar to the Chat view. Do not add multi-tenant guardrails. Do not touch unrelated pages. No new inline hex or emoji. Do not rebuild the public site unless the change is otherwise complete and verified (then scripts/build_workshop_public.sh, since it serves frontend/dist).",
+          "ts": "2026-07-18T18:41:52+00:00"
+        },
+        {
+          "kind": "related-from",
+          "ref": "65d1566566234e7285ce1fcdb4be030e",
+          "ts": "2026-07-18T18:43:58+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": "work-ui"
+      },
+      "provenance": "583a0b702d1b0fd890b9b2034f265a92dd96d16a0d35338be50d1ade07d9c3b9",
+      "touches": [],
+      "discovered_from": null,
+      "effort": "standard",
+      "latitude": null,
+      "created": "2026-07-18T17:14:10+00:00",
+      "updated": "2026-07-18T18:43:58+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "b9352de55d6d40068474bae287bd63cd",
+      "text": "Meter chat turns into the usage ledger (report-only, not gated)\nObjective: Record each chat turn's token spend so the operator can see chat usage, without gating admission on it.\nOutput: build_streaming sums input+cache_read+cache_creation+output per assistant message alongside the existing last_ctx tracking, threads it through _finalize_turn, and calls usage_ledger.record(scope, tokens, role=\"chat\"). Reported only: can_admit is NOT changed (its reserve fraction already assumes chat is invisible, so metering AND gating would double-count).\nStart from: build_streaming.py:142,155-179 (usage already parsed, output_tokens deliberately dropped), _finalize_turn:500,596-599; usage_ledger.record:95; the exemption note at usage_ledger.py:21. Raw per-turn stdout is journaled at .runtime/turns/<turn_id>/ so backfill is possible.\nBoundaries: Backend only. Prerequisite for existing ticket da952d26 (by-chat Usage view). Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 95,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/build_streaming.py",
+        "backend/services/usage_ledger.py"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T18:25:46+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "7fa4780dec424b08a4983865daf0a2c8",
+      "text": "L1: Wake the queue runner on enqueue instead of waiting out the poll\nObjective: Remove up to 60s of unconditional dead time between filing a ticket and work starting.\nOutput: filing/enqueueing signals the resident runner (signal file the sleep watches, or a short poll with a wake check) so a freshly filed ticket starts in seconds. Runner keeps its flock, off-switch, and pause-guard behavior unchanged.\nStart from: queue_runner.sh:39,102 (POLL=60, the sleep), tasks.add / the /tasks POST path.\nBoundaries: Do not remove the poll entirely - it is the recovery path when a signal is missed. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 94,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 2,
+      "claim_token": 2,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T18:37:22+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784399750288_1939",
+        "job_1784399842739_b5c9"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T18:37:21+00:00"
+        },
+        {
+          "kind": "touches",
+          "ref": "touches violation: wrote outside the task's declared globs [scripts/queue_runner.sh] -> docs/decisions/0007-entity-model-as-first-class-backend-concepts.md, docs/platform-redesign/entity-model-2026-07-18.md",
+          "ts": "2026-07-18T18:38:48+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "scripts/queue_runner.sh"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T18:54:43+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "4a0ac9d7d2e2415e8a1c43e7497fb2fc",
+      "text": "L2: Align the sweep's REMAIN guard with the caller's wall budget\nObjective: Make MAX_TASKS actually reachable so a sweep works multiple real tickets.\nOutput: project_ralph.sh:627 breaks when REMAIN < RALPH_MAX_WALL+30 (1230s) while queue_runner.sh:96 passes --max-wall 1500, so any task over ~270s ends the sweep after ONE task regardless of MAX_TASKS=3. Either derive RALPH_MAX_WALL from the sweep budget or raise the sweep budget; real tickets take minutes, so today the queue does ~1 real ticket per poll cycle. Verify with a sweep that completes >=2 non-trivial tickets.\nStart from: project_ralph.sh:41-43,627; queue_runner.sh:96. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 93,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "scripts/project_ralph.sh",
+        "scripts/queue_runner.sh"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T18:25:46+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "6cf238be51564cb5a6fc59dd0c2d83fa",
+      "text": "L3: Scope the reviewer's external checks to changed paths\nObjective: Cut reviewer wall-clock, which is paid N+1 times per task.\nOutput: check_pluggable_apps.sh currently runs repo-wide and UNCONDITIONALLY (reviewer.sh:224-230) and tsc -b --noEmit carries a 90s timeout (:192); gate both on whether the diff actually touches the relevant paths. reviewer.sh makes zero model calls, so this is pure wall-clock. Keep the gate's verdicts identical for diffs that DO touch those paths.\nStart from: reviewer.sh:184-230. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 92,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 2,
+      "claim_token": 2,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T18:45:02+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784399989433_5a49",
+        "job_1784400302203_aac2"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784400302203_aac2",
+          "ts": "2026-07-18T18:47:03+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "scripts/reviewer.sh"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T18:47:03+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "d0ee790a37e849199b329eabddcd0d94",
+      "text": "Widen general chat's tool surface and rewrite its persona around the work-placement principles\nObjective: Let chat actually do small work inline. Today general chat CANNOT: its allowlist is mcp__workshop__query + WebSearch/WebFetch with no Bash/Read/Edit/Write (chat_context.py:1004-1005), so its card-preferring persona is partly just a description of its inability.\nOutput: general chat gets a bounded read/small-write tool surface, and persona() is rewritten around the five principles in docs/platform-redesign/work-placement-and-preference-learning-2026-07-18.md - do small things now; hand off what needs the reviewer gate/touches/retry/receipt; offload context-heavy READING to a subagent (not necessarily a ticket); THE OPERATOR'S EXPRESSED WISH OUTRANKS ALL OF IT; say what you handed off in one line. Principles to reason with, not rules that fire.\nStart from: chat_context.py:1004-1005 (allowlist), :679-708 (persona), :166-175 (TASK_PROPOSAL_BUILD_RULE, already close to target), effective_allowed_tools:1065.\nBoundaries: Do not add hard blocks or refusal paths. The policy must bend to an explicit request. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 91,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 3,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T18:51:26+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784400424948_bf00",
+        "job_1784400491750_581d",
+        "job_1784400686590_47e5"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T18:48:10+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T18:50:25+00:00"
+        },
+        {
+          "kind": "receipt",
+          "ref": "job_1784400686590_47e5",
+          "ts": "2026-07-18T18:53:34+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/chat_context.py"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T18:53:34+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "5cc53905083d4dba92be053b9b02a2bf",
+      "text": "Write-boundary reminder on the file-write tool\nObjective: Surface the work-placement reminder at the moment the tradeoff becomes real - when the agent is about to write - rather than at the start of a turn.\nOutput: a short reminder attached at the write boundary noting that multi-file writes usually want the queue's review gate, and that a single small edit inline is fine. It REMINDS and lets the agent decide; it must never block or refuse.\nStart from: the chat tool wiring in chat_context.py / llm_router tool_flags:385. Depends on the widened tool surface. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 90,
+      "depends_on": [
+        "d0ee790a37e849199b329eabddcd0d94"
+      ],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 2,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:06:33+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784401478574_8381",
+        "job_1784401593572_faa6"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:06:32+00:00"
+        },
+        {
+          "kind": "touches",
+          "ref": "touches violation: wrote outside the task's declared globs [backend/services/chat_context.py] -> backend/services/llm_router.py",
+          "ts": "2026-07-18T19:07:55+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/chat_context.py",
+        "backend/services/llm_router.py"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "696153da4ae2445a97acc1a829362092",
+      "text": "Per-thread chat mode: orchestrated (default) vs direct\nObjective: Let the operator swap any chat back to a traditional chat experience at any time, so leniency is safe.\nOutput: a `mode` field on the thread record defaulting to `orchestrated`; `direct` = traditional chat, no auto-ticketing and no cards, but an explicit \"file this\" STILL works. Toggle exposed in the chat toolbar, switchable mid-thread without losing thread identity.\nStart from: chat_store.py:53-66 (thread record), :57-59 + set_thread_model:68 (exact precedent), list projection :116-119; read it where the provider resolves (chat.py:1006, :800) and let it modulate effective_allowed_tools (chat_context.py:1065) + which persona fragments _build_prompt appends (:704-708). POST /threads/{id}/rescope (chat.py:344) is precedent for rebinding a thread in place.\nOpen question for the operator: does `direct` mode still capture preferences, or is it fully inert? Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 89,
+      "depends_on": [
+        "d0ee790a37e849199b329eabddcd0d94"
+      ],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:10:41+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784401737264_ec19",
+        "job_1784401795631_a87d",
+        "job_1784401841608_8f6b"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:09:54+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:10:40+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:11:22+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/chat_store.py",
+        "backend/services/chat_context.py",
+        "backend/routes/chat.py"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "0578d66eada04ce9ac49a90a86c6e69e",
+      "text": "Typed operator-preference record + an `operator` scope injected everywhere\nObjective: Give operator preferences a real structure instead of free prose competing with worker noise.\nOutput: (a) a typed preference record (key/value/confidence/supersedes) stored beside the prose with its OWN injection budget - today prefs share one 60-entry/700-token bucket (learnings.py:56-62) with mechanical worker noise that outranks them on the provenance-weighted formula (the forgotten-sentinel learning is already at provenance 18); (b) an `operator` scope injected everywhere alongside `global` - prefs currently default to `workshop` (task_scope.py:219-227) which chat_context.py:616 explicitly SKIPS as a scoped block, so they reach almost nothing; (c) explicit supersession so a reversal retires the earlier entry instead of both being injected (memory_keeper.py:61-77 has supersession but only for knowledge notes); (d) get_preference/set_preference, which are specified in chat-work-linkage-2026-07-18.md:188 and 0006-auto-run-learning-mechanism.md:41 but DO NOT EXIST.\nStart from: learnings.py (record shape :354-363, dedup :340-352, memory_block :569-633), task_scope.apply_learning_note:198-234.\nBoundaries: extend the learnings system, do not replace it - it is well built. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 88,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T19:51:03+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784402629815_a21e",
+        "job_1784402691831_77aa",
+        "job_1784404262956_b381"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:24:50+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:26:56+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T19:54:00+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/learnings.py",
+        "backend/services/task_scope.py",
+        "backend/services/chat_context.py",
+        "backend/services/memory_keeper.py"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "d62f51befbf54ae3b831f69fedbafeb8",
+      "text": "Let repeated chat preferences earn durability (extend promotion beyond review: origin)\nObjective: A preference stated ten times in chat can currently NEVER become a durable rule.\nOutput: promotion counts only provenance sources prefixed `review:` (_BLOCK_ORIGIN learnings.py:388, filtered :434), so chat-captured prefs dedup into one entry with provenance 10 and stay ineligible forever; promoted.jsonl does not even exist yet (zero candidates ever generated). Extend the origin filter so repeated chat signals from DISTINCT occasions can reach candidate state. Keep the existing invariant: promotion proposes, the operator confirms - nothing auto-mints.\nStart from: learnings.py:370-520, promote_when_stable:441, block_origin_sources:428-438; the Review tab wiring at Work.tsx:827,1129,1162. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 87,
+      "depends_on": [
+        "0578d66eada04ce9ac49a90a86c6e69e"
+      ],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/learnings.py"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T17:38:53+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "a2b0d1636039412fb32c059946a89d8c",
+      "text": "Preference review UI: see, correct, and delete what the system learned\nObjective: Learned preferences must be inspectable and editable. A mis-learned rule that silently distorts behavior forever is worse than no learning.\nOutput: a surface listing learned operator preferences with their provenance (\"learned this from message X\", linking to the originating chat/turn), plus edit and delete. Any implicit/behavioral capture is PROPOSAL-ONLY here - it may suggest, never silently install. Design system: src/ui primitives, tokens not hex, lucide not emoji; check_design.sh --added HEAD and npx tsc --noEmit both clean.\nStart from: the Review tab in Work.tsx:827-1162 (existing promote/mint-rule surface), the preference record from the typed-preference ticket. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 86,
+      "depends_on": [
+        "0578d66eada04ce9ac49a90a86c6e69e"
+      ],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "frontend/src/pages/Work.tsx"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T17:38:53+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "af794526d3714492b966f463e8dca363",
+      "text": "C1: Expose the ready SET, not just the next task\nObjective: Prerequisite for every form of concurrency.\nOutput: next_ready_batch(n) (or equivalent) returning N independent ready tasks. next_ready already materializes the complete ready set at tasks.py:969 and discards everything but cands[0] one line later, so the computation exists; the consumers (dispatch_triggers.sh:240, project_ralph.sh:652,1000) are the work. Also expose ready task IDENTITIES via the API - _queue_snapshot (projects.py:638-681) returns only a count.\nStart from: tasks.py:943-971. Measured today: 21 of 24 open tickets are ready simultaneously. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 85,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T20:04:40+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784404846795_36d6",
+        "job_1784404923666_5b15",
+        "job_1784405080279_4c3c"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T20:02:02+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T20:03:38+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T20:05:46+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/tasks.py",
+        "backend/routes/projects.py",
+        "scripts/dispatch_triggers.sh",
+        "scripts/project_ralph.sh"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "dbcd929e1227445dbe2a5dceaafaf3f9",
+      "text": "C2: Encode prose dependencies into the depends_on field\nObjective: Make ordering correct before making execution concurrent.\nOutput: ticket dependencies currently live only in prose (\"Depends on: B1, B4\") and ZERO open tickets have depends_on set, so the scheduler is blind to ordering and can work a dependent ticket before its prerequisite. Backfill depends_on for the existing backlog and make the ticket-maker populate it going forward.\nStart from: tasks.py depends_on + ready() at :954-961; the existing design backlog (1c816fa9, 3677921e, b58f0fd1 and siblings all cite prose deps).\nBoundaries: correctness work; do not add concurrency here. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 84,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": 3,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T20:12:23+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784405148056_4b7e",
+        "job_1784405332863_e474",
+        "job_1784405543703_3bfd"
+      ],
+      "evidence": [
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T20:08:51+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T20:10:22+00:00"
+        },
+        {
+          "kind": "acceptance",
+          "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
+          "ts": "2026-07-18T20:13:44+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/tasks.py",
+        ".tasks.json"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T20:35:04+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "a4b6cc1fbf7f4795bfdea34e5e275490",
+      "text": "C3: Local-only completion path for worktree mode (no remote, no PR)\nObjective: Unblock worktree isolation on the workshop root, which has no remote.\nOutput: worktree mode is fully built and correct (allocate_task_worktree worktrees.py:205, git worktree lock :241-243, publish_or_park project_ralph.sh:248-270 which parks on conflict rather than looping) but its SUCCESS path publishes a PR, so it cannot be used on a tree with no remote_url. Add a local completion path (merge/fast-forward into the base branch) so isolation is usable here. WT_ENABLED requires repo.remote_url + concurrent_worktrees + a slug (project_ralph.sh:494-495) and all 9 projects have concurrent_worktrees=None with no remote.\nStart from: worktrees.py, project_ralph.sh:248-270,494-495,713-728. Note CONCURRENT_WORKTREES_MAX (:57) is declared and never read. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "done",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 83,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 1,
+      "claim_token": 1,
+      "lease_until": null,
+      "last_heartbeat": "2026-07-18T20:16:47+00:00",
+      "claim_pid": null,
+      "job_ids": [
+        "job_1784405806803_5e99"
+      ],
+      "evidence": [
+        {
+          "kind": "receipt",
+          "ref": "job_1784405806803_5e99",
+          "ts": "2026-07-18T20:19:13+00:00"
+        }
+      ],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "backend/services/worktrees.py",
+        "scripts/project_ralph.sh"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T20:19:13+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "0086a27007cd4e8e9bbde5fd6e662968",
+      "text": "C4: Parallel dispatch of independent ready tickets into isolated worktrees\nObjective: The actual throughput win - a reasoned concurrent swarm rather than a single chain.\nOutput: dispatch N independent ready tickets concurrently, each in its own worktree, with a sane concurrency cap and coordination when the ready set is wide. Today FOUR independent serializers stack: MAX_PROJECT_SWEEPS/MAX_AGENT_SWEEPS=1 (dispatch_triggers.sh:62-63), three exclusive flocks all keyed on md5(DIR) (queue_runner.sh:64-69, project_ralph.sh:529-535, ralph.sh:142-147), a sequential sweep loop (project_ralph.sh:625-980), and next_ready returning cands[0].\nBoundaries: LAST in the sequence, and only after C1+C2+C3. Parallel execution on one tree WITHOUT worktree isolation is how the git index race that already bit this repo becomes routine. Do not relax the DIR-keyed flocks until isolation is real. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 82,
+      "depends_on": [
+        "af794526d3714492b966f463e8dca363",
+        "dbcd929e1227445dbe2a5dceaafaf3f9",
+        "a4b6cc1fbf7f4795bfdea34e5e275490"
+      ],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [],
+      "source": {
+        "kind": "operator",
+        "ref": null
+      },
+      "provenance": null,
+      "touches": [
+        "scripts/project_ralph.sh",
+        "scripts/dispatch_triggers.sh",
+        "scripts/queue_runner.sh"
+      ],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T17:38:53+00:00",
+      "updated": "2026-07-18T17:38:53+00:00",
+      "owner": "operator",
+      "blocked_request": null
+    },
+    {
+      "id": "65d1566566234e7285ce1fcdb4be030e",
+      "text": "Add a by-chat usage view to the Usage page: stacked-area chart of the last 5 hours, no cap\nObjective: Add a grouping toggle to the Usage page (view usage By App, the current view, or By Chat) where the By Chat view renders a stacked-area chart of per-chat usage over the last rolling 5 hours with no cap and no cap controls.\nOutput: Usage page has a By App / By Chat toggle. By App is the existing view unchanged (caps, editable cap modal, per-interval spikes). By Chat shows a stacked-area chart: each chat is a filled band stacked on the one below over a shared rolling-5h x-axis, following the contour of the band beneath it; a legend below the chart lists each chat name with its color swatch. No per-chat cap, no editable-cap control, no progress bars in the Chat view. Backend exposes per-chat usage for the last 5h. Built to the design system (src/ui primitives, tokens not hex, lucide not emoji); `bash scripts/check_design.sh --added HEAD` and `cd frontend && npx tsc --noEmit` both clean.\nStart from: frontend/src/pages/Usage.tsx (current per-app cards + rolling-5h chart + editable cap modal are the pattern to mirror on the toggle); backend usage route feeding that page (grep backend/ for the per-app usage endpoint; extend it to return per-chat series for the last 5h). Reuse the existing chart component if one exists; otherwise mirror it. Confirm the existing pool is keyed by app before naming the toggle.\nBoundaries: Do not change the existing By App view or its cap logic. Do not add a cap, cap editor, or progress bar to the Chat view. Do not add multi-tenant guardrails. Do not touch unrelated pages. No new inline hex or emoji. Do not rebuild the public site unless the change is otherwise complete and verified (then scripts/build_workshop_public.sh).",
+      "status": "todo",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [
+        {
+          "kind": "related-to",
+          "ref": "da952d265fb940658675acb5e4f46a76",
+          "ts": "2026-07-18T18:43:58+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "general"
+      },
+      "provenance": "5435687bc15f1874d1d0a61c59d8a48ef02b9e20f0605f80d92405ed2a54dba8",
+      "touches": [],
+      "discovered_from": "da952d265fb940658675acb5e4f46a76",
+      "effort": null,
+      "latitude": null,
+      "created": "2026-07-18T18:43:58+00:00",
+      "updated": "2026-07-18T18:43:58+00:00",
+      "owner": "operator",
+      "blocked_request": null
     }
   ],
-  "export_sha": "771272ddf324d8cb351105d820dcfa2d8e9cb2e42ffe6015e83cf7003dbd7466"
+  "export_sha": "f6ea9f2b7d71bd9be5b9b07f4b44f5680797a6880d565025445c1a267db2af7b"
 }

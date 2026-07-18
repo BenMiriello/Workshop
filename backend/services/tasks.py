@@ -1037,6 +1037,7 @@ def update(
     assignee: str | None = None,
     priority: int | None = None,
     depends_on: list[str] | None = None,
+    touches: list[str] | None = None,
     blocked_reason: str | None = None,
     acceptance: dict | None = None,
     max_attempts: int | None = None,
@@ -1122,6 +1123,15 @@ def update(
             found["priority"] = int(priority)
         if depends_on is not None:
             found["depends_on"] = [str(d) for d in depends_on if d]
+        if touches is not None:
+            # `touches` was settable at add() but not here, which made the single
+            # most common cause of a blocked ticket unfixable through the supported
+            # path: a lane that is too narrow (or names the wrong files) fails the
+            # run, and correcting it meant hand-editing .tasks.json. Four of the
+            # five tickets blocked on 2026-07-18 were blocked by their own lane,
+            # not by the worker. An empty list clears back to UNRESTRICTED, which
+            # is what `touches: []` already means everywhere else (_check_touches).
+            found["touches"] = [str(t) for t in touches if t]
         if blocked_reason is not None:
             found["blocked_reason"] = blocked_reason or None
         if acceptance is not None:
