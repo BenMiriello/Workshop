@@ -461,6 +461,39 @@ def _normalize(task: dict) -> dict:
 # task saying what it is about, and the sweep holding it to that.
 _GLOB_MAGIC = re.compile(r"[*?\[]")
 
+# Repo-relative paths named in a ticket body, e.g. "backend/services/tasks.py" or
+# "scripts/project_ralph.sh:652". Requires a directory separator, so a bare
+# "tasks.py" mentioned in passing does not widen a lane.
+_BODY_PATH = re.compile(r"\b((?:[\w.-]+/)+[\w.-]+\.(?:py|sh|tsx?|jsx?|md|json|css))\b")
+
+
+def cited_paths(text: str) -> list[str]:
+    """The repo-relative files a ticket body names as the work."""
+    seen, out = set(), []
+    for m in _BODY_PATH.finditer(text or ""):
+        p = m.group(1)
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def lane_gaps(text: str, touches: list[str] | None) -> list[str]:
+    """Files the body cites that the declared lane does NOT cover.
+
+    A non-empty result means the ticket contradicts itself: it names work in
+    files the worker is forbidden to write. That is not a hypothetical - it is
+    what actually blocked four of the five tickets stuck on 2026-07-18. The
+    clearest case declared a lane of exactly ONE file, the one file its own body
+    says is already finished ("the computation exists; the CONSUMERS are the
+    work"), while excluding all three consumers it went on to name."""
+    globs = [g for g in (touches or []) if str(g).strip()]
+    if not globs:
+        return []          # unrestricted; nothing to contradict
+    pats = [_glob_to_re(g) for g in globs]
+    return [p for p in cited_paths(text)
+            if not any(rx.match(p) for rx in pats)]
+
 
 def _glob_to_re(pattern: str) -> re.Pattern:
     """Compile ONE path glob with the semantics people expect from a .gitignore /
@@ -1011,6 +1044,17 @@ def add(
                 if t.get("provenance") == provenance and t.get("status") != "parked":
                     return t
         now = _now()
+        # A lane that excludes files the body names as the work makes the ticket
+        # unwinnable: the worker either writes them and trips the touches gate, or
+        # does not and the done-gate reports "nothing was committed". Either way
+        # it burns every attempt and blocks, with the worker never at fault. The
+        # ticket's own prose is the better evidence of intent than a hand-guessed
+        # glob list, so widen the lane to match what the ticket says it will
+        # touch, rather than filing a self-contradicting ticket.
+        if touches:
+            gaps = lane_gaps(text, touches)
+            if gaps:
+                touches = list(touches) + gaps
         task = _normalize({
             "id": _new_id(), "text": text, "status": status,
             "assignee": assignee if assignee is not None else owner,
