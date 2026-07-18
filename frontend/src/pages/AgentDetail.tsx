@@ -688,6 +688,29 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       )}
 
       <Stack>
+        {/* --- Role card (C1). One-line description of what this role does,
+             so the operator knows the agent's shape at a glance. Full role-
+             shaped sub-panels (triager inbox, keeper store, broker verdicts,
+             maker in-flight, reviewer queue) live in a future pass; this small
+             card is the seed so the roster reads as five distinct kinds
+             rather than one uniform "agent". --- */}
+        {agent.role && (
+          <section>
+            <Card compact style={{ padding: "var(--space-3)" }}>
+              <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                <Tag hue={catFor(`role:${agent.role}`)}>{agent.role}</Tag>
+                <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                  {agent.role === "maker" && "Creates artifacts. Primary producer."}
+                  {agent.role === "reviewer" && "Approves or rejects maker output. Cannot self-approve."}
+                  {agent.role === "triager" && "Routes and classifies inbound work into tickets."}
+                  {agent.role === "keeper" && "Maintains one designated store; runs consolidation."}
+                  {agent.role === "broker" && "Mediates cross-store access; never reads the data it adjudicates."}
+                </span>
+              </Row>
+            </Card>
+          </section>
+        )}
+
         {/* --- Definition --- */}
         <section>
           <SectionLabel>Definition</SectionLabel>
