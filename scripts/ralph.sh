@@ -60,7 +60,15 @@ BASELINE=""
 DIR="$WORKSHOP"          # working tree to drive (default = workshop root)
 MAX_ITER=10
 MAX_WALL=1500   # 25 minutes
-MAX_TURNS_PER_ITER=6
+# Turns the model gets per iteration. This has to cover the WHOLE contract we ask
+# of a worker in one iteration: do the work, run reviewer.sh, and commit. At 6 a
+# real ticket spent every turn on the work plus the reviewer and died at
+# `max_turns` with the commit never reached — the task was then released as
+# "no work was committed" and a finished 339-line design doc was orphaned
+# uncommitted (observed 3x on each of two tickets, 2026-07-18). Raising the cap
+# is the fix: a requirement the turn budget cannot afford is not a requirement,
+# it is a guaranteed failure.
+MAX_TURNS_PER_ITER="${MAX_TURNS_PER_ITER:-10}"
 BILL_PROJECT=""   # --bill-project <scope>: record this run's tokens to the usage ledger
 LEARN_SCOPE_ARG=""  # --learn-scope <scope>: the learnings scope (project:/agent:/workshop)
 RECEIPT_PATH=""   # --receipt <path>: best-effort JSON receipt of this run's work product
@@ -206,7 +214,13 @@ except Exception:
 " "$TASK_ID" 2>/dev/null || true)
   fi
   if [[ -z "$(printf '%s' "$touches" | tr -d '[:space:]')" ]]; then
-    log "worker left changes uncommitted and the task declares no touches lane — declining to auto-commit (cannot distinguish this run's writes from a concurrent editor's)"
+    # Decline — but NAME the orphans. Silently declining is how a finished design
+    # doc ends up untracked with the task blocked and no pointer to the work.
+    local orphans
+    orphans=$(comm -13 <(printf '%s\n' "$PRERUN_DIRTY" | sort -u) \
+                       <(cd "$DIR" && git status --porcelain 2>/dev/null | sed 's/^...//' | sort -u) \
+              | grep -vE "$BOOKKEEPING_RE" | tr '\n' ' ' || true)
+    log "worker left changes uncommitted and the task declares no touches lane — declining to auto-commit (cannot distinguish this run's writes from a concurrent editor's). UNCOMMITTED: ${orphans:-<none>}"
     return 0
   fi
 
