@@ -13,7 +13,6 @@ import {
   YAxis,
 } from "recharts";
 import {
-  ActionBar,
   Button,
   Card,
   CardGrid,
@@ -22,6 +21,7 @@ import {
   CHART_SERIES,
   Field,
   Input,
+  Modal,
   PageHeader,
   ProgressBar,
   SectionLabel,
@@ -200,31 +200,8 @@ export default function Usage() {
             <div className="ws-stat-strip">
               <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
               <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
-              {edit.editing ? (
-                <Field label="Total cap" htmlFor="cap">
-                  <Input
-                    id="cap"
-                    type="number"
-                    min={1}
-                    step={100000}
-                    value={edit.draft.app_total}
-                    onChange={(e) => edit.set("app_total", Number(e.target.value) || 0)}
-                  />
-                </Field>
-              ) : (
-                <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
-              )}
+              <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
             </div>
-            {edit.editing && (
-              <ActionBar flash={edit.flash ? "Saved" : undefined}>
-                <Button size="sm" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
-                  Save
-                </Button>
-                <Button size="sm" variant="ghost" onClick={edit.cancel}>
-                  Cancel
-                </Button>
-              </ActionBar>
-            )}
 
             <ProgressBar
               value={data.app_used}
@@ -291,6 +268,38 @@ export default function Usage() {
             )}
           </Stack>
         </section>
+
+        <Modal
+          open={edit.editing}
+          onClose={edit.cancel}
+          title="Edit token cap"
+          actions={
+            <>
+              <Button size="sm" variant="ghost" onClick={edit.cancel}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
+                Save
+              </Button>
+            </>
+          }
+        >
+          <Field
+            label="App-wide token cap"
+            htmlFor="cap"
+            help="The most autonomous work may spend per rolling 5-hour window."
+          >
+            <Input
+              id="cap"
+              data-autofocus
+              type="number"
+              min={1}
+              step={100000}
+              value={edit.draft.app_total}
+              onChange={(e) => edit.set("app_total", Number(e.target.value) || 0)}
+            />
+          </Field>
+        </Modal>
 
         <section>
           <SectionLabel icon={<FolderGit2 aria-hidden size={14} />}>Per project</SectionLabel>
