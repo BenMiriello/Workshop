@@ -21,6 +21,15 @@ type AutonomyStatus = {
     disabled_at: string | null;
     flag_path: string;
   };
+  // Whether a worker loop is actually RESIDENT. The flag above says only that
+  // work is permitted; it says nothing about whether anything is running, which
+  // is how this control used to report "enabled (Ralph fires every 20m)" while
+  // no worker existed at all.
+  queue_runner?: {
+    running: boolean;
+    pid: number | null;
+    enabled: boolean;
+  };
 };
 
 type LoadedModel = {
@@ -114,6 +123,7 @@ export default function AutonomyControls() {
   }, [load]);
 
   const cronDisabled = !!auto?.cron_autonomy.disabled;
+  const runnerRunning = !!auto?.queue_runner?.running;
   const allStopped = cronDisabled;
 
   const onStopAll = async () => {
@@ -175,8 +185,19 @@ export default function AutonomyControls() {
       <Row label="cron loop">
         {auto == null ? "–" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={cronDisabled ? "stopped" : "running"}>
-              {cronDisabled ? "disabled" : "enabled (Ralph fires every 20m)"}
+            {/* Three real states, never "enabled" on the strength of a missing
+                flag file alone: work is permitted AND a worker is resident, or
+                it is permitted with nothing running (tickets pile up), or it is
+                switched off. The middle case is the one that used to read as
+                healthy while nothing ran. */}
+            <StatusDot
+              status={cronDisabled ? "stopped" : runnerRunning ? "running" : "warn"}
+            >
+              {cronDisabled
+                ? "disabled"
+                : runnerRunning
+                  ? "running (worker resident, draining the queue)"
+                  : "permitted, but no worker running — tickets will queue"}
             </StatusDot>
             <Button
               size="sm"

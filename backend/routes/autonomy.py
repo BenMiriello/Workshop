@@ -14,8 +14,11 @@ Plus read-only status endpoints feeding the Settings UI.
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import hashlib
 import os
 import shutil
+import signal
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,8 +39,74 @@ AUTONOMY_FLAG = Path(os.environ.get(
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
+WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
+QUEUE_RUNNER = WORKSHOP_ROOT / "scripts" / "queue_runner.sh"
+QUEUE_WATCHDOG = WORKSHOP_ROOT / "scripts" / "queue_runner_watchdog.sh"
+QUEUE_RUNNER_LOG = WORKSHOP_ROOT / ".runtime" / "queue-runner.log"
+QUEUE_RUNNER_PID = WORKSHOP_ROOT / ".runtime" / "queue-runner.pid"
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _queue_lock_path(dir_str: str) -> Path:
+    """The lock queue_runner.sh holds for a tree. Mirrors the shell derivation
+    exactly: md5 of `printf '%s\\n' "$DIR"`, first 12 hex chars."""
+    digest = hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
+    return Path(f"/tmp/workshop-queue-runner-{digest}.lock")
+
+
+def _queue_runner_state() -> dict:
+    """Whether a worker loop is ACTUALLY resident, by probing the runner's flock
+    rather than trusting a flag file. This is the distinction the old status
+    endpoint missed: the AUTONOMY_DISABLED flag being absent says only that work
+    is *permitted*, not that anything is *running* — which is how the UI came to
+    report "enabled (Ralph fires every 20m)" while no worker existed at all.
+
+    `running` = a live process holds the lock. `enabled` = the off-switch is
+    clear. Work only happens when BOTH are true, so the UI reports them
+    separately instead of collapsing them into one misleading label."""
+    lock = _queue_lock_path(str(WORKSHOP_ROOT))
+    running = False
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        fd = None
+    if fd is not None:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)  # we got it => nobody home
+        except OSError:
+            running = True
+        finally:
+            os.close(fd)
+
+    pid = None
+    try:
+        pid = int(QUEUE_RUNNER_PID.read_text().strip())
+    except (OSError, ValueError):
+        pid = None
+    # A pidfile outlives a SIGKILLed runner (the EXIT trap never fires), so it is
+    # only reported when the lock says someone is actually there.
+    if not running:
+        pid = None
+
+    last_line = None
+    try:
+        lines = [ln for ln in QUEUE_RUNNER_LOG.read_text(errors="replace").splitlines() if ln.strip()]
+        last_line = lines[-1] if lines else None
+    except OSError:
+        last_line = None
+
+    return {
+        "running": running,
+        "pid": pid,
+        "enabled": not AUTONOMY_FLAG.exists(),
+        "lock_path": str(lock),
+        "log_path": str(QUEUE_RUNNER_LOG),
+        "last_line": last_line,
+    }
 
 
 # ============================================================
@@ -75,8 +144,67 @@ async def autonomy_status():
             "disabled_at": flag_text,
             "flag_path": str(AUTONOMY_FLAG),
         },
+        "queue_runner": _queue_runner_state(),
         "jobs": _jobs_summary(),
     }
+
+
+# ============================================================
+# Queue worker loop (B0)
+# ============================================================
+# Start/stop the resident loop that drains the task queue. "Start" clears the
+# off-switch AND ensures a runner is resident (via the watchdog, which is
+# idempotent thanks to the runner's flock); "Stop" sets the off-switch and
+# signals the runner, so a cron-restarted runner comes back idle rather than
+# immediately resuming work.
+
+
+@router.get("/queue/runner")
+async def queue_runner_status():
+    """Real loop state: is a worker resident, and is work permitted."""
+    return _queue_runner_state()
+
+
+@router.post("/queue/runner/start")
+async def queue_runner_start():
+    try:
+        AUTONOMY_FLAG.unlink()
+    except FileNotFoundError:
+        pass
+    if not QUEUE_WATCHDOG.exists():
+        raise HTTPException(500, f"watchdog missing: {QUEUE_WATCHDOG}")
+    subprocess.Popen(
+        ["bash", str(QUEUE_WATCHDOG)],
+        cwd=str(WORKSHOP_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    # The watchdog spawns detached; give it a beat so the response reflects the
+    # started runner rather than the pre-start state.
+    await asyncio.sleep(1.5)
+    return _queue_runner_state()
+
+
+@router.post("/queue/runner/stop")
+async def queue_runner_stop():
+    """Set the off-switch and stop the resident runner + any in-flight sweep.
+    The sweep's own lease/reclaim path returns a half-worked ticket to the queue,
+    so stopping mid-run loses no tickets."""
+    AUTONOMY_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    AUTONOMY_FLAG.write_text(_now_iso() + "\n")
+    state = _queue_runner_state()
+    pid = state.get("pid")
+    if pid:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+    await asyncio.sleep(1.5)
+    return _queue_runner_state()
 
 
 def _jobs_summary(limit: int = 200) -> dict:

@@ -160,6 +160,85 @@ SENTINEL='<promise>COMPLETE</promise>'
 log "starting task: $(echo "$TASK" | head -c 200)"
 log "baseline=$BASELINE max_iter=$MAX_ITER max_wall=${MAX_WALL}s"
 
+# Pre-run working-tree snapshot, for the auto-commit net (maybe_autocommit). The
+# sweep tree is routinely dirty BEFORE a run (the task store, the regenerated
+# TODO.md, unrelated operator edits), so "what this run wrote" is the set of
+# paths dirty now that were not dirty at start — never the whole dirty tree.
+PRERUN_DIRTY=$(cd "$DIR" && git status --porcelain 2>/dev/null | sed 's/^...//' || true)
+
+# Bookkeeping churn, excluded from the auto-commit exactly as the receipt builder
+# in project_ralph.sh excludes it from the reported diff.
+BOOKKEEPING_RE='^(\.runtime/|\.tasks\.json|TODO\.md$)'
+
+# The completion gate in project_ralph.sh reads the GIT LOG: a run that leaves
+# its work uncommitted scores as "acceptance passed but no work was committed",
+# and the task is released back to the queue with the work discarded. Prompt rule
+# 5 tells the worker to commit, but a forgotten commit must not cost the entire
+# run, so this is the deterministic backstop: once the reviewer has APPROVED,
+# stage exactly the paths this run newly dirtied and commit them on the worker's
+# behalf. A worker that committed properly hits the early return and this is a
+# no-op.
+maybe_autocommit() {
+  local landed now_dirty new_paths n touches
+  landed=$(cd "$DIR" && git rev-list "$BASELINE..HEAD" 2>/dev/null | tr -d '[:space:]')
+  [[ -n "$landed" ]] && return 0
+
+  # "Newly dirty" is NOT sufficient evidence that this run wrote a file: the tree
+  # is shared, so an operator or a concurrent session editing alongside the sweep
+  # shows up as newly dirty too, and auto-committing it would attribute someone
+  # else's work to this ticket under the worker's name. (Observed exactly once,
+  # 2026-07-18, before this guard existed.) So the backstop only ever commits
+  # inside a lane the TASK declared: `touches`. A task with no declared lane is
+  # released by the gate as before — the prompt rule is the primary mechanism and
+  # this is only a net, so it is correct for it to decline rather than guess.
+  touches=""
+  if [[ -n "$TASK_ID" ]]; then
+    touches=$(python3 "$PTASKS" list-json "$STORE_DIR" 2>/dev/null \
+      | python3 -c "
+import json,sys
+try:
+    for t in json.load(sys.stdin):
+        if t.get('id') == sys.argv[1]:
+            print('\n'.join(t.get('touches') or []))
+            break
+except Exception:
+    pass
+" "$TASK_ID" 2>/dev/null || true)
+  fi
+  if [[ -z "$(printf '%s' "$touches" | tr -d '[:space:]')" ]]; then
+    log "worker left changes uncommitted and the task declares no touches lane — declining to auto-commit (cannot distinguish this run's writes from a concurrent editor's)"
+    return 0
+  fi
+
+  now_dirty=$(cd "$DIR" && git status --porcelain 2>/dev/null | sed 's/^...//')
+  new_paths=$(comm -13 <(printf '%s\n' "$PRERUN_DIRTY" | sort -u) \
+                       <(printf '%s\n' "$now_dirty" | sort -u) \
+              | grep -vE "$BOOKKEEPING_RE" || true)
+  # Keep only paths inside the declared lane.
+  if [[ -n "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]]; then
+    new_paths=$(printf '%s\n' "$new_paths" | python3 -c "
+import fnmatch, sys
+pats = [p for p in sys.argv[1].splitlines() if p.strip()]
+for line in sys.stdin:
+    p = line.strip()
+    if p and any(fnmatch.fnmatch(p, pat) for pat in pats):
+        print(p)
+" "$touches" 2>/dev/null || true)
+  fi
+  [[ -z "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]] && return 0
+  (cd "$DIR" && printf '%s\n' "$new_paths" | while IFS= read -r p; do
+     [[ -n "$p" ]] && git add -- "$p"
+   done) || return 0
+  (cd "$DIR" && git -c user.name='ralph' -c user.email='ralph@workshop.local' \
+     commit -q -m "ralph: $(echo "$TASK" | head -c 72 | tr '\n' ' ')" >>"$LOG" 2>&1) || return 0
+  n=$(printf '%s\n' "$new_paths" | grep -c . || true)
+  log "auto-committed $n file(s) the worker left uncommitted"
+  "$WORKSHOP/scripts/log_learning.sh" \
+    "Ralph: worker completed the task but left its changes UNCOMMITTED — the loop auto-committed them. Always commit before emitting the sentinel (prompt rule 5); the completion gate reads the git log, not the working tree." \
+    "ralph" 2>/dev/null || true
+  return 0
+}
+
 # Build the prompt template. Iteration 1 = full task. Iteration N>1 = "continue,
 # reviewer said incomplete because <reasons>".
 RALPH_INSTRUCTIONS=$(cat <<'PROMPT'
@@ -180,17 +259,28 @@ Rules of the loop:
    under `## Proposed`. Then exit (this is a legitimate completion).
 4. VERIFY before claiming done. If you added an endpoint, curl it. If you
    added a route, grep the wiring. If you added a script, dry-run it.
-5. When (and ONLY when) reviewer.sh returns `complete: true`, emit the
-   literal sentinel on its own line as the LAST line of your text output:
+5. COMMIT YOUR WORK. The completion gate reads the GIT LOG, not your working
+   tree: an uncommitted change is invisible to it, so the task is released back
+   to the queue as "acceptance passed but no work was committed" and everything
+   you just did is thrown away. Before emitting the sentinel, `git add` the
+   files this task was meant to write and commit them with a short message
+   describing the change. Stage only files this task owns — never `git add -A`
+   over an unrelated dirty tree, and never amend or rewrite existing commits.
+   If the task legitimately produces no file change (a pure external side
+   effect), say so explicitly in your output instead of committing nothing
+   silently.
+6. When (and ONLY when) reviewer.sh returns `complete: true` AND your work is
+   committed, emit the literal sentinel on its own line as the LAST line of
+   your text output:
 
        <promise>COMPLETE</promise>
 
    The Ralph loop greps for this exact string to decide whether to re-fire.
    No sentinel = re-fire.
-6. If a step is genuinely impossible (missing operator-side credential,
+7. If a step is genuinely impossible (missing operator-side credential,
    classifier block, etc.), mark the task `[~] BLOCKED: <specific reason>`
    in TODO.md and emit the sentinel — that's a valid completion.
-7. Be terse in narrative output. The Ralph log is for the operator to skim.
+8. Be terse in narrative output. The Ralph log is for the operator to skim.
 
 The task follows below.
 PROMPT
@@ -616,6 +706,11 @@ print(sid)
     exit_code=7
     break
   fi
+
+  # Reviewer approved: make sure the work is actually LANDED as a commit before
+  # the PASS branches below hand the task to project_ralph.sh's committed-work
+  # done-gate, which would otherwise release a perfectly good run back to todo.
+  (( COMPLETE == 1 )) && maybe_autocommit
 
   if (( SAW_SENTINEL == 1 && COMPLETE == 1 )); then
     log "PASS — sentinel + reviewer approval"

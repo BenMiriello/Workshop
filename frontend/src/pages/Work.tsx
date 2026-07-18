@@ -31,6 +31,7 @@ import {
 } from "../ui";
 import JobsFeed from "../components/JobsFeed";
 import AutonomyScopes from "../components/AutonomyScopes";
+import QueueRunner from "../components/QueueRunner";
 import { type Job, jobStatusKind } from "../lib/jobs";
 import {
   type BlockRequest,
@@ -1216,6 +1217,12 @@ export default function Work() {
   return (
     <div>
       <PageHeader title="Work" sub="Tickets across every scope, the runs they produce, what stopped and needs an answer, and how each scope processes work." />
+      {/* The worker loop's real state + its start/stop control, above the tabs:
+          whether tickets are being drained is the first thing to know on this
+          page, and it is true of every tab, not just one. */}
+      <div style={{ marginBottom: "var(--space-4)" }}>
+        <QueueRunner />
+      </div>
       <div style={{ marginBottom: "var(--space-4)" }}>
         <Segmented<Tab> ariaLabel="Work view" value={tab} onChange={setTab} options={TABS} />
       </div>
