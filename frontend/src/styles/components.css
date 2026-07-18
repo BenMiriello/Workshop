@@ -743,6 +743,15 @@ a.ws-btn { text-decoration: none; }
   .ws-col-optional { display: none; }
 }
 
+/* ProgressBar: a bounded quantity filling toward a cap. The fill color comes
+   from the status kind (--_solid set by .ws-status-*). Track is inset; fill
+   animates its width. */
+.ws-progress { display: flex; flex-direction: column; gap: var(--space-2); }
+.ws-progress__label { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); font-size: var(--fs-sm); color: var(--muted); }
+.ws-progress__track { height: 10px; background: var(--bg-inset); border-radius: var(--radius-pill); overflow: hidden; }
+.ws-progress__fill { height: 100%; background: var(--_solid, var(--accent)); border-radius: var(--radius-pill); transition: width var(--motion-med, 240ms) var(--ease-out, ease); }
+@media (prefers-reduced-motion: reduce) { .ws-progress__fill { transition: none; } }
+
 /* ---- CHARTS (recharts) --------------------------------------------------
    Charts inherit the system: muted axes, hairline grid, NO heavy frame, tonal
    fills. Series use the categorical suite (never status hues, so a line is

@@ -23,6 +23,13 @@ async def get_usage() -> dict:
     return usage_ledger.status()
 
 
+@router.get("/timeseries")
+async def get_usage_timeseries() -> dict:
+    """Cumulative per-project token usage sampled across the trailing rolling
+    window, for the line chart. Pure read; no side effects."""
+    return usage_ledger.timeseries()
+
+
 class BudgetPatch(BaseModel):
     app_total: int | None = Field(default=None, ge=1)
     autonomy_budget_fraction: float | None = Field(default=None, ge=0.1, le=1.0)

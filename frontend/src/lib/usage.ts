@@ -23,6 +23,16 @@ export type BudgetPatch = {
   autonomy_budget_fraction?: number;
 };
 
+// A point in the rolling-window time series: an ISO timestamp plus a cumulative
+// token total per project key. The last point equals the current window total.
+export type UsagePoint = { t: string } & Record<string, number | string>;
+
+export type UsageSeries = {
+  window_s: number;
+  projects: string[];
+  points: UsagePoint[];
+};
+
 export const usageApi = {
   status: (): Promise<UsageStatus> =>
     fetch("/api/usage").then(async (r) => {
@@ -37,6 +47,11 @@ export const usageApi = {
     }).then(async (r) => {
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
       return r.json() as Promise<UsageStatus>;
+    }),
+  timeseries: (): Promise<UsageSeries> =>
+    fetch("/api/usage/timeseries").then(async (r) => {
+      if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
+      return r.json() as Promise<UsageSeries>;
     }),
 };
 

@@ -156,3 +156,39 @@ export function Stat({
 export function Divider({ className }: { className?: string }) {
   return <hr className={cx("ws-divider", className)} />;
 }
+
+// ---- ProgressBar -----------------------------------------------------------
+// A horizontal fill showing value/max. `status` maps the fill to one of the
+// five status kinds (ok/running/stopped/warn/danger). Use for a bounded
+// quantity that fills toward a cap (usage vs budget, disk, quota) — not for a
+// pass/fail state (that is a StatusPill).
+export function ProgressBar({
+  value,
+  max,
+  status = "ok",
+  label,
+  className,
+}: {
+  value: number;
+  max: number;
+  status?: "ok" | "running" | "stopped" | "warn" | "danger";
+  label?: ReactNode;
+  className?: string;
+}) {
+  const frac = max > 0 ? Math.min(1, Math.max(0, value / max)) : 0;
+  const pct = Math.round(frac * 100);
+  return (
+    <div className={cx("ws-progress", `ws-status-${status}`, className)}>
+      {label != null && <div className="ws-progress__label">{label}</div>}
+      <div
+        className="ws-progress__track"
+        role="progressbar"
+        aria-valuenow={value}
+        aria-valuemin={0}
+        aria-valuemax={max}
+      >
+        <div className="ws-progress__fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}

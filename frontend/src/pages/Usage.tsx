@@ -5,6 +5,8 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -21,19 +23,19 @@ import {
   Field,
   Input,
   PageHeader,
+  ProgressBar,
   SectionLabel,
   Skeleton,
   Stack,
   Stat,
   StateBlock,
-  StatusPill,
   Table,
   TableScroll,
   NumCell,
   useEditMode,
   type StatusKind,
 } from "../ui";
-import { usageApi, fmtTokens, type UsageStatus } from "../lib/usage";
+import { usageApi, fmtTokens, type UsageStatus, type UsageSeries } from "../lib/usage";
 
 // The Usage page: the rolling-window token budget for autonomous background
 // work. Reads GET /api/usage (services.usage_ledger.status). Shows the app-wide
@@ -58,6 +60,13 @@ function windowLabel(windowS: number): string {
   return `Rolling ${hours}-hour window`;
 }
 
+// X-axis tick: an ISO timestamp -> a short local clock time (e.g. "3:40 PM").
+function clockTick(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 type Row = {
   slug: string;
   used: number;
@@ -69,6 +78,7 @@ type Row = {
 export default function Usage() {
   const nav = useNavigate();
   const [data, setData] = useState<UsageStatus | null>(null);
+  const [series, setSeries] = useState<UsageSeries | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -76,7 +86,9 @@ export default function Usage() {
     setLoading(true);
     setErr(null);
     try {
-      setData(await usageApi.status());
+      const [status, ts] = await Promise.all([usageApi.status(), usageApi.timeseries()]);
+      setData(status);
+      setSeries(ts);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -178,17 +190,77 @@ export default function Usage() {
           <Stack gap="sm">
             <SectionLabel icon={<Gauge aria-hidden size={14} />}>
               App-wide window
-              <StatusPill status={kind}>
-                {data.app_total > 0
-                  ? `${Math.round((data.app_used / data.app_total) * 100)}% used`
-                  : "uncapped"}
-              </StatusPill>
               {!edit.editing && (
                 <Button size="sm" variant="ghost" onClick={edit.begin} style={{ marginLeft: "auto" }}>
                   <SlidersHorizontal aria-hidden /> Edit cap
                 </Button>
               )}
             </SectionLabel>
+
+            {series && series.points.length > 0 && series.projects.length > 0 && (
+              <ChartFrame style={{ width: "100%", height: 200 }}>
+                <ResponsiveContainer>
+                  <LineChart data={series.points} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                    <XAxis
+                      dataKey="t"
+                      tickFormatter={clockTick}
+                      tick={{ fontSize: 11, fill: "var(--muted)" }}
+                      minTickGap={28}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => fmtTokens(v as number)}
+                      tick={{ fontSize: 11, fill: "var(--muted)" }}
+                      width={44}
+                    />
+                    <Tooltip
+                      isAnimationActive={false}
+                      cursor={{ stroke: "var(--border)" }}
+                      content={({ active, payload, label }: any) => (
+                        <ChartTooltip
+                          active={active}
+                          label={label ? clockTick(label as string) : ""}
+                          showName
+                          payload={payload ?? []}
+                          format={(v) => fmtTokens(v as number)}
+                        />
+                      )}
+                    />
+                    {series.projects.map((slug, i) => (
+                      <Line
+                        key={slug}
+                        type="monotone"
+                        dataKey={slug}
+                        name={slug}
+                        stroke={CHART_SERIES[i % CHART_SERIES.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={false}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartFrame>
+            )}
+
+            <ProgressBar
+              value={data.app_used}
+              max={data.app_total}
+              status={kind}
+              label={
+                <>
+                  <span>
+                    {fmtTokens(data.app_used)} of {fmtTokens(data.app_total)} used this window
+                  </span>
+                  <span>
+                    {data.app_total > 0
+                      ? `${Math.round((data.app_used / data.app_total) * 100)}%`
+                      : "uncapped"}
+                  </span>
+                </>
+              }
+            />
+
             <div className="ws-stat-strip">
               <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
               <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />

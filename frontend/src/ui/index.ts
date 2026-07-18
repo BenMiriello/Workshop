@@ -6,7 +6,7 @@ export { cx } from "./cx";
 export { useTheme, applyTheme, getStoredTheme, type ThemeMode } from "./theme";
 export { statusClass, catClass, catFor, type StatusKind, type CatHue } from "./status";
 
-export { Stack, Row, Spacer, SectionLabel, PageHeader, Toolbar, Card, CardGrid, Stat, Divider } from "./layout";
+export { Stack, Row, Spacer, SectionLabel, PageHeader, Toolbar, Card, CardGrid, Stat, Divider, ProgressBar } from "./layout";
 export {
   Button,
   Field,

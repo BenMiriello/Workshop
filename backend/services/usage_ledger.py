@@ -154,6 +154,43 @@ def window_usage(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
     return {"app": total, "by_project": by_project, "window_s": window_s}
 
 
+def timeseries(now: datetime | None = None, window_s: int = WINDOW_S,
+               buckets: int = 20) -> dict:
+    """Cumulative per-project token usage across the trailing window, sampled at
+    `buckets` evenly spaced points. Each point carries the running total (from
+    window start up to that point) for every project that has usage in the
+    window, so a line chart shows how the window's usage accumulated per app and
+    the last point equals the current window total. Rolling: the window start is
+    `now - window_s`, so entries that have aged out are already excluded."""
+    end = (now or _now()).timestamp()
+    start = end - window_s
+    step = window_s / buckets
+    entries = []
+    projects: set[str] = set()
+    for e in _read_entries():
+        t = _parse_ts(e.get("ts", ""))
+        if t is None or t < start:
+            continue
+        proj = e.get("project", "unbound")
+        projects.add(proj)
+        entries.append((t, proj, int(e.get("tokens") or 0)))
+    entries.sort(key=lambda x: x[0])
+    slugs = sorted(projects)
+    points = []
+    running: dict[str, int] = {s: 0 for s in slugs}
+    idx = 0
+    for b in range(1, buckets + 1):
+        edge = start + step * b
+        while idx < len(entries) and entries[idx][0] <= edge:
+            _, proj, tok = entries[idx]
+            running[proj] += tok
+            idx += 1
+        pt = {"t": datetime.fromtimestamp(edge, tz=timezone.utc).isoformat()}
+        pt.update({s: running[s] for s in slugs})
+        points.append(pt)
+    return {"window_s": window_s, "projects": slugs, "points": points}
+
+
 def prune(now: datetime | None = None, window_s: int = WINDOW_S) -> int:
     """Drop entries older than the window. Opportunistic; returns rows removed."""
     if not LEDGER_PATH.exists():
