@@ -219,15 +219,32 @@ fi
 
 # 4.6 Pluggable-app invariant — apps must not be welded back into platform-core
 #     files, and per-instance data must stay untracked (docs/apps-are-pluggable.md).
-#     Repo-wide invariant, so it always runs (not gated on changed paths).
+#     Gated: only runs when the diff touches the specific files the script inspects,
+#     eliminating the unconditional repo-wide scan cost on unrelated diffs.
 APPS_CHECK="skipped"
-if [[ -x "$WORKSHOP/scripts/check_pluggable_apps.sh" ]]; then
-  if bash "$WORKSHOP/scripts/check_pluggable_apps.sh" >/dev/null 2>&1; then
-    APPS_CHECK="ok"
+_APPS_CORE="backend/main.py backend/services/llm_router.py backend/services/app_registry.py backend/services/chat_context.py frontend/src/pages/Apps.tsx"
+_APPS_FORBIDDEN="projects.json build_agents.json backend/apps.json commute/schedule.json commute/legs.json commute/targets.json commute/sources/registry.json"
+_APPS_RELEVANT=false
+for _apf in $_APPS_CORE $_APPS_FORBIDDEN; do
+  if printf '%s\n' "$CHANGED_ALL" | grep -qxF "$_apf"; then
+    _APPS_RELEVANT=true; break
+  fi
+done
+if ! $_APPS_RELEVANT && printf '%s\n' "$CHANGED_ALL" | grep -qE '^commute/notes/'; then
+  _APPS_RELEVANT=true
+fi
+if $_APPS_RELEVANT; then
+  if [[ -x "$WORKSHOP/scripts/check_pluggable_apps.sh" ]]; then
+    if bash "$WORKSHOP/scripts/check_pluggable_apps.sh" >/dev/null 2>&1; then
+      APPS_CHECK="ok"
+    else
+      APPS_CHECK="fail"
+    fi
   else
-    APPS_CHECK="fail"
+    AMBIGUOUS+=("pluggable_apps_check_unavailable")
   fi
 fi
+unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
 
 # 4.7 Executed-criteria results (optional). A task can carry machine-checkable
 #     acceptance assertions; project_ralph.sh EXECUTES them in the scope dir and
