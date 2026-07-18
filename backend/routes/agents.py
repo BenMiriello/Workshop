@@ -754,11 +754,59 @@ async def get_agent(agent_id: str):
     id). The assistant persona/instructions live in the definition body; there is
     no separate Letta memory layer to enrich from. Enriched with the autonomy
     preset (classified from the agent's triggers) plus the scope's queue counts
-    and any pending `awaiting` prompts."""
+    and any pending `awaiting` prompts, plus the cross-link ids the UI uses to
+    render the Involved-in section (B1)."""
     rec = agents_registry.get(agent_id)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"agent not found: {agent_id}")
     snap = _agent_queue_snapshot(rec)
+    # Cross-link denormalization (B1). Small, best-effort passes over the task
+    # store + jobs feed + chat store. Bounded by limits so a big project cannot
+    # make this endpoint slow. Fail-open: any error yields an empty list rather
+    # than a 500 (the detail page must always render, even without cross-links).
+    linked_ticket_ids: list[str] = []
+    linked_run_ids: list[str] = []
+    linked_chat_ids: list[str] = []
+    try:
+        root = _agent_scope_root(rec)
+        if root is not None:
+            items = tasks.list_tasks(root, include_done=True)
+            slug = rec.get("slug") or ""
+            assignee = f"agent:{slug}" if slug else None
+            for t in items[:200]:
+                tid = t.get("id")
+                if not tid:
+                    continue
+                a = (t.get("assignee") or "").strip()
+                if assignee and a == assignee:
+                    linked_ticket_ids.append(tid)
+                elif not a and root is not None:
+                    # scope-implied membership: no explicit assignee, agent works
+                    # its scope by default. Include so the agent has something to
+                    # show; the UI can differentiate assigned vs scope-implied.
+                    linked_ticket_ids.append(tid)
+    except Exception:
+        pass
+    try:
+        from services import jobs as _jobs
+        job_recs = _jobs.read(agent_id=rec.get("id"), limit=100)
+        linked_run_ids = [j.get("id") for j in job_recs if j.get("id")]
+    except Exception:
+        pass
+    try:
+        from services import chat_store as _cs
+        slug = rec.get("slug") or ""
+        if slug:
+            # Cheap contextKey-prefix scan: chats whose thread key names this
+            # agent's scope. Not a graph query; just what is easy to compute
+            # without a schema change.
+            ck = f"agent:{slug}"
+            threads = _cs.list_threads()
+            for th in threads:
+                if (th.get("context_key") or "").startswith(ck):
+                    linked_chat_ids.append(th.get("id"))
+    except Exception:
+        pass
     return {
         **rec,
         "autonomy": triggers.triggers_to_preset(rec.get("triggers") or []),
@@ -767,6 +815,9 @@ async def get_agent(agent_id: str):
         "autonomy_mode": rec.get("autonomy") or "reactive",
         "queue": snap["queue"],
         "awaiting": snap["awaiting"],
+        "linked_ticket_ids": linked_ticket_ids[:50],
+        "linked_run_ids": linked_run_ids[:50],
+        "linked_chat_ids": linked_chat_ids[:50],
     }
 
 

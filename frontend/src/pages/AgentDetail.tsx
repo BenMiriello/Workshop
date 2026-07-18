@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote } from "lucide-react";
+import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks } from "lucide-react";
 import type { Project } from "@shared/types";
 import {
   ActionBar,
+  Badge,
   Button,
   Card,
   Checkbox,
@@ -46,6 +47,12 @@ type Limits = { max_iterations?: number; budget?: { max_wall_s?: number } };
 
 type AgentDetailData = UnifiedAgent & {
   definition?: string;
+  role?: string | null;
+  latitude?: string | null;
+  autonomy_mode?: "reactive" | "supervised" | "autonomous";
+  linked_ticket_ids?: string[];
+  linked_run_ids?: string[];
+  linked_chat_ids?: string[];
 };
 
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
@@ -636,14 +643,28 @@ function ExistingAgent({ agentId }: { agentId: string }) {
       <PageHeader
         title={agent.name}
         sub={
-          <span>
-            <code className="ws-mono">{agent.slug}</code> ·{" "}
-            {agent.project_slug ? <>project <code>{agent.project_slug}</code></> : "user scope"}
-          </span>
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            {/* Role + latitude + autonomy_mode as the primary chips (C10).
+                catFor gives each role its stable hue. */}
+            {agent.role && <Tag hue={catFor(`role:${agent.role}`)}>{agent.role}</Tag>}
+            {agent.autonomy_mode && agent.autonomy_mode !== "reactive" && (
+              <Tag hue={catFor(agent.autonomy_mode)}>{agent.autonomy_mode}</Tag>
+            )}
+            {agent.autonomy_mode === "reactive" && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>reactive</span>
+            )}
+            {agent.latitude && (
+              <Tag hue={catFor(`lat:${agent.latitude}`)}>latitude {agent.latitude}</Tag>
+            )}
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+              <code className="ws-mono">{agent.slug}</code> ·{" "}
+              {agent.project_slug ? <>project <code>{agent.project_slug}</code></> : "workshop scope"}
+              {" · runs as "}<code>{agent.runtime}</code>
+            </span>
+          </Row>
         }
         actions={
           <Row wrap>
-            <Tag hue={isBuilder ? "turquoise" : "violet"}>{agent.runtime}</Tag>
             {isBuilder ? (
               <Button size="sm" variant="primary" onClick={() => nav(`/agents/${encodeURIComponent(agent.slug)}/chat`)}>
                 <MessageSquare aria-hidden /> Open work pane
@@ -678,7 +699,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
               <Field label="Purpose" htmlFor="ad-purpose">
                 <Input id="ad-purpose" value={dPurpose} onChange={(e) => setDPurpose(e.target.value)} />
               </Field>
-              <Field label={isBuilder ? "Instructions" : "Persona"} htmlFor="ad-body">
+              <Field label="Definition body" htmlFor="ad-body" help={isBuilder ? "Instructions the Claude Code session runs under." : "Persona / behavior for this agent."}>
                 <Textarea id="ad-body" className="ws-mono" value={dBody} onChange={(e) => setDBody(e.target.value)} rows={12} />
               </Field>
             </Stack>
@@ -700,6 +721,60 @@ function ExistingAgent({ agentId }: { agentId: string }) {
             </Card>
           )}
         </section>
+
+        {/* --- Involved in --- */}
+        {/* Cross-links denormalized on the /api/agents/{id} response (B1). Each
+            list navigates directly into the entity it names. The tests /
+            navigability smoke check the operator asked for lands here. */}
+        {(agent.linked_chat_ids?.length || agent.linked_ticket_ids?.length || agent.linked_run_ids?.length) ? (
+          <section>
+            <SectionLabel>Involved in</SectionLabel>
+            <Stack gap="sm">
+              {agent.linked_chat_ids && agent.linked_chat_ids.length > 0 && (
+                <div>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    Chats ({agent.linked_chat_ids.length})
+                  </span>
+                  <Row wrap style={{ gap: "var(--space-1)", marginTop: "var(--space-1)" }}>
+                    {agent.linked_chat_ids.slice(0, 10).map((cid) => (
+                      <Link key={cid} to={`/chat/${encodeURIComponent(`agent:${agent.slug}`)}?thread=${encodeURIComponent(cid)}`} style={{ textDecoration: "none" }}>
+                        <Badge><MessageSquare size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{cid.slice(0, 8)}</Badge>
+                      </Link>
+                    ))}
+                  </Row>
+                </div>
+              )}
+              {agent.linked_ticket_ids && agent.linked_ticket_ids.length > 0 && (
+                <div>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    Tickets ({agent.linked_ticket_ids.length})
+                  </span>
+                  <Row wrap style={{ gap: "var(--space-1)", marginTop: "var(--space-1)" }}>
+                    {agent.linked_ticket_ids.slice(0, 10).map((tid) => (
+                      <Link key={tid} to={`/work?ticket=${encodeURIComponent(tid)}`} style={{ textDecoration: "none" }}>
+                        <Badge><ListChecks size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{tid.slice(0, 8)}</Badge>
+                      </Link>
+                    ))}
+                  </Row>
+                </div>
+              )}
+              {agent.linked_run_ids && agent.linked_run_ids.length > 0 && (
+                <div>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    Recent runs ({agent.linked_run_ids.length})
+                  </span>
+                  <Row wrap style={{ gap: "var(--space-1)", marginTop: "var(--space-1)" }}>
+                    {agent.linked_run_ids.slice(0, 10).map((rid) => (
+                      <Link key={rid} to={`/jobs/${encodeURIComponent(rid)}`} style={{ textDecoration: "none" }}>
+                        <Badge>{rid.slice(0, 10)}</Badge>
+                      </Link>
+                    ))}
+                  </Row>
+                </div>
+              )}
+            </Stack>
+          </section>
+        ) : null}
 
         {/* --- Triggers --- */}
         <section>
