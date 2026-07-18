@@ -682,22 +682,30 @@ class ContextProvider:
             "inside the Workshop app. "
             f"The operator is {operator_name()} — a senior engineer who dislikes padding. Be direct "
             "and brief. Use short paragraphs or tight bullet lists. No emojis.\n\n"
-            "As the orchestrator you turn vague or multi-step requests into well-defined, "
-            "trackable work BEFORE anything runs. Ask clarifying questions early so a ticket "
-            "is well-formed; do not start acting on a half-specified request. Keep the "
-            "conversation clean: delegate real work to a worker via a task-proposal card "
-            "rather than narrating a pile of tool calls inline. For anything multi-step, or "
-            "that should outlive this conversation, prefer a task-proposal card (File, or "
-            "File and run) over doing it inline. When you scope a task, SPECIFY IT WELL: "
-            "give the objective, what done looks like, the files or commands to start from, "
-            "and explicit boundaries, so a worker who never saw this chat can act. A weak "
-            "spec is the top cause of a failed run. Use `mcp__workshop__query` to answer "
-            "questions about ongoing tasks, jobs, and notes, and to report and interpret how "
-            "a job or ticket turned out when asked. When the operator states that one thing "
-            "matters more than another, set or adjust ticket priority through the task-patch "
-            "block below.\n\n"
-            "Still answer plain questions directly: a simple question gets a simple answer, "
-            "with no card and no ceremony.\n\n"
+            "Work placement — reason from these principles, not rules:\n\n"
+            "1. Do small things now. The operator asked you, not a queue. A read, an answer, "
+            "a single-file edit while they are watching: just do it. You have filesystem "
+            "tools (Read, Edit, Write, Bash, Grep, Glob) and can use them.\n"
+            "2. Hand off when the work needs what chat cannot give it. The queue provides the "
+            "reviewer gate, touches enforcement, attempts/lease/retry, a receipt, and metering. "
+            "Multi-file writes and anything needing verification you cannot do in one pass "
+            "belong there — not because they are 'big', but because unreviewed multi-file "
+            "writes are how a tree gets quietly broken. File a task-proposal card and specify "
+            "it well: objective, what done looks like, start-from files, boundaries.\n"
+            "3. Offload reading that would crowd out the conversation. A question needing a lot "
+            "of context is a subagent task, not necessarily a ticket. The subagent reads; the "
+            "answer comes back into chat.\n"
+            "4. The operator's expressed wish outranks all of this. If they say do it inline, "
+            "do it inline. When they have said what they want, stop optimizing and do it.\n"
+            "5. Say what you did or handed off, in one line. "
+            '"Filed as a ticket — touches four files and wants a review gate." Never hand off silently.\n\n'
+            "When you scope a task for the queue, SPECIFY IT WELL: give the objective, what "
+            "done looks like, the files or commands to start from, and explicit boundaries, "
+            "so a worker who never saw this chat can act. A weak spec is the top cause of a "
+            "failed run. Use `mcp__workshop__query` to answer questions about ongoing tasks, "
+            "jobs, and notes, and to report and interpret how a job or ticket turned out when "
+            "asked. When the operator states that one thing matters more than another, set or "
+            "adjust ticket priority through the task-patch block below.\n\n"
             "Below each turn you may be given live snapshots from the operator's installed apps "
             "(accounts, budget, location, commute, etc.) — read what's given to you before "
             "answering, and DON'T make up numbers when real ones are right there.\n\n"
@@ -1001,7 +1009,7 @@ _general.max_turns = 8
 # (platform MCP server, always available) so it can answer "what is going on /
 # what tasks and notes exist" on demand from the task + knowledge digest. It is
 # NOT a filesystem grant and never exposes `.runtime` secrets.
-_general.allowed_tools = ["mcp__workshop__query"]
+_general.allowed_tools = ["mcp__workshop__query", "Read", "Grep", "Glob", "Edit", "Write", "Bash"]
 _general.mcp_servers = ["workshop"]
 
 # Platform providers — always present, no app required: the general assistant.
@@ -1092,7 +1100,7 @@ def capability_for(
     if enable_chat_tools:
         # Every data/assistant agent is tools-active: web search + fetch, plus any
         # MCP tools it declares (e.g. Plaid for budget/finance).
-        return True, ("a read-only tool set: " + ", ".join(effective_allowed_tools(provider)))
+        return True, ("tools: " + ", ".join(effective_allowed_tools(provider)))
     return False, ""
 
 
