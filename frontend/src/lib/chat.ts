@@ -33,11 +33,15 @@ export type ChatMsg = {
 export type ThreadSummary = {
   id: string;
   context_key: string;
-  // Entity-model 2026-07-18 §7 (C11). Derived from context_key for legacy
+  // Entity-model 2026-07-18 §7 (C11 + P1). Derived from context_key for legacy
   // threads on read; persisted explicitly on new writes.
   scope?: string;
   scope_locked?: boolean;
   mode?: "orchestrated" | "direct";
+  // Canonical form: `agent:<slug>`. Legacy agent:<slug> chats back-fill
+  // to [that slug]; workshop/project chats start empty and grow when
+  // participants are added (P4).
+  participants?: string[];
   title: string;
   updated_at: string;
   message_count: number;

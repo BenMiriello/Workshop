@@ -99,12 +99,28 @@ export default function Chats() {
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return sorted.filter((t) => {
-      if (kind !== "all" && contextKind(t.context_key) !== kind) return false;
+      if (kind !== "all") {
+        const k = contextKind(t.context_key);
+        // P3: the Agent filter matches BOTH context_key-derived agent chats
+        // (legacy shape) AND any chat carrying an agent as a participant
+        // under the new model. That lets a workshop-scope chat with agent:X
+        // as a participant still surface here.
+        const hasAgentParticipant = (t.participants ?? []).length > 0;
+        if (kind === "agent") {
+          if (k !== "agent" && !hasAgentParticipant) return false;
+        } else if (k !== kind) {
+          return false;
+        }
+      }
       if (!needle) return true;
+      const participantMatch = (t.participants ?? []).some(
+        (p) => p.toLowerCase().includes(needle),
+      );
       return (
         (t.title || "").toLowerCase().includes(needle) ||
         (t.last_message || "").toLowerCase().includes(needle) ||
-        contextLabel(t.context_key).toLowerCase().includes(needle)
+        contextLabel(t.context_key).toLowerCase().includes(needle) ||
+        participantMatch
       );
     });
   }, [sorted, q, kind]);
@@ -206,6 +222,23 @@ export default function Chats() {
                   </strong>
                   <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
                     <Tag hue={catFor(t.context_key)}>{contextLabel(t.context_key)}</Tag>
+                    {/* P3: participants column — every agent in this chat as
+                        a small tag. An agent is a PARTICIPANT of a chat, not
+                        the chat's home; this row makes that visible instead
+                        of collapsing "agent chats" into a distinct scope. */}
+                    {(t.participants ?? []).slice(0, 3).map((p) => {
+                      const slug = p.startsWith("agent:") ? p.slice(6) : p;
+                      return (
+                        <Tag key={p} hue={catFor(`part:${slug}`)}>
+                          {slug}
+                        </Tag>
+                      );
+                    })}
+                    {(t.participants ?? []).length > 3 && (
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                        +{(t.participants ?? []).length - 3}
+                      </span>
+                    )}
                     <span className="ws-card__meta">{t.message_count}</span>
                   </span>
                 </div>
