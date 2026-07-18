@@ -298,9 +298,12 @@ async def spawn_task(thread_id: str, body: SpawnTask):
 
     # File AND run: launch a worker now for a freshly filed task. Never run a
     # merge/exact (it folded into an existing task; running that would be a
-    # surprise re-run of unrelated work). The launcher opens the Job; we then
-    # server-append a job-status ui-card so the live run persists in the thread
-    # across reloads with zero new transport.
+    # surprise re-run of unrelated work). C12 (2026-07-18): the server used
+    # to append a second `job-status` ui-card message after the run started,
+    # so the operator saw two cards for one spawn (the task-proposal card's
+    # own success state + the separate job-status card). We now return the
+    # job_id in the response and let the source card render it; Work and the
+    # Home attention strip surface the live run without a duplicate here.
     if body.run and result["decision"] not in ("merge", "exact"):
         task_rec = result.get("task") or {}
         task_id = task_rec.get("id")
@@ -311,33 +314,8 @@ async def spawn_task(thread_id: str, body: SpawnTask):
             except HTTPException as e:
                 resp["run_error"] = e.detail
             else:
-                job_id = run_res["job_id"]
-                resp["job_id"] = job_id
-                _append_job_status_card(thread_id, job_id, scope_key, task_id, task_rec)
+                resp["job_id"] = run_res["job_id"]
     return resp
-
-
-def _append_job_status_card(
-    thread_id: str, job_id: str, scope: str, task_id: str, task_rec: dict
-) -> None:
-    """Persist the live run as an assistant message carrying a ```ui-card
-    `job-status` block. The SERVER emits this card (never the model): the client
-    polls the Job and renders the lifecycle inline, and the message survives a
-    reload. Best-effort; a store hiccup must not fail the spawn."""
-    title = (task_rec.get("text") or "").split("\n", 1)[0].strip()[:80] or "the task"
-    card = {
-        "id": f"job-{job_id}",
-        "kind": "job-status",
-        "title": "Background run",
-        "job_id": job_id,
-        "task_id": task_id,
-        "scope": scope,
-    }
-    content = f'Running "{title}" now.\n\n```ui-card\n' + _json.dumps(card) + "\n```"
-    try:
-        chat_store.append_message(thread_id, "assistant", content, meta={"job_status": True})
-    except Exception as e:
-        log.warning("job-status card append failed: %s", e)
 
 
 @router.post("/threads/{thread_id}/rescope")
