@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { Link } from "react-router-dom";
 import {
-  Bot,
   FolderGit2,
   MessageSquare,
   MessagesSquare,
-  ListChecks,
   LayoutGrid,
   Banknote,
   PiggyBank,
@@ -13,7 +11,6 @@ import {
   Watch,
   Bird,
   MapPin,
-  AlertTriangle,
   type LucideProps,
 } from "lucide-react";
 import {
@@ -26,25 +23,14 @@ import {
   Skeleton,
   StateBlock,
   StatusPill,
-  Tag,
-  catFor,
   type StatusKind,
 } from "../ui";
-import { type Job, jobStatusKind } from "../lib/jobs";
 
-// Home — the operational hub (the platform root, "/"). Calm and scannable: a
-// strip for anything needing attention (a Job awaiting input), then recent
-// chats, recent Jobs, and pinned apps + projects. Each section reads its own
-// endpoint and ships all four list states. Deep views live behind each section's
-// "view all" link (Chats, Agents/Jobs, Apps, Projects).
-
-// ---- Jobs -----------------------------------------------------------------
-function jobBinding(job: Job): { icon: JSX.Element; text: string } {
-  if (job.project_slug) return { icon: <FolderGit2 aria-hidden />, text: job.project_slug };
-  if (job.agent_id) return { icon: <Bot aria-hidden />, text: job.agent_id };
-  if (job.chat_id) return { icon: <MessageSquare aria-hidden />, text: job.chat_id };
-  return { icon: <Bot aria-hidden />, text: "unbound" };
-}
+// Home — three bands per operator direction 2026-07-18: Apps + Chats +
+// Projects, each capped to the four most-recently-active items. No
+// attention band, no jobs feed, no status pills. The signal is "what am I
+// working on or near recently"; system status lives elsewhere (the /agents
+// header carries the autonomy pill; Work carries the ticket queue).
 
 function fmtAge(iso?: string): string {
   if (!iso) return "";
@@ -100,59 +86,9 @@ function CardSkeletons({ n = 3 }: { n?: number }) {
   );
 }
 
-// ---- Attention strip ------------------------------------------------------
-// Any Job in `awaiting_input` — the one status that wants the operator now.
-function AttentionStrip() {
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/jobs?status=awaiting_input&limit=20");
-      if (!r.ok) throw new Error(`${r.status}`);
-      const j = await r.json();
-      setJobs((j.jobs as Job[]) ?? []);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  // Self-hiding: no attention items and no error means nothing to show.
-  if (err || !jobs || jobs.length === 0) return null;
-
-  return (
-    <section style={{ marginBottom: "var(--space-7)" }}>
-      <SectionLabel icon={<AlertTriangle aria-hidden />}>Needs attention</SectionLabel>
-      <CardGrid className="ws-card-grid--dense">
-        {jobs.map((job) => {
-          const bind = jobBinding(job);
-          return (
-            <li key={job.id}>
-              <Link to={`/jobs/${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive compact>
-                  <Row between wrap style={{ gap: "var(--space-2)" }}>
-                    <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
-                      {bind.icon}
-                      <span className="ws-mono" style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bind.text}</span>
-                    </Row>
-                    <StatusPill status="warn">awaiting input</StatusPill>
-                  </Row>
-                </Card>
-              </Link>
-            </li>
-          );
-        })}
-      </CardGrid>
-    </section>
-  );
-}
+// AttentionStrip retired in C2 per operator direction 2026-07-18: Home stays
+// a "where I was near recently" surface. Blocked / awaiting jobs surface via
+// the ticket queue in Work; the /agents header pill carries autonomy state.
 
 // ---- Recent chats ---------------------------------------------------------
 type ThreadSummary = {
@@ -172,7 +108,7 @@ function RecentChats() {
       const r = await fetch("/api/chat/threads");
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const list = (await r.json()) as ThreadSummary[];
-      setThreads(Array.isArray(list) ? list.slice(0, 6) : []);
+      setThreads(Array.isArray(list) ? list.slice(0, 4) : []);
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -197,13 +133,13 @@ function RecentChats() {
                 to={`/chat/${encodeURIComponent(t.context_key)}?thread=${encodeURIComponent(t.id)}`}
                 style={{ textDecoration: "none", color: "inherit" }}
               >
-                <Card interactive compact>
+                <Card interactive compact style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                   <Row between style={{ gap: "var(--space-2)" }}>
                     <h3 className="ws-card__title" style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-base)" }}>
                       <MessageSquare size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                       {t.title || "Untitled chat"}
                     </h3>
-                    {t.updated_at && <span className="ws-card__meta ws-mono" style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{fmtAge(t.updated_at)}</span>}
+                    <span className="ws-card__meta ws-mono" style={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>{t.updated_at ? fmtAge(t.updated_at) : " "}</span>
                   </Row>
                   <p className="ws-card__meta ws-mono" style={{ marginTop: "var(--space-1)", minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.context_key}</p>
                 </Card>
@@ -217,71 +153,8 @@ function RecentChats() {
 }
 
 // ---- Recent Jobs ----------------------------------------------------------
-function RecentJobs() {
-  const [jobs, setJobs] = useState<Job[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/jobs?limit=6");
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const j = await r.json();
-      setJobs((j.jobs as Job[]) ?? []);
-      setErr(null);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 30_000);
-    return () => clearInterval(t);
-  }, [load]);
-
-  return (
-    <Section icon={ListChecks} title="Recent jobs" viewAll={{ to: "/jobs" }}>
-      {err ? (
-        <StateBlock variant="error" title="Couldn't load jobs" hint={<><code>/api/jobs</code> ({err})</>} />
-      ) : !jobs ? (
-        <CardSkeletons />
-      ) : jobs.length === 0 ? (
-        <StateBlock
-          title="No jobs yet"
-          hint={<>A Job is recorded for every bounded run: cron sweep, project sweep, or a manual run.</>}
-        />
-      ) : (
-        <CardGrid className="ws-card-grid--dense">
-          {jobs.map((job) => {
-            const bind = jobBinding(job);
-            const inner = (
-              <Card interactive compact>
-                <Row between wrap style={{ gap: "var(--space-2)" }}>
-                  <Row style={{ gap: "var(--space-1)", alignItems: "center", minWidth: 0 }}>
-                    {bind.icon}
-                    <span className="ws-mono" style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{bind.text}</span>
-                  </Row>
-                  <StatusPill status={jobStatusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
-                </Row>
-                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center", marginTop: "var(--space-2)" }}>
-                  {job.trigger && <Tag hue={catFor(job.trigger)}>{job.trigger}</Tag>}
-                  {job.started_at && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtAge(job.started_at)}</span>}
-                </Row>
-              </Card>
-            );
-            return (
-              <li key={job.id}>
-                <Link to={`/jobs/${encodeURIComponent(job.id)}`} style={{ textDecoration: "none", color: "inherit" }}>
-                  {inner}
-                </Link>
-              </li>
-            );
-          })}
-        </CardGrid>
-      )}
-    </Section>
-  );
-}
+// RecentJobs retired in C2. Runs surface via Work > Runs; Home stays as
+// three bands (Apps + Chats + Projects) per operator direction 2026-07-18.
 
 // ---- Pinned / recent Apps -------------------------------------------------
 type LauncherApp = { id: string; title: string; tagline: string; icon: string; route?: string; href?: string; external?: boolean };
@@ -394,22 +267,22 @@ function RecentProjects() {
       ) : projects.length === 0 ? (
         <StateBlock title="No projects yet" hint={<>Start one with <Link to="/projects/new">+ New project</Link>.</>} />
       ) : (
-        <CardGrid>
+        <CardGrid className="ws-projects-grid">
           {projects.map((p) => (
             <li key={p.slug}>
               <Link to={`/projects/${p.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive>
+                <Card interactive className="ws-project-card">
                   <Row between>
                     <h3 className="ws-card__title">
                       <FolderGit2 size={16} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                       {p.title}
                     </h3>
-                    {p.state && <StatusPill status={projectStateKind(p.state)}>{p.state}</StatusPill>}
+                    <StatusPill status={p.state ? projectStateKind(p.state) : "stopped"}>{p.state || "unknown"}</StatusPill>
                   </Row>
-                  {p.purpose && <p style={{ marginTop: "var(--space-2)" }}>{p.purpose}</p>}
-                  {p.last_touched && (
-                    <p className="ws-card__meta" style={{ marginTop: "var(--space-2)" }}>touched {fmtAge(p.last_touched)}</p>
-                  )}
+                  <p className="ws-project-card__desc" style={{ marginTop: "var(--space-2)" }}>{p.purpose || " "}</p>
+                  <p className="ws-card__meta ws-project-card__when">
+                    {p.last_touched ? `touched ${fmtAge(p.last_touched)}` : " "}
+                  </p>
                 </Card>
               </Link>
             </li>
@@ -421,13 +294,17 @@ function RecentProjects() {
 }
 
 export default function Home() {
+  // Home per operator direction 2026-07-18: three bands (Apps, Chats,
+  // Projects), each capped to the four most-recently-active items. No
+  // attention strip, no jobs feed, no autonomy pill, no budget bar. The
+  // signal is "what am I working on or near recently"; system status lives
+  // elsewhere (the /agents header shows autonomy state, Work shows the
+  // ticket queue, JobDetail shows run receipts).
   return (
     <div>
       <PageHeader title="Home" />
-      <AttentionStrip />
-      <RecentChats />
-      <RecentJobs />
       <PinnedApps />
+      <RecentChats />
       <RecentProjects />
     </div>
   );
