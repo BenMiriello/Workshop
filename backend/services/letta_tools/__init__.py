@@ -1,8 +1,17 @@
-"""Letta-registered tools for autonomous agents.
+"""Autonomous-agent tool bindings (Letta era; retained as reference registry).
 
-These Python functions get registered as Letta tools at FastAPI startup via
-the supervisor's `register_tools()` call. They are then attached to specific
-agents (workshop-overseer, plaid-watcher, email-triager) per their role.
+These Python functions were registered as Letta tools at FastAPI startup via
+the supervisor's `register_tools()` call. Letta was retired in the 2026-07-15
+Stage 9 teardown, so the registry below is no longer walked by any live code
+path (verified by grep: only `routes/tools.py` mentions it as a "keep in sync"
+comment). The functions themselves are still reachable via the dispatch table
+in `routes/tools.py`, which is how the mediated tool-call surface actually
+works today.
+
+Kept for two reasons:
+- documents which tools each role-carrying agent SHOULD have access to when
+  the assistant-loop runtime is genuinely built (dispatch_triggers.sh:493);
+- points would-be readers at the currently-live path.
 
 Design rules (per operator guidance):
   - Tools that talk to local resources (TODO.md, file system, notify queue)
@@ -35,19 +44,19 @@ from . import workshop, cloud, local, notify, health, sandbox_wrappers as sb
 # reach host files + host localhost (the Letta sandbox is isolated).
 TOOL_REGISTRY = {
     # workshop — TODO + file ops
-    "wkshp_read_todo":        (sb.wkshp_read_todo,        ["workshop-overseer"]),
-    "wkshp_propose_task":     (sb.wkshp_propose_task,     ["workshop-overseer", "plaid-watcher", "email-triager"]),
-    "wkshp_write_log":        (sb.wkshp_write_log,        ["workshop-overseer", "plaid-watcher", "email-triager"]),
-    "wkshp_mark_blocked":     (sb.wkshp_mark_blocked,     ["workshop-overseer"]),
+    "wkshp_read_todo":        (sb.wkshp_read_todo,        ["masini"]),
+    "wkshp_propose_task":     (sb.wkshp_propose_task,     ["masini", "plaid-watcher", "email-triager"]),
+    "wkshp_write_log":        (sb.wkshp_write_log,        ["masini", "plaid-watcher", "email-triager"]),
+    "wkshp_mark_blocked":     (sb.wkshp_mark_blocked,     ["masini"]),
     # local cognition — Ollama-backed quick decisions
-    "local_classify":         (sb.local_classify,         ["workshop-overseer", "plaid-watcher", "email-triager"]),
-    "local_route_decision":   (sb.local_route_decision,   ["workshop-overseer"]),
-    "local_summarize_short":  (sb.local_summarize_short,  ["workshop-overseer", "plaid-watcher", "email-triager"]),
+    "local_classify":         (sb.local_classify,         ["masini", "plaid-watcher", "email-triager"]),
+    "local_route_decision":   (sb.local_route_decision,   ["masini"]),
+    "local_summarize_short":  (sb.local_summarize_short,  ["masini", "plaid-watcher", "email-triager"]),
     # cloud escalation — claude -p with optional redaction
-    "cloud_run_claude":       (sb.cloud_run_claude,       ["workshop-overseer"]),
-    "cloud_run_ralph":        (sb.cloud_run_ralph,        ["workshop-overseer"]),
+    "cloud_run_claude":       (sb.cloud_run_claude,       ["masini"]),
+    "cloud_run_ralph":        (sb.cloud_run_ralph,        ["masini"]),
     # notification
-    "notify_operator":        (sb.notify_operator,        ["workshop-overseer", "plaid-watcher", "email-triager"]),
+    "notify_operator":        (sb.notify_operator,        ["masini", "plaid-watcher", "email-triager"]),
     # health
-    "system_health":          (sb.system_health,          ["workshop-overseer"]),
+    "system_health":          (sb.system_health,          ["masini"]),
 }
