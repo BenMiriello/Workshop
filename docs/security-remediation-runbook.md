@@ -118,6 +118,10 @@ sudo systemctl reload ssh
 committing to `/opt/clawd-house/docs`), owned by clawd-house, not writable by clawd-a, rejecting any
 `-c`/`--upload-pack`/user-supplied args. Or drop the rule if the commit path can move.
 
+### Stale Serve entry 🔴 — `:8445 → :3100` points at the now-stopped open-wearables frontend
+Harmless (502s), but tidy it up (needs sudo — clawd-a's `tailscale serve` is access-denied):
+`sudo tailscale serve --https=8445 off`
+
 ### L2 — Vite dev server (:5173) served to the tailnet via Serve 8443
 Source/source-map/FS exposure. Either `tailscale serve --https=8443 off`, or point it at the built
 bundle. If kept, set `server.fs.strict: true` in `frontend/vite.config.ts`.

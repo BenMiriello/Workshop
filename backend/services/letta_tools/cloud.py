@@ -21,14 +21,40 @@ _AUTH_ENV = "/home/clawd-a/.config/clawdbot/auth.env"
 _MAX_TURNS_CAP = 12
 _MAX_ITER_CAP = 8
 _MAX_DEPTH = 2
+_MAX_CONCURRENT = 3
+
+import threading
+_CONC_LOCK = threading.Lock()
+_active = {"n": 0}
 
 
 def _too_deep() -> bool:
+    # Best-effort recursion brake: works when the caller's env carries the counter
+    # (direct subprocess chain). It does NOT cross the /tools HTTP boundary — a
+    # nested claude that re-enters via host.docker.internal:8000 hits a depth-0
+    # backend — so the real fan-out bound is _try_enter() below (concurrency cap)
+    # plus the max_turns/timeout clamps, not this counter alone.
     import os
     try:
         return int(os.environ.get("WORKSHOP_AGENT_DEPTH", "0") or 0) >= _MAX_DEPTH
     except ValueError:
         return False
+
+
+def _try_enter() -> bool:
+    """Bound simultaneous cloud-run spawns regardless of how they were reached
+    (direct or via the /tools HTTP re-entry). Cost-safety, not user rate-limiting.
+    (security-audit-2026-07-18 A4 + re-audit finding 7)"""
+    with _CONC_LOCK:
+        if _active["n"] >= _MAX_CONCURRENT:
+            return False
+        _active["n"] += 1
+        return True
+
+
+def _leave() -> None:
+    with _CONC_LOCK:
+        _active["n"] = max(0, _active["n"] - 1)
 
 
 def _build_env() -> dict:
@@ -138,6 +164,8 @@ def cloud_run_claude(task: str, model: str = "haiku", redact_pii: bool = True, m
         "--output-format", "text",
         "--max-turns", str(max_turns),
     ]
+    if not _try_enter():
+        return "ERROR: cloud-run concurrency cap (%d) reached; try again shortly" % _MAX_CONCURRENT
     try:
         proc = subprocess.run(
             cmd, env=_build_env(), cwd="/home/clawd-a/workshop",
@@ -145,6 +173,8 @@ def cloud_run_claude(task: str, model: str = "haiku", redact_pii: bool = True, m
         )
     except subprocess.TimeoutExpired:
         return "ERROR: claude -p timed out (>600s)"
+    finally:
+        _leave()
     if proc.returncode != 0:
         return f"ERROR: claude -p exit {proc.returncode}: {proc.stderr[:200]}"
 
@@ -185,6 +215,8 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
     if len(matches) > 1:
         return f"ERROR: {len(matches)} tasks matched {task_substring!r}; be more specific"
     task_text = matches[0][4:]
+    if not _try_enter():
+        return "blocked: cloud-run concurrency cap (%d) reached; try again shortly" % _MAX_CONCURRENT
     try:
         proc = subprocess.run(
             ["/home/clawd-a/workshop/scripts/ralph.sh", task_text,
@@ -194,6 +226,8 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
         )
     except subprocess.TimeoutExpired:
         return "timeout: ralph exceeded wall budget"
+    finally:
+        _leave()
     exit_code = proc.returncode
     if exit_code == 0:
         return "completed: ralph approved by reviewer.sh"

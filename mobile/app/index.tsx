@@ -53,7 +53,12 @@ export default function Shell() {
   // (security-audit-2026-07-18 H6)
   const onShouldStart = useCallback(
     (req: { url: string }) => {
-      if (req.url.startsWith(webOrigin) || req.url === "about:blank") return true;
+      // Exact origin or a path UNDER it — with the "/" boundary so a look-alike host
+      // like `workshop.benmiriello.com.evil.com` can't satisfy a bare startsWith and
+      // inherit the bridge (security-audit-2026-07-18 re-audit finding 9).
+      if (req.url === webOrigin || req.url.startsWith(webOrigin + "/") || req.url === "about:blank") {
+        return true;
+      }
       if (/^https?:\/\//i.test(req.url)) void Linking.openURL(req.url);
       return false;
     },
@@ -87,7 +92,7 @@ export default function Shell() {
           <WebView
             ref={webRef}
             source={{ uri: WEB_URL }}
-            originWhitelist={[webOrigin]}
+            originWhitelist={[webOrigin, webOrigin + "/*"]}
             injectedJavaScriptBeforeContentLoaded={injected}
             onMessage={onMessage}
             onShouldStartLoadWithRequest={onShouldStart}
