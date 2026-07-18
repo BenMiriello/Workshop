@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { RefreshCw, Gauge, FolderGit2 } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { RefreshCw, Gauge, FolderGit2, SlidersHorizontal, FolderCog } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -10,12 +11,15 @@ import {
   YAxis,
 } from "recharts";
 import {
+  ActionBar,
   Button,
   Card,
   CardGrid,
   ChartFrame,
   ChartTooltip,
   CHART_SERIES,
+  Field,
+  Input,
   PageHeader,
   SectionLabel,
   Skeleton,
@@ -26,6 +30,7 @@ import {
   Table,
   TableScroll,
   NumCell,
+  useEditMode,
   type StatusKind,
 } from "../ui";
 import { usageApi, fmtTokens, type UsageStatus } from "../lib/usage";
@@ -62,6 +67,7 @@ type Row = {
 };
 
 export default function Usage() {
+  const nav = useNavigate();
   const [data, setData] = useState<UsageStatus | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -97,14 +103,29 @@ export default function Usage() {
       .sort((a, b) => b.used - a.used);
   }, [data]);
 
+  // Edit mode for the two operator-tunable budget knobs. Config write, so it
+  // commits on explicit Save (not on change), per the design system.
+  const edit = useEditMode(
+    { app_total: data?.app_total ?? 0 },
+    async (draft) => {
+      const next = await usageApi.setBudget({ app_total: Math.round(draft.app_total) });
+      setData(next);
+    },
+  );
+
   const header = (
     <PageHeader
       title="Usage"
       sub={data ? windowLabel(data.window_s) : undefined}
       actions={
-        <Button size="sm" onClick={refresh} loading={loading}>
-          <RefreshCw aria-hidden /> Refresh
-        </Button>
+        <>
+          <Button size="sm" variant="ghost" onClick={() => nav("/projects")}>
+            <FolderCog aria-hidden /> Manage projects
+          </Button>
+          <Button size="sm" onClick={refresh} loading={loading}>
+            <RefreshCw aria-hidden /> Refresh
+          </Button>
+        </>
       }
     />
   );
@@ -162,18 +183,40 @@ export default function Usage() {
                   ? `${Math.round((data.app_used / data.app_total) * 100)}% used`
                   : "uncapped"}
               </StatusPill>
+              {!edit.editing && (
+                <Button size="sm" variant="ghost" onClick={edit.begin} style={{ marginLeft: "auto" }}>
+                  <SlidersHorizontal aria-hidden /> Edit cap
+                </Button>
+              )}
             </SectionLabel>
-            <CardGrid>
-              <Card>
-                <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
-              </Card>
-              <Card>
-                <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
-              </Card>
-              <Card>
+            <div className="ws-stat-strip">
+              <Stat label="Used" value={fmtTokens(data.app_used)} sub="tokens this window" />
+              <Stat label="Remaining" value={fmtTokens(data.app_remaining)} sub="until the cap" />
+              {edit.editing ? (
+                <Field label="Total cap" htmlFor="cap">
+                  <Input
+                    id="cap"
+                    type="number"
+                    min={1}
+                    step={100000}
+                    value={edit.draft.app_total}
+                    onChange={(e) => edit.set("app_total", Number(e.target.value) || 0)}
+                  />
+                </Field>
+              ) : (
                 <Stat label="Total cap" value={fmtTokens(data.app_total)} sub="per window" />
-              </Card>
-            </CardGrid>
+              )}
+            </div>
+            {edit.editing && (
+              <ActionBar flash={edit.flash ? "Saved" : undefined}>
+                <Button size="sm" onClick={edit.save} loading={edit.saving} disabled={!edit.dirty}>
+                  Save
+                </Button>
+                <Button size="sm" variant="ghost" onClick={edit.cancel}>
+                  Cancel
+                </Button>
+              </ActionBar>
+            )}
           </Stack>
         </section>
 
@@ -251,18 +294,25 @@ export default function Usage() {
                     <tr>
                       <th>Project</th>
                       <th style={{ textAlign: "right" }}>Used</th>
-                      <th style={{ textAlign: "right" }}>Allowance</th>
-                      <th style={{ textAlign: "right" }}>Remaining</th>
+                      <th className="ws-col-optional" style={{ textAlign: "right" }}>Allowance</th>
+                      <th className="ws-col-optional" style={{ textAlign: "right" }}>Remaining</th>
                       <th style={{ textAlign: "right" }}>Share</th>
                     </tr>
                   </thead>
                   <tbody>
                     {rows.map((r) => (
                       <tr key={r.slug}>
-                        <td>{r.slug}</td>
+                        <td>
+                          <Link
+                            to={`/projects/${r.slug}`}
+                            style={{ color: "var(--accent)", fontWeight: "var(--fw-medium)" }}
+                          >
+                            {r.slug}
+                          </Link>
+                        </td>
                         <NumCell>{fmtTokens(r.used)}</NumCell>
-                        <NumCell>{fmtTokens(r.allowance)}</NumCell>
-                        <NumCell>{fmtTokens(r.remaining)}</NumCell>
+                        <NumCell className="ws-col-optional">{fmtTokens(r.allowance)}</NumCell>
+                        <NumCell className="ws-col-optional">{fmtTokens(r.remaining)}</NumCell>
                         <NumCell>{Math.round(r.share * 100)}%</NumCell>
                       </tr>
                     ))}

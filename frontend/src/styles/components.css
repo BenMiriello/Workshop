@@ -720,6 +720,29 @@ a.ws-btn { text-decoration: none; }
 .ws-stat__num { font-size: var(--fs-2xl); font-weight: var(--fw-semi); letter-spacing: -0.02em; margin-top: var(--space-2); font-variant-numeric: tabular-nums; line-height: 1; }
 .ws-stat__sub { margin-top: var(--space-2); font-size: var(--fs-sm); color: var(--muted); }
 
+/* Compact 3-up stat strip (Usage "app-wide window"): three small tiles that
+   stay side by side on a phone instead of a CardGrid stacking them into three
+   tall cards. The number shrinks and the sub-line hides on narrow screens;
+   both grow back past the 640px breakpoint. Stat already carries its own
+   border+shadow, so these tiles do NOT get an extra Card wrapper. */
+.ws-stat-strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-2); }
+.ws-stat-strip .ws-stat { padding: var(--space-3); min-width: 0; }
+.ws-stat-strip .ws-stat__num { font-size: var(--fs-lg); margin-top: var(--space-1); }
+.ws-stat-strip .ws-stat__sub { display: none; }
+@media (min-width: 640px) {
+  .ws-stat-strip { gap: var(--space-4); }
+  .ws-stat-strip .ws-stat { padding: var(--space-4) var(--space-5); }
+  .ws-stat-strip .ws-stat__num { font-size: var(--fs-2xl); margin-top: var(--space-2); }
+  .ws-stat-strip .ws-stat__sub { display: block; }
+}
+
+/* Secondary table column: dropped below 640px so a wide table fits a phone
+   instead of horizontal-scrolling. Use only on columns whose data is shown
+   elsewhere (e.g. a chart) or is genuinely optional detail. */
+@media (max-width: 639px) {
+  .ws-col-optional { display: none; }
+}
+
 /* ---- CHARTS (recharts) --------------------------------------------------
    Charts inherit the system: muted axes, hairline grid, NO heavy frame, tonal
    fills. Series use the categorical suite (never status hues, so a line is

@@ -190,6 +190,35 @@ def load_config() -> dict:
     return dict(_DEFAULT_CONFIG)
 
 
+def update_config(app_total: int | None = None,
+                  autonomy_budget_fraction: float | None = None) -> dict:
+    """Persist the two operator-tunable budget knobs onto the current config and
+    write it back atomically. Only the app-wide cap and the autonomy fraction are
+    editable here; per-project weights/floors stay a file-level concern. Values
+    are validated and clamped so a bad write can neither zero the cap nor starve
+    autonomy. Returns the saved config."""
+    cfg = load_config()
+    if app_total is not None:
+        try:
+            total = int(app_total)
+        except (TypeError, ValueError):
+            raise ValueError("app_total must be an integer")
+        if total < 1:
+            raise ValueError("app_total must be at least 1")
+        cfg["app_total"] = total
+    if autonomy_budget_fraction is not None:
+        try:
+            frac = float(autonomy_budget_fraction)
+        except (TypeError, ValueError):
+            raise ValueError("autonomy_budget_fraction must be a number")
+        cfg["autonomy_budget_fraction"] = max(_FRACTION_MIN, min(_FRACTION_MAX, frac))
+    BUDGET_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = BUDGET_CONFIG_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, indent=2))
+    tmp.replace(BUDGET_CONFIG_PATH)
+    return cfg
+
+
 def _autonomy_budget_fraction(cfg: dict) -> float:
     """Fraction of the app-wide budget autonomous work may consume before it
     yields to reserved interactive headroom. Env WORKSHOP_AUTONOMY_BUDGET_FRACTION

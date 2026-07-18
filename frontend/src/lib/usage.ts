@@ -18,9 +18,23 @@ export type UsageStatus = {
   projects: Record<string, ProjectUsage>;
 };
 
+export type BudgetPatch = {
+  app_total?: number;
+  autonomy_budget_fraction?: number;
+};
+
 export const usageApi = {
   status: (): Promise<UsageStatus> =>
     fetch("/api/usage").then(async (r) => {
+      if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
+      return r.json() as Promise<UsageStatus>;
+    }),
+  setBudget: (patch: BudgetPatch): Promise<UsageStatus> =>
+    fetch("/api/usage/budget", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", "x-workshop-client": "1" },
+      body: JSON.stringify(patch),
+    }).then(async (r) => {
       if (!r.ok) throw new Error(`${r.status} ${await r.text().catch(() => r.statusText)}`);
       return r.json() as Promise<UsageStatus>;
     }),
