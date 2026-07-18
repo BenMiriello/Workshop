@@ -32,8 +32,12 @@ import { latitudeDesc, type Latitude } from "../lib/tasks";
 // GET /api/agents/ (autonomy preset + role + depth + latitude). Kept local so the shared
 // UnifiedAgent type is untouched; every existing UnifiedAgent field still applies.
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
+type AutonomyMode = "reactive" | "supervised" | "autonomous";
 type RosterAgent = UnifiedAgent & {
   autonomy?: Preset;
+  // Per-agent autonomy mode (autonomy-model 2026-07-18). The primary axis;
+  // the preset above is the trigger cadence, kept for backward-compat.
+  autonomy_mode?: AutonomyMode;
   role?: string | null;
   depth?: "quick" | "standard" | "deep";
   fanout?: "off" | "read-only";
@@ -515,7 +519,24 @@ export default function Agents() {
       {total === 0 ? (
         <StateBlock
           title="No agents yet"
-          hint={<span>Use <strong>+ New agent</strong> to add an assistant or builder, or <strong>+ New builder</strong> to start a Claude Code session on a project.</span>}
+          hint={
+            <Stack gap="sm">
+              <span>
+                Agents are named, typed workers that hold roles like{" "}
+                <strong>maker</strong>, <strong>reviewer</strong>,{" "}
+                <strong>triager</strong>, or <strong>keeper</strong>. The
+                default set for a new workshop is <strong>none</strong>.
+              </span>
+              <Row wrap style={{ gap: "var(--space-2)" }}>
+                <Button size="sm" variant="ghost" onClick={() => setTemplating(true)}>
+                  <FileStack aria-hidden /> Adopt a template
+                </Button>
+                <Link to="/agents/new">
+                  <Button size="sm" variant="ghost"><Plus aria-hidden /> Start blank</Button>
+                </Link>
+              </Row>
+            </Stack>
+          }
         />
       ) : (
         <CardGrid className="ws-agents-grid">
@@ -538,13 +559,22 @@ export default function Agents() {
                         <Icon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
                         {a.name}
                       </h2>
-                      <Tag hue={isBuilder ? "turquoise" : "violet"}>{a.runtime}</Tag>
+                      {/* Primary tag flips from runtime to role (C8). Runtime
+                          becomes a small metadata line below (per operator
+                          direction: role/latitude/autonomy/scope first; runtime
+                          is plumbing). */}
+                      {a.role
+                        ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
+                        : <Tag hue={isBuilder ? "turquoise" : "violet"}>{a.runtime}</Tag>}
                     </Row>
                     <p className="ws-card__meta">{a.purpose || (isBuilder ? (a.project_slug ? `linked to ${a.project_slug}` : "freestanding") : "assistant")}</p>
-                    {(a.autonomy || a.role || a.depth || a.latitude) && (
+                    {(a.autonomy_mode || a.autonomy || a.depth || a.latitude) && (
                       <Row wrap style={{ gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
-                        {a.autonomy && <Badge>{presetIcon(a.autonomy)}{a.autonomy}</Badge>}
-                        {a.role && <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>}
+                        {/* Autonomy mode is the primary axis; if unset, fall
+                            back to the legacy preset badge for the transition. */}
+                        {a.autonomy_mode
+                          ? <Badge>{a.autonomy_mode}</Badge>
+                          : a.autonomy && <Badge>{presetIcon(a.autonomy)}{a.autonomy}</Badge>}
                         {a.depth && (
                           <Badge><Gauge size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{a.depth}</Badge>
                         )}
@@ -555,6 +585,10 @@ export default function Agents() {
                             </Badge>
                           </span>
                         )}
+                        {/* Runtime demoted to a small muted tag on the same row */}
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                          runs as {a.runtime}
+                        </span>
                       </Row>
                     )}
                     <p className="ws-card__meta">{triggerSummary(a.triggers)}</p>
