@@ -232,6 +232,33 @@ PYEOF
 )
 }
 
+# Merge a task worktree's branch into the canonical base branch locally (no push).
+# Echoes exactly one of:
+#   conflict                 -> merge conflict; caller parks
+#   ok\t<commit>             -> merged successfully
+#   error: <msg>             -> other failure; caller logs, still done
+merge_task_worktree_local() {  # $1=branch_slug
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" "$1" <<'PYEOF' 2>>"$LOG"
+import sys
+from services import worktrees
+slug, branch_slug = sys.argv[1], sys.argv[2]
+try:
+    r = worktrees.merge_branch(slug, branch_slug)
+except Exception as e:
+    print(f"error: {e}")
+    raise SystemExit(0)
+if not r.get("ok"):
+    reason = str(r.get("reason") or "merge failed")
+    if "conflict" in reason.lower():
+        print("conflict")
+    else:
+        print("error: " + reason[:300])
+    raise SystemExit(0)
+print(f"ok\t{r.get('commit') or ''}")
+PYEOF
+)
+}
+
 # Reap worktrees whose branch already merged into the canonical base. Best-effort.
 cleanup_merged_worktrees() {
   (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 - "$SLUG" <<'PYEOF' >/dev/null 2>>"$LOG"
@@ -245,14 +272,40 @@ PYEOF
 ) || true
 }
 
-# Called on a task's SUCCESS leg in worktree mode: push + open PR. On a rebase
-# conflict it PARKS the task (dead-letter, does not loop) and returns 1 so the
-# caller SKIPS its normal done/in_review transition. Otherwise augments $EVIDENCE
-# with the branch + pr and returns 0 so the caller proceeds. On the default path
-# (WT_MODE!=1) it is a no-op returning 0, so behavior there is unchanged.
+# Called on a task's SUCCESS leg in worktree mode. For a bound project: push +
+# open PR, park on rebase conflict. For an unbound project: merge the branch
+# locally into the canonical base, park on merge conflict. In both cases augments
+# $EVIDENCE and returns 0 so the caller proceeds, or parks the task and returns 1
+# so the caller skips the done/in_review transition. On the default path
+# (WT_MODE!=1) it is a no-op returning 0.
 publish_or_park() {  # $1=branch_slug $2=title $3=body
   [[ "$WT_MODE" != "1" ]] && return 0
-  local out; out=$(publish_task_worktree "$1" "$2" "$3")
+  local out
+  if [[ "$REPO_BOUND" != "1" ]]; then
+    # Local-only path: merge into base, no remote push or PR.
+    out=$(merge_task_worktree_local "$1")
+    if [[ "$out" == "conflict" ]]; then
+      python3 "$PTASKS" note "$DIR" "$TASK_ID" "local merge conflict: branch does not merge cleanly into the canonical base; parked (not looping)" --kind acceptance >/dev/null 2>>"$LOG"
+      ptasks_tx set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" || true
+      job_finish_child "$CHILD_JOB" failed "$RC" "$EVIDENCE"
+      PARKED=$((PARKED+1))
+      log "task=$TASK_ID PARKED (local merge conflict)"
+      return 1
+    fi
+    if [[ "$out" == ok* ]]; then
+      local commit; commit=$(printf '%s' "$out" | cut -f2)
+      local aug; aug=$(printf '%s' "$EVIDENCE" | jq -c \
+        --arg branch "wt/$SLUG/$1" --arg commit "$commit" \
+        '. + {branch: $branch, commit: $commit}' 2>/dev/null)
+      [[ -n "$aug" ]] && EVIDENCE="$aug"
+      log "task=$TASK_ID merged branch wt/$SLUG/$1 locally commit=$commit"
+    else
+      log "task=$TASK_ID local merge did not complete: ${out#error: }"
+    fi
+    return 0
+  fi
+  # Remote path (bound project): push + open PR.
+  out=$(publish_task_worktree "$1" "$2" "$3")
   if [[ "$out" == "conflict" ]]; then
     python3 "$PTASKS" note "$DIR" "$TASK_ID" "publish conflict: branch does not rebase cleanly onto the canonical base; parked (not looping)" --kind acceptance >/dev/null 2>>"$LOG"
     ptasks_tx set-status "$DIR" "$TASK_ID" parked --expect-claim-token "${CLAIM_TOKEN:-}" || true
@@ -497,7 +550,7 @@ PYEOF
 fi
 [[ "$DEFAULT_BRANCH" == "-" ]] && DEFAULT_BRANCH=""
 WT_ENABLED=0
-[[ "$REPO_BOUND" == "1" && "$CONCURRENT_WT" == "1" && -n "$SLUG" ]] && WT_ENABLED=1
+[[ "$CONCURRENT_WT" == "1" && -n "$SLUG" ]] && WT_ENABLED=1
 WORK_DIR="$DIR"
 
 RUNTIME="$DIR/.runtime"
