@@ -1,0 +1,18 @@
+- Operator prefers deep research and planning before execution, then fully autonomous work without pausing.
+- Workshop terminology (jobs, runs, agents, processes, tickets) is confused and needs clear distinct roles and purposes.
+- Chat should display related tasks/runs with live progress auto-updating in the originating chat.
+- Task filing should learn from operator's patterns to auto-file similar requests in future.
+- Chats have user-changeable scope: global, project-specific, or app-specific.
+- Scoping and decomposition happen in the main chat thread before spawning runs, not in the run itself.
+- Wants explicit ticket/task dependency tracking capability, usable manually and programmatically by agents and the operator.
+- Prefers deep exploration and thinking before splitting work into tickets, with grouping at whatever granularity fits (not micro, not macro).
+- Canonical entity model is Chat/Ticket/Run/Agent with one word per concept; sub-ticket depth capped at 2 levels.
+- Fable review-and-refine of design plans before execution improves outcomes over hand-waving.
+- Operator wants autonomous work execution once directed—no "say magic word" intermediate steps or permission gating.
+- Queue state must be visible (queued/running/blocked/done) with obvious affordances, not hidden mechanics or mystery toolbars.
+- Note capture should default to verbose with importance classification (task/context/reference/preference), not minimal or dropped.
+- System design must prioritize user usability, discoverability, and elegance for a real user, not technical purity.
+- Autonomy toggle is not accessible on the Usage page UI
+- Until automated ticket system completes several tickets end-to-end reliably, default to manual work and in-conversation monitoring instead of filing
+- Filing a ticket is not progress until a run completes and finishes
+- System has broken autonomy/worker loop wiring and no UI path to enable it
