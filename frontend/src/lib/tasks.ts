@@ -135,6 +135,10 @@ export type Task = {
   // Resolved by the API (invocation > task > scope > default), with its source.
   effective_latitude?: EffectiveLatitude;
   depends_on?: string[];
+  // Soft link (entity-model 2026-07-18 §4.2). No scheduling effect; visual
+  // grouping only. blocks is DERIVED from the inverse of depends_on and
+  // computed client-side from the current ticket list.
+  relates_to?: string[];
   acceptance?: TaskAcceptance | null;
   max_attempts?: number | null;
   blocked_reason?: string | null;

@@ -198,6 +198,37 @@ def _pid_alive(pid) -> bool:
     return True
 
 
+def _would_cycle(items: list[dict], task_id: str, new_deps: list[str]) -> bool:
+    """Would adding these deps to `task_id` form a cycle in depends_on?
+
+    Walks forward from each new dep through the current graph. If task_id is
+    reachable, the edge closes a cycle. `items` is the current store; new_deps
+    is the proposed depends_on list for task_id.
+
+    Cheap: O(V+E) worst case, one-shot; runs on every update so the DAG stays
+    a DAG (entity-model 2026-07-18 §4.4). Ignores self-links (they never gate
+    anything and are stripped by the caller anyway)."""
+    by_id = {str(t.get("id")): t for t in items if t.get("id")}
+    def _reaches(start: str, target: str) -> bool:
+        # BFS forward. Deps of `start`'s task, then their deps, etc.
+        seen: set[str] = set()
+        stack = [start]
+        while stack:
+            cur = stack.pop()
+            if cur == target:
+                return True
+            if cur in seen:
+                continue
+            seen.add(cur)
+            t = by_id.get(cur)
+            if not t:
+                continue
+            for d in t.get("depends_on") or []:
+                stack.append(str(d))
+        return False
+    return any(str(d) != task_id and _reaches(str(d), task_id) for d in new_deps)
+
+
 def _new_id() -> str:
     return uuid.uuid4().hex
 
@@ -408,6 +439,10 @@ def _normalize(task: dict) -> dict:
         "parent": task.get("parent") or None,
         "priority": _as_int(task.get("priority"), 0),
         "depends_on": [str(d) for d in (task.get("depends_on") or []) if d],
+        # relates_to: soft link (entity-model 2026-07-18 §4.2), UI-only, no
+        # scheduling effect. Distinct from depends_on which gates readiness.
+        # blocks is DERIVED from the inverse of depends_on and never stored.
+        "relates_to": [str(r) for r in (task.get("relates_to") or []) if r],
         "acceptance": acceptance,
         # max_attempts is the per-task cap on worker RUNS (sweep attempts). Read
         # legacy `max_iterations` for back-compat so old stores load unchanged.
@@ -1081,6 +1116,7 @@ def update(
     assignee: str | None = None,
     priority: int | None = None,
     depends_on: list[str] | None = None,
+    relates_to: list[str] | None = None,
     touches: list[str] | None = None,
     blocked_reason: str | None = None,
     acceptance: dict | None = None,
@@ -1166,7 +1202,22 @@ def update(
         if priority is not None:
             found["priority"] = int(priority)
         if depends_on is not None:
-            found["depends_on"] = [str(d) for d in depends_on if d]
+            new_deps = [str(d) for d in depends_on if d]
+            # Cycle guard (entity-model 2026-07-18 §4.4): the depends_on graph is
+            # a DAG. Any mutation that would create a cycle is rejected here
+            # BEFORE the write lands, so a bad patch never wedges the queue. The
+            # check walks forward from each new dependency: if we can reach this
+            # task, the edge is a cycle.
+            if _would_cycle(tasks, task_id, new_deps):
+                raise ValueError(
+                    f"depends_on would form a cycle back to {task_id}")
+            found["depends_on"] = new_deps
+        if relates_to is not None:
+            # Soft link. No cycle check (relates_to has no scheduling effect;
+            # entity-model §4.2). Duplicates and self-links are stripped so the
+            # UI never has to render them.
+            found["relates_to"] = [
+                str(r) for r in relates_to if r and str(r) != task_id]
         if touches is not None:
             # `touches` was settable at add() but not here, which made the single
             # most common cause of a blocked ticket unfixable through the supported

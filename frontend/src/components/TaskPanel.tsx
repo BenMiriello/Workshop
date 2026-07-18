@@ -92,6 +92,7 @@ type EditDraft = {
   acceptanceSpec: string;
   maxAttempts: string;
   dependsOn: string;
+  relatesTo: string;
 };
 
 function toDraft(t: Task): EditDraft {
@@ -107,6 +108,7 @@ function toDraft(t: Task): EditDraft {
     acceptanceSpec: t.acceptance?.spec ?? "",
     maxAttempts: t.max_attempts != null ? String(t.max_attempts) : "",
     dependsOn: (t.depends_on ?? []).join(", "),
+    relatesTo: (t.relates_to ?? []).join(", "),
   };
 }
 
@@ -240,8 +242,14 @@ export default function TaskPanel({
                 kind: draft.acceptanceKind,
                 spec: draft.acceptanceKind === "command" ? draft.acceptanceSpec.trim() || null : null,
               };
-        // depends_on: comma/whitespace separated task ids; [] clears them.
+        // depends_on / relates_to: comma-separated task ids; [] clears them.
+        // depends_on gates readiness; relates_to is a soft link with no
+        // scheduling effect (entity-model 2026-07-18 §4.2).
         const depends_on = draft.dependsOn
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const relates_to = draft.relatesTo
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean);
@@ -257,6 +265,7 @@ export default function TaskPanel({
           assignee: draft.assignee.trim() || null,
           acceptance,
           depends_on,
+          relates_to,
         };
         if (Number.isFinite(maxAttemptsNum)) body.max_attempts = maxAttemptsNum;
         const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(t.id)}`, {
@@ -432,8 +441,11 @@ export default function TaskPanel({
             <Input id={`tp-maxatt-${t.id}`} type="number" min={1} value={draft.maxAttempts} onChange={(e) => setField("maxAttempts", e.target.value)} style={{ maxWidth: "6rem" }} />
           </Field>
         </Row>
-        <Field label="Depends on" htmlFor={`tp-deps-${t.id}`} optional help="comma-separated task ids; gates readiness">
+        <Field label="Depends on" htmlFor={`tp-deps-${t.id}`} optional help="comma-separated task ids; gates readiness (cycle-guarded)">
           <Input id={`tp-deps-${t.id}`} value={draft.dependsOn} onChange={(e) => setField("dependsOn", e.target.value)} placeholder="task id, task id" />
+        </Field>
+        <Field label="Relates to" htmlFor={`tp-rel-${t.id}`} optional help="comma-separated task ids; soft link, no scheduling effect">
+          <Input id={`tp-rel-${t.id}`} value={draft.relatesTo} onChange={(e) => setField("relatesTo", e.target.value)} placeholder="task id, task id" />
         </Field>
         {rowErr && <p className="ws-field__error">{rowErr}</p>}
         {dirty && <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>Unsaved changes.</p>}
@@ -475,7 +487,24 @@ export default function TaskPanel({
           </span>
           {t.assignee && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{t.assignee}</span>}
           {t.depends_on && t.depends_on.length > 0 && (
-            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>depends on {t.depends_on.length}</span>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }} title={t.depends_on.join(", ")}>
+              depends on {t.depends_on.length}
+            </span>
+          )}
+          {(() => {
+            // blocks is derived: tasks whose depends_on names this ticket
+            // (entity-model 2026-07-18 §4.2). Cheap client-side pass.
+            const blockedBy = (tasks ?? []).filter((o) => (o.depends_on ?? []).includes(t.id)).map((o) => o.id);
+            return blockedBy.length > 0 ? (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }} title={blockedBy.join(", ")}>
+                blocks {blockedBy.length}
+              </span>
+            ) : null;
+          })()}
+          {t.relates_to && t.relates_to.length > 0 && (
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }} title={t.relates_to.join(", ")}>
+              relates to {t.relates_to.length}
+            </span>
           )}
         </Row>
         {t.blocked_reason && (

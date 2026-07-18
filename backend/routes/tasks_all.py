@@ -346,6 +346,7 @@ class TaskPatchIn(BaseModel):
     acceptance: TaskAcceptanceIn | None = None
     max_attempts: int | None = None
     depends_on: list[str] | None = None
+    relates_to: list[str] | None = None
 
 
 @router.get("/{scope}/{task_id}")
@@ -372,6 +373,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     if all(v is None for v in (
         body.status, body.text, body.priority, body.assignee, body.effort,
         body.latitude, body.acceptance, body.max_attempts, body.depends_on,
+        body.relates_to,
     )):
         raise HTTPException(400, "no fields to update")
     # Acceptance: an empty/none kind clears it (falsy dict -> store sets None); a
@@ -398,6 +400,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             acceptance=acceptance_arg,
             max_attempts=body.max_attempts,
             depends_on=body.depends_on,
+            relates_to=body.relates_to,
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
