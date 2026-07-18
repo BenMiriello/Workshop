@@ -33,6 +33,11 @@ export type ChatMsg = {
 export type ThreadSummary = {
   id: string;
   context_key: string;
+  // Entity-model 2026-07-18 §7 (C11). Derived from context_key for legacy
+  // threads on read; persisted explicitly on new writes.
+  scope?: string;
+  scope_locked?: boolean;
+  mode?: "orchestrated" | "direct";
   title: string;
   updated_at: string;
   message_count: number;

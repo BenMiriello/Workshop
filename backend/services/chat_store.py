@@ -48,11 +48,23 @@ def create_thread(
     title: str = "",
     agent_id: str | None = None,
     model: str | None = None,
+    scope: str | None = None,
+    scope_locked: bool = False,
+    mode: str = "orchestrated",
 ) -> dict:
     tid = uuid.uuid4().hex
+    # Entity-model 2026-07-18 §7 fields (C11):
+    # - scope: the Scope this chat lives in (workshop / project:X / app:Y /
+    #   agent:Z). Derived from context_key when not passed.
+    # - scope_locked: refuses to re-scope silently; the UI must confirm.
+    # - mode: orchestrated (the default; general flow) or direct (bypasses the
+    #   orchestrator persona and talks straight to the assistant).
     thread = {
         "id": tid,
         "context_key": context_key or "general",
+        "scope": scope or _scope_from_context_key(context_key or "general"),
+        "scope_locked": bool(scope_locked),
+        "mode": mode if mode in ("orchestrated", "direct") else "orchestrated",
         "agent_id": agent_id,
         # Per-thread model preference (full model id) chosen via the composer's
         # model picker. None = fall back to the provider default at call time.
@@ -62,6 +74,50 @@ def create_thread(
         "updated_at": _now_iso(),
         "messages": [],
     }
+    return _write(thread)
+
+
+def _scope_from_context_key(context_key: str) -> str:
+    """Best-effort mapping from the legacy context_key convention to the entity-
+    model scope address (§2). Preserves existing threads without a data
+    migration: a thread that has no explicit `scope` field lifts one from the
+    prefix on first read."""
+    if not context_key or context_key == "general":
+        return "workshop"
+    if ":" in context_key:
+        kind, rest = context_key.split(":", 1)
+        if kind == "build":
+            # build:<slug> and agent:<slug> are both agent-scope chats,
+            # differing only in runtime (per entity-model §6, §7).
+            return f"agent:{rest}"
+        if kind in ("project", "agent", "app"):
+            return context_key
+        return context_key
+    # Bare non-general = app id.
+    return f"app:{context_key}"
+
+
+def set_thread_scope(thread_id: str, scope: str, *, scope_locked: bool | None = None) -> dict | None:
+    """Re-scope a chat. Optionally toggles scope_locked. Returns updated thread
+    or None. C11 gate for rescope; the UI must confirm before calling."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread["scope"] = scope
+    if scope_locked is not None:
+        thread["scope_locked"] = bool(scope_locked)
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
+def set_thread_mode(thread_id: str, mode: str) -> dict | None:
+    """Set the per-thread interaction mode. `mode` must be `orchestrated` or
+    `direct`; anything else clamps to `orchestrated`."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread["mode"] = mode if mode in ("orchestrated", "direct") else "orchestrated"
+    thread["updated_at"] = _now_iso()
     return _write(thread)
 
 
@@ -112,9 +168,16 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         if title in (None, "", "New chat") and t.get("_seed_title"):
             title = t["_seed_title"]
         last = msgs[-1] if msgs else None
+        ck = t.get("context_key", "general")
         out.append({
             "id": t["id"],
-            "context_key": t.get("context_key", "general"),
+            "context_key": ck,
+            # Entity-model 2026-07-18 §7 fields (C11). Existing threads without
+            # a stored scope/mode lift them from the legacy context_key so a
+            # data migration isn't needed; new writes persist them explicitly.
+            "scope": t.get("scope") or _scope_from_context_key(ck),
+            "scope_locked": bool(t.get("scope_locked", False)),
+            "mode": t.get("mode") or "orchestrated",
             "agent_id": t.get("agent_id"),
             "model": t.get("model"),
             "title": title,
