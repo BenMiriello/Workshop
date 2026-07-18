@@ -352,6 +352,18 @@ _TOOLS_OFF_SYSTEM_NUDGE = (
     "You have no tools available in this session. "
     "Answer in pure text only — do not attempt to call any tool."
 )
+# Surfaced at the write boundary (when Write or Edit is in the allowed toolset).
+# Reminder only — never blocks. Complements the work-placement rule in the
+# persona (which fires at turn start) by re-anchoring the tradeoff at the moment
+# the agent is about to write.
+_WRITE_BOUNDARY_NUDGE = (
+    "WRITE PLACEMENT REMINDER: you can call Write or Edit directly. "
+    "A single small file edit inline is fine. "
+    "If you are about to touch multiple files, that usually wants the queue's "
+    "review gate: emit a task-proposal card instead, which adds touches "
+    "enforcement, a reviewer pass, and a receipt. "
+    "Your call — this is a reminder, not a restriction."
+)
 
 # MCP-startup race fix. By default the `claude -p` CLI starts --mcp-config
 # servers FULLY ASYNC ("[MCP] ... running fully async (nonblocking)") and fires
@@ -419,6 +431,9 @@ def tool_flags(
         flags = ["--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": servers_subset})]
         flags += (["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
         flags += ["--allowedTools", *allowed_tools, "--permission-mode", "bypassPermissions"]
+        _write_tools = {"Write", "Edit", "MultiEdit"}
+        if _write_tools & set(allowed_tools):
+            flags += ["--append-system-prompt", _WRITE_BOUNDARY_NUDGE]
         env = dict(_MCP_BLOCK_STARTUP_ENV) if servers_subset else {}
         return (flags, env, bool(servers_subset))
     return ([], {}, False)
