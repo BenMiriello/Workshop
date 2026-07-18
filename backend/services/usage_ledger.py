@@ -402,22 +402,31 @@ def status(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
 # Admission (the enforcement primitive the dispatcher + sweeps call)
 # ---------------------------------------------------------------------------
 
-def _inflight_coordinator_sweeps() -> int:
+def _inflight_coordinator_sweeps(exclude_job_id: str | None = None) -> int:
     """Count coordinator sweep Jobs currently `running` (no task_id / parent_id: a
     child task Job carries both). Each holds up to a nominal task's spend that has
     NOT yet landed in the ledger, since billing happens once at ralph exit (up to
     ~20 min later). Best-effort: any failure yields 0 (falls back to the old
-    single-nominal reserve). (review F8a)"""
+    single-nominal reserve). (review F8a)
+
+    `exclude_job_id` drops the CALLER's own sweep from the count. A sweep asking
+    "may I start one more task" is already `running`, so without this it is
+    counted both by the `1 +` (the task about to start) and by this function —
+    reserving two nominal tasks to run one. That is not conservatism, it is the
+    same task counted twice, and it deadlocks the queue in a band 150k wide below
+    the ceiling where nothing can ever be admitted."""
     try:
         from services import jobs
         running = jobs.read(status="running", limit=1000)
         return sum(1 for r in running
-                   if not r.get("task_id") and not r.get("parent_id"))
+                   if not r.get("task_id") and not r.get("parent_id")
+                   and (exclude_job_id is None or r.get("id") != exclude_job_id))
     except Exception:
         return 0
 
 
-def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str]:
+def can_admit(scope: str | None, now: datetime | None = None,
+              exclude_job_id: str | None = None) -> tuple[bool, str]:
     """Whether one more autonomous sweep/task may start in `scope` (a project
     slug or agent label). Returns (ok, reason).
 
@@ -440,7 +449,10 @@ def can_admit(scope: str | None, now: datetime | None = None) -> tuple[bool, str
     # cannot collectively overshoot the cap before any of them records. (A sweep
     # that calls admit from inside its own loop counts itself here, which only
     # makes the reserve more conservative: safe.) (review F8a)
-    reserve = nominal * (1 + _inflight_coordinator_sweeps())
+    # `1 +` is the task about to start; the rest are OTHER sweeps whose spend has
+    # not billed yet. The caller passes its own job id so it is not counted as
+    # both.
+    reserve = nominal * (1 + _inflight_coordinator_sweeps(exclude_job_id))
     # Autonomous admission ceiling = fraction of the app total. The remainder is
     # interactive headroom (never consumed by autonomous work). At fraction 1.0
     # this collapses to the old full-budget runaway guard.
@@ -488,6 +500,9 @@ def _main(argv: list[str]) -> int:
     r.add_argument("--role", default=None)
     a = sub.add_parser("admit")  # exit 0 = admit, 1 = deny (for shell gating)
     a.add_argument("--project", default=None)
+    # A sweep asking on its own behalf passes its coordinator Job id so its own
+    # in-flight run is not reserved for twice.
+    a.add_argument("--exclude-job", dest="exclude_job", default=None)
     sub.add_parser("status")
     sub.add_parser("prune")
     args = ap.parse_args(argv)
@@ -495,7 +510,7 @@ def _main(argv: list[str]) -> int:
         record(args.project, args.tokens, agent=args.agent, job_id=args.job_id,
                task_id=args.task_id, run=args.run, role=args.role)
     elif args.cmd == "admit":
-        ok, reason = can_admit(args.project)
+        ok, reason = can_admit(args.project, exclude_job_id=args.exclude_job)
         print(json.dumps({"ok": ok, "reason": reason}))
         return 0 if ok else 1
     elif args.cmd == "status":

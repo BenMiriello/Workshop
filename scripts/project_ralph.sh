@@ -666,8 +666,12 @@ while (( n < MAX_TASKS )); do
   # Usage-budget admission (Stage 5). Stop the sweep the moment this scope's
   # rolling-window budget is exhausted, so autonomous work can never run away
   # with the operator's Claude usage. Chats are unmetered and never gated.
+  # --exclude-job: this sweep's own coordinator Job is already `running`, so
+  # without excluding it the reserve counts the task about to start TWICE (once
+  # as "the next task", once as an in-flight sweep) and deadlocks the queue in a
+  # 150k-wide band below the ceiling.
   if ! (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger \
-          admit --project "$BILL_SCOPE" >/dev/null 2>&1); then
+          admit --project "$BILL_SCOPE" --exclude-job "$JOB_ID" >/dev/null 2>&1); then
     log "usage budget exhausted for scope=$BILL_SCOPE — stopping sweep (task=$TASK_ID left ready)"
     break
   fi

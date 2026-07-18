@@ -213,23 +213,34 @@ except Exception:
     pass
 " "$TASK_ID" 2>/dev/null || true)
   fi
-  if [[ -z "$(printf '%s' "$touches" | tr -d '[:space:]')" ]]; then
-    # Decline — but NAME the orphans. Silently declining is how a finished design
-    # doc ends up untracked with the task blocked and no pointer to the work.
-    local orphans
-    orphans=$(comm -13 <(printf '%s\n' "$PRERUN_DIRTY" | sort -u) \
-                       <(cd "$DIR" && git status --porcelain 2>/dev/null | sed 's/^...//' | sort -u) \
-              | grep -vE "$BOOKKEEPING_RE" | tr '\n' ' ' || true)
-    log "worker left changes uncommitted and the task declares no touches lane — declining to auto-commit (cannot distinguish this run's writes from a concurrent editor's). UNCOMMITTED: ${orphans:-<none>}"
-    return 0
-  fi
-
   now_dirty=$(cd "$DIR" && git status --porcelain 2>/dev/null | sed 's/^...//')
   new_paths=$(comm -13 <(printf '%s\n' "$PRERUN_DIRTY" | sort -u) \
                        <(printf '%s\n' "$now_dirty" | sort -u) \
               | grep -vE "$BOOKKEEPING_RE" || true)
+
+  # No declared lane (the common case for a design ticket, whose output is a doc
+  # nobody listed in advance). Rather than decline and orphan finished work, fall
+  # back to the narrowest defensible rule: files that DID NOT EXIST when the run
+  # started, i.e. currently untracked. A brand-new file appearing mid-run is the
+  # worker's output with high confidence, and committing it cannot clobber a
+  # concurrent editor's changes to an existing file — which was the actual hazard
+  # (hit once on 2026-07-18). Modified-but-pre-existing files are still left
+  # alone without a declared lane.
+  if [[ -z "$(printf '%s' "$touches" | tr -d '[:space:]')" ]]; then
+    local untracked
+    untracked=$(cd "$DIR" && git ls-files --others --exclude-standard 2>/dev/null | sort -u)
+    new_paths=$(comm -12 <(printf '%s\n' "$new_paths" | sort -u) \
+                         <(printf '%s\n' "$untracked") || true)
+    if [[ -z "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]]; then
+      log "worker left changes uncommitted, task declares no touches lane, and nothing NEW was created — declining to auto-commit (cannot tell this run's edits to existing files from a concurrent editor's)"
+      return 0
+    fi
+    log "no touches lane: rescuing only newly-created files"
+  fi
+
   # Keep only paths inside the declared lane.
-  if [[ -n "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]]; then
+  if [[ -n "$(printf '%s' "$touches" | tr -d '[:space:]')" ]] \
+     && [[ -n "$(printf '%s' "$new_paths" | tr -d '[:space:]')" ]]; then
     new_paths=$(printf '%s\n' "$new_paths" | python3 -c "
 import fnmatch, sys
 pats = [p for p in sys.argv[1].splitlines() if p.strip()]
@@ -273,16 +284,17 @@ Rules of the loop:
    under `## Proposed`. Then exit (this is a legitimate completion).
 4. VERIFY before claiming done. If you added an endpoint, curl it. If you
    added a route, grep the wiring. If you added a script, dry-run it.
-5. COMMIT YOUR WORK. The completion gate reads the GIT LOG, not your working
-   tree: an uncommitted change is invisible to it, so the task is released back
-   to the queue as "acceptance passed but no work was committed" and everything
-   you just did is thrown away. Before emitting the sentinel, `git add` the
-   files this task was meant to write and commit them with a short message
-   describing the change. Stage only files this task owns — never `git add -A`
-   over an unrelated dirty tree, and never amend or rewrite existing commits.
-   If the task legitimately produces no file change (a pure external side
-   effect), say so explicitly in your output instead of committing nothing
-   silently.
+5. COMMIT AS SOON AS THE WORK EXISTS — BEFORE you run the reviewer. Do not save
+   the commit for the end. The completion gate reads the GIT LOG, not your
+   working tree: an uncommitted change is invisible to it, so the task is
+   released back to the queue as "acceptance passed but no work was committed"
+   and everything you did is thrown away. If you run out of turns while
+   reviewing, an already-committed change survives and an uncommitted one does
+   not. So: write the file, `git add` it, commit it with a short message, THEN
+   review and iterate (amending or adding follow-up commits as you fix things).
+   Stage only files this task owns — never `git add -A` over an unrelated dirty
+   tree. If the task legitimately produces no file change (a pure external side
+   effect), say so explicitly rather than committing nothing silently.
 6. When (and ONLY when) reviewer.sh returns `complete: true` AND your work is
    committed, emit the literal sentinel on its own line as the LAST line of
    your text output:
