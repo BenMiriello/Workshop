@@ -31,6 +31,7 @@ set -u
 WORKSHOP=/home/clawd-a/workshop
 AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
 AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
+AUTONOMY_OVERRIDE=$WORKSHOP/.runtime/autonomy-override.json
 RALPH=$WORKSHOP/scripts/ralph.sh
 REVIEWER=$WORKSHOP/scripts/reviewer.sh
 PTASKS=$WORKSHOP/scripts/project_tasks.py
@@ -560,11 +561,24 @@ LOG="$RUNTIME/ralph.log"
 ts() { date -Iseconds; }
 log() { echo "[$(ts)] [project_ralph] $*" >> "$LOG"; echo "[project_ralph] $*"; }
 
-# Global off-switch (same flag the workshop cron honors). A scheduled/continuous
-# sweep obeys it; a manual operator-triggered run (--force) is a deliberate
-# foreground action and bypasses it, along with the per-project mode gate below.
-if [[ -f "$AUTONOMY_FLAG" && "$FORCE" -ne 1 ]]; then
-  log "global autonomy off-switch present; not running"
+# Global off-switch (same flag + JSON overlay the workshop cron honors). A
+# scheduled/continuous sweep obeys them; a manual operator-triggered run
+# (--force) is a deliberate foreground action and bypasses both, along with
+# the per-project mode gate below.
+_is_autonomy_off() {
+  [[ -f "$AUTONOMY_FLAG" ]] && return 0
+  [[ -f "$AUTONOMY_OVERRIDE" ]] || return 1
+  if python3 -c "import json,sys; sys.exit(0 if json.load(open('$AUTONOMY_OVERRIDE')).get('engaged') else 1)" 2>/dev/null; then
+    return 0
+  fi
+  # Corrupt JSON = fail-closed.
+  if ! python3 -c "import json; json.load(open('$AUTONOMY_OVERRIDE'))" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+if _is_autonomy_off && [[ "$FORCE" -ne 1 ]]; then
+  log "global autonomy off-switch present (flag or override); not running"
   job_finish "$JOB_ID" cancelled 0 0
   exit 2
 fi

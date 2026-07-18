@@ -59,6 +59,21 @@ done
 LOG="$WORKSHOP/.runtime/queue-runner.log"
 PIDFILE="$WORKSHOP/.runtime/queue-runner.pid"
 AUTONOMY_FLAG="$WORKSHOP/.runtime/AUTONOMY_DISABLED"
+AUTONOMY_OVERRIDE="$WORKSHOP/.runtime/autonomy-override.json"
+
+# Off = the legacy flag file OR the 2026-07-18 JSON overlay engaged. Corrupt
+# JSON reads as off (fail-closed per autonomy-model §6).
+is_autonomy_off() {
+  [[ -f "$AUTONOMY_FLAG" ]] && return 0
+  [[ -f "$AUTONOMY_OVERRIDE" ]] || return 1
+  if python3 -c "import json,sys; sys.exit(0 if json.load(open('$AUTONOMY_OVERRIDE')).get('engaged') else 1)" 2>/dev/null; then
+    return 0
+  fi
+  if ! python3 -c "import json; json.load(open('$AUTONOMY_OVERRIDE'))" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
 RALPH="$WORKSHOP/scripts/project_ralph.sh"
 # Touching this file interrupts the idle sleep and starts the next sweep
 # immediately. Tasks enqueued via the API or letta tools write it; the runner
@@ -93,8 +108,8 @@ unset ANTHROPIC_API_KEY
 log "=== runner start pid=$$ dir=$DIR poll=${POLL}s max_tasks=$MAX_TASKS ==="
 
 while :; do
-  if [[ -f "$AUTONOMY_FLAG" ]]; then
-    log "autonomy disabled (flag present); idling"
+  if is_autonomy_off; then
+    log "autonomy disabled (flag or override present); idling"
   else
     # pause_guard signals "paused" by calling `exit 0` in the shell it is sourced
     # into, and "not paused" by returning 0 — indistinguishable by exit status

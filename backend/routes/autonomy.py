@@ -26,7 +26,8 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from services import gpubroker_client, jobs
+from services import autonomy_override, gpubroker_client, jobs
+from pydantic import BaseModel
 
 
 router = APIRouter(tags=["autonomy"])
@@ -138,15 +139,66 @@ async def autonomy_status():
             flag_text = AUTONOMY_FLAG.read_text().strip()
         except OSError:
             flag_text = ""
+    override = autonomy_override.read()
+    # The status endpoint honors either signal: the legacy flag file, or the
+    # 2026-07-18 JSON overlay. Engaged is truthy if EITHER says so.
+    disabled = AUTONOMY_FLAG.exists() or bool(override.get("engaged"))
     return {
         "cron_autonomy": {
-            "disabled": AUTONOMY_FLAG.exists(),
+            "disabled": disabled,
             "disabled_at": flag_text,
             "flag_path": str(AUTONOMY_FLAG),
         },
+        "override": override,
         "queue_runner": _queue_runner_state(),
         "jobs": _jobs_summary(),
     }
+
+
+# ============================================================
+# JSON override overlay (autonomy-model 2026-07-18 §1.2)
+# ============================================================
+# The legacy AUTONOMY_FLAG above remains as a maintenance-scripts guard; the
+# JSON overlay is the operator-facing off-switch, distinct from an individual
+# agent's autonomy field.
+
+
+class OverrideEngageIn(BaseModel):
+    reason: str | None = None
+
+
+@router.get("/agents/autonomy/override")
+async def get_autonomy_override():
+    """Current override state: {engaged, reason, engaged_at, engaged_by}. File
+    absent reads as clear; corrupt / unreadable reads as engaged (fail-closed)."""
+    return autonomy_override.read()
+
+
+@router.post("/agents/autonomy/override")
+async def engage_autonomy_override(body: OverrideEngageIn):
+    """Engage the override. Every scope answers `reactive` for background
+    dispatch until cleared. Per-agent autonomy fields are NEVER mutated."""
+    autonomy_override.OVERRIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "engaged": True,
+        "reason": (body.reason or "").strip() or None,
+        "engaged_at": _now_iso(),
+        "engaged_by": "operator",
+    }
+    import json as _json
+    autonomy_override.OVERRIDE_PATH.write_text(_json.dumps(payload, indent=2))
+    return autonomy_override.read()
+
+
+@router.delete("/agents/autonomy/override")
+async def clear_autonomy_override():
+    """Clear the override. Each agent immediately resumes its configured mode
+    without a restore step (the field was never mutated)."""
+    try:
+        autonomy_override.OVERRIDE_PATH.unlink()
+    except FileNotFoundError:
+        pass
+    return autonomy_override.read()
 
 
 # ============================================================
