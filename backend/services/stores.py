@@ -77,20 +77,28 @@ class AccessDenied(PermissionError):
 
 @dataclass(frozen=True)
 class Store:
-    """A registered handle onto an app's data.
+    """A registered handle onto an app's or project's data.
 
-    uri        — workshop://store/<owner_app>/<name>, the stable identifier.
-    owner_app  — the app that owns the store (its data lives inside that app).
-    name       — the store name within the app.
-    type       — an optional broker type ("Note", "Budget", "Finance", ...).
-    path       — the resolved filesystem path (file or directory) the store
-                 wraps. May not exist yet; export/consumers tolerate absence.
+    uri          — workshop://store/<owner_app>/<name>, the stable identifier.
+    owner_app    — the app that owns the store (its data lives inside that
+                   app). Also serves as `host_app` in the entity-model
+                   vocabulary (2026-07-18 §8.3).
+    name         — the store name within the app or project.
+    type         — an optional broker type ("Note", "Budget", "Finance", ...).
+    path         — the resolved filesystem path (file or directory) the store
+                   wraps. May not exist yet; export/consumers tolerate absence.
+    host_project — the project slug that owns this store, when the store is
+                   project-scoped rather than app-scoped. Mostly None for the
+                   builtin stores; populated by the per-project knowledge
+                   register path. Enables B11's "Storage and access" panel
+                   inside ProjectDetail to fetch by host without parsing URIs.
     """
     uri: str
     owner_app: str
     name: str
     type: str | None
     path: str
+    host_project: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -131,13 +139,33 @@ def resolve(uri: str) -> "tuple[Store, str]":
     return store, path
 
 
-def declare(owner_app: str, name: str, path: str | Path, type: str | None = None) -> Store:
+def declare(owner_app: str, name: str, path: str | Path, type: str | None = None,
+            host_project: str | None = None) -> Store:
     """Register a Store over an existing path. REGISTRATION, not relocation — the
-    file/dir is left exactly as it is (mode, location, content). Idempotent."""
+    file/dir is left exactly as it is (mode, location, content). Idempotent.
+
+    `host_project` tags the store as project-scoped (per entity-model
+    2026-07-18 §8.3). Optional; the URI still keys uniqueness."""
     uri = make_uri(owner_app, name)
-    store = Store(uri=uri, owner_app=owner_app, name=name, type=type, path=str(path))
+    store = Store(uri=uri, owner_app=owner_app, name=name, type=type, path=str(path),
+                  host_project=host_project)
     _REGISTRY[uri] = store
     return store
+
+
+def by_host(*, app: str | None = None, project: str | None = None) -> "list[Store]":
+    """Stores hosted by a given app or project (per entity-model §8.3).
+
+    Enables B11's Storage-and-access panel inside App and Project detail:
+    call by_host(app="notes") or by_host(project="acme") to fetch the stores
+    that surface's "Storage and access" section should display."""
+    matches = []
+    for s in _REGISTRY.values():
+        if app is not None and s.owner_app == app:
+            matches.append(s)
+        elif project is not None and s.host_project == project:
+            matches.append(s)
+    return sorted(matches, key=lambda s: s.uri)
 
 
 def get(uri: str) -> Store | None:

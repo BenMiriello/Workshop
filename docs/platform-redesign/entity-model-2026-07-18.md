@@ -327,7 +327,7 @@ high" for these values. The canonical names are `strict/standard/open` as define
 in `scopedness-and-escalation-2026-07-16.md` (the more fully-reasoned source). The
 final-plan doc's latitude naming is superseded here.
 
-### 8.3 Store tiers
+### 8.3 Store tiers and hosts
 
 Every Store is assigned one of three access tiers:
 
@@ -340,6 +340,29 @@ Every Store is assigned one of three access tiers:
 The mediated tier is the mechanism behind operator ask A6 (LLM-reviewed access).
 The broker Agent must never read the data it adjudicates (invariant I2 from
 `synthesis-agent-protocols-2026-07-16.md`).
+
+Every Store also names its host: the App or Project it belongs to. Stores are
+mostly 1:1 with a host (operator observation, coherence-migration-plan
+2026-07-18); a Store is the data-face of an App or Project, not a distinct
+UI concept. Two formal fields on the Store record express this:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `host_app` | string \| None | The app that owns this Store's data. In the current code this is `owner_app`; the two names are the same field. |
+| `host_project` | string \| None | The project slug that owns this Store, when project-scoped rather than app-scoped. None for app-scoped stores. |
+
+At most one of `host_app` or `host_project` names a host; both may be None
+only for workshop-scope stores (e.g. the operator's personal notes vault at
+`workshop://store/notes/vault`, which belongs to the operator, not to any
+app or project). The registration helpers surface a `host_project` argument
+(`stores.declare(..., host_project=...)`) so the project-scoped knowledge
+registration path can tag its stores appropriately. Discovery uses
+`stores.by_host(app=...)` or `stores.by_host(project=...)`.
+
+Consequence for UI (B11): the "Storage and access" section inside App detail
+and Project detail fetches with the corresponding `by_host` call. No
+separate `/stores` page. The workshop-scope vault Store surfaces on the
+Notes app; the mediated broker adjudicates any cross-store request.
 
 ### 8.4 Autonomy modes
 
