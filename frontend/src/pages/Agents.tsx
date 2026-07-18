@@ -397,6 +397,9 @@ export default function Agents() {
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
   const [spawning, setSpawning] = useState(false);
   const [templating, setTemplating] = useState(false);
+  // Scope-kind filter (C3). Persists in URL-less local state; view preference,
+  // commits on change per the design system.
+  const [scopeFilter, setScopeFilter] = useState<"all" | "workshop" | "project">("all");
 
   const loadAll = useCallback(async () => {
     try {
@@ -539,8 +542,29 @@ export default function Agents() {
           }
         />
       ) : (
-        <CardGrid className="ws-agents-grid">
-          {agents.map((a) => {
+        <>
+          {/* Scope-kind filter chips (C3). Split the roster by home scope:
+              workshop-scope agents (no project link) and project-scope
+              agents (a project_slug). "All" is the default and current
+              behavior. */}
+          <Row wrap style={{ gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
+            <Segmented
+              ariaLabel="Scope filter"
+              value={scopeFilter}
+              onChange={setScopeFilter}
+              options={[
+                { value: "all", label: "All" },
+                { value: "workshop", label: "Workshop" },
+                { value: "project", label: "Projects" },
+              ]}
+            />
+          </Row>
+          <CardGrid className="ws-agents-grid">
+            {agents.filter((a) => {
+              if (scopeFilter === "workshop") return !a.project_slug;
+              if (scopeFilter === "project") return !!a.project_slug;
+              return true;
+            }).map((a) => {
             const isBuilder = a.runtime === "builder";
             const Icon = isBuilder ? Bot : Brain;
             const when = activityLabel(a.last_active || a.created_at);
@@ -618,7 +642,8 @@ export default function Agents() {
               </li>
             );
           })}
-        </CardGrid>
+          </CardGrid>
+        </>
       )}
 
       {/* Autonomy + GPU/Ollama controls moved back to Settings (C6). The read-
