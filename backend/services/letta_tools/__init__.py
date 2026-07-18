@@ -45,18 +45,18 @@ from . import workshop, cloud, local, notify, health, sandbox_wrappers as sb
 TOOL_REGISTRY = {
     # workshop — TODO + file ops
     "wkshp_read_todo":        (sb.wkshp_read_todo,        ["masini"]),
-    "wkshp_propose_task":     (sb.wkshp_propose_task,     ["masini", "plaid-watcher", "email-triager"]),
-    "wkshp_write_log":        (sb.wkshp_write_log,        ["masini", "plaid-watcher", "email-triager"]),
+    "wkshp_propose_task":     (sb.wkshp_propose_task,     ["masini"]),
+    "wkshp_write_log":        (sb.wkshp_write_log,        ["masini"]),
     "wkshp_mark_blocked":     (sb.wkshp_mark_blocked,     ["masini"]),
     # local cognition — Ollama-backed quick decisions
-    "local_classify":         (sb.local_classify,         ["masini", "plaid-watcher", "email-triager"]),
+    "local_classify":         (sb.local_classify,         ["masini"]),
     "local_route_decision":   (sb.local_route_decision,   ["masini"]),
-    "local_summarize_short":  (sb.local_summarize_short,  ["masini", "plaid-watcher", "email-triager"]),
+    "local_summarize_short":  (sb.local_summarize_short,  ["masini"]),
     # cloud escalation — claude -p with optional redaction
     "cloud_run_claude":       (sb.cloud_run_claude,       ["masini"]),
     "cloud_run_ralph":        (sb.cloud_run_ralph,        ["masini"]),
     # notification
-    "notify_operator":        (sb.notify_operator,        ["masini", "plaid-watcher", "email-triager"]),
+    "notify_operator":        (sb.notify_operator,        ["masini"]),
     # health
     "system_health":          (sb.system_health,          ["masini"]),
 }
