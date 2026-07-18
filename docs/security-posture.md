@@ -127,6 +127,29 @@ requires docker-socket access — hence `workshop-backend.service` runs uvicorn 
 
 ---
 
+## 5a. Agent-execution boundary (what confines an autonomous turn)
+
+Autonomous turns (`ralph`/`project_ralph`/`queue_runner`/`cron_agent` + the `/tools` recursive-claude
+tools) run the **same `claude -p`** as interactive sessions, as `clawd-a`, in the `docker` group, with
+**no sandbox**, holding the OAuth token and full tree read/write. The only enforcement is two
+PreToolUse **Bash-only** hooks (`egress-guard.py`, `git-guard.py`) plus the Anthropic auto-mode
+classifier. These turns ingest untrusted content (Discord/web/task text), so prompt injection is in
+scope even though the system is single-operator.
+
+**Requirement / truth to preserve:** the task **scope** (`project:`/`agent:`/`build:`), `touches`,
+`latitude`, and `grants`/`stores` are **coordination and correctness mechanisms, NOT a security
+boundary.** `touches` is a post-hoc check on the committed git diff; `latitude` is advisory; `grants`
+bind only code that voluntarily consults them. All are self-editable by a same-uid agent. Never
+represent them as confinement in docs/UI, and never rely on them to keep an agent out of another
+project, the personal-data stores, or the host.
+
+**Real confinement can only come from an OS boundary:** a dedicated lower-privilege execution
+identity for the autonomy loop (a sub-user *without* the docker group), plus rootless/socket-proxied
+Docker for the app runner (§5). Until that exists, the honest posture is: an agent turn can do
+anything clawd-a can do, up to and including host root via the docker socket. The completion gate
+(`reviewer.sh`) is a **quality** control (it checks the committed diff), not a safety control (it
+never inspects the turn's Bash actions). See `security-audit-2026-07-18-agents.md`.
+
 ## 6. Network exposure model
 
 - **Internet:** only the two Cloudflare hostnames above, both API-401 unauthenticated.
