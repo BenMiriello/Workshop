@@ -540,6 +540,26 @@ for a in agents:
         break
     slug = a.get("slug")
     trigs = a.get("triggers") or []
+    # Per-agent autonomy gate (C5, autonomy-model 2026-07-18 §4). Uses
+    # triggers.effective_autonomy which honors the workshop override overlay
+    # then reads the agent's own `autonomy` field. A reactive agent — the
+    # default for a fresh agent per autonomy-model §1.1 — never fires
+    # background triggers, only manual invocations. One-time default flip
+    # applied here so existing agents that shipped with declared triggers
+    # keep working: an agent whose stored autonomy is the (default) reactive
+    # AND which carries a non-empty triggers list is treated as `supervised`
+    # for the purposes of this tick. The operator promotes to autonomous
+    # explicitly through the AutonomyPanel; until then supervised runs land
+    # in `in_review`.
+    try:
+        eff = triggers.effective_autonomy(slug or "")
+    except Exception:
+        eff = "reactive"
+    if eff == "reactive" and trigs:
+        eff = "supervised"
+    if eff == "reactive":
+        print(f"skip-reactive\t{slug}\t(autonomy=reactive; manual invocation only)", file=sys.stderr)
+        continue
     if not slug or not trigs:
         # A registered agent with NO triggers can never be dispatched. Silent
         # until now, which is why all 20 builder agents were invisible: they
