@@ -68,6 +68,15 @@ function buildSlug(contextKey: string): string | null {
   return contextKey.startsWith("build:") ? contextKey.slice("build:".length) : null;
 }
 
+// The project slug this chat is bound to (if any). Used by the /deploy slash
+// command to jump straight to that project's Deploys panel; general chat and
+// app docks fall through to the /deploys index.
+function projectSlugFor(contextKey: string): string | null {
+  if (contextKey.startsWith("project:")) return contextKey.slice("project:".length);
+  if (contextKey.startsWith("build:")) return contextKey.slice("build:".length);
+  return null;
+}
+
 // The task-store scope a chat maps to, or null when the chat has no task queue
 // (general chat, app docks). build/project/agent chats all get the shared
 // TaskPanel; the contextKey IS the scope key for those.
@@ -1092,6 +1101,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     { name: "tasks", desc: "Toggle the task list", available: !!taskScope, kind: "local", run: () => setTasksOpen((o) => !o) },
     { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, kind: "local", run: () => popOut() },
     { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => { setInput("/"); inputRef.current?.focus(); } },
+    // /deploy — jump to the project's Deploys panel when the chat is bound to
+    // one, else to the cross-project /deploys index. The actual "kick a deploy"
+    // action still lives at those pages; the command is a keyboard shortcut.
+    { name: "deploy", desc: "Open deploys for this project (or the index)", available: true, kind: "local", run: () => {
+        const slug = projectSlugFor(contextKey);
+        if (slug) navigate(`/projects/${encodeURIComponent(slug)}#deploys`);
+        else navigate(`/deploys`);
+      } },
     // Claude Code commands - forwarded to the agent's session (build agents only).
     { name: "compact", desc: "Summarize + compact the conversation to free up context", available: build, kind: "passthrough" },
     { name: "context", desc: "Show what's currently in the context window", available: build, kind: "passthrough" },
