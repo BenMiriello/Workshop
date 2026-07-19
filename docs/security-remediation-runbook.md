@@ -47,14 +47,15 @@ Flush it:
 ```
 sudo systemctl restart user@1003.service      # or: reboot
 ```
-After that: `grep Groups /proc/$(systemctl --user show -p MainPID --value workshop-backend.service)/status`
-should NOT list `994`, and the boundary is fully closed. (Cron-spawned agent turns already lack the
-stale group — they get groups fresh from PAM — so only backend-spawned turns are the residual until
-the flush.) Two follow-ups: **migrate `ws_gengui`** off the root daemon onto rootless (it still runs
-on the root daemon; the app runner will rebuild it on rootless when next started — or remove the old
-container and restart the app from the UI), and a **stray rootless docker daemon was created for
-`benmiriello`** during the misfire (`~benmiriello/.config/systemd/user/docker.service`) — harmless,
-disable it with `systemctl --user disable --now docker` as benmiriello if unintended.
+**COMPLETED 2026-07-18:** the operator ran `sudo systemctl restart user@1003.service`. Verified after:
+backend groups = `100 1003` (no `994`); a process spawned by the fresh user-manager (= how agent turns
+are spawned) hitting the root socket returns **permission denied**; the rootless daemon is usable and
+contained. **The boundary is fully closed.** `ws_gengui` was **migrated to rootless** (removed from the
+root daemon, `frontend` service brought up on `/run/user/1003/docker.sock`; Vite ready, app runner sees
+it `running`, root daemon clean). Remaining tidy-up (optional, benmiriello's own): a **stray rootless
+docker daemon was created for `benmiriello`** during the misfire
+(`~benmiriello/.config/systemd/user/docker.service`) — harmless; disable with
+`systemctl --user disable --now docker` as benmiriello if unintended.
 
 **Confirmed facts for this host (2026-07-18):** `unprivileged_userns_clone=1`, `max_user_namespaces`
 high → rootless is viable; 192G free; **only ONE** clawd-a app-runner container is on the root daemon
