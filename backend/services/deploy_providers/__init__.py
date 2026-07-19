@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from . import cloudflare_pages
+from . import cloudflare_pages, rsync_ssh
 
 
 _REGISTRY: dict[str, ModuleType] = {
     cloudflare_pages.KIND: cloudflare_pages,
+    rsync_ssh.KIND: rsync_ssh,
 }
 
 
