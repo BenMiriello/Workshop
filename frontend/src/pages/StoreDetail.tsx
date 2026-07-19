@@ -137,7 +137,7 @@ export default function StoreDetail() {
       <PageHeader
         title={
           <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-            <Link to="/settings/grants" style={{ display: "inline-flex", alignItems: "center" }} aria-label="Back">
+            <Link to="/stores" style={{ display: "inline-flex", alignItems: "center" }} aria-label="Back">
               <ArrowLeft aria-hidden />
             </Link>
             <Database aria-hidden />
