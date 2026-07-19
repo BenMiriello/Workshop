@@ -51,6 +51,10 @@ from typing import Any, Iterable
 STATUSES = ("queued", "running", "awaiting_input", "done", "failed", "cancelled")
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
 TRIGGERS = ("manual", "cron", "event", "loop")
+# `kind` classifies what the Job is doing so the feed can filter by role
+# (ralph sweep, deploy attempt, categorizer, ...). Open-set: unknown values are
+# preserved but the enum below is what the deploy/dispatch/UI code understands.
+KINDS = ("ralph", "sweep", "deploy", "deploy-rollback", "categorize", "reason")
 
 JOBS_LOG = Path(os.environ.get(
     "WORKSHOP_JOBS_LOG",
@@ -94,6 +98,8 @@ def start(
     task_id: str | None = None,
     parent_id: str | None = None,
     pid: int | None = None,
+    kind: str | None = None,
+    binding: dict | None = None,
 ) -> dict:
     """Open a Job and append its record. Returns the full record (with `id`).
     `task_id` links a child Job to the Task it worked; `parent_id` links it to
@@ -116,6 +122,8 @@ def start(
         task_id=task_id,
         parent_id=parent_id,
         pid=pid,
+        kind=kind,
+        binding=binding,
     )
     _append(record)
     return record
@@ -189,9 +197,14 @@ def read(
     status: str | None = None,
     task_id: str | None = None,
     parent_id: str | None = None,
+    kind: str | None = None,
+    binding_key: str | None = None,
+    binding_value: str | None = None,
     limit: int = 50,
 ) -> list[dict]:
-    """Most recent Jobs first, filtered by agent/project/status/task/parent."""
+    """Most recent Jobs first, filtered by agent/project/status/task/parent/kind.
+    binding_key+binding_value filters on a specific field of the binding dict
+    (e.g. read(kind="deploy", binding_key="deploy_id", binding_value="dep_x"))."""
     limit = max(1, min(int(limit), 1000))
     records = list(_read_all().values())
 
@@ -206,6 +219,12 @@ def read(
             return False
         if parent_id is not None and r.get("parent_id") != parent_id:
             return False
+        if kind is not None and r.get("kind") != kind:
+            return False
+        if binding_key is not None:
+            b = r.get("binding") or {}
+            if not isinstance(b, dict) or str(b.get(binding_key)) != str(binding_value):
+                return False
         return True
 
     records = [r for r in records if keep(r)]

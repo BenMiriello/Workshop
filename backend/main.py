@@ -15,6 +15,7 @@ from deps_user import (
 # file. See docs/apps-are-pluggable.md.
 from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index
 from routes import stores as stores_routes
+from routes import deploys as deploys_routes
 from services import app_registry
 import asyncio
 import logging
@@ -124,6 +125,10 @@ app.include_router(grants.router, dependencies=_OPERATOR)
 # is served ungated here; the gate is on a caller that says it is an agent.
 app.include_router(stores_routes.router, dependencies=_OPERATOR)
 app.include_router(backlog.router, dependencies=_OPERATOR)
+# Deploys — per-project target bindings + provider catalog + run kicker. Both
+# cross-project (/deploys) and per-project (/projects/{slug}/deploys/...) routes
+# live in the same router.
+app.include_router(deploys_routes.router, dependencies=_OPERATOR)
 app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)
 app.include_router(redaction.router, dependencies=_OPERATOR)

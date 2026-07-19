@@ -30,6 +30,13 @@ def _path(slug: str) -> Path:
     return _ROOT / f"{safe}.json"
 
 
+# Workspace-scope secrets — shared across projects. Deploy provider credentials
+# (Cloudflare API tokens, account ids, etc.) commonly live here so the same
+# token drives every project's deploys without per-project duplication. Per-
+# project values still take precedence when both are set.
+WORKSPACE_SLUG = "_workspace"
+
+
 def load(slug: str) -> dict[str, str]:
     """All stored values for a project. Empty dict if none. Internal/runner use
     only — do NOT return this through an API."""
@@ -105,3 +112,39 @@ def env_for(slug: str, keys: list[str] | None = None) -> dict[str, str]:
     if keys is None:
         return dict(cur)
     return {k: cur[k] for k in keys if k in cur}
+
+
+def env_with_workspace(slug: str, keys: list[str] | None = None) -> dict[str, str]:
+    """Same as env_for but with a workspace-scope fallback: keys the project
+    doesn't set are filled from the shared _workspace store. Per-project
+    values always win. Runner-only."""
+    project_vals = load(slug)
+    workspace_vals = load(WORKSPACE_SLUG) if slug != WORKSPACE_SLUG else {}
+    if keys is None:
+        merged = dict(workspace_vals)
+        merged.update(project_vals)
+        return merged
+    out: dict[str, str] = {}
+    for k in keys:
+        if k in project_vals:
+            out[k] = project_vals[k]
+        elif k in workspace_vals:
+            out[k] = workspace_vals[k]
+    return out
+
+
+def status_with_workspace(slug: str, keys: list[str]) -> dict[str, dict]:
+    """Presence per key with source, workspace-fallback aware. Each entry is
+    {set: bool, source: "project"|"workspace"|None}. Safe to surface — never
+    returns values."""
+    project_vals = load(slug)
+    workspace_vals = load(WORKSPACE_SLUG) if slug != WORKSPACE_SLUG else {}
+    out: dict[str, dict] = {}
+    for k in keys:
+        if project_vals.get(k):
+            out[k] = {"set": True, "source": "project"}
+        elif workspace_vals.get(k):
+            out[k] = {"set": True, "source": "workspace"}
+        else:
+            out[k] = {"set": False, "source": None}
+    return out
