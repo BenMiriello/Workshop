@@ -210,11 +210,11 @@ export default function Projects() {
           }
         />
       ) : (
-        <CardGrid>
+        <CardGrid className="ws-projects-grid">
           {projects.map((p) => (
             <li key={p.slug}>
               <Link to={`/projects/${p.slug}`} style={{ textDecoration: "none", color: "inherit" }}>
-                <Card interactive>
+                <Card interactive className="ws-project-card">
                   <Row between>
                     <h2 className="ws-card__title">
                       <FolderGit2 size={16} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />
@@ -223,8 +223,10 @@ export default function Projects() {
                     <StatusPill status={stateKind(p.state)}>{p.state}</StatusPill>
                   </Row>
                   <p className="ws-card__meta ws-mono">{p.slug}</p>
-                  {p.purpose && <p style={{ marginTop: "var(--space-2)" }}>{p.purpose}</p>}
-                  <p className="ws-card__meta" style={{ marginTop: "var(--space-2)" }}>
+                  <p className="ws-project-card__desc" style={{ marginTop: "var(--space-2)" }}>
+                    {p.purpose || " "}
+                  </p>
+                  <p className="ws-card__meta ws-project-card__when">
                     touched {fmtAge(p.last_touched)} · {p.sensitivity}
                   </p>
                 </Card>

@@ -24,3 +24,4 @@ Order: most recent at top.
 - Ralph: worker finished cleanly but forgot to emit <promise>COMPLETE</promise> sentinel — always end the final iteration with that exact string on its own line — 2026-05-23T01:23Z [src:ralph sha:ed821201c9d1]
 - Ralph rejected: py_typecheck_fail — 2026-05-23T02:00Z [src:ralph sha:c8aa7fce0032]
 - Ralph rejected: ts_typecheck_fail — 2026-05-23T02:04Z [src:ralph sha:556e56b10480]
+- Ralph: worker completed the task but left its changes UNCOMMITTED — the loop auto-committed them. Always commit before emitting the sentinel (prompt rule 5); the completion gate reads the git log, not the working tree. [src:ralph sha:2d5f46b89a07]
