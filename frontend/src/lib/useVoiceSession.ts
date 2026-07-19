@@ -177,9 +177,13 @@ export function useVoiceSession(
     voiceApi.putPrefs({ interrupt_rate: Number(rate.toFixed(3)) }).catch(() => {});
   }, []);
 
+  // Build chats (context_key "build:<slug>") run tools and sit in `thinking` far
+  // longer than a conversational reply, so the session's stall watchdog needs the
+  // longer ceiling.
+  const isBuild = contextKey.startsWith("build:");
   const session = useMemo(
-    () => new VoiceSession({ startReply, prefs: prefsRef.current, onPrefsSignal: persistSignal }),
-    [startReply, persistSignal],
+    () => new VoiceSession({ startReply, prefs: prefsRef.current, onPrefsSignal: persistSignal, isBuild }),
+    [startReply, persistSignal, isBuild],
   );
 
   // Follow the host chat's active thread. When it switches (or first resolves),

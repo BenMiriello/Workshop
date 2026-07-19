@@ -131,6 +131,10 @@ export type VoiceConfig = {
   startReply: (text: string, handlers: ReplyHandlers, opts?: { speculative?: boolean; blocking?: boolean }) => ReplyHandle;
   prefs: VoicePrefs;
   onPrefsSignal?: (interruptRate: number) => void;
+  // Build-by-voice turns run tools and can sit in `thinking` far longer than a
+  // conversational reply (the worker's ceiling is ~900s), so the client watchdog
+  // uses a much longer stall timeout for them.
+  isBuild?: boolean;
 };
 
 // Words that, when they end a partial utterance, signal it is not finished — so
@@ -490,6 +494,9 @@ export class VoiceSession {
     if (this.state === "listening") {
       this.resumedSinceCut = true;
       if (this.held) this.supersedeDraft();
+      // Clear a transient turn error (e.g. "Didn't catch that") now that they're
+      // trying again, so the status strip reflects the live attempt.
+      if (this.error) { this.error = null; this.emit(); }
     }
   }
 
@@ -506,9 +513,11 @@ export class VoiceSession {
     // Superseded/interrupted while the recorder was flushing (Enter-send, barge):
     // abandon — whoever bumped the epoch owns the turn now.
     if (ep !== this.epoch || this.state !== "listening") return;
-    if (blob && blob.size >= 1200) {
-      try { const t = await transcribeBlob(blob); if (t) this.segs.push(t); }
-      catch { /* keep whatever segments we have */ }
+    const spoke = !!blob && blob.size >= 1200;
+    let sttFailed = false;
+    if (spoke) {
+      try { const t = await transcribeBlob(blob!); if (t) this.segs.push(t); }
+      catch { sttFailed = true; /* keep whatever segments we have */ }
     }
     if (ep !== this.epoch || this.state !== "listening") return;
     // The user is typing — hold this turn open (defer the endpoint) and keep
@@ -528,7 +537,12 @@ export class VoiceSession {
       this.bumpEpoch();
       if (this.held) this.supersedeDraft();
       this.resetSegs();
+      // The user clearly spoke (a real blob) but nothing came back — whether STT
+      // errored or returned empty — so surface it instead of silently re-arming
+      // (D1: "I talked and nothing happened"). Clears when they speak again.
+      if (spoke) this.error = sttFailed ? "Couldn't reach the speech engine. Try again." : "Didn't catch that. Try again.";
       this.armServerListen();
+      this.emit();
       return;
     }
     if (this.held && this.draftText === final) {
@@ -787,6 +801,9 @@ export class VoiceSession {
 
   private onReplyDelta(full: string) {
     if (this._interrupted) return;
+    // Streaming progress means the turn is not stalled — re-arm the watchdog so a
+    // long (or muted, still-`thinking`) reply can't trip it; only true silence does.
+    if (this.state === "thinking") this.armThinkingWatchdog();
     this.pushSentences(full, false);
   }
 
@@ -908,12 +925,17 @@ export class VoiceSession {
 
   // ---- client watchdog -----------------------------------------------------
   // A stalled `thinking` (an SSE that hangs without erroring) would otherwise
-  // wedge the machine forever. Armed on entry to `thinking`, cleared on any exit.
+  // wedge the machine forever. Armed on entry to `thinking`, RE-armed on each
+  // reply delta (so an actively-streaming turn never trips), cleared on any exit.
+  // Build-by-voice turns get a far longer ceiling (silent tool runs, and muted
+  // build turns that never leave `thinking`).
   private static readonly THINKING_TIMEOUT_MS = 70000;
+  private static readonly BUILD_THINKING_TIMEOUT_MS = 900000;
 
   private armThinkingWatchdog() {
     this.clearThinkingWatchdog();
-    this.thinkingTimer = setTimeout(() => this.onThinkingTimeout(), VoiceSession.THINKING_TIMEOUT_MS);
+    const ms = this.cfg.isBuild ? VoiceSession.BUILD_THINKING_TIMEOUT_MS : VoiceSession.THINKING_TIMEOUT_MS;
+    this.thinkingTimer = setTimeout(() => this.onThinkingTimeout(), ms);
   }
   private clearThinkingWatchdog() {
     if (this.thinkingTimer) { clearTimeout(this.thinkingTimer); this.thinkingTimer = null; }
