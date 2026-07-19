@@ -76,6 +76,7 @@ function fmtTs(ts?: string): string {
 // ---- Tickets tab -----------------------------------------------------------
 
 function TicketsTab() {
+  const nav = useNavigate();
   const [params] = useSearchParams();
   const [data, setData] = useState<TasksResp | null>(null);
   const [scopes, setScopes] = useState<string[]>([]);
@@ -206,7 +207,10 @@ function TicketsTab() {
               <Card
                 interactive
                 compact
-                onClick={() => { setNotice(null); setOpen({ mode: "edit", task: t }); }}
+                onClick={() => {
+                  setNotice(null);
+                  nav(`/tickets/${encodeURIComponent(t.scope || "workshop")}/${encodeURIComponent(t.id)}`);
+                }}
                 style={{ cursor: "pointer" }}
               >
                 <Stack gap="sm">
