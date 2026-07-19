@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import deploys, deploy_providers, deploy_runner, jobs
+from services import deploys, deploy_providers, deploy_runner, deploys_override, jobs
 
 
 router = APIRouter(tags=["deploys"])
@@ -55,6 +55,11 @@ class RollbackIn(BaseModel):
     to_run_id: str
 
 
+class OverrideEngageIn(BaseModel):
+    reason: str | None = None
+    by: str | None = "operator"
+
+
 # ---- cross-project ---------------------------------------------------------
 
 
@@ -66,6 +71,24 @@ def list_all():
 @router.get("/deploys/providers")
 def providers():
     return {"providers": deploy_providers.describe_all()}
+
+
+# Deploys autonomy override — the workspace-level kill switch for shipping.
+# Independent of the workshop autonomy override (services/autonomy_override.py):
+# freezing agent dispatch and freezing prod deploys are separate decisions.
+@router.get("/deploys/autonomy/override")
+def override_read():
+    return deploys_override.read()
+
+
+@router.post("/deploys/autonomy/override")
+def override_engage(body: OverrideEngageIn):
+    return deploys_override.engage(reason=body.reason, by=body.by)
+
+
+@router.delete("/deploys/autonomy/override")
+def override_clear():
+    return deploys_override.clear()
 
 
 # ---- per-project -----------------------------------------------------------
@@ -124,6 +147,8 @@ def kick(slug: str, deploy_id: str, body: KickIn):
         raise HTTPException(404, "deploy not found")
     try:
         job_id = deploy_runner.kick(deploy_id, ref=body.ref, message=body.message, trigger="manual")
+    except deploy_runner.OverrideEngaged as e:
+        raise HTTPException(409, str(e))
     except (KeyError, ValueError) as e:
         raise HTTPException(400, str(e))
     return {"job_id": job_id}
@@ -142,6 +167,8 @@ def rollback(slug: str, deploy_id: str, body: RollbackIn):
         raise HTTPException(400, "to_run_id belongs to a different deploy")
     try:
         job_id = deploy_runner.kick_rollback(deploy_id, body.to_run_id, trigger="manual")
+    except deploy_runner.OverrideEngaged as e:
+        raise HTTPException(409, str(e))
     except KeyError:
         raise HTTPException(404, "deploy not found")
     return {"job_id": job_id}

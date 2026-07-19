@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from . import deploys, deploy_providers, jobs, secrets_store
+from . import deploys, deploy_providers, deploys_override, jobs, secrets_store
 
 
 WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path(__file__).resolve().parents[2])))
@@ -277,10 +277,22 @@ def _run_deploy(deploy_id: str, ref: str | None, message: str | None,
             pass
 
 
+class OverrideEngaged(RuntimeError):
+    """Raised when the deploys autonomy override is engaged and a deploy is
+    refused. Route layer maps this to a 409."""
+
+
 def kick(deploy_id: str, *, ref: str | None = None, message: str | None = None,
          trigger: str = "manual") -> str:
     """Fire a deploy in a background thread. Returns the Job id immediately.
-    The Job's binding carries {deploy_id, ref} so downstream filters work."""
+    The Job's binding carries {deploy_id, ref} so downstream filters work.
+
+    Raises OverrideEngaged when the deploys autonomy override is set. Autonomous
+    (event-driven) triggers become queued-blocked at the Phase 4 event source
+    layer, not here; here every trigger is treated equal-priority to the
+    operator's manual click and the override is a hard stop."""
+    if deploys_override.is_engaged():
+        raise OverrideEngaged("deploys autonomy override is engaged")
     deploy = deploys.get(deploy_id)
     if not deploy:
         raise KeyError(deploy_id)
@@ -371,6 +383,8 @@ def _run_rollback(deploy_id: str, to_run_id: str, job_id: str) -> None:
 
 
 def kick_rollback(deploy_id: str, to_run_id: str, *, trigger: str = "manual") -> str:
+    if deploys_override.is_engaged():
+        raise OverrideEngaged("deploys autonomy override is engaged")
     deploy = deploys.get(deploy_id)
     if not deploy:
         raise KeyError(deploy_id)
