@@ -354,7 +354,9 @@ function DeployRow({
       <Row wrap between style={{ alignItems: "flex-start", gap: "var(--space-3)" }}>
         <Stack gap="sm" style={{ flex: "1 1 20rem", minWidth: 0 }}>
           <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-            <span style={{ fontWeight: "var(--fw-semi)", fontSize: "var(--fs-md)" }}>{deploy.name}</span>
+            <Link to={`/deploys/${encodeURIComponent(deploy.id)}`} style={{ fontWeight: "var(--fw-semi)", fontSize: "var(--fs-md)" }}>
+              {deploy.name}
+            </Link>
             <Badge>{provider}</Badge>
             <Tag hue="indigo">branch: {branch}</Tag>
             <StatusPill status={lastStatus}>{lastLabel}</StatusPill>

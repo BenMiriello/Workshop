@@ -241,7 +241,9 @@ export default function Deploys() {
                   </td>
                   <td>
                     <Row wrap style={{ gap: "var(--space-1)", alignItems: "center" }}>
-                      <span style={{ fontWeight: "var(--fw-semi)" }}>{d.name}</span>
+                      <Link to={`/deploys/${encodeURIComponent(d.id)}`} style={{ fontWeight: "var(--fw-semi)" }}>
+                        {d.name}
+                      </Link>
                       <Badge>{d.target.kind}</Badge>
                     </Row>
                   </td>
