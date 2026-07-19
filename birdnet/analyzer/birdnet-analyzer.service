@@ -1,17 +1,26 @@
-# Persistent BirdNET analyzer service. Install on the box that runs the backend.
-#   sudo cp birdnet-analyzer.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now birdnet-analyzer
+# Persistent BirdNET analyzer sidecar. Runs as a systemd USER unit next to the
+# other workshop-* services (linger is on, so it survives reboots). Install:
+#   cp birdnet-analyzer.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now birdnet-analyzer
+#
+# Port: 8013, NOT the historical 8012 default — 8012 is occupied by another
+# user's app bound on 0.0.0.0, whose SPA answered GET /health with HTML 200 and
+# masked a month-long analyzer outage while every POST /birds/analyze 502'd.
+# The backend is pointed here by the workshop-backend.service.d/birdnet-analyzer.conf
+# drop-in (Environment=BIRDNET_ANALYZER_URL=http://127.0.0.1:8013). Keep the
+# port in this file and that drop-in in sync.
+
 [Unit]
-Description=BirdNET analyzer service (model resident, for the mic-test feed)
+Description=BirdNET analyzer service (model resident, serves /birds/analyze ML)
 After=network-online.target
 
 [Service]
 Type=simple
-User=clawd-a
 WorkingDirectory=/home/clawd-a/workshop/birdnet/analyzer
+Environment=BIRDNET_ANALYZER_PORT=8013
 ExecStart=/home/clawd-a/workshop/birdnet/analyzer/.venv/bin/python /home/clawd-a/workshop/birdnet/analyzer/service.py
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

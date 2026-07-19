@@ -23,6 +23,12 @@
   height: 340px;
   border-radius: var(--radius-lg);
   overflow: hidden;
+  /* The engine assigns large per-actor z-indexes (depth-sorted birds, nametags)
+     as raw element styles. Without a stacking context here those values compete
+     with the whole page and paint over dropdowns (--z-dropdown: 100) and modals
+     (--z-modal: 1010). isolate contains them: actors sort against each other
+     only, and the aviary as a whole stays in normal flow order. */
+  isolation: isolate;
 }
 @media (min-width: 900px) { .ws-aviary { height: 400px; } }
 @media (max-width: 480px) { .ws-aviary { height: 300px; } }

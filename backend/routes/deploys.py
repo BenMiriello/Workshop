@@ -21,7 +21,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import deploys, deploy_providers, deploy_runner, deploys_override, jobs
+from services import deploys, deploy_providers, deploy_runner, deploys_override, deploy_watcher, jobs
 
 
 router = APIRouter(tags=["deploys"])
@@ -185,6 +185,34 @@ def list_runs(slug: str, deploy_id: str, limit: int = 20):
                           limit=limit))
     runs.sort(key=lambda r: r.get("started_at") or "", reverse=True)
     return {"runs": runs[:limit]}
+
+
+@router.post("/deploys/watcher/tick")
+def watcher_tick():
+    """One-shot manual sweep across all autonomous Deploys. Returns per-deploy
+    decisions so the operator can see what happened. Called by the frontend
+    Refresh button and by cron for a periodic reality check."""
+    return {"results": deploy_watcher.tick_all()}
+
+
+@router.post("/projects/{slug}/deploys/{deploy_id}:tick")
+def watcher_tick_one(slug: str, deploy_id: str):
+    """Force a single-Deploy watcher tick. Handy for testing without waiting
+    for the loop interval."""
+    rec = deploys.get(deploy_id)
+    if not rec or rec.get("project_slug") != slug:
+        raise HTTPException(404, "deploy not found")
+    return deploy_watcher.tick_one(deploy_id)
+
+
+@router.get("/projects/{slug}/deploys/{deploy_id}/notice")
+def read_notice(slug: str, deploy_id: str):
+    """The 'change detected but paused' notice, if any. Cleared automatically
+    on the next kick."""
+    rec = deploys.get(deploy_id)
+    if not rec or rec.get("project_slug") != slug:
+        raise HTTPException(404, "deploy not found")
+    return deploy_watcher.read_notice(deploy_id) or {"none": True}
 
 
 @router.get("/deploys/{deploy_id}/log/{run_id}")

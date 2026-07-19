@@ -42,6 +42,10 @@ async def lifespan(app: FastAPI):
     # services with backoff) and reconcile the port registry each pass.
     from services import app_monitor
     app.state._bg_app_monitor = asyncio.create_task(app_monitor.monitor_loop())
+    # Deploy watcher: auto-deploy autonomous Deploys when their source branch
+    # moves forward at the git remote. Respects both autonomy overrides.
+    from services import deploy_watcher
+    app.state._bg_deploy_watcher = asyncio.create_task(deploy_watcher.watcher_loop())
     # Crash/restart resilience: re-attach to any build turn that was still running
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a
@@ -52,7 +56,9 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     yield
-    for t in [*getattr(app.state, "_app_bg", []), getattr(app.state, "_bg_app_monitor", None)]:
+    for t in [*getattr(app.state, "_app_bg", []),
+              getattr(app.state, "_bg_app_monitor", None),
+              getattr(app.state, "_bg_deploy_watcher", None)]:
         if t:
             t.cancel()
 

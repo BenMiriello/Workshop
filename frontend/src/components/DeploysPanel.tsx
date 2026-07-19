@@ -200,6 +200,10 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         <SectionLabel icon={<Rocket aria-hidden />}>Deploys</SectionLabel>
         <Row wrap style={{ gap: "var(--space-2)" }}>
           <Button size="sm" variant="ghost" onClick={load}><RefreshCw aria-hidden /> Refresh</Button>
+          <Button size="sm" variant="ghost" onClick={async () => {
+            const r = await fetch(`/api/deploys/watcher/tick`, { method: "POST" });
+            if (r.ok) { const j = await r.json(); setBanner(`Watcher tick: ${JSON.stringify(j.results.map((x: { name?: string; status: string }) => `${x.name}=${x.status}`).join(", "))}`); await load(); }
+          }} disabled={loading}>Check for updates</Button>
           <Button size="sm" variant="primary" onClick={() => setAddOpen(true)} disabled={loading}>
             <Plus aria-hidden /> Add target
           </Button>

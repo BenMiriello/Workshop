@@ -202,6 +202,30 @@ def log(msg):
     print("[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg), flush=True)
 
 
+# Analyze-failure visibility: /birds/analyze returning an error (backend up but
+# the analyzer sidecar down/misrouted) used to look IDENTICAL to "no birds
+# heard" — the bridge counted the chunk as posted and heartbeat'd happily for
+# 26 days while every call 502'd. Track a failure streak: log the first
+# failure, every 100th while it persists, and the recovery.
+_fail_streak = 0
+_fail_total = 0
+
+
+def _analyze_failed(msg: str):
+    global _fail_streak, _fail_total
+    _fail_streak += 1
+    _fail_total += 1
+    if _fail_streak == 1 or _fail_streak % 100 == 0:
+        log("ANALYZE FAILING (streak %d): %s" % (_fail_streak, msg))
+
+
+def _analyze_ok():
+    global _fail_streak
+    if _fail_streak:
+        log("analyze recovered after %d failed chunks" % _fail_streak)
+    _fail_streak = 0
+
+
 def post_chunk(pcm: bytes) -> dict | None:
     path = None
     try:
@@ -219,12 +243,21 @@ def post_chunk(pcm: bytes) -> dict | None:
              "-F", "location_id=%s" % LOCID,
              "-F", "min_conf=%s" % MINCONF,
              "-F", "station=%s" % DEVICE,
+             "-w", "\n%{http_code}",
              API],
             capture_output=True, text=True)
         if r.returncode != 0:
+            _analyze_failed("curl exit %d" % r.returncode)
             return None
-        return json.loads(r.stdout)
-    except Exception:
+        body, _, code = r.stdout.rpartition("\n")
+        if code != "200":
+            _analyze_failed("HTTP %s: %s" % (code or "?", body.strip()[:200]))
+            return None
+        resp = json.loads(body)
+        _analyze_ok()
+        return resp
+    except Exception as e:
+        _analyze_failed("%s: %s" % (type(e).__name__, e))
         return None
     finally:
         if path:
@@ -311,8 +344,9 @@ def main():
                     _hearing_ts = time.time()
                 now = time.time()
                 if now - last_hb >= HEARTBEAT_SECS:
-                    log("heartbeat: %d chunks posted, %d detection events so far"
-                        % (chunks, det_events))
+                    log("heartbeat: %d chunks posted, %d detection events, "
+                        "%d analyze failures (current streak %d)"
+                        % (chunks, det_events, _fail_total, _fail_streak))
                     last_hb = now
         finally:
             try: proc.kill()
