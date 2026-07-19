@@ -91,16 +91,26 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         # Reject vacuous, self-referential meta-tasks. Reviewing/prioritizing the
         # list IS the overseer's job, not a deliverable; these slip past dedupe
         # because each is worded slightly differently. Concrete tasks don't match.
-        vacuous_markers = (
-            "prioritize the top", "prioritize the first", "prioritize the current",
-            "address the top", "address the first", "address the remaining",
-            "from the todo list", "from todo list", "task from todo", "open todos",
-            "oldest open todos", "open tasks", "tbd from todo",
-            "begin processing the oldest", "categorize the first",
-            "streamline progress", "streamline workflow", "reduce the backlog",
-            "reduce backlog", "either complete or delegate", "address immediate",
-            "address critical item", "most urgent open", "most urgent todo",
-        )
+        #
+        # SINGLE SOURCE OF TRUTH: the marker list lives in shared/meta_reject.txt
+        # so this filter, scripts/work_generator.sh, and scripts/graduate_proposals.sh
+        # all reject the same spam. Read it at runtime (the Letta sandbox can't
+        # import shared/), with a minimal inline fallback covering the known spam
+        # variants if the file is ever unreadable — so we never silently allow it.
+        _reject_path = Path("/home/clawd-a/workshop/shared/meta_reject.txt")
+        try:
+            vacuous_markers = tuple(
+                s.strip().lower()
+                for s in _reject_path.read_text().splitlines()
+                if s.strip() and not s.strip().startswith("#")
+            )
+        except Exception:
+            vacuous_markers = (
+                "verify / finish caveat", "highest-priority open todo",
+                "highest priority open todo", "reduce backlog", "reduce the backlog",
+                "reduce the todo backlog", "most urgent open", "open todos",
+                "prioritize the top", "from the todo list",
+            )
         if any(m in norm for m in vacuous_markers):
             return ("skipped (vacuous self-referential task — just do the work, "
                     f"don't propose reviewing the list): {task_text.strip()}")
@@ -185,6 +195,11 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
                     at -= 1
                 lines.insert(at, line)
         todo_path.write_text("\n".join(lines).rstrip() + "\n")
+        # Wake the queue runner so newly filed tasks start in seconds.
+        try:
+            Path("/home/clawd-a/workshop/.runtime/queue-runner.wake").touch()
+        except OSError:
+            pass
     return f"added: {line}"
 
 

@@ -1,0 +1,63 @@
+# meta_reject.txt — SINGLE SOURCE OF TRUTH for the vacuous/meta-task reject list.
+#
+# A "meta task" is vacuous list-management spam: reviewing, prioritizing,
+# reducing, or otherwise managing the TODO list is the overseer's JOB, not a
+# deliverable. These slip past exact/near dedupe because each is worded
+# slightly differently, so we match on distinctive lowercased SUBSTRINGS.
+#
+# Consumed by (all three MUST reject the same list):
+#   - backend/services/letta_tools/workshop.py  wkshp_propose_task  (reads this
+#     file at runtime; the Letta sandbox can't import shared/)
+#   - scripts/work_generator.sh                 append_item  (via --check CLI)
+#   - scripts/graduate_proposals.sh             (imports is_meta_reject)
+#
+# Matching: task text is lowercased + whitespace-collapsed, then each marker
+# below is tested as a substring. One line per marker. `#` lines are comments.
+# A concrete task names a concrete referent (file/service/endpoint/feature) and
+# won't match; pure list-management prose will.
+
+# --- caveat / self-referential generator spam ---
+verify / finish caveat
+finish caveat on prior
+
+# --- "highest priority open todo item" family ---
+highest-priority open todo
+highest priority open todo
+highest-priority open item
+highest priority open item
+top open todo item
+next open todo item
+
+# --- "reduce backlog" family ---
+reduce backlog
+reduce the backlog
+reduce the todo backlog
+reduce todo backlog
+
+# --- prioritize / address the list ---
+prioritize the top
+prioritize the first
+prioritize the current
+address the top
+address the first
+address the remaining
+address immediate
+address critical item
+most urgent open
+most urgent todo
+
+# --- "from the todo list" / open-todos referents ---
+from the todo list
+from todo list
+task from todo
+tbd from todo
+open todos
+oldest open todos
+open tasks
+
+# --- misc list-management verbs applied to the list itself ---
+begin processing the oldest
+categorize the first
+streamline progress
+streamline workflow
+either complete or delegate
