@@ -6,16 +6,17 @@ import {
   Badge, Modal, Skeleton, type StatusKind,
 } from "../ui";
 
-// Run & Deploy: the single place a project becomes a running thing. Drives the
-// backend app_runner — one app made of N services (each its own process + port),
-// with build/spawn on a background thread, health probing, and the autonomous
-// monitor restarting crashed services. Declared deps (postgres/redis/...) are
-// brought up the same way. Viewing a running service happens through the backend
-// reverse proxy (the app sets its base to WORKSHOP_PROXY_BASE so assets resolve).
+// Run: the single place a project becomes a running thing on this host. Drives
+// the backend app_runner — one app made of N services (each its own process +
+// port), with build/spawn on a background thread, health probing, and the
+// autonomous monitor restarting crashed services. Declared deps (postgres/redis
+// /...) are brought up the same way. Viewing a running service happens through
+// the backend reverse proxy (the app sets its base to WORKSHOP_PROXY_BASE so
+// assets resolve).
 //
-// There is deliberately no separate "Standalone" or "Integrated" deploy concept:
-// running the app IS the deployment. The exposed service's URL is the standalone
-// origin; previewing it inside Workshop chrome is the integrated view.
+// Publishing a build to a hosted target (Cloudflare Pages, etc.) is a separate
+// concept and lives in DeploysPanel — running the app locally IS NOT the same
+// thing as shipping it to a hosted origin.
 
 type Service = {
   name: string;
@@ -163,7 +164,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     return (
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
-          <SectionLabel icon={<Boxes aria-hidden />}>Run &amp; Deploy</SectionLabel>
+          <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
         </Row>
         <Card>
           <StateBlock
@@ -181,7 +182,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
     return (
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
-          <SectionLabel icon={<Boxes aria-hidden />}>Run &amp; Deploy</SectionLabel>
+          <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
         </Row>
         <Card>
           <StateBlock
@@ -216,7 +217,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   return (
     <section style={{ marginBottom: "var(--space-6)" }}>
       <Row between style={{ marginBottom: "var(--space-3)" }}>
-        <SectionLabel icon={<Boxes aria-hidden />}>Run &amp; Deploy</SectionLabel>
+        <SectionLabel icon={<Boxes aria-hidden />}>Run</SectionLabel>
         <Row wrap style={{ gap: "var(--space-2)" }}>
           {status && <StatusPill status={phaseKind}>{phaseLabel}</StatusPill>}
           <Button size="sm" variant="ghost" onClick={() => { loadManifest(); loadStatus(); }}>

@@ -58,6 +58,7 @@ import { useCrumbLabel } from "../components/appNav";
 import { chatApi, type ThreadSummary } from "../lib/chat";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 import AppServicesPanel from "../components/AppServicesPanel";
+import DeploysPanel from "../components/DeploysPanel";
 import AutonomyPanel from "../components/AutonomyPanel";
 import EnvironmentPanel from "../components/EnvironmentPanel";
 
@@ -1559,14 +1560,17 @@ export default function ProjectDetail() {
       {/* --- App (multi-service runner) --- */}
       <AppServicesPanel slug={slug} />
 
+      {/* --- Deploys (per-project target bindings) --- */}
+      <DeploysPanel slug={slug} />
+
       {/* --- Environment / secrets registry --- */}
       <EnvironmentPanel slug={slug} />
 
       {/* --- Share (publish to the local marketplace) --- */}
-      {/* Running the project lives in "Run & Deploy" above (the app runner). This
-          section is only about sharing a snapshot with the rest of this workshop:
-          it cuts a local release and lists it in the marketplace, where anyone can
-          install (fork) it. No duplicate "standalone/integrated" run concepts. */}
+      {/* Run above starts the project's app_runner services locally. Deploys above
+          ships a build to a hosted target (Cloudflare Pages, ...). Share below cuts
+          a local release and lists it in the workshop marketplace where anyone here
+          can install (fork) it. The three surfaces are distinct on purpose. */}
       <section style={{ marginBottom: "var(--space-6)" }}>
         <SectionLabel icon={<Store aria-hidden />}>Share</SectionLabel>
         <Card>
