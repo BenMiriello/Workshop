@@ -230,7 +230,10 @@ function ProjectStoresSection({ slug }: { slug: string }) {
               <Row key={s.uri} between wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
                 <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
                   <Tag hue={catFor(s.tier)}>{s.tier}</Tag>
-                  <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{s.name}</span>
+                  <Link to={`/stores/${encodeURIComponent(s.owner_app)}/${encodeURIComponent(s.name)}`}
+                        className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
+                    {s.name}
+                  </Link>
                   {s.type && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{s.type}</span>}
                 </Row>
                 <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{s.uri}</span>

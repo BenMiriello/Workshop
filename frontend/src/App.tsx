@@ -32,6 +32,7 @@ import Work from "./pages/Work";
 import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
 import DeployDetail from "./pages/DeployDetail";
+import StoreDetail from "./pages/StoreDetail";
 import NotesPage from "./pages/Notes";
 import Jobs from "./pages/Jobs";
 import JobDetail from "./pages/JobDetail";
@@ -116,6 +117,7 @@ export default function App() {
           <Route path="/deploys" element={<Deploys />} />
           <Route path="/tickets/:scope/:id" element={<TicketDetail />} />
           <Route path="/deploys/:id" element={<DeployDetail />} />
+          <Route path="/stores/:app/:name" element={<StoreDetail />} />
           <Route path="/notes" element={<NotesPage />} />
           <Route path="/jobs" element={<Jobs />} />
           <Route path="/jobs/:id" element={<JobDetail />} />
