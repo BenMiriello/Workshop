@@ -154,6 +154,12 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     if t == "result":
         return ("result", {
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
+            # How the CLI ended the turn: "success", "error_max_turns" (ran out
+            # of agentic steps mid-task), "error_during_execution", … Without
+            # this a step-exhausted turn is indistinguishable from a finished
+            # one, which is exactly what made turns look like they "just stopped".
+            "subtype": ev.get("subtype"),
+            "is_error": bool(ev.get("is_error")),
             "duration_ms": ev.get("duration_ms"),
             "total_cost_usd": ev.get("total_cost_usd"),
             "usage": ev.get("usage"),
@@ -466,6 +472,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             state["spend_sum"] = int(state.get("spend_sum") or 0) + _spend_tokens_from_usage(payload.get("usage"))
         elif kind == "result":
             state["saw_result"] = True
+            state["result_subtype"] = payload.get("subtype") or ""
             # The result envelope's usage is the turn TOTAL across tool rounds.
             # That overcounts the context window (hence the fallback-only use
             # below) but it is exactly right for spend, so prefer it when present.
@@ -538,11 +545,13 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         rc = 0 if state["saw_result"] else -1
     await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
                          context_tokens=int(state.get("last_ctx") or 0),
-                         spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0))
+                         spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
+                         subtype=str(state.get("result_subtype") or ""))
 
 
 async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
-                         context_tokens: int = 0, spend_tokens: int = 0) -> None:
+                         context_tokens: int = 0, spend_tokens: int = 0,
+                         subtype: str = "") -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 900))
@@ -555,8 +564,21 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
     # nothing came back, say WHY (timeout / compact / clean-no-summary / failure).
     is_command = prompt.strip().startswith("/")
     minutes = max(1, round(timeout_s / 60))
+    # The turn ran out of agentic steps mid-task. It usually HAS produced text by
+    # then, so without saying this the operator sees a partial answer that reads
+    # like a finished one and has no way to know the work was cut off. Say it
+    # either way, and say what to do about it.
+    hit_step_limit = subtype == "error_max_turns"
+    step_note = (
+        f"This turn stopped after its {meta.get('max_turns')}-step limit, before finishing. "
+        "Anything it already wrote to disk is saved — send \"continue\" to pick up "
+        "where it left off."
+    )
     if turn.final_text:
-        text = turn.final_text
+        text = turn.final_text + (f"\n\n{step_note}" if hit_step_limit else "")
+        is_error = False
+    elif hit_step_limit:
+        text = step_note
         is_error = False
     elif timed_out:
         text = (
@@ -627,9 +649,23 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         chat_store.finalize_streaming_assistant(
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes,
+            stopped=("max_steps" if hit_step_limit else None),
         )
     except Exception as e:
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)
+    # Self-heal a bad resume. If a turn that was RESUMING this thread's session
+    # failed outright, the session is the prime suspect (pruned, corrupted, or
+    # written under a different cwd). Detach it so the next turn mints a fresh one
+    # and re-sends the assembled history — retrying the same broken resume forever
+    # is what turns one bad session into a chat that "always errors".
+    if is_error and meta.get("resume") and meta.get("session_id"):
+        try:
+            thread = chat_store.get_thread(turn.thread_id)
+            if thread and thread.get("claude_session") == meta["session_id"]:
+                chat_store.clear_thread_session(turn.thread_id)
+                log.info("turn %s: detached failed session %s", turn.id, meta["session_id"])
+        except Exception as e:
+            log.debug("turn %s: session detach failed: %s", turn.id, e)
     # Record the real context occupancy reported by the model this turn, so the
     # composer meter reflects the live window (and its post-compaction drop)
     # instead of the ever-growing stored transcript. Only on a successful turn

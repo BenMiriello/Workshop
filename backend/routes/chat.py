@@ -70,8 +70,14 @@ PROVIDER_MODELS: dict[str, str] = {
 ENABLE_CHAT_TOOLS = True
 # Timeout: 300s comfortably covers cold-start + Sonnet on prompt-heavy budget
 # turns + one optional Plaid roundtrip + synthesis.
-CHAT_TIMEOUT_S = 300
-MAX_HISTORY = 24  # messages of transcript carried into the prompt
+# Wall-clock and step budget for a chat turn. Both used to be small enough
+# (300s / 8 steps) that any real piece of work was guillotined mid-way and the
+# operator saw a turn "just stop without finishing or reporting". A chat turn is
+# the same kind of work a build turn does, so it gets the same budget; a turn
+# that ends at either limit now says so explicitly (see _finalize_turn).
+CHAT_TIMEOUT_S = 900
+CHAT_MAX_TURNS = 40
+MAX_HISTORY = 60  # messages of transcript carried into a fresh-session prompt
 
 
 class CreateThread(BaseModel):
@@ -102,6 +108,17 @@ class RenameThread(BaseModel):
 
 class RescopeThread(BaseModel):
     context_key: str
+
+
+class CardState(BaseModel):
+    """The outcome of acting on an in-chat ui-card, so the card stops offering an
+    action that has already been taken. `key` is a stable digest of the card's own
+    block, computed by the client."""
+    key: str
+    phase: str                    # "success" | "dismissed"
+    note: str | None = None
+    slug: str | None = None
+    title: str | None = None
 
 
 class SpawnTask(BaseModel):
@@ -239,6 +256,21 @@ async def rename(thread_id: str, body: RenameThread):
 @router.delete("/threads/{thread_id}")
 async def remove(thread_id: str):
     return {"deleted": chat_store.delete_thread(thread_id)}
+
+
+@router.post("/threads/{thread_id}/card-state")
+async def set_card_state(thread_id: str, body: CardState):
+    """Record that an in-chat card has been acted on.
+
+    Cards used to be stateless: the acted-on state lived in component state only,
+    so a card the operator had already filed and run came back offering the same
+    buttons on the next load, with no way to tell it apart from one that had
+    never been touched. Acting on a card is a real event about the conversation,
+    so it is stored with the conversation."""
+    t = chat_store.set_card_state(thread_id, body.key, body.model_dump(exclude={"key"}))
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return {"card_states": t.get("card_states", {})}
 
 
 async def _distill_task_from_thread(t: dict) -> str:
@@ -576,6 +608,11 @@ def _link_build_skills(provider) -> None:
 # thread JSON so it is always reversible.
 _COMPACT_TOKEN_THRESHOLD = 6000  # tokens of uncompacted tail before folding
 _CHARS_PER_TOKEN = 4
+_COMPACT_KEEP_TAIL = 4  # turns a forced /compact keeps verbatim
+# Summarization is one text-in/text-out call, so it should take seconds. Cap it
+# hard: /compact is a foreground request the operator is waiting on, and the
+# 10-minute library default meant a slow call read as a dead button.
+_COMPACT_CALL_TIMEOUT_S = 120
 
 
 def _est_tokens(msgs: list[dict]) -> int:
@@ -600,7 +637,11 @@ def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
         + f"=== NEW TURNS TO FOLD IN ===\n{_fmt_turns(to_fold)}\n\n"
         "=== OUTPUT ===\nThe updated summary only, no preamble."
     )
-    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU)
+    # Text in, text out. Without tools_disabled this ran in the DEFAULT agentic
+    # mode: a full toolset plus every MCP server spun up just to write a summary,
+    # which took minutes and made /compact look like it had hung or done nothing.
+    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
+                                tools_disabled=True, timeout_s=_COMPACT_CALL_TIMEOUT_S)
     return (res.get("text") or "").strip()
 
 
@@ -613,7 +654,8 @@ def _distill_sync(to_fold: list[dict]) -> list[str]:
         "emojis. If there is nothing durable, output nothing.\n\n"
         f"=== TURNS ===\n{_fmt_turns(to_fold)}\n\n=== FACTS (one per line) ===\n"
     )
-    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU)
+    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
+                                tools_disabled=True, timeout_s=_COMPACT_CALL_TIMEOUT_S)
     lines = [ln.strip("-*• \t") for ln in (res.get("text") or "").splitlines()]
     return [ln for ln in lines if ln and len(ln) > 8][:5]
 
@@ -640,35 +682,115 @@ async def _distill(to_fold: list[dict], scope_key: str) -> None:
         log.warning("chat distillation failed for %s: %s", scope_key, e)
 
 
-async def _maybe_compact(thread: dict, scope_key: str = "") -> tuple[str, list[dict]]:
-    """Append-until-threshold + one compaction pass. Returns (summary, recent
-    verbatim turns). Best-effort: any failure leaves the thread untouched and
-    returns the current (summary, tail), so a compaction hiccup never blocks a
-    reply or loses messages. On a successful fold it also distills durable facts
-    from the folded turns into the scope's knowledge (Phase 3)."""
+async def _compact_thread(thread: dict, scope_key: str = "", *,
+                          force: bool = False) -> tuple[str, list[dict], int]:
+    """One compaction pass. Returns (summary, recent verbatim turns, folded count).
+
+    Two entry conditions. Automatic (`force=False`): only when the uncompacted
+    tail is both long enough and over the token budget, and then only the oldest
+    half folds — that keeps the cached prefix stable across ordinary turns.
+    Forced (`force=True`, the /compact command): fold everything except the last
+    `_COMPACT_KEEP_TAIL` turns regardless of size, because the operator asked for
+    the context back now.
+
+    Best-effort: any failure leaves the thread untouched and returns the current
+    (summary, tail, 0), so a compaction hiccup never blocks a reply or loses
+    messages. Raw messages stay in the thread JSON either way, so the fold is
+    always reversible. On a successful fold it also distills durable facts from
+    the folded turns into the scope's knowledge (Phase 3)."""
     msgs = thread.get("messages", [])
     summary = thread.get("summary", "") or ""
     ct = int(thread.get("compacted_through", 0) or 0)
     if ct < 0 or ct > len(msgs):
         ct = 0
     tail = msgs[ct:]
-    if len(tail) < 6 or _est_tokens(tail) < _COMPACT_TOKEN_THRESHOLD:
-        return summary, tail
-    fold_n = len(tail) // 2
+    if force:
+        fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
+        if fold_n == 0:
+            return summary, tail, 0
+    else:
+        if len(tail) < 6 or _est_tokens(tail) < _COMPACT_TOKEN_THRESHOLD:
+            return summary, tail, 0
+        fold_n = len(tail) // 2
     to_fold, keep = tail[:fold_n], tail[fold_n:]
     try:
         new_summary = await asyncio.to_thread(_summarize_sync, summary, to_fold)
     except Exception as e:
         log.warning("chat compaction failed for %s: %s", thread.get("id"), e)
-        return summary, tail
+        return summary, tail, 0
     if not new_summary:
-        return summary, tail
+        return summary, tail, 0
     thread["summary"] = new_summary
     thread["compacted_through"] = ct + fold_n
+    if force:
+        # The stored measured value is the pre-fold context size; leaving it
+        # would pin the composer meter at its old reading and make /compact look
+        # like it did nothing. Drop it so the meter re-estimates from the newly
+        # compacted prompt on the next read.
+        thread.pop("context_tokens", None)
     chat_store.save_thread(thread)
     if scope_key:
         await _distill(to_fold, scope_key)
-    return new_summary, keep
+    return new_summary, keep, fold_n
+
+
+async def _maybe_compact(thread: dict, scope_key: str = "") -> tuple[str, list[dict]]:
+    """Threshold compaction on the ordinary turn path. See `_compact_thread`."""
+    summary, tail, _ = await _compact_thread(thread, scope_key)
+    return summary, tail
+
+
+@router.post("/threads/{thread_id}/compact")
+async def compact_thread(thread_id: str):
+    """Fold the STORED transcript now (half of the /compact command).
+
+    A chat's context lives in two places and /compact has to reach both:
+
+      1. the live claude session, whose window is what actually fills up. Only
+         the CLI's own `/compact` frees that, and it does so by running as a
+         normal turn (the raw-slash branch in POST /turns). The client sends
+         that turn itself, so the fold is visible in the transcript instead of
+         happening invisibly.
+      2. the stored transcript, which is what gets re-assembled whenever a fresh
+         session starts. That is this endpoint: fold everything except the last
+         `_COMPACT_KEEP_TAIL` turns into the running summary, and report what
+         moved so the client can render a marker rather than a silent no-op.
+
+    `live_session` tells the client whether (1) is worth doing — a chat that has
+    not started a session yet has no live window to reclaim."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    before = len(t.get("messages", [])) - int(t.get("compacted_through", 0) or 0)
+    summary, tail, folded = await _compact_thread(
+        t, provider.knowledge_scope(), force=True)
+    return {
+        "folded": folded,
+        "kept": len(tail),
+        "before": before,
+        "summary": summary,
+        "compacted_through": int(t.get("compacted_through", 0) or 0),
+        "live_session": _has_live_session(t, provider),
+    }
+
+
+def _has_live_session(t: dict, provider) -> bool:
+    """Does this chat have a claude session whose window /compact can reclaim?
+
+    Two homes, because build agents predate per-thread sessions: an agent chat's
+    session hangs off the AGENT record (one session per agent), everything else
+    off the thread. Checking only the thread would silently skip the native
+    compact for exactly the chats that need it most."""
+    if isinstance(provider, chat_context.BuildAgentContextProvider):
+        try:
+            from services import build_agents as _ba
+            rec = _ba.get_agent(provider.slug) or {}
+            return bool(rec.get("claude_session"))
+        except Exception as e:
+            log.debug("compact: agent session lookup failed for %s: %s", provider.slug, e)
+            return False
+    return bool(t.get("claude_session"))
 
 
 # Context-window windows per model (mirrors the frontend meter). Claude = 200k;
@@ -731,16 +853,14 @@ async def thread_context(thread_id: str):
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
     )
-    # Mirror what a real turn sends. Data providers fold the oldest turns into a
+    # Mirror what a real turn sends. Every provider folds the oldest turns into a
     # running summary (see _maybe_compact); only the summary + the tail after
     # `compacted_through` actually go to the model, so count that, not everything.
     history = t.get("messages", [])
-    summary = ""
-    if not is_build_mode:
-        ct = int(t.get("compacted_through", 0) or 0)
-        if 0 <= ct <= len(history):
-            history = history[ct:]
-        summary = t.get("summary", "") or ""
+    ct = int(t.get("compacted_through", 0) or 0)
+    if 0 <= ct <= len(history):
+        history = history[ct:]
+    summary = t.get("summary", "") or ""
     prompt = _build_prompt(provider, history, "", preamble=preamble, summary=summary)
     used = max(1, round(len(prompt) / 4))
     return {
@@ -788,12 +908,71 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
                 recalled = "\n\n".join(blocks)[:2000]
             except Exception as e:
                 log.warning("chat auto-recall failed for %s: %s", provider.key, e)
-        # Threshold compaction (Phase 3): fold the oldest half of a long transcript
-        # into a running summary so the cached prefix stays stable and the window
-        # does not overflow. Data mode only (build agents keep their own session).
-        summary, history = await _maybe_compact(t, provider.knowledge_scope())
+    # Threshold compaction (Phase 3): fold the oldest half of a long transcript
+    # into a running summary so the cached prefix stays stable and the window does
+    # not overflow. Applies to EVERY provider here, because this is the fresh-
+    # session assembly: whatever it builds is the whole context the model gets, so
+    # an uncompacted 200-message project chat would re-send the entire transcript
+    # (and, past MAX_HISTORY, silently drop its own beginning instead).
+    summary, history = await _maybe_compact(t, provider.knowledge_scope())
     prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled, summary=summary)
     return prompt, is_build_mode
+
+
+def _thread_session(thread_id: str, cwd: str) -> tuple[str | None, bool]:
+    """(session_id, is_new) for this thread's persistent claude session.
+
+    Stale-session guard, same as the build-agent path: an id whose session file
+    is gone (pruned, or written under a different cwd) would make `--resume` fail
+    the entire turn, so drop it and mint a fresh one. Starting fresh is safe —
+    the caller re-assembles the full prompt (summary + transcript tail) for a new
+    session, so continuity is preserved even when the CLI's copy is gone."""
+    got = chat_store.ensure_thread_session(thread_id)
+    if got is None:
+        return None, True
+    sid, is_new = got
+    if sid and not is_new and not build_streaming.session_alive(sid, cwd):
+        log.info("thread %s: claude session %s is gone; starting fresh", thread_id, sid)
+        chat_store.clear_thread_session(thread_id)
+        got = chat_store.ensure_thread_session(thread_id)
+        if got is None:
+            return None, True
+        sid, is_new = got
+    return sid, is_new
+
+
+async def _resumed_prompt(t: dict, provider, content: str) -> str:
+    """The per-turn message for a chat whose claude session is being RESUMED.
+
+    The session already holds the persona, the history, and everything the first
+    turn assembled, so re-sending that would both waste the window and fight the
+    session's own memory. What must refresh every turn is the volatile part: the
+    runtime briefing (a builder's cwd/stack/ports) or the provider's live app
+    state, plus any notes retrieved for this specific message."""
+    parts: list[str] = []
+    briefing = chat_context.runtime_briefing(provider)
+    if briefing:
+        parts.append(briefing)
+    else:
+        try:
+            live = provider.live_context()
+        except Exception as e:
+            log.warning("chat live_context failed for %s: %s", provider.key, e)
+            live = ""
+        if live:
+            parts.append("=== LIVE CONTEXT (current app state) ===\n" + live)
+    if not chat_context.is_build_provider(provider) and len(content.strip()) >= 8:
+        try:
+            hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
+            blocks = [f"[{h.get('note_id') or 'note'}] {(h.get('text') or '').strip()}" for h in hits]
+            recalled = "\n\n".join(blocks)[:2000]
+        except Exception as e:
+            log.warning("chat auto-recall failed for %s: %s", provider.key, e)
+            recalled = ""
+        if recalled:
+            parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
+    parts.append("=== OPERATOR MESSAGE ===\n" + content)
+    return "\n\n".join(parts)
 
 
 @router.post("/threads/{thread_id}/messages")
@@ -1051,36 +1230,47 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         )
         return {"turn_id": turn.id}
 
-    # ---- Project providers: full agentic toolset over the project tree, but no
-    #      persistent session (there is no per-project agent record to hang one on;
-    #      spawn a Build agent in the project to get resumable sessions). ----------
-    if chat_context.is_build_provider(provider):
+    # ---- Every other chat (project, general, app assistants): ONE persistent
+    #      claude session per THREAD. A chat is a conversation, so it continues
+    #      instead of being re-derived: the session carries what it already read,
+    #      ran, and decided. Previously these all spawned stateless, which is why a
+    #      chat mid-task visibly restarted from scratch on every message and redid
+    #      work it had already finished. The tool surface still differs by provider
+    #      (project = full agentic in the project tree; data = web + declared MCP),
+    #      only the continuity is now shared. --------------------------------------
+    is_project = chat_context.is_build_provider(provider)
+    if is_project:
         _link_build_skills(provider)
-        prompt, _ = await _assemble_full_prompt(t, provider, content)
-        turn = await build_streaming.start_turn(
-            thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
-            prompt=prompt, model=model, cwd=str(provider.dir),
-            session_id=None, resume=False, max_turns=provider.max_turns, timeout_s=900,
-        )
-        return {"turn_id": turn.id}
-
-    # ---- Data / assistant providers: narrow tools (web + the provider's declared
-    #      MCP) or tools-off, stateless, no project cwd. They can search the web and
-    #      query the workshop, but cannot free-build without a chosen project. Same
-    #      capability ladder (ENABLE_CHAT_TOOLS + effective_allowed_tools) as the
-    #      blocking POST /messages path, now streamed so the turn shows its work. --
-    prompt, _ = await _assemble_full_prompt(t, provider, content)
-    if ENABLE_CHAT_TOOLS:
-        allowed_tools = chat_context.effective_allowed_tools(provider)
-        mcp_servers = list(provider.mcp_servers)
+        cwd = str(provider.dir)
+        allowed_tools: list[str] | None = None
+        mcp_servers: list[str] = []
         tools_disabled = False
+        max_turns = max(provider.max_turns, CHAT_MAX_TURNS)
     else:
-        allowed_tools, mcp_servers, tools_disabled = None, [], True
-    default_cwd = os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~"))
+        cwd = os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~"))
+        if ENABLE_CHAT_TOOLS:
+            allowed_tools = chat_context.effective_allowed_tools(provider)
+            mcp_servers = list(provider.mcp_servers)
+            tools_disabled = False
+        else:
+            allowed_tools, mcp_servers, tools_disabled = None, [], True
+        max_turns = max(provider.max_turns, CHAT_MAX_TURNS)
+
+    sid, is_new = _thread_session(thread_id, cwd)
+    if content.startswith("/"):
+        # A slash command goes raw so the CLI registers it as a command (this is
+        # what makes a native /compact actually compact the live session).
+        prompt, resume_flag = content, bool(sid and not is_new)
+    elif sid and not is_new:
+        prompt, resume_flag = await _resumed_prompt(t, provider, content), True
+    else:
+        prompt, _ = await _assemble_full_prompt(t, provider, content)
+        resume_flag = False
     turn = await build_streaming.start_turn(
-        thread_id=thread_id, agent_slug=provider.key, prompt=prompt, model=model,
-        cwd=default_cwd, session_id=None, resume=False,
-        max_turns=max(provider.max_turns, 6), timeout_s=CHAT_TIMEOUT_S,
+        thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
+        prompt=prompt, model=model, cwd=cwd,
+        session_id=sid, resume=resume_flag,
+        max_turns=max_turns, timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
     return {"turn_id": turn.id}

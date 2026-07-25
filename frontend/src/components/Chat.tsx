@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
-  UserPlus,
+  UserPlus, FoldVertical, ArrowDown,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Button, Markdown } from "../ui";
 import { scopeLabel } from "../lib/tasks";
@@ -12,6 +12,7 @@ import TaskPanel from "./TaskPanel";
 import {
   chatApi,
   type ChatMsg,
+  type CardState,
   type ChatSegment,
   type Thread,
   type ThreadSummary,
@@ -19,6 +20,10 @@ import {
   shortHttpError,
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
+import {
+  NEW_CHAT, readSelection, writeSelection, readProvider, writeProvider,
+  readQueue, writeQueue,
+} from "../lib/chatSelection";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { unlockAudio } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
@@ -92,6 +97,7 @@ function taskScopeFor(contextKey: string): string | null {
 }
 
 const MODEL_LABELS: Record<string, string> = {
+  "claude-opus-5": "Opus 5",
   "claude-opus-4-8": "Opus 4.8",
   "claude-fable-5": "Fable 5",
   "claude-sonnet-4-6": "Sonnet 4.6",
@@ -131,6 +137,7 @@ function modelDisplay(model?: string | null): ModelDisplay {
 // draft, against the model's context window (Claude = 200k; local models are
 // smaller). It's a "how full is this chat" indicator, not an exact accounting.
 const CONTEXT_WINDOW: Record<string, number> = {
+  "claude-opus-5": 200_000,
   "claude-opus-4-8": 200_000,
   "claude-fable-5": 200_000,
   "claude-sonnet-4-6": 200_000,
@@ -348,10 +355,28 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
+  // How many leading messages the backend has folded into the running summary.
+  // Raw messages are never dropped, so the fold is only visible if we mark it:
+  // this drives the "compacted" divider in the transcript.
+  const [compactedThrough, setCompactedThrough] = useState(0);
+  // /compact is in flight (disables the composer's compact affordance).
+  const [compacting, setCompacting] = useState(false);
+  // Which in-chat cards this thread has already acted on (server-backed), so a
+  // proposal that was filed and run doesn't come back offering to run again.
+  const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
+  // Bumped after a forced compaction so the context meter refetches: folding
+  // does not change messages.length, which is what otherwise drives that read.
+  const [ctxNonce, setCtxNonce] = useState(0);
   // Live mirror of `messages` so effects (the voice overlay-settle poll) can read
   // the current length without listing `messages` in their dep arrays.
   const messagesRef = useRef<ChatMsg[]>(messages);
   messagesRef.current = messages;
+  // Live mirror of activeId so the scope loader can read the thread we're
+  // currently on WITHOUT listing activeId in its deps (which would re-run it on
+  // every thread switch). It uses this to keep an open chat put instead of
+  // snapping to the newest thread.
+  const activeIdRef = useRef<string | null>(activeId);
+  activeIdRef.current = activeId;
   // Composer text is a persisted draft (survives reload, syncs across tabs /
   // devices) keyed by this chat's contextKey - see lib/draftSync.
   const [input, setInput] = useDraft(contextKey);
@@ -368,8 +393,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [err, setErr] = useState<string | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
 
-  // Live assistant turn: ordered segments built from the SSE stream.
+  // Live assistant turn: ordered segments built from the SSE stream. Treat this
+  // as a render-ahead cache of server state, never as the only home of a turn's
+  // output: nothing may clear it until the server's copy of that turn is in
+  // `messages`, or the record of what the turn did disappears from the log.
   const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
+  const pendingRef = useRef<ChatSegment[]>(pendingSegments);
+  pendingRef.current = pendingSegments;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   // P4: participants on the active thread. Populated from getThread + the
@@ -480,6 +510,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Whether the log is scrolled to (near) the bottom - so focus/keyboard/viewport
   // changes only re-pin when the user was already following the latest messages.
   const atBottomRef = useRef(true);
+  // New content arrived while scrolled up: offer a way back instead of dragging
+  // the view down.
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   // Stream resilience: count consecutive reconnect attempts (reset on any event
   // received, so a healthy long turn never trips the cap), and self-reference
   // attachStream so a drop handler can re-attach without a render cycle.
@@ -488,7 +521,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const attachStreamRef = useRef<(turnId: string, threadId: string, isFirst: boolean) => void>(() => {});
 
 
-  // Provider list (scoped to this app, or the full cross-context list).
+  // Provider list (scoped to this app, or the full cross-context list). The
+  // provider drives `scope`, which is the thread list you can see — so snapping
+  // back to the default on every mount stranded every chat started under the
+  // other provider. Restore the one this surface was left on.
   useEffect(() => {
     let cancelled = false;
     chatApi
@@ -496,13 +532,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       .then((list) => {
         if (cancelled) return;
         setProviders(list);
-        if (effectiveMode === "data" && list.length && !list.some((p) => p.key === contextKey)) {
-          setActiveProvider("general");
-        }
+        if (effectiveMode !== "data" || !list.length) return;
+        const remembered = readProvider(contextKey);
+        if (remembered && list.some((p) => p.key === remembered)) setActiveProvider(remembered);
+        else if (!list.some((p) => p.key === contextKey)) setActiveProvider("general");
       })
       .catch(() => { /* non-essential */ });
     return () => { cancelled = true; };
   }, [contextKey, effectiveMode, scoped]);
+
+  const chooseProvider = useCallback((key: string) => {
+    setActiveProvider(key);
+    writeProvider(contextKey, key);
+  }, [contextKey]);
 
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
   const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
@@ -695,20 +737,28 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => { if (settlePollRef.current) settlePollRef.current.cancelled = true; };
   }, [voiceOn, activeId]);
 
+  // The queue is durable (see lib/chatSelection): it survives a refresh or a
+  // closed tab, because messages sitting in it have been SENT as far as the
+  // operator is concerned and dropping them is message loss.
   const setQueue = useCallback((next: string[]) => {
     queuedRef.current = next;
     setQueued(next);
-  }, []);
+    writeQueue(activeIdRef.current ?? `scope:${scope}`, next);
+  }, [scope]);
 
-  // Send the next queued message (if any) as a fresh turn. Called when a turn
-  // finishes (or is stopped) so queued messages run one after another.
+  // Deliver everything queued behind the finished turn as ONE next turn. Sending
+  // them one at a time made N queued messages into N sequential turns, so the
+  // last thing typed could wait out several more turns before being read; the
+  // operator's spec is that the next turn picks up ALL messages queued since.
+  // (Not interrupting the running turn is the other half of that spec and is
+  // preserved — only the Stop button ends a turn early.)
   const dispatchNext = useCallback(() => {
     const q = queuedRef.current;
     if (!q.length) return;
-    const [next, ...rest] = q;
-    setQueue(rest);
-    setMessages((m) => [...m, { role: "user", content: next, ts: new Date().toISOString() }]);
-    sendBuildRef.current(next);
+    setQueue([]);
+    const ts = new Date().toISOString();
+    setMessages((m) => [...m, ...q.map((content) => ({ role: "user" as const, content, ts }))]);
+    sendBuildRef.current(q.join("\n\n"));
   }, [setQueue]);
 
   // ---- Live SSE stream (build turns) --------------------------------------
@@ -812,7 +862,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           const stillRunning = !!(last && last.role === "assistant" && last.meta?.streaming);
           if (!stillRunning) { void finish(); return; } // turn really ended - sync + stop
         } catch { /* network error - assume the turn is still running and retry */ }
-        if (reconnectsRef.current >= MAX_RECONNECTS) { void finish(); return; }
+        if (reconnectsRef.current >= MAX_RECONNECTS) {
+          // Out of reconnect budget on a turn the server says is STILL RUNNING.
+          // Do not call finish(): that would drop to an idle-looking UI (the
+          // "you told me you were working but nothing was happening" report) and
+          // would dispatch queued messages into a second concurrent turn. Stop
+          // retrying, keep the work on screen, say so plainly, and let the
+          // liveness poll re-attach when the connection comes back.
+          finishingRef.current = true;
+          setStreaming(false);
+          setReconnecting(false);
+          setErr("Lost the live connection to this turn. It is still running on the server, reattaching...");
+          return;
+        }
         reconnectsRef.current += 1;
         setReconnecting(true);
         window.setTimeout(() => {
@@ -832,7 +894,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Render a thread's messages, reconnecting to a still-streaming last turn.
   const hydrate = useCallback(
     (t: Thread) => {
-      setQueue([]);
+      setQueue(readQueue(t.id));
+      // The fold marker is server state, not a one-shot response to clicking
+      // /compact: without reading it back here the divider vanished on every
+      // reload and a compacted thread looked exactly like an uncompacted one.
+      setCompactedThrough(Number(t.compacted_through) || 0);
+      setCardStates(t.card_states ?? {});
       const msgs = t.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
@@ -860,19 +927,33 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         const list = await chatApi.listThreads(scope);
         if (cancelled) return;
         setThreads(list);
-        if (list.length) {
-          // Prefer an explicitly-requested thread (resuming a draft via link),
-          // else the most recent one for this scope.
-          const target = (initialThreadId && list.some((x) => x.id === initialThreadId))
-            ? initialThreadId : list[0].id;
+        // Choose the active thread ONCE per scope, honoring (in priority order):
+        //   1. the thread we're already on   → re-hydrate it, never snap to newest
+        //   2. an explicit new-chat intent   → stay blank (this is what makes
+        //      "New chat" / "/clear" survive a reload instead of re-adopting)
+        //   3. an initialThreadId link       → resume a specific thread
+        //   4. the last thread open in this scope → restore it across a refresh
+        //   5. otherwise the most-recent thread
+        const has = (id: string | null | undefined): boolean => !!id && list.some((x) => x.id === id);
+        const stored = readSelection(scope);
+        const current = activeIdRef.current;
+        let target: string | null;
+        if (has(current)) target = current;
+        else if (stored === NEW_CHAT) target = null;
+        else if (has(initialThreadId)) target = initialThreadId ?? null;
+        else if (has(stored)) target = stored;
+        else target = list.length ? list[0].id : null;
+        if (target) {
           const t = await chatApi.getThread(target);
           if (cancelled) return;
           setActiveId(t.id);
+          writeSelection(scope, t.id);
           if (t.model) setSelectedModel(t.model);
           hydrate(t);
         } else {
           setActiveId(null);
           setMessages([]);
+          setPendingSegments([]);
         }
       } catch (e) {
         if (!cancelled) setErr(String(e));
@@ -889,19 +970,67 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
+  // Liveness is SERVER state. The local `streaming` flag only knows about turns
+  // THIS tab attached to, so a turn running in another tab, on another device, or
+  // one whose socket died past its reconnect budget rendered as a completely idle
+  // chat while work was in flight. Poll the thread while idle and re-attach the
+  // moment the server says a turn is live: that restores both the truthful
+  // working indicator and the live segments, from any client.
+  useEffect(() => {
+    if (!activeId || streaming) return;
+    let cancelled = false;
+    const check = async () => {
+      if (cancelled || sseRef.current) return;
+      try {
+        const t = await chatApi.getThread(activeId);
+        if (cancelled || sseRef.current) return;
+        const last = t.messages[t.messages.length - 1];
+        if (last?.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
+          const startedMs = last.ts ? Date.parse(last.ts) : NaN;
+          turnStartRef.current = Number.isFinite(startedMs) ? startedMs : Date.now();
+          setErr(null);
+          setMessages(t.messages.slice(0, -1));
+          attachStreamRef.current(last.meta.turn_id, t.id, false);
+        }
+      } catch { /* transient — try again on the next tick */ }
+    };
+    const id = window.setInterval(check, 10_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [activeId, streaming]);
+
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight });
   }, []);
+  // The ONLY writer of atBottomRef. Anything else writing it (the render-driven
+  // effect below used to) destroys the position tracking and defeats every guard
+  // that depends on it.
   const onLogScroll = useCallback(() => {
     const el = scrollRef.current;
-    if (el) atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    atBottomRef.current = atBottom;
+    setShowJumpToLatest((v) => (atBottom ? false : v));
   }, []);
 
+  // Follow the conversation only while the operator is actually following it.
+  // This effect fires on every streamed token; unguarded (and re-asserting
+  // "we're at the bottom" as it used to) it hard-scrolled the log down on every
+  // token, so scrolling up to read an earlier message while a turn streamed was
+  // impossible. Leaving the bottom is not a trap: new content while scrolled up
+  // raises a jump-to-latest affordance instead of yanking the view.
   useEffect(() => {
-    scrollToBottom();
-    atBottomRef.current = true;
+    if (atBottomRef.current) scrollToBottom();
+    else if (streaming || pendingSegments.length > 0 || messages.length) setShowJumpToLatest(true);
   }, [messages, pendingSegments, queued, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
+
+  // Sending is an explicit intent to follow the conversation again, so it always
+  // returns to the bottom regardless of where the log was scrolled.
+  const followLatest = useCallback(() => {
+    atBottomRef.current = true;
+    setShowJumpToLatest(false);
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   // Keep the log pinned to the bottom when the composer is focused and the mobile
   // keyboard opens/closes (which resizes the visual viewport) or the textarea
@@ -954,11 +1083,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const t: Thread = await chatApi.getThread(id);
       setActiveId(t.id);
       setSelectedModel(t.model || "");
+      // Persist the choice: opening a chat is the operator saying "this is the
+      // one I'm in", and that has to outlive the component the same way the
+      // thread itself does.
+      writeSelection(scope, t.id);
       hydrate(t);
     } catch (e) {
       setErr(String(e));
     }
-  }, [hydrate]);
+  }, [hydrate, scope]);
 
   const newChat = useCallback(() => {
     sseRef.current?.close();
@@ -969,14 +1102,39 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setQueue([]);
     setErr(null);
     setSelectedModel("");
-  }, [setQueue]);
+    setCompactedThrough(0);
+    setCardStates({});
+    // Persist the intent so a reload / navigation lands on a blank new chat
+    // rather than silently re-adopting the most-recent thread.
+    writeSelection(scope, NEW_CHAT);
+  }, [setQueue, scope]);
 
   const stop = useCallback(() => {
     sseRef.current?.close();
     sseRef.current = null;
+    // Claim the finish so a pending drop handler can't re-attach behind us.
+    finishingRef.current = true;
     setStreaming(false);
-    // Stopped watching the current turn; run anything queued behind it.
-    dispatchNext();
+    setReconnecting(false);
+    // Reconcile BEFORE handing off to the next turn. Stopping used to drop
+    // straight into dispatchNext, and the next turn's attachStream then cleared
+    // pendingSegments — so everything the stopped turn had already done vanished
+    // from the transcript. Pull the server's copy first; if that fetch fails,
+    // fold what's on screen into the log locally rather than losing it.
+    const id = activeIdRef.current;
+    if (!id) { dispatchNext(); return; }
+    chatApi.getThread(id)
+      .then((t) => { setMessages(t.messages); setPendingSegments([]); })
+      .catch(() => {
+        const segs = pendingRef.current;
+        if (segs.length) {
+          setMessages((m) => [...m, {
+            role: "assistant", content: "", ts: new Date().toISOString(), meta: { segments: segs },
+          }]);
+        }
+        setPendingSegments([]);
+      })
+      .finally(() => dispatchNext());
   }, [dispatchNext]);
 
   const removeThread = useCallback(async (id: string) => {
@@ -1001,6 +1159,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         const t = await chatApi.createThread(scope);
         id = t.id;
         setActiveId(id);
+        // Put the new thread in the picker immediately and record it as the
+        // selection. Without this a chat you just started was unreachable the
+        // moment you navigated away: it wasn't in the local list, and nothing
+        // remembered you were in it.
+        setThreads((list) => (list.some((x) => x.id === t.id) ? list : [t, ...list]));
+        writeSelection(scope, t.id);
       }
       const r = await fetch(`/api/chat/threads/${id}/turns`, {
         method: "POST",
@@ -1020,21 +1184,60 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // can fire a queued turn without a render cycle.
   sendBuildRef.current = sendBuild;
 
+  // /compact — reclaim context now. A chat's context lives in TWO places and
+  // this has to reach both, which is why compacting one of them alone never
+  // visibly did anything:
+  //   1. the stored transcript, re-assembled whenever a fresh session starts →
+  //      folded server-side by POST /threads/:id/compact.
+  //   2. the live claude session, whose window is what actually fills up → only
+  //      the CLI's own /compact frees that, and it does so by running as a turn.
+  // Running (2) as a normal turn is deliberate: the fold then appears in the
+  // transcript with a reply, instead of being an invisible state change.
+  const compact = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) { setErr("Nothing to compact — this chat has no messages yet."); return; }
+    if (streaming) { setErr("Wait for the current turn to finish before compacting."); return; }
+    setErr(null);
+    setCompacting(true);
+    try {
+      const r = await chatApi.compactThread(id);
+      setCompactedThrough(r.compacted_through);
+      // The context meter is derived server-side from the compacted prompt, so
+      // re-read it rather than guessing at the new number.
+      setCtxNonce((n) => n + 1);
+      if (r.live_session) {
+        setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
+        void sendBuildRef.current("/compact");
+      } else if (r.folded === 0) {
+        setErr("Nothing to compact — the transcript is already short.");
+      }
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setCompacting(false);
+    }
+  }, [streaming]);
+
   // Submit a concrete string as a turn (used by send() and by slash passthrough).
   const submitText = useCallback((raw: string) => {
     const text = raw.trim();
     if (!text) return;
     setErr(null);
+    followLatest();
     // A turn is already streaming → queue this message; it sends when the current
     // turn finishes (a single conversation runs one turn at a time).
     if (streaming) {
       setQueue([...queuedRef.current, text]);
       return;
     }
+    // /compact is a Workshop action, not a message. Intercept it here as well as
+    // in the autocomplete, so typing it and hitting enter folds the transcript
+    // instead of sending the literal string "/compact" to the model.
+    if (text === "/compact") { void compact(); return; }
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
-  }, [streaming, sendBuild, setQueue]);
+  }, [streaming, sendBuild, setQueue, compact, followLatest]);
 
   // Composer text change. In voice mode, keep the engine's typing-hold aware of
   // whether the composer currently holds text (so it defers taking its turn).
@@ -1109,8 +1312,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (slug) navigate(`/projects/${encodeURIComponent(slug)}#deploys`);
         else navigate(`/deploys`);
       } },
+    // /compact is a Workshop action in EVERY mode, not a Claude Code passthrough:
+    // it folds this thread's transcript server-side via POST /threads/:id/compact.
+    { name: "compact", desc: "Summarize + compact the conversation to free up context", available: !compacting, kind: "local", run: () => void compact() },
     // Claude Code commands - forwarded to the agent's session (build agents only).
-    { name: "compact", desc: "Summarize + compact the conversation to free up context", available: build, kind: "passthrough" },
     { name: "context", desc: "Show what's currently in the context window", available: build, kind: "passthrough" },
     { name: "cost", desc: "Show token usage and plan limits", available: build, kind: "passthrough" },
     { name: "model", desc: "Show or switch the model", available: build, kind: "passthrough" },
@@ -1204,7 +1409,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <select
             className="chat-tb__select chat-tb__provider"
             value={activeProvider}
-            onChange={(e) => setActiveProvider(e.target.value)}
+            onChange={(e) => chooseProvider(e.target.value)}
             title="Which assistant to talk to"
             aria-label="Assistant"
           >
@@ -1245,6 +1450,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <span style={{ marginLeft: "var(--space-1)", fontSize: "var(--fs-xs)" }}>New chat</span>
         </button>
       )}
+      {/* Model select sits right beside the conversation picker - the two things
+          you actually change. Keeping them adjacent means the model never gets
+          pushed off the end of the row on a narrow (mobile) viewport. */}
+      {modelOptions.length > 1 && (
+        <>
+          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)", marginRight: "var(--space-1)" }}>Model:</span>
+          <select
+            className="chat-tb__select chat-tb__model"
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            title="Model for this conversation"
+            aria-label="Model"
+          >
+            {modelOptions.map((id) => (
+              <option key={id} value={id}>{modelLabel(id)}</option>
+            ))}
+          </select>
+        </>
+      )}
+      {modelOptions.length === 1 && (
+        <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>{modelLabel(modelOptions[0])}</span>
+      )}
+      {/* Spacer pushes the per-thread action buttons to the right on desktop; on
+          mobile the toolbar wraps and the actions flow onto the next line. */}
+      <span className="chat-tb__spacer" />
       {activeId && (
         <button className="chat-tb__btn" onClick={() => setConfirmDeleteId(activeId)} title="Delete chat" aria-label="Delete chat">
           <Trash2 size={16} aria-hidden />
@@ -1329,26 +1559,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           {openTaskCount > 0 && <span className="chat-tb__badge">{openTaskCount}</span>}
         </button>
       )}
-      <span className="chat-tb__spacer" />
-      {modelOptions.length > 1 && (
-        <>
-          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginRight: "var(--space-1)" }}>Model:</span>
-          <select
-            className="chat-tb__select chat-tb__model"
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            title="Model for this conversation"
-            aria-label="Model"
-          >
-            {modelOptions.map((id) => (
-              <option key={id} value={id}>{modelLabel(id)}</option>
-            ))}
-          </select>
-        </>
-      )}
-      {modelOptions.length === 1 && (
-        <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{modelLabel(modelOptions[0])}</span>
-      )}
       {variant !== "full" && !hideExpand && (
         <button className="chat-tb__btn" onClick={popOut} title="Open full screen" aria-label="Open full screen">
           <Maximize2 size={16} aria-hidden />
@@ -1394,10 +1604,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const threadCfg = modelDisplay(selectedModel);
 
   // Context passed to any in-chat ui-card: navigation, the current context key,
-  // the active thread id, and the rescope wrapper (Move-chat-into-project).
+  // the active thread id, the rescope wrapper (Move-chat-into-project), and the
+  // server-backed record of which cards have already been acted on.
+  const recordCardState = useCallback(
+    (key: string, state: { phase: string; note?: string | null; slug?: string | null; title?: string | null }) => {
+      setCardStates((prev) => ({ ...prev, [key]: state }));
+      const id = activeIdRef.current;
+      if (!id) return;
+      void chatApi.setCardState(id, key, state).catch(() => {
+        /* the local state still holds for this session; it re-syncs on the next action */
+      });
+    },
+    [],
+  );
   const cardCtx = useMemo<UiCardCtx>(
-    () => ({ navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread }),
-    [navigate, contextKey, activeId],
+    () => ({
+      navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread,
+      cardStates, recordCardState,
+    }),
+    [navigate, contextKey, activeId, cardStates, recordCardState],
   );
 
   const renderAssistant = (m: ChatMsg, isLatest: boolean) => {
@@ -1408,6 +1633,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }
     return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
   };
+
+  const jumpToLatest = showJumpToLatest ? (
+    <div className="chat-jump">
+      <Button size="sm" variant="ghost" onClick={followLatest}>
+        <ArrowDown size={14} aria-hidden /> Jump to latest
+      </Button>
+    </div>
+  ) : null;
 
   const log = (
     <div className="chat-log" ref={scrollRef} onScroll={onLogScroll}>
@@ -1426,13 +1659,33 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         </div>
       )}
       {messages.map((m, i) => (
-        <div key={i} className={`chat-msg ${m.role}`}>
+        <Fragment key={i}>
+        {/* The fold marker. Compaction never drops raw messages, so without this
+            divider a compacted thread looks identical to an uncompacted one and
+            the operator can't tell whether /compact did anything. */}
+        {compactedThrough > 0 && i === compactedThrough && (
+          <div className="chat-fold" role="separator">
+            <FoldVertical size={14} strokeWidth={1.8} aria-hidden />
+            <span>
+              {compactedThrough} earlier {compactedThrough === 1 ? "message" : "messages"} folded into the running summary
+            </span>
+          </div>
+        )}
+        <div className={`chat-msg ${m.role}`}>
           <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
             {m.role === "assistant" ? (
               <>
                 {m.meta?.timeout && (
                   <div className="chat-timeout-tag">
                     <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
+                  </div>
+                )}
+                {/* A step-exhausted turn usually HAS written an answer, so
+                    without this it reads as a turn that finished when it was
+                    actually cut off mid-task. */}
+                {m.meta?.stopped === "max_steps" && !m.meta?.timeout && (
+                  <div className="chat-timeout-tag">
+                    <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at its step limit, send "continue"
                   </div>
                 )}
                 {renderAssistant(m, idle && i === lastAssistantIdx)}
@@ -1445,6 +1698,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             <div key={j} className="chat-note">{n}</div>
           ))}
         </div>
+        </Fragment>
       ))}
       {(streaming || pendingSegments.length > 0) && (
         <div className="chat-msg assistant">
@@ -1558,7 +1812,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       .then((r) => { if (!cancelled) setServerCtx({ used: r.used_tokens, window: r.window_tokens }); })
       .catch(() => { /* keep the client estimate */ });
     return () => { cancelled = true; };
-  }, [activeId, messages.length, streaming]);
+  }, [activeId, messages.length, streaming, ctxNonce]);
   useEffect(() => { setServerCtx(null); }, [activeId]); // drop stale count on thread switch
 
   const ctx = useMemo(() => {
@@ -1814,6 +2068,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       )}
       {taskPanel}
       {log}
+      {jumpToLatest}
       {egressBanner}
       {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}

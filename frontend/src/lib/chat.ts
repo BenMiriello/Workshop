@@ -18,6 +18,10 @@ export type ChatMsg = {
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.
     timeout?: boolean;
+    // Any OTHER non-completion ending, currently "max_steps" (the turn ran out
+    // of agentic steps mid-task). A cut-off turn usually has produced text, so
+    // without this it renders exactly like a turn that finished.
+    stopped?: string;
     // Ordered text/tool segments (assistant turns). Absent on plain messages.
     segments?: ChatSegment[];
     // True while the turn is still streaming; turn_id lets a reload reconnect
@@ -47,6 +51,23 @@ export type ThreadSummary = {
   message_count: number;
   last_message: string;
   model?: string | null;
+  // How many leading messages the backend has folded into its running summary.
+  // Raw messages are never dropped, so this is the only way a client can tell a
+  // compacted thread from an uncompacted one — and the only way the fold marker
+  // survives a reload.
+  compacted_through?: number;
+  // Which in-chat cards have already been acted on, keyed by a digest of the
+  // card block. Without this a card that was filed and run came back on the next
+  // load looking exactly like one that had never been touched.
+  card_states?: Record<string, CardState>;
+};
+
+export type CardState = {
+  phase: string;              // "success" | "dismissed"
+  note?: string | null;
+  slug?: string | null;
+  title?: string | null;
+  ts?: string;
 };
 
 export type Thread = ThreadSummary & { messages: ChatMsg[] };
@@ -135,6 +156,27 @@ export const chatApi = {
 
   deleteThread: (id: string) =>
     fetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then(j<{ deleted: boolean }>),
+
+  // Fold the STORED transcript into the running summary (half of /compact — the
+  // half that shrinks what a fresh session re-reads). `live_session` reports
+  // whether this chat also has a live claude session whose window only the CLI's
+  // own /compact can reclaim; the caller sends that as a turn.
+  compactThread: (id: string) =>
+    fetch(`/api/chat/threads/${id}/compact`, { method: "POST" }).then(
+      j<{
+        folded: number; kept: number; before: number; summary: string;
+        compacted_through: number; live_session: boolean;
+      }>,
+    ),
+
+  // Record that an in-chat card has been acted on, so it stops offering an
+  // action already taken. Fire-and-forget from the caller's perspective.
+  setCardState: (id: string, key: string, state: CardState) =>
+    fetch(`/api/chat/threads/${id}/card-state`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key, ...state }),
+    }).then(j<{ card_states: Record<string, CardState> }>),
 
   sendMessage: (id: string, content: string, model?: string) =>
     fetch(`/api/chat/threads/${id}/messages`, {

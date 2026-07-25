@@ -53,6 +53,7 @@ AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", str(Path.home() / ".config" / "work
 TIER_HAIKU = "claude-haiku-4-5-20251001"
 TIER_SONNET = "claude-sonnet-4-6"
 TIER_OPUS = "claude-opus-4-8"
+TIER_OPUS_5 = "claude-opus-5"
 TIER_FABLE = "claude-fable-5"
 
 # Health thresholds

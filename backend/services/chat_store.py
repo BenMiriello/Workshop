@@ -433,12 +433,15 @@ def finalize_streaming_assistant(
     error: bool = False,
     timed_out: bool = False,
     notes: list[str] | None = None,
+    stopped: str | None = None,
 ) -> dict | None:
     """Mark the live turn complete (streaming=False) with its final segments.
     If the placeholder message is missing, append a finished one instead.
 
     `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
     the UI can render a calm "stopped — continue" note instead of a red error.
+    `stopped` names any OTHER non-completion ending ("max_steps"), so a turn that
+    was cut off mid-task is never rendered as a turn that finished.
     `notes` mirrors the blocking path's meta.notes (e.g. "Updated the plan" from
     an action provider) so a streamed action turn renders the same follow-ups."""
     thread = get_thread(thread_id)
@@ -451,6 +454,8 @@ def finalize_streaming_assistant(
             meta["error"] = True
         if timed_out:
             meta["timeout"] = True
+        if stopped:
+            meta["stopped"] = stopped
         if notes:
             meta["notes"] = notes
         return append_message(thread_id, "assistant", content, meta=meta or None)
@@ -462,6 +467,8 @@ def finalize_streaming_assistant(
         meta["error"] = True
     if timed_out:
         meta["timeout"] = True
+    if stopped:
+        meta["stopped"] = stopped
     if notes:
         meta["notes"] = notes
     save_thread(thread)
@@ -478,6 +485,53 @@ def set_thread_context_tokens(thread_id: str, tokens: int) -> dict | None:
     if thread is None:
         return None
     thread["context_tokens"] = max(0, int(tokens))
+    return _write(thread)
+
+
+def set_card_state(thread_id: str, key: str, state: dict) -> dict | None:
+    """Persist the outcome of acting on one in-chat ui-card, keyed by a digest of
+    the card block. Stored on the thread because it is a fact about this
+    conversation, and because the operator hitting "run" on one device should not
+    see that same card offering to run again on another."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    states = thread.setdefault("card_states", {})
+    states[str(key)[:128]] = {**state, "ts": _now_iso()}
+    return _write(thread)
+
+
+def ensure_thread_session(thread_id: str) -> tuple[str, bool] | None:
+    """Return (session_id, is_new) for this thread's persistent claude session.
+
+    Every chat is a conversation, so every chat gets ONE session that the CLI
+    carries across turns. Before this, only build-agent chats had a session and
+    every other chat re-spawned stateless: each turn re-derived what was going on
+    from a 24-message text transcript, so a chat mid-task visibly "started from
+    scratch" every time and repeated the discovery work it had already done.
+
+    is_new tells the caller whether this turn passes --session-id (mint) or
+    --resume (continue)."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    existing = thread.get("claude_session")
+    if existing:
+        return existing, False
+    sid = str(uuid.uuid4())
+    thread["claude_session"] = sid
+    _write(thread)
+    return sid, True
+
+
+def clear_thread_session(thread_id: str) -> dict | None:
+    """Detach the thread from its claude session so the next turn starts a fresh
+    one (and re-sends the assembled history, so nothing is forgotten). Used when
+    the session is gone from disk or a resume failed."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    thread.pop("claude_session", None)
     return _write(thread)
 
 

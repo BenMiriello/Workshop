@@ -44,6 +44,7 @@ def operator_name() -> str:
 from services import llm_router as _llm  # noqa: E402
 
 PICKABLE_MODELS: list[str] = [
+    _llm.TIER_OPUS_5,  # claude-opus-5
     _llm.TIER_OPUS,    # claude-opus-4-8
     _llm.TIER_FABLE,   # claude-fable-5
     _llm.TIER_SONNET,  # claude-sonnet-4-6
@@ -52,6 +53,7 @@ PICKABLE_MODELS: list[str] = [
 
 # Short tier-name aliases accepted from the API alongside the full ids.
 MODEL_ALIASES: dict[str, str] = {
+    "opus5": _llm.TIER_OPUS_5,
     "opus": _llm.TIER_OPUS,
     "fable": _llm.TIER_FABLE,
     "sonnet": _llm.TIER_SONNET,

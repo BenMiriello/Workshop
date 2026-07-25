@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { MessageSquare, ChevronDown } from "lucide-react";
 import Chat from "./Chat";
+import { useVisualViewport } from "../lib/useVisualViewport";
 
 // Floating chat surface. The collapsed state is an accent FAB; the expanded
 // state is a card-elevated panel hosting the unified Chat component.
@@ -23,6 +24,10 @@ type Props = {
 export default function ChatDock({ contextKey, title = "Assistant", placeholder, onAction, mode = "data" }: Props) {
   const [open, setOpen] = useState(false);
   const modeLabel = mode === "build" ? "Build" : "Data";
+  // The dock is a chat surface with a composer, so it needs the same visual-
+  // viewport measurement the focused chat has: without it the mobile keyboard
+  // overlays the composer and leaves a blank band where the dock used to be.
+  useVisualViewport(open);
 
   if (!open) {
     return (
@@ -39,7 +44,7 @@ export default function ChatDock({ contextKey, title = "Assistant", placeholder,
   }
 
   return (
-    <div className="ws-dock" style={{ height: "min(620px, calc(100dvh - 2.5rem))" }}>
+    <div className="ws-dock" style={{ height: "min(620px, calc(var(--app-vh, 100dvh) - 2.5rem))" }}>
       <div className="ws-dock__header" onClick={() => setOpen(false)} role="button" tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") setOpen(false);

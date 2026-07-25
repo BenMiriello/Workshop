@@ -470,17 +470,55 @@ function JobStatusCard({ spec, ctx }: { spec: UiCardSpec; ctx: UiCardCtx }) {
   );
 }
 
+// Stable identity for a card, derived from its own block. The card has no id of
+// its own, and its position in the transcript shifts as messages arrive, so the
+// content IS the identity: the same card block acted on once should stay acted
+// on. djb2 over the raw text, hex — short, stable, and collision-safe enough for
+// per-thread keys.
+function cardKey(raw: string): string {
+  let h = 5381;
+  for (let i = 0; i < raw.length; i++) h = ((h * 33) ^ raw.charCodeAt(i)) >>> 0;
+  return `c${h.toString(16)}${raw.length.toString(16)}`;
+}
+
 export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: string; ctx: UiCardCtx }) {
   const fields = useMemo(() => spec?.fields ?? [], [spec]);
+  const key = useMemo(() => cardKey(raw), [raw]);
+  // What the server says already happened to this card. This is what stops a
+  // filed-and-run proposal from coming back as an untouched one after a reload.
+  const recorded = ctx.cardStates?.[key];
   const [values, setValues] = useState<Record<string, string>>(() => {
     const seed: Record<string, string> = {};
     for (const f of fields) seed[f.name] = f.value ?? "";
+    if (recorded?.slug) seed.slug = recorded.slug;
     return seed;
   });
-  const [phase, setPhase] = useState<Phase>("edit");
-  const [success, setSuccess] = useState<SuccessInfo | null>(null);
+  const [phase, setPhase] = useState<Phase>(
+    recorded?.phase === "success" ? "success" : recorded?.phase === "dismissed" ? "dismissed" : "edit",
+  );
+  const [success, setSuccess] = useState<SuccessInfo | null>(
+    recorded?.phase === "success"
+      ? { slug: recorded.slug ?? undefined, title: recorded.title ?? undefined, note: recorded.note ?? undefined }
+      : null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // A card rendered before its thread's states arrived (or acted on in another
+  // tab) reconciles when the record shows up, rather than staying stale.
+  useEffect(() => {
+    if (!recorded) return;
+    if (recorded.phase === "success") {
+      setPhase("success");
+      setSuccess((s) => s ?? {
+        slug: recorded.slug ?? undefined,
+        title: recorded.title ?? undefined,
+        note: recorded.note ?? undefined,
+      });
+    } else if (recorded.phase === "dismissed") {
+      setPhase("dismissed");
+    }
+  }, [recorded]);
 
   const known = !!spec && KNOWN_KINDS.has(spec.kind);
   const setValue = (name: string, v: string) => setValues((prev) => ({ ...prev, [name]: v }));
@@ -498,8 +536,12 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
         if (result.values) setValues((prev) => ({ ...prev, ...result.values }));
         setSuccess({ slug: result.slug, title: result.title, note: result.note, actions: result.actions });
         setPhase("success");
+        ctx.recordCardState?.(key, {
+          phase: "success", slug: result.slug ?? null, title: result.title ?? null, note: result.note ?? null,
+        });
       } else if (result.status === "dismiss") {
         setPhase("dismissed");
+        ctx.recordCardState?.(key, { phase: "dismissed" });
       } else if (result.status === "error") {
         setError(result.message);
       }

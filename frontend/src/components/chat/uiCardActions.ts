@@ -83,6 +83,15 @@ export type UiCardCtx = {
   contextKey: string;
   threadId: string | null;
   rescopeThread: (id: string, contextKey: string) => Promise<unknown>;
+  // Server-backed record of which cards in this thread have already been acted
+  // on, and the writer for it. Cards are no longer stateless across a reload:
+  // one that was filed and run renders its outcome instead of offering the same
+  // buttons again (which is how the same work got queued twice).
+  cardStates?: Record<string, { phase: string; note?: string | null; slug?: string | null; title?: string | null }>;
+  recordCardState?: (
+    key: string,
+    state: { phase: string; note?: string | null; slug?: string | null; title?: string | null },
+  ) => void;
 };
 
 export type CardResult =
