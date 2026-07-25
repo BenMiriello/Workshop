@@ -537,10 +537,47 @@ export default function JobDetail() {
           </section>
         )}
 
-        {job.error && (
+        {/* Render this whenever the run FAILED, not only when it carried an error
+            string. A failed job with no detail used to render nothing at all,
+            which is how a run could report that it errored and then tell you
+            precisely nothing about it. Say what is known, say plainly when
+            nothing was captured, and give somewhere to go next: a failed run is
+            a dead end unless you can get back to what asked for it. */}
+        {(job.status === "failed" || job.error) && (
           <section>
             <SectionLabel>Error</SectionLabel>
-            <StateBlock variant="error" title="This job failed" hint={job.error} />
+            <StateBlock
+              variant="error"
+              title="This job failed"
+              hint={
+                <Stack gap="sm">
+                  <span>
+                    {job.error
+                      || "No reason was captured for this failure. The run ended without recording an error, so the evidence and timing below are all there is."}
+                  </span>
+                  <Row wrap style={{ gap: "var(--space-2)" }}>
+                    {job.chat_id && job.chat_context_key && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => nav(`/chat/${encodeURIComponent(job.chat_context_key!)}?thread=${encodeURIComponent(job.chat_id!)}`)}
+                      >
+                        <MessageSquare aria-hidden /> Follow up in the chat that started this
+                      </Button>
+                    )}
+                    {(job as { task_id?: string }).task_id && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => nav(`/work?ticket=${encodeURIComponent((job as { task_id?: string }).task_id!)}`)}
+                      >
+                        <ListChecks aria-hidden /> Open the ticket
+                      </Button>
+                    )}
+                  </Row>
+                </Stack>
+              }
+            />
           </section>
         )}
 

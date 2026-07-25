@@ -998,6 +998,38 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => { cancelled = true; window.clearInterval(id); };
   }, [activeId, streaming]);
 
+  // Re-sync with the server when the chat comes back to the foreground. The
+  // transcript can have moved on while this tab was hidden (a turn finished, or
+  // the same chat was used on another device), and showing a stale log as though
+  // it were current is the same "browser state does not reflect the backend"
+  // problem in a different place. Skipped while a turn is live (the stream owns
+  // the log) and while an unsent bubble is pending (it isn't on the server, and
+  // re-syncing would silently drop it along with its retry).
+  useEffect(() => {
+    if (!activeId) return;
+    let cancelled = false;
+    const resync = async () => {
+      if (cancelled || streaming || sseRef.current || document.hidden) return;
+      if (messagesRef.current.some((m) => m.meta?.unsent)) return;
+      try {
+        const t = await chatApi.getThread(activeId);
+        if (cancelled || streaming || sseRef.current) return;
+        if (messagesRef.current.some((m) => m.meta?.unsent)) return;
+        setCompactedThrough(Number(t.compacted_through) || 0);
+        setCardStates(t.card_states ?? {});
+        setMessages(t.messages || []);
+      } catch { /* leave what's on screen */ }
+    };
+    const onVis = () => { if (!document.hidden) void resync(); };
+    window.addEventListener("focus", resync);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", resync);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [activeId, streaming]);
+
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight });
@@ -1177,8 +1209,28 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     } catch (e) {
       setErr(String(e));
       setStreaming(false);
+      // The turn never started, so the server has no copy of this message. Mark
+      // the optimistic bubble instead of leaving it looking delivered: a bubble
+      // that silently isn't real is exactly what "my messages keep disappearing"
+      // felt like from the outside.
+      setMessages((m) => {
+        const i = m.length - 1;
+        if (i < 0 || m[i].role !== "user" || m[i].content !== text) return m;
+        const copy = m.slice();
+        copy[i] = { ...copy[i], meta: { ...copy[i].meta, unsent: true } };
+        return copy;
+      });
     }
   }, [activeId, scope, selectedModel, messages.length, attachStream]);
+
+  // Re-send a message that never reached the server (drops the marked bubble and
+  // runs it as a fresh turn).
+  const retryUnsent = useCallback((idx: number, text: string) => {
+    setMessages((m) => m.filter((_, i) => i !== idx));
+    setErr(null);
+    void sendBuildRef.current(text);
+    setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString() }]);
+  }, []);
 
   // Keep a ref to the latest sendBuild so dispatchNext (used inside attachStream)
   // can fire a queued turn without a render cycle.
@@ -1691,7 +1743,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
                 {renderAssistant(m, idle && i === lastAssistantIdx)}
               </>
             ) : (
-              <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+              <>
+                <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+                {m.meta?.unsent && (
+                  <div className="chat-unsent">
+                    <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
+                    <span>Not sent, this message never reached the server.</span>
+                    <Button size="sm" variant="ghost" onClick={() => retryUnsent(i, m.content)}>Retry</Button>
+                  </div>
+                )}
+              </>
             )}
           </div>
           {m.meta?.notes?.map((n, j) => (

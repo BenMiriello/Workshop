@@ -539,19 +539,25 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         await asyncio.sleep(0.15)
 
     turn.final_text = _content()
+    lost = False
     if proc is not None:
         rc = proc.returncode if proc.returncode is not None else -1
     else:
+        # Re-attach path (this backend did not spawn the process — it adopted the
+        # turn's journal after a restart). No result line and no live pid means
+        # the run is simply gone, which is a different thing from a crash and
+        # deserves to be named as one.
         rc = 0 if state["saw_result"] else -1
+        lost = not state["saw_result"]
     await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
                          context_tokens=int(state.get("last_ctx") or 0),
                          spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
-                         subtype=str(state.get("result_subtype") or ""))
+                         subtype=str(state.get("result_subtype") or ""), lost=lost)
 
 
 async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
                          context_tokens: int = 0, spend_tokens: int = 0,
-                         subtype: str = "") -> None:
+                         subtype: str = "", lost: bool = False) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 900))
@@ -600,6 +606,16 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         text = (
             "The turn finished without a closing message — the steps above are the "
             "result. Send a follow-up if you want a summary or the next change."
+        )
+        is_error = False
+    elif lost:
+        # The operator saw "ended unexpectedly (exit -1)" over and over without
+        # ever being told what it meant. This is that case, named: the backend
+        # was restarted while the turn was in flight and the run did not survive.
+        text = (
+            "This turn was lost when the backend restarted mid-run, so it never "
+            "reported back. Nothing it had written to disk is affected. Send "
+            "\"continue\" to pick the work back up."
         )
         is_error = False
     else:

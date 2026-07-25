@@ -22,6 +22,11 @@ export type ChatMsg = {
     // of agentic steps mid-task). A cut-off turn usually has produced text, so
     // without this it renders exactly like a turn that finished.
     stopped?: string;
+    // Client-only: this user message never reached the server, so it is NOT in
+    // the transcript on disk. Marked rather than silently left looking sent —
+    // an optimistic bubble that quietly isn't real is the "my messages keep
+    // disappearing" bug.
+    unsent?: boolean;
     // Ordered text/tool segments (assistant turns). Absent on plain messages.
     segments?: ChatSegment[];
     // True while the turn is still streaming; turn_id lets a reload reconnect

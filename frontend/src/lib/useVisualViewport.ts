@@ -43,9 +43,26 @@ export function useVisualViewport(active: boolean = true): void {
     };
 
     settle();
-    // Keep the page itself from scrolling behind the fixed shell.
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    // Keep the page itself from scrolling behind the fixed shell. `body {
+    // overflow: hidden }` alone does NOT stop iOS from scrolling the *layout*
+    // viewport to reveal a focused input, and that scroll is what opens the
+    // blank band below the shell. Pin both elements, and paint them with the app
+    // background so any residual gap reads as the app rather than as a white
+    // chin. The previous values are restored on cleanup.
+    const body = document.body.style;
+    const html = document.documentElement.style;
+    const prev = {
+      bodyOverflow: body.overflow, bodyPosition: body.position, bodyWidth: body.width,
+      bodyHeight: body.height, bodyBg: body.background,
+      htmlOverflow: html.overflow, htmlBg: html.background,
+    };
+    body.overflow = "hidden";
+    body.position = "fixed";
+    body.width = "100%";
+    body.height = "100%";
+    body.background = "var(--bg)";
+    html.overflow = "hidden";
+    html.background = "var(--bg)";
     vv?.addEventListener("resize", settle);
     vv?.addEventListener("scroll", set);
     window.addEventListener("resize", settle);
@@ -62,7 +79,13 @@ export function useVisualViewport(active: boolean = true): void {
       window.removeEventListener("orientationchange", settle);
       window.removeEventListener("focusin", settle);
       window.removeEventListener("focusout", settle);
-      document.body.style.overflow = prevOverflow;
+      body.overflow = prev.bodyOverflow;
+      body.position = prev.bodyPosition;
+      body.width = prev.bodyWidth;
+      body.height = prev.bodyHeight;
+      body.background = prev.bodyBg;
+      html.overflow = prev.htmlOverflow;
+      html.background = prev.htmlBg;
       root.removeProperty("--app-vh");
       root.removeProperty("--app-top");
     };

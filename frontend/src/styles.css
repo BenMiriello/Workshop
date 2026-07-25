@@ -602,6 +602,13 @@ input[type="range"].grad::-moz-range-thumb {
   border-top: 1px dashed var(--border); padding-top: var(--space-2);
 }
 
+/* A user message that never reached the server. It stays in the log (losing it
+   is the bug) but must not look delivered. */
+.chat-unsent {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-top: 0.35rem; font-size: 0.72rem; color: var(--warn-solid);
+}
+
 /* Jump-to-latest: shown only when new content arrives while scrolled up, so
    leaving the bottom of the log is not a trap. */
 .chat-jump {
