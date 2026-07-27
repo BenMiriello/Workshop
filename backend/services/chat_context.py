@@ -647,7 +647,12 @@ def ambient_digest(provider: "ContextProvider") -> str:
 
 class ContextProvider:
     key = "general"
-    label = "Clawd"
+    # Named for its SCOPE, not as a character. This entry is the workshop-scope
+    # chat, which is what the Chats page and the task scope labels have always
+    # called it; the picker calling the same thing "Clawd" was the app
+    # disagreeing with itself. Agents are participants in a chat (entity model
+    # 2026-07-18), so the top-level chat is a place, not a persona.
+    label = "Workshop"
     # Per-provider tool policy for the chat surface.
     #   allowed_tools : list of MCP tool names ("mcp__plaid__search_transactions")
     #                   the model may call. Empty = tools fully off (single-turn
@@ -680,7 +685,7 @@ class ContextProvider:
 
     def persona(self) -> str:
         return (
-            "You are Clawd, the operator's personal assistant and work orchestrator "
+            "You are the operator's personal assistant and work orchestrator "
             "inside the Workshop app. "
             f"The operator is {operator_name()} — a senior engineer who dislikes padding. Be direct "
             "and brief. Use short paragraphs or tight bullet lists. No emojis.\n\n"

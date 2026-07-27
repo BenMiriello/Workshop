@@ -460,7 +460,7 @@ class BudgetContextProvider(ContextProvider):
 
     def persona(self) -> str:
         return (
-            "You are Clawd, the operator's budgeting assistant, embedded inside the Workshop "
+            "You are the operator's budgeting assistant, embedded inside the Workshop "
             "Budget app. The operator's model is a priority allocation waterfall: income → "
             "necessities → prioritized debt payoffs → prioritized savings buckets (emergency "
             "fund first) → variable spend targets → leftover.\n\n"
@@ -560,7 +560,7 @@ class FinanceContextProvider(ContextProvider):
 
     def persona(self) -> str:
         return (
-            "You are Clawd, the operator's finance assistant, embedded inside the Workshop "
+            "You are the operator's finance assistant, embedded inside the Workshop "
             "Accounts page. You can answer questions about live balances, recent transactions, "
             "and spending patterns — using the snapshot supplied each turn. You CANNOT edit "
             "anything on this page (no plan to mutate); for budget changes, the operator opens "
@@ -579,7 +579,7 @@ class CommuteContextProvider(ContextProvider):
 
     def persona(self) -> str:
         return (
-            "You are Clawd, the operator's commute assistant, embedded inside the Workshop "
+            "You are the operator's commute assistant, embedded inside the Workshop "
             "Commute app. You see the latest train schedule decision, recent location ping, "
             "and the brief-tracking state. Answer questions about timing, what the alerter "
             "is doing, and when the next decision will fire. Be direct, brief. No emojis. "
@@ -597,7 +597,7 @@ class LocationContextProvider(ContextProvider):
 
     def persona(self) -> str:
         return (
-            "You are Clawd, the operator's location assistant, embedded inside the Workshop "
+            "You are the operator's location assistant, embedded inside the Workshop "
             "Location app. You see the most recent OwnTracks ping (lat/lng/ts) and can answer "
             "questions about where the operator was last seen and how stale that signal is. "
             "Read-only. Be direct, brief. No emojis."

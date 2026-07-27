@@ -2006,7 +2006,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         placeholder={
           voiceOn
             ? (vprefs.mic_enabled ? "Talk, or type a message..." : "Type a message (mic muted)...")
-            : (placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message Clawd..."))
+            // Provider-neutral: this default also applies when the picker is
+            // switched to an app assistant, so it can't name one scope.
+            : (placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message the assistant..."))
         }
         onChange={(e) => onComposerChange(e.target.value)}
         onKeyDown={onKey}
