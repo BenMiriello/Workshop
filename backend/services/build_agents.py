@@ -226,8 +226,31 @@ def mark_idle(slug: str) -> None:
         _save(data)
 
 
-def slugs() -> list[str]:
-    return list((_load().get("build_agents") or {}).keys())
+def slugs(include_retired: bool = False) -> list[str]:
+    """Registered agent slugs. Retired agents are excluded by default: `retire()`
+    was supposed to take an agent out of circulation, but every caller listed all
+    slugs regardless, so a retired agent went on cluttering the chat picker
+    forever and retiring achieved nothing visible."""
+    agents = _load().get("build_agents") or {}
+    if include_retired:
+        return list(agents.keys())
+    return [s for s, a in agents.items() if a.get("state") != "retired"]
+
+
+def delete_agent(slug: str) -> bool:
+    """Drop an agent from the registry entirely. Distinct from `retire()`, which
+    keeps the record: this is for agents that should leave no trace (test and
+    probe stubs). Returns False if it was not registered.
+
+    Does NOT touch the agent's working tree or its claude session on disk; those
+    are owned by the filesystem and pruned separately."""
+    data = _load()
+    agents = data.get("build_agents") or {}
+    if slug not in agents:
+        return False
+    del agents[slug]
+    _save(data)
+    return True
 
 
 def ensure_session_id(slug: str) -> tuple[str, bool]:
