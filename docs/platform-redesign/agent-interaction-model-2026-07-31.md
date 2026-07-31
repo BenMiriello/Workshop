@@ -485,7 +485,21 @@ builder" modal, its slug generator, and the `/api/agents/build` fetch that fed
 it are deleted. `mentionable` / `delegatable` added to the agent record, both
 defaulting False, read/write through the registry and the API.
 
-**P3-P6 — not started.** Mention routing, the inbox, the session rename, and
-the memory layers remain. They are specified above and independent of each
-other after P2. P3 is the next one: it consumes `mentionable`, which P2 just
-made available.
+**P3 — done** (`33016f6`). `services/mentions.py` owns the routing policy:
+first-tag-wins (D2), opt-in via `mentionable` (D1), scope-bounded (D5), and
+never-fails (an unresolvable `@word` is text). A mention turn runs AS the agent
+— its definition as persona, its scope's tree as cwd, tools only for a maker —
+and is stateless per mention, because a resumable session per (agent, chat)
+pair would create a second invisible conversation beside the visible one.
+`speaker` threads through `start_turn` to `meta.agent` on both the streaming
+placeholder and the finalized message, so replies are attributed while they
+stream. UI: `@` picker mirroring the slash menu, byline on agent replies, and
+`mentionable`/`delegatable` editable and stated on the agent page.
+`memory-keeper` is the first mentionable agent.
+
+Not in P3, deliberately, and owed to D3: the assistant is not yet told that an
+agent answered. It does not reply to the mention (the turn never reaches it),
+but it also cannot see the exchange as context. That is open question 5 and
+lands with P4.
+
+**P4-P6 — not started.** Inbox, session rename, memory layers.
