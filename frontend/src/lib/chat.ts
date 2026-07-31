@@ -22,6 +22,10 @@ export type ChatMsg = {
     // "max_steps" value is gone with the step cap — but the field stays so an
     // older transcript on disk still parses.
     stopped?: string;
+    // The AGENT that produced this reply, when the turn was addressed to one by
+    // @mention. Absent on ordinary assistant replies, which is what makes the
+    // assistant the unmarked default and an agent reply visibly someone else's.
+    agent?: string;
     // Client-only: this user message never reached the server, so it is NOT in
     // the transcript on disk. Marked rather than silently left looking sent —
     // an optimistic bubble that quietly isn't real is the "my messages keep

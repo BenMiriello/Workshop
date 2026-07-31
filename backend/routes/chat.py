@@ -1218,6 +1218,94 @@ class StartTurnIn(BaseModel):
     model: str | None = None
 
 
+async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
+                                    content: str, model: str):
+    """Run one turn AS the mentioned agent, inside the chat.
+
+    The agent answers with its own definition, its own memory scope and its own
+    workspace — it is the agent talking, not the assistant doing an impression of
+    it. Deliberately stateless per mention: an agent joins a conversation to
+    answer a question, and carrying a resumable session per (agent, chat) pair
+    would quietly create a second, invisible conversation alongside this one.
+    What it needs from the chat, it is given here.
+
+    The reply is stamped with `meta.agent` so the transcript can attribute it,
+    which is the whole point: an unattributed agent reply is indistinguishable
+    from the assistant and the operator would have no idea who answered.
+    """
+    from services import agents_registry, mentions as _mentions
+
+    slug = agent["slug"]
+    rec = agents_registry.get(slug) or {}
+    kscope = knowledge.scope_for_context(thread.get("context_key") or "general")
+
+    # The agent's workspace. A project agent works in its project tree; anything
+    # else answers from the chat cwd. This is the "own little bubble" bound —
+    # narrow now, and the place a per-session worktree slots in later.
+    cwd = str(task_scope.root_for_context(agent["scope"]) or
+              os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~")))
+
+    # Strip the mention token from what the agent reads. It is addressing
+    # information, not part of the question, and leaving it in reliably produces
+    # replies that open by explaining who they are.
+    _slug, start, end = _mentions.find_first(content)
+    question = (content[:start] + content[end:]).strip() if start >= 0 else content
+
+    # Recent conversation, so the agent can answer a question that refers to what
+    # was just said instead of asking the operator to repeat themselves.
+    recent = []
+    for m in (thread.get("messages") or [])[-8:]:
+        body = (m.get("content") or "").strip()
+        if not body:
+            continue
+        who = "Operator" if m.get("role") == "user" else ((m.get("meta") or {}).get("agent") or "Assistant")
+        recent.append(f"{who}: {body[:1500]}")
+    convo = "\n\n".join(recent[:-1]) if len(recent) > 1 else ""
+
+    definition = (rec.get("definition") or "").strip()
+    role = rec.get("role") or "agent"
+    parts = [
+        f"You are {agent['name']} ({slug}), a {role} agent in the operator's Workshop.",
+        f"Your scope is {agent['scope']}. You are answering INSIDE a chat, because "
+        f"the operator addressed you directly with @{slug}.",
+        "Answer as yourself, briefly and directly. Do not greet, do not introduce "
+        "yourself, and do not restate the question. If it is outside what you do, "
+        "say so in one line and name who or what would handle it.",
+    ]
+    if definition:
+        parts.append("=== YOUR DEFINITION ===\n" + definition)
+    if convo:
+        parts.append("=== RECENT CONVERSATION (context; do not reply to it) ===\n" + convo)
+    parts.append("=== THE OPERATOR ASKS YOU ===\n" + (question or content))
+    prompt = "\n\n".join(parts)
+
+    turn = await build_streaming.start_turn(
+        thread_id=thread_id, agent_slug=slug, prompt=prompt, model=model,
+        cwd=cwd, session_id=None, resume=False, timeout_s=CHAT_TIMEOUT_S,
+        allowed_tools=None if role == "maker" else [],
+        mcp_servers=[], tools_disabled=(role != "maker"),
+        speaker=slug,
+    )
+    _ = kscope  # scope resolution is carried by cwd; kept for the memory phase
+    return turn
+
+
+@router.get("/threads/{thread_id}/mentionable")
+async def list_mentionable(thread_id: str):
+    """Agents this chat may @-mention, in picker order.
+
+    Server-resolved because the rule is a policy, not a display preference: an
+    agent is addressable only if it opted in (`mentionable`) AND this chat's
+    scope reaches it. Computing that on the client would put the policy in two
+    places and let them disagree."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    from services import mentions as _mentions
+    scope = knowledge.scope_for_context(t.get("context_key") or "general")
+    return {"scope": scope, "agents": _mentions.mentionable_agents(scope)}
+
+
 @router.post("/threads/{thread_id}/turns")
 async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     t = chat_store.get_thread(thread_id)
@@ -1236,6 +1324,19 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         chat_store.set_thread_model(thread_id, model)
 
     chat_store.append_message(thread_id, "user", content)
+
+    # ---- @mention: this message is addressed to an AGENT, not the assistant ----
+    # The agent answers in the chat, attributed to it, and the ordinary assistant
+    # stays out of it. Resolution is scope-bounded and opt-in (services/mentions);
+    # anything that does not resolve is ordinary text and falls through, so an
+    # email address or a stray "@" can never fail a message.
+    from services import mentions as _mentions
+    _chat_scope = knowledge.scope_for_context(t.get("context_key") or "general")
+    _mentioned = _mentions.resolve(content, _chat_scope)
+    if _mentioned is not None:
+        turn = await _start_agent_mention_turn(
+            thread_id=thread_id, thread=t, agent=_mentioned, content=content, model=model)
+        return {"turn_id": turn.id}
 
     # ---- Build-agent providers: the persistent Claude Code session path --------
     if isinstance(provider, chat_context.BuildAgentContextProvider):

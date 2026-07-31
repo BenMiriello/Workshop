@@ -50,6 +50,8 @@ type AgentDetailData = UnifiedAgent & {
   role?: string | null;
   latitude?: string | null;
   autonomy_mode?: "reactive" | "supervised" | "autonomous";
+  mentionable?: boolean;
+  delegatable?: boolean;
   linked_ticket_ids?: string[];
   linked_run_ids?: string[];
   linked_chat_ids?: string[];
@@ -531,6 +533,8 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   const [dName, setDName] = useState("");
   const [dPurpose, setDPurpose] = useState("");
   const [dBody, setDBody] = useState("");
+  const [dMentionable, setDMentionable] = useState(false);
+  const [dDelegatable, setDDelegatable] = useState(false);
   const [dTriggers, setDTriggers] = useState<Trigger[]>([]);
   const [dLimits, setDLimits] = useState<Limits>({});
 
@@ -613,6 +617,8 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     setDBody(agent.runtime === "assistant" ? personaValue : agent.definition || "");
     setDTriggers((agent.triggers || []).map((t) => ({ ...t })));
     setDLimits(agent.limits || { max_iterations: 20, budget: { max_wall_s: 3000 } });
+    setDMentionable(!!agent.mentionable);
+    setDDelegatable(!!agent.delegatable);
     setEditing(true);
     setFlash(false);
   };
@@ -630,6 +636,8 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           purpose: dPurpose,
           triggers: dTriggers,
           limits: dLimits,
+          mentionable: dMentionable,
+          delegatable: dDelegatable,
           definition: dBody,
         }),
       });
@@ -753,6 +761,23 @@ function ExistingAgent({ agentId }: { agentId: string }) {
               <Field label="Purpose" htmlFor="ad-purpose">
                 <Input id="ad-purpose" value={dPurpose} onChange={(e) => setDPurpose(e.target.value)} />
               </Field>
+              <Field
+                label="Interaction"
+                help="Both are off by default. Most agents are triggered workers that report through their runs and belong in neither list."
+              >
+                <Stack gap="sm">
+                  <Checkbox
+                    checked={dMentionable}
+                    onChange={setDMentionable}
+                    label={`Mentionable — can be @${agent.slug}'d in a chat and answers inline`}
+                  />
+                  <Checkbox
+                    checked={dDelegatable}
+                    onChange={setDDelegatable}
+                    label="Delegatable — can be handed a ticket to work"
+                  />
+                </Stack>
+              </Field>
               <Field label="Definition body" htmlFor="ad-body" help={isBuilder ? "Instructions the Claude Code session runs under." : "Persona / behavior for this agent."}>
                 <Textarea id="ad-body" className="ws-mono" value={dBody} onChange={(e) => setDBody(e.target.value)} rows={12} />
               </Field>
@@ -765,6 +790,14 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                 {isBuilder ? "Claude Code agent" : "Assistant agent"}
                 {agent.memory ? ` · memory: ${agent.memory}` : ""}
               </p>
+              <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-2)" }}>
+                {agent.mentionable
+                  ? <Tag hue={catFor("mentionable")}>@-mentionable</Tag>
+                  : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>not mentionable</span>}
+                {agent.delegatable
+                  ? <Tag hue={catFor("delegatable")}>delegatable</Tag>
+                  : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>not delegatable</span>}
+              </Row>
               <pre style={{
                 marginTop: "var(--space-3)", padding: "var(--space-3)",
                 background: "var(--bg-inset)", borderRadius: "var(--radius-sm)",

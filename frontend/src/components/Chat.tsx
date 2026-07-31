@@ -4,7 +4,7 @@ import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
-  UserPlus, FoldVertical, ArrowDown, MoreVertical, ChevronDown, MessagesSquare,
+  UserPlus, FoldVertical, ArrowDown, MoreVertical, ChevronDown, MessagesSquare, Bot,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator } from "../ui";
 import { scopeLabel } from "../lib/tasks";
@@ -579,7 +579,23 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setSpawning(false);
     }
   }, [activeId, spawning]);
+  // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
+  // scope reach, which is policy, not display), refreshed when the thread moves.
+  const [mentionable, setMentionable] = useState<
+    { slug: string; name: string; role: string | null; purpose: string; local: boolean }[]
+  >([]);
+  useEffect(() => {
+    if (!activeId) { setMentionable([]); return; }
+    let cancelled = false;
+    fetch(`/api/chat/threads/${encodeURIComponent(activeId)}/mentionable`)
+      .then((r) => (r.ok ? r.json() : { agents: [] }))
+      .then((j) => { if (!cancelled) setMentionable(j.agents || []); })
+      .catch(() => { if (!cancelled) setMentionable([]); });
+    return () => { cancelled = true; };
+  }, [activeId]);
+
   const [slashSel, setSlashSel] = useState(0);
+  const [mentionSel, setMentionSel] = useState(0);
   // The slash BUTTON opens the command list as a menu. It is deliberately
   // separate from "the operator is typing a /command": the button used to work
   // by writing "/" into the composer, which meant tapping it destroyed whatever
@@ -1625,6 +1641,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [input, submitText, voiceOn, vsession, setInput]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // The mention picker owns the same keys as the slash menu while it is open,
+    // and is checked first: typing "@" is a narrower, more recent intent than a
+    // "/" that may be sitting at the start of the line from earlier.
+    if (showMentions) {
+      const sel = Math.min(mentionSel, mentionMatches.length - 1);
+      if (e.key === "ArrowDown") { e.preventDefault(); setMentionSel((i) => Math.min(i + 1, mentionMatches.length - 1)); return; }
+      if (e.key === "ArrowUp") { e.preventDefault(); setMentionSel((i) => Math.max(i - 1, 0)); return; }
+      if (e.key === "Escape") { e.preventDefault(); setMentionSel(0); setInput(input.replace(/@[a-z0-9-]*$/, "")); return; }
+      if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); pickMention(mentionMatches[sel].slug); return; }
+    }
     // Slash-command menu owns the arrow/enter/tab/escape keys while it's open.
     if (showSlash) {
       const sel = Math.min(slashSel, slashMatches.length - 1);
@@ -1703,6 +1729,27 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       ? slashCommands.filter((c) => c.available)
       : [];
   const showSlash = (slashTyped || slashOpen) && slashMatches.length > 0;
+
+  // The @-mention being typed: the last "@word" run at the very end of the
+  // composer. Anchored to the end so editing earlier in a message never
+  // re-opens the picker, and only ONE mention is offered because only the
+  // first tag in a message is ever parsed server-side (addressing two agents
+  // in one breath has no coherent meaning).
+  const mentionMatch = /(?:^|\s)@([a-z0-9-]*)$/.exec(input);
+  const alreadyMentioned = /(?:^|\s)@[a-z][a-z0-9-]*\s/.test(input);
+  const mentionQuery = mentionMatch && !alreadyMentioned ? mentionMatch[1] : null;
+  const mentionMatches = mentionQuery === null
+    ? []
+    : mentionable.filter((a) => a.slug.startsWith(mentionQuery) || a.name.toLowerCase().startsWith(mentionQuery));
+  const showMentions = mentionQuery !== null && mentionMatches.length > 0;
+  const pickMention = (slug: string) => {
+    // Replace the partial token in place; everything the operator typed around
+    // it is preserved, and the trailing space means the next keystroke is the
+    // message rather than more of the name.
+    setInput(input.replace(/@[a-z0-9-]*$/, `@${slug} `));
+    setMentionSel(0);
+    inputRef.current?.focus();
+  };
   const runSlash = (c: SlashCommand) => {
     // Only clear the composer when its contents WERE the command being typed.
     // Picking from the button-opened menu leaves your draft exactly as it was.
@@ -2129,6 +2176,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
             {m.role === "assistant" ? (
               <>
+                {/* Attribution. A reply from a mentioned agent is NOT the
+                    assistant's, and without a byline the operator has no way to
+                    tell who answered — which is the whole point of addressing
+                    one. Only agent replies carry it; the assistant is the
+                    unmarked default because it is the overwhelming majority. */}
+                {m.meta?.agent && (
+                  <div className="chat-byline">
+                    <Bot size={13} strokeWidth={1.8} aria-hidden />
+                    <span>{m.meta.agent}</span>
+                  </div>
+                )}
                 {m.meta?.timeout && (
                   <div className="chat-timeout-tag">
                     <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
@@ -2338,6 +2396,29 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const composer = (
     <div ref={composerRef} className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
+      {showMentions && (
+        <ul className="chat-slash-menu" role="listbox" aria-label="Agents you can mention">
+          {mentionMatches.map((a, i) => {
+            const active = i === Math.min(mentionSel, mentionMatches.length - 1);
+            return (
+              <li
+                key={a.slug}
+                role="option"
+                aria-selected={active}
+                className={`chat-slash-item${active ? " is-active" : ""}`}
+                onMouseEnter={() => setMentionSel(i)}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => pickMention(a.slug)}
+              >
+                <span className="chat-slash-name">@{a.slug}</span>
+                <span className="chat-slash-desc">
+                  {a.role ? `${a.role} · ` : ""}{a.purpose || a.name}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       {showSlash && (
         <ul className="chat-slash-menu" role="listbox" aria-label="Slash commands">
           {slashMatches.map((c, i) => {

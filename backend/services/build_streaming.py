@@ -400,7 +400,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      timeout_s: float = 900,
                      allowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
-                     tools_disabled: bool = False) -> Turn:
+                     tools_disabled: bool = False,
+                     speaker: str | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -412,7 +413,12 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         data/assistant path. No cwd write-build without a real project.
       - tools_disabled: pure text (ENABLE_CHAT_TOOLS off).
     A None session_id spawns stateless (no --session-id/--resume), so a general
-    or project chat streams without a persistent Claude Code session."""
+    or project chat streams without a persistent Claude Code session.
+
+    `speaker` names the AGENT answering, when the turn was addressed to one by
+    @mention. It rides through to the stored message as `meta.agent` so the
+    transcript can attribute the reply. Absent (the normal case) the reply is
+    the assistant's and needs no attribution."""
     turn = _make_turn(thread_id, agent_slug)
     try:
         owner_id = ownership.current_owner()
@@ -421,6 +427,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     meta = {
         "turn_id": turn.id, "thread_id": thread_id, "agent_slug": agent_slug,
         "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
+        "speaker": speaker,
         "owner_id": owner_id, "prompt": prompt,
         "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
         "allowed_tools": allowed_tools, "mcp_servers": mcp_servers,
@@ -468,7 +475,8 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     # Persist an empty assistant placeholder bound to this turn. As the turn
     # streams we update its segments; a reload sees partial content + reconnects.
     try:
-        chat_store.append_streaming_assistant(turn.thread_id, turn.id, model=meta["model"])
+        chat_store.append_streaming_assistant(
+            turn.thread_id, turn.id, model=meta["model"], agent=meta.get("speaker"))
     except Exception as e:  # pragma: no cover — defensive
         log.warning("turn %s: could not seed streaming message: %s", turn.id, e)
 
@@ -789,6 +797,7 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         chat_store.finalize_streaming_assistant(
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes,
+            agent=meta.get("speaker"),
         )
     except Exception as e:
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)

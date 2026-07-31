@@ -417,14 +417,21 @@ def _find_by_turn(thread: dict, turn_id: str) -> dict | None:
     return None
 
 
-def append_streaming_assistant(thread_id: str, turn_id: str, model: str | None = None) -> dict:
-    """Append an empty assistant message marked as the live turn `turn_id`."""
+def append_streaming_assistant(thread_id: str, turn_id: str, model: str | None = None,
+                               agent: str | None = None) -> dict:
+    """Append an empty assistant message marked as the live turn `turn_id`.
+
+    `agent` names the agent answering when the turn came from an @mention. It is
+    stamped on the PLACEHOLDER as well as the finalized message so the reply is
+    attributed while it streams, not only once it lands."""
     thread = get_thread(thread_id)
     if thread is None:
         raise KeyError(thread_id)
     meta = {"streaming": True, "turn_id": turn_id, "segments": []}
     if model:
         meta["model"] = model
+    if agent:
+        meta["agent"] = agent
     msg = {
         "role": "assistant",
         "content": "",
@@ -464,6 +471,7 @@ def finalize_streaming_assistant(
     timed_out: bool = False,
     notes: list[str] | None = None,
     stopped: str | None = None,
+    agent: str | None = None,
 ) -> dict | None:
     """Mark the live turn complete (streaming=False) with its final segments.
     If the placeholder message is missing, append a finished one instead.
@@ -488,6 +496,8 @@ def finalize_streaming_assistant(
             meta["stopped"] = stopped
         if notes:
             meta["notes"] = notes
+        if agent:
+            meta["agent"] = agent
         return append_message(thread_id, "assistant", content, meta=meta or None)
     m["content"] = content
     meta = m.setdefault("meta", {})
@@ -501,6 +511,8 @@ def finalize_streaming_assistant(
         meta["stopped"] = stopped
     if notes:
         meta["notes"] = notes
+    if agent:
+        meta["agent"] = agent
     save_thread(thread)
     return m
 

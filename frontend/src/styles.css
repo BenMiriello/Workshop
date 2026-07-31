@@ -1094,3 +1094,14 @@ input[type="range"].grad::-moz-range-thumb {
 .atlas-legend-row:hover { background: var(--card-hover); }
 
 .atlas-point-card { margin-top: .8rem; padding: .7rem .8rem; }
+
+/* Byline over an agent's reply (@mention). Reads as attribution, not as a
+   status: same weight and hue as the other in-bubble meta rows, sitting above
+   the content the way a speaker label does. No border and no chip — who is
+   talking is hierarchy, carried by position and color. */
+.chat-byline {
+  display: flex; align-items: center; gap: 0.3rem;
+  margin-bottom: 0.35rem;
+  color: var(--muted); font-size: var(--fs-xs);
+}
+.chat-byline span { font-weight: 600; letter-spacing: 0.01em; }
