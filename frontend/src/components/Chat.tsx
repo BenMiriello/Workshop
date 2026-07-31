@@ -1,16 +1,25 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
-  WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
+  Plus, Trash2, CornerDownLeft, Square, Maximize2, ChevronLeft,
+  WifiOff, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff,
   FoldVertical, ArrowDown, Bell, MoreVertical, ChevronDown, MessagesSquare, Bot,
 } from "lucide-react";
-import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator } from "../ui";
+import { ConfirmDialog, StateBlock, Button, Menu, MenuItem, MenuSeparator } from "../ui";
 import { scopeLabel } from "../lib/tasks";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
 import TicketDraftsDialog from "./chat/TicketDraftsDialog";
+import { AssistantTurn, AnswerBody, ElidedContent } from "./chat/Transcript";
+import { NoticeBar, type ChatNotice } from "./chat/ChatNotice";
+import {
+  deriveMode, buildSlug, projectSlugFor, taskScopeFor, formatElapsed,
+  estimateContextTokens, isEgressFailure,
+  type ChatMode, type ChatVariant,
+} from "./chat/chatScope";
+import { orderModels, modelLabel, modelDisplay, contextWindowFor, MODEL_LABELS } from "./chat/models";
+import { useMessageQueue } from "./chat/useMessageQueue";
 import {
   chatApi,
   type ChatMsg,
@@ -24,12 +33,10 @@ import {
 import { useDraft } from "../lib/draftSync";
 import {
   NEW_CHAT, readSelection, writeSelection, readProvider, writeProvider,
-  readQueue, writeQueue,
 } from "../lib/chatSelection";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { unlockAudio, MIC_FAIL_TEXT } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
-import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
 
 // Unified Chat component. Replaces ChatPanel + BuildChatPanel.
@@ -48,8 +55,9 @@ import { type UiCardCtx } from "./chat/uiCardActions";
 // turn is streaming. Assistant turns render as ordered text/tool segments that
 // survive a reload and reconnect to the live stream.
 
-export type ChatMode = "data" | "build";
-export type ChatVariant = "dock" | "panel" | "full";
+// Re-exported: these describe a chat, and callers have always imported them from
+// here. Their definitions now live with the other contextKey derivations.
+export type { ChatMode, ChatVariant };
 
 export type ChatProps = {
   contextKey: string;
@@ -66,339 +74,6 @@ export type ChatProps = {
   // link) instead of the most-recent one for this scope.
   initialThreadId?: string;
 };
-
-function deriveMode(contextKey: string): ChatMode {
-  return contextKey.startsWith("build:") ? "build" : "data";
-}
-
-function buildSlug(contextKey: string): string | null {
-  return contextKey.startsWith("build:") ? contextKey.slice("build:".length) : null;
-}
-
-// The project slug this chat is bound to (if any). Used by the /deploy slash
-// command to jump straight to that project's Deploys panel; general chat and
-// app docks fall through to the /deploys index.
-function projectSlugFor(contextKey: string): string | null {
-  if (contextKey.startsWith("project:")) return contextKey.slice("project:".length);
-  if (contextKey.startsWith("build:")) return contextKey.slice("build:".length);
-  return null;
-}
-
-// The task-store scope a chat maps to, or null when the chat has no task queue
-// (general chat, app docks). build/project/agent chats all get the shared
-// TaskPanel; the contextKey IS the scope key for those.
-function taskScopeFor(contextKey: string): string | null {
-  if (
-    contextKey.startsWith("build:") ||
-    contextKey.startsWith("project:") ||
-    contextKey.startsWith("agent:")
-  ) {
-    return contextKey;
-  }
-  return null;
-}
-
-// Display order for the model picker: most-reached-for first. The backend's
-// list order drives default-model resolution, so this reorders the MENU only —
-// anything the backend serves that isn't named here keeps its original position
-// at the end, so a newly added model still shows up.
-const MODEL_ORDER = [
-  "claude-fable-5",
-  "claude-opus-5",
-  "claude-opus-4-8",
-  "claude-sonnet-5",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5-20251001",
-];
-function orderModels(ids: string[]): string[] {
-  const rank = (id: string) => {
-    const i = MODEL_ORDER.indexOf(id);
-    return i === -1 ? MODEL_ORDER.length : i;
-  };
-  return [...ids].sort((a, b) => rank(a) - rank(b));
-}
-
-const MODEL_LABELS: Record<string, string> = {
-  "claude-opus-5": "Opus 5",
-  "claude-opus-4-8": "Opus 4.8",
-  "claude-fable-5": "Fable 5",
-  "claude-sonnet-5": "Sonnet 5",
-  "claude-sonnet-4-6": "Sonnet 4.6",
-  "claude-haiku-4-5-20251001": "Haiku 4.5",
-};
-function modelLabel(id: string): string {
-  return MODEL_LABELS[id] ?? id;
-}
-
-// Why the input lane can't run — each with the step that fixes it. A generic
-// "microphone error" is what made the four genuinely different causes here
-// indistinguishable from each other and from a muted mic. The wording lives
-// with the failure kinds in lib/voice.ts (MIC_FAIL_TEXT); it was duplicated
-// here, and the two copies had drifted to different recovery hints.
-
-// "12s" under a minute, "1m 05s" beyond - for the live working indicator.
-function formatElapsed(s: number): string {
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const r = s % 60;
-  return `${m}m ${r.toString().padStart(2, "0")}s`;
-}
-
-// ---- Per-model display handling -------------------------------------------
-// How aggressively a model's turns collapse in the transcript. Keyed by model
-// id with a `default` fallback, so a newly-added model can be tuned (or render
-// differently) without touching the components.
-type ModelDisplay = {
-  headLines: number;       // lines kept at the top when a block is elided
-  tailLines: number;       // lines kept at the bottom
-  elideOverLines: number;  // elide only when a block exceeds this many lines
-  recentSteps: number;     // work steps shown inline on the most recent turn
-};
-const MODEL_DISPLAY: Record<string, ModelDisplay> = {
-  default: { headLines: 6, tailLines: 3, elideOverLines: 12, recentSteps: 2 },
-};
-function modelDisplay(model?: string | null): ModelDisplay {
-  return (model && MODEL_DISPLAY[model]) || MODEL_DISPLAY.default;
-}
-
-// Context-usage meter under the composer. The model doesn't hand back exact token
-// counts, so approximate: ~4 chars/token over the visible turns + the current
-// draft, against the model's context window (Claude = 200k; local models are
-// smaller). It's a "how full is this chat" indicator, not an exact accounting.
-// Only used for the estimate shown BEFORE a thread's first turn reports real
-// usage; after that the server's measured window wins. Kept in sync with
-// backend/routes/chat.py `_CONTEXT_WINDOW` — every current Claude family is 1M,
-// and Haiku 4.5 is the genuine 200k exception. These were all 200k, which made
-// the meter read 155% (clamped to a confident 100%) on a chat using under a
-// third of its window.
-const CONTEXT_WINDOW: Record<string, number> = {
-  "claude-opus-5": 1_000_000,
-  "claude-opus-4-8": 1_000_000,
-  "claude-opus-4-7": 1_000_000,
-  "claude-opus-4-6": 1_000_000,
-  "claude-fable-5": 1_000_000,
-  "claude-sonnet-5": 1_000_000,
-  "claude-sonnet-4-6": 1_000_000,
-  "claude-haiku-4-5": 200_000,
-  "claude-haiku-4-5-20251001": 200_000,
-};
-function contextWindowFor(model: string): number {
-  if (CONTEXT_WINDOW[model]) return CONTEXT_WINDOW[model];
-  // An unrecognized Claude model is likelier to be newer than older, and every
-  // current family except Haiku is 1M. Guessing low is the failure that pins
-  // the meter at 100%; guessing high just under-reports until a turn measures.
-  if (model.startsWith("claude")) return 1_000_000;
-  return model ? 32_768 : 1_000_000; // local/Ollama default; Claude if unset
-}
-function estimateContextTokens(messages: ChatMsg[], draft: string): number {
-  let chars = draft.length;
-  for (const m of messages) {
-    chars += (m.content || "").length;
-    for (const s of m.meta?.segments || []) {
-      chars += s.t === "text" ? s.text.length : s.name.length + (s.input?.length || 0);
-    }
-  }
-  return Math.ceil(chars / 4);
-}
-
-const EGRESS_MARKERS = [
-  "egress", "blocked", "could not resolve host", "network is unreachable",
-  "npm err! network", "fatal: unable to access",
-  "temporary failure in name resolution", "connection refused",
-];
-function isEgressFailure(text: string | null | undefined): boolean {
-  if (!text) return false;
-  const t = text.toLowerCase();
-  return EGRESS_MARKERS.some((m) => t.includes(m));
-}
-
-// ---- Tool call: compact by default, tap to expand -------------------------
-// One dense row (icon · name · truncated input). Tapping reveals the full input
-// (a command / path / pattern). Mobile-first: the preview truncates with an
-// ellipsis so a tool call never blows out the bubble width.
-function ToolChip({ name, input }: { name: string; input: string }) {
-  const [open, setOpen] = useState(false);
-  const hasDetail = !!input;
-  return (
-    <div className={`chat-tool${open ? " is-open" : ""}`}>
-      <button
-        type="button"
-        className="chat-tool__head"
-        onClick={() => hasDetail && setOpen((o) => !o)}
-        aria-expanded={hasDetail ? open : undefined}
-        title={hasDetail ? input : name}
-      >
-        {hasDetail && <ChevronRight size={13} aria-hidden className="chat-tool__chev" />}
-        <Wrench size={12} aria-hidden className="chat-tool__icon" />
-        <span className="chat-tool__name">{name}</span>
-        {hasDetail && <span className="chat-tool__preview ws-mono">{input}</span>}
-      </button>
-      {open && hasDetail && <pre className="chat-tool__detail ws-mono">{input}</pre>}
-    </div>
-  );
-}
-
-// First-several + last-few line elision with Show more/less. `render` turns a
-// source slice into nodes (markdown for assistant text, plain for user text).
-// `expanded` seeds the open state (the most recent turn opens fully).
-function ElidedContent({
-  source, render, cfg, expanded,
-}: {
-  source: string;
-  render: (s: string) => ReactNode;
-  cfg: ModelDisplay;
-  expanded?: boolean;
-}) {
-  const lines = source.split("\n");
-  // Estimate *visual* lines: a long paragraph with no newlines still wraps to
-  // many lines, so count wrapped rows (~CPL chars each), not just "\n"s.
-  const CPL = 46; // ~chars per line on a phone; over-counts a little on desktop
-  const visualLines = lines.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / CPL)), 0);
-  const elide = visualLines > Math.max(cfg.elideOverLines, cfg.headLines + cfg.tailLines + 1);
-  const [open, setOpen] = useState(!!expanded);
-  useEffect(() => { setOpen(!!expanded); }, [expanded]);
-  if (!elide) return <>{render(source)}</>;
-  if (open) {
-    return (
-      <>
-        {render(source)}
-        <button type="button" className="chat-more" onClick={() => setOpen(false)}>Show less</button>
-      </>
-    );
-  }
-  // Prefer slicing on real line breaks (lists, paragraphs, code); fall back to
-  // characters when it's a few long wrapped lines so the preview still trims.
-  let headSrc: string, tailSrc: string, label: string;
-  if (lines.length >= cfg.headLines + cfg.tailLines + 2) {
-    headSrc = lines.slice(0, cfg.headLines).join("\n");
-    tailSrc = lines.slice(-cfg.tailLines).join("\n");
-    label = `Show ${lines.length - cfg.headLines - cfg.tailLines} more lines`;
-  } else {
-    headSrc = source.slice(0, cfg.headLines * CPL);
-    tailSrc = source.slice(-cfg.tailLines * CPL);
-    label = "Show more";
-  }
-  // A visible "···" divider marks the cut; the whole line expands on click.
-  return (
-    <>
-      {render(headSrc)}
-      <button type="button" className="chat-ellipsis" onClick={() => setOpen(true)}>
-        <span className="chat-ellipsis__dots" aria-hidden>•••</span>
-        <span className="chat-ellipsis__label">{label}</span>
-      </button>
-      {render(tailSrc)}
-    </>
-  );
-}
-
-// The answer body of an assistant turn. When it contains no ```ui-card block it
-// behaves exactly as before (elided markdown). When it does, the text is split
-// on the fenced blocks: surrounding markdown renders normally and each block
-// renders as an interactive <UiCard/>, interleaved in order. A ui-card message
-// is intentionally interactive, so its markdown runs are not elided (the card
-// must stay fully visible). Works identically for a live-streamed answer and a
-// stored message on reload, because both flow through here. While the answer
-// is still streaming, a not-yet-closed ```ui-card fence renders as a skeleton
-// placeholder instead of flashing the half-written JSON; once the stream ends
-// (or on a stored message) an unclosed fence falls back to plain markdown.
-function AnswerBody({
-  source, cfg, expanded, cardCtx, streaming,
-}: {
-  source: string;
-  cfg: ModelDisplay;
-  expanded?: boolean;
-  cardCtx: UiCardCtx;
-  streaming?: boolean;
-}) {
-  if (!hasUiCard(source)) {
-    return <ElidedContent source={source} cfg={cfg} expanded={expanded} render={(s) => <Markdown>{s}</Markdown>} />;
-  }
-  const parts = splitUiCards(source);
-  return (
-    <>
-      {parts.map((p, i) => {
-        if (p.t === "md") return p.text.trim() ? <Markdown key={i}>{p.text}</Markdown> : null;
-        if (p.t === "open") {
-          return streaming ? <UiCardPending key={i} /> : <Markdown key={i}>{p.text}</Markdown>;
-        }
-        return <UiCard key={i} spec={p.spec} raw={p.raw} ctx={cardCtx} />;
-      })}
-    </>
-  );
-}
-
-// The "work" of an assistant turn - its tool calls + interim text. On the most
-// recent turn the latest few steps stay inline and older ones fold into a
-// re-openable accordion; on older turns all of it folds away (just the answer
-// shows). Tool calls themselves stay individually expandable (ToolChip).
-function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay }) {
-  const [open, setOpen] = useState(false);
-  const inlineCount = isLatest ? cfg.recentSteps : 0;
-  const older = inlineCount > 0 ? work.slice(0, Math.max(0, work.length - inlineCount)) : work;
-  const recent = inlineCount > 0 ? work.slice(Math.max(0, work.length - inlineCount)) : [];
-  const olderTools = older.filter((s) => s.t === "tool").length;
-  const renderSeg = (s: ChatSegment, i: number) =>
-    s.t === "tool"
-      ? <ToolChip key={i} name={s.name} input={s.input} />
-      : (s.text.trim() ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div> : null);
-  return (
-    <div className="chat-work">
-      {older.length > 0 && (
-        <>
-          <button
-            type="button"
-            className={`chat-work__toggle${open ? " is-open" : ""}`}
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-          >
-            <ChevronRight size={13} aria-hidden className="chat-work__chev" />
-            {open ? "Hide" : "Show"} {older.length} earlier step{older.length > 1 ? "s" : ""}
-            {olderTools > 0 ? ` · ${olderTools} tool${olderTools > 1 ? "s" : ""}` : ""}
-          </button>
-          {open && <div className="chat-work__list">{older.map(renderSeg)}</div>}
-        </>
-      )}
-      {recent.length > 0 && <div className="chat-work__list">{recent.map(renderSeg)}</div>}
-    </div>
-  );
-}
-
-// An assistant turn: split the trailing run of text (the answer) from the work
-// (tools + interim thinking). The answer renders fully on the most recent turn
-// and is elided on older ones; the work collapses per WorkSteps.
-function AssistantTurn({ segments, isLatest, model, cardCtx, streaming }: { segments: ChatSegment[]; isLatest: boolean; model?: string; cardCtx: UiCardCtx; streaming?: boolean }) {
-  const cfg = modelDisplay(model);
-  let cut = segments.length;
-  while (cut > 0 && segments[cut - 1].t === "text") cut--;
-  const work = segments.slice(0, cut);
-  const answer = segments.slice(cut);
-  return (
-    <>
-      {work.length > 0 && <WorkSteps work={work} isLatest={isLatest} cfg={cfg} />}
-      {answer.map((s, i) =>
-        s.t === "text" && s.text.trim() ? (
-          <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} streaming={streaming} />
-        ) : null,
-      )}
-    </>
-  );
-}
-
-// A one-line note about something the operator just did, shown under the toolbar.
-//
-// DISCRIMINATED ON PURPOSE. This started as a single "spawn message" shape that
-// carried a scope and two booleans, and the renderer INFERRED the sentence from
-// which fields were empty — so "not run, no run error" meant "filed as a ticket".
-// Compaction then reused the same shape to report progress and inherited the
-// ticket sentence, and /compact announced itself as "Filed as a ticket in
-// general". A note now says what kind of thing it is instead of leaving the
-// renderer to guess from absent fields.
-type ChatNotice =
-  // Something was filed into the ticket queue. The only kind that links to Work.
-  | { kind: "ticket"; text: string; scope: string; ran: boolean; runError?: string }
-  // Context reclamation: in flight (`busy`) or its result. Never a ticket.
-  | { kind: "compaction"; text: string; busy?: boolean }
-  | { kind: "error"; text: string };
 
 export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand, initialThreadId }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
@@ -480,10 +155,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   // Messages typed while a build turn is streaming are queued (a session can't
   // run two turns at once) and sent automatically when the turn finishes. They
-  // render as pending user bubbles below the live response.
-  const [queued, setQueued] = useState<string[]>([]);
-  const queuedRef = useRef<string[]>([]);
+  // render as pending user bubbles below the live response. The durability and
+  // self-draining rules live in the hook — see useMessageQueue.
   const sendBuildRef = useRef<(t: string) => void>(() => {});
+  const queue = useMessageQueue({
+    scope: effectiveMode === "build" ? contextKey : activeProvider,
+    streaming, loadingThreads, streamingRef,
+    send: (t) => sendBuildRef.current(t),
+    appendUserMessages: (texts) => {
+      const ts = new Date().toISOString();
+      setMessages((m) => [...m, ...texts.map((content) => ({ role: "user" as const, content, ts }))]);
+    },
+  });
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [openTaskCount, setOpenTaskCount] = useState(0);
@@ -646,7 +329,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       // still said NEW_CHAT, so the loader came back blank and the thread the
       // operator had just been talking to was only findable in the picker.
       writeSelection(scope, id);
-      queueKeyRef.current = id;
+      queue.carryToThread(id);
     }
     void refreshThreads();
   }, [refreshThreads, scope]);
@@ -791,49 +474,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => { if (settlePollRef.current) settlePollRef.current.cancelled = true; };
   }, [voiceOn, activeId]);
 
-  // The queue is durable (see lib/chatSelection): it survives a refresh or a
-  // closed tab, because messages sitting in it have been SENT as far as the
-  // operator is concerned and dropping them is message loss.
-  //
-  // Which thread the queue belongs to is tracked EXPLICITLY here rather than
-  // read off `activeIdRef` at write time. `activeIdRef` is assigned during
-  // render, so through a thread switch it still holds the OUTGOING thread:
-  // hydrate() would load the incoming thread's queue and then write it back
-  // under the outgoing thread's key, erasing messages the operator had already
-  // sent. Switching chats destroyed the queue of the chat you left. The key
-  // moves only when the code that changes threads says it moves.
-  const queueKeyRef = useRef<string>(`scope:${scope}`);
-  const blankQueueKey = `scope:${scope}`;
-  const setQueue = useCallback((next: string[]) => {
-    queuedRef.current = next;
-    setQueued(next);
-    writeQueue(queueKeyRef.current, next);
-  }, []);
-  // Take one entry back out (the newest match). Used when something queued
-  // optimistically turns out not to be needed — a no-op if the queue already
-  // drained, which is the right answer: it was sent, so there is nothing to
-  // retract.
-  const dropQueued = useCallback((text: string) => {
-    const q = queuedRef.current;
-    const i = q.lastIndexOf(text);
-    if (i >= 0) setQueue([...q.slice(0, i), ...q.slice(i + 1)]);
-  }, [setQueue]);
-
-  // Deliver everything queued behind the finished turn as ONE next turn. Sending
-  // them one at a time made N queued messages into N sequential turns, so the
-  // last thing typed could wait out several more turns before being read; the
-  // operator's spec is that the next turn picks up ALL messages queued since.
-  // (Not interrupting the running turn is the other half of that spec and is
-  // preserved — only the Stop button ends a turn early.)
-  const dispatchNext = useCallback(() => {
-    const q = queuedRef.current;
-    if (!q.length) return;
-    setQueue([]);
-    const ts = new Date().toISOString();
-    setMessages((m) => [...m, ...q.map((content) => ({ role: "user" as const, content, ts }))]);
-    sendBuildRef.current(q.join("\n\n"));
-  }, [setQueue]);
-
   // A button-opened slash menu dismisses like any other popover. (The typed
   // variant closes itself when the "/" stops being a command.)
   useEffect(() => {
@@ -859,35 +499,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     if (!streaming && pendingSegments.length === 0 && interjections.length) setInterjections([]);
   }, [streaming, pendingSegments.length, interjections.length]);
-
-  // A queue with nothing running must drain ITSELF.
-  //
-  // dispatchNext used to be reachable from exactly two places: the stream's
-  // finish handler, and Stop. Both are "a turn just ended in THIS tab". Every
-  // other way a turn can end — the page was reloaded, the tab was closed and
-  // reopened, the stream dropped past its reconnect budget, the backend
-  // restarted, the turn finished while the tab was asleep — left the queue
-  // restored from storage on the next load with nothing that would ever send
-  // it. The messages sat on screen looking pending, forever, and typing
-  // something new sailed straight past them as its own turn because nothing was
-  // streaming. That is a message-loss bug wearing the costume of a pending one.
-  //
-  // So: whenever there is something queued and no turn is running, send it.
-  // Queued means the operator already hit enter; delivery is owed.
-  const drainingRef = useRef(false);
-  useEffect(() => {
-    if (streaming || loadingThreads || !queued.length) return;
-    if (drainingRef.current) return;
-    drainingRef.current = true;
-    // A tick of slack so a turn that is in the act of starting (sendBuild sets
-    // `streaming` before its POST resolves) wins the race and we don't open a
-    // second turn alongside it.
-    const t = window.setTimeout(() => {
-      drainingRef.current = false;
-      if (!streamingRef.current && queuedRef.current.length) dispatchNext();
-    }, 250);
-    return () => { window.clearTimeout(t); drainingRef.current = false; };
-  }, [streaming, loadingThreads, queued, dispatchNext]);
 
   // ---- Live SSE stream (build turns) --------------------------------------
   // Used both for a freshly-started turn and for reconnecting to an in-flight
@@ -969,7 +580,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         scheduleAutoNameRefetch(isFirst);
         setTaskRefetchKey((k) => k + 1);
         // Type-ahead: run the next queued message, if any.
-        dispatchNext();
+        queue.dispatch();
       };
       es.addEventListener("done", finish);
       es.addEventListener("end", finish);
@@ -1017,7 +628,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (es.readyState === EventSource.CLOSED) void handleDrop();
       };
     },
-    [refreshThreads, scheduleAutoNameRefetch, dispatchNext, onAction],
+    [refreshThreads, scheduleAutoNameRefetch, queue, onAction],
   );
   attachStreamRef.current = attachStream;
 
@@ -1026,8 +637,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     (t: Thread) => {
       // Point the queue at the thread being loaded BEFORE reading it, so the
       // read-then-write round trip can't land on the thread we're leaving.
-      queueKeyRef.current = t.id;
-      setQueue(readQueue(t.id));
+      queue.bindThread(t.id);
       // The fold marker is server state, not a one-shot response to clicking
       // /compact: without reading it back here the divider vanished on every
       // reload and a compacted thread looked exactly like an uncompacted one.
@@ -1048,7 +658,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         setPendingSegments([]);
       }
     },
-    [attachStream, setQueue],
+    [attachStream, queue],
   );
 
   useEffect(() => {
@@ -1089,9 +699,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           setPendingSegments([]);
           // Landing blank: the queue belongs to the blank-chat slot, and
           // anything already waiting there is still owed delivery.
-          queueKeyRef.current = `scope:${scope}`;
-          setQueued(readQueue(`scope:${scope}`));
-          queuedRef.current = readQueue(`scope:${scope}`);
+          queue.bindBlank();
         }
       } catch (e) {
         if (!cancelled) setErr(String(e));
@@ -1192,7 +800,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     if (atBottomRef.current) scrollToBottom();
     else if (streaming || pendingSegments.length > 0 || messages.length) setShowJumpToLatest(true);
-  }, [messages, pendingSegments, interjections, queued, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
+  }, [messages, pendingSegments, interjections, queue.items, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
 
   // Sending is an explicit intent to follow the conversation again, so it always
   // returns to the bottom regardless of where the log was scrolled.
@@ -1281,8 +889,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // Move the queue key to the blank-chat slot FIRST. Otherwise clearing the
     // composer queue for the new chat would wipe the queue still owed to the
     // thread being left behind.
-    queueKeyRef.current = blankQueueKey;
-    setQueue([]);
+    queue.resetToBlank();
     setErr(null);
     setSelectedModel("");
     setCompactedThrough(0);
@@ -1290,7 +897,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // Persist the intent so a reload / navigation lands on a blank new chat
     // rather than silently re-adopting the most-recent thread.
     writeSelection(scope, NEW_CHAT);
-  }, [setQueue, scope, blankQueueKey]);
+  }, [queue, scope]);
 
   const stop = useCallback(() => {
     sseRef.current?.close();
@@ -1306,7 +913,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // from the transcript. Pull the server's copy first; if that fetch fails,
     // fold what's on screen into the log locally rather than losing it.
     const id = activeIdRef.current;
-    if (!id) { dispatchNext(); return; }
+    if (!id) { queue.dispatch(); return; }
     chatApi.getThread(id)
       .then((t) => { setMessages(t.messages); setPendingSegments([]); })
       .catch(() => {
@@ -1318,8 +925,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         }
         setPendingSegments([]);
       })
-      .finally(() => dispatchNext());
-  }, [dispatchNext]);
+      .finally(() => queue.dispatch());
+  }, [queue]);
 
   const removeThread = useCallback(async (id: string) => {
     await chatApi.deleteThread(id);
@@ -1355,10 +962,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         // stored under the blank-chat key; without moving it, the next hydrate
         // reads the (empty) thread queue and those messages are never delivered
         // and never seen again.
-        const carried = queuedRef.current;
-        queueKeyRef.current = t.id;
-        writeQueue(blankQueueKey, []);
-        if (carried.length) writeQueue(t.id, carried);
+        queue.carryToThread(t.id);
       }
       const r = await fetch(`/api/chat/threads/${id}/turns`, {
         method: "POST",
@@ -1383,7 +987,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         return copy;
       });
     }
-  }, [activeId, scope, selectedModel, messages.length, attachStream, blankQueueKey]);
+  }, [activeId, scope, selectedModel, messages.length, attachStream, queue]);
 
   // Re-send a message that never reached the server (drops the marked bubble and
   // runs it as a fresh turn).
@@ -1427,7 +1031,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // was asked for, and read as though the request had been ignored and then
     // picked up at random. Queue it up front and it sits in true order.
     const preQueued = streamingRef.current && effectiveMode === "build";
-    if (preQueued) setQueue([...queuedRef.current, "/compact"]);
+    if (preQueued) queue.push("/compact");
     // Put the request in the log at the moment it was made, not after the server
     // round trip. Deferring it meant the "/compact" bubble appeared many seconds
     // late, BELOW whatever had streamed in the meantime, so the log claimed the
@@ -1465,7 +1069,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             // which renders its own pending bubble — so drop ours or the request
             // shows twice.
             dropRequestBubble();
-            setQueue([...queuedRef.current, "/compact"]);
+            queue.push("/compact");
           } else {
             void sendBuildRef.current("/compact");
           }
@@ -1474,7 +1078,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       } else {
         // No live session after all — take the speculative entry back out rather
         // than letting a literal "/compact" reach a model as text.
-        if (preQueued) dropQueued("/compact");
+        if (preQueued) queue.drop("/compact");
         if (r.folded === 0) {
           // Nothing happened, so nothing should be left claiming it did.
           dropRequestBubble();
@@ -1488,14 +1092,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         }
       }
     } catch (e) {
-      if (preQueued) dropQueued("/compact");
+      if (preQueued) queue.drop("/compact");
       dropRequestBubble();
       setNotice(null);
       setErr(`Couldn't compact: ${String(e)}`);
     } finally {
       setCompacting(false);
     }
-  }, [setQueue, dropQueued, scope, effectiveMode]);
+  }, [queue, scope, effectiveMode]);
 
   // Submit a concrete string as a turn (used by send() and by slash passthrough).
   const submitText = useCallback((raw: string) => {
@@ -1546,7 +1150,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // turn, which is the only timing the CLI acts on them.
     const isSlashCommand = /^\/[a-zA-Z][\w:-]*(\s|$)/.test(text);
     const threadId = activeIdRef.current;
-    if (streaming && isSlashCommand) { setQueue([...queuedRef.current, text]); return; }
+    if (streaming && isSlashCommand) { queue.push(text); return; }
     if (streaming && threadId) {
       void chatApi.injectIntoThread(threadId, text)
         .then((r) => {
@@ -1560,17 +1164,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             setInterjections((x) => [...x, { at: pendingRef.current.length, text }]);
             followLatest();
           } else {
-            setQueue([...queuedRef.current, text]);
+            queue.push(text);
           }
         })
-        .catch(() => { setQueue([...queuedRef.current, text]); });
+        .catch(() => { queue.push(text); });
       return;
     }
-    if (streaming) { setQueue([...queuedRef.current, text]); return; }
+    if (streaming) { queue.push(text); return; }
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
-  }, [streaming, sendBuild, setQueue, compact, followLatest]);
+  }, [streaming, sendBuild, queue, compact, followLatest]);
 
   // Composer text change. In voice mode, keep the engine's typing-hold aware of
   // whether the composer currently holds text (so it defers taking its turn).
@@ -2138,7 +1742,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         </Fragment>
       ))}
       {(streaming || pendingSegments.length > 0) && liveTurnBlocks}
-      {queued.map((q, i) => (
+      {queue.items.map((q, i) => (
         <div key={`q${i}`} className="chat-msg user">
           <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">{q}</div>
         </div>
@@ -2526,41 +2130,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const panelInner = (
     <div className={`chat-panel chat-panel--${variant}`}>
       {toolbar}
-      {notice && (
-        <div
-          className={`chat-spawn-note${notice.kind === "error" ? " is-error" : ""}`}
-          role="status"
-        >
-          <span className="chat-spawn-note__body">
-            {notice.kind === "ticket" ? (
-              <>
-                {notice.ran ? (
-                  <>Filed and running in <strong>{scopeLabel(notice.scope)}</strong>. The live status is in the card below.{" "}</>
-                ) : notice.runError ? (
-                  <>Filed in <strong>{scopeLabel(notice.scope)}</strong>, but could not run now: {notice.runError}.{" "}</>
-                ) : (
-                  <>Filed as a ticket in <strong>{scopeLabel(notice.scope)}</strong>.{" "}</>
-                )}
-                <a href={`/work?scope=${encodeURIComponent(notice.scope)}`}>View in Work</a>.{" "}
-                <span className="ws-muted">{notice.text.slice(0, 140)}{notice.text.length > 140 ? "…" : ""}</span>
-              </>
-            ) : (
-              /* Compaction and errors are not tickets: no scope, no Work link.
-                 A busy note carries the same dots as the working indicator so
-                 "something is happening" reads the same way everywhere. */
-              <>
-                {notice.text}
-                {notice.kind === "compaction" && notice.busy && (
-                  <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
-                )}
-              </>
-            )}
-          </span>
-          <button className="chat-tb__btn" onClick={() => setNotice(null)} title="Dismiss" aria-label="Dismiss">
-            <X size={14} aria-hidden />
-          </button>
-        </div>
-      )}
+      {notice && <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />}
       <InboxStrip
         chatId={activeId}
         open={inboxOpen}
