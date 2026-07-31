@@ -469,4 +469,23 @@ Progress is tracked in the log at the bottom of this file.
 
 ### Execution log
 
-- P1 — in progress
+**P1 — done** (`505f590`). Runs is the canonical noun: `/jobs` list retired
+(it rendered the same `JobsFeed` as Work's Runs tab), detail moved to
+`/runs/:id`, `Jobs.tsx` deleted, `/jobs` and `/jobs/:id` redirect forward, every
+internal link rewritten. The knowledge store is `/memory` (Brain icon), which
+ends the collision with the Notes app at `/apps/notes`; `/notes` redirects.
+Audit item 6.2 was wrong and is corrected in place — `Events.tsx` and
+`Services.tsx` are live panels inside Settings, not orphans.
+
+**P2 — done** (`d54c092`). `_role_for_runtime` resolves a builder to `maker` at
+the read boundary, so role is meaningful for every agent (12 makers, 1 triager,
+1 keeper, 1 unroled assistant) instead of being None on everything that
+predates the enum. The Agents page counts, tags and routes by role; the "New
+builder" modal, its slug generator, and the `/api/agents/build` fetch that fed
+it are deleted. `mentionable` / `delegatable` added to the agent record, both
+defaulting False, read/write through the registry and the API.
+
+**P3-P6 — not started.** Mention routing, the inbox, the session rename, and
+the memory layers remain. They are specified above and independent of each
+other after P2. P3 is the next one: it consumes `mentionable`, which P2 just
+made available.
