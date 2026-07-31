@@ -12,6 +12,7 @@ import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
 import ChatDialogs from "./chat/ChatDialogs";
 import { useCompaction } from "./chat/useCompaction";
+import { useVoiceMode } from "./chat/useVoiceMode";
 import {
   buildSlashCommands, matchSlash, matchMention, applyMention, type SlashCommand,
 } from "./chat/slashCommands";
@@ -38,8 +39,6 @@ import { useDraft } from "../lib/draftSync";
 import {
   NEW_CHAT, readSelection, writeSelection, readProvider, writeProvider,
 } from "../lib/chatSelection";
-import { useVoiceSession } from "../lib/useVoiceSession";
-import { unlockAudio } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
 
@@ -296,96 +295,30 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [refreshThreads]);
 
   // ---- Voice mode -----------------------------------------------------------
-  // Voice is a MODE of this chat, not a separate screen: the same thread, the
-  // same message log. The engine (mic/STT/TTS/barge-in over a warm worker) drives
-  // input + spoken replies; we render its in-flight turn as normal bubbles and
-  // fold the finished turn into `messages` once the worker persists it (both
-  // interfaces write the SAME thread - see useVoiceSession + voice_worker).
-  const [voiceOn, setVoiceOn] = useState(false);
-  const [voiceSettings, setVoiceSettings] = useState(false);
-  // The orb element: the mic-level halo is written here directly (a CSS var) by
-  // the session's onLevel callback, off the React render path (Phase 3 item 3).
-  const orbRef = useRef<HTMLButtonElement>(null);
-  // The engine created a thread for a brand-new chat: adopt it as this chat's so
-  // the transcript stays unified (never a parallel thread).
-  const adoptThread = useCallback((id: string) => {
-    if (!activeIdRef.current) {
-      setActiveId(id);
-      // Record it as the selection too. Adopting without persisting left a
-      // voice-started chat unreachable on the next mount: the stored selection
-      // still said NEW_CHAT, so the loader came back blank and the thread the
-      // operator had just been talking to was only findable in the picker.
-      writeSelection(scope, id);
-      queue.carryToThread(id);
-    }
-    void refreshThreads();
-  }, [refreshThreads, scope]);
+  // A mode of THIS chat, not a separate screen — see useVoiceMode for the
+  // lifecycle rules (gesture-scoped audio unlock, driving off the flag rather
+  // than the toggle, and what "fatal" is allowed to mean).
   const {
-    session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs, prewarm: vprewarm,
-  } = useVoiceSession(contextKey, selectedModel || undefined, activeId ?? undefined, adoptThread);
-
-  const toggleVoice = useCallback(() => {
-    // Unlock audio HERE, in the click gesture (Phase 6.2). The lifecycle effect
-    // that calls vsession.start() is NOT a user gesture, so priming there would
-    // not satisfy the autoplay policy - a later held-draft release (which fires
-    // outside any gesture) would still be blocked. This click is the gesture.
-    unlockAudio();
-    setVoiceOn((on) => !on);
-  }, []);
-
-  // Drive the engine from voiceOn (not the toggle) so that if the session object
-  // is recreated mid-conversation - e.g. the model changes, which rebuilds the
-  // reply path - voice re-starts on the new session instead of silently going
-  // deaf. Turning off (or unmounting / switching session) stops the mic.
-  useEffect(() => {
-    if (!voiceOn) return;
-    vprewarm();
-    vsession.start();
-    return () => vsession.stop();
-  }, [voiceOn, vsession, vprewarm]);
-
-  // Probe engine capabilities when voice turns on / the settings sheet opens, so
-  // the provider controls reflect the truth before a session ever starts. Caps live
-  // on the session (the single source): probeCaps fills them while idle, start()
-  // owns them once running, and both flow to the UI via vsnap.caps.
-  useEffect(() => {
-    if (voiceOn || voiceSettings) void vsession.probeCaps();
-  }, [voiceOn, voiceSettings, vsession]);
-
-  // Esc interrupts the assistant mid-speech while voice is on (the settings sheet,
-  // when open, owns Esc to close itself - handled by Modal).
-  useEffect(() => {
-    if (!voiceOn) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !voiceSettings) vsession.interrupt();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [voiceOn, voiceSettings, vsession]);
-
-  // Mic level → orb, off the React render path. The session pushes ~60fps; we
-  // write it straight onto the orb element as `--vlevel` (a CSS var the halo
-  // reads), so the level animates without re-rendering Chat (D4).
-  useEffect(() => {
-    vsession.setOnLevel((v) => {
-      const el = orbRef.current;
-      if (el) el.style.setProperty("--vlevel", String(0.15 + v * 0.85));
-    });
-    return () => vsession.setOnLevel(null);
-  }, [vsession]);
-
-  // Fatal now means one specific thing: the session has NO usable input lane
-  // left (input_mode "voice" and the mic is unavailable). Anything the composer
-  // can still carry — a muted mic, a denied permission while typing is allowed,
-  // an insecure origin — is a standing condition shown in the strip, not a
-  // reason to tear voice mode down. Muting used to land here and kill the
-  // session; it no longer sets fatal at all.
-  useEffect(() => {
-    if (voiceOn && vsnap.fatal) {
-      setErr(vsnap.error || "Voice unavailable.");
-      setVoiceOn(false);
-    }
-  }, [voiceOn, vsnap.fatal, vsnap.error]);
+    voiceOn, toggleVoice, settingsOpen: voiceSettings, setSettingsOpen: setVoiceSettings,
+    orbRef, vsession, vsnap, vprefs, vupdatePrefs,
+  } = useVoiceMode({
+    contextKey,
+    model: selectedModel,
+    activeId,
+    onAdoptThread: (id) => {
+      if (!activeIdRef.current) {
+        setActiveId(id);
+        // Persist the selection too. Adopting without it left a voice-started
+        // chat unreachable on the next mount: the stored selection still said
+        // NEW_CHAT, so the loader came back blank and the thread the operator
+        // had just been talking to was only findable in the picker.
+        writeSelection(scope, id);
+        queue.carryToThread(id);
+      }
+      void refreshThreads();
+    },
+    onFatal: setErr,
+  });
 
   // A finished spoken exchange stays on screen until its persisted messages
   // land — see useVoiceSettle for why this needs a layout effect and a
