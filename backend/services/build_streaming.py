@@ -691,6 +691,19 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             chat_store.set_thread_context_tokens(turn.thread_id, context_tokens)
         except Exception as e:
             log.debug("turn %s: context-token persist failed: %s", turn.id, e)
+    elif compacted:
+        # A native in-session /compact just emptied the live window, but the CLI
+        # does not always report usage on that turn. Leaving the pre-compact
+        # reading in place pins the composer meter at its old number, which is
+        # what made /compact read as a no-op even when it had worked: a chat with
+        # four stored messages sat at 142k/200k because that was the last thing
+        # measured. Drop the stale measurement so the meter re-derives from the
+        # compacted prompt, and let the next real turn re-measure. Same reasoning
+        # (and same remedy) as the forced-fold path in routes/chat.py.
+        try:
+            chat_store.clear_thread_context_tokens(turn.thread_id)
+        except Exception as e:
+            log.debug("turn %s: context-token clear failed: %s", turn.id, e)
 
     # Meter the turn's SPEND. Reported, never gated: usage_ledger.can_admit
     # reserves headroom on the assumption that interactive chat is invisible to

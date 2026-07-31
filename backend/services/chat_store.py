@@ -488,6 +488,21 @@ def set_thread_context_tokens(thread_id: str, tokens: int) -> dict | None:
     return _write(thread)
 
 
+def clear_thread_context_tokens(thread_id: str) -> dict | None:
+    """Forget the measured context occupancy.
+
+    Called when something has just shrunk the live window (an in-session
+    /compact) but no fresh measurement came back with it. Absent the key the
+    meter falls back to estimating from the compacted prompt, which is right;
+    keeping a stale pre-compact number is not."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    if thread.pop("context_tokens", None) is None:
+        return thread
+    return _write(thread)
+
+
 def set_card_state(thread_id: str, key: str, state: dict) -> dict | None:
     """Persist the outcome of acting on one in-chat ui-card, keyed by a digest of
     the card block. Stored on the thread because it is a fact about this

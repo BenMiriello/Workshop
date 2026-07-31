@@ -919,6 +919,20 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     return prompt, is_build_mode
 
 
+def _is_raw_command(content: str) -> bool:
+    """Is this turn a slash command for the CLI to execute, or just a message
+    that happens to begin with "/"?
+
+    Only a single line qualifies. The client drains everything typed behind a
+    running turn into ONE next turn, joined by blank lines, so a queued
+    "/compact" followed by any other message arrives here as a multi-line blob.
+    Sent raw, the CLI reads the whole blob as one command name and the turn
+    fails — and the operator's other message is then neither executed as a
+    command nor read as text. It is simply lost."""
+    stripped = content.strip()
+    return stripped.startswith("/") and "\n" not in stripped
+
+
 def _thread_session(thread_id: str, cwd: str) -> tuple[str | None, bool]:
     """(session_id, is_new) for this thread's persistent claude session.
 
@@ -1212,7 +1226,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         # with the runtime briefing re-sent (the session retains persona/history
         # but the environment block must refresh every turn). Slash commands go
         # raw so the CLI registers them as commands.
-        if content.startswith("/"):
+        if _is_raw_command(content):
             prompt = content
             resume_flag = bool(sid and not is_new)
         elif sid and not is_new:
@@ -1257,7 +1271,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         max_turns = max(provider.max_turns, CHAT_MAX_TURNS)
 
     sid, is_new = _thread_session(thread_id, cwd)
-    if content.startswith("/"):
+    if _is_raw_command(content):
         # A slash command goes raw so the CLI registers it as a command (this is
         # what makes a native /compact actually compact the live session).
         prompt, resume_flag = content, bool(sid and not is_new)

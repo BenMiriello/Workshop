@@ -596,9 +596,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // The engine created a thread for a brand-new chat: adopt it as this chat's so
   // the transcript stays unified (never a parallel thread).
   const adoptThread = useCallback((id: string) => {
-    setActiveId((cur) => cur ?? id);
+    if (!activeIdRef.current) {
+      setActiveId(id);
+      // Record it as the selection too. Adopting without persisting left a
+      // voice-started chat unreachable on the next mount: the stored selection
+      // still said NEW_CHAT, so the loader came back blank and the thread the
+      // operator had just been talking to was only findable in the picker.
+      writeSelection(scope, id);
+      queueKeyRef.current = id;
+    }
     void refreshThreads();
-  }, [refreshThreads]);
+  }, [refreshThreads, scope]);
   const {
     session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs, prewarm: vprewarm,
   } = useVoiceSession(contextKey, selectedModel || undefined, activeId ?? undefined, adoptThread);
@@ -740,11 +748,21 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // The queue is durable (see lib/chatSelection): it survives a refresh or a
   // closed tab, because messages sitting in it have been SENT as far as the
   // operator is concerned and dropping them is message loss.
+  //
+  // Which thread the queue belongs to is tracked EXPLICITLY here rather than
+  // read off `activeIdRef` at write time. `activeIdRef` is assigned during
+  // render, so through a thread switch it still holds the OUTGOING thread:
+  // hydrate() would load the incoming thread's queue and then write it back
+  // under the outgoing thread's key, erasing messages the operator had already
+  // sent. Switching chats destroyed the queue of the chat you left. The key
+  // moves only when the code that changes threads says it moves.
+  const queueKeyRef = useRef<string>(`scope:${scope}`);
+  const blankQueueKey = `scope:${scope}`;
   const setQueue = useCallback((next: string[]) => {
     queuedRef.current = next;
     setQueued(next);
-    writeQueue(activeIdRef.current ?? `scope:${scope}`, next);
-  }, [scope]);
+    writeQueue(queueKeyRef.current, next);
+  }, []);
 
   // Deliver everything queued behind the finished turn as ONE next turn. Sending
   // them one at a time made N queued messages into N sequential turns, so the
@@ -894,6 +912,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Render a thread's messages, reconnecting to a still-streaming last turn.
   const hydrate = useCallback(
     (t: Thread) => {
+      // Point the queue at the thread being loaded BEFORE reading it, so the
+      // read-then-write round trip can't land on the thread we're leaving.
+      queueKeyRef.current = t.id;
       setQueue(readQueue(t.id));
       // The fold marker is server state, not a one-shot response to clicking
       // /compact: without reading it back here the divider vanished on every
@@ -954,6 +975,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           setActiveId(null);
           setMessages([]);
           setPendingSegments([]);
+          // Landing blank: the queue belongs to the blank-chat slot, and
+          // anything already waiting there is still owed delivery.
+          queueKeyRef.current = `scope:${scope}`;
+          setQueued(readQueue(`scope:${scope}`));
+          queuedRef.current = readQueue(`scope:${scope}`);
         }
       } catch (e) {
         if (!cancelled) setErr(String(e));
@@ -1131,6 +1157,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setActiveId(null);
     setMessages([]);
     setPendingSegments([]);
+    // Move the queue key to the blank-chat slot FIRST. Otherwise clearing the
+    // composer queue for the new chat would wipe the queue still owed to the
+    // thread being left behind.
+    queueKeyRef.current = blankQueueKey;
     setQueue([]);
     setErr(null);
     setSelectedModel("");
@@ -1139,7 +1169,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // Persist the intent so a reload / navigation lands on a blank new chat
     // rather than silently re-adopting the most-recent thread.
     writeSelection(scope, NEW_CHAT);
-  }, [setQueue, scope]);
+  }, [setQueue, scope, blankQueueKey]);
 
   const stop = useCallback(() => {
     sseRef.current?.close();
@@ -1197,6 +1227,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         // remembered you were in it.
         setThreads((list) => (list.some((x) => x.id === t.id) ? list : [t, ...list]));
         writeSelection(scope, t.id);
+        // Carry the type-ahead queue across the moment a blank chat becomes a
+        // real thread. Anything typed while this first turn was starting was
+        // stored under the blank-chat key; without moving it, the next hydrate
+        // reads the (empty) thread queue and those messages are never delivered
+        // and never seen again.
+        const carried = queuedRef.current;
+        queueKeyRef.current = t.id;
+        writeQueue(blankQueueKey, []);
+        if (carried.length) writeQueue(t.id, carried);
       }
       const r = await fetch(`/api/chat/threads/${id}/turns`, {
         method: "POST",
@@ -1221,7 +1260,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         return copy;
       });
     }
-  }, [activeId, scope, selectedModel, messages.length, attachStream]);
+  }, [activeId, scope, selectedModel, messages.length, attachStream, blankQueueKey]);
 
   // Re-send a message that never reached the server (drops the marked bubble and
   // runs it as a fresh turn).
@@ -1276,16 +1315,22 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     if (!text) return;
     setErr(null);
     followLatest();
+    // /compact is a Workshop action, not a message. Intercept it here as well as
+    // in the autocomplete, so typing it and hitting enter folds the transcript
+    // instead of sending the literal string "/compact" to the model.
+    //
+    // This has to come BEFORE the queue branch. Queued behind a running turn it
+    // was treated as ordinary text and drained into the next turn joined to
+    // whatever else was waiting — so it neither compacted nor read as a message.
+    // compact() refuses politely while a turn is live, which is the honest
+    // answer rather than a silent no-op.
+    if (text === "/compact") { void compact(); return; }
     // A turn is already streaming → queue this message; it sends when the current
     // turn finishes (a single conversation runs one turn at a time).
     if (streaming) {
       setQueue([...queuedRef.current, text]);
       return;
     }
-    // /compact is a Workshop action, not a message. Intercept it here as well as
-    // in the autocomplete, so typing it and hitting enter folds the transcript
-    // instead of sending the literal string "/compact" to the model.
-    if (text === "/compact") { void compact(); return; }
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
