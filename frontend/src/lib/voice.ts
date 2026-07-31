@@ -109,12 +109,72 @@ export function unlockAudio(): void {
 }
 
 // ============================================================================
+// Capture preflight — say WHY, not "mic error"
+// ============================================================================
+// Every distinct reason the input lane cannot run, as a value the UI can explain.
+// "notAllowed" is a real permission denial; it is NOT what deliberately muting
+// the mic produces (see VoiceSession.micSuspended).
+export type MicFailKind =
+  | "insecure"     // not an https/localhost origin — mediaDevices doesn't exist
+  | "unsupported"  // secure, but the browser has no getUserMedia at all
+  | "notAllowed"   // the user (or policy) denied permission
+  | "notFound"     // no input device
+  | "inUse"        // device held by another app (NotReadableError/TrackStartError)
+  | "unknown";
+
+export class MicError extends Error {
+  kind: MicFailKind;
+  constructor(kind: MicFailKind, message: string) {
+    super(message);
+    this.name = "MicError";
+    this.kind = kind;
+  }
+}
+
+// Static check, safe to run before any user gesture. Returns the blocking
+// problem or null. getUserMedia is only defined on secure origins, so an http://
+// tailnet or a WebView without the right host wiring lands here instead of
+// throwing an opaque TypeError from inside MicStream.start().
+export function micPreflight(): MicError | null {
+  if (typeof window === "undefined") return new MicError("unsupported", "No browser environment.");
+  if (!window.isSecureContext) {
+    return new MicError(
+      "insecure",
+      `Voice input needs a secure origin (https or localhost). This page is ${window.location.protocol}//${window.location.host}.`,
+    );
+  }
+  if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+    return new MicError("unsupported", "This browser has no microphone capture API.");
+  }
+  return null;
+}
+
+// Map a getUserMedia rejection to a MicError with a recovery hint.
+function classifyGumError(e: unknown): MicError {
+  const name = (e as { name?: string })?.name || "";
+  const msg = String((e as Error)?.message || e);
+  if (name === "NotAllowedError" || name === "SecurityError" || /permission|not allowed/i.test(msg)) {
+    return new MicError("notAllowed", "Microphone permission denied. Allow it in the browser's site settings, then turn voice on again.");
+  }
+  if (name === "NotFoundError" || name === "OverconstrainedError") {
+    return new MicError("notFound", "No microphone found. Connect an input device and try again.");
+  }
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
+    return new MicError("inUse", "The microphone is in use by another app.");
+  }
+  return new MicError("unknown", `Could not open the microphone: ${msg}`);
+}
+
+// ============================================================================
 // Microphone stream + voice-activity detection (VAD)
 // ============================================================================
 // One shared mic capture that (a) exposes a live audio level for the UI and for
 // barge-in detection, and (b) records segments to a Blob for server STT.
 export type MicEvents = {
-  onLevel?: (rms: number) => void;      // 0..1, ~60fps
+  // net = level after subtracting the TTS envelope (what the VAD acts on).
+  // raw = the unprocessed mic level. The UI needs BOTH: net drives the orb halo,
+  // raw is the only thing that can answer "is this microphone even connected".
+  onLevel?: (rms: number, raw?: number) => void;      // 0..1, ~60fps
   onSpeechStart?: () => void;
   onSpeechEnd?: () => void;
   // An earlier, lower-confidence pause (< endSilenceMs). Fires once per silence
@@ -182,9 +242,86 @@ export class MicStream {
   private onsetSince = 0;
   private bargeSustainMs = 180;
 
+  // ---- level telemetry + noise-floor calibration ---------------------------
+  // The old fixed 0.06 onset threshold was a guess made against an unknown
+  // capture chain (echoCancellation + noiseSuppression + AGC all move the
+  // level). On a mic that never reached it, onSpeechStart never fired, so no
+  // segment was ever cut and voice mode was silently, permanently deaf. The
+  // threshold is now a MEASUREMENT: sample the ambient floor, sit above it.
+  private sensitivity = 0.5;       // the user's knob, 0..1
+  private noiseFloor = 0;          // measured ambient RMS
+  private calibrating = false;
+  private calStart = 0;
+  private calPeak = 0;
+  private calSum = 0;
+  private calN = 0;
+  private calibrated = false;
+  private rawLevel = 0;            // last raw (pre-subtraction) mic level
+  private rawPeak = 0;             // rolling peak, for the no-signal watchdog
+  private static CAL_MS = 1200;
+
   setSensitivity(v: number) {
-    // v 0..1 → threshold 0.12 (insensitive) .. 0.02 (hair-trigger)
-    this.startThreshold = 0.12 - Math.max(0, Math.min(1, v)) * 0.1;
+    this.sensitivity = Math.max(0, Math.min(1, v));
+    this.applyThreshold();
+  }
+
+  // sensitivity 0..1 → a floor between 0.10 (insensitive) and 0.015 (hair
+  // trigger). The live threshold is whichever is higher: that floor, or a
+  // margin over the measured ambient noise.
+  private applyThreshold() {
+    const knobFloor = 0.10 - this.sensitivity * 0.085;
+    this.startThreshold = this.calibrated
+      ? Math.max(knobFloor, this.noiseFloor * 2.5)
+      : knobFloor;
+  }
+
+  // Begin (or restart) a noise-floor measurement. Called when the input lane
+  // arms, so a mid-session device change re-measures.
+  calibrate() {
+    this.calibrating = true;
+    this.calStart = performance.now();
+    this.calPeak = 0;
+    this.calSum = 0;
+    this.calN = 0;
+  }
+
+  private tickCalibration(rms: number, now: number) {
+    this.calSum += rms;
+    this.calN += 1;
+    if (rms > this.calPeak) this.calPeak = rms;
+    if (now - this.calStart < MicStream.CAL_MS) return;
+    // Use the mean, not the peak: a single cough during calibration should not
+    // deafen the session for the rest of it.
+    const mean = this.calN ? this.calSum / this.calN : 0;
+    this.noiseFloor = mean;
+    this.calibrated = true;
+    this.calibrating = false;
+    this.applyThreshold();
+  }
+
+  // Live diagnostics for the settings sheet + the watchdogs. Everything the
+  // question "why isn't it hearing me" needs, in one object.
+  levels(): { raw: number; peak: number; floor: number; threshold: number; calibrated: boolean } {
+    return {
+      raw: this.rawLevel,
+      peak: this.rawPeak,
+      floor: this.noiseFloor,
+      threshold: this.startThreshold,
+      calibrated: this.calibrated,
+    };
+  }
+
+  // Is the VAD currently inside an utterance? The preview loop only spends a
+  // transcription pass when there is speech to preview.
+  get inSpeech(): boolean { return this.speaking; }
+
+  // Reset the rolling peak and report what it was. The no-signal watchdog calls
+  // this on an interval: a peak of ~0 over a whole window means the track is
+  // producing silence (unplugged, muted in the OS, or a dead WebView capture).
+  takePeak(): number {
+    const p = this.rawPeak;
+    this.rawPeak = 0;
+    return p;
   }
 
   // Trailing silence (ms) that ends an utterance on the server VAD path.
@@ -215,15 +352,26 @@ export class MicStream {
       return;
     }
     this.events = events;
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    });
+    // Preflight first so an insecure origin or a capture-less browser reports
+    // the actual reason instead of throwing "cannot read getUserMedia of
+    // undefined" from the next line.
+    const pre = micPreflight();
+    if (pre) throw pre;
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      });
+    } catch (e) {
+      throw classifyGumError(e);
+    }
     this.ctx = new AudioContext();
     const src = this.ctx.createMediaStreamSource(this.stream);
     this.analyser = this.ctx.createAnalyser();
     this.analyser.fftSize = 1024;
     src.connect(this.analyser);
     this.running = true;
+    this.rawPeak = 0;
+    this.calibrate();
     this.loop();
   }
 
@@ -236,8 +384,17 @@ export class MicStream {
     const rms = Math.sqrt(sum / buf.length);
     // Net = mic energy minus the TTS we're currently emitting.
     const net = Math.max(0, rms - this.outputProbe() * this.echoK);
-    this.events.onLevel?.(Math.min(1, net * 4));
     const now = performance.now();
+    this.rawLevel = rms;
+    if (rms > this.rawPeak) this.rawPeak = rms;
+    this.events.onLevel?.(Math.min(1, net * 4), Math.min(1, rms * 4));
+    // While calibrating, measure the room and take no VAD decisions: the ambient
+    // sample must not be polluted by treating it as speech.
+    if (this.calibrating) {
+      this.tickCalibration(rms, now);
+      this.raf = requestAnimationFrame(this.loop);
+      return;
+    }
     const thr = this.bargeMode ? this.startThreshold * 1.8 : this.startThreshold;
     if (net > thr) {
       if (!this.speaking) {
@@ -314,6 +471,37 @@ export class MicStream {
     this.startRecording();
   }
 
+  // A decodable copy of the CURRENT segment so far, without ending it.
+  //
+  // This is what makes live partials possible on the server path. requestData()
+  // flushes everything buffered since the segment started into ondataavailable;
+  // because the chunks run from the segment's first byte, they form a complete
+  // container (header included) that PyAV can decode. Chopping the stream into
+  // independent slices would not — only the first slice would carry a header,
+  // and re-cutting mid-word wrecks accuracy at the seams.
+  //
+  // The segment keeps recording throughout, so the authoritative transcript at
+  // the endpoint is still ONE clean pass over the whole utterance.
+  async snapshot(): Promise<Blob | null> {
+    const rec = this.recorder;
+    if (!rec || rec.state !== "recording") return null;
+    const chunks = this.chunks;
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        rec.removeEventListener("dataavailable", onData);
+        resolve(chunks.length ? new Blob([...chunks], { type: rec.mimeType }) : null);
+      };
+      const onData = () => { queueMicrotask(done); };
+      rec.addEventListener("dataavailable", onData);
+      // Don't hang the preview loop if the recorder never answers.
+      setTimeout(done, 600);
+      try { rec.requestData(); } catch { done(); }
+    });
+  }
+
   async stopRecording(): Promise<Blob | null> {
     const rec = this.recorder;
     if (!rec) return null;
@@ -357,13 +545,19 @@ export async function nativeTranscribe(locale = "en-US"): Promise<string> {
 }
 
 // ---- STT: server ------------------------------------------------------------
-export async function transcribeBlob(blob: Blob): Promise<string> {
+export async function transcribeBlob(
+  blob: Blob,
+  opts?: { preview?: boolean; signal?: AbortSignal },
+): Promise<string> {
   const fd = new FormData();
   // Filename extension tracks the negotiated recorder mime (webm on Chrome, m4a
   // on Safari); appending a Blob sets the part's Content-Type from blob.type.
   fd.append("audio", blob, `utterance.${extForMime(blob.type)}`);
   fd.append("language", "en");
-  const r = await fetch("/api/voice/stt", { method: "POST", body: fd });
+  // Display-only pass over a still-growing utterance: smaller model, no VAD
+  // trim. Never becomes the committed turn text.
+  if (opts?.preview) fd.append("preview", "1");
+  const r = await fetch("/api/voice/stt", { method: "POST", body: fd, signal: opts?.signal });
   if (!r.ok) throw new Error(`stt ${r.status}`);
   const j = await r.json();
   return (j.text || "").trim();
@@ -381,6 +575,7 @@ export function recognizeOnce(onPartial?: (t: string) => void): {
   rec.interimResults = true;
   rec.continuous = false;
   let finalText = "";
+  let aborted = false;
   const promise = new Promise<string>((resolve, reject) => {
     rec.onresult = (e: any) => {
       let interim = "";
@@ -391,11 +586,29 @@ export function recognizeOnce(onPartial?: (t: string) => void): {
       }
       onPartial?.((finalText + " " + interim).trim());
     };
-    rec.onerror = (e: any) => reject(new Error(e.error || "recognition error"));
-    rec.onend = () => resolve(finalText.trim());
+    // `aborted` is what the recognizer reports when WE tore it down (muting the
+    // mic, ending the session). It is benign and must never be confused with a
+    // permission denial — conflating the two is what made muting the mic read as
+    // "microphone not allowed" and kill the session. Resolve with whatever text
+    // we had instead of rejecting.
+    rec.onerror = (e: any) => {
+      const code = e?.error || "recognition error";
+      if (aborted || code === "aborted") { resolve(""); return; }
+      reject(new Error(code));
+    };
+    rec.onend = () => resolve(aborted ? "" : finalText.trim());
     try { rec.start(); } catch (e) { reject(e as Error); }
   });
-  return { promise, abort: () => { try { rec.stop(); } catch { /* noop */ } } };
+  // Discard, don't finalize: an abort means the caller no longer wants this
+  // utterance (mic muted, session ended, barge superseded it), so it must not
+  // come back as text and start a turn.
+  return {
+    promise,
+    abort: () => {
+      aborted = true;
+      try { rec.abort(); } catch { try { rec.stop(); } catch { /* noop */ } }
+    },
+  };
 }
 
 // ============================================================================

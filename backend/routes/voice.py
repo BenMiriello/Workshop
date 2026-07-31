@@ -35,6 +35,14 @@ _PREFS_DEFAULTS = {
     "voice": voice_engine.DEFAULT_VOICE,
     "speed": 1.0,
     "verbosity": "normal",    # terse | normal
+    # The modality matrix — the single source of truth for how a conversation is
+    # carried. Any of the nine combinations is legal (talk-in/read-out,
+    # type-in/listen-out, either side, both sides).
+    "input_mode": "both",     # voice | text | both  — which capture lanes run
+    "output_mode": "both",    # voice | text | both  — spoken and/or captioned
+    # Legacy booleans, kept because stored prefs files and the API carry them.
+    # They are DERIVED from the modes on read and fold back into them on write,
+    # so old clients and old files keep working; see _normalize_modes.
     "mic_enabled": True,      # input lane; off = composer-only
     "speak_replies": True,    # voice-output lane; replaces the old tts "off" mute
     "typing_hold": True,      # typing defers the voice endpoint
@@ -54,15 +62,43 @@ def _prefs_path():
     return user_runtime_dir() / "voice-prefs.json"
 
 
+_MODES = ("voice", "text", "both")
+
+
+def _normalize_modes(data: dict, patch: dict | None = None) -> dict:
+    """Keep the modality matrix and the legacy booleans in agreement.
+
+    Whichever side the caller wrote wins: a patch naming `input_mode` /
+    `output_mode` drives the booleans, and a patch naming only `mic_enabled` /
+    `speak_replies` (an older client, or a stored file written before the matrix
+    existed) drives the modes. With neither, the modes are authoritative."""
+    touched = set(patch or {})
+    if "input_mode" not in touched and "mic_enabled" in touched:
+        data["input_mode"] = "both" if data["mic_enabled"] else "text"
+    if "output_mode" not in touched and "speak_replies" in touched:
+        data["output_mode"] = "both" if data["speak_replies"] else "text"
+    if data.get("input_mode") not in _MODES:
+        data["input_mode"] = "both"
+    if data.get("output_mode") not in _MODES:
+        data["output_mode"] = "both"
+    data["mic_enabled"] = data["input_mode"] != "text"
+    data["speak_replies"] = data["output_mode"] != "text"
+    return data
+
+
 def _load_prefs() -> dict:
     p = _prefs_path()
     data = dict(_PREFS_DEFAULTS)
+    stored: dict = {}
     if p.exists():
         try:
-            data.update(json.loads(p.read_text()))
+            stored = json.loads(p.read_text())
+            data.update(stored)
         except (ValueError, OSError):
-            pass
-    return data
+            stored = {}
+    # A file written before the matrix existed carries only the booleans; let
+    # them define the modes rather than silently resetting to the default.
+    return _normalize_modes(data, {k: v for k, v in stored.items() if k in _PREFS_DEFAULTS})
 
 
 def _save_prefs(patch: dict) -> dict:
@@ -70,6 +106,7 @@ def _save_prefs(patch: dict) -> dict:
     for k, v in (patch or {}).items():
         if k in _PREFS_DEFAULTS:
             data[k] = v
+    _normalize_modes(data, patch)
     p = _prefs_path()
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, indent=2))
@@ -90,19 +127,29 @@ async def voice_voices():
 
 
 @router.post("/voice/stt")
-async def voice_stt(audio: UploadFile, language: str = Form("en")):
-    if not voice_engine.STT.available:
+async def voice_stt(
+    audio: UploadFile,
+    language: str = Form("en"),
+    preview: bool = Form(False),
+):
+    """Transcribe an utterance.
+
+    `preview=1` is the live-partial path: a growing window of an utterance still
+    in progress, decoded by the small preview model so the pass finishes inside
+    the endpoint silence. Display only — the committed turn text always comes
+    from a full-quality pass over the finished segment."""
+    engine = voice_engine.STT_PREVIEW if preview else voice_engine.STT
+    if not engine.available:
         raise HTTPException(status_code=503, detail="server STT unavailable")
     data = await audio.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty audio")
     await VOICE_HOLD.touch("voice stt")
-    import asyncio
 
     text = await asyncio.to_thread(
-        voice_engine.STT.transcribe, data, (language or None)
+        engine.transcribe, data, (language or None), preview
     )
-    return {"text": text}
+    return {"text": text, "preview": preview}
 
 
 class TtsBody(BaseModel):

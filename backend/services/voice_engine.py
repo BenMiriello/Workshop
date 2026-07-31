@@ -33,6 +33,12 @@ _MODELS_DIR = Path(os.environ.get("VOICE_MODELS_DIR", str(_RUNTIME / "voice" / "
 
 # --- config -----------------------------------------------------------------
 STT_MODEL = os.environ.get("VOICE_STT_MODEL", "base.en")
+# A second, smaller model used ONLY for the live partial transcript the client
+# shows while you are still speaking. It runs against a growing window of the
+# current segment, so it must finish well inside the endpoint silence; base.en
+# (RTF ~0.3 on CPU) falls behind on a long utterance, tiny.en (~0.1) does not.
+# Its output is display-only and never becomes the committed turn text.
+STT_PREVIEW_MODEL = os.environ.get("VOICE_STT_PREVIEW_MODEL", "tiny.en")
 TTS_ONNX = os.environ.get("VOICE_TTS_ONNX", str(_MODELS_DIR / "kokoro-v1.0.onnx"))
 TTS_VOICES = os.environ.get("VOICE_TTS_VOICES", str(_MODELS_DIR / "voices-v1.0.bin"))
 DEFAULT_VOICE = os.environ.get("VOICE_TTS_VOICE", "af_heart")
@@ -69,8 +75,9 @@ def _resolve_device() -> str:
 # Speech-to-text (faster-whisper)
 # ============================================================================
 class _STT:
-    def __init__(self) -> None:
+    def __init__(self, model_name: str = STT_MODEL) -> None:
         self._model = None
+        self._name = model_name
         self._lock = threading.Lock()
         self._device = "cpu"
         self._err: str | None = None
@@ -94,19 +101,26 @@ class _STT:
 
             device = _resolve_device()
             compute = "int8_float16" if device == "cuda" else "int8"
-            log.info("loading faster-whisper %s on %s (%s)", STT_MODEL, device, compute)
-            self._model = WhisperModel(STT_MODEL, device=device, compute_type=compute)
+            log.info("loading faster-whisper %s on %s (%s)", self._name, device, compute)
+            self._model = WhisperModel(self._name, device=device, compute_type=compute)
             self._device = device
             return self._model
 
-    def transcribe(self, audio: bytes, language: str | None = "en") -> str:
+    def transcribe(self, audio: bytes, language: str | None = "en", preview: bool = False) -> str:
+        """Decode `audio` (any browser container — PyAV handles it) to text.
+
+        `preview=True` transcribes a growing window of an utterance that is still
+        in progress, for the live partial the client displays. It drops the VAD
+        filter (a mid-word tail is not silence to be trimmed, and trimming it
+        makes the partial flicker) and never raises for an empty result."""
         model = self._ensure()
         # faster-whisper decodes the container itself (PyAV) from a file-like.
         segments, _info = model.transcribe(
             io.BytesIO(audio),
             language=language,
-            vad_filter=True,
+            vad_filter=not preview,
             beam_size=1,
+            condition_on_previous_text=False,
         )
         return " ".join(s.text.strip() for s in segments).strip()
 
@@ -241,13 +255,21 @@ def split_sentences(text: str) -> list[str]:
 
 
 # --- singletons -------------------------------------------------------------
-STT = _STT()
+STT = _STT(STT_MODEL)
+# Loaded lazily on the first preview request, so a session that never shows a
+# partial (browser/native STT tiers) never pays for it.
+STT_PREVIEW = _STT(STT_PREVIEW_MODEL)
 TTS = _TTS()
 
 
 def health() -> dict:
     return {
-        "stt": {"available": STT.available, "model": STT_MODEL, "error": STT._err},
+        "stt": {
+            "available": STT.available,
+            "model": STT_MODEL,
+            "preview_model": STT_PREVIEW_MODEL,
+            "error": STT._err,
+        },
         "tts": {
             "available": TTS.available,
             "voice": DEFAULT_VOICE,
