@@ -186,20 +186,35 @@ And two invariants:
    the window where a ticket filed but the separate run launch failed.
 2. **Three error idioms.** Pick one presentation; egress stays special only
    because it carries a distinct remedy.
-3. ~~**`Chat.tsx` is 2,560 lines / 41 `useState`.**~~ **Done** (`111923c`,
-   `c0dace6`, `4a1c65b`): 2,560 → 1,823 lines, `useState` 41 → 31, `useRef`
-   22 → 6, `useEffect` 23 → 14. Extracted, in rising order of entanglement:
-   `chat/models.ts`, `chat/chatScope.ts`, `chat/Transcript.tsx`,
-   `chat/ChatNotice.tsx` (type and renderer together, so a new kind cannot be
-   added without deciding how it reads), `chat/useMessageQueue.ts`,
-   `chat/useLogScroll.ts`, `chat/useVoiceSettle.ts`, `chat/useTurnStream.ts`.
-   Each hook carries the rules it enforces, because in every case those rules
-   were the accumulated residue of specific reported bugs and were previously
-   discoverable only by reading the handler nesting.
+3. ~~**`Chat.tsx` is 2,560 lines / 41 `useState`.**~~ **Done.** 2,560 → 1,039
+   lines; `useState` 41 → 25, `useRef` 22 → 5, `useEffect` 23 → 7. What remains
+   is composition: state, effects, and the callbacks that tie the parts
+   together.
 
-   What is left of `Chat.tsx` is composition plus the toolbar/log/composer
-   markup. The remaining seam, if it is ever worth taking, is the transcript
-   render (`log`) — it is the largest single block left.
+   Two passes, and the first was only half the job. Extracting hooks moved the
+   LOGIC out but left one component still rendering the toolbar, the transcript,
+   the live turn, the voice overlay, the composer, the pickers and the dialogs.
+   The component TREE is the other half:
+
+   | Layer | Modules |
+   |---|---|
+   | container | `Chat.tsx` |
+   | chrome | `ChatToolbar`, `ChatDialogs`, `ChatNotice`, `InboxStrip`, `TaskPanel` |
+   | transcript | `ChatLog` → `MessageList`, `LiveTurn`, `VoiceTurn`, `WorkingIndicator`, `Transcript` |
+   | composer | `ChatComposer` → `CommandPicker`, `ContextMeter`, `VoiceControls` |
+   | behaviour | `useTurnStream`, `useMessageQueue`, `useLogScroll`, `useVoiceMode`, `useVoiceSettle`, `useCompaction`, `useVoiceComposer` |
+   | data | `models`, `chatScope`, `slashCommands`, `drawers` |
+
+   Every module is under 320 lines. Real de-duplication came out of it: the
+   slash list and the @-mention list were the same markup twice (one
+   `CommandPicker` now), and the working indicator was written out three times.
+
+   **A live bug surfaced during the split**: `queueRef.current = queue` had never
+   been written, so the stream's hand-off to queued messages resolved to null on
+   every finished turn. It was invisible because the queue's own self-draining
+   effect picked them up a beat later — the redundant path masking the primary
+   one, which is exactly what redundancy does when nobody looks.
+
 4. **P5/P6/P7** remain as recorded in the continuation brief. P7 (Runs and Agents
    detail pages, bidirectional chat links) is the operator's most-repeated
    outstanding complaint and should come first.
