@@ -751,3 +751,51 @@ session's voice work (the `MicFailKind` message map). Its supporting types were 
 committed in `a49d5f3`, and HEAD builds clean from an isolated worktree, so nothing is broken
 — but it is not mine and it landed in my commit. Stage explicitly in this tree; three other
 sessions committed to it during this work.
+
+## 12. Why §10 still didn't work in practice (2026-07-30, commit `7b0d6d6`)
+
+It happened again after §10 shipped, and the server was not at fault — the client never asked.
+
+**How that was established, and the technique is worth reusing:** the backend access-logs every
+request. Across the whole session the only POSTs to an inject route were two `curl` probes of
+mine. Meanwhile the edge log showed the browser had fetched `index-BhYx_fcu.js` — the bundle
+that *contains* the injection code. Right code loaded, request never sent. That narrows it to
+the client gate immediately, with no guessing about caches.
+
+The gate: `submitText` only injected when it had a turn id in `liveTurnRef`, a ref local to one
+component mount. Empty in more cases than accounted for — a second tab, another device, a turn
+adopted after a backend restart, a reload that re-attached by a different path, and the window
+inside `sendBuild` where `streaming` is already true but the POST yielding the turn id has not
+returned. Every one degraded silently to "queue it and wait out the turn", i.e. straight back
+to the behaviour §10 existed to remove.
+
+Fix: stop making the client know a turn id. `POST /chat/threads/{id}/inject` resolves the live
+turn server-side from the stored transcript (last message carrying `meta.streaming`). The
+client knows which conversation it is in; that is all it should need. The turn-addressed route
+stays for callers that do hold an id.
+
+Verified with the turn id never mentioned by the caller: agent four sleeps deep took a
+chat-addressed message, stopped after the first, answered AVOCET; resolved turn id matched;
+transcript ordered user / injected-user / assistant; injecting into an idle chat declines
+cleanly rather than 500ing.
+
+### 12a. A standing hazard this exposed
+
+**A long-lived tab keeps running the bundle it loaded.** `index.html` is served fresh so a
+reload picks up a new hash, but an SPA tab left open for hours does not reload, and there is
+nothing that notices the served bundle has moved on. Several times today a fix was live on the
+server while the operator was still executing older code — indistinguishable, from his seat,
+from the fix not working. A build-id check with a reload affordance is the obvious remedy and
+is NOT built (it is a UI addition and was not requested). Until it exists, **after any frontend
+ship, say explicitly that the tab needs reloading**, and confirm behaviour against the access
+log rather than by asking whether it seems fixed.
+
+### 12b. Tree hygiene note
+
+A concurrent session was editing the voice files throughout. `69b821b` accidentally carried its
+`Chat.tsx` hunk (the `MicFailKind` map), and because the matching `VoiceSettings.tsx` change is
+still uncommitted, **HEAD alone no longer typechecks** — `Chat.tsx` passes a `session` prop the
+committed component does not declare. The working tree does typecheck, so this ship was built
+from it into a temp dir and rsynced (never building straight into the live `dist`). Whoever
+owns the voice work should commit those files; until then, do not expect a clean-worktree build
+of HEAD to succeed.
