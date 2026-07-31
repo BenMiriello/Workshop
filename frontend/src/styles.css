@@ -852,7 +852,10 @@ input[type="range"].grad::-moz-range-thumb {
    narrow (phone) row and simply wasn't there. A control that can shrink to
    nothing is a control that disappears exactly when the screen is small. */
 .chat-model {
-  flex: 0 1 auto; min-width: 4.5rem; max-width: 11rem;
+  /* Sized to its content — model labels are short ("Opus 5", "Haiku 4.5").
+     The old 4.5rem floor was a workaround for the wrapper collapsing to zero;
+     the primitive is `flex: 0 0 auto` now, so the floor just padded it out. */
+  flex: 0 0 auto; min-width: 0; max-width: 8rem;
   display: inline-flex; align-items: center; gap: 0.2rem;
   height: 2.1rem; padding: 0 0.45rem;
   font: inherit; font-size: var(--fs-xs); line-height: 1;
@@ -866,10 +869,9 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-model.is-static:hover { color: var(--muted); background: transparent; }
 .chat-model__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-model__caret { flex: 0 0 auto; }
-/* The model picker is the one Menu that MAY truncate (a long model name should
-   yield before Send does) — but only down to a floor, never to nothing. Every
-   other Menu keeps the primitive's non-shrinking default. */
-.chat-actions > .ws-menu { flex: 0 1 auto; min-width: 4.5rem; }
+/* The model picker may truncate rather than push Send off the row — capped by
+   max-width on the trigger, not by a min-width floor on the wrapper. */
+.chat-actions > .ws-menu { min-width: 0; }
 .chat-send, .chat-stop {
   /* flex: 0 0 auto — these are fixed-size targets; without it they inherit
      shrink:1 and get squashed below a tappable size on a crowded row. */
