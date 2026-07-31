@@ -17,9 +17,16 @@ so a message sent from any surface behaves the same way:
     through the inbox and have no business in a chat; surfacing them in the
     picker would only make it harder to find the ones that do.
 
-Scope bounds delivery: an agent is addressable from a chat whose scope is the
-agent's own scope or an ancestor of it. A project agent can be reached from the
-workshop chat and from its project's chat, not from an unrelated project's.
+Scope bounds who is reachable, and mentioning and delivery use DIFFERENT rules:
+
+  * **Mentioning** (`scope_allows`) works in either direction along one branch.
+    The operator typed the name, so there is nothing to protect them from; a
+    workshop-scope agent is addressable from every chat under it. Only a
+    genuinely unrelated branch is excluded (`project:a` cannot summon
+    `project:b`'s agent).
+
+  * **Delivery** (`may_deliver_to`) is unsolicited, so it only flows UP: an
+    agent surfaces into its own chat or a broader one, never sideways.
 """
 from __future__ import annotations
 
@@ -42,24 +49,68 @@ def find_first(content: str) -> tuple[str | None, int, int]:
     return m.group(1), m.start(), m.end()
 
 
-def scope_allows(chat_scope: str, agent_scope: str) -> bool:
-    """May a chat at `chat_scope` address an agent whose home is `agent_scope`?
+ROOT_SCOPE = "workshop"
 
-    True when they are the same scope, or when the chat sits ABOVE the agent —
-    `workshop` reaches everything, `project:x` reaches `project:x` and anything
-    nested under it. The inverse is deliberately false: an agent's own private
-    chat is not a place to summon the workshop's agents from.
+
+def is_ancestor(outer: str, inner: str) -> bool:
+    """Does `outer` contain `inner` in the scope tree (strictly)?
+
+    `workshop` is the root and contains everything, but it is NOT a string
+    prefix of `project:x` or `agent:y` — the address grammar writes the root as
+    a bare word and its children as `kind:name`, so they look like siblings to a
+    prefix test. That mismatch is worth stating rather than rediscovering: a
+    plain `startswith` says workshop contains nothing, which silently empties
+    every scoped picker.
+    """
+    if outer == inner:
+        return False
+    if outer == ROOT_SCOPE:
+        return True
+    return inner.startswith(outer + ":")
+
+
+def _on_same_branch(a: str, b: str) -> bool:
+    """Do these two scope addresses lie on one path through the scope tree?"""
+    return a == b or is_ancestor(a, b) or is_ancestor(b, a)
+
+
+def scope_allows(chat_scope: str, agent_scope: str) -> bool:
+    """May a chat at `chat_scope` MENTION an agent whose home is `agent_scope`?
+
+    Either direction along one branch. `workshop` reaches everything below it,
+    and — the part that matters — everything below reaches back up: a
+    workshop-scope agent is addressable from inside a project or agent chat.
+
+    The first cut of this only allowed reaching DOWNWARD, by analogy with the
+    delivery rule below. That was wrong, and wrong in a way that made the
+    feature look broken: every project and agent chat got an empty picker,
+    because the general-purpose agents all live at workshop scope. The two
+    rules are not analogous. Delivery is unsolicited and its constraint exists
+    to stop noise flowing uphill; a mention is the operator typing a name, so
+    there is no noise to prevent and no reason to hide an agent they can see on
+    the Agents page. What stays excluded is a genuinely unrelated branch —
+    `project:a` cannot summon `project:b`'s agent — because that is a scope
+    boundary rather than a volume control.
 
     A chat with no resolvable scope is treated as `workshop`, which is where an
     unscoped conversation already files its work.
     """
-    chat = (chat_scope or "workshop").strip()
-    home = (agent_scope or "workshop").strip()
-    if chat == home:
-        return True
-    if chat == "workshop":
-        return True
-    return home.startswith(chat + ":") or home.startswith(chat + "/")
+    return _on_same_branch((chat_scope or "workshop").strip(),
+                           (agent_scope or "workshop").strip())
+
+
+def may_deliver_to(chat_scope: str, agent_scope: str) -> bool:
+    """May an agent at `agent_scope` push an UNSOLICITED message to this chat?
+
+    Stricter than mentioning, and deliberately one-directional: the chat must be
+    the agent's scope or an ancestor of it. This is the operator's rule verbatim
+    — "you don't want just any old chat up at the top level getting pings from
+    all agents underneath it" — so an agent surfaces upward toward the operator's
+    broader chats, never sideways into an unrelated one.
+    """
+    chat = (chat_scope or ROOT_SCOPE).strip()
+    home = (agent_scope or ROOT_SCOPE).strip()
+    return chat == home or is_ancestor(chat, home)
 
 
 def mentionable_agents(chat_scope: str) -> list[dict]:
