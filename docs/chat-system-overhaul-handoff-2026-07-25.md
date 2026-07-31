@@ -570,3 +570,84 @@ re-derived from a truncated transcript each turn.
 - Card state: POST then GET round-trips on the thread.
 - Live browser: no console errors at 1280 or 390; at 390 every toolbar control is inside the
   viewport (max x 378 of 390), which was the original clipping complaint.
+
+---
+
+## 9. Second pass, 2026-07-30: what §8 missed
+
+The 07-25 work was real and it shipped. It did not finish the job. Five more defects were
+found by auditing the chat surface state-by-state against the rule §8b states. Shipped in
+`52d4349` and `b837d53`, built from a clean worktree and confirmed served.
+
+### 9a. Where the reports actually live
+
+Answering "did we document this?" — yes, better than it felt from the operator's seat:
+
+| Source | What it holds |
+|---|---|
+| §1 of this file | all eleven operator statements, verbatim |
+| `.runtime/users/6/chat/b3a9f09f…json` | the 07-25 thread — 40 operator messages, the full arc |
+| `.runtime/users/6/chat/d18e3b6d…json` | the 07-18 thread — the run/job/card dead-end reports |
+| `.runtime/users/6/chat/47b637e7…json` | the 07-25→30 thread — voice, and the compaction evidence |
+
+The gap was not documentation. It was that the 07-25 pass declared the lifecycle fixed and
+stopped auditing, so the remaining defects were never looked for.
+
+### 9b. The five defects
+
+1. **Switching chats destroyed the queue of the chat you left.** `setQueue` derived its
+   storage key from `activeIdRef`, which is assigned *during render*, so through a switch it
+   still held the OUTGOING thread. `hydrate()` read the incoming thread's queue and wrote it
+   back under the outgoing thread's key — normally empty, so the messages waiting there were
+   removed. §8c marks the durable queue "done"; it was durable and pointed at the wrong thread.
+2. **Messages typed while a blank chat's first turn was starting were stranded** under the
+   blank-chat key and never migrated when the thread was created.
+3. **`/compact` typed during a turn was queued as ordinary text**, then drained into the next
+   turn joined to whatever else was waiting. Backend half: a drained queue arrives as one
+   blank-line-joined blob, and anything starting with `/` went RAW to the CLI, which read the
+   whole blob as a command name and failed the turn.
+4. **`/compact` read as a no-op even when it worked.** A native in-session compact empties the
+   live window but the CLI does not always report usage on that turn, and the stored
+   measurement was dropped only when the STORED transcript folded — which needs more than
+   `_COMPACT_KEEP_TAIL` messages. Below that `_compact_thread` returns early. Live evidence:
+   thread `47b637e7` sat at **142,183 / 200,000 tokens on four messages**. That number was on
+   screen while the operator was writing "is the chat memory back down to starting point?"
+5. **In-chat card state diverged silently.** `recordCardState` patched local state and
+   swallowed a failed write with a note claiming it would "re-sync on the next action". It
+   never did. The card read as acted-on, the server had no record, and the next hydrate
+   brought back an un-acted card offering to file and run work that had already run. This is
+   statement 8's "it's still sitting here as though I had not clicked it before" — §8c did not
+   list it, and §5b assumed it was covered.
+
+Also: the model/assistant list fetch was caught and discarded as "non-essential", falling back
+to hardcoded `MODEL_LABELS` — the same divergence that made Opus 5 invisible in §2a. And a
+voice-adopted thread never recorded itself as the selection, so it came back blank on remount.
+
+### 9c. The thing that would have blocked any fix from reaching the operator
+
+`frontend/package.json` runs `tsc -b && vite build`. **Uncommitted voice WIP in the tree
+(`frontend/src/lib/voiceSession.ts`, an unused `lastSttMs` field, TS6133) has been failing that
+typecheck since 07-27, so `npm run build` — and therefore every ship — has been broken.** The
+last successful build was 07-25 14:47. Anything committed to the frontend after that had not
+reached `dist`, which is what the public site serves.
+
+This pass shipped by building from a detached worktree at HEAD, so the stale voice WIP was not
+dragged into the bundle. **That WIP is still uncommitted and still breaks the build.** Resolve
+it before the next frontend change, or repeat the worktree trick.
+
+### 9d. Audited and found honest
+
+The server-derived liveness poll behind the working indicator, the queued-message bubbles, the
+fold divider, `compacted_through`, participants, and the thread picker's active selection all
+reconcile with the server correctly. No change needed.
+
+### 9e. Evidence
+
+- `_is_raw_command` over 8 cases including `"/compact\n\nalso please fix the picker"` → not a
+  command; `clear_thread_context_tokens` set/clear/idempotent-re-clear round trip.
+- Backend import clean, restarted via systemd with `WORKSHOP_CHAT_CWD` confirmed preserved
+  (losing it would strand every chat's claude session), `/api/chat/providers` → 401 not 500.
+- `tsc` and `check_design.sh` clean; bundle `index-pk4sbrTY.js` confirmed served by the edge
+  with all three fixes present in it.
+- Thread `47b637e7`'s stale 142,183-token reading was cleared in place, so the meter is honest
+  now and not only for future compactions.
