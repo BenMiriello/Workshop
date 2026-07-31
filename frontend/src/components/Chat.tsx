@@ -401,6 +401,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [compactedThrough, setCompactedThrough] = useState(0);
   // /compact is in flight (disables the composer's compact affordance).
   const [compacting, setCompacting] = useState(false);
+  // The live turn IS the CLI's own /compact. It runs through the ordinary turn
+  // machinery, so without this the indicator said "Working" — the one label that
+  // tells you nothing about the several seconds you are waiting through.
+  const [turnIsCompact, setTurnIsCompact] = useState(false);
   // Which in-chat cards this thread has already acted on (server-backed), so a
   // proposal that was filed and run doesn't come back offering to run again.
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
@@ -585,6 +589,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const taskScope = taskScopeFor(contextKey);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const finishingRef = useRef(false);
@@ -859,6 +864,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setQueued(next);
     writeQueue(queueKeyRef.current, next);
   }, []);
+  // Take one entry back out (the newest match). Used when something queued
+  // optimistically turns out not to be needed — a no-op if the queue already
+  // drained, which is the right answer: it was sent, so there is nothing to
+  // retract.
+  const dropQueued = useCallback((text: string) => {
+    const q = queuedRef.current;
+    const i = q.lastIndexOf(text);
+    if (i >= 0) setQueue([...q.slice(0, i), ...q.slice(i + 1)]);
+  }, [setQueue]);
 
   // Deliver everything queued behind the finished turn as ONE next turn. Sending
   // them one at a time made N queued messages into N sequential turns, so the
@@ -1262,6 +1276,21 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     if (inputFocused && atBottomRef.current) scrollToBottom();
   }, [input, inputFocused, scrollToBottom]);
 
+  // The composer sits in flow above nothing — it SHARES the column with the log,
+  // so every row the textarea grows by is a row the log loses. Re-pin whenever
+  // the composer changes height, or the bottom message slides underneath it: you
+  // scroll down to read the last reply, go back to typing, the composer grows,
+  // and the thing you were reading is gone. Nothing else notices that resize —
+  // it isn't a render, a viewport change, or a scroll — so an observer on the
+  // element is what closes the gap.
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => { if (atBottomRef.current) scrollToBottom(); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
+
   // Elapsed-time ticker for the working indicator. The clock starts when a turn
   // begins streaming and keeps running across reconnects (streaming stays true),
   // so "Working… 45s" reflects the real turn duration, not the last reconnect.
@@ -1284,7 +1313,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const max = parseFloat(getComputedStyle(el).maxHeight) || 96;
     el.style.height = `${Math.min(el.scrollHeight, max)}px`;
   }, []);
-  useEffect(() => { autosize(); }, [input, autosize]);
+  // useLayoutEffect, not useEffect: the scroll-to-bottom effects above also fire
+  // on `input`, and passive effects run in declaration order — so resizing here
+  // passively meant every scroll was computed against the composer's PREVIOUS
+  // height and landed short by exactly the row that had just been added. Layout
+  // effects run first regardless of order, so the measurement is never stale.
+  useLayoutEffect(() => { autosize(); }, [input, autosize]);
 
   // (There is no in-chat "open another thread" path any more. Switching
   // conversations goes through the chat list, which navigates here with
@@ -1352,6 +1386,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // is transport-uniform.
   const sendBuild = useCallback(async (text: string) => {
     setStreaming(true);
+    setTurnIsCompact(text.trim() === "/compact");
     setPendingSegments([]);
     turnStartRef.current = Date.now(); // fresh turn - anchor the elapsed clock now
     const isFirst = messages.length <= 1;
@@ -1435,10 +1470,27 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // queues below rather than being dropped.
     setErr(null);
     setCompacting(true);
+    // Show the request in the log NOW, in the place it happened.
+    //
+    // The live-session half has to run as its own turn, so behind a running turn
+    // it queues. It used to queue only AFTER the server fold returned — several
+    // seconds of round trip, during which the running turn kept streaming — so
+    // the "/compact" bubble landed below a wall of output that arrived after it
+    // was asked for, and read as though the request had been ignored and then
+    // picked up at random. Queue it up front and it sits in true order.
+    const preQueued = streamingRef.current && effectiveMode === "build";
+    if (preQueued) setQueue([...queuedRef.current, "/compact"]);
     // Compaction is a several-second server round trip. Without a note here the
     // only feedback was the finished result, so a slow (or failed) pass was
     // indistinguishable from a button that did nothing.
-    setSpawnMsg({ ok: true, text: "Compacting the conversation…", scope: scope, ran: false });
+    setSpawnMsg({
+      ok: true,
+      text: preQueued
+        ? "Compacting. The live session folds when the running turn finishes."
+        : "Compacting the conversation…",
+      scope: scope,
+      ran: false,
+    });
     try {
       const r = await chatApi.compactThread(id);
       setCompactedThrough(r.compacted_through);
@@ -1448,27 +1500,35 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       if (r.live_session) {
         // The CLI's own /compact is the only thing that frees the live window,
         // and it runs as a normal turn — so behind a running turn it queues
-        // instead of opening a second one.
-        if (streamingRef.current) {
-          setQueue([...queuedRef.current, "/compact"]);
-        } else {
-          setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
-          void sendBuildRef.current("/compact");
+        // instead of opening a second one. Already queued above in that case.
+        if (!preQueued) {
+          if (streamingRef.current) {
+            setQueue([...queuedRef.current, "/compact"]);
+          } else {
+            setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
+            void sendBuildRef.current("/compact");
+          }
+          setSpawnMsg(null);
         }
-        setSpawnMsg(null);
-      } else if (r.folded === 0) {
-        setSpawnMsg(null);
-        setErr("Nothing to compact — the transcript is already short.");
       } else {
-        setSpawnMsg({ ok: true, text: `Compacted ${r.folded} messages into the running summary.`, scope: scope, ran: false });
+        // No live session after all — take the speculative entry back out rather
+        // than letting a literal "/compact" reach a model as text.
+        if (preQueued) dropQueued("/compact");
+        if (r.folded === 0) {
+          setSpawnMsg(null);
+          setErr("Nothing to compact — the transcript is already short.");
+        } else {
+          setSpawnMsg({ ok: true, text: `Compacted ${r.folded} messages into the running summary.`, scope: scope, ran: false });
+        }
       }
     } catch (e) {
+      if (preQueued) dropQueued("/compact");
       setSpawnMsg(null);
       setErr(`Couldn't compact: ${String(e)}`);
     } finally {
       setCompacting(false);
     }
-  }, [setQueue, scope]);
+  }, [setQueue, dropQueued, scope, effectiveMode]);
 
   // Submit a concrete string as a turn (used by send() and by slash passthrough).
   const submitText = useCallback((raw: string) => {
@@ -1998,7 +2058,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
               {showWorking && (
                 <div className="chat-working" role="status" aria-live="polite">
                   <span className="chat-working__label">
-                    {reconnecting ? "Reconnecting" : "Working"}
+                    {reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}
                   </span>
                   <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
                   {elapsed > 0 && <span className="chat-working__time">{formatElapsed(elapsed)}</span>}
@@ -2262,7 +2322,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             };
 
   const composer = (
-    <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
+    <div ref={composerRef} className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
       {showSlash && (
         <ul className="chat-slash-menu" role="listbox" aria-label="Slash commands">
           {slashMatches.map((c, i) => {
