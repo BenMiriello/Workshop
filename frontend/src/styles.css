@@ -813,13 +813,10 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  /* No border-top. The input below already draws its own rounded border, so a
-     full-width rule here stacked a second line 12px above the first one and
-     cost a row of vertical space to separate nothing. Removing the rule was the
-     fix; the padding stays as it was — tightening both overshot. */
   padding: var(--space-3);
   /* keep the composer above the iOS keyboard / home indicator on mobile */
   padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
 }
 .chat-input {
   display: block; width: 100%; resize: none;

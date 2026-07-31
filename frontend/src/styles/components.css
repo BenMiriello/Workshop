@@ -1191,6 +1191,12 @@ a.ws-btn { text-decoration: none; }
 .ws-app.ws-app--chatfull > .ws-topnav {
   padding: var(--space-2) var(--space-4);
   flex-wrap: nowrap;
+  /* The chat toolbar sits directly beneath this and draws its own bottom rule,
+     so keeping this one put TWO horizontal lines a few pixels apart at the top
+     of every chat — a doubled border costing a band of vertical space to
+     separate two control rows that read as one. The toolbar's rule is the one
+     that means something (chrome above, transcript below), so it wins. */
+  border-bottom: none;
 }
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */
