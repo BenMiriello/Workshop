@@ -104,14 +104,12 @@ why each new feature got its own surface.
 `StateBlock`, and the note banner's error kind) — plus a fourth if you count
 `meta.error` on a message in the log. Each looks different.
 
-**Two of them are "a ticket was filed"** — the note banner and the in-chat card —
-and they are produced by *different code paths against different endpoints*:
-
-- in-chat cards → `POST /api/tasks` (`chat/uiCardActions.ts`)
-- toolbar dialog → `POST /api/chat/threads/:id/spawn-task` (`TicketDraftsDialog`)
-
-That is the operator's "multiple different ways of showing that a ticket is
-filed", and it is real: two implementations of one verb, reporting differently.
+**Two of them are "a ticket was filed"** — the note banner and the in-chat card.
+They *were* produced by different code paths against different endpoints
+(`POST /api/tasks` from `chat/uiCardActions.ts`, `POST
+/api/chat/threads/:id/spawn-task` from `TicketDraftsDialog`), which is the
+operator's "multiple different ways of showing that a ticket is filed". Both now
+go through `spawn-task` (`6743aec`); the two surfaces differ in *trigger* only.
 
 ---
 
@@ -179,10 +177,13 @@ And two invariants:
 
 ## 6. What is still wrong, in priority order
 
-1. **Two ticket-filing implementations** (§2). Collapse to one path with one
-   result shape. Cards and the dialog should differ in *trigger*, not in
-   mechanism or reporting. This is the operator's stated complaint and the
-   largest remaining incoherence.
+1. ~~**Two ticket-filing implementations**~~ **Done** (`6743aec`). Both callers
+   now use the chat's `spawn-task`, which takes an explicit scope. The
+   duplication was the visible half; the functional half was that only
+   spawn-task recorded `source: {kind: chat, ref}`, so a ticket filed from a
+   CARD had no provenance back to its conversation — and Ticket → chat could
+   never resolve for those. Filing and running is also one request now, closing
+   the window where a ticket filed but the separate run launch failed.
 2. **Three error idioms.** Pick one presentation; egress stays special only
    because it carries a distinct remedy.
 3. ~~**`Chat.tsx` is 2,560 lines / 41 `useState`.**~~ **Done** (`111923c`,
