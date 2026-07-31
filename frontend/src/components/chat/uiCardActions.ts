@@ -191,10 +191,15 @@ const dismiss: UiCardHandler = async () => ({ status: "dismiss" });
 // `addTasksAndRun` files it and starts a worker immediately (the run endpoint).
 // The store, CLI, and API all say `task`; the UI prose says "ticket".
 
+// The spawn-task response. `job_id` / `run_error` only appear when `run` was
+// requested, and they are mutually exclusive: one run attempt, one outcome.
 type CreatedTask = {
   task?: { id?: string; text?: string } | null;
+  scope?: string;
   decision?: string;
   message?: string;
+  job_id?: string | null;
+  run_error?: string | null;
 };
 
 // The structured spec sections a task-proposal card may carry, in the order
@@ -227,27 +232,49 @@ export function composeTaskText(v: Record<string, string>): string {
   return lines.join("\n").trim();
 }
 
-async function fileTicket(v: Record<string, string>): Promise<CreatedTask> {
-  const scope = (v.scope || "workshop").trim();
-  const text = composeTaskText(v);
-  const priority = Number(v.priority || "0") || 0;
-  const effort = (v.effort || "").trim();
-  const r = await fetch("/api/tasks", {
+// ONE path for filing a ticket from a chat.
+//
+// This used to POST /api/tasks directly while the toolbar's ticket dialog posted
+// to the chat's spawn-task endpoint: two implementations of one verb, reporting
+// differently, and only one of them recording where the ticket came from. A
+// ticket filed from a card had no provenance back to the conversation that
+// produced it, so the chat -> ticket link the rest of the system relies on was
+// simply missing for half the tickets.
+//
+// spawn-task is the chat-aware one and now takes an explicit scope, so it serves
+// both callers. `run` is part of the same request rather than a second round
+// trip, which also removes the window where a ticket was filed and the run
+// launch failed separately.
+async function fileTicket(
+  v: Record<string, string>,
+  threadId: string,
+  run: boolean,
+): Promise<CreatedTask> {
+  const r = await fetch(`/api/chat/threads/${encodeURIComponent(threadId)}/spawn-task`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scope, text, priority, effort: effort || null }),
+    body: JSON.stringify({
+      scope: (v.scope || "workshop").trim(),
+      text: composeTaskText(v),
+      priority: Number(v.priority || "0") || 0,
+      effort: (v.effort || "").trim() || null,
+      run,
+    }),
   });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
   return (await r.json()) as CreatedTask;
 }
 
-const addTasks: UiCardHandler = async (state) => {
+const addTasks: UiCardHandler = async (state, ctx) => {
   const scope = (state.values.scope || "workshop").trim();
   if (!composeTaskText(state.values).trim()) {
     return { status: "error", message: "Add a ticket title first." };
   }
+  if (!ctx.threadId) {
+    return { status: "error", message: "This card is not attached to a chat yet." };
+  }
   try {
-    const j = await fileTicket(state.values);
+    const j = await fileTicket(state.values, ctx.threadId, false);
     const decided = j.decision && j.decision !== "distinct" ? ` (${j.message ?? j.decision})` : "";
     return {
       status: "success",
@@ -260,21 +287,25 @@ const addTasks: UiCardHandler = async (state) => {
   }
 };
 
-const addTasksAndRun: UiCardHandler = async (state) => {
+const addTasksAndRun: UiCardHandler = async (state, ctx) => {
   const scope = (state.values.scope || "workshop").trim();
   if (!composeTaskText(state.values).trim()) {
     return { status: "error", message: "Add a ticket title first." };
   }
+  if (!ctx.threadId) {
+    return { status: "error", message: "This card is not attached to a chat yet." };
+  }
   let created: CreatedTask;
   try {
-    created = await fileTicket(state.values);
+    created = await fileTicket(state.values, ctx.threadId, true);
   } catch (e) {
     return { status: "error", message: String(e) };
   }
-  const taskId = created.task?.id;
-  if (!taskId) {
+  if (!created.task?.id) {
     return { status: "error", message: "Ticket filed but no id was returned." };
   }
+  // A merge folded into an existing ticket, so the server deliberately does not
+  // run it: re-running work that already exists would be a surprise.
   if (created.decision === "merge" || created.decision === "exact") {
     return {
       status: "success",
@@ -283,31 +314,19 @@ const addTasksAndRun: UiCardHandler = async (state) => {
       actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
     };
   }
-  const rr = await fetch(
-    `/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(taskId)}/run`,
-    { method: "POST" },
-  );
-  if (!rr.ok) {
-    let detail = `${rr.status}`;
-    try {
-      const e = await rr.json();
-      detail = e.detail || detail;
-    } catch {
-      /* non-JSON body */
-    }
+  if (created.run_error) {
     // The ticket IS filed; only the immediate run failed (commonly a busy tree).
     return {
       status: "success",
-      note: `Filed the ticket in ${scope}, but could not run it now: ${detail}`,
+      note: `Filed the ticket in ${scope}, but could not run it now: ${created.run_error}`,
       values: { scope } as Record<string, string>,
       actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
     };
   }
-  const run = await rr.json();
   return {
     status: "success",
     note: `Filed and running in ${scope}.`,
-    values: { scope, __job_id: String(run.job_id || "") } as Record<string, string>,
+    values: { scope, __job_id: String(created.job_id || "") } as Record<string, string>,
     actions: [
       { id: "viewRun", label: "View run", variant: "primary" },
       { id: "openWork", label: "Open in Work" },

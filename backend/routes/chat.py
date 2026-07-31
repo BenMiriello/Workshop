@@ -129,7 +129,15 @@ class CardState(BaseModel):
 class SpawnTask(BaseModel):
     text: str | None = None       # explicit task text; else distilled from the chat
     project: str | None = None    # target project slug; else the chat's own scope
+    # An explicit scope KEY (workshop / project:x / agent:x / build:x). Task
+    # proposal cards let the operator choose where a ticket lands, and they used
+    # to POST /api/tasks directly to honour that — which meant filing from a card
+    # recorded no chat provenance and the ticket had no way back to the
+    # conversation that produced it. This is how one endpoint serves both.
+    scope: str | None = None
     acceptance: dict | None = None
+    priority: int = 0
+    effort: str | None = None
     run: bool = False             # file AND run now (open a Job, launch a worker)
 
 
@@ -389,7 +397,12 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     # own to file to yet).
     root = None
     scope_key = None
-    if body.project:
+    if body.scope:
+        candidate = body.scope.strip()
+        resolved = task_scope.root_for_context(candidate)
+        if resolved is not None:
+            scope_key, root = candidate, resolved
+    if root is None and body.project:
         scope_key = f"project:{body.project}"
         root = task_scope.root_for_context(scope_key)
     if root is None:
@@ -415,6 +428,8 @@ async def spawn_task(thread_id: str, body: SpawnTask):
     from services import task_dedup
     result = task_dedup.dedup_add(
         root, text=text, acceptance=acceptance,
+        priority=body.priority or 0,
+        effort=(body.effort or "").strip() or None,
         source={"kind": "chat", "ref": thread_id},
     )
     resp = {
