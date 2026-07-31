@@ -1561,7 +1561,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // message silently went back to the queue and waited out the whole turn —
     // the exact behaviour this was supposed to end. The client knows which
     // conversation it is in; the server resolves which turn is live on it.
+    // ...unless it is a slash command. Injection hands the text to the MODEL;
+    // slash commands are handled by the CLI's own command layer, which only runs
+    // between turns. A command that arrives mid-turn is swallowed there — not
+    // deferred, not passed through as text, just gone. Measured against the CLI
+    // directly (2.1.220): "/compact" injected mid-turn produced no user message,
+    // no command, no fold, and the turn ended normally; the same channel, same
+    // message shape, sent while idle, emitted a fresh session init and a real
+    // reply. Plain text injected mid-turn arrives fine (that's the control), so
+    // this is specific to the leading slash. Queue commands to run as their own
+    // turn, which is the only timing the CLI acts on them.
+    const isSlashCommand = /^\/[a-zA-Z][\w:-]*(\s|$)/.test(text);
     const threadId = activeIdRef.current;
+    if (streaming && isSlashCommand) { setQueue([...queuedRef.current, text]); return; }
     if (streaming && threadId) {
       void chatApi.injectIntoThread(threadId, text)
         .then((r) => {
