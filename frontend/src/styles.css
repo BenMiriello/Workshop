@@ -827,10 +827,13 @@ input[type="range"].grad::-moz-range-thumb {
   padding: 0.55rem 0.75rem;   /* actions live in a row below now, not over the text */
   /* 16px minimum: stops iOS auto-zoom on focus */
   font-size: 1rem; line-height: 1.45; font-family: inherit;
-  background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  /* No border. The field reads as a field from its inset background, and the
+     composer's own top rule already separates it from the log — a box around
+     the textarea on top of that was the extra line. */
+  background: var(--bg-inset); color: var(--fg);
+  border: none; border-radius: var(--radius-lg);
 }
-.chat-input:focus-visible { outline: none; border-color: var(--accent); box-shadow: var(--focus-ring); }
+.chat-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* On a phone, once the input is focused the on-screen keyboard sits directly
    below the composer and covers the home-indicator inset, so the bottom padding
    becomes a dead row between the buttons and the keyboard. Collapse it while
