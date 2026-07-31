@@ -558,11 +558,11 @@ input[type="range"].grad::-moz-range-thumb {
   height: 2rem; padding: 0 0.4rem;
   font-size: var(--fs-sm); line-height: 1; font-weight: var(--fw-semi);
   color: var(--fg); background: transparent;
-  border: 1px solid transparent; border-radius: var(--radius-md);
+  border: none; border-radius: var(--radius-md);
   cursor: pointer;
 }
 .chat-tb__picker:hover { background: var(--card-hover); }
-.chat-tb__picker[aria-expanded="true"] { background: var(--card-hover); border-color: var(--border); }
+.chat-tb__picker[aria-expanded="true"] { background: var(--card-hover); }
 .chat-tb__picker.is-static { cursor: default; }
 .chat-tb__picker.is-static:hover { background: transparent; }
 .chat-tb__picker-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -860,11 +860,12 @@ input[type="range"].grad::-moz-range-thumb {
   height: 2.1rem; padding: 0 0.45rem;
   font: inherit; font-size: var(--fs-xs); line-height: 1;
   color: var(--muted); background: transparent;
-  border: 1px solid transparent; border-radius: var(--radius-md);
+  border: none; border-radius: var(--radius-md);
   cursor: pointer;
 }
+/* No border, open or closed. Background alone carries hover and open state. */
 .chat-model:hover { color: var(--fg); background: var(--card-hover); }
-.chat-model[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); border-color: var(--border); }
+.chat-model[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
 .chat-model.is-static { cursor: default; }
 .chat-model.is-static:hover { color: var(--muted); background: transparent; }
 .chat-model__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
