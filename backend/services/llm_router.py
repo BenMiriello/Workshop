@@ -445,7 +445,7 @@ def call_cloud(
     prompt: str,
     *,
     model: str = TIER_HAIKU,
-    max_turns: int = 6,
+    max_turns: int | None = None,
     timeout_s: float = 600,
     cwd: str = os.environ.get("WORKSHOP_CHAT_CWD", str(Path.home())),
     tools_disabled: bool = False,
@@ -473,6 +473,13 @@ def call_cloud(
 
     3. Default — agentic mode, full tool/MCP inheritance, plain text output.
 
+    `max_turns=None` (the default) passes NO `--max-turns` to the CLI: the turn
+    runs until the model is done. A step cap is only ever appropriate for the
+    single-shot internal helpers (naming a thread, classifying a note) that pass
+    an explicit small number; it is NOT a control for conversational or agentic
+    work, which must be free to keep going. Spend is bounded by the usage cap,
+    not by counting steps.
+
     Returns: {"text": str, "model": str, "elapsed_s": float, "exit_code": int,
               "stop_reason": str | None, "recovered": bool}
     `recovered` is True if exit_code != 0 but we salvaged assistant text from
@@ -488,9 +495,10 @@ def call_cloud(
     # the narrow-tool path sets this; it spawns the server the model must use.
     block_mcp_startup = False
     # Tool/MCP/permission flags are shared with build_streaming via tool_flags()
-    # so the three modes never drift. call_cloud owns the output-format + max-turns
-    # decisions per mode (stream-json for tools-off/narrow so partial text is
-    # recoverable; text for full agentic).
+    # so the three modes never drift. call_cloud owns the output-format decision
+    # per mode (stream-json for tools-off/narrow so partial text is recoverable;
+    # text for full agentic).
+    cap = [] if max_turns is None else ["--max-turns", str(max_turns)]
     _tflags, _tenv, block_mcp_startup = tool_flags(
         tools_disabled=tools_disabled, allowed_tools=allowed_tools, mcp_servers=mcp_servers,
     )
@@ -499,12 +507,12 @@ def call_cloud(
         cmd.extend(["--output-format", "stream-json", "--verbose", "--max-turns", "1", *_tflags])
         use_stream_json = True
     elif allowed_tools:
-        # Narrow-tool path: honor the caller's max_turns (one tool call + a
-        # synthesis turn with headroom). Stream-json for partial-text recovery.
-        cmd.extend(["--output-format", "stream-json", "--verbose", "--max-turns", str(max_turns), *_tflags])
+        # Narrow-tool path: uncapped unless the caller asks for a cap (the
+        # one-shot helpers do). Stream-json for partial-text recovery.
+        cmd.extend(["--output-format", "stream-json", "--verbose", *cap, *_tflags])
         use_stream_json = True
     else:
-        cmd.extend(["--output-format", "text", "--max-turns", str(max_turns)])
+        cmd.extend(["--output-format", "text", *cap])
 
     # Session persistence (Build mode): `--session-id` reserves a uuid on the
     # first call so subsequent `--resume` calls continue the same conversation.

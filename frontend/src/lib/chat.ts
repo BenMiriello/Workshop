@@ -18,9 +18,9 @@ export type ChatMsg = {
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.
     timeout?: boolean;
-    // Any OTHER non-completion ending, currently "max_steps" (the turn ran out
-    // of agentic steps mid-task). A cut-off turn usually has produced text, so
-    // without this it renders exactly like a turn that finished.
+    // Any OTHER non-completion ending. Nothing writes this today — the old
+    // "max_steps" value is gone with the step cap — but the field stays so an
+    // older transcript on disk still parses.
     stopped?: string;
     // Client-only: this user message never reached the server, so it is NOT in
     // the transcript on disk. Marked rather than silently left looking sent —

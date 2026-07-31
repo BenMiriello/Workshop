@@ -661,15 +661,11 @@ class ContextProvider:
     #                   text Q&A; the call_cloud path pins max_turns=1).
     #   mcp_servers   : which MCP server specs to spawn in the chat subprocess.
     #                   Must be a subset of llm_router._MCP_SERVER_SPECS keys.
-    #   max_turns     : agentic budget when tools are allowed. 1 tool call + 1
-    #                   synthesis turn is the floor (2); 4 gives headroom for a
-    #                   retry or follow-up lookup. Ignored when allowed_tools is
-    #                   empty.
+    # There is no per-provider step budget: a chat turn runs until it is done.
     # Defaults below are deliberately empty — `general` is text-only because
     # cross-cutting chat without a clear data domain doesn't justify the surface.
     allowed_tools: list[str] = []
     mcp_servers: list[str] = []
-    max_turns: int = 4
     # Role surfaced to the UI: "assistant" for data/app chats, "builder" for
     # project:/build: providers. Drives the composer label + default model.
     role: str = "assistant"
@@ -838,8 +834,6 @@ class ProjectContextProvider(ContextProvider):
     # signals routes/chat.py to switch into the project-build branch.
     allowed_tools = []
     mcp_servers = []
-    # Vibe-coding wants real headroom; tasks routinely span 20+ tool calls.
-    max_turns = 60
     role = "builder"
     # Builders default to a strong model for codegen quality; opus is selectable.
     default_model = _llm.TIER_SONNET
@@ -912,7 +906,6 @@ class BuildAgentContextProvider(ContextProvider):
     label = "Build · agent"
     allowed_tools = []
     mcp_servers = []
-    max_turns = 60
     role = "builder"
     default_model = _llm.TIER_SONNET
 
@@ -974,7 +967,6 @@ class AssistantAgentContextProvider(ContextProvider):
     a chat surface (before this they silently fell back to `general`). Data-tier
     tools (web + anything it declares), no project cwd, no build."""
     role = "assistant"
-    max_turns = 8
     default_model = _llm.TIER_HAIKU
 
     def __init__(self, slug: str, record: dict):
@@ -1010,10 +1002,7 @@ class AssistantAgentContextProvider(ContextProvider):
 # WebSearch/WebFetch centrally via effective_allowed_tools(), so providers no
 # longer need to opt in per-instance. (budget/finance keep their Plaid tools and
 # gain web; commute/location gain web; build/project agents run the full toolset.)
-# The only per-instance tweak left is a roomier turn budget for the open-ended
-# general assistant so a research answer isn't cut short.
 _general = ContextProvider()
-_general.max_turns = 8
 # Stage 7 (2e): the general chat gets a scoped, read-only workshop-query tool
 # (platform MCP server, always available) so it can answer "what is going on /
 # what tasks and notes exist" on demand from the task + knowledge digest. It is

@@ -211,7 +211,9 @@ except Exception:
       EVT_EXIT=$?
       echo "$LOCAL_RESP" | python3 -c "import json,sys; print(json.load(sys.stdin).get('response','[no response]'))" 2>/dev/null >> "$LOG" || true
     else
-      timeout 300 "$CLAUDE" -p "$EVENT_PROMPT" --output-format text --max-turns 4 >> "$LOG" 2>&1
+      # No --max-turns: the 300s timeout is the bound. A step cap here cut
+      # handlers off mid-task for no benefit the timeout doesn't already give.
+      timeout 300 "$CLAUDE" -p "$EVENT_PROMPT" --output-format text >> "$LOG" 2>&1
       EVT_EXIT=$?
     fi
     AGENT_RUN_END=$(date -Iseconds)

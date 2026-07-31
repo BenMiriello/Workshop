@@ -455,7 +455,6 @@ class BudgetContextProvider(ContextProvider):
         "mcp__plaid__list_transactions",
     ]
     mcp_servers = ["plaid"]
-    max_turns = 4
     default_model = _llm.TIER_SONNET
 
     def persona(self) -> str:
@@ -556,7 +555,6 @@ class FinanceContextProvider(ContextProvider):
         "mcp__plaid__list_investment_transactions",
     ]
     mcp_servers = ["plaid"]
-    max_turns = 4
 
     def persona(self) -> str:
         return (

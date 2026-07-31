@@ -48,8 +48,8 @@ DEFAULT_CHAT_MODEL = llm_router.TIER_HAIKU
 PROVIDER_MODELS: dict[str, str] = {
     "budget": llm_router.TIER_SONNET,  # plan-patch needs careful path generation
 }
-# Per-provider tool policy: providers define allowed_tools + mcp_servers +
-# max_turns (see chat_context.ContextProvider). The narrow-tool path in
+# Per-provider tool policy: providers define allowed_tools + mcp_servers
+# (see chat_context.ContextProvider). The narrow-tool path in
 # call_cloud honors these — built-in tools (Bash/Read/Edit) stay off
 # everywhere; only the named MCP tools are surfaced. Providers with empty
 # allowed_tools fall through to tools_disabled (single-turn text).
@@ -70,13 +70,12 @@ PROVIDER_MODELS: dict[str, str] = {
 ENABLE_CHAT_TOOLS = True
 # Timeout: 300s comfortably covers cold-start + Sonnet on prompt-heavy budget
 # turns + one optional Plaid roundtrip + synthesis.
-# Wall-clock and step budget for a chat turn. Both used to be small enough
-# (300s / 8 steps) that any real piece of work was guillotined mid-way and the
-# operator saw a turn "just stop without finishing or reporting". A chat turn is
-# the same kind of work a build turn does, so it gets the same budget; a turn
-# that ends at either limit now says so explicitly (see _finalize_turn).
+# Wall-clock budget for a chat turn. There is deliberately NO step budget: a
+# chat turn is the same kind of work a build turn does, and this platform exists
+# for that work to run to completion on its own. Capping agentic steps guillotined
+# turns mid-task ("it just stopped without finishing"), and it is the wrong lever
+# anyway — spend is governed by the usage cap, not by counting steps.
 CHAT_TIMEOUT_S = 900
-CHAT_MAX_TURNS = 40
 MAX_HISTORY = 60  # messages of transcript carried into a fresh-session prompt
 
 
@@ -1015,14 +1014,13 @@ async def send_message(thread_id: str, body: PostMessage):
 
     # Build mode (Project chats + Build-agent chats): full agentic toolset
     # (Read/Write/Edit/Bash/Grep/etc), cwd pinned to the project/agent directory,
-    # larger max_turns + timeout, and — for Build-agent chats — a persistent
+    # a longer timeout, and — for Build-agent chats — a persistent
     # Claude Code session via --session-id (first turn) / --resume (subsequent).
     # The narrow-tool / tools_disabled branches don't apply — those are for
     # Data-mode surfaces.
     if is_build_mode:
         _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
         call_kwargs = {
-            "max_turns": provider.max_turns,
             "cwd": str(provider.dir),
         }
         # Build runs are often long. Keep a hard ceiling well above Data mode.
@@ -1060,7 +1058,6 @@ async def send_message(thread_id: str, body: PostMessage):
         call_kwargs = {
             "allowed_tools": chat_context.effective_allowed_tools(provider),
             "mcp_servers": list(provider.mcp_servers),
-            "max_turns": max(provider.max_turns, 6),
         }
         call_timeout = CHAT_TIMEOUT_S
     else:
@@ -1082,9 +1079,9 @@ async def send_message(thread_id: str, body: PostMessage):
         if result.get("recovered"):
             # The CLI exited non-zero but we salvaged the assistant text from
             # the stream-json transcript. For tools_disabled this is a config
-            # regression; for the narrow-tool path it's most often a max_turns
-            # hit mid-synthesis, which is benign as long as the recovered text
-            # is a complete reply. Either way: log so it's visible.
+            # regression; for the narrow-tool path it usually means the CLI
+            # tripped mid-synthesis, which is benign as long as the recovered
+            # text is a complete reply. Either way: log so it's visible.
             log.warning(
                 "chat completion recovered (provider=%s) after exit=%d stop_reason=%s",
                 provider.key, result.get("exit_code"), result.get("stop_reason"),
@@ -1241,7 +1238,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         turn = await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
-            max_turns=provider.max_turns, timeout_s=900,
+            timeout_s=900,
         )
         return {"turn_id": turn.id}
 
@@ -1260,7 +1257,6 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         allowed_tools: list[str] | None = None
         mcp_servers: list[str] = []
         tools_disabled = False
-        max_turns = max(provider.max_turns, CHAT_MAX_TURNS)
     else:
         cwd = os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~"))
         if ENABLE_CHAT_TOOLS:
@@ -1269,7 +1265,6 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
             tools_disabled = False
         else:
             allowed_tools, mcp_servers, tools_disabled = None, [], True
-        max_turns = max(provider.max_turns, CHAT_MAX_TURNS)
 
     sid, is_new = _thread_session(thread_id, cwd)
     if _is_raw_command(content):
@@ -1285,7 +1280,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
         prompt=prompt, model=model, cwd=cwd,
         session_id=sid, resume=resume_flag,
-        max_turns=max_turns, timeout_s=CHAT_TIMEOUT_S,
+        timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
     return {"turn_id": turn.id}

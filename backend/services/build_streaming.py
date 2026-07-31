@@ -204,10 +204,9 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     if t == "result":
         return ("result", {
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
-            # How the CLI ended the turn: "success", "error_max_turns" (ran out
-            # of agentic steps mid-task), "error_during_execution", … Without
-            # this a step-exhausted turn is indistinguishable from a finished
-            # one, which is exactly what made turns look like they "just stopped".
+            # How the CLI ended the turn: "success", "error_during_execution",
+            # … Kept as telemetry for diagnosing a turn that ended badly. Note
+            # that "error_max_turns" can no longer occur: we pass no step cap.
             "subtype": ev.get("subtype"),
             "is_error": bool(ev.get("is_error")),
             "duration_ms": ev.get("duration_ms"),
@@ -390,7 +389,7 @@ def _kill_turn_proc(pid: int | None, proc=None) -> None:
 
 async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str,
                      cwd: str, session_id: str | None, resume: bool,
-                     max_turns: int = 60, timeout_s: float = 900,
+                     timeout_s: float = 900,
                      allowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
                      tools_disabled: bool = False) -> Turn:
@@ -414,7 +413,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     meta = {
         "turn_id": turn.id, "thread_id": thread_id, "agent_slug": agent_slug,
         "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
-        "owner_id": owner_id, "prompt": prompt, "max_turns": max_turns,
+        "owner_id": owner_id, "prompt": prompt,
         "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
         "allowed_tools": allowed_tools, "mcp_servers": mcp_servers,
         "tools_disabled": bool(tools_disabled),
@@ -435,7 +434,6 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
-        "--max-turns", str(meta["max_turns"]),
     ]
     # Tool surface. Data/assistant turns (allowed_tools set) and tools-off turns
     # get their narrow flags from the SAME helper llm_router.call_cloud uses, so
@@ -697,21 +695,12 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
     # nothing came back, say WHY (timeout / compact / clean-no-summary / failure).
     is_command = prompt.strip().startswith("/")
     minutes = max(1, round(timeout_s / 60))
-    # The turn ran out of agentic steps mid-task. It usually HAS produced text by
-    # then, so without saying this the operator sees a partial answer that reads
-    # like a finished one and has no way to know the work was cut off. Say it
-    # either way, and say what to do about it.
-    hit_step_limit = subtype == "error_max_turns"
-    step_note = (
-        f"This turn stopped after its {meta.get('max_turns')}-step limit, before finishing. "
-        "Anything it already wrote to disk is saved — send \"continue\" to pick up "
-        "where it left off."
-    )
+    # No step cap is passed to the CLI any more (see start_turn), so a turn ends
+    # when the model is done, when the wall clock runs out, or when it fails —
+    # never because it took "too many" steps. Autonomous work is the point of
+    # this platform; spend is bounded by the usage cap, not by counting steps.
     if turn.final_text:
-        text = turn.final_text + (f"\n\n{step_note}" if hit_step_limit else "")
-        is_error = False
-    elif hit_step_limit:
-        text = step_note
+        text = turn.final_text
         is_error = False
     elif timed_out:
         text = (
@@ -792,7 +781,6 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         chat_store.finalize_streaming_assistant(
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes,
-            stopped=("max_steps" if hit_step_limit else None),
         )
     except Exception as e:
         log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)

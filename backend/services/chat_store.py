@@ -470,7 +470,7 @@ def finalize_streaming_assistant(
 
     `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
     the UI can render a calm "stopped — continue" note instead of a red error.
-    `stopped` names any OTHER non-completion ending ("max_steps"), so a turn that
+    `stopped` names any OTHER non-completion ending, so a turn that
     was cut off mid-task is never rendered as a turn that finished.
     `notes` mirrors the blocking path's meta.notes (e.g. "Updated the plan" from
     an action provider) so a streamed action turn renders the same follow-ups."""

@@ -11,9 +11,9 @@
 #
 # Each iteration sees the PREVIOUS iteration's diff via `git status` and the
 # reviewer's verdict, so it can self-correct. Continuity across iterations is
-# preserved with `claude --continue` after the first turn. Cap on cost: each
-# iteration runs with `--max-turns 6` so a single claude tick can't burn
-# unbounded budget.
+# preserved with `claude --continue` after the first turn. Cost is bounded by
+# wall clock (--max-wall, PER_ITER_TIMEOUT) and by the usage cap — deliberately
+# NOT by a per-iteration step count. See MAX_TURNS_PER_ITER below.
 #
 # Usage:
 #   ralph.sh "<task description>" [--baseline-rev <rev>] [--max-iter N] [--max-wall S]
@@ -60,15 +60,17 @@ BASELINE=""
 DIR="$WORKSHOP"          # working tree to drive (default = workshop root)
 MAX_ITER=10
 MAX_WALL=1500   # 25 minutes
-# Turns the model gets per iteration. This has to cover the WHOLE contract we ask
-# of a worker in one iteration: do the work, run reviewer.sh, and commit. At 6 a
-# real ticket spent every turn on the work plus the reviewer and died at
-# `max_turns` with the commit never reached — the task was then released as
-# "no work was committed" and a finished 339-line design doc was orphaned
-# uncommitted (observed 3x on each of two tickets, 2026-07-18). Raising the cap
-# is the fix: a requirement the turn budget cannot afford is not a requirement,
-# it is a guaranteed failure.
-MAX_TURNS_PER_ITER="${MAX_TURNS_PER_ITER:-10}"
+# NO step cap per iteration by default. An iteration has to cover the whole
+# contract — do the work, run reviewer.sh, commit — and a step budget cannot know
+# how many steps that takes. At 6 a real ticket died at `max_turns` with the
+# commit never reached, and a finished 339-line design doc was orphaned
+# uncommitted (3x on each of two tickets, 2026-07-18); raising it to 10 only
+# moved the cliff. A requirement the turn budget cannot afford is not a
+# requirement, it is a guaranteed failure — so the budget is gone. Cost is
+# bounded where it actually belongs: PER_ITER_TIMEOUT, MAX_WALL, MAX_ITER, and
+# the usage cap. Set MAX_TURNS_PER_ITER in the env to reinstate a cap for a
+# one-off debugging run.
+MAX_TURNS_PER_ITER="${MAX_TURNS_PER_ITER:-}"
 BILL_PROJECT=""   # --bill-project <scope>: record this run's tokens to the usage ledger
 LEARN_SCOPE_ARG=""  # --learn-scope <scope>: the learnings scope (project:/agent:/workshop)
 RECEIPT_PATH=""   # --receipt <path>: best-effort JSON receipt of this run's work product
@@ -552,15 +554,17 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   LAST_ITER_OUT="$ITER_OUT"   # remember for the receipt summary (final iter's .result)
   # --output-format json wraps the final text in `.result` (so the sentinel and
   # classifier grep -F still match verbatim) AND carries `.usage`, which is the
-  # only way to meter real token spend for the usage ledger. --max-turns bounds
-  # within-iter cost.
+  # only way to meter real token spend for the usage ledger. Within-iter cost is
+  # bounded by PER_ITER_TIMEOUT, not by a step count.
+  TURN_CAP=()
+  [ -n "$MAX_TURNS_PER_ITER" ] && TURN_CAP=(--max-turns "$MAX_TURNS_PER_ITER")
   set +e
   # </dev/null so claude doesn't wait on (and warn about) stdin — that warning
   # would otherwise be merged into ITER_OUT by 2>&1 and corrupt the JSON.
   ITER_START=$(date +%s)
   timeout "$PER_ITER_TIMEOUT" "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
     --output-format json \
-    --max-turns "$MAX_TURNS_PER_ITER" \
+    "${TURN_CAP[@]}" \
     </dev/null >"$ITER_OUT" 2>&1
   CLAUDE_EXIT=$?
   ITER_DUR=$(( $(date +%s) - ITER_START ))
