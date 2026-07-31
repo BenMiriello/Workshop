@@ -286,7 +286,15 @@ def _summarize_tool_input(inp: dict) -> str:
 # A build turn's claude subprocess is DETACHED (start_new_session) and streams
 # its stdout STRAIGHT TO A FILE, not an in-process pipe. So a backend restart
 # (which kills uvicorn but not the detached child) never interrupts the build:
-# the child keeps running and keeps writing its journal. We read events by
+# the child keeps running and keeps writing its journal.
+#
+# THIS DEPENDS ON THE SERVICE UNIT. start_new_session gives the child its own
+# session + process group, but NOT its own cgroup — it stays in the backend's.
+# Under systemd's default KillMode=control-group a restart therefore SIGTERMs
+# the child too and the guarantee above silently does not hold: the in-flight
+# reply collapses to whatever text had been flushed and finalizes via the
+# `lost` path. infra/systemd/workshop-backend.service sets KillMode=process to
+# make it hold; keep that line if you touch the unit. We read events by
 # TAILING that file — identical whether we just spawned the process or are
 # re-attaching to one that outlived us. On startup, reattach_running_turns()
 # resumes any journal still marked "running": tails a live process to completion,

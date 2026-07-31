@@ -15,6 +15,22 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+# Kill ONLY uvicorn on stop/restart — not the whole cgroup.
+#
+# A chat turn runs a detached `claude` child that streams its output to a
+# journal file, so the turn survives a backend restart: the next backend tails
+# that journal and drives the turn to completion (build_streaming.py,
+# "Crash/restart resilience"). start_new_session=True gives the child its own
+# session + process group, but cgroup membership is INHERITED and unaffected —
+# so under systemd's default KillMode=control-group every restart SIGTERMed the
+# turn as well, and the design never actually held. The operator saw this on
+# 2026-07-30: a reply in flight collapsed to whatever partial text had been
+# flushed, then finalized as lost.
+#
+# KillMode=process signals the main process only, leaving in-flight turns to
+# finish and be re-adopted. The tradeoff is that a stopped service can leave a
+# child running for the length of one turn; that is the intended behaviour here.
+KillMode=process
 WorkingDirectory=@WORKSHOP_ROOT@/backend
 # Optional secrets (Plaid, 511, Discord, etc.). The leading "-" makes it
 # non-fatal when the file is absent. See infra/systemd/secrets.env.example.

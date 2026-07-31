@@ -56,9 +56,20 @@ if command -v loginctl >/dev/null 2>&1; then
 fi
 
 # Free :8000 from any ad-hoc nohup backend so the service can bind it.
-if pgrep -f 'uvicorn main:app.*8000' >/dev/null 2>&1; then
-  echo "Stopping ad-hoc backend on :8000 ..."
-  pkill -f 'uvicorn main:app.*8000' || true
+#
+# Skip the service's OWN process: the pattern below matches the systemd-managed
+# backend just as well as an ad-hoc one, so an unguarded pkill here kills a
+# healthy backend — and with it any chat turn in flight — on what is supposed to
+# be an idempotent re-install. Only ad-hoc PIDs (not the unit's MainPID) qualify.
+main_pid="$(systemctl --user show -p MainPID --value "$SERVICE" 2>/dev/null || echo 0)"
+adhoc=""
+for p in $(pgrep -f 'uvicorn main:app.*8000' 2>/dev/null || true); do
+  [ "$p" = "${main_pid:-0}" ] && continue
+  adhoc="$adhoc $p"
+done
+if [ -n "$adhoc" ]; then
+  echo "Stopping ad-hoc backend on :8000 (pids:$adhoc) ..."
+  kill $adhoc 2>/dev/null || true
   sleep 1
 fi
 

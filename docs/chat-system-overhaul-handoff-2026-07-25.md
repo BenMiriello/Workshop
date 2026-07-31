@@ -799,3 +799,72 @@ committed component does not declare. The working tree does typecheck, so this s
 from it into a temp dir and rsynced (never building straight into the live `dist`). Whoever
 owns the voice work should commit those files; until then, do not expect a clean-worktree build
 of HEAD to succeed.
+
+## 13. The mid-turn restart that rewound a live chat (2026-07-30)
+
+The operator, mid-conversation: *"wait wtf my recent ongoing in app chat just
+reset back to an earlier state with both my and the system messages
+disappearing?!"*
+
+Cause: **I restarted the backend at 20:51:10 while he had a turn running.** It
+had been going since 20:43 and had two of his messages injected into it (20:46,
+20:49). No data was lost — the thread went 29 -> 35 messages with all five
+injected messages intact — but the reply he was watching collapsed to an earlier
+state, which is indistinguishable from loss while it is happening.
+
+### Correcting the first diagnosis
+
+My initial explanation was that `reattach_running_turns()` re-tails the journal
+**from offset 0**, rebuilding `turn.segments` from empty and persisting each
+partial rebuild over the stored copy. That is wrong, and reading the code
+disproves it: `_drain()` does a bare `f.read()`, so the first pass consumes the
+journal to EOF in one shot and the first `_persist()` writes the *complete*
+rebuild. Replay never publishes a partial state.
+
+### What actually happened
+
+`start_new_session=True` gives the turn's `claude` child its own session and
+process group — which is why `_retire_turn_proc`'s process-group kill can target
+it — but **cgroup membership is inherited and unaffected.** Verified live:
+
+```
+backend    MainPID 3026688  cgroup .../workshop-backend.service
+turn child pid     3040621  cgroup .../workshop-backend.service   <-- same cgroup
+```
+
+The unit did not set `KillMode`, so it defaulted to `control-group`: on restart
+systemd SIGTERMs **every** process in the cgroup, the detached child included.
+So the entire journal-backed crash-resilience design — "a backend restart never
+interrupts the build" — had never actually held under systemd. The child died
+mid-reply, reattach found `status=running` with a dead pid, drained the journal,
+and finalized the truncated text through the `lost` branch of `_finalize_turn`.
+
+Confirmed both directions on a throwaway unit with a detached child:
+
+| unit `KillMode` | detached child after `systemctl restart` |
+|---|---|
+| `control-group` (the old default) | **killed** |
+| `process` (the fix) | **survived** |
+
+### Fixes
+
+1. `infra/systemd/workshop-backend.service` sets `KillMode=process`, so a restart
+   signals uvicorn only and in-flight turns survive to be re-adopted. Applied to
+   the live unit via `daemon-reload` (no restart — a turn was running).
+2. `scripts/restart_backend.sh` refuses to run while a turn journal is marked
+   running with a live pid (`--deferred` / `--force` to override). `--deferred`
+   already existed for exactly this and I ignored it three times.
+3. `scripts/install_service.sh` no longer `pkill`s the service's own backend. Its
+   "free :8000 from any ad-hoc nohup backend" pattern matched the systemd-managed
+   process too, so an idempotent re-install would kill a healthy backend and any
+   turn in flight.
+
+### Not fixed, deliberately
+
+`chat_store` does a full read-modify-write in every mutator with no locking, and
+I had flagged that as a latent multi-writer hazard. **It is not one.** The module
+contains zero `async`/`await`, every caller runs on the event loop thread, no
+sync route touches it, no background thread touches it, and nothing outside the
+backend writes `.runtime/users/*/chat/*.json`. A read-modify-write therefore
+cannot be interleaved. Adding locks would be machinery for a race that cannot
+occur. If a second writer process is ever introduced, revisit this.
