@@ -724,6 +724,35 @@ def _distill_sync(to_fold: list[dict]) -> list[str]:
     return [ln for ln in lines if ln and len(ln) > 8][:5]
 
 
+# Scheduled distillations, held so the event loop cannot garbage-collect a task
+# that nothing else references.
+_DISTILL_TASKS: set = set()
+
+
+def _schedule_distill(to_fold: list[dict], scope_key: str) -> None:
+    """Run distillation OUT of band.
+
+    It used to be awaited inside the compaction pass, which put a second model
+    call plus a note write on the foreground path. On /compact — a request the
+    operator is actively waiting on — that turned a summarize call into
+    summarize + distill + dedupe, and the button read as dead for ~30 seconds
+    before anything appeared in the chat.
+
+    Nothing in the response depends on the distilled facts: they land in the
+    scope's knowledge note for LATER turns to recall. So the caller should not
+    pay for them. Same reasoning as `chat_naming.schedule`.
+    """
+    if not scope_key:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover — no running loop: do it inline.
+        return
+    task = loop.create_task(_distill(to_fold, scope_key))
+    _DISTILL_TASKS.add(task)
+    task.add_done_callback(_DISTILL_TASKS.discard)
+
+
 async def _distill(to_fold: list[dict], scope_key: str) -> None:
     """Distillation (Phase 3): pull durable facts out of the turns being compacted
     away and into the scope's `chat-distilled` note, so knowledge that would other
@@ -793,8 +822,9 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
         # compacted prompt on the next read.
         thread.pop("context_tokens", None)
     chat_store.save_thread(thread)
-    if scope_key:
-        await _distill(to_fold, scope_key)
+    # Scheduled, not awaited: the fold is what the caller asked for and is now
+    # saved. See `_schedule_distill`.
+    _schedule_distill(to_fold, scope_key)
     return new_summary, keep, fold_n
 
 

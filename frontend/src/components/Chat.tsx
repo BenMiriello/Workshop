@@ -384,6 +384,22 @@ function AssistantTurn({ segments, isLatest, model, cardCtx, streaming }: { segm
   );
 }
 
+// A one-line note about something the operator just did, shown under the toolbar.
+//
+// DISCRIMINATED ON PURPOSE. This started as a single "spawn message" shape that
+// carried a scope and two booleans, and the renderer INFERRED the sentence from
+// which fields were empty — so "not run, no run error" meant "filed as a ticket".
+// Compaction then reused the same shape to report progress and inherited the
+// ticket sentence, and /compact announced itself as "Filed as a ticket in
+// general". A note now says what kind of thing it is instead of leaving the
+// renderer to guess from absent fields.
+type ChatNotice =
+  // Something was filed into the ticket queue. The only kind that links to Work.
+  | { kind: "ticket"; text: string; scope: string; ran: boolean; runError?: string }
+  // Context reclamation: in flight (`busy`) or its result. Never a ticket.
+  | { kind: "compaction"; text: string; busy?: boolean }
+  | { kind: "error"; text: string };
+
 export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand, initialThreadId }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
@@ -470,16 +486,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sendBuildRef = useRef<(t: string) => void>(() => {});
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
-  const [tasksOpen, setTasksOpen] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
   // Filing this chat as tickets. The dialog owns the drafting, editing and
   // filing; this only holds whether it is open and where its result note goes.
   const [ticketsOpen, setTicketsOpen] = useState(false);
-  const [spawnMsg, setSpawnMsg] = useState<
-    { ok: true; text: string; scope: string; ran: boolean; jobId?: string; runError?: string }
-    | { ok: false; text: string }
-    | null
-  >(null);
+  const [notice, setNotice] = useState<ChatNotice | null>(null);
 
   // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
   // scope reach, which is policy, not display), refreshed when the thread moves.
@@ -496,12 +507,21 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => { cancelled = true; };
   }, [activeId]);
 
-  // The inbox lives behind a toolbar toggle, exactly like the task panel. It
-  // used to render inline and always open: on a phone that pushed the log and
-  // the composer off-screen, and with no cap on item count it was a wall rather
-  // than a signal. The badge carries the count so nothing is hidden; the panel
-  // is opened deliberately.
-  const [inboxOpen, setInboxOpen] = useState(false);
+  // ONE auxiliary drawer at a time, selected from the toolbar.
+  //
+  // The inbox and the task list are both bounded panels that open between the
+  // toolbar and the log, and they were independent booleans — so both could be
+  // open at once, stacking 40vh of inbox on 30vh of tasks and leaving a sliver
+  // of conversation on a phone. They are alternatives, not layers: each answers
+  // "what else is going on around this chat", and wanting one is wanting to look
+  // away from the other. Making that a single selection is what stops the top of
+  // the chat from growing without limit as more panels get added.
+  //
+  // Both stay MOUNTED when unselected (they poll and report their counts), so
+  // the toolbar badges stay live without the operator opening anything.
+  const [drawer, setDrawer] = useState<"inbox" | "tasks" | null>(null);
+  const inboxOpen = drawer === "inbox";
+  const tasksOpen = drawer === "tasks";
   const [inboxCount, setInboxCount] = useState(0);
   const [slashSel, setSlashSel] = useState(0);
   const [mentionSel, setMentionSel] = useState(0);
@@ -1408,16 +1428,26 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // picked up at random. Queue it up front and it sits in true order.
     const preQueued = streamingRef.current && effectiveMode === "build";
     if (preQueued) setQueue([...queuedRef.current, "/compact"]);
-    // Compaction is a several-second server round trip. Without a note here the
-    // only feedback was the finished result, so a slow (or failed) pass was
-    // indistinguishable from a button that did nothing.
-    setSpawnMsg({
-      ok: true,
+    // Put the request in the log at the moment it was made, not after the server
+    // round trip. Deferring it meant the "/compact" bubble appeared many seconds
+    // late, BELOW whatever had streamed in the meantime, so the log claimed the
+    // operator asked for it after output they had already read. `ts` is kept so
+    // the no-op path can take this exact bubble back out again.
+    const requestTs = new Date().toISOString();
+    if (!preQueued && !streamingRef.current) {
+      setMessages((m) => [...m, { role: "user", content: "/compact", ts: requestTs }]);
+    }
+    const dropRequestBubble = () =>
+      setMessages((m) => m.filter((x) => !(x.ts === requestTs && x.content === "/compact")));
+    // Compaction is a server round trip. Without a note here the only feedback
+    // is the finished result, so a slow (or failed) pass is indistinguishable
+    // from a button that did nothing.
+    setNotice({
+      kind: "compaction",
+      busy: true,
       text: preQueued
         ? "Compacting. The live session folds when the running turn finishes."
         : "Compacting the conversation…",
-      scope: scope,
-      ran: false,
     });
     try {
       const r = await chatApi.compactThread(id);
@@ -1431,27 +1461,36 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         // instead of opening a second one. Already queued above in that case.
         if (!preQueued) {
           if (streamingRef.current) {
+            // A turn started while the fold was in flight. Hand it to the queue,
+            // which renders its own pending bubble — so drop ours or the request
+            // shows twice.
+            dropRequestBubble();
             setQueue([...queuedRef.current, "/compact"]);
           } else {
-            setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
             void sendBuildRef.current("/compact");
           }
-          setSpawnMsg(null);
+          setNotice(null);
         }
       } else {
         // No live session after all — take the speculative entry back out rather
         // than letting a literal "/compact" reach a model as text.
         if (preQueued) dropQueued("/compact");
         if (r.folded === 0) {
-          setSpawnMsg(null);
+          // Nothing happened, so nothing should be left claiming it did.
+          dropRequestBubble();
+          setNotice(null);
           setErr("Nothing to compact — the transcript is already short.");
         } else {
-          setSpawnMsg({ ok: true, text: `Compacted ${r.folded} messages into the running summary.`, scope: scope, ran: false });
+          setNotice({
+            kind: "compaction",
+            text: `Compacted ${r.folded} messages into the running summary.`,
+          });
         }
       }
     } catch (e) {
       if (preQueued) dropQueued("/compact");
-      setSpawnMsg(null);
+      dropRequestBubble();
+      setNotice(null);
       setErr(`Couldn't compact: ${String(e)}`);
     } finally {
       setCompacting(false);
@@ -1604,7 +1643,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     { name: "new", desc: "Start a new chat", available: true, kind: "local", run: () => newChat() },
     { name: "clear", desc: "Start a fresh chat (alias of new)", available: true, kind: "local", run: () => newChat() },
     { name: "delete", desc: "Delete the current chat", available: !!activeId, kind: "local", run: () => { if (activeId) setConfirmDeleteId(activeId); } },
-    { name: "tasks", desc: "Toggle the task list", available: !!taskScope, kind: "local", run: () => setTasksOpen((o) => !o) },
+    { name: "tasks", desc: "Toggle the task list", available: !!taskScope, kind: "local", run: () => setDrawer((d) => (d === "tasks" ? null : "tasks")) },
+    // The inbox is the task list's sibling drawer, so it gets the sibling
+    // command. Leaving it out made the two panels look like different kinds of
+    // thing in a place where they are deliberately the same kind.
+    { name: "inbox", desc: "Toggle what agents are waiting on you for", available: !!activeId, kind: "local", run: () => setDrawer((d) => (d === "inbox" ? null : "inbox")) },
     { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, kind: "local", run: () => popOut() },
     { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => setSlashOpen(true) },
     // /deploy — jump to the project's Deploys panel when the chat is bound to
@@ -1787,7 +1830,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {activeId && (
         <button
           className={`chat-tb__btn chat-tb__tasks${inboxOpen ? " is-active" : ""}`}
-          onClick={() => setInboxOpen((o) => !o)}
+          onClick={() => setDrawer((d) => (d === "inbox" ? null : "inbox"))}
           title={inboxCount ? `${inboxCount} waiting on you` : "Nothing waiting"}
           aria-label="Agent inbox"
           aria-expanded={inboxOpen}
@@ -1799,7 +1842,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {taskScope && (
         <button
           className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
-          onClick={() => setTasksOpen((o) => !o)}
+          onClick={() => setDrawer((d) => (d === "tasks" ? null : "tasks"))}
           title="Tasks"
           aria-label="Tasks"
           aria-expanded={tasksOpen}
@@ -1857,7 +1900,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       open={ticketsOpen}
       chatId={activeId}
       onClose={() => setTicketsOpen(false)}
-      onFiled={(m) => setSpawnMsg({ ok: true, ...m })}
+      onFiled={(m) => setNotice({ kind: "ticket", ...m })}
     />
   );
 
@@ -2477,26 +2520,37 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const panelInner = (
     <div className={`chat-panel chat-panel--${variant}`}>
       {toolbar}
-      {spawnMsg && (
-        <div className={`chat-spawn-note${spawnMsg.ok ? "" : " is-error"}`} role="status">
+      {notice && (
+        <div
+          className={`chat-spawn-note${notice.kind === "error" ? " is-error" : ""}`}
+          role="status"
+        >
           <span className="chat-spawn-note__body">
-            {spawnMsg.ok ? (
+            {notice.kind === "ticket" ? (
               <>
-                {spawnMsg.ran ? (
-                  <>Filed and running in <strong>{scopeLabel(spawnMsg.scope)}</strong>. The live status is in the card below.{" "}</>
-                ) : spawnMsg.runError ? (
-                  <>Filed in <strong>{scopeLabel(spawnMsg.scope)}</strong>, but could not run now: {spawnMsg.runError}.{" "}</>
+                {notice.ran ? (
+                  <>Filed and running in <strong>{scopeLabel(notice.scope)}</strong>. The live status is in the card below.{" "}</>
+                ) : notice.runError ? (
+                  <>Filed in <strong>{scopeLabel(notice.scope)}</strong>, but could not run now: {notice.runError}.{" "}</>
                 ) : (
-                  <>Filed as a ticket in <strong>{scopeLabel(spawnMsg.scope)}</strong>.{" "}</>
+                  <>Filed as a ticket in <strong>{scopeLabel(notice.scope)}</strong>.{" "}</>
                 )}
-                <a href={`/work?scope=${encodeURIComponent(spawnMsg.scope)}`}>View in Work</a>.{" "}
-                <span className="ws-muted">{spawnMsg.text.slice(0, 140)}{spawnMsg.text.length > 140 ? "…" : ""}</span>
+                <a href={`/work?scope=${encodeURIComponent(notice.scope)}`}>View in Work</a>.{" "}
+                <span className="ws-muted">{notice.text.slice(0, 140)}{notice.text.length > 140 ? "…" : ""}</span>
               </>
             ) : (
-              spawnMsg.text
+              /* Compaction and errors are not tickets: no scope, no Work link.
+                 A busy note carries the same dots as the working indicator so
+                 "something is happening" reads the same way everywhere. */
+              <>
+                {notice.text}
+                {notice.kind === "compaction" && notice.busy && (
+                  <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
+                )}
+              </>
             )}
           </span>
-          <button className="chat-tb__btn" onClick={() => setSpawnMsg(null)} title="Dismiss" aria-label="Dismiss">
+          <button className="chat-tb__btn" onClick={() => setNotice(null)} title="Dismiss" aria-label="Dismiss">
             <X size={14} aria-hidden />
           </button>
         </div>
@@ -2505,7 +2559,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         chatId={activeId}
         open={inboxOpen}
         onCountChange={setInboxCount}
-        onClose={() => setInboxOpen(false)}
+        onClose={() => setDrawer(null)}
         onOpenGlobal={() => navigate("/work?tab=inbox")}
       />
       {taskPanel}
