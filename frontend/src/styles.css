@@ -827,10 +827,12 @@ input[type="range"].grad::-moz-range-thumb {
   padding: 0.55rem 0.75rem;   /* actions live in a row below now, not over the text */
   /* 16px minimum: stops iOS auto-zoom on focus */
   font-size: 1rem; line-height: 1.45; font-family: inherit;
-  /* No border. The field reads as a field from its inset background, and the
-     composer's own top rule already separates it from the log — a box around
-     the textarea on top of that was the extra line. */
-  background: var(--bg-inset); color: var(--fg);
+  /* Field surface comes from the SAME token every .ws-input/.ws-textarea uses,
+     so this stays in step with the design system instead of drifting from it.
+     Borderless by construction — that is already the primitive's treatment, and
+     hand-rolling a bordered variant here is what made the chat input the only
+     field in the app with a box around it. */
+  background: var(--field-bg); color: var(--fg);
   border: none; border-radius: var(--radius-lg);
 }
 .chat-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
