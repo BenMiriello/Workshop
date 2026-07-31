@@ -23,11 +23,39 @@ have_unit() {
 # detaches the restarter from the agent's process tree so it survives the backend
 # dying. (See docs/app-platform-runner.md, "restart the server that hosts the agent".)
 if [ "${1:-}" = "--deferred" ]; then
-  delay="${2:-5}"
+  # WAIT FOR THE TURN TO END, don't guess how long it will take.
+  #
+  # This used to sleep a fixed 5s and then run the restart, which hits the
+  # live-turn guard below and is REFUSED whenever the turn is still going. A
+  # long turn therefore never restarted at all: the refusal went to a log
+  # nobody reads, the command reported success, and the backend silently kept
+  # serving old code. That failure is invisible from the chat and it cost a
+  # whole session's backend work being "shipped" but not running.
+  #
+  # So: poll the same condition the guard checks, and restart the moment it
+  # clears. `--deferred <seconds>` still caps the wait (default 30 minutes) so
+  # a wedged turn can't leave a restarter parked forever.
+  max_wait="${2:-1800}"
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
-  setsid bash -c "sleep ${delay}; bash '${self}'" >>/tmp/workshop-backend.log 2>&1 </dev/null &
+  turns="$REPO_ROOT/.runtime/turns"
+  setsid bash -c '
+    self="$1"; turns="$2"; max="$3"; waited=0
+    turn_live() {
+      [ -d "$turns" ] || return 1
+      for meta in "$turns"/*/meta.json; do
+        [ -f "$meta" ] || continue
+        grep -q "\"status\": *\"running\"" "$meta" || continue
+        pid="$(sed -n "s/.*\"pid\": *\([0-9]\+\).*/\1/p" "$meta" | head -1)"
+        [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+      done
+      return 1
+    }
+    while turn_live && [ "$waited" -lt "$max" ]; do sleep 3; waited=$((waited+3)); done
+    sleep 1
+    bash "$self"
+  ' _ "$self" "$turns" "$max_wait" >>/tmp/workshop-backend.log 2>&1 </dev/null &
   disown || true
-  echo "Backend restart scheduled in ${delay}s (deferred + detached) — this reply lands first, then it reloads with your changes."
+  echo "Backend restart armed: it fires as soon as the running turn finishes (waiting up to ${max_wait}s)."
   exit 0
 fi
 
