@@ -397,7 +397,7 @@ def _kill_turn_proc(pid: int | None, proc=None) -> None:
 
 async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str,
                      cwd: str, session_id: str | None, resume: bool,
-                     timeout_s: float = 900,
+                     timeout_s: float = 0,
                      allowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
                      tools_disabled: bool = False,
@@ -555,7 +555,12 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             pass
 
     path = _journal_dir(turn.id) / "stream.jsonl"
-    deadline = (meta.get("started") or time.time()) + float(meta.get("timeout_s", 900))
+    # A wall clock is OPT-IN. `timeout_s` <= 0 means the turn runs until the
+    # model is done, the process dies, or the operator stops it. There is no
+    # step cap either (see start_turn), so nothing guillotines a turn mid-task:
+    # spend is governed by the usage cap, which is the correct lever.
+    _budget = float(meta.get("timeout_s", 0) or 0)
+    deadline = ((meta.get("started") or time.time()) + _budget) if _budget > 0 else None
     state = {"compacted": False, "saw_result": False, "last_ctx": 0}
     buf = ""
     offset = 0
@@ -665,7 +670,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             _drain(final=True)
             _persist()
             break
-        if time.time() > deadline:
+        if deadline is not None and time.time() > deadline:
             timed_out = True
             _kill_turn_proc(meta.get("pid"), proc)
             _drain(final=True)
@@ -701,7 +706,7 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
                          subtype: str = "", lost: bool = False) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
-    timeout_s = float(meta.get("timeout_s", 900))
+    timeout_s = float(meta.get("timeout_s", 0) or 0)
     _push(turn, "done", {"exit_code": rc, "text_len": len(turn.final_text)})
     turn.complete = True
     if timed_out:
@@ -710,19 +715,21 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
     # Same plain-language finalize as the original path: salvage any text; when
     # nothing came back, say WHY (timeout / compact / clean-no-summary / failure).
     is_command = prompt.strip().startswith("/")
-    minutes = max(1, round(timeout_s / 60))
-    # No step cap is passed to the CLI any more (see start_turn), so a turn ends
-    # when the model is done, when the wall clock runs out, or when it fails —
-    # never because it took "too many" steps. Autonomous work is the point of
-    # this platform; spend is bounded by the usage cap, not by counting steps.
+    minutes = max(1, round(timeout_s / 60)) if timeout_s > 0 else 0
+    # Neither cap is passed to the CLI any more (see start_turn): no step cap,
+    # and by default no wall clock either. A turn ends when the model is done,
+    # when the process dies, or when the operator stops it — never because it
+    # took "too many" steps or "too long". Autonomous work is the point of this
+    # platform; spend is bounded by the usage cap. The timeout branch below only
+    # runs for a caller that deliberately asked for a budget.
     if turn.final_text:
         text = turn.final_text
         is_error = False
     elif timed_out:
         text = (
-            f"This turn was stopped after reaching the {minutes}-minute time limit. "
-            "Any files it changed are already saved — send a follow-up (e.g. "
-            "\"continue\") to pick up where it left off."
+            f"This turn was stopped after reaching the {minutes}-minute limit set "
+            "by whatever started it. Any files it changed are already saved — "
+            "send a follow-up (e.g. \"continue\") to pick up where it left off."
         )
         is_error = False
     elif compacted:

@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import inbox, chat_store, knowledge
+from services import inbox, chat_store, knowledge, run_inbox
 
 log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
@@ -55,6 +55,16 @@ async def list_inbox(chat_id: str | None = None, state: str = "open"):
     filtered to what that chat should surface inline (see inbox.surfaces_in_chat
     — a broad chat is deliberately not a firehose, and what it does not show
     inline is still here globally)."""
+    # Blocked work asks through the inbox. Reconciled here rather than raised at
+    # the moment of blocking, because the producers are shell sweeps in another
+    # process — see services/run_inbox.
+    if state == "open":
+        try:
+            from routes.tasks_all import scope_roots
+            run_inbox.sync(scope_roots())
+        except Exception as e:
+            # A reconcile failure must never empty the operator's inbox.
+            log.warning("inbox: awaiting-task sync failed: %s", e)
     scope, cid = _scope_for_chat(chat_id)
     items = inbox.list_items(chat_scope=scope, chat_id=cid, state=state)
     return {

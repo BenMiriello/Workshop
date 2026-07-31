@@ -430,7 +430,7 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
     return labels, (not has_source)
 
 
-def turn_contract(timeout_s: float | int = 900) -> str:
+def turn_contract(timeout_s: float | int = 0) -> str:
     """The rule that decides when a turn ends. Re-sent on EVERY turn.
 
     Why this exists: an agent in this chat has no way to observe the stop
@@ -448,7 +448,20 @@ def turn_contract(timeout_s: float | int = 900) -> str:
     So tell it, every turn, next to the other volatile facts about its
     environment.
     """
-    minutes = max(1, round(float(timeout_s) / 60))
+    # 0 means no wall clock (routes/chat.CHAT_TIMEOUT_S). Saying "the only bound
+    # is N minutes" when there is no bound would be a false constraint, and a
+    # false constraint on a turn's length is exactly what makes an agent wrap up
+    # work it should be finishing.
+    budget = float(timeout_s or 0)
+    bound = (
+        "There is NO cap on this turn: no step limit and no time limit. It runs "
+        "until the work is done. Running long is fine and expected; stopping "
+        "early is the failure mode."
+        if budget <= 0 else
+        f"There is NO step cap on a turn. The only bound is a "
+        f"{max(1, round(budget / 60))}-minute wall clock. Running long is fine "
+        "and expected; stopping early is the failure mode."
+    )
     return (
         "=== HOW THIS TURN ENDS (re-read every turn) ===\n"
         "This turn ends the moment you emit a message that is ONLY text, with no "
@@ -469,9 +482,7 @@ def turn_contract(timeout_s: float | int = 900) -> str:
         "- If you must stop with work outstanding, say plainly what is done, what "
         "is not, and why. Never imply a continuation that cannot happen.\n"
         "\n"
-        f"There is NO step cap on a turn. The only bound is a {minutes}-minute wall "
-        "clock. Running long is fine and expected; stopping early is the failure "
-        "mode."
+        + bound
     )
 
 

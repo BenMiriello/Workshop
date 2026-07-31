@@ -71,12 +71,17 @@ PROVIDER_MODELS: dict[str, str] = {
 ENABLE_CHAT_TOOLS = True
 # Timeout: 300s comfortably covers cold-start + Sonnet on prompt-heavy budget
 # turns + one optional Plaid roundtrip + synthesis.
-# Wall-clock budget for a chat turn. There is deliberately NO step budget: a
-# chat turn is the same kind of work a build turn does, and this platform exists
-# for that work to run to completion on its own. Capping agentic steps guillotined
-# turns mid-task ("it just stopped without finishing"), and it is the wrong lever
-# anyway — spend is governed by the usage cap, not by counting steps.
-CHAT_TIMEOUT_S = 900
+# There is deliberately NO budget on a chat turn: no step cap and no wall clock.
+#
+# A chat turn is the same kind of work a build turn does, and this platform
+# exists for that work to run to completion on its own. Both caps produced the
+# same failure from different directions — a turn guillotined mid-task, files
+# half-changed, reported to the operator as "stopped at the time limit" — and
+# both are the wrong lever. Spend is governed by the usage cap.
+#
+# 0 means no deadline (services/build_streaming reads it that way). A turn ends
+# when the model is done, when the process dies, or when the operator stops it.
+CHAT_TIMEOUT_S = 0
 MAX_HISTORY = 60  # messages of transcript carried into a fresh-session prompt
 
 
@@ -1161,8 +1166,9 @@ async def send_message(thread_id: str, body: PostMessage):
         call_kwargs = {
             "cwd": str(provider.dir),
         }
-        # Build runs are often long. Keep a hard ceiling well above Data mode.
-        call_timeout = 900
+        # Build runs are often long and are allowed to be. No ceiling: see
+        # CHAT_TIMEOUT_S above.
+        call_timeout = CHAT_TIMEOUT_S
 
         # Persistent --resume sessions: only for BuildAgentContextProvider for
         # now (Project chats don't have a dedicated agent record to hang a
@@ -1477,7 +1483,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
         turn = await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
-            timeout_s=900,
+            timeout_s=CHAT_TIMEOUT_S,
         )
         return {"turn_id": turn.id}
 

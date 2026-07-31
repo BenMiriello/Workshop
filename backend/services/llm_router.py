@@ -530,13 +530,19 @@ def call_cloud(
         env.update(_MCP_BLOCK_STARTUP_ENV)
 
     start = time.time()
+    # 0 (or negative) means NO wall clock — the call runs until the model is
+    # done. subprocess.run treats timeout=0 as "already expired", so the value
+    # has to become None here rather than being passed through; getting that
+    # wrong kills every turn instantly.
+    _timeout = float(timeout_s or 0)
+    _timeout = _timeout if _timeout > 0 else None
     try:
         proc = subprocess.run(
             cmd, env=env, cwd=cwd,
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True, text=True, timeout=_timeout,
         )
     except subprocess.TimeoutExpired as e:
-        raise CloudCallFailed(f"claude -p timed out after {timeout_s}s: {e}") from e
+        raise CloudCallFailed(f"claude -p timed out after {_timeout}s: {e}") from e
     elapsed = time.time() - start
 
     # Stream-json paths (tools_disabled or narrow allowed_tools): parse stream

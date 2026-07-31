@@ -47,9 +47,11 @@ IDLE_S = 600.0            # reap a conversational worker after this long with no
 BUILD_IDLE_S = 30.0
 TURN_TIMEOUT_S = 60.0     # a conversational voice reply slower than this is a failure
 # A voice BUILD turn runs real tools (edits, commands, tests) and legitimately
-# takes minutes — mirror the text build path's generous ceiling, not the 60s
-# conversational one.
-BUILD_TURN_TIMEOUT_S = 900.0
+# takes as long as the work takes — mirror the text build path, which has no
+# wall clock at all (routes/chat.CHAT_TIMEOUT_S), not the 60s conversational
+# one. 0 means no deadline. The conversational bound above stays: a SPOKEN
+# reply that slow is a genuine failure, not autonomous work.
+BUILD_TURN_TIMEOUT_S = 0.0
 # Stable cwd so `--resume` can find the session on disk across respawns. Used for
 # conversational (no-tool) workers; build workers use the agent's own cwd.
 VOICE_CWD = str(Path(__file__).resolve().parents[2])
@@ -412,8 +414,10 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
             worker.dead = True
             return
         timeout_s = BUILD_TURN_TIMEOUT_S if worker.is_build else TURN_TIMEOUT_S
+        # 0 means no deadline; asyncio.wait_for spells that None.
         try:
-            await asyncio.wait_for(turn.done_event.wait(), timeout=timeout_s)
+            await asyncio.wait_for(turn.done_event.wait(),
+                                   timeout=timeout_s if timeout_s > 0 else None)
         except asyncio.TimeoutError:
             await _interrupt(worker)
             _finish_turn(turn, error=f"timeout after {int(timeout_s)}s")

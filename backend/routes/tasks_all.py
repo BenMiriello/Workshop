@@ -132,6 +132,11 @@ def _scope_roots() -> list[tuple[str, Path]]:
     return order
 
 
+# Public alias: other routers (the inbox reconciler) need the same scope sweep,
+# and duplicating it would let the two drift.
+scope_roots = _scope_roots
+
+
 # ---- Aggregate list --------------------------------------------------------
 
 @router.get("")
