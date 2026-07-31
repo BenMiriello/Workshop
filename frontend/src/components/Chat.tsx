@@ -1435,6 +1435,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // queues below rather than being dropped.
     setErr(null);
     setCompacting(true);
+    // Compaction is a several-second server round trip. Without a note here the
+    // only feedback was the finished result, so a slow (or failed) pass was
+    // indistinguishable from a button that did nothing.
+    setSpawnMsg({ ok: true, text: "Compacting the conversation…", scope: scope, ran: false });
     try {
       const r = await chatApi.compactThread(id);
       setCompactedThrough(r.compacted_through);
@@ -1451,15 +1455,20 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
           void sendBuildRef.current("/compact");
         }
+        setSpawnMsg(null);
       } else if (r.folded === 0) {
+        setSpawnMsg(null);
         setErr("Nothing to compact — the transcript is already short.");
+      } else {
+        setSpawnMsg({ ok: true, text: `Compacted ${r.folded} messages into the running summary.`, scope: scope, ran: false });
       }
     } catch (e) {
-      setErr(String(e));
+      setSpawnMsg(null);
+      setErr(`Couldn't compact: ${String(e)}`);
     } finally {
       setCompacting(false);
     }
-  }, [setQueue]);
+  }, [setQueue, scope]);
 
   // Submit a concrete string as a turn (used by send() and by slash passthrough).
   const submitText = useCallback((raw: string) => {
@@ -2265,8 +2274,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
                 aria-selected={active}
                 className={`chat-slash-item${active ? " is-active" : ""}`}
                 onMouseEnter={() => setSlashSel(i)}
-                // onMouseDown (not onClick) so it fires before the textarea blur.
-                onMouseDown={(e) => { e.preventDefault(); runSlash(c); }}
+                // preventDefault on mousedown keeps the textarea focused; the
+                // ACTION runs on click. It used to run on mousedown, which a
+                // touch device only synthesizes after the fact and not
+                // dependably — so on a phone, tapping a command did nothing at
+                // all: no error, no message, no fold. click fires on both.
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => runSlash(c)}
               >
                 <span className="chat-slash-name">/{c.name}</span>
                 <span className="chat-slash-desc">{c.desc}</span>
