@@ -428,8 +428,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // /participants routes; canonical form is `agent:<slug>`. Empty on threads
   // that have never been assigned an agent.
   const [participants, setParticipants] = useState<string[]>([]);
-  const [showAddParticipant, setShowAddParticipant] = useState(false);
-  const [addParticipantSlug, setAddParticipantSlug] = useState("");
+  // Agents you can add to this chat. Fetched so the control can OFFER them:
+  // the previous version was a bare text box asking you to type a slug, which
+  // means you had to already know the answer to use it.
+  const [agentChoices, setAgentChoices] = useState<{ slug: string; name: string }[]>([]);
+  const [agentsErr, setAgentsErr] = useState(false);
 
   const addParticipant = useCallback(async (slug: string) => {
     const s = slug.trim();
@@ -444,10 +447,30 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         const t = await r.json();
         setParticipants(t.participants ?? []);
       }
-    } finally {
-      setAddParticipantSlug("");
-      setShowAddParticipant(false);
+    } catch {
+      /* leave participants as they are; the tag list is the source of truth */
     }
+  }, [activeId]);
+
+  // Load the agent roster once a thread is open, so the add-agent menu has real
+  // names in it. A failure is remembered (not swallowed) so the menu can say it
+  // couldn't load the list instead of just looking empty.
+  useEffect(() => {
+    if (!activeId) return;
+    let cancelled = false;
+    fetch("/api/agents/")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((list: { slug?: string; name?: string }[]) => {
+        if (cancelled) return;
+        setAgentChoices(
+          (Array.isArray(list) ? list : [])
+            .filter((a) => a.slug)
+            .map((a) => ({ slug: a.slug as string, name: a.name || (a.slug as string) })),
+        );
+        setAgentsErr(false);
+      })
+      .catch(() => { if (!cancelled) setAgentsErr(true); });
+    return () => { cancelled = true; };
   }, [activeId]);
 
   const removeParticipant = useCallback(async (p: string) => {
@@ -467,7 +490,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     if (!activeId) {
       setParticipants([]);
-      setShowAddParticipant(false);
       return;
     }
     let cancelled = false;
@@ -1576,6 +1598,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // it duplicated the chat list you reach with back / "All chats", and its one
   // unique job (start a new chat) is now the + button.
   const activeThreadTitle = activeId ? threads.find((t) => t.id === activeId)?.title : undefined;
+  // Agents not already in this chat — the only ones worth offering.
+  const inChat = new Set(participants.map((p) => (p.startsWith("agent:") ? p.slice(6) : p)));
+  const available = agentChoices.filter((a) => !inChat.has(a.slug));
   const toolbar = (
     <div className="chat-toolbar">
       {variant === "full" && (
@@ -1648,26 +1673,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
               </button>
             );
           })}
-          <button
-            className="chat-tb__btn"
-            title="Add an agent to this chat"
-            aria-label="Add agent"
-            onClick={() => setShowAddParticipant((v) => !v)}
+          {/* Pick an agent from the ones that exist. Asking the operator to type
+              a slug into a blank box required already knowing the answer. */}
+          <Menu
+            label="Add an agent to this chat"
+            align="end"
+            trigger={
+              <button className="chat-tb__btn" title="Add an agent to this chat" aria-label="Add agent">
+                <UserPlus size={16} aria-hidden />
+              </button>
+            }
           >
-            <UserPlus size={16} aria-hidden />
-          </button>
-          {showAddParticipant && (
-            <input
-              className="chat-tb__select"
-              type="text"
-              placeholder="agent slug"
-              value={addParticipantSlug}
-              onChange={(e) => setAddParticipantSlug(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addParticipant(addParticipantSlug); } }}
-              style={{ width: "8rem" }}
-              autoFocus
-            />
-          )}
+            {agentsErr ? (
+              <MenuItem onSelect={() => navigate("/agents")}>Couldn't load agents — open Agents</MenuItem>
+            ) : available.length === 0 ? (
+              <MenuItem onSelect={() => navigate("/agents")}>
+                {agentChoices.length ? "All agents are already here" : "No agents yet — create one"}
+              </MenuItem>
+            ) : (
+              available.map((a) => (
+                <MenuItem key={a.slug} icon={<UserPlus size={14} />} onSelect={() => void addParticipant(a.slug)}>
+                  {a.name}
+                </MenuItem>
+              ))
+            )}
+          </Menu>
         </>
       )}
       {taskScope && (

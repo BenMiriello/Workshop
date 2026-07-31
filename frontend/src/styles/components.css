@@ -595,7 +595,13 @@ a.ws-btn { text-decoration: none; }
 /* ---- MENU (overflow / compact picker popover) ---------------------------- */
 /* Card language, one elevation step below a modal: this is a transient list
    attached to its trigger, not a surface you work in. */
-.ws-menu { position: relative; display: inline-flex; min-width: 0; }
+/* flex: 0 0 auto — a Menu must never be the thing that gives way. As a bare
+   flex child with shrink:1 this wrapper collapsed to zero width on a crowded
+   row and CLIPPED ITS OWN TRIGGER: the control was in the DOM, took no space,
+   and was simply not there on a phone. That silently ate a whole overflow menu.
+   A consumer that genuinely wants a truncating trigger opts in by overriding
+   flex on `.ws-menu` itself (see .chat-actions > .ws-menu). */
+.ws-menu { position: relative; display: inline-flex; flex: 0 0 auto; min-width: 0; }
 .ws-menu__list {
   position: absolute; z-index: var(--z-dropdown);
   min-width: 11rem; max-width: min(20rem, 80vw);

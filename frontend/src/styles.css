@@ -65,22 +65,27 @@ body {
   background: var(--card); color: var(--fg); cursor: pointer;
 }
 .ws-iconbtn:hover { background: var(--card-hover); }
-.ws-menu {
+/* App-nav overflow popover. Renamed off `.ws-menu`, which now belongs to the
+   `Menu` primitive in src/ui — and it was a real collision, not a cosmetic one:
+   this sheet loads AFTER components.css, so `position: absolute` here was
+   landing on the primitive's WRAPPER and pulling every Menu trigger out of its
+   toolbar. The controls were in the DOM and nowhere on screen. */
+.ws-navmenu {
   position: absolute; right: 0; top: calc(100% + 0.4rem); min-width: 180px;
   display: flex; flex-direction: column; gap: 2px;
   background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
   padding: var(--space-1); z-index: var(--z-dropdown);
 }
-.ws-menu__item {
+.ws-navmenu__item {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
   color: var(--fg); text-decoration: none; font-size: var(--fs-sm); white-space: nowrap;
 }
-.ws-menu__item:hover { background: var(--card-hover); }
-.ws-menu__item.is-active { color: var(--accent); background: var(--accent-soft); }
-.ws-menu__item svg { color: var(--muted); }
-.ws-menu__item.is-active svg { color: var(--accent); }
+.ws-navmenu__item:hover { background: var(--card-hover); }
+.ws-navmenu__item.is-active { color: var(--accent); background: var(--accent-soft); }
+.ws-navmenu__item svg { color: var(--muted); }
+.ws-navmenu__item.is-active svg { color: var(--accent); }
 
 /* Linked-app switcher (Finance ⇄ Budget, Location ⇄ Commute). Lives inline in
    the PageHeader actions row, left of Refresh — compact pills, no own row. */
@@ -859,11 +864,13 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex; align-items: center; gap: 0.4rem;
 }
 .chat-actions__spacer { flex: 1 1 0; min-width: var(--space-2); }
-/* Model picker: sits just left of the slash/voice/send cluster. Sized to its
-   text so a long model name never squeezes Send off the row; it truncates
-   instead. Same quiet-trigger idiom as the header scope picker. */
+/* Model picker: sits just left of the slash/voice/send cluster. It truncates
+   rather than pushing Send off the row — but it has a FLOOR, because with
+   `min-width: 0` and the default shrink factor it collapsed to zero width on a
+   narrow (phone) row and simply wasn't there. A control that can shrink to
+   nothing is a control that disappears exactly when the screen is small. */
 .chat-model {
-  flex: 0 1 auto; min-width: 0;
+  flex: 0 1 auto; min-width: 4.5rem; max-width: 11rem;
   display: inline-flex; align-items: center; gap: 0.2rem;
   height: 2.1rem; padding: 0 0.45rem;
   font: inherit; font-size: var(--fs-xs); line-height: 1;
@@ -877,7 +884,14 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-model.is-static:hover { color: var(--muted); background: transparent; }
 .chat-model__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-model__caret { flex: 0 0 auto; }
+/* The model picker is the one Menu that MAY truncate (a long model name should
+   yield before Send does) — but only down to a floor, never to nothing. Every
+   other Menu keeps the primitive's non-shrinking default. */
+.chat-actions > .ws-menu { flex: 0 1 auto; min-width: 4.5rem; }
 .chat-send, .chat-stop {
+  /* flex: 0 0 auto — these are fixed-size targets; without it they inherit
+     shrink:1 and get squashed below a tappable size on a crowded row. */
+  flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.1rem; height: 2.1rem; padding: 0;
   border-radius: var(--radius-md); cursor: pointer;
@@ -890,6 +904,9 @@ input[type="range"].grad::-moz-range-thumb {
    the chat's context is, with the % to its right. Single accent tone — it does
    not shift to amber/red as it fills. */
 .chat-context-meter {
+  /* Yields first: of everything in this row it is the only thing that is pure
+     information, so it is what gives way when space runs out. */
+  flex: 0 1 auto; min-width: 0; overflow: hidden;
   display: flex; align-items: center; gap: var(--space-2);
   padding: 0 0.1rem;
 }
@@ -917,6 +934,7 @@ input[type="range"].grad::-moz-range-thumb {
 
 /* ---- Slash commands: composer button + autocomplete popover ---- */
 .chat-slash-btn {
+  flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.1rem; height: 2.1rem; padding: 0;
   border-radius: var(--radius-md); cursor: pointer;

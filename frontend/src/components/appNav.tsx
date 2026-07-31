@@ -417,7 +417,7 @@ export function SectionNav() {
           <Menu size={20} aria-hidden />
         </button>
         {open && (
-          <div className="ws-menu" role="menu">
+          <div className="ws-navmenu" role="menu">
             {SECTIONS.map((s) => {
               const Icon = s.icon;
               return (
@@ -426,7 +426,7 @@ export function SectionNav() {
                   to={s.to}
                   end={s.to === "/"}
                   role="menuitem"
-                  className={({ isActive }) => (isActive ? "ws-menu__item is-active" : "ws-menu__item")}
+                  className={({ isActive }) => (isActive ? "ws-navmenu__item is-active" : "ws-navmenu__item")}
                 >
                   <Icon size={16} aria-hidden />
                   {s.label}
