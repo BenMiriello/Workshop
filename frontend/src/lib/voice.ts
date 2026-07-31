@@ -122,10 +122,39 @@ export type MicFailKind =
   | "inUse"        // device held by another app (NotReadableError/TrackStartError)
   | "unknown";
 
+// What each failure kind says to the operator. ONE sentence per kind, defined
+// once, here — beside the kinds themselves.
+//
+// This used to live in three places (the two MicError factories below, the
+// browser-recognizer path in voiceSession, and a private map in Chat.tsx) which
+// had drifted to three different recovery hints for the same condition: "turn
+// voice on again", "tap the mic", and "tap the mic to try again". Three copies
+// means fixing the wording in one and believing you are done. The recovery is
+// phrased without naming a specific control, because these render from more
+// than one surface.
+export const MIC_FAIL_TEXT: Record<MicFailKind, string> = {
+  insecure: "Voice input needs a secure origin (https, or localhost). Typing still works.",
+  unsupported: "This browser can't capture audio. Typing still works.",
+  notAllowed: "Microphone permission denied. Allow it in your browser's site settings, then try the mic again.",
+  notFound: "No microphone found. Connect one, then try the mic again.",
+  inUse: "The microphone is in use by another app. Close it, then try the mic again.",
+  unknown: "Couldn't open the microphone. Try the mic again.",
+};
+
+// The message for a kind, optionally carrying the machine detail that makes it
+// diagnosable (which origin, which underlying exception). The sentence stays
+// canonical; only the parenthetical varies.
+export function micFailText(kind: MicFailKind, detail?: string): string {
+  const d = (detail || "").trim();
+  return d ? `${MIC_FAIL_TEXT[kind]} (${d})` : MIC_FAIL_TEXT[kind];
+}
+
 export class MicError extends Error {
   kind: MicFailKind;
-  constructor(kind: MicFailKind, message: string) {
-    super(message);
+  constructor(kind: MicFailKind, message?: string) {
+    // Default to the canonical text for the kind, so a caller cannot
+    // accidentally introduce a fourth wording just by forgetting to look it up.
+    super(message ?? MIC_FAIL_TEXT[kind]);
     this.name = "MicError";
     this.kind = kind;
   }
@@ -136,33 +165,35 @@ export class MicError extends Error {
 // tailnet or a WebView without the right host wiring lands here instead of
 // throwing an opaque TypeError from inside MicStream.start().
 export function micPreflight(): MicError | null {
-  if (typeof window === "undefined") return new MicError("unsupported", "No browser environment.");
+  if (typeof window === "undefined") {
+    return new MicError("unsupported", micFailText("unsupported", "no browser environment"));
+  }
   if (!window.isSecureContext) {
-    return new MicError(
-      "insecure",
-      `Voice input needs a secure origin (https or localhost). This page is ${window.location.protocol}//${window.location.host}.`,
-    );
+    return new MicError("insecure", micFailText(
+      "insecure", `this page is ${window.location.protocol}//${window.location.host}`,
+    ));
   }
   if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
-    return new MicError("unsupported", "This browser has no microphone capture API.");
+    return new MicError("unsupported", micFailText("unsupported", "no getUserMedia"));
   }
   return null;
 }
 
-// Map a getUserMedia rejection to a MicError with a recovery hint.
+// Map a getUserMedia rejection onto a failure kind. The wording comes from
+// MIC_FAIL_TEXT; this function's job is the classification, not the prose.
 function classifyGumError(e: unknown): MicError {
   const name = (e as { name?: string })?.name || "";
   const msg = String((e as Error)?.message || e);
   if (name === "NotAllowedError" || name === "SecurityError" || /permission|not allowed/i.test(msg)) {
-    return new MicError("notAllowed", "Microphone permission denied. Allow it in the browser's site settings, then turn voice on again.");
+    return new MicError("notAllowed");
   }
   if (name === "NotFoundError" || name === "OverconstrainedError") {
-    return new MicError("notFound", "No microphone found. Connect an input device and try again.");
+    return new MicError("notFound");
   }
   if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") {
-    return new MicError("inUse", "The microphone is in use by another app.");
+    return new MicError("inUse");
   }
-  return new MicError("unknown", `Could not open the microphone: ${msg}`);
+  return new MicError("unknown", micFailText("unknown", msg));
 }
 
 // ============================================================================

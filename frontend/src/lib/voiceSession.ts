@@ -32,6 +32,7 @@ import {
   splitSentences,
   cleanForSpeech,
   micPreflight,
+  micFailText,
   MicError,
   type EngineCaps,
   type MicFailKind,
@@ -540,7 +541,7 @@ export class VoiceSession {
       // rather than a stringified exception. MicError carries the recovery step.
       const me = e instanceof MicError ? e : null;
       this.micFail = me ? me.kind : "unknown";
-      const msg = me ? me.message : `Could not open the microphone: ${String(e)}`;
+      const msg = me ? me.message : micFailText("unknown", String(e));
       // The VAD mic drives capture + hands-free barge-in for the SERVER path.
       // Browser and native STT capture themselves, so a mic failure there only
       // costs us barge-in — surface it, but let the session run.
@@ -794,7 +795,7 @@ export class VoiceSession {
           // composer live. Only voice-only input has nothing left to fall to.
           if (/not-allowed|denied|service-not-allowed/i.test(msg)) {
             this.micFail = "notAllowed";
-            this.error = "Microphone permission denied. Allow it in the browser's site settings, then tap the mic.";
+            this.error = micFailText("notAllowed");
             this.micOff = true;
             this.mic.stop();
             if (this.cfg.prefs.input_mode === "voice") this.fatal = true;

@@ -25,7 +25,7 @@ import {
   readQueue, writeQueue,
 } from "../lib/chatSelection";
 import { useVoiceSession } from "../lib/useVoiceSession";
-import { unlockAudio, type MicFailKind } from "../lib/voice";
+import { unlockAudio, MIC_FAIL_TEXT } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -110,15 +110,9 @@ function modelLabel(id: string): string {
 
 // Why the input lane can't run — each with the step that fixes it. A generic
 // "microphone error" is what made the four genuinely different causes here
-// indistinguishable from each other and from a muted mic.
-const MIC_FAIL_TEXT: Record<MicFailKind, string> = {
-  insecure: "Voice input needs a secure origin (https, or localhost). Typing still works.",
-  unsupported: "This browser can't capture audio. Typing still works.",
-  notAllowed: "Microphone permission denied. Allow it in your browser's site settings, then tap the mic.",
-  notFound: "No microphone found. Connect one, then tap the mic.",
-  inUse: "The microphone is in use by another app. Close it, then tap the mic.",
-  unknown: "Couldn't open the microphone. Tap the mic to try again.",
-};
+// indistinguishable from each other and from a muted mic. The wording lives
+// with the failure kinds in lib/voice.ts (MIC_FAIL_TEXT); it was duplicated
+// here, and the two copies had drifted to different recovery hints.
 
 // "12s" under a minute, "1m 05s" beyond - for the live working indicator.
 function formatElapsed(s: number): string {
