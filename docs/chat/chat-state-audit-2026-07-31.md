@@ -185,10 +185,20 @@ And two invariants:
    largest remaining incoherence.
 2. **Three error idioms.** Pick one presentation; egress stays special only
    because it carries a distinct remedy.
-3. **`Chat.tsx` is 2,560 lines / 41 `useState`.** The three classes in §4 are the
-   natural seams: a `useChatNotice`, the live-turn state, and the drawer
-   selection are separable without a rewrite. Do this incrementally, when
-   touching each area — not as a big-bang refactor.
+3. ~~**`Chat.tsx` is 2,560 lines / 41 `useState`.**~~ **Done** (`111923c`,
+   `c0dace6`, `4a1c65b`): 2,560 → 1,823 lines, `useState` 41 → 31, `useRef`
+   22 → 6, `useEffect` 23 → 14. Extracted, in rising order of entanglement:
+   `chat/models.ts`, `chat/chatScope.ts`, `chat/Transcript.tsx`,
+   `chat/ChatNotice.tsx` (type and renderer together, so a new kind cannot be
+   added without deciding how it reads), `chat/useMessageQueue.ts`,
+   `chat/useLogScroll.ts`, `chat/useVoiceSettle.ts`, `chat/useTurnStream.ts`.
+   Each hook carries the rules it enforces, because in every case those rules
+   were the accumulated residue of specific reported bugs and were previously
+   discoverable only by reading the handler nesting.
+
+   What is left of `Chat.tsx` is composition plus the toolbar/log/composer
+   markup. The remaining seam, if it is ever worth taking, is the transcript
+   render (`log`) — it is the largest single block left.
 4. **P5/P6/P7** remain as recorded in the continuation brief. P7 (Runs and Agents
    detail pages, bidirectional chat links) is the operator's most-repeated
    outstanding complaint and should come first.

@@ -21,9 +21,9 @@ The plan is §8 of `agent-interaction-model-2026-07-31.md`. Status:
 | **P2** Agent model (role, not runtime) | done | `d54c092` |
 | **P3** @mention routing | done | `33016f6`, `1b26d12` |
 | **P4** Inbox | done | `8146c93`, `babe12f` |
-| **P5** Run → Session | **partial** | `8f37faf` |
-| **P6** Memory layers | **not started** | — |
-| **P7** Detail pages + cross-linking | **partial** | `8f37faf` |
+| **P5** Run → Session | **partial** (asking half done) | `8f37faf`, `2720a98` |
+| **P6** Memory layers | **done** | `9002956`, `ca6f973` |
+| **P7** Detail pages + cross-linking | **done** | `8f37faf`, `a6f9a54` |
 
 Also landed outside the phase plan, in response to operator review:
 
@@ -36,28 +36,39 @@ Also landed outside the phase plan, in response to operator review:
   unconditional `@media (max-width: 560px)` turning EVERY modal into a bottom
   sheet. Now opt-in via `<Modal sheet>`.
 - **`restart_backend.sh --deferred` fixed** (`7db6c83`). See §4.
-- **Turn contract + draft-clear** (this commit). See §2 and §3.
+- **Turn contract + draft-clear** (`a7faffa`). See §2 and §3.
+- **Chat coherence + split** (`380190a` … `4a1c65b`). Compaction no longer
+  renders as ticket filing, one drawer at a time, errors no longer swallowed on
+  empty chats, and `Chat.tsx` broken up: 2,560 → 1,823 lines, `useState` 41 →
+  31, `useRef` 22 → 6, `useEffect` 23 → 14. See
+  [`../chat/chat-state-audit-2026-07-31.md`](../chat/chat-state-audit-2026-07-31.md).
+- **No wall clock on a turn** (`2720a98`).
 
 ### What P5/P6/P7 still need
 
-**P5 (Run → Session).** Operator-visible copy now says "Run". The deeper half is
-undone: the entity model's point (§4 D11) is that a Run is really a *session* —
-it has state (`waiting/working/blocked/done`), emits structured activities
-(thoughts, tool calls, elicitations), and can ASK rather than fail. Today a run
-is a fire-and-forget process. The `awaiting` shape exists in the schema (entity
-model §4.3) and nothing ever raises it. Wiring `awaiting` → an inbox `question`
-item is the natural first step, and the inbox (P4) is already there to receive it.
+**P5 (Run → Session).** The ASKING half is done: `services/run_inbox.py`
+reconciles every task carrying an `awaiting` record into an inbox `question`,
+and closes it when the task unblocks. That was the part that mattered — the
+escalation primitive existed and nothing surfaced it.
 
-**P6 (Memory).** Designed in §7 of the interaction doc, not built. One new scope
-kind `role:<role>`, a read-union across `workshop` + role + place + private, and
-promotion-on-evidence reusing the existing provenance counter. Nothing started.
+Still undone is the state machine itself: the entity model's point (§4 D11) is
+that a Run is really a *session* with state (`waiting/working/blocked/done`)
+emitting structured activities (thoughts, tool calls, elicitations). Today a run
+is still a fire-and-forget process that happens to be able to ask.
 
-**P7 (Detail pages).** Ticket → chat back-link done (`origin` resolved
-server-side in `GET /tasks/{scope}/{id}`). Still undone: Runs and Agents pages
-brought onto the design system, showing what the thing is actually doing, with
-links in both directions. The operator's complaint is precise and unaddressed —
-opening an item from the inbox lands on a page that "has not been redesigned in
-ages, doesn't display anything useful, doesn't allow you to go to the chat".
+**P6 (Memory).** Built. `role:<role>` is a scope kind
+(`shared/knowledge/roles/<role>/`); `knowledge.read_layers` is the union
+`workshop → role → place → private`, injected into the chat prompt LABELLED per
+layer so a conflict between "how this work is done" and "how this project does
+it" is resolvable; `services/memory_promotion.py` proposes a note held by three
+or more narrow scopes for promotion, as a `review` item that only writes when
+approved.
+
+**P7 (Detail pages).** Done. Ticket → chat was already there; Run → chat and
+Agent → chats/tickets/runs already existed on the design system. The actual gap
+was the INBOX: items carried `ticket_id` and `run_id` and the UI never used
+them, so a row told the operator something was blocked and made them go find it.
+Expanded rows now link to both.
 
 ---
 
@@ -74,9 +85,19 @@ writing "next I'll do X" as making a plan; the harness experiences it as the end
 of the session. Nothing resumes. The agent has no way to observe the stop
 condition it is subject to, and was never told it.
 
-Confirmed against the live turn journal: `timeout_s=900`, no step cap (removed
-earlier this session). **Nothing forces the stop.** The model chooses it every
-time, by writing a paragraph.
+Confirmed against the live turn journal: no step cap, and since `2720a98` no
+wall clock either — `CHAT_TIMEOUT_S = 0` means no deadline, threaded through
+build_streaming (`deadline = None`), llm_router (0 must become `None` before
+`subprocess.run`, which treats `timeout=0` as already expired) and
+voice_worker's build path. **Nothing forces the stop.** The model chooses it
+every time, by writing a paragraph.
+
+The wall clock was removed because it produced the same failure as the step cap
+from the other direction: work guillotined mid-task and reported as "stopped at
+the time limit". `turn_contract` no longer asserts a bound that does not exist —
+telling an agent it has fifteen minutes when nothing enforces that is a false
+constraint, and a false constraint on turn length is exactly what makes an agent
+wrap up work it should be finishing.
 
 **Fix.** `chat_context.turn_contract()` — a block re-sent on EVERY turn, first in
 the prompt, stating: text-only ends the turn; narrate progress alongside tool
