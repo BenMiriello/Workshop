@@ -11,6 +11,7 @@ import ChatComposer from "./chat/ChatComposer";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
 import ChatDialogs from "./chat/ChatDialogs";
+import { useCompaction } from "./chat/useCompaction";
 import {
   buildSlashCommands, matchSlash, matchMention, applyMention, type SlashCommand,
 } from "./chat/slashCommands";
@@ -91,12 +92,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMsg[]>([]);
-  // How many leading messages the backend has folded into the running summary.
-  // Raw messages are never dropped, so the fold is only visible if we mark it:
-  // this drives the "compacted" divider in the transcript.
-  const [compactedThrough, setCompactedThrough] = useState(0);
-  // /compact is in flight (disables the composer's compact affordance).
-  const [compacting, setCompacting] = useState(false);
   // The live turn IS the CLI's own /compact. It runs through the ordinary turn
   // machinery, so without this the indicator said "Working" — the one label that
   // tells you nothing about the several seconds you are waiting through.
@@ -104,9 +99,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Which in-chat cards this thread has already acted on (server-backed), so a
   // proposal that was filed and run doesn't come back offering to run again.
   const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
-  // Bumped after a forced compaction so the context meter refetches: folding
-  // does not change messages.length, which is what otherwise drives that read.
-  const [ctxNonce, setCtxNonce] = useState(0);
   // Live mirror of `messages` so effects (the voice overlay-settle poll) can read
   // the current length without listing `messages` in their dep arrays.
   const messagesRef = useRef<ChatMsg[]>(messages);
@@ -142,6 +134,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // must know whether a turn is running, and a finished turn must dispatch what
   // is queued behind it. The stream is declared first (the queue reads its
   // `streaming` directly) and reaches the queue through a ref filled in below.
+  // A note about the last thing the operator did. Declared here because the
+  // compaction hook writes it. See chat/ChatNotice for the kinds.
+  const [notice, setNotice] = useState<ChatNotice | null>(null);
+
   const queueRef = useRef<MessageQueue | null>(null);
 
   // The live turn: its SSE channel, resilience, and what "still running" means.
@@ -181,13 +177,24 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setMessages((m) => [...m, ...texts.map((content) => ({ role: "user" as const, content, ts }))]);
     },
   });
+  // Close the loop the stream reads through. Without this assignment
+  // `dispatchQueue` above resolves to null on every finished turn, and the
+  // queue only drains via its own self-draining effect a beat later — the
+  // primary hand-off is simply dead.
+  queueRef.current = queue;
+
+  // /compact reaches BOTH homes of a chat's context — see useCompaction.
+  const { compacting, compactedThrough, setCompactedThrough, ctxNonce, compact } = useCompaction({
+    activeIdRef, streamingRef, isBuild: effectiveMode === "build", queue,
+    setMessages, setNotice, setErr,
+    sendTurn: (t) => void sendBuildRef.current(t),
+  });
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [openTaskCount, setOpenTaskCount] = useState(0);
   // Filing this chat as tickets. The dialog owns the drafting, editing and
   // filing; this only holds whether it is open and where its result note goes.
   const [ticketsOpen, setTicketsOpen] = useState(false);
-  const [notice, setNotice] = useState<ChatNotice | null>(null);
 
   // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
   // scope reach, which is policy, not display), refreshed when the thread moves.
@@ -643,105 +650,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Keep a ref to the latest sendBuild so dispatchNext (used inside attachStream)
   // can fire a queued turn without a render cycle.
   sendBuildRef.current = sendBuild;
-
-  // /compact — reclaim context now. A chat's context lives in TWO places and
-  // this has to reach both, which is why compacting one of them alone never
-  // visibly did anything:
-  //   1. the stored transcript, re-assembled whenever a fresh session starts →
-  //      folded server-side by POST /threads/:id/compact.
-  //   2. the live claude session, whose window is what actually fills up → only
-  //      the CLI's own /compact frees that, and it does so by running as a turn.
-  // Running (2) as a normal turn is deliberate: the fold then appears in the
-  // transcript with a reply, instead of being an invisible state change.
-  const compact = useCallback(async () => {
-    const id = activeIdRef.current;
-    if (!id) { setErr("Nothing to compact — this chat has no messages yet."); return; }
-    // Deliberately NOT gated on `streaming`. Folding the stored transcript is a
-    // server-side operation on the saved thread and is independent of whatever
-    // turn is in flight; refusing while a turn ran meant /compact was rejected
-    // almost every time it was reached for, since that is exactly when context
-    // is under pressure. The live-session half is what has to wait, and it
-    // queues below rather than being dropped.
-    setErr(null);
-    setCompacting(true);
-    // Show the request in the log NOW, in the place it happened.
-    //
-    // The live-session half has to run as its own turn, so behind a running turn
-    // it queues. It used to queue only AFTER the server fold returned — several
-    // seconds of round trip, during which the running turn kept streaming — so
-    // the "/compact" bubble landed below a wall of output that arrived after it
-    // was asked for, and read as though the request had been ignored and then
-    // picked up at random. Queue it up front and it sits in true order.
-    const preQueued = streamingRef.current && effectiveMode === "build";
-    if (preQueued) queue.push("/compact");
-    // Put the request in the log at the moment it was made, not after the server
-    // round trip. Deferring it meant the "/compact" bubble appeared many seconds
-    // late, BELOW whatever had streamed in the meantime, so the log claimed the
-    // operator asked for it after output they had already read. `ts` is kept so
-    // the no-op path can take this exact bubble back out again.
-    const requestTs = new Date().toISOString();
-    if (!preQueued && !streamingRef.current) {
-      setMessages((m) => [...m, { role: "user", content: "/compact", ts: requestTs }]);
-    }
-    const dropRequestBubble = () =>
-      setMessages((m) => m.filter((x) => !(x.ts === requestTs && x.content === "/compact")));
-    // Compaction is a server round trip. Without a note here the only feedback
-    // is the finished result, so a slow (or failed) pass is indistinguishable
-    // from a button that did nothing.
-    setNotice({
-      kind: "compaction",
-      busy: true,
-      text: preQueued
-        ? "Compacting. The live session folds when the running turn finishes."
-        : "Compacting the conversation…",
-    });
-    try {
-      const r = await chatApi.compactThread(id);
-      setCompactedThrough(r.compacted_through);
-      // The context meter is derived server-side from the compacted prompt, so
-      // re-read it rather than guessing at the new number.
-      setCtxNonce((n) => n + 1);
-      if (r.live_session) {
-        // The CLI's own /compact is the only thing that frees the live window,
-        // and it runs as a normal turn — so behind a running turn it queues
-        // instead of opening a second one. Already queued above in that case.
-        if (!preQueued) {
-          if (streamingRef.current) {
-            // A turn started while the fold was in flight. Hand it to the queue,
-            // which renders its own pending bubble — so drop ours or the request
-            // shows twice.
-            dropRequestBubble();
-            queue.push("/compact");
-          } else {
-            void sendBuildRef.current("/compact");
-          }
-          setNotice(null);
-        }
-      } else {
-        // No live session after all — take the speculative entry back out rather
-        // than letting a literal "/compact" reach a model as text.
-        if (preQueued) queue.drop("/compact");
-        if (r.folded === 0) {
-          // Nothing happened, so nothing should be left claiming it did.
-          dropRequestBubble();
-          setNotice(null);
-          setErr("Nothing to compact — the transcript is already short.");
-        } else {
-          setNotice({
-            kind: "compaction",
-            text: `Compacted ${r.folded} messages into the running summary.`,
-          });
-        }
-      }
-    } catch (e) {
-      if (preQueued) queue.drop("/compact");
-      dropRequestBubble();
-      setNotice(null);
-      setErr(`Couldn't compact: ${String(e)}`);
-    } finally {
-      setCompacting(false);
-    }
-  }, [queue, scope, effectiveMode]);
 
   // Submit a concrete string as a turn (used by send() and by slash passthrough).
   const submitText = useCallback((raw: string) => {
