@@ -537,7 +537,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (remembered && list.some((p) => p.key === remembered)) setActiveProvider(remembered);
         else if (!list.some((p) => p.key === contextKey)) setActiveProvider("general");
       })
-      .catch(() => { /* non-essential */ });
+      .catch((e) => {
+        // NOT non-essential, which is what this used to claim. This list is the
+        // live source for the model picker; when it fails the picker silently
+        // falls back to the frontend's hardcoded MODEL_LABELS, which can offer
+        // models the backend does not serve — the same frontend/backend
+        // divergence that made a newly added model invisible. Say it failed
+        // rather than presenting a stale list as the real one.
+        if (!cancelled) setErr(`Couldn't load the model/assistant list: ${e}. The picker may be showing stale options.`);
+      });
     return () => { cancelled = true; };
   }, [contextKey, effectiveMode, scoped]);
 
@@ -1708,9 +1716,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setCardStates((prev) => ({ ...prev, [key]: state }));
       const id = activeIdRef.current;
       if (!id) return;
-      void chatApi.setCardState(id, key, state).catch(() => {
-        /* the local state still holds for this session; it re-syncs on the next action */
-      });
+      void chatApi.setCardState(id, key, state)
+        // The server's map is the authority, not the optimistic patch. Taking
+        // the response back is what keeps a card that has been acted on from
+        // re-offering "File and run" after a reload.
+        .then((r) => { if (r?.card_states) setCardStates(r.card_states); })
+        .catch((e) => {
+          // Previously swallowed with a note that it would "re-sync on the next
+          // action" — it never did. The optimistic state simply diverged: the
+          // card looked filed, the server had no record, and the next hydrate
+          // brought back an un-acted card for work that had already run. Say
+          // so instead, so the state on screen and the state on disk agree.
+          setErr(`Couldn't record that action on the server: ${e}. Reload to see the real state of this card.`);
+        });
     },
     [],
   );
