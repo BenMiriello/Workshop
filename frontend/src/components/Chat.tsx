@@ -1258,14 +1258,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [scrollToBottom]);
 
   // Keep the log pinned to the bottom when the composer is focused and the mobile
-  // keyboard opens/closes (which resizes the visual viewport) or the textarea
-  // grows as you type. Without this the scroller keeps its pixel scrollTop while
-  // the viewport shrinks, so you end up staring at older messages. Only re-pin
-  // when the user was already at the bottom (atBottomRef), so scrolling up to
-  // read history isn't yanked back down.
+  // keyboard opens/closes (which resizes the visual viewport). Only re-pin when
+  // the user was already at the bottom (atBottomRef), so scrolling up to read
+  // history isn't yanked back down.
+  //
+  // Focus itself does NOT scroll. It used to, unconditionally: tapping the
+  // composer to start typing threw you to the newest message, discarding
+  // wherever you had scrolled to. Reading something further up and then
+  // replying to it is an ordinary thing to do, and focusing an input is not a
+  // request to go anywhere.
   useEffect(() => {
     if (!inputFocused) return;
-    scrollToBottom();
     const vv = window.visualViewport;
     const onResize = () => { if (atBottomRef.current) scrollToBottom(); };
     vv?.addEventListener("resize", onResize);
