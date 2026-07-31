@@ -349,7 +349,121 @@ consolidation claim is made.
 
 ---
 
-## 7. What is NOT decided
+## 7. Memory: specialized and shared learning
 
-Nothing in §4 or §6.7 is approved. No code has been written against this
-document.
+Operator ask: agents must gain generalized skills and improve together, adapt to
+the operator over time, and NOT each be an island relearning from scratch —
+while still keeping place-specific knowledge correctly scoped. Multiple
+instances of one role should share what that role has learned, and every agent
+should know what it is, where it is, and what it may touch.
+
+### 7.1 What the research says
+
+[CoALA](https://arxiv.org/pdf/2309.02427) (Princeton, 2023) is the standard
+taxonomy and the ecosystem has converged on it: **working** (the live context
+window), **episodic** (what happened when I tried X), **semantic** (facts), and
+**procedural** (skills, workflows, tool-use patterns that worked). Surveys in
+[2026](https://mem0.ai/blog/state-of-ai-agent-memory-2026) confirm the three
+long-term tiers as the settled shape.
+
+For the multi-agent case specifically, the
+[production guidance](https://mem0.ai/blog/multi-agent-memory-systems) is
+**shared organizational memory plus private agent-specific spaces**, partitioned
+by id, precisely to stop context bloat while allowing pooling. The honest state
+of the art, per the same survey: frameworks support shared state, but *the
+protocol for how agents read and write each other's memory is the missing
+piece*. So there is no library to adopt here — this is a design decision, and
+the scoped note store already in `knowledge.py` is a better starting point than
+most.
+
+### 7.2 The gap in the current store
+
+`knowledge.py` scopes notes on **one axis — place**:
+
+```
+workshop | project:<slug> | app:<name> | agent:<slug>
+```
+
+Place is the wrong and only axis for the operator's ask. Two reviewers working
+in two different projects share a *role*, not a place, so under the current
+model everything either of them learns about reviewing is stranded in a project
+scope or dumped into `workshop` where it pollutes every other reader.
+
+### 7.3 Design: add a role axis, read the union, promote on evidence
+
+**One new scope kind**, matching the existing address grammar:
+
+```
+role:<role>        # maker | reviewer | triager | keeper | broker
+```
+
+**Read path — an agent reads the union of four scopes, narrowest last:**
+
+| Layer | Scope | Holds |
+|---|---|---|
+| shared | `workshop` | operator preferences, house style, cross-cutting facts |
+| role | `role:<its role>` | procedural memory: how this kind of work is done well |
+| place | `project:*` / `app:*` | facts about this codebase, this domain |
+| private | `agent:<slug>` | episodic: what this agent tried, and how it went |
+
+Narrower wins on conflict. This is the mechanism that makes multiple instances
+of one role share learning without sharing a place, and it is the direct answer
+to "not each its own island."
+
+**Write path — write narrow, promote on evidence.** Every note is written to the
+narrowest scope that could own it (default: the agent's own). Promotion is
+earned, not assumed:
+
+> A note retrieved and confirmed in **three or more distinct narrower scopes**
+> is proposed for promotion to the layer above.
+
+Place-specific → stays. Role-general → promoted to `role:*`. Operator-general →
+promoted to `workshop`. This is the same provenance-counter mechanism the entity
+model already specifies for grant promotion (§8.1: "textual rules proven stable
+across three or more Blocks"), generalized from grants to notes. It is one
+mechanism doing two jobs rather than a second system.
+
+**Promotion is a `review` item in the inbox**, not an automatic write. That
+keeps the operator in the loop on exactly the decisions that shape every future
+agent, and it is one more use of the notify/question/review taxonomy rather than
+a new surface.
+
+### 7.4 Self-knowledge
+
+"Each agent should know what it's doing, where it is, what it has access to."
+This is not a memory problem — it is a prompt-assembly problem, and it is cheap.
+Every agent turn gets a preamble block stating its role, its scope, its
+workspace path, its granted capabilities, and what it must not do. Derived from
+the agent record (§4.1), never hand-written per agent, so it cannot drift from
+the enforced values.
+
+---
+
+## 8. Execution plan
+
+Sequenced so each phase is coherent on its own and leaves nothing half-migrated.
+Old surfaces are removed in the same phase that replaces them — never layered.
+
+| Phase | Scope | Done when |
+|---|---|---|
+| **P1 — Dead code + vocabulary** | Delete `pages/Events.tsx`, `pages/Services.tsx`. Retire `/jobs` and `/stores` as pages (routes become redirects to their canonical home). Resolve the two Notes surfaces. Rename Jobs → Runs across UI copy, routes, and breadcrumbs. | No orphaned page files; one Notes; nav and URLs use the canonical nouns. |
+| **P2 — Agent model** | Backend: add `mentionable`, `delegatable` to the agent record; drop the dead `participants` field end to end. Frontend: `Agents.tsx` keyed by `role`, not `runtime`; "New builder" modal retired; agent detail shows role, scope, grants, workspace. | No `runtime`-keyed UI, no `participants` anywhere. |
+| **P3 — Mention routing** | D1/D2/D3 in the chat: `@` autocomplete over mentionable agents in scope, first-tag-wins parsing, attributed agent replies, assistant does not answer for an agent. | Mentioning an agent gets that agent's reply, attributed. |
+| **P4 — Inbox** | notify / question / review items, global store with per-chat filter, scope-bounded delivery (D5), top-of-chat surface + drawer. Session `awaiting` raises a question item. | An agent can reach the operator without writing to a transcript. |
+| **P5 — Session** | Rename Run → Session; state machine + structured activities; `read_chat` tool for originating-chat context (D12). | No "job" noun in the work path. |
+| **P6 — Memory** | `role:<role>` scope kind, read-union assembly, promotion proposals as review items, self-knowledge preamble. | Two agents of one role share role learning. |
+
+P1 and P2 are the operator's emphasised ask (no old surfaces left lying around)
+and run first. Each phase ships with `tsc --noEmit`, `check_design.sh`, and a
+public bundle rebuild.
+
+---
+
+## 9. Status
+
+Plan finalized 2026-07-31 and approved by the operator for full execution.
+Progress is tracked in the log at the bottom of this file.
+
+### Execution log
+
+- P1 — in progress
