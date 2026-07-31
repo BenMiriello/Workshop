@@ -26,6 +26,7 @@ export {
 export { Segmented, type SegmentedOption } from "./Segmented";
 export { Stepper } from "./Stepper";
 export { Modal, ConfirmDialog } from "./Modal";
+export { Menu, MenuItem, MenuSeparator } from "./Menu";
 export { StateBlock, Skeleton, ActionBar, CopyButton, RevealField } from "./feedback";
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";

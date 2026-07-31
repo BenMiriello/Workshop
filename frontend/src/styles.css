@@ -555,25 +555,51 @@ input[type="range"].grad::-moz-range-thumb {
      pushing the model select past the edge where it can't be reached. */
   flex-wrap: wrap; row-gap: var(--space-2);
 }
+/* Used by the inline "add agent" field. The three stock <select>s that used to
+   share this class are gone — see .chat-tb__picker / .chat-model. */
 .chat-tb__select {
   height: 2rem; min-width: 0; padding: 0 0.45rem;
   font-size: var(--fs-sm); line-height: 1;
   background: var(--bg); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+/* Scope picker: a quiet text trigger with a single caret, not a boxed select.
+   It reads as a label you can change, which is what it is. */
+.chat-tb__picker {
+  flex: 0 1 auto; min-width: 0;
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  height: 2rem; padding: 0 0.4rem;
+  font-size: var(--fs-sm); line-height: 1; font-weight: var(--fw-semi);
+  color: var(--fg); background: transparent;
+  border: 1px solid transparent; border-radius: var(--radius-md);
   cursor: pointer;
 }
-.chat-tb__thread { flex: 1 1 5rem; }       /* focal control — absorbs slack */
-.chat-tb__provider { flex: 0 1 6rem; min-width: 3rem; }
-.chat-tb__model { flex: 0 1 6.5rem; min-width: 3.5rem; }
-.chat-tb__spacer { flex: 0 1 var(--space-2); min-width: 0; }
+.chat-tb__picker:hover { background: var(--card-hover); }
+.chat-tb__picker[aria-expanded="true"] { background: var(--card-hover); border-color: var(--border); }
+.chat-tb__picker.is-static { cursor: default; }
+.chat-tb__picker.is-static:hover { background: transparent; }
+.chat-tb__picker-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-tb__picker-caret { flex: 0 0 auto; color: var(--muted); }
+/* Where you are. A label, not a control — the conversation is switched from
+   the chat list, not from inside the conversation. */
+.chat-tb__title {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--fs-sm); color: var(--muted);
+}
+.chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
   display: inline-flex; align-items: center; justify-content: center;
+  gap: 0.2rem;
   width: 2rem; height: 2rem; padding: 0;
   background: transparent; color: var(--muted);
   border: 1px solid transparent; border-radius: var(--radius-md);
   cursor: pointer;
 }
+/* Participant tags carry a slug, so they size to their text. */
+.chat-tb__btn--wide { width: auto; padding: 0 0.4rem; }
+.chat-tb__btn-text { font-size: var(--fs-xs); }
 .chat-tb__btn:hover { color: var(--fg); background: var(--card-hover); }
 .chat-tb__btn.is-active { color: var(--accent); background: var(--accent-soft); }
 .chat-tb__badge {
@@ -583,14 +609,12 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: 0.62rem; font-weight: var(--fw-semi); line-height: 1;
   background: var(--accent); color: var(--accent-fg); border-radius: 999px;
 }
-/* Mobile: drop the inline field labels and let the two dropdowns you actually
-   change (conversation + model) take the first row, with the action buttons
-   flowing onto the next one. Same idiom as .birds-label. */
+/* Mobile: the header is now short enough to stay on one row. Drop the thread
+   title first (the log itself tells you where you are) rather than letting the
+   actions wrap onto a second line — that second row of unlabelled icons was
+   the thing that made this header unreadable. */
 @media (max-width: 640px) {
-  .chat-toolbar .chat-tb__label { display: none; }
-  .chat-tb__spacer { flex-basis: 100%; height: 0; }
-  .chat-tb__thread { flex: 1 1 8rem; }
-  .chat-tb__provider, .chat-tb__model { flex: 0 1 7rem; }
+  .chat-tb__title { display: none; }
 }
 
 /* Compaction fold marker. Compaction never drops raw messages, so this divider
@@ -835,6 +859,24 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex; align-items: center; gap: 0.4rem;
 }
 .chat-actions__spacer { flex: 1 1 0; min-width: var(--space-2); }
+/* Model picker: sits just left of the slash/voice/send cluster. Sized to its
+   text so a long model name never squeezes Send off the row; it truncates
+   instead. Same quiet-trigger idiom as the header scope picker. */
+.chat-model {
+  flex: 0 1 auto; min-width: 0;
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  height: 2.1rem; padding: 0 0.45rem;
+  font: inherit; font-size: var(--fs-xs); line-height: 1;
+  color: var(--muted); background: transparent;
+  border: 1px solid transparent; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.chat-model:hover { color: var(--fg); background: var(--card-hover); }
+.chat-model[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); border-color: var(--border); }
+.chat-model.is-static { cursor: default; }
+.chat-model.is-static:hover { color: var(--muted); background: transparent; }
+.chat-model__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-model__caret { flex: 0 0 auto; }
 .chat-send, .chat-stop {
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.1rem; height: 2.1rem; padding: 0;

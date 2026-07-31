@@ -4,9 +4,9 @@ import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
-  UserPlus, FoldVertical, ArrowDown,
+  UserPlus, FoldVertical, ArrowDown, MoreVertical, ChevronDown, MessagesSquare,
 } from "lucide-react";
-import { ConfirmDialog, StateBlock, Button, Markdown } from "../ui";
+import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator } from "../ui";
 import { scopeLabel } from "../lib/tasks";
 import TaskPanel from "./TaskPanel";
 import {
@@ -403,6 +403,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const pendingRef = useRef<ChatSegment[]>(pendingSegments);
   pendingRef.current = pendingSegments;
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Starting a new chat leaves the current one — cheap to undo (the thread is
+  // still there) but disorienting mid-conversation, so it asks first.
+  const [confirmNew, setConfirmNew] = useState(false);
 
   // P4: participants on the active thread. Populated from getThread + the
   // /participants routes; canonical form is `agent:<slug>`. Empty on threads
@@ -1143,23 +1146,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, []);
   useEffect(() => { autosize(); }, [input, autosize]);
 
-  const openThread = useCallback(async (id: string) => {
-    setErr(null);
-    sseRef.current?.close();
-    sseRef.current = null;
-    try {
-      const t: Thread = await chatApi.getThread(id);
-      setActiveId(t.id);
-      setSelectedModel(t.model || "");
-      // Persist the choice: opening a chat is the operator saying "this is the
-      // one I'm in", and that has to outlive the component the same way the
-      // thread itself does.
-      writeSelection(scope, t.id);
-      hydrate(t);
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, [hydrate, scope]);
+  // (There is no in-chat "open another thread" path any more. Switching
+  // conversations goes through the chat list, which navigates here with
+  // ?thread=<id>; the mount effect above adopts it and persists the selection.)
 
   const newChat = useCallback(() => {
     sseRef.current?.close();
@@ -1386,8 +1375,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const popOut = () => navigate(`/chat/${encodeURIComponent(contextKey)}`);
   const back = () => {
+    // Prefer where you actually came from; otherwise the chat list, which is
+    // this surface's parent now that the thread dropdown is gone.
     if (window.history.length > 1) navigate(-1);
-    else navigate("/agents");
+    else navigate("/chats");
   };
 
   // ---- Slash commands ------------------------------------------------------
@@ -1486,7 +1477,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   ) : null;
 
-  // ---- Compact toolbar: one row for picker + new/delete + tasks + model ----
+  // ---- Header: scope + where-you-are on the left, actions on the right ----
+  // The conversation picker used to live here as a third <select>. It is gone:
+  // it duplicated the chat list you reach with back / "All chats", and its one
+  // unique job (start a new chat) is now the + button.
+  const activeThreadTitle = activeId ? threads.find((t) => t.id === activeId)?.title : undefined;
   const toolbar = (
     <div className="chat-toolbar">
       {variant === "full" && (
@@ -1507,86 +1502,37 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <PanelsTopLeft size={16} aria-hidden />
         </button>
       )}
-      {/* Provider select (which assistant to talk to). Shown only when there
-          is a real choice; single-provider case renders as a plain label so
-          the toolbar stops reading as two identical dropdowns (C13). */}
-      {showProviderPicker && providers.length > 1 && effectiveMode === "data" && (
-        <>
-          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>Assistant:</span>
-          <select
-            className="chat-tb__select chat-tb__provider"
-            value={activeProvider}
-            onChange={(e) => chooseProvider(e.target.value)}
-            title="Which assistant to talk to"
-            aria-label="Assistant"
-          >
-            {providers.map((p) => (
-              <option key={p.key} value={p.key}>{p.label}</option>
-            ))}
-          </select>
-        </>
-      )}
-      {showProviderPicker && providers.length === 1 && effectiveMode === "data" && (
-        <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>
-          {providers[0].label}
-        </span>
-      )}
-      {/* Conversation select. When no threads exist, show a labeled button
-          instead of a one-item dropdown. The redundant Plus button that used
-          to sit beside this select is gone: the "New chat" option in the
-          dropdown is the same affordance. */}
-      {threads.length > 0 ? (
-        <>
-          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>Chat:</span>
-          <select
-            className="chat-tb__select chat-tb__thread"
-            value={activeId ?? ""}
-            onChange={(e) => (e.target.value ? openThread(e.target.value) : newChat())}
-            title="Conversation"
-            aria-label="Conversation"
-          >
-            <option value="">New chat</option>
-            {threads.map((t) => (
-              <option key={t.id} value={t.id}>{t.title}</option>
-            ))}
-          </select>
-        </>
-      ) : (
-        <button className="chat-tb__btn" onClick={newChat} title="Start a new chat" aria-label="New chat">
-          <Plus size={16} aria-hidden />
-          <span style={{ marginLeft: "var(--space-1)", fontSize: "var(--fs-xs)" }}>New chat</span>
-        </button>
-      )}
-      {/* Model select sits right beside the conversation picker - the two things
-          you actually change. Keeping them adjacent means the model never gets
-          pushed off the end of the row on a narrow (mobile) viewport. */}
-      {modelOptions.length > 1 && (
-        <>
-          <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)", marginRight: "var(--space-1)" }}>Model:</span>
-          <select
-            className="chat-tb__select chat-tb__model"
-            value={selectedModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            title="Model for this conversation"
-            aria-label="Model"
-          >
-            {modelOptions.map((id) => (
-              <option key={id} value={id}>{modelLabel(id)}</option>
-            ))}
-          </select>
-        </>
-      )}
-      {modelOptions.length === 1 && (
-        <span className="chat-tb__label ws-muted" style={{ fontSize: "var(--fs-xs)", marginLeft: "var(--space-2)" }}>{modelLabel(modelOptions[0])}</span>
-      )}
+      {/* Scope picker: which assistant this conversation is with. This is the
+          ONE picker that belongs in the header — it decides what the chat can
+          see and which thread list you're in, so changing it changes the whole
+          surface. Model moved down to the composer (a per-turn knob), and the
+          conversation picker is gone entirely: back / "All chats" reaches the
+          list, and + starts a new one. */}
+      {showProviderPicker && providers.length > 1 && effectiveMode === "data" ? (
+        <Menu
+          label="Assistant"
+          align="start"
+          trigger={
+            <button className="chat-tb__picker" title="Which assistant to talk to">
+              <span className="chat-tb__picker-val">{activeProviderObj?.label ?? activeProvider}</span>
+              <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
+            </button>
+          }
+        >
+          {providers.map((p) => (
+            <MenuItem key={p.key} checked={p.key === activeProvider} onSelect={() => chooseProvider(p.key)}>
+              {p.label}
+            </MenuItem>
+          ))}
+        </Menu>
+      ) : showProviderPicker && providers.length === 1 && effectiveMode === "data" ? (
+        <span className="chat-tb__picker is-static">{providers[0].label}</span>
+      ) : null}
+      {/* Which conversation you're in — a label, not a control. */}
+      {activeThreadTitle && <span className="chat-tb__title">{activeThreadTitle}</span>}
       {/* Spacer pushes the per-thread action buttons to the right on desktop; on
           mobile the toolbar wraps and the actions flow onto the next line. */}
       <span className="chat-tb__spacer" />
-      {activeId && (
-        <button className="chat-tb__btn" onClick={() => setConfirmDeleteId(activeId)} title="Delete chat" aria-label="Delete chat">
-          <Trash2 size={16} aria-hidden />
-        </button>
-      )}
       {/* P4: participants control. Renders each agent currently in this chat
           as a small removable tag, plus a compact "Add" input to invite
           another agent by slug. An agent in a chat is a property of the
@@ -1598,13 +1544,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             return (
               <button
                 key={p}
-                className="chat-tb__btn"
+                className="chat-tb__btn chat-tb__btn--wide"
                 title={`Remove ${slug} from this chat`}
                 aria-label={`Remove participant ${slug}`}
                 onClick={() => void removeParticipant(p)}
               >
-                <span style={{ fontSize: "var(--fs-xs)" }}>{slug}</span>
-                <X size={12} aria-hidden style={{ marginLeft: "0.2rem" }} />
+                <span className="chat-tb__btn-text">{slug}</span>
+                <X size={12} aria-hidden />
               </button>
             );
           })}
@@ -1630,30 +1576,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           )}
         </>
       )}
-      {activeId && (
-        <button
-          className="chat-tb__btn"
-          onClick={() => void spawnTaskFromChat(false)}
-          disabled={spawning !== false}
-          title="File this chat as a tracked ticket"
-          aria-label="File ticket"
-          aria-busy={spawning === "file"}
-        >
-          {spawning === "file" ? <Loader size={16} aria-hidden className="ws-spin" /> : <ListPlus size={16} aria-hidden />}
-        </button>
-      )}
-      {activeId && (
-        <button
-          className="chat-tb__btn"
-          onClick={() => void spawnTaskFromChat(true)}
-          disabled={spawning !== false}
-          title="File this chat as a ticket and run it now"
-          aria-label="File and run"
-          aria-busy={spawning === "run"}
-        >
-          {spawning === "run" ? <Loader size={16} aria-hidden className="ws-spin" /> : <Play size={16} aria-hidden />}
-        </button>
-      )}
       {taskScope && (
         <button
           className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
@@ -1666,17 +1588,83 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           {openTaskCount > 0 && <span className="chat-tb__badge">{openTaskCount}</span>}
         </button>
       )}
-      {variant !== "full" && !hideExpand && (
-        <button className="chat-tb__btn" onClick={popOut} title="Open full screen" aria-label="Open full screen">
-          <Maximize2 size={16} aria-hidden />
-        </button>
-      )}
+      <button
+        className="chat-tb__btn"
+        onClick={() => setConfirmNew(true)}
+        title="Start a new chat"
+        aria-label="New chat"
+      >
+        <Plus size={16} aria-hidden />
+      </button>
+      {/* Overflow. Everything here is real, but none of it is per-turn work:
+          filing the conversation as tracked work, finding another chat, and
+          deleting this one. They were four unlabelled icons in a second row. */}
+      <Menu
+        label="Chat actions"
+        align="end"
+        trigger={
+          <button className="chat-tb__btn" title="More" aria-label="More chat actions">
+            <MoreVertical size={16} aria-hidden />
+          </button>
+        }
+      >
+        <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => navigate("/chats")}>
+          All chats
+        </MenuItem>
+        {variant !== "full" && !hideExpand && (
+          <MenuItem icon={<Maximize2 size={14} />} onSelect={popOut}>
+            Open full screen
+          </MenuItem>
+        )}
+        {activeId && (
+          <>
+            <MenuSeparator />
+            <MenuItem
+              icon={spawning === "file" ? <Loader size={14} className="ws-spin" /> : <ListPlus size={14} />}
+              onSelect={() => { if (spawning === false) void spawnTaskFromChat(false); }}
+            >
+              File as a ticket
+            </MenuItem>
+            <MenuItem
+              icon={spawning === "run" ? <Loader size={14} className="ws-spin" /> : <Play size={14} />}
+              onSelect={() => { if (spawning === false) void spawnTaskFromChat(true); }}
+            >
+              File as a ticket and run it now
+            </MenuItem>
+            <MenuSeparator />
+            <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => setConfirmDeleteId(activeId)}>
+              Delete chat…
+            </MenuItem>
+          </>
+        )}
+      </Menu>
     </div>
   );
 
   const confirmDeleteTitle = confirmDeleteId
     ? threads.find((t) => t.id === confirmDeleteId)?.title
     : undefined;
+
+  const newChatDialog = (
+    <ConfirmDialog
+      open={confirmNew}
+      onCancel={() => setConfirmNew(false)}
+      onConfirm={() => { setConfirmNew(false); newChat(); }}
+      title="Start a new chat?"
+      body={
+        activeId ? (
+          <span>
+            This leaves {activeThreadTitle ? `"${activeThreadTitle}"` : "the current chat"} and opens a blank
+            one in {scopeLabel(scope)}. Nothing is deleted — you can come back to it from All chats.
+          </span>
+        ) : (
+          <span>Opens a blank chat in {scopeLabel(scope)}.</span>
+        )
+      }
+      confirmLabel="New chat"
+      danger={false}
+    />
+  );
 
   const deleteDialog = (
     <ConfirmDialog
@@ -2083,6 +2071,33 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       <div className="chat-actions">
         {!voiceOn && contextMeter}
         <span className="chat-actions__spacer" />
+        {/* Model: a per-turn knob, so it lives with the other per-turn controls
+            instead of in the header beside the things that change the whole
+            surface. Menu rather than <select> — the stock double-arrow was the
+            loudest element in a row of quiet icon buttons. */}
+        {modelOptions.length > 1 ? (
+          <Menu
+            label="Model"
+            align="end"
+            side="top"
+            trigger={
+              <button className="chat-model" onMouseDown={(e) => e.preventDefault()} title="Model for this conversation">
+                <span className="chat-model__val">{modelLabel(selectedModel)}</span>
+                <ChevronDown size={14} aria-hidden className="chat-model__caret" />
+              </button>
+            }
+          >
+            {modelOptions.map((id) => (
+              <MenuItem key={id} checked={id === selectedModel} onSelect={() => setSelectedModel(id)}>
+                {modelLabel(id)}
+              </MenuItem>
+            ))}
+          </Menu>
+        ) : modelOptions.length === 1 ? (
+          <span className="chat-model is-static">
+            <span className="chat-model__val">{modelLabel(modelOptions[0])}</span>
+          </span>
+        ) : null}
         {/* Voice mode: a mode of THIS chat (same thread + log), toggled in place.
             When on, the state orb, mic mute, reply mute, and settings sit here;
             when off, just the slash button. Build chats build by talking; data
@@ -2201,6 +2216,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
       {deleteDialog}
+      {newChatDialog}
       <VoiceSettings
         open={voiceSettings}
         onClose={() => setVoiceSettings(false)}
