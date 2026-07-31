@@ -502,4 +502,27 @@ agent answered. It does not reply to the mention (the turn never reaches it),
 but it also cannot see the exchange as context. That is open question 5 and
 lands with P4.
 
-**P4-P6 — not started.** Inbox, session rename, memory layers.
+**P4 — done** (`8146c93`). `services/inbox.py` + `/api/inbox` + the chat strip.
+Items typed by verb (notify / question / review), not by entity — which is what
+makes one stack coherent and answers the operator's "do we mix agents and jobs
+up there?". Questions and reviews sort above notifications. Dedupe on
+`dedupe_key` while open, because a triggered agent re-raises the same block
+every pass. Two delivery rules, not one: `may_deliver_to` (scope — agents
+surface upward, never sideways) and the stricter `surfaces_in_chat` (inline — an
+item must name this chat or match its scope exactly), which serves "a broader
+chat can receive" without "any top-level chat gets pinged by everything
+underneath". What a chat does not show inline is counted as "N more in other
+scopes"; nothing is hidden.
+
+**OPERATIONAL BUG FOUND, and it hid P3 entirely.** `restart_backend.sh
+--deferred` defaults to a 5-SECOND delay and then refuses if a chat turn is
+running. During a long turn the retry always lands mid-turn, so it refuses
+every time and the backend silently keeps serving old code — uptime showed
+11h53m across three "successful" restarts. That is why the @-mention picker
+appeared to do nothing: the frontend shipped, but `/api/chat/threads/{id}/
+mentionable` did not exist on the running process, so the fetch 404'd and the
+list stayed empty. The delay is a positional arg (`--deferred <seconds>`);
+anything longer than a turn works, or poll for the turn to end. Worth fixing
+properly in the script rather than remembering.
+
+**P5-P6 — not started.** Session rename, memory layers.
