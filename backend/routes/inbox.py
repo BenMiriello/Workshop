@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from services import inbox, chat_store, knowledge, run_inbox
+from services import inbox, chat_store, knowledge, run_inbox, memory_promotion
 
 log = logging.getLogger(__name__)
 # Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
@@ -65,6 +65,12 @@ async def list_inbox(chat_id: str | None = None, state: str = "open"):
         except Exception as e:
             # A reconcile failure must never empty the operator's inbox.
             log.warning("inbox: awaiting-task sync failed: %s", e)
+        # A lesson learned in three separate scopes is no longer a local lesson.
+        # Proposed, never written automatically — see services/memory_promotion.
+        try:
+            memory_promotion.sweep()
+        except Exception as e:
+            log.warning("inbox: promotion sweep failed: %s", e)
     scope, cid = _scope_for_chat(chat_id)
     items = inbox.list_items(chat_scope=scope, chat_id=cid, state=state)
     return {
@@ -94,7 +100,21 @@ async def resolve_inbox(item_id: str, body: ResolveIn):
     """Answer or dismiss. Both close the item; which one is recorded, because
     "I answered" and "I dismissed" are different facts and a run of dismissals
     is the signal that an agent is producing noise."""
+    # Read the item BEFORE resolving: resolving is what makes an approval
+    # actionable, and afterwards its dedupe key is no longer open to match on.
+    before = inbox.get_item(item_id)
     it = inbox.resolve_item(item_id, answer=body.answer, dismissed=body.dismissed)
     if it is None:
         raise HTTPException(404, "item not found")
+    # An approved promotion is the one answer that performs a write. Everything
+    # else is just a recorded decision.
+    key = (before or {}).get("dedupe_key") or ""
+    if (not body.dismissed and str(body.answer or "").strip().lower() == "approve"
+            and key.startswith("promote:")):
+        try:
+            done = memory_promotion.approve(key)
+            it = {**it, "promoted": done}
+        except Exception as e:
+            log.warning("inbox: promotion apply failed for %s: %s", key, e)
+            it = {**it, "promoted": False}
     return it
