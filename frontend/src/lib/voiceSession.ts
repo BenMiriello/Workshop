@@ -469,10 +469,17 @@ export class VoiceSession {
   // ---- lifecycle -----------------------------------------------------------
   async start() {
     if (this.state !== "idle") return;
+    // Starting up is not instantaneous — capability detection and then the mic
+    // permission prompt are both awaited, and the operator can switch voice back
+    // off during either. stop() bumps the epoch, so a moved epoch means "this
+    // startup was abandoned": bail instead of running on to armListen() and
+    // resurrecting a session that was deliberately turned off.
+    const ep = this.epoch;
     this.set("connecting");
     this.error = null;
     this.fatal = false;
     this.caps = await detectCaps();
+    if (ep !== this.epoch) return;
     this.resolveProviders();
     this.micFail = null;
     this.micSuspended = false;
@@ -495,10 +502,21 @@ export class VoiceSession {
         if (this.cfg.prefs.input_mode === "voice") { this.fatal = true; this.set("idle"); return; }
       }
     }
+    if (ep !== this.epoch) return;  // switched off while the mic was opening
     this.armListen();
   }
 
   private async startMic(): Promise<boolean> {
+    // The epoch this attempt belongs to. getUserMedia is asynchronous and, on a
+    // first grant, sits open on a browser permission prompt for as long as the
+    // operator takes to answer it. If voice is switched off in the meantime the
+    // request is torn down and rejects — and Firefox reports that teardown as
+    // NotAllowedError, indistinguishable from an actual denial. `micSuspended`
+    // covers the mic-toggle path but stop() never sets it, so turning voice OFF
+    // while the prompt was up produced "Microphone permission denied" for a
+    // permission the operator had never been asked about, let alone refused.
+    // stop() does bump the epoch, so that is the signal to check.
+    const ep = this.epoch;
     try {
       await this.mic.start({
         onLevel: (v) => { this.onLevelCb?.(v); },
@@ -514,8 +532,10 @@ export class VoiceSession {
       this.mic.setEager(this.cfg.prefs.eager_endpoint && this.sttProvider === "server", this.cfg.prefs.eager_silence_ms);
       return true;
     } catch (e) {
-      // Deliberate mute raced the start: not an error, just stale work.
-      if (this.micSuspended) return false;
+      // Deliberate mute OR a deliberate shutdown raced the start: not an error,
+      // just stale work. Cancelling is not denying, and must never be reported
+      // as one.
+      if (this.micSuspended || ep !== this.epoch) return false;
       // Report the ACTUAL reason (insecure origin / denied / no device / in use)
       // rather than a stringified exception. MicError carries the recovery step.
       const me = e instanceof MicError ? e : null;
