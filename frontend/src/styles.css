@@ -53,10 +53,11 @@ body {
    components.css under APP SHELL + NAV. */
 
 /* Section nav: inline links on desktop, overflow-menu button on mobile. */
-.ws-sectionnav-menu { display: none; position: relative; flex: 0 0 auto; }
+.ws-sectionnav-menu { display: none; }
 @media (max-width: 640px) {
   .ws-sectionnav-inline { display: none; }
-  .ws-sectionnav-menu { display: block; }
+  /* inline-flex, not block: this is the Menu primitive's wrapper now. */
+  .ws-sectionnav-menu { display: inline-flex; }
 }
 .ws-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
@@ -65,27 +66,8 @@ body {
   background: var(--card); color: var(--fg); cursor: pointer;
 }
 .ws-iconbtn:hover { background: var(--card-hover); }
-/* App-nav overflow popover. Renamed off `.ws-menu`, which now belongs to the
-   `Menu` primitive in src/ui — and it was a real collision, not a cosmetic one:
-   this sheet loads AFTER components.css, so `position: absolute` here was
-   landing on the primitive's WRAPPER and pulling every Menu trigger out of its
-   toolbar. The controls were in the DOM and nowhere on screen. */
-.ws-navmenu {
-  position: absolute; right: 0; top: calc(100% + 0.4rem); min-width: 180px;
-  display: flex; flex-direction: column; gap: 2px;
-  background: var(--card); border: 1px solid var(--border);
-  border-radius: var(--radius-md); box-shadow: var(--shadow-lg);
-  padding: var(--space-1); z-index: var(--z-dropdown);
-}
-.ws-navmenu__item {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
-  color: var(--fg); text-decoration: none; font-size: var(--fs-sm); white-space: nowrap;
-}
-.ws-navmenu__item:hover { background: var(--card-hover); }
-.ws-navmenu__item.is-active { color: var(--accent); background: var(--accent-soft); }
-.ws-navmenu__item svg { color: var(--muted); }
-.ws-navmenu__item.is-active svg { color: var(--accent); }
+/* (The app-nav overflow popover was a second, hand-rolled menu. It is gone —
+   SectionNav uses the `Menu` primitive, which is the only menu in the app.) */
 
 /* Linked-app switcher (Finance ⇄ Budget, Location ⇄ Commute). Lives inline in
    the PageHeader actions row, left of Refresh — compact pills, no own row. */

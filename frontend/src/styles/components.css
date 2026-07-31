@@ -623,6 +623,8 @@ a.ws-btn { text-decoration: none; }
   border-radius: var(--radius-sm); cursor: pointer;
 }
 .ws-menu__item:hover { background: var(--card-hover); }
+.ws-menu__item.is-active { color: var(--accent); background: var(--accent-soft); }
+.ws-menu__item.is-active .ws-menu__icon { color: var(--accent); }
 .ws-menu__item--danger { color: var(--danger); }
 .ws-menu__item--danger:hover { background: var(--danger-soft); }
 .ws-menu__check,

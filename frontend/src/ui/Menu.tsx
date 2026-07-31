@@ -134,6 +134,7 @@ export function MenuItem({
   onSelect,
   icon,
   checked,
+  active,
   danger,
   hint,
 }: {
@@ -143,6 +144,9 @@ export function MenuItem({
   // Present (true or false) marks this menu a single-choice picker: every item
   // reserves the check column so the labels stay aligned.
   checked?: boolean;
+  // "You are here" — for a menu used as navigation. Distinct from `checked`,
+  // which is a choice you made; this is where the app currently is.
+  active?: boolean;
   danger?: boolean;
   hint?: ReactNode;
 }) {
@@ -150,7 +154,8 @@ export function MenuItem({
     <button
       type="button"
       role="menuitem"
-      className={cx("ws-menu__item", danger && "ws-menu__item--danger")}
+      aria-current={active ? "page" : undefined}
+      className={cx("ws-menu__item", active && "is-active", danger && "ws-menu__item--danger")}
       onClick={onSelect}
     >
       {checked !== undefined && (

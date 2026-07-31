@@ -8,8 +8,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { NavLink, useLocation } from "react-router-dom";
-import { Menu, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, NotebookPen, MessagesSquare, Gauge, Rocket, Settings as SettingsIcon } from "lucide-react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Menu as MenuIcon, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, NotebookPen, MessagesSquare, Gauge, Rocket, Settings as SettingsIcon } from "lucide-react";
+import { Menu, MenuItem } from "../ui";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
@@ -372,28 +373,7 @@ const linkClass = ({ isActive }: { isActive: boolean }) => (isActive ? "is-activ
 
 export function SectionNav() {
   const { pathname } = useLocation();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  // Close the menu whenever the route changes (a link was followed).
-  useEffect(() => setOpen(false), [pathname]);
-
-  // Dismiss on outside click / Escape while open.
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
+  const navigate = useNavigate();
 
   return (
     <>
@@ -405,37 +385,29 @@ export function SectionNav() {
         ))}
       </nav>
 
-      <div className="ws-sectionnav-menu" ref={ref}>
-        <button
-          type="button"
-          className="ws-iconbtn"
-          aria-label="Sections menu"
-          aria-haspopup="menu"
-          aria-expanded={open}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <Menu size={20} aria-hidden />
-        </button>
-        {open && (
-          <div className="ws-navmenu" role="menu">
-            {SECTIONS.map((s) => {
-              const Icon = s.icon;
-              return (
-                <NavLink
-                  key={s.to}
-                  to={s.to}
-                  end={s.to === "/"}
-                  role="menuitem"
-                  className={({ isActive }) => (isActive ? "ws-navmenu__item is-active" : "ws-navmenu__item")}
-                >
-                  <Icon size={16} aria-hidden />
-                  {s.label}
-                </NavLink>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {/* Same sections, same active highlight — now on the shared Menu
+          primitive, which brings the keyboard nav and focus handling this
+          hand-rolled popover never had. */}
+      <Menu
+        className="ws-sectionnav-menu"
+        label="Sections"
+        align="end"
+        trigger={
+          <button type="button" className="ws-iconbtn" aria-label="Sections menu">
+            <MenuIcon size={20} aria-hidden />
+          </button>
+        }
+      >
+        {SECTIONS.map((s) => {
+          const Icon = s.icon;
+          const isActive = s.to === "/" ? pathname === "/" : pathname.startsWith(s.to);
+          return (
+            <MenuItem key={s.to} icon={<Icon size={16} />} active={isActive} onSelect={() => navigate(s.to)}>
+              {s.label}
+            </MenuItem>
+          );
+        })}
+      </Menu>
     </>
   );
 }
