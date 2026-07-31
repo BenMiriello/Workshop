@@ -454,7 +454,7 @@ function JobStatusCard({ spec, ctx }: { spec: UiCardSpec; ctx: UiCardCtx }) {
           <span style={{ fontSize: "var(--fs-sm)" }}>{summary}</span>
         )}
         <Row wrap style={{ gap: "var(--space-2)" }}>
-          <Button size="sm" variant="ghost" onClick={() => ctx.navigate(`/jobs/${encodeURIComponent(jobId)}`)}>
+          <Button size="sm" variant="ghost" onClick={() => ctx.navigate(`/runs/${encodeURIComponent(jobId)}`)}>
             View job <ArrowUpRight size={14} aria-hidden />
           </Button>
           <Button

@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
-import { Menu as MenuIcon, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, NotebookPen, MessagesSquare, Gauge, Rocket, Settings as SettingsIcon } from "lucide-react";
+import { Menu as MenuIcon, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, Brain, MessagesSquare, Gauge, Rocket, Settings as SettingsIcon } from "lucide-react";
 import { Menu, MenuItem } from "../ui";
 
 // Single source of truth for in-app navigation chrome:
@@ -49,8 +49,8 @@ const NODES: Record<string, RouteNode> = {
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
   "/work": { label: "Work" },
-  "/notes": { label: "Notes" },
-  "/jobs": { label: "Jobs" },
+  "/memory": { label: "Memory" },
+  "/runs": { label: "Runs" },
   "/usage": { label: "Usage" },
   "/chats": { label: "Chats" },
   "/projects": { label: "Projects" },
@@ -365,7 +365,7 @@ const SECTIONS = [
   { to: "/agents", label: "Agents", icon: Bot },
   { to: "/work", label: "Work", icon: ListChecks },
   { to: "/deploys", label: "Deploys", icon: Rocket },
-  { to: "/notes", label: "Notes", icon: NotebookPen },
+  { to: "/memory", label: "Memory", icon: Brain },
   { to: "/usage", label: "Usage", icon: Gauge },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];

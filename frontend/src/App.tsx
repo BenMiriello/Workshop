@@ -34,9 +34,8 @@ import TicketDetail from "./pages/TicketDetail";
 import DeployDetail from "./pages/DeployDetail";
 import StoreDetail from "./pages/StoreDetail";
 import Stores from "./pages/Stores";
-import NotesPage from "./pages/Notes";
-import Jobs from "./pages/Jobs";
-import JobDetail from "./pages/JobDetail";
+import MemoryPage from "./pages/Memory";
+import RunDetail from "./pages/RunDetail";
 import Usage from "./pages/Usage";
 import Settings from "./pages/Settings";
 import CommuteApp from "./pages/apps/Commute";
@@ -63,6 +62,14 @@ function BirdsLayout() {
 function AgentBuildRedirect() {
   const { slug = "" } = useParams();
   return <Navigate to={`/agents/${encodeURIComponent(slug)}/chat`} replace />;
+}
+
+// "Job" was the legacy noun for a Run. Old /jobs/:id deep-links live in chat
+// spawn notes, agent cards and ticket histories that are already persisted, so
+// they keep resolving — to the canonical /runs/:id.
+function JobIdRedirect() {
+  const { id = "" } = useParams();
+  return <Navigate to={`/runs/${encodeURIComponent(id)}`} replace />;
 }
 
 // Voice is now an inline toggle inside the chat, not a screen. Old /voice/:key
@@ -93,7 +100,7 @@ export default function App() {
       pathname === "/projects" ||
       pathname.startsWith("/projects/") ||
       pathname === "/agents" ||
-      pathname.startsWith("/jobs") ||
+      pathname.startsWith("/runs") ||
       pathname === "/chats" ||
       pathname === "/marketplace" ||
       pathname.startsWith("/apps/birds") ||
@@ -120,9 +127,12 @@ export default function App() {
           <Route path="/deploys/:id" element={<DeployDetail />} />
           <Route path="/stores" element={<Stores />} />
           <Route path="/stores/:app/:name" element={<StoreDetail />} />
-          <Route path="/notes" element={<NotesPage />} />
-          <Route path="/jobs" element={<Jobs />} />
-          <Route path="/jobs/:id" element={<JobDetail />} />
+          {/* The scoped knowledge store — agent memory, not the Notes app at
+              /apps/notes. Both were called "Notes", which is why neither was
+              findable. This one is Memory (it is what agents read and write
+              and what promotion in the memory design operates on). */}
+          <Route path="/memory" element={<MemoryPage />} />
+          <Route path="/runs/:id" element={<RunDetail />} />
           <Route path="/usage" element={<Usage />} />
           <Route path="/agents/new" element={<AgentDetail />} />
           <Route path="/agents/:slug/chat" element={<AgentBuild />} />
@@ -166,12 +176,17 @@ export default function App() {
           {/* Legacy path + the old external link both land on the in-workshop app now. */}
           <Route path="/commute" element={<Navigate to="/apps/commute" replace />} />
           <Route path="/settings" element={<Settings />} />
-          {/* Activity retired: Jobs live at /jobs (under Agents), Services/Events
-              moved into Settings > System. Old URLs redirect to their new homes. */}
+          {/* Retired surfaces. Services/Events moved into Settings > System and
+              their page files are deleted. "Jobs" was the legacy noun for a Run
+              (entity model section 5) and had its own list page that rendered
+              the SAME JobsFeed component as Work's Runs tab — one surface at two
+              addresses. The list is Work's Runs tab; the detail is /runs/:id. */}
           <Route path="/activity" element={<Navigate to="/" replace />} />
           <Route path="/services" element={<Navigate to="/settings" replace />} />
           <Route path="/events" element={<Navigate to="/settings" replace />} />
-          <Route path="/runs" element={<Navigate to="/jobs" replace />} />
+          <Route path="/jobs" element={<Navigate to="/work?tab=runs" replace />} />
+          <Route path="/jobs/:id" element={<JobIdRedirect />} />
+          <Route path="/notes" element={<Navigate to="/memory" replace />} />
           {/* Old /location web-geolocation page removed. Owntracks iOS now
               posts to /api/location/owntracks; viewer lives at /apps/location. */}
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />

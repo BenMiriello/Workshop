@@ -615,7 +615,7 @@ function EditTicket({
                           type="button"
                           className="ws-bc__link"
                           style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}
-                          onClick={() => { onClose(); nav(`/jobs/${encodeURIComponent(job.id)}`); }}
+                          onClick={() => { onClose(); nav(`/runs/${encodeURIComponent(job.id)}`); }}
                         >
                           View run <ArrowUpRight size={14} aria-hidden />
                         </button>

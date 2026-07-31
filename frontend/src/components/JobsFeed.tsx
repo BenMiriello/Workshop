@@ -209,7 +209,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
           <div
             role="link"
             tabIndex={0}
-            onClick={() => nav(`/jobs/${encodeURIComponent(child.id)}`)}
+            onClick={() => nav(`/runs/${encodeURIComponent(child.id)}`)}
             style={{
               display: "flex", alignItems: "baseline", gap: "var(--space-2)",
               padding: "var(--space-2) 0", cursor: "pointer",
@@ -250,7 +250,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
                 interactive
                 compact
                 className="ws-job-card"
-                onClick={() => nav(`/jobs/${encodeURIComponent(job.id)}`)}
+                onClick={() => nav(`/runs/${encodeURIComponent(job.id)}`)}
                 style={{ cursor: "pointer" }}
               >
                 <div className="ws-job-card__bind">

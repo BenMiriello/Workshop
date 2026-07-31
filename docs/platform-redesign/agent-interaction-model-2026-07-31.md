@@ -281,14 +281,17 @@ unknown role. `entity-model-2026-07-18.md` §6.1 states agents are keyed by
 **role**, not runtime. The frontend is a generation behind. This is the "builder
 agent interface" the operator flagged.
 
-### 6.2 Fully orphaned page files
+### 6.2 Page files with no route ~~(orphaned)~~ — CORRECTED
 
-| File | Status |
-|---|---|
-| `frontend/src/pages/Events.tsx` | **zero imports.** `/events` redirects to `/settings` (App.tsx:173) |
-| `frontend/src/pages/Services.tsx` | **zero imports.** `/services` redirects to `/settings` (App.tsx:172) |
+`frontend/src/pages/Events.tsx` and `frontend/src/pages/Services.tsx` have no
+route of their own (`/events` and `/services` redirect to `/settings`), but they
+are **not dead**: `Settings.tsx` imports them as `./Services` and `./Events` and
+renders them as panels inside the System section (Settings.tsx:35-36, 619, 622).
 
-Dead code. Safe to delete.
+The original audit entry claimed zero imports. That was wrong — the grep pattern
+searched for `pages/Events` and missed the sibling-relative `./Events`. Deleting
+them broke the typecheck immediately and they were restored. No action needed;
+they are correctly placed already.
 
 ### 6.3 Two Notes surfaces, both live, both called "Notes"
 

@@ -412,7 +412,7 @@ export default function DeployDetail() {
                         </span>
                       )}
                       <Button size="sm" variant="ghost" onClick={() => openLog(r)}>Log</Button>
-                      <Link to={`/jobs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
+                      <Link to={`/runs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
                         <Button size="sm" variant="ghost">Open</Button>
                       </Link>
                       {r.status === "done" && r.kind === "deploy" && (

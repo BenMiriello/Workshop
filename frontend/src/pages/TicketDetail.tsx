@@ -477,7 +477,7 @@ export default function TicketDetail() {
                           {r.evidence.summary}
                         </span>
                       )}
-                      <Link to={`/jobs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
+                      <Link to={`/runs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
                         <Button size="sm" variant="ghost">Open</Button>
                       </Link>
                     </Row>

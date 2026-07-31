@@ -282,7 +282,7 @@ export default function JobDetail() {
     try {
       const r = await fetch(`/api/jobs/${encodeURIComponent(id)}/dismiss`, { method: "POST" });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      nav("/jobs");
+      nav("/work?tab=runs");
     } catch (e) {
       setActErr(e instanceof Error ? e.message : String(e));
       setActing(null);
@@ -290,7 +290,7 @@ export default function JobDetail() {
   }, [id, nav]);
 
   const back = (
-    <Button size="sm" variant="ghost" onClick={() => nav("/jobs")}>
+    <Button size="sm" variant="ghost" onClick={() => nav("/work?tab=runs")}>
       <ChevronLeft aria-hidden /> Jobs
     </Button>
   );
@@ -325,7 +325,7 @@ export default function JobDetail() {
       <StateBlock
         title="Job not found"
         hint={<>No job with id <code>{id}</code>. It may have been pruned from the log.</>}
-        action={<Button size="sm" onClick={() => nav("/jobs")}>Back to jobs</Button>}
+        action={<Button size="sm" onClick={() => nav("/work?tab=runs")}>Back to runs</Button>}
       />
     );
   } else if (!job) {
@@ -524,7 +524,7 @@ export default function JobDetail() {
                           type="button"
                           className="ws-bc__link"
                           style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
-                          onClick={() => nav(`/jobs/${encodeURIComponent(c.id)}`)}
+                          onClick={() => nav(`/runs/${encodeURIComponent(c.id)}`)}
                         >
                           View run <ArrowUpRight aria-hidden size={12} />
                         </button>
