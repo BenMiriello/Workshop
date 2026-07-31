@@ -141,7 +141,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
 
   const filterBar = (
     <Segmented<StatusFilter>
-      ariaLabel="Filter jobs by status"
+      ariaLabel="Filter runs by status"
       value={filter}
       onChange={setFilter}
       options={FILTERS}
@@ -153,7 +153,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
     body = (
       <StateBlock
         variant="error"
-        title="Couldn't load jobs"
+        title="Couldn't load runs"
         hint={<><code>/api/jobs</code> ({err})</>}
         action={<Button size="sm" onClick={refresh}>Retry</Button>}
       />
@@ -175,7 +175,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
   } else if (jobs.length === 0) {
     body = (
       <StateBlock
-        title={filter === "all" ? "No jobs yet" : `No ${filter} jobs`}
+        title={filter === "all" ? "No runs yet" : `No ${filter} jobs`}
         hint={
           filter === "all" ? (
             <>A Job is recorded for every bounded run. Trigger one with <code>cron_agent.sh</code>, a project sweep, or a manual run.</>

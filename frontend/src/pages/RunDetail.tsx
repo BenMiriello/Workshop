@@ -17,11 +17,15 @@ import {
 import type { StatusKind } from "../ui";
 import { type Job, jobStatusKind } from "../lib/jobs";
 
-// One Job's detail: its binding, trigger, timing, outcome, and freeform
-// evidence. Linked from the Jobs feed, Home attention cards, and an agent's
-// job history. Reads GET /api/jobs/{id}.
+// One RUN's detail: its binding, trigger, timing, outcome, and freeform
+// evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
+// run history. Reads GET /api/jobs/{id}.
 //
-// When a job is awaiting_input its evidence is a list of the tasks it stopped
+// "Run" in the UI, `job` in the code: ADR 0001 keeps the code noun, and the
+// entity model (section 5) fixes the word the operator reads. Renaming imports
+// and CSS hooks would be churn with no reader-facing benefit.
+//
+// When a run is awaiting_input its evidence is a list of the tasks it stopped
 // on, each carrying a plain-language question. That case gets a dedicated,
 // actionable section at the top (approve / send back / unblock / cancel) so the
 // operator can see WHAT is waited on, WHERE it ran, and resolve it in place -
@@ -297,7 +301,7 @@ export default function JobDetail() {
 
   const header = (
     <PageHeader
-      title={job?.title || "Job"}
+      title={job?.title || "Run"}
       sub={<code className="ws-mono">{id}</code>}
       actions={
         <Row wrap style={{ gap: "var(--space-2)" }}>
@@ -315,7 +319,7 @@ export default function JobDetail() {
     body = (
       <StateBlock
         variant="error"
-        title="Couldn't load job"
+        title="Couldn't load run"
         hint={<><code>/api/jobs/{id}</code>. {err}</>}
         action={<Button size="sm" onClick={refresh}>Retry</Button>}
       />
@@ -323,7 +327,7 @@ export default function JobDetail() {
   } else if (notFound) {
     body = (
       <StateBlock
-        title="Job not found"
+        title="Run not found"
         hint={<>No job with id <code>{id}</code>. It may have been pruned from the log.</>}
         action={<Button size="sm" onClick={() => nav("/work?tab=runs")}>Back to runs</Button>}
       />
@@ -548,7 +552,7 @@ export default function JobDetail() {
             <SectionLabel>Error</SectionLabel>
             <StateBlock
               variant="error"
-              title="This job failed"
+              title="This run failed"
               hint={
                 <Stack gap="sm">
                   <span>

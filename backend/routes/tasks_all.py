@@ -359,7 +359,38 @@ async def get_one(scope: str, task_id: str) -> dict:
         raise HTTPException(404, f"task not found: {task_id}")
     rec = dict(t)
     rec["scope"] = scope
+    rec["origin"] = _origin_for(t)
     return _with_latitude(rec, scope)
+
+
+def _origin_for(task: dict) -> dict | None:
+    """Resolve a ticket's `source` into something a UI can link to.
+
+    Every ticket already records where it came from — `{kind: "chat", ref:
+    <thread id>}` when it was filed from a conversation — and nothing ever
+    surfaced it. So a ticket opened from the inbox was a dead end: the
+    conversation that produced it, and the reasoning behind it, existed and
+    were unreachable. Resolving the id to a title and a route here (rather than
+    making the client know how chat URLs are built) keeps that knowledge in one
+    place.
+    """
+    src = task.get("source") or {}
+    if src.get("kind") != "chat" or not src.get("ref"):
+        return None
+    from services import chat_store
+    try:
+        t = chat_store.get_thread(src["ref"])
+    except Exception:
+        t = None
+    if t is None:
+        # The chat was deleted. Say so rather than rendering a link that 404s.
+        return {"kind": "chat", "id": src["ref"], "title": None, "context_key": None}
+    return {
+        "kind": "chat",
+        "id": t.get("id"),
+        "title": t.get("title") or "Chat",
+        "context_key": t.get("context_key") or "general",
+    }
 
 
 _ACCEPTANCE_KINDS = {"reviewer", "command", "operator"}

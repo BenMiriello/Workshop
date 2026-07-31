@@ -192,13 +192,29 @@ async def engage_autonomy_override(body: OverrideEngageIn):
 
 @router.delete("/agents/autonomy/override")
 async def clear_autonomy_override():
-    """Clear the override. Each agent immediately resumes its configured mode
-    without a restore step (the field was never mutated)."""
+    """Clear the override AND the legacy flag file. Each agent immediately
+    resumes its configured mode without a restore step (the field was never
+    mutated).
+
+    Both, because autonomy is gated by `AUTONOMY_FLAG.exists() or
+    override.engaged` — two switches read as one truth. Clearing only the
+    overlay left the flag file holding the loop off while the UI reported the
+    override as cleared, with nothing on screen naming the thing still doing it.
+    That is how the pause set for the 2026-07-18 migration survived thirteen
+    days: whoever tried to lift it would have seen it "cleared" and still off.
+    A single control has to reach every switch it claims to represent."""
+    cleared = []
     try:
         autonomy_override.OVERRIDE_PATH.unlink()
+        cleared.append("override")
     except FileNotFoundError:
         pass
-    return autonomy_override.read()
+    try:
+        AUTONOMY_FLAG.unlink()
+        cleared.append("flag")
+    except FileNotFoundError:
+        pass
+    return {**autonomy_override.read(), "cleared": cleared}
 
 
 # ============================================================

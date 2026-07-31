@@ -143,6 +143,16 @@ export type Task = {
   max_attempts?: number | null;
   blocked_reason?: string | null;
   job_ids?: string[];
+  // Where this ticket came from, resolved server-side into something linkable.
+  // Provenance was always recorded and never shown, which made a ticket opened
+  // from the inbox a dead end: the conversation that produced it existed and
+  // was unreachable. `context_key` is null when the chat has since been deleted.
+  origin?: {
+    kind: "chat";
+    id: string;
+    title: string | null;
+    context_key: string | null;
+  } | null;
   evidence?: TaskEvidence[];
   source?: { kind?: string; ref?: string | null };
   awaiting?: BlockRequest | null;

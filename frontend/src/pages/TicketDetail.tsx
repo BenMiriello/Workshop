@@ -241,6 +241,21 @@ export default function TicketDetail() {
                     scope <ExternalLink size={10} aria-hidden />
                   </Link>
                 )}
+                {/* Back to the conversation that produced this ticket. The
+                    reasoning lives there; a ticket without a route back to it
+                    is a decision with its argument amputated. */}
+                {task.origin?.context_key ? (
+                  <Link
+                    to={`/chat/${encodeURIComponent(task.origin.context_key)}?thread=${encodeURIComponent(task.origin.id)}`}
+                    style={{ fontSize: "var(--fs-xs)" }}
+                  >
+                    from "{task.origin.title}" <ExternalLink size={10} aria-hidden />
+                  </Link>
+                ) : task.origin ? (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    from a chat that has since been deleted
+                  </span>
+                ) : null}
                 <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{id}</span>
               </>
             )}
