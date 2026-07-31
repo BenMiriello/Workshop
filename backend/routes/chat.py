@@ -798,6 +798,7 @@ def _has_live_session(t: dict, provider) -> bool:
 _CONTEXT_WINDOW = {
     "claude-opus-4-8": 200_000,
     "claude-sonnet-4-6": 200_000,
+    "claude-sonnet-5": 200_000,
     "claude-haiku-4-5-20251001": 200_000,
 }
 

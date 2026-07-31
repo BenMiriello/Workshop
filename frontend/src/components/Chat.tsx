@@ -100,6 +100,7 @@ const MODEL_LABELS: Record<string, string> = {
   "claude-opus-5": "Opus 5",
   "claude-opus-4-8": "Opus 4.8",
   "claude-fable-5": "Fable 5",
+  "claude-sonnet-5": "Sonnet 5",
   "claude-sonnet-4-6": "Sonnet 4.6",
   "claude-haiku-4-5-20251001": "Haiku 4.5",
 };
@@ -140,6 +141,7 @@ const CONTEXT_WINDOW: Record<string, number> = {
   "claude-opus-5": 200_000,
   "claude-opus-4-8": 200_000,
   "claude-fable-5": 200_000,
+  "claude-sonnet-5": 200_000,
   "claude-sonnet-4-6": 200_000,
   "claude-haiku-4-5-20251001": 200_000,
 };

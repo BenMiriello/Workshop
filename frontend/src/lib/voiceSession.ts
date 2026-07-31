@@ -31,7 +31,10 @@ import {
   detectCaps,
   splitSentences,
   cleanForSpeech,
+  micPreflight,
+  MicError,
   type EngineCaps,
+  type MicFailKind,
   type Speaker,
   type SttProvider,
   type TtsProvider,
@@ -42,15 +45,29 @@ export type VoiceState = "idle" | "connecting" | "listening" | "thinking" | "spe
 export type SentenceStatus = "pending" | "speaking" | "heard";
 export type SpokenSentence = { text: string; status: SentenceStatus };
 
+// The modality matrix. A conversation is carried by an input lane and an output
+// lane, chosen independently — talk and read, type and listen, either, or both.
+// This is the single source of truth; mic_enabled/speak_replies are derived from
+// it (and derive it, for prefs files written before the matrix existed).
+export type ModalityMode = "voice" | "text" | "both";
+
 export type VoicePrefs = {
   voice: string;
   speed: number;
   tts_provider: "auto" | "server" | "browser" | "off";
   stt_provider: "auto" | "server" | "browser";
-  // Input lane. When false, the mic is off and the composer is the only input.
+  // How you talk to it: "voice" = mic only, "text" = composer only (mic off by
+  // intent, so a mic error in this state is configuration, not failure),
+  // "both" = either at any moment.
+  input_mode: ModalityMode;
+  // How it answers: "voice" = spoken, "text" = captions only, "both" = spoken
+  // AND captioned. Heard-vs-generated bookkeeping runs identically in all three,
+  // so interrupt/resume semantics never change with the mode.
+  output_mode: ModalityMode;
+  // Derived from input_mode. Kept because stored prefs and the API carry it.
   mic_enabled: boolean;
-  // Voice-output lane. When false, replies render as captions only (marked
-  // heard immediately) — this is the mute, decoupled from the engine choice.
+  // Derived from output_mode. When false, replies render as captions only
+  // (marked heard immediately) — the mute, decoupled from the engine choice.
   speak_replies: boolean;
   // Typing holds my turn: while typing, the voice endpoint is deferred.
   typing_hold: boolean;
@@ -72,6 +89,8 @@ export const DEFAULT_PREFS: VoicePrefs = {
   speed: 1.0,
   tts_provider: "auto",
   stt_provider: "auto",
+  input_mode: "both",
+  output_mode: "both",
   mic_enabled: true,
   speak_replies: true,
   typing_hold: true,
@@ -83,6 +102,37 @@ export const DEFAULT_PREFS: VoicePrefs = {
   barge_in: true,
   barge_sensitivity: 0.5,
   verbosity: "normal",
+};
+
+// Keep the matrix and the legacy booleans in agreement on the client too, so a
+// session constructed from a partial/older prefs object behaves. Mirrors
+// _normalize_modes in backend/routes/voice.py.
+export function normalizeModes(p: VoicePrefs): VoicePrefs {
+  const input_mode: ModalityMode =
+    p.input_mode ?? (p.mic_enabled === false ? "text" : "both");
+  const output_mode: ModalityMode =
+    p.output_mode ?? (p.speak_replies === false ? "text" : "both");
+  return {
+    ...p,
+    input_mode,
+    output_mode,
+    mic_enabled: input_mode !== "text",
+    speak_replies: output_mode !== "text",
+  };
+}
+
+// Everything the question "why isn't it hearing me" needs, in one object. Not in
+// the hot path: read on demand by the settings sheet, and by the watchdogs.
+export type VoiceDiagnostics = {
+  rawLevel: number;      // live unprocessed mic level, 0..1
+  noiseFloor: number;    // measured ambient RMS
+  threshold: number;     // the live onset threshold
+  calibrated: boolean;
+  micRunning: boolean;
+  micSuspended: boolean; // input lane off BY INTENT — not a failure
+  secureContext: boolean;
+  lastTurnMs: number | null;   // endpoint -> first audio
+  lastSttMs: number | null;    // duration of the last committed transcription
 };
 
 export type VoiceSnapshot = {
@@ -105,6 +155,12 @@ export type VoiceSnapshot = {
   // In-progress voice transcript (segments captured but not yet sent) — shown as
   // ghost text above the composer so nothing is sent unseen.
   pendingUser: string;
+  // Why the input lane can't run, when it can't. Separate from `error` because
+  // it is a standing condition with a recovery step, not a per-turn hiccup.
+  micFail: MicFailKind | null;
+  // True while a preview transcription is in flight, so the UI can show that the
+  // live partial is still catching up rather than looking stalled.
+  previewing: boolean;
 };
 
 export type ReplyHandle = {
@@ -190,6 +246,25 @@ export class VoiceSession {
   private draftText = "";             // text the current draft was fired with
   // Mixed input/output state.
   private micOff = false;             // mic lane disabled (composer-only input)
+  // Set for the whole time the input lane is off BY INTENT. While set, any error
+  // arriving from the capture layer is swallowed rather than surfaced or
+  // escalated to fatal: muting the mic is a configuration, not a failure. This
+  // is what stopped "turn the mic off" from reading as "permission denied".
+  private micSuspended = false;
+  private micFail: MicFailKind | null = null;
+  // Live-partial preview loop (server STT path). previewBusy gates to one pass
+  // in flight; a slow pass just skips ticks rather than queueing up.
+  private previewTimer: ReturnType<typeof setInterval> | null = null;
+  private previewBusy = false;
+  private previewAbort: AbortController | null = null;
+  private previewText = "";           // display-only; never becomes turn text
+  private segStart = 0;               // when the current segment began recording
+  // Input-signal watchdog: catches "the mic is on but nothing is arriving" and
+  // "signal is arriving but never clears the threshold" — the two silent-deafness
+  // modes that made voice mode look broken with no message at all.
+  private signalTimer: ReturnType<typeof setInterval> | null = null;
+  private heardSpeechEver = false;
+  private lowLevelNudged = false;
   private typing = false;             // composer currently has text
   private lastKeystroke = 0;
   private typingTimer: ReturnType<typeof setTimeout> | null = null;
@@ -237,7 +312,12 @@ export class VoiceSession {
       error: this.error,
       fatal: this.fatal,
       interruptRate: this.turnCount ? this.interrupts / this.turnCount : 0,
-      pendingUser: this.segs.join(" ").trim(),
+      // What has been captured but not yet sent: committed segments plus the
+      // live preview of the words still being spoken. On the server path this is
+      // the ONLY proof the system is hearing anything — before, it was empty.
+      pendingUser: [this.segs.join(" ").trim(), this.previewText].filter(Boolean).join(" ").trim(),
+      micFail: this.micFail,
+      previewing: this.previewBusy,
     };
     return this._snapshot;
   }
@@ -254,8 +334,11 @@ export class VoiceSession {
   // abandons or replaces the active turn context (see the `epoch` field note).
   private bumpEpoch(): number { return ++this.epoch; }
 
-  setPrefs(p: VoicePrefs) {
+  setPrefs(pIn: VoicePrefs) {
     const prev = this.cfg.prefs;
+    // Whichever side the caller wrote (matrix or legacy booleans), both agree
+    // from here on, so nothing downstream has to know which one changed.
+    const p = normalizeModes(pIn);
     this.cfg.prefs = p;
     this.mic.setSensitivity(p.barge_sensitivity);
     this.mic.setEndSilence(p.endpoint_silence_ms);
@@ -329,13 +412,26 @@ export class VoiceSession {
     this.fatal = false;
     this.caps = await detectCaps();
     this.resolveProviders();
-    this.micOff = !this.cfg.prefs.mic_enabled;
-    if (!this.micOff) {
-      const ok = await this.startMic();
-      // A mic failure on the server STT path is fatal — there is no capture lane.
-      // startMic() already set `error`; flag it fatal, stay idle, and emit so the
-      // UI can drop voiceOn instead of showing a live-looking-but-deaf orb.
-      if (!ok && this.sttProvider === "server") { this.fatal = true; this.set("idle"); return; }
+    this.micFail = null;
+    this.micSuspended = false;
+    this.heardSpeechEver = false;
+    this.lowLevelNudged = false;
+    const wantMic = this.cfg.prefs.input_mode !== "text";
+    this.micOff = !wantMic;
+    if (wantMic) {
+      // Check before asking, so an insecure origin says exactly that instead of
+      // producing an opaque TypeError from inside getUserMedia.
+      const pre = micPreflight();
+      const ok = pre ? (this.micFail = pre.kind, this.error = pre.message, false) : await this.startMic();
+      if (!ok) {
+        // The mic is unavailable. That is only fatal when the user asked for a
+        // voice-ONLY input lane; otherwise voice mode continues with the
+        // composer driving turns and replies still spoken, and the standing
+        // reason sits in micFail. Bricking the whole chat over a mic is worse
+        // than degrading to the lane that still works.
+        this.micOff = true;
+        if (this.cfg.prefs.input_mode === "voice") { this.fatal = true; this.set("idle"); return; }
+      }
     }
     this.armListen();
   }
@@ -349,30 +445,59 @@ export class VoiceSession {
         onEagerPause: () => this.onEagerPause(),
         // A recorder-construction failure surfaces here instead of throwing
         // uncaught out of startRecording (Phase 6.1).
-        onError: (m) => { this.error = m; this.emit(); },
+        onError: (m) => { if (!this.micSuspended) { this.error = m; this.emit(); } },
       });
+      this.micFail = null;
       this.mic.setSensitivity(this.cfg.prefs.barge_sensitivity);
       this.mic.setEager(this.cfg.prefs.eager_endpoint && this.sttProvider === "server", this.cfg.prefs.eager_silence_ms);
       return true;
     } catch (e) {
+      // Deliberate mute raced the start: not an error, just stale work.
+      if (this.micSuspended) return false;
+      // Report the ACTUAL reason (insecure origin / denied / no device / in use)
+      // rather than a stringified exception. MicError carries the recovery step.
+      const me = e instanceof MicError ? e : null;
+      this.micFail = me ? me.kind : "unknown";
+      const msg = me ? me.message : `Could not open the microphone: ${String(e)}`;
       // The VAD mic drives capture + hands-free barge-in for the SERVER path.
-      // Browser and native STT capture themselves, so a mic failure there is
-      // non-fatal — proceed without VAD.
-      if (this.sttProvider === "server") { this.error = `mic: ${String(e)}`; return false; }
-      return true;
+      // Browser and native STT capture themselves, so a mic failure there only
+      // costs us barge-in — surface it, but let the session run.
+      this.error = msg;
+      return this.sttProvider !== "server";
     }
   }
 
   // Toggle the mic lane live without ending the session (composer stays usable).
+  //
+  // Turning it OFF must be completely silent: tear down the recognizer as well
+  // as the mic (the old code stopped only the mic, leaving an in-flight browser
+  // recognizer to error, which the fatal-classifier read as "permission denied"
+  // and used to kill voice mode outright), and hold micSuspended so any late
+  // error from either lane is dropped on the floor.
   setMicEnabled(on: boolean) {
     if (on === !this.micOff) return;
     this.micOff = !on;
     if (!on) {
+      this.micSuspended = true;
+      this.stopPreviewLoop();
+      this.stopSignalWatchdog();
+      this.browserAbort?.();
+      this.browserAbort = null;
       this.mic.stop();
       this.capturing = false;
+      // Clear anything the capture lane left behind: with the mic intentionally
+      // off there is nothing for the user to act on.
+      this.partial = "";
+      this.previewText = "";
+      if (this.micFail) this.micFail = null;
+      this.error = null;
+      this.fatal = false;
       this.emit();
-    } else if (this.state !== "idle" && this.state !== "connecting") {
-      this.startMic().then((ok) => { if (ok) this.armListen(); });
+    } else {
+      this.micSuspended = false;
+      if (this.state !== "idle" && this.state !== "connecting") {
+        this.startMic().then((ok) => { if (ok) this.armListen(); else this.emit(); });
+      }
     }
   }
 
@@ -386,6 +511,9 @@ export class VoiceSession {
     sp?.detach();          // its stop() must not fire finishSpeaking
     sp?.stop();
     this.browserAbort?.();
+    this.browserAbort = null;
+    this.stopPreviewLoop();
+    this.stopSignalWatchdog();
     this.mic.stop();
     this.capturing = false;
     this.clearThinkingWatchdog();
@@ -396,12 +524,16 @@ export class VoiceSession {
   private resolveProviders() {
     const p = this.cfg.prefs;
     const c = this.caps!;
-    // STT
-    if (p.stt_provider === "server" && c.server?.stt.available) this.sttProvider = "server";
+    // STT — the input lane. input_mode "text" means the composer is the only
+    // input by intent, so no capture engine is resolved at all.
+    if (p.input_mode === "text") this.sttProvider = null;
+    else if (p.stt_provider === "server" && c.server?.stt.available) this.sttProvider = "server";
     else if (p.stt_provider === "browser" && c.browserStt) this.sttProvider = "browser";
     else this.sttProvider = c.stt; // auto
-    // TTS
-    if (!p.speak_replies || p.tts_provider === "off") this.ttsProvider = null;
+    // TTS — the output lane. output_mode "text" means captions only; the
+    // sentences still stream and are still marked heard, so interrupt/resume
+    // semantics are identical whether you are listening or reading.
+    if (p.output_mode === "text" || p.tts_provider === "off") this.ttsProvider = null;
     else if (p.tts_provider === "server" && c.server?.tts.available) this.ttsProvider = "server";
     else if (p.tts_provider === "browser" && c.browserTts) this.ttsProvider = "browser";
     else this.ttsProvider = c.tts; // auto
@@ -436,6 +568,119 @@ export class VoiceSession {
     if (!this.capturing) {
       this.mic.startRecording();
       this.capturing = true;
+      this.segStart = performance.now();
+    }
+    this.startPreviewLoop();
+    this.startSignalWatchdog();
+  }
+
+  // ---- live partial transcript (server path) -------------------------------
+  //
+  // The server path used to have NO feedback channel: `partial` was written only
+  // by the browser recognizer, so on the default (server) tier nothing you said
+  // appeared until the whole turn committed — indistinguishable from broken.
+  //
+  // This ticks a display-only transcription of the segment SO FAR. MicStream
+  // .snapshot() flushes the recorder's buffer without ending the segment, and
+  // because those chunks start at the segment's first byte they decode as a
+  // complete container. The recorder keeps running, so the committed transcript
+  // is still one clean full-quality pass at the endpoint; this is purely the
+  // "yes, I hear you" channel.
+  private static PREVIEW_MS = 900;
+  // Past this, a preview pass would land after the endpoint anyway — stop
+  // spending CPU on it and leave the last partial on screen.
+  private static PREVIEW_MAX_SEG_MS = 30000;
+
+  private startPreviewLoop() {
+    if (this.previewTimer || this.sttProvider !== "server") return;
+    this.previewTimer = setInterval(() => { void this.previewTick(); }, VoiceSession.PREVIEW_MS);
+  }
+
+  private stopPreviewLoop() {
+    if (this.previewTimer) { clearInterval(this.previewTimer); this.previewTimer = null; }
+    this.previewAbort?.abort();
+    this.previewAbort = null;
+    this.previewBusy = false;
+    this.previewText = "";
+  }
+
+  private async previewTick() {
+    if (this.state !== "listening" || this.micOff || !this.capturing) return;
+    if (this.previewBusy) return;                    // one pass in flight; skip
+    if (!this.mic.inSpeech && !this.previewText) return;  // nothing said yet
+    if (performance.now() - this.segStart > VoiceSession.PREVIEW_MAX_SEG_MS) return;
+    const ep = this.epoch;
+    let blob: Blob | null = null;
+    try { blob = await this.mic.snapshot(); } catch { blob = null; }
+    if (!blob || blob.size < 600) return;
+    if (ep !== this.epoch || this.state !== "listening") return;
+    this.previewBusy = true;
+    this.emit();
+    const ac = new AbortController();
+    this.previewAbort = ac;
+    try {
+      const t = await transcribeBlob(blob, { preview: true, signal: ac.signal });
+      if (ep !== this.epoch || this.state !== "listening") return;
+      // Only ever grow the shown text within a segment; a preview that comes
+      // back shorter (a trailing word clipped by the flush) would otherwise make
+      // the caption stutter backwards.
+      if (t && t.length >= this.previewText.length) this.previewText = t;
+    } catch {
+      // A failed preview is not a failed turn — the endpoint pass is what counts.
+    } finally {
+      if (this.previewAbort === ac) this.previewAbort = null;
+      this.previewBusy = false;
+      this.emit();
+    }
+  }
+
+  // ---- input-signal watchdog ----------------------------------------------
+  //
+  // Two ways the input lane goes silently deaf, both of which used to present as
+  // "nothing happens, forever, with no message":
+  //   1. no signal at all — track producing silence (unplugged, OS-muted, a dead
+  //      WebView capture). Peak level over a whole window is ~0.
+  //   2. signal, but never over the onset threshold — a quiet mic against a
+  //      threshold that was a hardcoded guess. Calibration mostly fixes this;
+  //      when it doesn't, drop the threshold once and say so.
+  private static SIGNAL_WINDOW_MS = 4000;
+  private static SILENT_PEAK = 0.004;
+
+  private startSignalWatchdog() {
+    if (this.signalTimer) return;
+    this.mic.takePeak();
+    this.signalTimer = setInterval(() => this.checkSignal(), VoiceSession.SIGNAL_WINDOW_MS);
+  }
+
+  private stopSignalWatchdog() {
+    if (this.signalTimer) { clearInterval(this.signalTimer); this.signalTimer = null; }
+  }
+
+  private checkSignal() {
+    if (this.state !== "listening" || this.micOff || this.micSuspended) return;
+    if (!this.mic.running) return;
+    const peak = this.mic.takePeak();
+    const lv = this.mic.levels();
+    if (peak < VoiceSession.SILENT_PEAK) {
+      this.error = "No signal from the microphone. Check the input device, or that another app isn't holding it.";
+      this.emit();
+      return;
+    }
+    // Signal is arriving. If it has never once tripped the onset threshold, the
+    // threshold is wrong for this mic — lower it once, then tell the user.
+    if (!this.heardSpeechEver && lv.calibrated && peak < lv.threshold) {
+      if (!this.lowLevelNudged) {
+        this.lowLevelNudged = true;
+        this.mic.setSensitivity(Math.min(1, this.cfg.prefs.barge_sensitivity + 0.25));
+        this.error = "Mic level is low — raising sensitivity. Speak up, or raise Mic sensitivity in Voice settings.";
+        this.emit();
+      }
+      return;
+    }
+    // Healthy: clear a stale signal complaint (but never a turn error).
+    if (this.error && /No signal from the microphone|Mic level is low/.test(this.error)) {
+      this.error = null;
+      this.emit();
     }
   }
 
@@ -493,6 +738,7 @@ export class VoiceSession {
     // answering a fragment. Drop it (superseded) and keep collecting the utterance.
     if (this.state === "listening") {
       this.resumedSinceCut = true;
+      this.heardSpeechEver = true;
       if (this.held) this.supersedeDraft();
       // Clear a transient turn error (e.g. "Didn't catch that") now that they're
       // trying again, so the status strip reflects the live attempt.
@@ -513,12 +759,21 @@ export class VoiceSession {
     // Superseded/interrupted while the recorder was flushing (Enter-send, barge):
     // abandon — whoever bumped the epoch owns the turn now.
     if (ep !== this.epoch || this.state !== "listening") return;
-    const spoke = !!blob && blob.size >= 1200;
+    // Any blob at all gets a transcription attempt. The old `size >= 1200` gate
+    // dropped short utterances SILENTLY — not even the "didn't catch that"
+    // message fired — so a clipped "yes" looked identical to a dead system.
+    // A container header alone is a few hundred bytes, so only reject the truly
+    // empty, and say so when we do.
+    const spoke = !!blob && blob.size > 0;
     let sttFailed = false;
     if (spoke) {
       try { const t = await transcribeBlob(blob!); if (t) this.segs.push(t); }
       catch { sttFailed = true; /* keep whatever segments we have */ }
     }
+    // The preview has served its purpose; the committed segments now own the
+    // pending text. Clearing here stops a stale partial double-printing next to
+    // the real transcript.
+    this.previewText = "";
     if (ep !== this.epoch || this.state !== "listening") return;
     // The user is typing — hold this turn open (defer the endpoint) and keep
     // capturing; onTypingReleased or an Enter-send will finalize it. Bump so any
@@ -582,6 +837,10 @@ export class VoiceSession {
     this.resumedSinceCut = false;
     let blob: Blob | null = null;
     try { blob = await this.mic.cutSegment(); } catch { blob = null; }
+    // A fresh segment is recording now; the preview window restarts with it, and
+    // the text it had previewed is about to be committed into segs.
+    this.segStart = performance.now();
+    this.previewText = "";
     if (this.state !== "listening" || !this.capturing || ep !== this.epoch) return;
     if (!blob || blob.size < 1200) return;
     let text = "";
@@ -663,6 +922,10 @@ export class VoiceSession {
   // Kick off a (non-speculative) reply turn for a finished utterance.
   private startTurn(text: string) {
     this.bumpEpoch();
+    // Listening is over for this turn: stop previewing and stop watching for a
+    // dead input lane until we re-arm.
+    this.stopPreviewLoop();
+    this.stopSignalWatchdog();
     this.lastUser = text;
     this.turnCount += 1;
     this.tEndpoint = performance.now();
