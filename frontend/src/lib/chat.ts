@@ -27,6 +27,10 @@ export type ChatMsg = {
     // an optimistic bubble that quietly isn't real is the "my messages keep
     // disappearing" bug.
     unsent?: boolean;
+    // Sent while a turn was already running, and handed to that turn rather
+    // than queued behind it — so it reached the agent at the next boundary
+    // between its actions.
+    injected?: boolean;
     // Ordered text/tool segments (assistant turns). Absent on plain messages.
     segments?: ChatSegment[];
     // True while the turn is still streaming; turn_id lets a reload reconnect
@@ -182,6 +186,17 @@ export const chatApi = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ key, ...state }),
     }).then(j<{ card_states: Record<string, CardState> }>),
+
+  // Hand a message to a turn that is ALREADY running. It lands at the next
+  // boundary between the agent's actions rather than waiting out the whole
+  // turn. `delivered: false` is not an error — the turn ended in the meantime
+  // and the caller should queue the message as the next turn instead.
+  injectIntoTurn: (turnId: string, content: string) =>
+    fetch(`/api/chat/turns/${turnId}/inject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }).then(j<{ delivered: boolean; reason: string }>),
 
   sendMessage: (id: string, content: string, model?: string) =>
     fetch(`/api/chat/threads/${id}/messages`, {

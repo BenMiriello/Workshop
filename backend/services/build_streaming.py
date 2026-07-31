@@ -35,6 +35,56 @@ CLAUDE_CLI = llm_router.CLAUDE_CLI
 STREAM_LINE_LIMIT = 64 * 1024 * 1024
 
 
+def _stdin_fifo(turn_id: str) -> Path:
+    """The turn's realtime input channel.
+
+    A turn runs `--input-format stream-json`, so its stdin stays open for the
+    life of the run and the CLI reads whatever arrives at the next boundary
+    BETWEEN steps. That is what lets a message sent while the agent is working
+    reach it now instead of waiting out the whole turn.
+
+    It is a FIFO on disk, not a pipe, for the same reason stdout goes to a file:
+    the child is spawned detached and has to survive a backend restart. A pipe
+    dies with the parent; a FIFO can be reopened by whoever is running later."""
+    return _journal_dir(turn_id) / "stdin.fifo"
+
+
+def _user_message_line(text: str) -> str:
+    """One stream-json user message, as the CLI expects it on stdin."""
+    return json.dumps({
+        "type": "user",
+        "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+    }) + "\n"
+
+
+def write_to_turn(turn_id: str, text: str) -> bool:
+    """Hand a message to a RUNNING turn. True if it was written.
+
+    Non-blocking on purpose: opening a FIFO for writing blocks until a reader is
+    present, and if the turn has already ended there is no reader and this would
+    hang the request forever. O_NONBLOCK turns that case into ENXIO, which is
+    the honest answer — "that turn is gone, queue it as the next one" — and the
+    caller falls back to the queue."""
+    fifo = _stdin_fifo(turn_id)
+    if not fifo.exists():
+        return False
+    fd = None
+    try:
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(fd, _user_message_line(text).encode())
+        return True
+    except OSError as e:
+        # ENXIO = FIFO open for write with no reader: the turn's process is gone.
+        log.debug("turn %s: injection failed (%s)", turn_id, e)
+        return False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
 def session_alive(session_id: str | None, cwd: str) -> bool:
     """True if the claude CLI still has this session on disk. Claude stores a
     session as ~/.claude/projects/<cwd-with-slashes-as-dashes>/<id>.jsonl. Old
@@ -286,6 +336,47 @@ def _proc_alive(pid: int | None) -> bool:
         return True
 
 
+async def _retire_turn_proc(pid: int | None, proc=None) -> None:
+    """End a turn's process once its `result` line has landed.
+
+    Under `--input-format stream-json` the CLI does not exit when it finishes a
+    turn: stdin is still open, so it idles waiting for the next message. The
+    result line is the end of THIS turn, so somebody has to retire it or every
+    turn leaks a claude process holding its session.
+
+    SIGTERM the whole group first and give it a moment. The group matters
+    because the CLI owns children (MCP servers, tool subprocesses) and this now
+    runs on every single turn rather than only on a timeout, so orphaning them
+    would accumulate fast. SIGKILL is the fallback if it does not go."""
+    try:
+        pgid = os.getpgid(pid) if pid else None
+    except OSError:
+        pgid = None
+    try:
+        if pgid is not None:
+            os.killpg(pgid, signal.SIGTERM)
+        elif proc is not None and proc.returncode is None:
+            proc.terminate()
+    except Exception:
+        pass
+    for _ in range(20):  # up to ~2s for a clean shutdown
+        await asyncio.sleep(0.1)
+        if proc is not None and proc.returncode is not None:
+            return
+        if pid and not _proc_alive(pid):
+            return
+    _kill_turn_proc(pid, proc)
+
+
+def _cleanup_turn_input(turn_id: str) -> None:
+    """Drop the turn's input channel. Its absence is also the signal that makes
+    a later injection fail fast and fall back to the queue instead of hanging."""
+    try:
+        _stdin_fifo(turn_id).unlink(missing_ok=True)
+    except OSError as e:
+        log.debug("turn %s: input channel cleanup failed: %s", turn_id, e)
+
+
 def _kill_turn_proc(pid: int | None, proc=None) -> None:
     try:
         if proc is not None and proc.returncode is None:
@@ -334,9 +425,14 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
 
 
 async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
+    # The prompt goes in over stdin as a stream-json message rather than as an
+    # argv positional, because stdin then STAYS open for the rest of the run and
+    # anything else the operator sends lands at the next step boundary. (It also
+    # takes the assembled prompt off the argv length limit.)
     cmd: list[str] = [
-        CLAUDE_CLI, "-p", meta["prompt"],
+        CLAUDE_CLI, "-p",
         "--model", meta["model"],
+        "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
         "--max-turns", str(meta["max_turns"]),
@@ -390,20 +486,43 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         _push(turn, "error", {"detail": turn.error})
         _mark_meta(meta, "done")
         return
+    # The realtime input channel. Opened O_RDWR rather than O_RDONLY on purpose:
+    # an fd that is its own writer never reports EOF, so the child keeps reading
+    # after an injector closes its write handle. Opened O_RDONLY the CLI would
+    # see EOF the moment the first injection closed and would end the run.
+    fifo = _stdin_fifo(turn.id)
+    try:
+        if fifo.exists():
+            fifo.unlink()
+        os.mkfifo(fifo, 0o600)
+        in_fd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+    except OSError as e:
+        out_f.close(); err_f.close()
+        turn.error = f"input channel open failed: {e}"
+        turn.complete = True
+        _push(turn, "error", {"detail": turn.error})
+        _mark_meta(meta, "done")
+        return
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=meta["cwd"], env=env,
-            stdout=out_f, stderr=err_f,
+            stdin=in_fd, stdout=out_f, stderr=err_f,
             start_new_session=True,  # detach: survive a backend restart / pkill uvicorn
         )
     except FileNotFoundError as e:
-        out_f.close(); err_f.close()
+        out_f.close(); err_f.close(); os.close(in_fd)
         turn.error = f"claude CLI not found: {e}"
         turn.complete = True
         _push(turn, "error", {"detail": turn.error})
         _mark_meta(meta, "done")
         return
     out_f.close(); err_f.close()
+    # The child holds its own dup of the fifo fd, so drop ours; the child's copy
+    # is what keeps the channel from hitting EOF.
+    os.close(in_fd)
+    # Deliver the prompt as the run's first message.
+    if not write_to_turn(turn.id, meta["prompt"]):
+        log.warning("turn %s: could not write the opening prompt to its input channel", turn.id)
     meta["pid"] = proc.pid
     _write_meta(meta)
     await _drive_turn(turn, meta, proc=proc)
@@ -525,6 +644,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         if saw_tool or (turn.segments and now - last_persist > 0.4):
             _persist(); last_persist = now
         if state["saw_result"]:
+            await _retire_turn_proc(meta.get("pid"), proc)
             break
         alive = (proc.returncode is None) if proc is not None else _proc_alive(meta.get("pid"))
         if not alive:
@@ -538,17 +658,24 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             break
         await asyncio.sleep(0.15)
 
+    _cleanup_turn_input(turn.id)
     turn.final_text = _content()
     lost = False
-    if proc is not None:
+    if state["saw_result"]:
+        # The result line is the authoritative end of a turn, and we are the one
+        # who signalled the process to stop afterwards — so its exit status
+        # reports OUR signal, not the turn's outcome. Reading it here would
+        # render every successful turn as "ended unexpectedly (exit -15)".
+        rc = 0
+    elif proc is not None:
         rc = proc.returncode if proc.returncode is not None else -1
     else:
         # Re-attach path (this backend did not spawn the process — it adopted the
         # turn's journal after a restart). No result line and no live pid means
         # the run is simply gone, which is a different thing from a crash and
         # deserves to be named as one.
-        rc = 0 if state["saw_result"] else -1
-        lost = not state["saw_result"]
+        rc = -1
+        lost = True
     await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
                          context_tokens=int(state.get("last_ctx") or 0),
                          spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
@@ -823,6 +950,23 @@ async def _maybe_autoname_stream(chat_mod, thread_id: str, user_msg: str, assist
 
 def get_turn(turn_id: str) -> Turn | None:
     return TURNS.get(turn_id)
+
+
+def inject(turn_id: str, text: str) -> bool:
+    """Deliver a message into a turn that is currently running.
+
+    The operator's spec: a new message must not abort the work in flight, but it
+    must not have to wait out the whole turn either — it lands at the next point
+    between the agent's actions. Writing it to the turn's stdin is exactly that;
+    the CLI reads pending input at each step boundary.
+
+    Returns False when the turn is no longer accepting input, which is the
+    caller's cue to queue it as the next turn instead. The message is never
+    dropped either way."""
+    text = (text or "").strip()
+    if not text:
+        return False
+    return write_to_turn(turn_id, text)
 
 
 async def iter_events(turn: Turn, after: int = 0):

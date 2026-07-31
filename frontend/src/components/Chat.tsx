@@ -512,6 +512,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sseRef = useRef<EventSource | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const finishingRef = useRef(false);
+  // The turn currently running, if any. A message sent while it runs is handed
+  // straight to it (it lands at the next boundary between the agent's actions)
+  // instead of waiting for the whole turn to end.
+  const liveTurnRef = useRef<string | null>(null);
   // Whether the log is scrolled to (near) the bottom - so focus/keyboard/viewport
   // changes only re-pin when the user was already following the latest messages.
   const atBottomRef = useRef(true);
@@ -799,6 +803,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     (turnId: string, threadId: string, isFirst: boolean) => {
       sseRef.current?.close();
       finishingRef.current = false;
+      liveTurnRef.current = turnId;
       setStreaming(true);
       setPendingSegments([]);
 
@@ -850,6 +855,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const finish = async () => {
         if (finishingRef.current) return;
         finishingRef.current = true;
+        liveTurnRef.current = null;
         es.close();
         sseRef.current = null;
         setStreaming(false);
@@ -1173,6 +1179,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const stop = useCallback(() => {
     sseRef.current?.close();
     sseRef.current = null;
+    liveTurnRef.current = null;
     // Claim the finish so a pending drop handler can't re-attach behind us.
     finishingRef.current = true;
     setStreaming(false);
@@ -1324,10 +1331,27 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // compact() refuses politely while a turn is live, which is the honest
     // answer rather than a silent no-op.
     if (text === "/compact") { void compact(); return; }
-    // A turn is already streaming → queue this message; it sends when the current
-    // turn finishes (a single conversation runs one turn at a time).
+    // A turn is already running → hand the message TO it. The agent reads
+    // pending input at the next boundary between its actions, so it arrives
+    // within a step or two instead of after the whole turn. It does not
+    // interrupt the work in flight; only Stop does that.
+    //
+    // Queueing is now only the fallback for the narrow case where the turn ends
+    // between hitting enter and the request landing. The message is never lost:
+    // either the running turn took it, or it becomes the next turn.
     if (streaming) {
-      setQueue([...queuedRef.current, text]);
+      const turnId = liveTurnRef.current;
+      if (!turnId) { setQueue([...queuedRef.current, text]); return; }
+      void chatApi.injectIntoTurn(turnId, text)
+        .then((r) => {
+          if (r.delivered) {
+            setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString(), meta: { injected: true } }]);
+            followLatest();
+          } else {
+            setQueue([...queuedRef.current, text]);
+          }
+        })
+        .catch(() => { setQueue([...queuedRef.current, text]); });
       return;
     }
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };

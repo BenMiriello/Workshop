@@ -369,6 +369,36 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
     return msg
 
 
+def insert_message_before_live_turn(thread_id: str, role: str, content: str,
+                                    meta: dict | None = None) -> dict:
+    """Append a message, but keep it ABOVE the in-flight assistant placeholder.
+
+    A message sent while a turn is running is a real part of the conversation —
+    it has to be in the transcript, or a fresh session re-assembling history
+    from it would never know the operator said anything. But the live turn's
+    assistant message is already the last entry, so a plain append would file
+    the operator's message after a reply that had not been written yet, and the
+    thread would read out of order forever after.
+
+    Slots it in just before that placeholder instead. With no live placeholder
+    this is an ordinary append."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        raise KeyError(thread_id)
+    msg = {"role": role, "content": content, "ts": _now_iso()}
+    if meta:
+        msg["meta"] = meta
+    msgs = thread["messages"]
+    last = msgs[-1] if msgs else None
+    if last and last.get("role") == "assistant" and (last.get("meta") or {}).get("streaming"):
+        msgs.insert(len(msgs) - 1, msg)
+    else:
+        msgs.append(msg)
+    thread["updated_at"] = _now_iso()
+    _write(thread)
+    return msg
+
+
 def save_thread(thread: dict) -> dict:
     """Persist a thread dict the caller already mutated (atomic write)."""
     thread["updated_at"] = _now_iso()

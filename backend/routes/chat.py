@@ -1291,6 +1291,43 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     return {"turn_id": turn.id}
 
 
+class InjectMessage(BaseModel):
+    content: str
+
+
+@router.post("/turns/{turn_id}/inject")
+async def inject_into_turn(turn_id: str, body: InjectMessage):
+    """Hand a message to a turn that is already running.
+
+    The operator's spec, stated twice: a new message must never interrupt the
+    work in flight — only Stop does that — but it must not have to wait out the
+    entire turn either. It goes in at the next point between the agent's
+    actions, which is how every other chat behaves.
+
+    `delivered: false` is not an error. It means the turn finished between the
+    operator hitting enter and this request landing, and the client should queue
+    the message as the next turn instead. The message is never dropped."""
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(400, "empty message")
+    turn = build_streaming.get_turn(turn_id)
+    if turn is None or turn.complete:
+        return {"delivered": False, "reason": "turn is no longer running"}
+    delivered = build_streaming.inject(turn_id, content)
+    if delivered:
+        # The transcript is the record. A message sent mid-turn is part of the
+        # conversation whether or not the turn that received it succeeds, and it
+        # has to be stored or a later fresh session would re-assemble history
+        # without it. Slotted above the live assistant placeholder so the thread
+        # does not read out of order.
+        try:
+            chat_store.insert_message_before_live_turn(
+                turn.thread_id, "user", content, meta={"injected": True})
+        except Exception as e:
+            log.warning("turn %s: could not persist injected message: %s", turn_id, e)
+    return {"delivered": delivered, "reason": "" if delivered else "turn is no longer accepting input"}
+
+
 @router.get("/turns/{turn_id}/stream")
 async def stream_turn(turn_id: str, request: Request):
     turn = build_streaming.get_turn(turn_id)
