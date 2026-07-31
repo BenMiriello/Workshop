@@ -19,14 +19,14 @@ import {
   type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { orderModels, modelLabel, modelDisplay, contextWindowFor, MODEL_LABELS } from "./chat/models";
-import { useMessageQueue } from "./chat/useMessageQueue";
+import { useMessageQueue, type MessageQueue } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
 import { useVoiceSettle } from "./chat/useVoiceSettle";
+import { useTurnStream, useTurnLiveness } from "./chat/useTurnStream";
 import {
   chatApi,
   type ChatMsg,
   type CardState,
-  type ChatSegment,
   type Thread,
   type ThreadSummary,
   type Provider,
@@ -119,30 +119,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Composer text is a persisted draft (survives reload, syncs across tabs /
   // devices) keyed by this chat's contextKey - see lib/draftSync.
   const [input, setInput, clearInput] = useDraft(contextKey);
-  const [streaming, setStreaming] = useState(false);
-  // Live mirror, so the queue-drain timer can re-check liveness at the moment it
-  // fires rather than acting on the value captured when it was scheduled.
-  const streamingRef = useRef(false);
-  streamingRef.current = streaming;
-  // A build turn's SSE dropped and we're re-attaching to the still-running turn
-  // (proxy/idle timeouts mid-turn are normal on long turns) - the working
-  // indicator stays up and says "reconnecting" instead of the turn going dead.
-  const [reconnecting, setReconnecting] = useState(false);
-  // Seconds elapsed on the live turn - drives the "Working… 12s" indicator.
-  const [elapsed, setElapsed] = useState(0);
   // Composer focus: drives mobile keyboard chrome (drop the bottom padding so
   // there's no dead row between the buttons and the keyboard) + scroll pinning.
   const [inputFocused, setInputFocused] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [loadingThreads, setLoadingThreads] = useState(true);
 
-  // Live assistant turn: ordered segments built from the SSE stream. Treat this
-  // as a render-ahead cache of server state, never as the only home of a turn's
-  // output: nothing may clear it until the server's copy of that turn is in
-  // `messages`, or the record of what the turn did disappears from the log.
-  const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
-  const pendingRef = useRef<ChatSegment[]>(pendingSegments);
-  pendingRef.current = pendingSegments;
   // Messages the operator sent DURING the running turn and that the turn
   // accepted. `at` is how many reply segments had streamed when it landed, so
   // the log can cut the live turn at that point and show the message between
@@ -154,6 +136,35 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Starting a new chat leaves the current one — cheap to undo (the thread is
   // still there) but disorienting mid-conversation, so it asks first.
   const [confirmNew, setConfirmNew] = useState(false);
+
+  // The turn stream and the type-ahead queue each need the other: the queue
+  // must know whether a turn is running, and a finished turn must dispatch what
+  // is queued behind it. The stream is declared first (the queue reads its
+  // `streaming` directly) and reaches the queue through a ref filled in below.
+  const queueRef = useRef<MessageQueue | null>(null);
+
+  // The live turn: its SSE channel, resilience, and what "still running" means.
+  // See useTurnStream for the rules a dropped connection has to obey.
+  const {
+    streaming, streamingRef, reconnecting, elapsed,
+    pendingSegments, setPendingSegments,
+    attach: attachStream, anchorStart, stop, closeStream, hasOpenStream,
+    markStarting, markFailed, segmentCount,
+  } = useTurnStream({
+    onMessages: (msgs) => setMessages(msgs),
+    onTurnEnd: (wasFirst) => {
+      void refreshThreads();
+      scheduleAutoNameRefetch(wasFirst);
+      setTaskRefetchKey((k) => k + 1);
+    },
+    onError: setErr,
+    onNotes: () => onAction?.(),
+    activeIdRef,
+    dispatchQueue: () => queueRef.current?.dispatch(),
+    appendSegmentsAsMessage: (segs) => setMessages((m) => [...m, {
+      role: "assistant", content: "", ts: new Date().toISOString(), meta: { segments: segs },
+    }]),
+  });
 
   // Messages typed while a build turn is streaming are queued (a session can't
   // run two turns at once) and sent automatically when the turn finishes. They
@@ -218,18 +229,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const slug = buildSlug(contextKey);
   const taskScope = taskScopeFor(contextKey);
 
-  const sseRef = useRef<EventSource | null>(null);
-  const finishingRef = useRef(false);
-  // The turn currently running, if any. A message sent while it runs is handed
-  // straight to it (it lands at the next boundary between the agent's actions)
-  // instead of waiting for the whole turn to end.
-  const liveTurnRef = useRef<string | null>(null);
   // Stream resilience: count consecutive reconnect attempts (reset on any event
   // received, so a healthy long turn never trips the cap), and self-reference
   // attachStream so a drop handler can re-attach without a render cycle.
-  const reconnectsRef = useRef(0);
-  const turnStartRef = useRef(0);
-  const attachStreamRef = useRef<(turnId: string, threadId: string, isFirst: boolean) => void>(() => {});
 
 
   // Provider list (scoped to this app, or the full cross-context list). The
@@ -423,139 +425,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     if (!streaming && pendingSegments.length === 0 && interjections.length) setInterjections([]);
   }, [streaming, pendingSegments.length, interjections.length]);
 
-  // ---- Live SSE stream (build turns) --------------------------------------
-  // Used both for a freshly-started turn and for reconnecting to an in-flight
-  // turn after a reload (the server replays all events via Last-Event-ID=0).
-  const attachStream = useCallback(
-    (turnId: string, threadId: string, isFirst: boolean) => {
-      sseRef.current?.close();
-      finishingRef.current = false;
-      liveTurnRef.current = turnId;
-      setStreaming(true);
-      setPendingSegments([]);
-
-      const pushText = (content: string) =>
-        setPendingSegments((segs) => {
-          if (!content) return segs;
-          const last = segs[segs.length - 1];
-          if (last && last.t === "text") {
-            const copy = segs.slice();
-            copy[copy.length - 1] = { t: "text", text: last.text + content };
-            return copy;
-          }
-          return [...segs, { t: "text", text: content }];
-        });
-
-      const es = new EventSource(`/api/chat/turns/${turnId}/stream`);
-      sseRef.current = es;
-
-      // Any inbound frame means the stream is healthy: clear the reconnect
-      // budget + the "reconnecting" flag, so one long turn with the odd proxy
-      // drop never exhausts the cap.
-      const markAlive = () => {
-        reconnectsRef.current = 0;
-        setReconnecting(false);
-      };
-
-      es.addEventListener("text", (e) => {
-        markAlive();
-        try { pushText(JSON.parse((e as MessageEvent).data).payload?.content || ""); } catch { /* ignore */ }
-      });
-      es.addEventListener("tool", (e) => {
-        markAlive();
-        try {
-          const p = JSON.parse((e as MessageEvent).data).payload || {};
-          setPendingSegments((s) => [...s, { t: "tool", name: p.name || "?", input: p.input || "" }]);
-        } catch { /* ignore */ }
-      });
-      es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm
-      es.addEventListener("error", (e) => {
-        // An in-band error EVENT (carries data) - surface its detail. This is a
-        // turn-level error from the server, NOT a connection drop (that's
-        // es.onerror below, which has no data).
-        try {
-          const d = JSON.parse((e as MessageEvent).data || "{}");
-          if (d.payload?.detail) setErr(String(d.payload.detail));
-        } catch { /* ignore */ }
-      });
-
-      const finish = async () => {
-        if (finishingRef.current) return;
-        finishingRef.current = true;
-        liveTurnRef.current = null;
-        es.close();
-        sseRef.current = null;
-        setStreaming(false);
-        setReconnecting(false);
-        reconnectsRef.current = 0;
-        turnStartRef.current = 0;
-        try {
-          const t = await chatApi.getThread(threadId);
-          setMessages(t.messages);
-          // If the turn applied a provider action (e.g. an app persona editing
-          // the budget plan), it rides in the final message's meta.notes; tell
-          // the host so it refetches its data (the old sendData path did this).
-          const last = t.messages[t.messages.length - 1];
-          if (last?.meta?.notes?.length) onAction?.();
-        } catch { /* ignore */ }
-        setPendingSegments([]);
-        refreshThreads();
-        scheduleAutoNameRefetch(isFirst);
-        setTaskRefetchKey((k) => k + 1);
-        // Type-ahead: run the next queued message, if any.
-        queue.dispatch();
-      };
-      es.addEventListener("done", finish);
-      es.addEventListener("end", finish);
-
-      // Connection dropped (proxy idle-timeout, network blip, backend hiccup).
-      // Do NOT finalize blindly - that is what made turns look like they "just
-      // stopped". Check whether the turn actually completed server-side; if it's
-      // still running, re-attach (the server replays the turn's events from the
-      // start), keeping the working indicator up. Give up only after
-      // MAX_RECONNECTS consecutive no-progress attempts, or once the turn is
-      // gone / finished.
-      const MAX_RECONNECTS = 8;
-      const handleDrop = async () => {
-        if (finishingRef.current) return;
-        es.close();
-        if (sseRef.current === es) sseRef.current = null;
-        try {
-          const t = await chatApi.getThread(threadId);
-          const last = t.messages[t.messages.length - 1];
-          const stillRunning = !!(last && last.role === "assistant" && last.meta?.streaming);
-          if (!stillRunning) { void finish(); return; } // turn really ended - sync + stop
-        } catch { /* network error - assume the turn is still running and retry */ }
-        if (reconnectsRef.current >= MAX_RECONNECTS) {
-          // Out of reconnect budget on a turn the server says is STILL RUNNING.
-          // Do not call finish(): that would drop to an idle-looking UI (the
-          // "you told me you were working but nothing was happening" report) and
-          // would dispatch queued messages into a second concurrent turn. Stop
-          // retrying, keep the work on screen, say so plainly, and let the
-          // liveness poll re-attach when the connection comes back.
-          finishingRef.current = true;
-          setStreaming(false);
-          setReconnecting(false);
-          setErr("Lost the live connection to this turn. It is still running on the server, reattaching...");
-          return;
-        }
-        reconnectsRef.current += 1;
-        setReconnecting(true);
-        window.setTimeout(() => {
-          if (!finishingRef.current) attachStreamRef.current(turnId, threadId, isFirst);
-        }, 1200);
-      };
-      es.onerror = () => {
-        // Only a CLOSED socket is terminal; CONNECTING means the browser is
-        // already auto-retrying (with Last-Event-ID) - let it.
-        if (es.readyState === EventSource.CLOSED) void handleDrop();
-      };
-    },
-    [refreshThreads, scheduleAutoNameRefetch, queue, onAction],
-  );
-  attachStreamRef.current = attachStream;
-
-  // Render a thread's messages, reconnecting to a still-streaming last turn.
   const hydrate = useCallback(
     (t: Thread) => {
       // Point the queue at the thread being loaded BEFORE reading it, so the
@@ -572,8 +441,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         // Anchor the elapsed clock to the turn's REAL start (the streaming
         // message's server timestamp), so a reload mid-turn shows the true
         // elapsed time instead of restarting from zero.
-        const startedMs = last.ts ? Date.parse(last.ts) : NaN;
-        turnStartRef.current = Number.isFinite(startedMs) ? startedMs : Date.now();
+        anchorStart(last.ts ? Date.parse(last.ts) : NaN);
         setMessages(msgs.slice(0, -1));
         attachStream(last.meta.turn_id, t.id, false);
       } else {
@@ -581,7 +449,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         setPendingSegments([]);
       }
     },
-    [attachStream, queue],
+    [attachStream, anchorStart, setPendingSegments, queue],
   );
 
   useEffect(() => {
@@ -630,42 +498,22 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (!cancelled) setLoadingThreads(false);
       }
     })();
-    return () => {
-      cancelled = true;
-      sseRef.current?.close();
-      sseRef.current = null;
-    };
+    return () => { cancelled = true; closeStream(); };
     // hydrate is stable enough; scope drives the reload.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
-  // Liveness is SERVER state. The local `streaming` flag only knows about turns
-  // THIS tab attached to, so a turn running in another tab, on another device, or
-  // one whose socket died past its reconnect budget rendered as a completely idle
-  // chat while work was in flight. Poll the thread while idle and re-attach the
-  // moment the server says a turn is live: that restores both the truthful
-  // working indicator and the live segments, from any client.
-  useEffect(() => {
-    if (!activeId || streaming) return;
-    let cancelled = false;
-    const check = async () => {
-      if (cancelled || sseRef.current) return;
-      try {
-        const t = await chatApi.getThread(activeId);
-        if (cancelled || sseRef.current) return;
-        const last = t.messages[t.messages.length - 1];
-        if (last?.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
-          const startedMs = last.ts ? Date.parse(last.ts) : NaN;
-          turnStartRef.current = Number.isFinite(startedMs) ? startedMs : Date.now();
-          setErr(null);
-          setMessages(t.messages.slice(0, -1));
-          attachStreamRef.current(last.meta.turn_id, t.id, false);
-        }
-      } catch { /* transient — try again on the next tick */ }
-    };
-    const id = window.setInterval(check, 10_000);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeId, streaming]);
+  // Liveness is SERVER state — a turn running in another tab or on another
+  // device must not render as an idle chat. See useTurnLiveness.
+  useTurnLiveness({
+    activeId, streaming, hasOpenStream,
+    onReattach: (turnId, threadId, startedMs, msgs) => {
+      anchorStart(startedMs);
+      setErr(null);
+      setMessages(msgs);
+      attachStream(turnId, threadId, false);
+    },
+  });
 
   // Re-sync with the server when the chat comes back to the foreground. The
   // transcript can have moved on while this tab was hidden (a turn finished, or
@@ -678,11 +526,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     if (!activeId) return;
     let cancelled = false;
     const resync = async () => {
-      if (cancelled || streaming || sseRef.current || document.hidden) return;
+      if (cancelled || streaming || hasOpenStream() || document.hidden) return;
       if (messagesRef.current.some((m) => m.meta?.unsent)) return;
       try {
         const t = await chatApi.getThread(activeId);
-        if (cancelled || streaming || sseRef.current) return;
+        if (cancelled || streaming || hasOpenStream()) return;
         if (messagesRef.current.some((m) => m.meta?.unsent)) return;
         setCompactedThrough(Number(t.compacted_through) || 0);
         setCardStates(t.card_states ?? {});
@@ -698,18 +546,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [activeId, streaming]);
-
-  // Elapsed-time ticker for the working indicator. The clock starts when a turn
-  // begins streaming and keeps running across reconnects (streaming stays true),
-  // so "Working... 45s" reflects the real turn duration, not the last reconnect.
-  useEffect(() => {
-    if (!streaming) { setElapsed(0); turnStartRef.current = 0; return; }
-    if (!turnStartRef.current) turnStartRef.current = Date.now();
-    const tick = () => setElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, [streaming]);
 
   // Following the conversation, composer sizing, and the jump-to-latest
   // affordance are one behaviour — see useLogScroll for the rules and the bugs
@@ -729,8 +565,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // ?thread=<id>; the mount effect above adopts it and persists the selection.)
 
   const newChat = useCallback(() => {
-    sseRef.current?.close();
-    sseRef.current = null;
+    closeStream();
     setActiveId(null);
     setMessages([]);
     setPendingSegments([]);
@@ -745,36 +580,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // Persist the intent so a reload / navigation lands on a blank new chat
     // rather than silently re-adopting the most-recent thread.
     writeSelection(scope, NEW_CHAT);
-  }, [queue, scope]);
-
-  const stop = useCallback(() => {
-    sseRef.current?.close();
-    sseRef.current = null;
-    liveTurnRef.current = null;
-    // Claim the finish so a pending drop handler can't re-attach behind us.
-    finishingRef.current = true;
-    setStreaming(false);
-    setReconnecting(false);
-    // Reconcile BEFORE handing off to the next turn. Stopping used to drop
-    // straight into dispatchNext, and the next turn's attachStream then cleared
-    // pendingSegments — so everything the stopped turn had already done vanished
-    // from the transcript. Pull the server's copy first; if that fetch fails,
-    // fold what's on screen into the log locally rather than losing it.
-    const id = activeIdRef.current;
-    if (!id) { queue.dispatch(); return; }
-    chatApi.getThread(id)
-      .then((t) => { setMessages(t.messages); setPendingSegments([]); })
-      .catch(() => {
-        const segs = pendingRef.current;
-        if (segs.length) {
-          setMessages((m) => [...m, {
-            role: "assistant", content: "", ts: new Date().toISOString(), meta: { segments: segs },
-          }]);
-        }
-        setPendingSegments([]);
-      })
-      .finally(() => queue.dispatch());
-  }, [queue]);
+  }, [queue, scope, closeStream, setPendingSegments]);
 
   const removeThread = useCallback(async (id: string) => {
     await chatApi.deleteThread(id);
@@ -788,10 +594,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // backend picks the tool surface + session from the provider class; the client
   // is transport-uniform.
   const sendBuild = useCallback(async (text: string) => {
-    setStreaming(true);
+    markStarting();
     setTurnIsCompact(text.trim() === "/compact");
-    setPendingSegments([]);
-    turnStartRef.current = Date.now(); // fresh turn - anchor the elapsed clock now
     const isFirst = messages.length <= 1;
     try {
       let id = activeId;
@@ -822,7 +626,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       attachStream(turn_id, id, isFirst);
     } catch (e) {
       setErr(String(e));
-      setStreaming(false);
+      markFailed();
       // The turn never started, so the server has no copy of this message. Mark
       // the optimistic bubble instead of leaving it looking delivered: a bubble
       // that silently isn't real is exactly what "my messages keep disappearing"
@@ -1009,7 +813,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
             // interjection pinned to how much of the reply had streamed when it
             // landed; the log splits the live turn there and renders it in
             // real order (see `log`).
-            setInterjections((x) => [...x, { at: pendingRef.current.length, text }]);
+            setInterjections((x) => [...x, { at: segmentCount(), text }]);
             followLatest();
           } else {
             queue.push(text);
