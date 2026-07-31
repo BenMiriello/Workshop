@@ -1,0 +1,1 @@
+A review verdict without a command that was actually run is an opinion, not a review.

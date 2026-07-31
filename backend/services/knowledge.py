@@ -7,8 +7,15 @@ plaintext store was always authoritative and its search fallback is now the only
 path.
 
 Scope model (see `scope_for_context`): one of `workshop`, `project:<slug>`,
-`app:<name>`, `agent:<id>`. Each scope maps to a directory holding `MEMORY.md`
-(the index) plus one `<note-id>.md` per note.
+`app:<name>`, `agent:<id>`, `role:<role>`. Each scope maps to a directory
+holding `MEMORY.md` (the index) plus one `<note-id>.md` per note.
+
+TWO AXES, NOT ONE. Scope used to name only a PLACE, and place is the wrong sole
+axis for how agents learn. Two reviewers working in two different projects share
+a ROLE, not a place, so everything either of them learned about reviewing was
+either stranded in a project scope or dumped into `workshop`, where it polluted
+every other reader. `role:<role>` is the second axis, and `read_layers` below is
+what makes an agent read the union of both without either one leaking.
 """
 from __future__ import annotations
 
@@ -84,7 +91,7 @@ def _parse_scope(scope_key: str) -> tuple[str, str]:
         return ("workshop", "")
     if ":" in scope_key:
         kind, _, slug = scope_key.partition(":")
-        if kind in ("project", "app", "agent") and slug and _SLUG_RE.fullmatch(slug):
+        if kind in ("project", "app", "agent", "role") and slug and _SLUG_RE.fullmatch(slug):
             return (kind, slug)
     raise ValueError(f"unknown scope_key: {scope_key!r}")
 
@@ -96,6 +103,12 @@ def scope_dir(scope_key: str) -> Path:
     - `project:<slug>` -> projects/<slug>/knowledge/
     - `app:<name>`     -> apps/<name>/knowledge/
     - `agent:<id>`     -> .runtime/agents/<id>/knowledge/
+    - `role:<role>`    -> shared/knowledge/roles/<role>/
+
+    Role memory lives under `shared/` rather than `.runtime/` because it is
+    durable, cross-agent, git-inspectable knowledge — the same class of thing as
+    `workshop`, addressed on the other axis. An agent's own scope stays in
+    `.runtime/` because it is that instance's episodic record.
     """
     kind, slug = _parse_scope(scope_key)
     root = _root()
@@ -105,6 +118,8 @@ def scope_dir(scope_key: str) -> Path:
         d = root / "projects" / slug / "knowledge"
     elif kind == "app":
         d = root / "apps" / slug / "knowledge"
+    elif kind == "role":
+        d = root / "shared" / "knowledge" / "roles" / slug.lower()
     else:  # agent
         d = _runtime() / "agents" / slug / "knowledge"
     d.mkdir(parents=True, exist_ok=True)
@@ -272,6 +287,66 @@ def _mtime_iso(f: Path) -> str | None:
     return datetime.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
 
 
+def read_layers(scope_key: str, role: str | None = None) -> list[str]:
+    """The scopes an agent READS, widest first, narrowest last.
+
+    This is the read-union that makes shared and specialized learning coexist:
+
+      workshop     operator preferences, house style, cross-cutting facts
+      role:<role>  procedural memory: how this KIND of work is done well
+      place        project:* / app:* - facts about this codebase or domain
+      private      agent:<slug> - what this agent tried, and how it went
+
+    Narrowest wins on conflict, which is why the caller renders them in this
+    order: a later, more specific note overrides a general one for a reader
+    going top to bottom.
+
+    The role layer is the point. Two reviewers in two different projects share a
+    role and not a place, so without it everything either learned about reviewing
+    was stranded in one project or dumped into `workshop` where it polluted every
+    other reader. With it, instances of a role get better together without
+    becoming islands and without becoming everyone's business.
+
+    Deduped and order-preserving; a scope that is its own layer appears once.
+    """
+    layers: list[str] = ["workshop"]
+    if role:
+        r = str(role).strip().lower()
+        if r and _SLUG_RE.fullmatch(r):
+            layers.append(f"role:{r}")
+    if scope_key and scope_key not in layers:
+        layers.append(scope_key)
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in layers:
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def layered_index_block(scope_key: str, role: str | None = None) -> tuple[str, list[str]]:
+    """`index_block` over the read-union. Returns (text, scopes_used).
+
+    Each layer is labelled, because an unlabelled merge tells the model what is
+    known but not what governs: "this is how reviewing is done here" and "this is
+    how THIS project does it" are different claims, and a conflict between them
+    is resolvable only if the reader can see which is which.
+    """
+    blocks: list[str] = []
+    used: list[str] = []
+    for sk in read_layers(scope_key, role):
+        try:
+            b = index_block(sk)
+        except Exception:
+            continue
+        if b:
+            blocks.append(f"[{sk}]\n{b}")
+            used.append(sk)
+    return ("\n\n".join(blocks), used)
+
+
 def index_block(scope_key: str) -> str:
     """A compact ambient index of the scope's notes for the chat prompt, or ""
     when the scope has no notes. Titles + hooks only (the bodies load on recall),
@@ -432,6 +507,14 @@ def register_knowledge_stores() -> None:
                 d = child / "knowledge"
                 if d.is_dir() and _SLUG_RE.fullmatch(child.name):
                     found.append((f"{kind}:{child.name}", d))
+
+    roles_base = root / "shared" / "knowledge" / "roles"
+    if roles_base.exists():
+        for child in sorted(roles_base.iterdir()):
+            # A role scope IS its directory (no nested `knowledge/`), because it
+            # already lives under shared/knowledge.
+            if child.is_dir() and _SLUG_RE.fullmatch(child.name):
+                found.append((f"role:{child.name}", child))
 
     agents_base = _runtime() / "agents"
     if agents_base.exists():

@@ -16,3 +16,21 @@
 - Until automated ticket system completes several tickets end-to-end reliably, default to manual work and in-conversation monitoring instead of filing
 - Filing a ticket is not progress until a run completes and finishes
 - System has broken autonomy/worker loop wiring and no UI path to enable it
+- (no durable facts — these are in-flight bugs being tracked in current work, not new stable preferences or commitments)
+- Chat system needs complete overhaul before any other work; use main thread not job queue for chat fixes, system is too unreliable for queueing
+- Operator wants comprehensive handoff documentation including all issues, code state, findings, and next steps
+- Chat bugs are front-end state machine defects: New chat doesn't persist (refreshes back to old thread), /clear doesn't persist, activeId re-adopts list[0] blindly on remount, optimistic messages evaporate if turn interrupted
+- After chat lifecycle is confirmed working, investigate run/job/chat linkage as separate workstream
+- Operator strongly dislikes losing work history when new messages arrive; all turns should pick up new messages on next cycle without dropping prior output, only stop button should interrupt work
+- (nothing)
+- No borders for visual hierarchy, use position/scale/weight/color instead - repeated mistake operator has corrected multiple times
+- Operator dislikes step/turn limits and being asked to continue repeatedly - wants autonomous turn completion without caps
+- Model picker belongs in the composer next to send button with Fable 5 listed first
+- Chat header row: back, workbench, assistant picker, title, kebab menu containing All chats / Open full screen / File ticket / File and run / Delete, agent tags, add-agent button, task counter, new-chat plus, overflow menu
+- Focus ring must inherit element's border-radius and not force it on all descendants
+- (no durable facts)
+- Modal is the default dialog pattern; bottom drawer only when functionally necessary
+- Prefer rework and integration over feature layering; clean up old interfaces rather than adding alongside them
+- Tickets generated from chat should propose 0..N distinct tickets with self-descriptive text and confidence levels, not squash to one
+- Ticket drafts persist on threads and can be revisited without re-running generation
+- Agents are configurations with opt-in mentionable and delegatable capabilities; most agents should have neither

@@ -561,14 +561,25 @@ def _build_prompt(
     # Ambient in-scope knowledge index (Phase 2): the note titles for this scope so
     # the model knows what it can recall. Small + cache-stable (bodies arrive via
     # retrieval in the reply region, not here). Best-effort; never blocks the reply.
+    # Read the UNION of the layers this agent learns from, not just its own
+    # place: workshop (house style) + role:<role> (how this KIND of work is done
+    # well) + place + private. Without the role layer, everything two reviewers
+    # in two different projects learn about reviewing is either stranded in one
+    # project or dumped into `workshop` where it pollutes every other reader.
+    # See knowledge.read_layers.
     try:
         kscope = provider.knowledge_scope()
-        kindex = knowledge.index_block(kscope)
+        krole = _agent_role_for(provider)
+        kindex, kused = knowledge.layered_index_block(kscope, krole)
     except Exception as e:
         log.warning("chat knowledge index failed for %s: %s", provider.key, e)
-        kindex = ""
+        kindex, kused = "", []
     if kindex:
-        parts.append(f"=== KNOWLEDGE (in scope: {kscope}) ===\n{kindex}")
+        parts.append(
+            "=== KNOWLEDGE (layers, narrowest last - a narrower note wins) ===\n"
+            f"{kindex}"
+        )
+        log.debug("chat knowledge layers for %s: %s", provider.key, kused)
     # Ambient skills (Phase 5): available skill names + descriptions in the stable
     # prefix so a data-mode assistant knows what it can invoke; full bodies load on
     # demand via the use_skill action (see _expand_use_skill). Builders discover
@@ -1008,6 +1019,29 @@ async def thread_context(thread_id: str):
         "model": model,
         "source": "estimated",
     }
+
+
+def _agent_role_for(provider) -> str | None:
+    """The ROLE (maker/reviewer/triager/keeper/broker) behind a chat, or None.
+
+    Distinct from `provider.role`, which is the provider CLASS
+    (assistant/builder) and is a different axis entirely. Only an agent-backed
+    chat has a role in the closed-enum sense, so everything else reads the
+    workshop + place layers and no role layer, which is correct: a general chat
+    is not doing a kind of work.
+    """
+    slug = getattr(provider, "slug", None)
+    if not slug:
+        return None
+    try:
+        from services import agents_registry
+        rec = agents_registry.get(slug)
+    except Exception:
+        return None
+    if not rec:
+        return None
+    role = str(rec.get("role") or "").strip().lower()
+    return role or None
 
 
 async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, bool]:
