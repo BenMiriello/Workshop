@@ -31,6 +31,38 @@ if [ "${1:-}" = "--deferred" ]; then
   exit 0
 fi
 
+# --- Refuse to restart on top of a live chat turn --------------------------
+# Restarting mid-turn is operator-visible damage, not just a blip. The turn's
+# process is killed; on startup reattach_running_turns() adopts the orphan and
+# re-tails its journal FROM THE BEGINNING, rebuilding the assistant message's
+# segments from scratch and persisting the partial rebuild over the stored copy.
+# From the chat it looks like the conversation spontaneously rewound to an
+# earlier state, and the client's SSE drops at the same moment, so a re-hydrate
+# replaces what was on screen with the mid-rebuild version. Nothing is lost —
+# the replay restores it — but the operator has no way to know that while it is
+# happening.
+#
+# A turn is live if any turn journal is still marked running with a live pid.
+# Pass --force to override (or --deferred, which is usually what you want).
+turns_dir="$REPO_ROOT/.runtime/turns"
+if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
+  live=""
+  for meta in "$turns_dir"/*/meta.json; do
+    [ -f "$meta" ] || continue
+    grep -q '"status": *"running"' "$meta" || continue
+    pid="$(sed -n 's/.*"pid": *\([0-9]\+\).*/\1/p' "$meta" | head -1)"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && { live="$pid"; break; }
+  done
+  if [ -n "$live" ]; then
+    echo "REFUSING: a chat turn is running right now (pid $live)." >&2
+    echo "Restarting would kill it and visibly rewind the transcript mid-reply." >&2
+    echo "Wait for it to finish, or use:" >&2
+    echo "  scripts/restart_backend.sh --deferred   # restart after the reply lands" >&2
+    echo "  scripts/restart_backend.sh --force      # restart anyway" >&2
+    exit 2
+  fi
+fi
+
 # --- Preferred: systemd --user service -------------------------------------
 if have_unit; then
   systemctl --user restart "$SERVICE"
