@@ -3,9 +3,14 @@ import { createPortal } from "react-dom";
 import { cx } from "./cx";
 import { Button } from "./controls";
 
-// Modal / Sheet. Reimplements kitchen.js openOverlay: scrim click + Esc close,
-// focus trap, restore focus on close. On mobile (<560px) the CSS turns it into
-// a bottom sheet. Render nothing when not open.
+// Modal. Scrim click + Esc close, focus trap, restore focus on close. Renders
+// nothing when not open.
+//
+// A CENTERED DIALOG AT EVERY WIDTH. This used to become a bottom sheet under
+// 560px automatically, which made every dialog in the app a drawer on a phone.
+// A sheet reads as a peripheral panel you flick away — right for a picker,
+// wrong for a decision you are being asked to make — so it is now opt-in via
+// `sheet`, and the caller chooses.
 export function Modal({
   open,
   onClose,
@@ -15,6 +20,7 @@ export function Modal({
   actions,
   labelledBy = "ws-modal-title",
   size = "default",
+  sheet = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -25,6 +31,9 @@ export function Modal({
   labelledBy?: string;
   // "lg" widens the dialog for content-heavy forms (many fields/sliders).
   size?: "default" | "lg";
+  // Opt in to the bottom-sheet presentation. For panels that belong to the
+  // bottom edge (a picker, a quick action list), never for a decision.
+  sheet?: boolean;
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const lastFocus = useRef<HTMLElement | null>(null);
@@ -72,7 +81,7 @@ export function Modal({
 
   return createPortal(
     <div
-      className="ws-overlay"
+      className={cx("ws-overlay", sheet && "ws-overlay--sheet")}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}

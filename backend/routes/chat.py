@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from services import chat_store, chat_context
 from services import task_scope
+from services import ticket_drafts
 from services import knowledge
 from services import skills
 from services import llm_router
@@ -300,34 +301,68 @@ async def _distill_task_from_thread(t: dict) -> str:
         return ""
 
 
-@router.post("/threads/{thread_id}/spawn-task/preview")
-async def preview_spawn_task(thread_id: str):
-    """The ticket this chat WOULD file, without filing it.
+class DraftPatch(BaseModel):
+    title: str | None = None
+    body: str | None = None
+    acceptance: str | None = None
 
-    Filing used to be a blind 35-55 second round trip behind a spinner: the
-    conversation was distilled by a model, deduped against the scope's corpus,
-    and written, with the operator seeing the result only once it was already
-    a fact. They could not read the derived text, could not correct it, and
-    could not tell whether "run it now" was even possible in this scope.
 
-    This does the expensive half (distil + resolve scope) and returns it for
-    review. `runnable` is the answer to the last question: a general chat is
-    not a runnable scope, so running is refused up front with a reason rather
-    than reported afterwards as a footnote on a success message.
-    """
+@router.get("/threads/{thread_id}/ticket-drafts")
+async def get_ticket_drafts(thread_id: str):
+    """Drafts already proposed for this chat. Never regenerates.
+
+    Reopening the file-a-ticket dialog must show what was there, including any
+    edits: proposing costs a model call and tens of seconds, and silently
+    redoing it (or losing the operator's corrections) is the behaviour that
+    makes people stop using a feature."""
+    try:
+        return ticket_drafts.get(thread_id)
+    except KeyError:
+        raise HTTPException(404, "thread not found")
+
+
+@router.post("/threads/{thread_id}/ticket-drafts")
+async def make_ticket_drafts(thread_id: str):
+    """Read the conversation and propose 0..N tickets, then store them.
+
+    Zero is a normal answer. A conversation is not one ticket, and most of what
+    is said in one is discussion, reversal, or work already done."""
+    try:
+        return await ticket_drafts.propose(thread_id)
+    except KeyError:
+        raise HTTPException(404, "thread not found")
+    except Exception as e:
+        raise HTTPException(502, f"could not draft tickets: {e}")
+
+
+@router.patch("/threads/{thread_id}/ticket-drafts/{draft_id}")
+async def patch_ticket_draft(thread_id: str, draft_id: str, body: DraftPatch):
+    try:
+        return ticket_drafts.update_draft(
+            thread_id, draft_id, body.model_dump(exclude_none=True))
+    except KeyError:
+        raise HTTPException(404, "thread not found")
+
+
+@router.delete("/threads/{thread_id}/ticket-drafts/{draft_id}")
+async def delete_ticket_draft(thread_id: str, draft_id: str):
+    try:
+        return ticket_drafts.discard(thread_id, draft_id)
+    except KeyError:
+        raise HTTPException(404, "thread not found")
+
+
+@router.get("/threads/{thread_id}/ticket-scope")
+async def ticket_scope(thread_id: str):
+    """Where this chat's tickets file, and whether that scope can run them."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
     scope_key = t.get("context_key")
     if task_scope.root_for_context(scope_key) is None:
         scope_key = "workshop"
-    text = await _distill_task_from_thread(t)
     from routes.tasks_all import scope_is_runnable
-    return {
-        "text": text,
-        "scope": scope_key,
-        "runnable": scope_is_runnable(scope_key),
-    }
+    return {"scope": scope_key, "runnable": scope_is_runnable(scope_key)}
 
 
 @router.post("/threads/{thread_id}/spawn-task")

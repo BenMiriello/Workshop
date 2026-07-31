@@ -587,11 +587,29 @@ a.ws-btn { text-decoration: none; }
 @keyframes ws-fade { from { opacity: 0; } }
 @keyframes ws-pop { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
 
-/* mobile: sheet from bottom */
+/* Bottom sheet — OPT-IN (`<Modal sheet>`), not a breakpoint.
+   This used to fire automatically under 560px, so EVERY dialog in the app
+   became a drawer on a phone. That is a strong interaction choice being made
+   for the caller: a sheet reads as a peripheral panel you flick away, which is
+   right for a picker and wrong for a decision you are being asked to make.
+   A centered dialog is the default at every width; a caller that genuinely
+   wants a sheet asks for one. */
+.ws-overlay--sheet { align-items: flex-end; padding: 0; }
+.ws-overlay--sheet .ws-modal,
+.ws-overlay--sheet .ws-modal--lg {
+  max-width: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+  max-height: calc(100vh - var(--space-6));
+  max-height: calc(100dvh - var(--space-6));
+  animation: ws-sheet-up var(--dur-base) var(--ease-out);
+}
+@keyframes ws-sheet-up { from { transform: translateY(12px); opacity: 0; } }
+
+/* Centered dialogs still have to fit a phone: shrink the padding and let the
+   dialog use the full width minus a margin, without becoming a sheet. */
 @media (max-width: 560px) {
-  .ws-overlay { align-items: flex-end; padding: 0; }
+  .ws-overlay { padding: var(--space-3); }
   .ws-modal, .ws-modal--lg {
-    max-width: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    max-width: none; padding: var(--space-4);
     max-height: calc(100vh - var(--space-6));
     max-height: calc(100dvh - var(--space-6));
   }
