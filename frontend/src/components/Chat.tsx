@@ -9,6 +9,7 @@ import {
 import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator } from "../ui";
 import { scopeLabel } from "../lib/tasks";
 import TaskPanel from "./TaskPanel";
+import InboxStrip from "./chat/InboxStrip";
 import {
   chatApi,
   type ChatMsg,
@@ -2626,6 +2627,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           </button>
         </div>
       )}
+      <InboxStrip chatId={activeId} onOpenGlobal={() => navigate("/work?tab=inbox")} />
       {taskPanel}
       {log}
       {jumpToLatest}

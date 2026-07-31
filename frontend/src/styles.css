@@ -1105,3 +1105,58 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--muted); font-size: var(--fs-xs);
 }
 .chat-byline span { font-weight: 600; letter-spacing: 0.01em; }
+
+/* ---- Inbox strip: agents needing the operator, above the transcript ----
+   An interrupt surface, so it is quiet by default and takes zero space when
+   empty (the component returns null). Kind is carried by icon + a left accent
+   on the question/review rows, not by a box: per DS rule 6 hierarchy comes from
+   position, weight and color. The accent is the one exception and it is load-
+   bearing — it is what lets a question be found at a glance in a stack. */
+.chat-inbox {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) 0;
+}
+.chat-inbox__item {
+  background: var(--card-bg);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+/* Only the two kinds that WANT something are marked. A notification is the
+   quiet default; marking everything would mark nothing. */
+.chat-inbox__item--question { box-shadow: inset 3px 0 0 var(--accent); }
+.chat-inbox__item--review { box-shadow: inset 3px 0 0 var(--warn); }
+.chat-inbox__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  color: var(--muted);
+}
+.chat-inbox__title {
+  flex: 1 1 auto; min-width: 0;
+  color: var(--fg); font-size: var(--fs-sm); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-inbox__dismiss {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem; padding: 0;
+  color: var(--muted); background: transparent; border: none;
+  border-radius: var(--radius-sm); cursor: pointer;
+}
+.chat-inbox__dismiss:hover { color: var(--fg); background: var(--card-hover); }
+.chat-inbox__body {
+  margin: var(--space-2) 0 0;
+  color: var(--muted); font-size: var(--fs-sm); line-height: 1.45;
+}
+.chat-inbox__actions {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: var(--space-2); margin-top: var(--space-3);
+}
+.chat-inbox__actions .ws-input { flex: 1 1 12rem; min-width: 0; }
+.chat-inbox__more {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  align-self: flex-start;
+  padding: 0.25rem 0.4rem;
+  color: var(--muted); background: transparent; border: none;
+  border-radius: var(--radius-sm);
+  font: inherit; font-size: var(--fs-xs); cursor: pointer;
+}
+.chat-inbox__more:hover { color: var(--fg); background: var(--card-hover); }
