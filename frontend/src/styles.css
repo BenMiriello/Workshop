@@ -417,9 +417,17 @@ label {
 .sec-h { margin: 0 0 0.6rem; font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* Compact numeric input used in the edit form and simulator controls. */
-.num-in { width: 100%; padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); font-size: 0.9rem; font-family: inherit; }
-.num-in:hover { border-color: var(--border-strong); }
-.num-in:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+/* Legacy field class, still used by the birds sub-app (migrated last per
+   frontend/CLAUDE.md). It no longer REDEFINES a field — it borrows the design
+   system's field surface, so there is one description of what a field looks
+   like instead of two that drift. New code uses Input/Select from src/ui. */
+.num-in {
+  width: 100%; padding: 0.4rem 0.6rem; font-family: inherit; font-size: 0.9rem;
+  color: var(--fg); background: var(--field-bg);
+  border: 1px solid transparent; border-radius: var(--radius-md);
+}
+.num-in:hover { background: var(--bg-inset); }
+.num-in:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* Real select styling: drop the native OS chrome for a custom caret. */
 select.num-in {
   appearance: none; -webkit-appearance: none; cursor: pointer;
@@ -462,13 +470,8 @@ input[type="range"].grad::-moz-range-thumb {
 /* ---- Budget plan editor: per-row CRUD ---- */
 .ef-row { display: flex; align-items: flex-end; gap: 0.6rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.7rem; margin-bottom: 0.6rem; }
 .ef-grid { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.5rem 0.7rem; min-width: 0; }
-.ef-field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--muted); min-width: 0; }
-.ef-inwrap { display: flex; align-items: center; gap: 0.25rem; }
-.ef-prefix { color: var(--muted); font-size: 0.8rem; }
-.ef-del { flex: 0 0 auto; background: none; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); padding: 0.4rem; cursor: pointer; align-self: center; }
-.ef-del:hover { color: var(--err); border-color: var(--err); }
-.ef-add { display: inline-flex; align-items: center; gap: 0.3rem; background: none; border: 1px dashed var(--border); border-radius: 6px; color: var(--accent); padding: 0.4rem 0.8rem; font-size: 0.82rem; cursor: pointer; margin-top: 0.2rem; }
-.ef-add:hover { border-color: var(--accent); }
+/* (.ef-field / .ef-inwrap / .ef-prefix / .ef-del / .ef-add deleted — the Budget
+   edit form uses Field/Input/Select/Button from src/ui now.) */
 
 /* ---- Inline click-to-edit fields ----
    Renders any value as a hairline-underlined button; on click swaps to an
@@ -492,7 +495,9 @@ input[type="range"].grad::-moz-range-thumb {
 .inline-edit-wrap { display: inline-flex; align-items: center; gap: 0.25rem; }
 .inline-edit-input {
   font: inherit; color: var(--fg);
-  background: var(--bg); border: 1px solid var(--accent); border-radius: 4px;
+  /* Same field surface as everything else; the accent used to be spent on a
+     border here, which made this the one editable control with a coloured box. */
+  background: var(--field-bg); border: 1px solid transparent; border-radius: var(--radius-sm);
   padding: 0 4px; min-width: 4.5em; max-width: 12em;
   /* Hide native spinner — the operator types numbers, not clicks tiny arrows. */
   -moz-appearance: textfield; appearance: textfield;

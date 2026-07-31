@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, TriangleAlert, Pencil, Trash2, Plus, RefreshCw } from "lucide-react";
 import { AppGroupNav } from "../../components/appNav";
-import { Button, PageHeader, Tabs } from "../../ui";
+import { Button, Field, Input, PageHeader, Select, Tabs } from "../../ui";
 import Projection from "./budget/Projection";
 import AppChatDock from "../../components/AppChatDock";
 
@@ -811,38 +811,44 @@ function SpendingSection({ variable, necessitiesActual, windowDays, unclassified
 const newId = () =>
   typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : `id-${Math.floor(Math.random() * 1e8)}`;
 
+// These wrap the design-system Field/Input/Select rather than the hand-rolled
+// `.ef-field` + `.num-in` pair they used to. That pair was a parallel
+// implementation of the same controls — its own border, hover, focus ring and
+// select caret — so it drifted from every other field in the app and had to be
+// fixed separately whenever the system changed.
 function EfNum({ label, value, onChange, prefix = "$" }: { label: string; value: number; onChange: (n: number) => void; prefix?: string }) {
   return (
-    <label className="ef-field">
-      <span>{label}</span>
-      <span className="ef-inwrap">
-        {prefix ? <span className="ef-prefix">{prefix}</span> : null}
-        <input className="num-in" type="number" value={Number.isFinite(value) ? value : 0}
-          onChange={(e) => onChange(e.target.value === "" ? 0 : parseFloat(e.target.value))} />
-      </span>
-    </label>
+    <Field label={prefix ? `${label} (${prefix})` : label}>
+      <Input
+        type="number"
+        value={Number.isFinite(value) ? value : 0}
+        onChange={(e) => onChange(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+      />
+    </Field>
   );
 }
 function EfText({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (s: string) => void; placeholder?: string }) {
   return (
-    <label className="ef-field">
-      <span>{label}</span>
-      <input className="num-in" type="text" value={value || ""} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
-    </label>
+    <Field label={label}>
+      <Input type="text" value={value || ""} placeholder={placeholder} onChange={(e) => onChange(e.target.value)} />
+    </Field>
   );
 }
 function EfSelect({ label, value, onChange, options }: { label: string; value: string; onChange: (s: string) => void; options: [string, string][] }) {
   return (
-    <label className="ef-field">
-      <span>{label}</span>
-      <select className="num-in" value={value} onChange={(e) => onChange(e.target.value)}>
+    <Field label={label}>
+      <Select value={value} onChange={(e) => onChange(e.target.value)}>
         {options.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-      </select>
-    </label>
+      </Select>
+    </Field>
   );
 }
 function DelBtn({ onClick }: { onClick: () => void }) {
-  return <button className="ef-del" onClick={onClick} title="Remove" aria-label="Remove"><Trash2 size={15} strokeWidth={1.8} /></button>;
+  return (
+    <Button variant="ghost" size="sm" onClick={onClick} title="Remove" aria-label="Remove">
+      <Trash2 size={15} strokeWidth={1.8} />
+    </Button>
+  );
 }
 
 // ---- Full plan editor: add / rename / delete / set targets & timelines on
@@ -898,7 +904,7 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
           <DelBtn onClick={() => mutate((p) => p.necessities.splice(i, 1))} />
         </div>
       ))}
-      <button className="ef-add" onClick={() => mutate((p) => p.necessities.push({ id: newId(), name: "", monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add necessity</button>
+      <Button variant="ghost" size="sm" onClick={() => mutate((p) => p.necessities.push({ id: newId(), name: "", monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add necessity</Button>
 
       {/* Payoffs */}
       <p className="sec-h" style={{ marginTop: "1.2rem" }}>Payoffs</p>
@@ -921,7 +927,7 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
           <DelBtn onClick={() => mutate((p) => p.debts.splice(i, 1))} />
         </div>
       ))}
-      <button className="ef-add" onClick={() => mutate((p) => p.debts.push({ id: newId(), name: "", priority: nextPriority(p.debts), balance: 0, account_mask: null, apr: 0, promo_until: null, cadence: "monthly", strategy: "fixed_amount", target_date: null, planned_per_period: 0, planned_monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add payoff</button>
+      <Button variant="ghost" size="sm" onClick={() => mutate((p) => p.debts.push({ id: newId(), name: "", priority: nextPriority(p.debts), balance: 0, account_mask: null, apr: 0, promo_until: null, cadence: "monthly", strategy: "fixed_amount", target_date: null, planned_per_period: 0, planned_monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add payoff</Button>
 
       {/* Savings & goals */}
       <p className="sec-h" style={{ marginTop: "1.2rem" }}>Savings & goals</p>
@@ -939,7 +945,7 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
           <DelBtn onClick={() => mutate((p) => p.savings.splice(i, 1))} />
         </div>
       ))}
-      <button className="ef-add" onClick={() => mutate((p) => p.savings.push({ id: newId(), name: "", priority: nextPriority(p.savings), term: "short", target: 0, current: 0, account_mask: null, target_date: null, planned_monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add goal</button>
+      <Button variant="ghost" size="sm" onClick={() => mutate((p) => p.savings.push({ id: newId(), name: "", priority: nextPriority(p.savings), term: "short", target: 0, current: 0, account_mask: null, target_date: null, planned_monthly: 0, note: "" }))}><Plus size={14} strokeWidth={2} /> Add goal</Button>
 
       {/* Variable categories */}
       <p className="sec-h" style={{ marginTop: "1.2rem" }}>Spending categories (monthly target)</p>
@@ -953,7 +959,7 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
           <DelBtn onClick={() => mutate((p) => p.variable.splice(i, 1))} />
         </div>
       ))}
-      <button className="ef-add" onClick={() => mutate((p) => p.variable.push({ id: newId(), name: "", target: 0, match: [] }))}><Plus size={14} strokeWidth={2} /> Add category</button>
+      <Button variant="ghost" size="sm" onClick={() => mutate((p) => p.variable.push({ id: newId(), name: "", target: 0, match: [] }))}><Plus size={14} strokeWidth={2} /> Add category</Button>
 
       <div className="form-actions-sticky" style={{ marginTop: "1.2rem" }}>
         <button className="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save plan"}</button>
