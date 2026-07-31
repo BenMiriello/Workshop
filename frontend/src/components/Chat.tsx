@@ -25,7 +25,7 @@ import {
   readQueue, writeQueue,
 } from "../lib/chatSelection";
 import { useVoiceSession } from "../lib/useVoiceSession";
-import { unlockAudio } from "../lib/voice";
+import { unlockAudio, type MicFailKind } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./chat/UiCard";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -107,6 +107,18 @@ const MODEL_LABELS: Record<string, string> = {
 function modelLabel(id: string): string {
   return MODEL_LABELS[id] ?? id;
 }
+
+// Why the input lane can't run — each with the step that fixes it. A generic
+// "microphone error" is what made the four genuinely different causes here
+// indistinguishable from each other and from a muted mic.
+const MIC_FAIL_TEXT: Record<MicFailKind, string> = {
+  insecure: "Voice input needs a secure origin (https, or localhost). Typing still works.",
+  unsupported: "This browser can't capture audio. Typing still works.",
+  notAllowed: "Microphone permission denied. Allow it in your browser's site settings, then tap the mic.",
+  notFound: "No microphone found. Connect one, then tap the mic.",
+  inUse: "The microphone is in use by another app. Close it, then tap the mic.",
+  unknown: "Couldn't open the microphone. Tap the mic to try again.",
+};
 
 // "12s" under a minute, "1m 05s" beyond - for the live working indicator.
 function formatElapsed(s: number): string {
@@ -383,6 +395,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // devices) keyed by this chat's contextKey - see lib/draftSync.
   const [input, setInput] = useDraft(contextKey);
   const [streaming, setStreaming] = useState(false);
+  // Live mirror, so the queue-drain timer can re-check liveness at the moment it
+  // fires rather than acting on the value captured when it was scheduled.
+  const streamingRef = useRef(false);
+  streamingRef.current = streaming;
   // A build turn's SSE dropped and we're re-attaching to the still-running turn
   // (proxy/idle timeouts mid-turn are normal on long turns) - the working
   // indicator stays up and says "reconnecting" instead of the turn going dead.
@@ -678,9 +694,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => vsession.setOnLevel(null);
   }, [vsession]);
 
-  // A fatal engine error (mic permission denied, mic start failure) must never
-  // leave a live-looking-but-deaf orb (D1): drop out of voice mode and surface
-  // the reason in the chat error line so it persists after the strip is gone.
+  // Fatal now means one specific thing: the session has NO usable input lane
+  // left (input_mode "voice" and the mic is unavailable). Anything the composer
+  // can still carry — a muted mic, a denied permission while typing is allowed,
+  // an insecure origin — is a standing condition shown in the strip, not a
+  // reason to tear voice mode down. Muting used to land here and kill the
+  // session; it no longer sets fatal at all.
   useEffect(() => {
     if (voiceOn && vsnap.fatal) {
       setErr(vsnap.error || "Voice unavailable.");
@@ -795,6 +814,35 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setMessages((m) => [...m, ...q.map((content) => ({ role: "user" as const, content, ts }))]);
     sendBuildRef.current(q.join("\n\n"));
   }, [setQueue]);
+
+  // A queue with nothing running must drain ITSELF.
+  //
+  // dispatchNext used to be reachable from exactly two places: the stream's
+  // finish handler, and Stop. Both are "a turn just ended in THIS tab". Every
+  // other way a turn can end — the page was reloaded, the tab was closed and
+  // reopened, the stream dropped past its reconnect budget, the backend
+  // restarted, the turn finished while the tab was asleep — left the queue
+  // restored from storage on the next load with nothing that would ever send
+  // it. The messages sat on screen looking pending, forever, and typing
+  // something new sailed straight past them as its own turn because nothing was
+  // streaming. That is a message-loss bug wearing the costume of a pending one.
+  //
+  // So: whenever there is something queued and no turn is running, send it.
+  // Queued means the operator already hit enter; delivery is owed.
+  const drainingRef = useRef(false);
+  useEffect(() => {
+    if (streaming || loadingThreads || !queued.length) return;
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    // A tick of slack so a turn that is in the act of starting (sendBuild sets
+    // `streaming` before its POST resolves) wins the race and we don't open a
+    // second turn alongside it.
+    const t = window.setTimeout(() => {
+      drainingRef.current = false;
+      if (!streamingRef.current && queuedRef.current.length) dispatchNext();
+    }, 250);
+    return () => { window.clearTimeout(t); drainingRef.current = false; };
+  }, [streaming, loadingThreads, queued, dispatchNext]);
 
   // ---- Live SSE stream (build turns) --------------------------------------
   // Used both for a freshly-started turn and for reconnecting to an in-flight
@@ -2018,17 +2066,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const voiceStatus: { kind: "error" | "partial" | "state"; text: string } =
     vsnap.error
       ? { kind: "error", text: vsnap.error }
-      : vsnap.state === "listening" && (vsnap.partial || vsnap.pendingUser)
-        ? { kind: "partial", text: vsnap.partial || vsnap.pendingUser }
-        : {
-            kind: "state",
-            text:
-              vsnap.state === "connecting" ? "Connecting"
-              : vsnap.state === "thinking" ? "Thinking"
-              : vsnap.state === "speaking" ? "Speaking, Esc to stop"
-              : vsnap.state === "listening" ? "Listening"
-              : "Voice on",
-          };
+      // A standing capture condition outlives any one turn's error, so it gets
+      // its own branch: without this, clearing `error` made "no microphone"
+      // silently become "Listening" again.
+      : vsnap.micFail
+        ? { kind: "error", text: MIC_FAIL_TEXT[vsnap.micFail] }
+        : vsnap.state === "listening" && (vsnap.partial || vsnap.pendingUser)
+          ? { kind: "partial", text: vsnap.partial || vsnap.pendingUser }
+          : {
+              kind: "state",
+              text:
+                vsnap.state === "connecting" ? "Connecting"
+                : vsnap.state === "thinking" ? "Thinking"
+                : vsnap.state === "speaking" ? "Speaking, Esc to stop"
+                // "Listening" with the mic off is a lie, and it's the exact lie
+                // that made a muted mic look like a broken one.
+                : vsnap.state === "listening"
+                  ? (vprefs.mic_enabled ? "Listening" : "Mic off — type to send")
+                  : "Voice on",
+            };
 
   const composer = (
     <div className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
