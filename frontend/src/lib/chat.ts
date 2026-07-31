@@ -224,6 +224,13 @@ export const chatApi = {
   // Turn this chat into a self-contained background task (Stage 4). Files a
   // ticket into a project's queue (the chat's scope, else the workshop queue),
   // distilling the conversation when no explicit text is given.
+  // What this chat WOULD file, without filing it. Lets the operator read and
+  // correct the derived text, and tells them up front whether the scope can
+  // actually run it.
+  previewSpawnTask: (id: string) =>
+    fetch(`/api/chat/threads/${id}/spawn-task/preview`, { method: "POST" })
+      .then(j<{ text: string; scope: string; runnable: boolean }>),
+
   spawnTask: (id: string, body?: { text?: string; project?: string; run?: boolean }) =>
     fetch(`/api/chat/threads/${id}/spawn-task`, {
       method: "POST",

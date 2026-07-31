@@ -300,6 +300,36 @@ async def _distill_task_from_thread(t: dict) -> str:
         return ""
 
 
+@router.post("/threads/{thread_id}/spawn-task/preview")
+async def preview_spawn_task(thread_id: str):
+    """The ticket this chat WOULD file, without filing it.
+
+    Filing used to be a blind 35-55 second round trip behind a spinner: the
+    conversation was distilled by a model, deduped against the scope's corpus,
+    and written, with the operator seeing the result only once it was already
+    a fact. They could not read the derived text, could not correct it, and
+    could not tell whether "run it now" was even possible in this scope.
+
+    This does the expensive half (distil + resolve scope) and returns it for
+    review. `runnable` is the answer to the last question: a general chat is
+    not a runnable scope, so running is refused up front with a reason rather
+    than reported afterwards as a footnote on a success message.
+    """
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    scope_key = t.get("context_key")
+    if task_scope.root_for_context(scope_key) is None:
+        scope_key = "workshop"
+    text = await _distill_task_from_thread(t)
+    from routes.tasks_all import scope_is_runnable
+    return {
+        "text": text,
+        "scope": scope_key,
+        "runnable": scope_is_runnable(scope_key),
+    }
+
+
 @router.post("/threads/{thread_id}/spawn-task")
 async def spawn_task(thread_id: str, body: SpawnTask):
     """Turn a chat into a self-contained background task (Stage 4). Files a ticket

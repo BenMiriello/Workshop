@@ -701,6 +701,23 @@ def _tree_busy(dir_str: str) -> bool:
         os.close(fd)
 
 
+def scope_is_runnable(scope: str | None) -> bool:
+    """Can a worker actually be launched against this scope?
+
+    `launch_task_run` accepts project / workshop / agent / build and rejects
+    everything else with a 400. A general chat resolves to `general`, which is
+    NOT runnable — so "file and run" from a general chat could only ever file.
+    Exposed as a predicate so the UI can say that BEFORE the operator commits,
+    rather than reporting it as a footnote on a success message afterwards.
+    """
+    if not scope:
+        return False
+    return (scope == "workshop"
+            or scope.startswith("project:")
+            or scope.startswith("agent:")
+            or scope.startswith("build:"))
+
+
 def launch_task_run(scope: str, task_id: str) -> dict:
     """Open a manual Job and Popen a detached single-task sweep against `scope`
     for exactly `task_id`. Shared by the /tasks run endpoint and the chat

@@ -13,7 +13,12 @@ from pydantic import BaseModel
 from services import inbox, chat_store, knowledge
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/inbox", tags=["inbox"])
+# Bare prefix, NOT "/api/inbox". The edge proxy strips the leading `/api`
+# before it reaches this app, so every router here mounts at its bare path
+# (`/tasks`, `/notes`, `/chat`) and the frontend calls `/api/<same>`. Prefixing
+# with `/api` here yields `/api/api/...` in effect: the client's request arrives
+# as `/inbox`, matches nothing, and 404s while the route list looks correct.
+router = APIRouter(prefix="/inbox", tags=["inbox"])
 
 
 class RaiseIn(BaseModel):

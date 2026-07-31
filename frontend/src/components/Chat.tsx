@@ -3,10 +3,11 @@ import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
-  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
+  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff,
   FoldVertical, ArrowDown, Bell, MoreVertical, ChevronDown, MessagesSquare, Bot,
 } from "lucide-react";
-import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator } from "../ui";
+import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator,
+  Modal, Field, Textarea, Stack, Row, Tag, catFor, Skeleton } from "../ui";
 import { scopeLabel } from "../lib/tasks";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
@@ -471,35 +472,67 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [openTaskCount, setOpenTaskCount] = useState(0);
-  // File the chat as a tracked ticket (Stage 4). Two affordances: File ticket
-  // (queue it for the dispatcher) and File and run (open a Job + launch a worker
-  // now). When a run starts, the server appends a persistent job-status card to
-  // the thread; we reload the messages so it shows immediately.
-  const [spawning, setSpawning] = useState<false | "file" | "run">(false);
+  // Filing this chat as a ticket, as a REVIEW step rather than a blind write.
+  //
+  // What it replaces: two unlabelled icons for one verb plus a boolean, sharing
+  // a single busy flag — so tapping the second while the first was working (35
+  // to 55 seconds, with only a spinner) did nothing at all. Neither showed the
+  // operator the text a model had derived from their conversation, so a wrong
+  // summary could only be discovered in /work afterwards. And "run it now" from
+  // a general chat could never run: the scope is not runnable, which surfaced
+  // as a footnote on a success message.
+  const [draft, setDraft] = useState<
+    | null
+    | { phase: "loading" }
+    | { phase: "ready"; text: string; scope: string; runnable: boolean }
+    | { phase: "error"; message: string }
+  >(null);
+  const [draftText, setDraftText] = useState("");
+  const [filing, setFiling] = useState(false);
   const [spawnMsg, setSpawnMsg] = useState<
     { ok: true; text: string; scope: string; ran: boolean; jobId?: string; runError?: string }
     | { ok: false; text: string }
     | null
   >(null);
-  const spawnTaskFromChat = useCallback(async (run: boolean) => {
-    if (!activeId || spawning) return;
-    setSpawning(run ? "run" : "file");
+
+  const openTicketDraft = useCallback(async () => {
+    if (!activeId) return;
     setSpawnMsg(null);
+    setDraft({ phase: "loading" });
     try {
-      const r = await chatApi.spawnTask(activeId, { run });
+      const r = await chatApi.previewSpawnTask(activeId);
+      if (!r.text) {
+        setDraft({ phase: "error", message: "There isn't enough in this conversation yet to derive a task from." });
+        return;
+      }
+      setDraftText(r.text);
+      setDraft({ phase: "ready", text: r.text, scope: r.scope, runnable: r.runnable });
+    } catch (e) {
+      setDraft({ phase: "error", message: String(e) });
+    }
+  }, [activeId]);
+
+  const fileTicket = useCallback(async (run: boolean) => {
+    if (!activeId || filing) return;
+    setFiling(true);
+    try {
+      const r = await chatApi.spawnTask(activeId, { text: draftText.trim(), run });
       if (run && r.job_id) {
         try {
           const t = await chatApi.getThread(activeId);
           setMessages(t.messages);
         } catch { /* the card still shows on the next reload */ }
       }
+      setDraft(null);
       setSpawnMsg({ ok: true, text: r.task.text, scope: r.scope, ran: !!r.job_id, jobId: r.job_id, runError: r.run_error });
     } catch {
-      setSpawnMsg({ ok: false, text: "Could not create a task from this chat." });
+      setDraft(null);
+      setSpawnMsg({ ok: false, text: "Could not create a ticket from this chat." });
     } finally {
-      setSpawning(false);
+      setFiling(false);
     }
-  }, [activeId, spawning]);
+  }, [activeId, filing, draftText]);
+
   // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
   // scope reach, which is policy, not display), refreshed when the thread moves.
   const [mentionable, setMentionable] = useState<
@@ -1783,29 +1816,21 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {/* Spacer pushes the per-thread action buttons to the right on desktop; on
           mobile the toolbar wraps and the actions flow onto the next line. */}
       <span className="chat-tb__spacer" />
-      {/* File-as-ticket and file-and-run stay VISIBLE. They were moved into the
-          overflow in the header rework; that was not asked for — these two were
-          flagged for discussion, not relocation — so they are back on the row. */}
+      {/* ONE ticket action, not two.
+          File-as-ticket and file-and-run were the same verb plus a boolean,
+          rendered as two unlabelled icons that shared one busy lock — so while
+          the first spun (35-55s), the second silently did nothing. Both filed
+          blind: the operator never saw the text a model had derived from their
+          conversation, could not correct it, and learned only afterwards that
+          the scope could not run it. Now one button opens a review step. */}
       {activeId && (
         <button
           className="chat-tb__btn"
-          onClick={() => { if (spawning === false) void spawnTaskFromChat(false); }}
-          title="File this chat as a tracked ticket"
+          onClick={() => openTicketDraft()}
+          title="File this chat as a ticket"
           aria-label="File as a ticket"
-          aria-busy={spawning === "file"}
         >
-          {spawning === "file" ? <Loader size={16} aria-hidden className="ws-spin" /> : <ListPlus size={16} aria-hidden />}
-        </button>
-      )}
-      {activeId && (
-        <button
-          className="chat-tb__btn"
-          onClick={() => { if (spawning === false) void spawnTaskFromChat(true); }}
-          title="File this chat as a ticket and run it now"
-          aria-label="File as a ticket and run it now"
-          aria-busy={spawning === "run"}
-        >
-          {spawning === "run" ? <Loader size={16} aria-hidden className="ws-spin" /> : <Play size={16} aria-hidden />}
+          <ListPlus size={16} aria-hidden />
         </button>
       )}
       {activeId && (
@@ -1875,6 +1900,76 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const confirmDeleteTitle = confirmDeleteId
     ? threads.find((t) => t.id === confirmDeleteId)?.title
     : undefined;
+
+  // Review before filing. The distil takes 35-55s, so the dialog opens
+  // immediately and says what it is waiting for — the wait is the same, but it
+  // is legible instead of a mystery spinner on a toolbar icon.
+  const ticketDialog = (
+    <Modal
+      open={draft !== null}
+      onClose={() => setDraft(null)}
+      title="File this chat as a ticket"
+      actions={
+        draft?.phase === "ready" ? (
+          <Row wrap style={{ gap: "var(--space-2)", justifyContent: "flex-end" }}>
+            <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Cancel</Button>
+            {/* Running is offered ONLY where it can actually happen. A general
+                chat has no runnable scope, and offering a button that always
+                fails is worse than not offering it. */}
+            {draft.runnable && (
+              <Button size="sm" variant="ghost" disabled={filing || !draftText.trim()}
+                      onClick={() => void fileTicket(true)}>
+                File and run now
+              </Button>
+            )}
+            <Button size="sm" variant="primary" disabled={filing || !draftText.trim()}
+                    onClick={() => void fileTicket(false)}>
+              {filing ? "Filing…" : "File ticket"}
+            </Button>
+          </Row>
+        ) : null
+      }
+    >
+      {draft?.phase === "loading" && (
+        <Stack gap="sm">
+          <Skeleton />
+          <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+            Reading the conversation and drafting a self-contained task. This takes
+            a few seconds.
+          </span>
+        </Stack>
+      )}
+      {draft?.phase === "error" && (
+        <StateBlock
+          variant="error"
+          title="Couldn't draft a ticket"
+          hint={<span>{draft.message}</span>}
+          action={<Button size="sm" variant="ghost" onClick={() => void openTicketDraft()}>Try again</Button>}
+        />
+      )}
+      {draft?.phase === "ready" && (
+        <Stack>
+          <Field
+            label="Ticket"
+            htmlFor="ticket-draft"
+            help="Drafted from this conversation. Edit it — a worker sees only this, not the chat."
+          >
+            <Textarea id="ticket-draft" value={draftText} rows={7}
+                      onChange={(e) => setDraftText(e.target.value)} />
+          </Field>
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Files into</span>
+            <Tag hue={catFor(draft.scope)}>{scopeLabel(draft.scope)}</Tag>
+            {!draft.runnable && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                This scope can't run work directly — file it, then run it from Work.
+              </span>
+            )}
+          </Row>
+        </Stack>
+      )}
+    </Modal>
+  );
 
   const newChatDialog = (
     <ConfirmDialog
@@ -2530,6 +2625,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
       {deleteDialog}
+      {ticketDialog}
       {newChatDialog}
       <VoiceSettings
         open={voiceSettings}
