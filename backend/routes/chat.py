@@ -792,22 +792,55 @@ def _has_live_session(t: dict, provider) -> bool:
     return bool(t.get("claude_session"))
 
 
-# Context-window windows per model (mirrors the frontend meter). Claude = 200k;
-# local models are smaller.
+# Context window per model. This is the DENOMINATOR of the composer meter, and
+# it was wrong for every Claude model except Haiku: the table said 200k across
+# the board, but the whole 4.6-and-later generation is 1M. A real chat holding
+# 310,931 tokens therefore computed 155% and clamped to a permanent, confident
+# 100% — the meter read "full" on a chat using under a third of its window.
+#
+# Haiku 4.5 is the genuine 200k exception; do not "simplify" this table back to
+# one number.
 _CONTEXT_WINDOW = {
-    "claude-opus-4-8": 200_000,
-    "claude-sonnet-4-6": 200_000,
-    "claude-sonnet-5": 200_000,
+    "claude-opus-5": 1_000_000,
+    "claude-opus-4-8": 1_000_000,
+    "claude-opus-4-7": 1_000_000,
+    "claude-opus-4-6": 1_000_000,
+    "claude-fable-5": 1_000_000,
+    "claude-sonnet-5": 1_000_000,
+    "claude-sonnet-4-6": 1_000_000,
+    "claude-haiku-4-5": 200_000,
     "claude-haiku-4-5-20251001": 200_000,
 }
+# Smallest-to-largest, for the self-correction in `_window_for`.
+_WINDOW_TIERS = (200_000, 1_000_000)
 
 
-def _window_for(model: str | None) -> int:
+def _window_for(model: str | None, measured: int = 0) -> int:
+    """The model's context window, widened to fit what we've actually measured.
+
+    A hardcoded table goes stale every time a model ships, and the failure is
+    silent and one-directional: too small a window pins the meter at 100% and
+    the operator has no way to tell a wrong denominator from a genuinely full
+    chat. So the measurement gets a vote. If the model reports more context in
+    use than the table allows, the table is the thing that's wrong — step up to
+    the smallest tier that actually fits rather than rendering a confident lie.
+    """
     if model and model in _CONTEXT_WINDOW:
-        return _CONTEXT_WINDOW[model]
-    if model and model.startswith("claude"):
-        return 200_000
-    return 32_768 if model else 200_000
+        window = _CONTEXT_WINDOW[model]
+    elif model and model.startswith("claude"):
+        # An unrecognized Claude model is far more likely to be newer than
+        # older, and every current family except Haiku is 1M.
+        window = 1_000_000
+    elif model:
+        window = 32_768  # local / Ollama
+    else:
+        window = 1_000_000
+    if measured > window:
+        for tier in _WINDOW_TIERS:
+            if tier > measured:
+                return tier
+        return measured  # past every known tier — report honestly, never clamp
+    return window
 
 
 @router.get("/threads/{thread_id}/context")
@@ -830,11 +863,13 @@ async def thread_context(thread_id: str):
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
     model = _resolve_model(None, t, provider)
-    window = _window_for(model)
-
     stored = t.get("context_tokens")
-    if isinstance(stored, (int, float)) and stored > 0:
-        used = int(stored)
+    measured = int(stored) if isinstance(stored, (int, float)) and stored > 0 else 0
+    # Let the measurement correct a stale table (see `_window_for`).
+    window = _window_for(model, measured)
+
+    if measured > 0:
+        used = measured
         return {
             "used_tokens": used,
             "window_tokens": window,

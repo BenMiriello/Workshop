@@ -143,18 +143,30 @@ function modelDisplay(model?: string | null): ModelDisplay {
 // counts, so approximate: ~4 chars/token over the visible turns + the current
 // draft, against the model's context window (Claude = 200k; local models are
 // smaller). It's a "how full is this chat" indicator, not an exact accounting.
+// Only used for the estimate shown BEFORE a thread's first turn reports real
+// usage; after that the server's measured window wins. Kept in sync with
+// backend/routes/chat.py `_CONTEXT_WINDOW` — every current Claude family is 1M,
+// and Haiku 4.5 is the genuine 200k exception. These were all 200k, which made
+// the meter read 155% (clamped to a confident 100%) on a chat using under a
+// third of its window.
 const CONTEXT_WINDOW: Record<string, number> = {
-  "claude-opus-5": 200_000,
-  "claude-opus-4-8": 200_000,
-  "claude-fable-5": 200_000,
-  "claude-sonnet-5": 200_000,
-  "claude-sonnet-4-6": 200_000,
+  "claude-opus-5": 1_000_000,
+  "claude-opus-4-8": 1_000_000,
+  "claude-opus-4-7": 1_000_000,
+  "claude-opus-4-6": 1_000_000,
+  "claude-fable-5": 1_000_000,
+  "claude-sonnet-5": 1_000_000,
+  "claude-sonnet-4-6": 1_000_000,
+  "claude-haiku-4-5": 200_000,
   "claude-haiku-4-5-20251001": 200_000,
 };
 function contextWindowFor(model: string): number {
   if (CONTEXT_WINDOW[model]) return CONTEXT_WINDOW[model];
-  if (model.startsWith("claude")) return 200_000;
-  return model ? 32_768 : 200_000; // local/Ollama default; Claude fallback if unset
+  // An unrecognized Claude model is likelier to be newer than older, and every
+  // current family except Haiku is 1M. Guessing low is the failure that pins
+  // the meter at 100%; guessing high just under-reports until a turn measures.
+  if (model.startsWith("claude")) return 1_000_000;
+  return model ? 32_768 : 1_000_000; // local/Ollama default; Claude if unset
 }
 function estimateContextTokens(messages: ChatMsg[], draft: string): number {
   let chars = draft.length;
