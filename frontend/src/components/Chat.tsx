@@ -1,24 +1,25 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-  Plus, Trash2, CornerDownLeft, Square, Maximize2, ChevronLeft,
-  WifiOff, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
-  PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff,
-  FoldVertical, ArrowDown, Bell, MoreVertical, ChevronDown, MessagesSquare, Bot,
+  WifiOff, ArrowDown,
 } from "lucide-react";
-import { ConfirmDialog, StateBlock, Button, Menu, MenuItem, MenuSeparator } from "../ui";
-import { scopeLabel } from "../lib/tasks";
+import { StateBlock, Button } from "../ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
-import TicketDraftsDialog from "./chat/TicketDraftsDialog";
-import { AssistantTurn, AnswerBody, ElidedContent } from "./chat/Transcript";
 import { NoticeBar, type ChatNotice } from "./chat/ChatNotice";
+import ChatComposer from "./chat/ChatComposer";
+import ChatToolbar from "./chat/ChatToolbar";
+import ChatLog from "./chat/ChatLog";
+import ChatDialogs from "./chat/ChatDialogs";
 import {
-  deriveMode, buildSlug, projectSlugFor, taskScopeFor, formatElapsed,
-  estimateContextTokens, isEgressFailure,
-  type ChatMode, type ChatVariant,
+  buildSlashCommands, matchSlash, matchMention, applyMention, type SlashCommand,
+} from "./chat/slashCommands";
+import { type ChatDrawer } from "./chat/drawers";
+import {
+  deriveMode, buildSlug, projectSlugFor, taskScopeFor,
+  isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
-import { orderModels, modelLabel, modelDisplay, contextWindowFor, MODEL_LABELS } from "./chat/models";
+import { MODEL_LABELS } from "./chat/models";
 import { useMessageQueue, type MessageQueue } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
 import { useVoiceSettle } from "./chat/useVoiceSettle";
@@ -37,7 +38,7 @@ import {
   NEW_CHAT, readSelection, writeSelection, readProvider, writeProvider,
 } from "../lib/chatSelection";
 import { useVoiceSession } from "../lib/useVoiceSession";
-import { unlockAudio, MIC_FAIL_TEXT } from "../lib/voice";
+import { unlockAudio } from "../lib/voice";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
 
@@ -203,19 +204,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => { cancelled = true; };
   }, [activeId]);
 
-  // ONE auxiliary drawer at a time, selected from the toolbar.
-  //
-  // The inbox and the task list are both bounded panels that open between the
-  // toolbar and the log, and they were independent booleans — so both could be
-  // open at once, stacking 40vh of inbox on 30vh of tasks and leaving a sliver
-  // of conversation on a phone. They are alternatives, not layers: each answers
-  // "what else is going on around this chat", and wanting one is wanting to look
-  // away from the other. Making that a single selection is what stops the top of
-  // the chat from growing without limit as more panels get added.
-  //
-  // Both stay MOUNTED when unselected (they poll and report their counts), so
-  // the toolbar badges stay live without the operator opening anything.
-  const [drawer, setDrawer] = useState<"inbox" | "tasks" | null>(null);
+  // One auxiliary drawer at a time — see chat/drawers for why.
+  const [drawer, setDrawer] = useState<ChatDrawer>(null);
   const inboxOpen = drawer === "inbox";
   const tasksOpen = drawer === "tasks";
   const [inboxCount, setInboxCount] = useState(0);
@@ -898,72 +888,33 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   //                     full Claude command set works even though we only surface
   //                     the useful ones in the autocomplete.
   // Typing "/" opens the autocomplete; the slash button opens the same menu.
-  type SlashCommand = { name: string; desc: string; available: boolean; kind: "local" | "passthrough"; run?: () => void };
   const build = effectiveMode === "build";
-  const slashCommands: SlashCommand[] = [
-    // Workshop chat actions.
-    { name: "new", desc: "Start a new chat", available: true, kind: "local", run: () => newChat() },
-    { name: "clear", desc: "Start a fresh chat (alias of new)", available: true, kind: "local", run: () => newChat() },
-    { name: "delete", desc: "Delete the current chat", available: !!activeId, kind: "local", run: () => { if (activeId) setConfirmDeleteId(activeId); } },
-    { name: "tasks", desc: "Toggle the task list", available: !!taskScope, kind: "local", run: () => setDrawer((d) => (d === "tasks" ? null : "tasks")) },
-    // The inbox is the task list's sibling drawer, so it gets the sibling
-    // command. Leaving it out made the two panels look like different kinds of
-    // thing in a place where they are deliberately the same kind.
-    { name: "inbox", desc: "Toggle what agents are waiting on you for", available: !!activeId, kind: "local", run: () => setDrawer((d) => (d === "inbox" ? null : "inbox")) },
-    { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, kind: "local", run: () => popOut() },
-    { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => setSlashOpen(true) },
-    // /deploy — jump to the project's Deploys panel when the chat is bound to
-    // one, else to the cross-project /deploys index. The actual "kick a deploy"
-    // action still lives at those pages; the command is a keyboard shortcut.
-    { name: "deploy", desc: "Open deploys for this project (or the index)", available: true, kind: "local", run: () => {
-        const slug = projectSlugFor(contextKey);
-        if (slug) navigate(`/projects/${encodeURIComponent(slug)}#deploys`);
-        else navigate(`/deploys`);
-      } },
-    // /compact is a Workshop action in EVERY mode, not a Claude Code passthrough:
-    // it folds this thread's transcript server-side via POST /threads/:id/compact.
-    { name: "compact", desc: "Summarize + compact the conversation to free up context", available: !compacting, kind: "local", run: () => void compact() },
-    // Claude Code commands - forwarded to the agent's session (build agents only).
-    { name: "context", desc: "Show what's currently in the context window", available: build, kind: "passthrough" },
-    { name: "cost", desc: "Show token usage and plan limits", available: build, kind: "passthrough" },
-    { name: "model", desc: "Show or switch the model", available: build, kind: "passthrough" },
-    { name: "memory", desc: "Show the agent's memory (CLAUDE.md)", available: build, kind: "passthrough" },
-    { name: "init", desc: "Generate a CLAUDE.md for this project", available: build, kind: "passthrough" },
-    { name: "review", desc: "Review a pull request", available: build, kind: "passthrough" },
-    { name: "status", desc: "Show session + account status", available: build, kind: "passthrough" },
-    { name: "agents", desc: "List configured subagents", available: build, kind: "passthrough" },
-    { name: "mcp", desc: "Show connected MCP servers", available: build, kind: "passthrough" },
-  ];
-  // Visible only when the input is a single "/"-prefixed token (a command being
-  // typed), filtered to available commands matching the typed prefix.
-  const slashTyped = input.startsWith("/") && !input.includes("\n");
-  const slashQuery = slashTyped ? input.slice(1).toLowerCase().trimStart().split(" ")[0] : "";
-  // Typed: filter by what's been typed. Button-opened: the whole list, because
-  // nothing was typed to filter by.
-  const slashMatches = slashTyped
-    ? slashCommands.filter((c) => c.available && c.name.startsWith(slashQuery))
-    : slashOpen
-      ? slashCommands.filter((c) => c.available)
-      : [];
-  const showSlash = (slashTyped || slashOpen) && slashMatches.length > 0;
+  const slashCommands = buildSlashCommands({
+    isBuild: build,
+    hasThread: !!activeId,
+    hasTaskScope: !!taskScope,
+    canExpand: variant !== "full" && !hideExpand,
+    compacting,
+    actions: {
+      newChat: () => newChat(),
+      deleteChat: () => { if (activeId) setConfirmDeleteId(activeId); },
+      toggleTasks: () => setDrawer((d) => (d === "tasks" ? null : "tasks")),
+      toggleInbox: () => setDrawer((d) => (d === "inbox" ? null : "inbox")),
+      popOut: () => popOut(),
+      showHelp: () => setSlashOpen(true),
+      openDeploys: () => {
+        const p = projectSlugFor(contextKey);
+        navigate(p ? `/projects/${encodeURIComponent(p)}#deploys` : "/deploys");
+      },
+      compact: () => void compact(),
+    },
+  });
+  const { typed: slashTyped, matches: slashMatches, show: showSlash } =
+    matchSlash(input, slashCommands, slashOpen);
+  const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
 
-  // The @-mention being typed: the last "@word" run at the very end of the
-  // composer. Anchored to the end so editing earlier in a message never
-  // re-opens the picker, and only ONE mention is offered because only the
-  // first tag in a message is ever parsed server-side (addressing two agents
-  // in one breath has no coherent meaning).
-  const mentionMatch = /(?:^|\s)@([a-z0-9-]*)$/.exec(input);
-  const alreadyMentioned = /(?:^|\s)@[a-z][a-z0-9-]*\s/.test(input);
-  const mentionQuery = mentionMatch && !alreadyMentioned ? mentionMatch[1] : null;
-  const mentionMatches = mentionQuery === null
-    ? []
-    : mentionable.filter((a) => a.slug.startsWith(mentionQuery) || a.name.toLowerCase().startsWith(mentionQuery));
-  const showMentions = mentionQuery !== null && mentionMatches.length > 0;
   const pickMention = (slug: string) => {
-    // Replace the partial token in place; everything the operator typed around
-    // it is preserved, and the trailing space means the next keystroke is the
-    // message rather than more of the name.
-    setInput(input.replace(/@[a-z0-9-]*$/, `@${slug} `));
+    setInput(applyMention(input, slug));
     setMentionSel(0);
     inputRef.current?.focus();
   };
@@ -1022,202 +973,52 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const activeThreadTitle = activeId ? threads.find((t) => t.id === activeId)?.title : undefined;
   // Agents not already in this chat — the only ones worth offering.
   const toolbar = (
-    <div className="chat-toolbar">
-      {variant === "full" && (
-        <button className="chat-tb__btn" onClick={back} title="Back" aria-label="Back">
-          <ChevronLeft size={16} aria-hidden />
-        </button>
-      )}
-      {/* Build agents: from the focused chat, open the full workbench (files /
-          editor / preview / diff). Only in the full chat - inside the workbench
-          itself the chat is already embedded, so the button would be redundant. */}
-      {effectiveMode === "build" && slug && variant === "full" && (
-        <button
-          className="chat-tb__btn"
-          onClick={() => navigate(`/agents/${slug}/chat`)}
-          title="Open workbench (files · editor · preview · diff)"
-          aria-label="Open workbench"
-        >
-          <PanelsTopLeft size={16} aria-hidden />
-        </button>
-      )}
-      {/* Scope picker: which assistant this conversation is with. This is the
-          ONE picker that belongs in the header — it decides what the chat can
-          see and which thread list you're in, so changing it changes the whole
-          surface. Model moved down to the composer (a per-turn knob), and the
-          conversation picker is gone entirely: back / "All chats" reaches the
-          list, and + starts a new one. */}
-      {showProviderPicker && providers.length > 1 && effectiveMode === "data" ? (
-        <Menu
-          label="Assistant"
-          align="start"
-          trigger={
-            <button className="chat-tb__picker" title="Which assistant to talk to">
-              <span className="chat-tb__picker-val">{activeProviderObj?.label ?? activeProvider}</span>
-              <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
-            </button>
-          }
-        >
-          {providers.map((p) => (
-            <MenuItem key={p.key} checked={p.key === activeProvider} onSelect={() => chooseProvider(p.key)}>
-              {p.label}
-            </MenuItem>
-          ))}
-        </Menu>
-      ) : showProviderPicker && providers.length === 1 && effectiveMode === "data" ? (
-        <span className="chat-tb__picker is-static">{providers[0].label}</span>
-      ) : null}
-      {/* Which conversation you're in — a label, not a control. */}
-      {activeThreadTitle && <span className="chat-tb__title">{activeThreadTitle}</span>}
-      {/* Spacer pushes the per-thread action buttons to the right on desktop; on
-          mobile the toolbar wraps and the actions flow onto the next line. */}
-      <span className="chat-tb__spacer" />
-      {/* ONE ticket action, not two.
-          File-as-ticket and file-and-run were the same verb plus a boolean,
-          rendered as two unlabelled icons that shared one busy lock — so while
-          the first spun (35-55s), the second silently did nothing. Both filed
-          blind: the operator never saw the text a model had derived from their
-          conversation, could not correct it, and learned only afterwards that
-          the scope could not run it. Now one button opens a review step. */}
-      {activeId && (
-        <button
-          className="chat-tb__btn"
-          onClick={() => setTicketsOpen(true)}
-          title="File this chat as a ticket"
-          aria-label="File as a ticket"
-        >
-          <ListPlus size={16} aria-hidden />
-        </button>
-      )}
-      {activeId && (
-        <button
-          className={`chat-tb__btn chat-tb__tasks${inboxOpen ? " is-active" : ""}`}
-          onClick={() => setDrawer((d) => (d === "inbox" ? null : "inbox"))}
-          title={inboxCount ? `${inboxCount} waiting on you` : "Nothing waiting"}
-          aria-label="Agent inbox"
-          aria-expanded={inboxOpen}
-        >
-          <Bell size={16} aria-hidden />
-          {inboxCount > 0 && <span className="chat-tb__badge">{inboxCount}</span>}
-        </button>
-      )}
-      {taskScope && (
-        <button
-          className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
-          onClick={() => setDrawer((d) => (d === "tasks" ? null : "tasks"))}
-          title="Tasks"
-          aria-label="Tasks"
-          aria-expanded={tasksOpen}
-        >
-          <ListTodo size={16} aria-hidden />
-          {openTaskCount > 0 && <span className="chat-tb__badge">{openTaskCount}</span>}
-        </button>
-      )}
-      <button
-        className="chat-tb__btn"
-        onClick={() => setConfirmNew(true)}
-        title="Start a new chat"
-        aria-label="New chat"
-      >
-        <Plus size={16} aria-hidden />
-      </button>
-      {/* Overflow: only the things that are genuinely rare or destructive —
-          finding another chat, going full screen, deleting this one. Actions
-          you take on a conversation stay on the row where you can see them. */}
-      <Menu
-        label="Chat actions"
-        align="end"
-        trigger={
-          <button className="chat-tb__btn" title="More" aria-label="More chat actions">
-            <MoreVertical size={16} aria-hidden />
-          </button>
-        }
-      >
-        <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => navigate("/chats")}>
-          All chats
-        </MenuItem>
-        {variant !== "full" && !hideExpand && (
-          <MenuItem icon={<Maximize2 size={14} />} onSelect={popOut}>
-            Open full screen
-          </MenuItem>
-        )}
-        {activeId && (
-          <>
-            <MenuSeparator />
-            <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => setConfirmDeleteId(activeId)}>
-              Delete chat…
-            </MenuItem>
-          </>
-        )}
-      </Menu>
-    </div>
-  );
-
-  const confirmDeleteTitle = confirmDeleteId
-    ? threads.find((t) => t.id === confirmDeleteId)?.title
-    : undefined;
-
-  const ticketDialog = (
-    <TicketDraftsDialog
-      open={ticketsOpen}
-      chatId={activeId}
-      onClose={() => setTicketsOpen(false)}
-      onFiled={(m) => setNotice({ kind: "ticket", ...m })}
+    <ChatToolbar
+      variant={variant}
+      mode={effectiveMode}
+      slug={slug}
+      hideExpand={hideExpand}
+      activeId={activeId}
+      activeThreadTitle={activeThreadTitle}
+      showProviderPicker={showProviderPicker}
+      providers={providers}
+      activeProvider={activeProvider}
+      activeProviderLabel={activeProviderObj?.label ?? activeProvider}
+      onChooseProvider={chooseProvider}
+      drawer={drawer}
+      onSetDrawer={setDrawer}
+      inboxCount={inboxCount}
+      taskScope={taskScope}
+      openTaskCount={openTaskCount}
+      onBack={back}
+      onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
+      onFileTicket={() => setTicketsOpen(true)}
+      onNewChat={() => setConfirmNew(true)}
+      onDelete={setConfirmDeleteId}
+      onPopOut={popOut}
+      onNavigate={navigate}
     />
   );
 
-  const newChatDialog = (
-    <ConfirmDialog
-      open={confirmNew}
-      onCancel={() => setConfirmNew(false)}
-      onConfirm={() => { setConfirmNew(false); newChat(); }}
-      title="Start a new chat?"
-      body={
-        activeId ? (
-          <span>
-            This leaves {activeThreadTitle ? `"${activeThreadTitle}"` : "the current chat"} and opens a blank
-            one in {scopeLabel(scope)}. Nothing is deleted — you can come back to it from All chats.
-          </span>
-        ) : (
-          <span>Opens a blank chat in {scopeLabel(scope)}.</span>
-        )
-      }
-      confirmLabel="New chat"
-      danger={false}
-    />
-  );
-
-  const deleteDialog = (
-    <ConfirmDialog
-      open={confirmDeleteId != null}
-      onCancel={() => setConfirmDeleteId(null)}
-      onConfirm={async () => {
-        const id = confirmDeleteId;
-        setConfirmDeleteId(null);
-        if (id) await removeThread(id);
-      }}
-      title="Delete chat?"
-      body={
-        <span>
-          This permanently deletes {confirmDeleteTitle ? `"${confirmDeleteTitle}"` : "this chat"} and its
-          messages. This can't be undone.
-        </span>
-      }
-      confirmLabel="Delete chat"
+  const dialogs = (
+    <ChatDialogs
+      scope={scope}
+      activeId={activeId}
+      activeThreadTitle={activeThreadTitle}
+      ticketsOpen={ticketsOpen}
+      onCloseTickets={() => setTicketsOpen(false)}
+      onFiled={setNotice}
+      confirmNew={confirmNew}
+      onCancelNew={() => setConfirmNew(false)}
+      onConfirmNew={() => { setConfirmNew(false); newChat(); }}
+      confirmDeleteId={confirmDeleteId}
+      confirmDeleteTitle={confirmDeleteId ? threads.find((t) => t.id === confirmDeleteId)?.title : undefined}
+      onCancelDelete={() => setConfirmDeleteId(null)}
+      onConfirmDelete={async (id) => { setConfirmDeleteId(null); await removeThread(id); }}
     />
   );
 
   const overflowed = messages.length >= 500;
-
-  // Recency nuance: the most recent assistant answer is expanded; older ones
-  // auto-shorten. "Most recent" only applies when nothing is streaming (a live
-  // turn is itself the most recent).
-  const idle = !streaming && pendingSegments.length === 0;
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") { lastAssistantIdx = i; break; }
-  }
-  const threadCfg = modelDisplay(selectedModel);
 
   // Context passed to any in-chat ui-card: navigation, the current context key,
   // the active thread id, the rescope wrapper (Move-chat-into-project), and the
@@ -1251,15 +1052,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     [navigate, contextKey, activeId, cardStates, recordCardState],
   );
 
-  const renderAssistant = (m: ChatMsg, isLatest: boolean) => {
-    if (m.meta?.error) return m.content;
-    const model = m.meta?.model ?? selectedModel;
-    if (m.meta?.segments && m.meta.segments.length) {
-      return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx} />;
-    }
-    return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
-  };
-
   const jumpToLatest = showJumpToLatest ? (
     <div className="chat-jump">
       <Button size="sm" variant="ghost" onClick={followLatest}>
@@ -1268,196 +1060,30 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   ) : null;
 
-  // The live turn, cut at every point the operator interjected. With no
-  // interjections (the common case) this is exactly one assistant bubble
-  // carrying the streamed segments plus the working indicator — unchanged. With
-  // them, the reply is split so each message sits between the output that
-  // preceded it and the output that followed, which is the order things
-  // actually happened in.
-  const liveTurnBlocks = (() => {
-    const cuts = interjections.map((x) => Math.min(x.at, pendingSegments.length));
-    const bounds = [0, ...cuts, pendingSegments.length];
-    const blocks: ReactNode[] = [];
-    for (let k = 0; k < bounds.length - 1; k++) {
-      const slice = pendingSegments.slice(bounds[k], bounds[k + 1]);
-      const isLastSlice = k === bounds.length - 2;
-      // The working indicator belongs to the tail of the reply, so it renders
-      // below the newest interjection rather than stranded above it.
-      const showWorking = streaming && isLastSlice;
-      if (slice.length || showWorking) {
-        blocks.push(
-          <div className="chat-msg assistant" key={`live-a${k}`}>
-            <div className="chat-bubble">
-              {slice.length > 0 && (
-                <AssistantTurn
-                  segments={slice}
-                  isLatest={isLastSlice}
-                  model={selectedModel}
-                  cardCtx={cardCtx}
-                  streaming
-                />
-              )}
-              {showWorking && (
-                <div className="chat-working" role="status" aria-live="polite">
-                  <span className="chat-working__label">
-                    {reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}
-                  </span>
-                  <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
-                  {elapsed > 0 && <span className="chat-working__time">{formatElapsed(elapsed)}</span>}
-                </div>
-              )}
-            </div>
-          </div>,
-        );
-      }
-      if (k < interjections.length) {
-        blocks.push(
-          <div className="chat-msg user" key={`live-ij${k}`}>
-            <div className="chat-bubble" title="Sent mid-turn; the running turn picked it up">
-              {interjections[k].text}
-            </div>
-          </div>,
-        );
-      }
-    }
-    return <>{blocks}</>;
-  })();
-
   const log = (
-    <div className="chat-log" ref={scrollRef} onScroll={onLogScroll}>
-      {loadingThreads && messages.length === 0 ? (
-        <div className="chat-empty">Loading...</div>
-      ) : err && messages.length === 0 ? (
-        <div className="chat-empty chat-empty--err">Couldn't load threads. {String(err).slice(0, 240)}</div>
-      ) : messages.length === 0 && !inFlight ? (
-        <div className="chat-empty">
-          {effectiveMode === "build" ? "Tell the agent what to build..." : "Ask anything, or tell me to change the plan."}
-        </div>
-      ) : null}
-      {overflowed && (
-        <div className="chat-empty chat-empty--note">
-          Showing the latest messages. Older history is paginated server-side.
-        </div>
-      )}
-      {messages.map((m, i) => (
-        <Fragment key={i}>
-        {/* The fold marker. Compaction never drops raw messages, so without this
-            divider a compacted thread looks identical to an uncompacted one and
-            the operator can't tell whether /compact did anything. */}
-        {compactedThrough > 0 && i === compactedThrough && (
-          <div className="chat-fold" role="separator">
-            <FoldVertical size={14} strokeWidth={1.8} aria-hidden />
-            <span>
-              {compactedThrough} earlier {compactedThrough === 1 ? "message" : "messages"} folded into the running summary
-            </span>
-          </div>
-        )}
-        <div className={`chat-msg ${m.role}`}>
-          <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
-            {m.role === "assistant" ? (
-              <>
-                {/* Attribution. A reply from a mentioned agent is NOT the
-                    assistant's, and without a byline the operator has no way to
-                    tell who answered — which is the whole point of addressing
-                    one. Only agent replies carry it; the assistant is the
-                    unmarked default because it is the overwhelming majority. */}
-                {m.meta?.agent && (
-                  <div className="chat-byline">
-                    <Bot size={13} strokeWidth={1.8} aria-hidden />
-                    <span>{m.meta.agent}</span>
-                  </div>
-                )}
-                {m.meta?.timeout && (
-                  <div className="chat-timeout-tag">
-                    <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
-                  </div>
-                )}
-                {renderAssistant(m, idle && i === lastAssistantIdx)}
-              </>
-            ) : (
-              <>
-                <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
-                {m.meta?.unsent && (
-                  <div className="chat-unsent">
-                    <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
-                    <span>Not sent, this message never reached the server.</span>
-                    <Button size="sm" variant="ghost" onClick={() => retryUnsent(i, m.content)}>Retry</Button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-          {m.meta?.notes?.map((n, j) => (
-            <div key={j} className="chat-note">{n}</div>
-          ))}
-        </div>
-        </Fragment>
-      ))}
-      {(streaming || pendingSegments.length > 0) && liveTurnBlocks}
-      {queue.items.map((q, i) => (
-        <div key={`q${i}`} className="chat-msg user">
-          <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">{q}</div>
-        </div>
-      ))}
-      {/* Live spoken turn: the just-sent utterance + the streaming reply, rendered
-          as normal bubbles. The heard / speaking / pending caption cue is the one
-          voice-specific touch - it lives INSIDE a standard assistant bubble. When
-          the turn finishes it does NOT vanish: it's held in `settling` (plain
-          bubbles) until the refetch lands the persisted messages, then swaps once
-          into the log (D4 - no vanish-then-pop). Muted (captions-only) replies
-          stay in `thinking` the whole time and stream their captions here too. */}
-      {/* The settling exchange (the just-finished turn) renders ABOVE the live
-          overlay so a fast follow-up turn never hides it: turn N stays put as
-          plain bubbles until its persisted messages land, then swaps out. */}
-      {voiceOn && settling && (
-        <>
-          {settling.user && (
-            <div className="chat-msg user">
-              <div className="chat-bubble">{settling.user}</div>
-            </div>
-          )}
-          {settling.assistant && (
-            <div className="chat-msg assistant">
-              <div className="chat-bubble">{settling.assistant}</div>
-            </div>
-          )}
-        </>
-      )}
-      {voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking") && (
-        <>
-          {vsnap.lastUser && (
-            <div className="chat-msg user">
-              <div className="chat-bubble">{vsnap.lastUser}</div>
-            </div>
-          )}
-          <div className="chat-msg assistant">
-            <div className="chat-bubble">
-              {vsnap.sentences.length > 0 ? (
-                <span className="chat-voice-live">
-                  {vsnap.sentences.map((s, i) => (
-                    <span
-                      key={i}
-                      className={
-                        s.status === "heard" ? "chat-voice-heard"
-                        : s.status === "speaking" ? "chat-voice-now"
-                        : "chat-voice-pending"
-                      }
-                    >
-                      {s.text}{" "}
-                    </span>
-                  ))}
-                </span>
-              ) : (
-                <div className="chat-working" role="status" aria-live="polite">
-                  <span className="chat-working__label">Thinking</span>
-                  <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
+    <ChatLog
+      scrollRef={scrollRef}
+      onScroll={onLogScroll}
+      loading={loadingThreads}
+      error={err}
+      messages={messages}
+      isBuild={effectiveMode === "build"}
+      inFlight={inFlight}
+      overflowed={overflowed}
+      compactedThrough={compactedThrough}
+      selectedModel={selectedModel}
+      cardCtx={cardCtx}
+      onRetryUnsent={retryUnsent}
+      streaming={streaming}
+      pendingSegments={pendingSegments}
+      interjections={interjections}
+      workingLabel={reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}
+      elapsed={elapsed}
+      queued={queue.items}
+      voiceOn={voiceOn}
+      settling={settling}
+      vsnap={vsnap}
+    />
   );
 
   const taskPanel = taskScope ? (
@@ -1474,309 +1100,60 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // composer streaming state) apply whenever a turn is live, regardless of mode.
   const streamingBuild = streaming;
 
-  // Context usage below the composer. Prefer the backend's REAL count (it
-  // assembles the actual prompt - persona + live app context + windowed history),
-  // refetched when a turn settles; fall back to a client estimate if unavailable.
-  const [serverCtx, setServerCtx] = useState<{ used: number; window: number } | null>(null);
-  useEffect(() => {
-    if (!activeId || streaming) return;
-    let cancelled = false;
-    chatApi
-      .threadContext(activeId)
-      .then((r) => { if (!cancelled) setServerCtx({ used: r.used_tokens, window: r.window_tokens }); })
-      .catch(() => { /* keep the client estimate */ });
-    return () => { cancelled = true; };
-  }, [activeId, messages.length, streaming, ctxNonce]);
-  useEffect(() => { setServerCtx(null); }, [activeId]); // drop stale count on thread switch
-
-  const ctx = useMemo(() => {
-    if (serverCtx) {
-      // Real assembled-context count + the live (unsent) draft.
-      const used = serverCtx.used + Math.ceil(input.length / 4);
-      return { used, win: serverCtx.window, pct: Math.min(100, Math.round((used / serverCtx.window) * 100)) };
-    }
-    const used = estimateContextTokens(messages, input);
-    const win = contextWindowFor(selectedModel);
-    return { pct: Math.min(100, Math.round((used / win) * 100)), used, win };
-  }, [serverCtx, messages, input, selectedModel]);
-  // Circular ring (single accent tone, no threshold colors). The progress arc is
-  // a dash on a rotated circle so it fills clockwise from 12 o'clock.
-  const RING_R = 7;
-  const RING_C = 2 * Math.PI * RING_R;
-  const contextMeter = (
-    <div
-      className="chat-context-meter"
-      title={`~${ctx.used.toLocaleString()} of ${ctx.win.toLocaleString()} tokens used in this chat`}
-    >
-      <svg className="chat-context-meter__ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden>
-        <circle className="chat-context-meter__track" cx="9" cy="9" r={RING_R} />
-        <circle
-          className="chat-context-meter__arc"
-          cx="9" cy="9" r={RING_R}
-          style={{ strokeDasharray: `${(ctx.pct / 100) * RING_C} ${RING_C}` }}
-        />
-      </svg>
-      <span className="chat-context-meter__pct">{ctx.pct}%</span>
-    </div>
-  );
-
-  // Voice affordances for the composer: the state "orb" doubles as interrupt (when
-  // speaking) / send-now (when listening). The orb NEVER shows a Mic glyph - that
-  // was the confusing twin of the mic-mute button (D6). It uses AudioLines
-  // (listening, with the level halo), Loader (thinking/connecting), Square
-  // (speaking, the stop affordance), and AlertTriangle (error/idle-unexpectedly).
-  const voiceErrored = !!vsnap.error;
-  const voiceOrbAction = () => {
-    if (vsnap.state === "speaking") vsession.interrupt();
-    else if (vsnap.state === "thinking") vsession.cancelTurn();  // scrap a mis-heard send
-    else if (vsnap.state === "listening") vsession.forceEndUtterance();
-  };
-  const voiceOrbIcon =
-    voiceErrored || vsnap.state === "idle"
-      ? <AlertTriangle size={16} aria-hidden />
-      : vsnap.state === "connecting"
-        ? <Loader size={16} aria-hidden className="ws-spin" />
-        : vsnap.state === "thinking"
-          ? <X size={16} aria-hidden />          /* tap = scrap the mis-heard turn */
-          : vsnap.state === "speaking"
-            ? <Square size={16} aria-hidden />
-            : <AudioLines size={16} aria-hidden />;
-  const voiceOrbLabel =
-    voiceErrored ? "Voice error"
-    : vsnap.state === "speaking" ? "Stop"
-    : vsnap.state === "listening" ? "Send now"
-    : vsnap.state === "thinking" ? "Cancel - scrap that"
-    : vsnap.state === "connecting" ? "Starting" : "Listening";
-
-  // The single voice status surface, above the composer (replaces the ghost line).
-  // One of: an error with Retry, the live partial transcript while listening, or
-  // the plain state word. `aria-live="polite"` announces state changes.
-  const voiceStatus: { kind: "error" | "partial" | "state"; text: string } =
-    vsnap.error
-      ? { kind: "error", text: vsnap.error }
-      // A standing capture condition outlives any one turn's error, so it gets
-      // its own branch: without this, clearing `error` made "no microphone"
-      // silently become "Listening" again.
-      : vsnap.micFail
-        ? { kind: "error", text: MIC_FAIL_TEXT[vsnap.micFail] }
-        : vsnap.state === "listening" && (vsnap.partial || vsnap.pendingUser)
-          ? { kind: "partial", text: vsnap.partial || vsnap.pendingUser }
-          : {
-              kind: "state",
-              text:
-                vsnap.state === "connecting" ? "Connecting"
-                : vsnap.state === "thinking" ? "Thinking"
-                : vsnap.state === "speaking" ? "Speaking, Esc to stop"
-                // "Listening" with the mic off is a lie, and it's the exact lie
-                // that made a muted mic look like a broken one.
-                : vsnap.state === "listening"
-                  ? (vprefs.mic_enabled ? "Listening" : "Mic off — type to send")
-                  : "Voice on",
-            };
-
   const composer = (
-    <div ref={composerRef} className={`chat-composer${streamingBuild ? " is-streaming" : ""}${inputFocused ? " is-focused" : ""}`}>
-      {showMentions && (
-        <ul className="chat-slash-menu" role="listbox" aria-label="Agents you can mention">
-          {mentionMatches.map((a, i) => {
-            const active = i === Math.min(mentionSel, mentionMatches.length - 1);
-            return (
-              <li
-                key={a.slug}
-                role="option"
-                aria-selected={active}
-                className={`chat-slash-item${active ? " is-active" : ""}`}
-                onMouseEnter={() => setMentionSel(i)}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => pickMention(a.slug)}
-              >
-                <span className="chat-slash-name">@{a.slug}</span>
-                <span className="chat-slash-desc">
-                  {a.role ? `${a.role} · ` : ""}{a.purpose || a.name}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {showSlash && (
-        <ul className="chat-slash-menu" role="listbox" aria-label="Slash commands">
-          {slashMatches.map((c, i) => {
-            const active = i === Math.min(slashSel, slashMatches.length - 1);
-            return (
-              <li
-                key={c.name}
-                role="option"
-                aria-selected={active}
-                className={`chat-slash-item${active ? " is-active" : ""}`}
-                onMouseEnter={() => setSlashSel(i)}
-                // preventDefault on mousedown keeps the textarea focused; the
-                // ACTION runs on click. It used to run on mousedown, which a
-                // touch device only synthesizes after the fact and not
-                // dependably — so on a phone, tapping a command did nothing at
-                // all: no error, no message, no fold. click fires on both.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => runSlash(c)}
-              >
-                <span className="chat-slash-name">/{c.name}</span>
-                <span className="chat-slash-desc">{c.desc}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {voiceOn && (
-        <div className={`chat-voice-strip is-${voiceStatus.kind}`} role="status" aria-live="polite">
-          {voiceStatus.kind === "error" ? (
-            <>
-              <span className="chat-voice-strip__msg">
-                <AlertTriangle size={14} aria-hidden className="chat-voice-strip__icon" />
-                {voiceStatus.text}
-              </span>
-              <Button size="sm" variant="ghost" onClick={() => vsession.retry()}>Retry</Button>
-            </>
-          ) : voiceStatus.kind === "partial" ? (
-            <span className="chat-voice-strip__msg">
-              <span className="chat-voice-strip__label">Heard:</span>
-              <span className="chat-voice-strip__partial">{voiceStatus.text}</span>
-            </span>
-          ) : (
-            <span className="chat-voice-strip__msg">
-              <span className="chat-voice-strip__state">{voiceStatus.text}</span>
-            </span>
-          )}
-        </div>
-      )}
-      <textarea
-        ref={inputRef}
-        className="chat-input"
-        rows={1}
-        value={input}
-        placeholder={
-          voiceOn
-            ? (vprefs.mic_enabled ? "Talk, or type a message..." : "Type a message (mic muted)...")
-            // Provider-neutral: this default also applies when the picker is
-            // switched to an app assistant, so it can't name one scope.
-            : (placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message the assistant..."))
-        }
-        onChange={(e) => onComposerChange(e.target.value)}
-        onKeyDown={onKey}
-        onFocus={() => setInputFocused(true)}
-        onBlur={() => setInputFocused(false)}
-      />
-      <div className="chat-actions">
-        {!voiceOn && contextMeter}
-        <span className="chat-actions__spacer" />
-        {/* Model: a per-turn knob, so it lives with the other per-turn controls
-            instead of in the header beside the things that change the whole
-            surface. Menu rather than <select> — the stock double-arrow was the
-            loudest element in a row of quiet icon buttons. */}
-        {modelOptions.length > 1 ? (
-          <Menu
-            label="Model"
-            align="end"
-            side="top"
-            trigger={
-              <button className="chat-model" onMouseDown={(e) => e.preventDefault()} title="Model for this conversation">
-                <span className="chat-model__val">{modelLabel(selectedModel)}</span>
-                <ChevronDown size={14} aria-hidden className="chat-model__caret" />
-              </button>
-            }
-          >
-            {orderModels(modelOptions).map((id) => (
-              <MenuItem key={id} checked={id === selectedModel} onSelect={() => setSelectedModel(id)}>
-                {modelLabel(id)}
-              </MenuItem>
-            ))}
-          </Menu>
-        ) : modelOptions.length === 1 ? (
-          <span className="chat-model is-static">
-            <span className="chat-model__val">{modelLabel(modelOptions[0])}</span>
-          </span>
-        ) : null}
-        {/* Voice mode: a mode of THIS chat (same thread + log), toggled in place.
-            When on, the state orb, mic mute, reply mute, and settings sit here;
-            when off, just the slash button. Build chats build by talking; data
-            chats converse - either way it's the same conversation. */}
-        {/* The voice cluster (orb, mic-mute, reply-mute, gear) shares a subtle
-            background pill so it reads as one group, distinct from the exit
-            toggle and Send that sit outside it. */}
-        {voiceOn && (
-          <div className={`chat-voice-cluster${voiceErrored ? " is-error" : ""}`}>
-            <button
-              ref={orbRef}
-              className={`chat-voice-orb is-${vsnap.state}${voiceErrored ? " is-error" : ""}`}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={voiceOrbAction}
-              aria-label={voiceOrbLabel}
-              title={voiceOrbLabel}
-            >
-              {voiceOrbIcon}
-            </button>
-            <button
-              className={`chat-slash-btn${vprefs.mic_enabled ? " is-active" : ""}`}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => vupdatePrefs({ mic_enabled: !vprefs.mic_enabled })}
-              aria-pressed={vprefs.mic_enabled}
-              aria-label={vprefs.mic_enabled ? "Mute microphone" : "Unmute microphone"}
-              title={vprefs.mic_enabled ? "Mic on, tap to mute" : "Mic muted, tap to talk"}
-            >
-              {vprefs.mic_enabled ? <Mic size={16} aria-hidden /> : <MicOff size={16} aria-hidden />}
-            </button>
-            {/* Reply-mute ("Speak replies") lives in Voice settings, not here:
-                a persistent TTS-off button next to the mic is the #1 thing that
-                made this cluster confusing (two mute buttons doing different
-                things). The main surface stays orb + mic-mute + settings. */}
-            <button
-              className="chat-slash-btn"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setVoiceSettings(true)}
-              aria-label="Voice settings"
-              title="Voice settings"
-            >
-              <Settings2 size={16} aria-hidden />
-            </button>
-          </div>
-        )}
-        <button
-          className={`chat-slash-btn${voiceOn ? " is-active" : ""}`}
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={toggleVoice}
-          aria-pressed={voiceOn}
-          aria-label={voiceOn ? "Exit voice mode" : "Voice mode"}
-          title={voiceOn ? "Exit voice mode" : (build ? "Voice mode: build by talking" : "Voice mode: talk instead of type")}
-        >
-          {/* Distinct glyph on/off so the exit toggle never reads as a twin of the
-              listening orb's AudioLines: AudioLines invites voice, PhoneOff leaves it. */}
-          {voiceOn ? <PhoneOff size={16} aria-hidden /> : <AudioLines size={16} aria-hidden />}
-        </button>
-        {!voiceOn && (
-          <button
-            className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { setSlashOpen((v) => !v); setSlashSel(0); }}
-            aria-label="Slash commands"
-            aria-expanded={showSlash}
-            title="Slash commands"
-          >
-            <Slash size={16} aria-hidden />
-          </button>
-        )}
-        {/* While a build turn streams, Send (queues the next message) sits to the
-            left of Stop. Otherwise just Send. */}
-        {/* onMouseDown preventDefault: don't let tapping an action button blur the
-            textarea - on mobile that closes the keyboard, the layout jumps, and the
-            tap lands where the button no longer is (the "send needs two taps" bug). */}
-        <button className="chat-send" onMouseDown={(e) => e.preventDefault()} onClick={send} disabled={!input.trim()} aria-label="Send (Enter)" title={streamingBuild ? "Send (queues until the current turn finishes)" : "Send (Enter)"}>
-          <CornerDownLeft size={16} aria-hidden />
-        </button>
-        {streamingBuild && (
-          <button className="chat-stop" onMouseDown={(e) => e.preventDefault()} onClick={stop} aria-label="Stop receiving (turn continues in background)" title="Stop receiving (turn continues in background)">
-            <Square size={16} aria-hidden />
-          </button>
-        )}
-      </div>
-    </div>
+    <ChatComposer
+      composerRef={composerRef}
+      inputRef={inputRef}
+      input={input}
+      onChange={onComposerChange}
+      onKeyDown={onKey}
+      placeholder={
+        voiceOn
+          ? (vprefs.mic_enabled ? "Talk, or type a message..." : "Type a message (mic muted)...")
+          // Provider-neutral: this default also applies when the picker is
+          // switched to an app assistant, so it cannot name one scope.
+          : (placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message the assistant..."))
+      }
+      focused={inputFocused}
+      onFocusChange={setInputFocused}
+      slashOptions={slashMatches.map((c) => ({ key: c.name, label: `/${c.name}`, desc: c.desc }))}
+      slashSelected={slashSel}
+      showSlash={showSlash}
+      onSlashHover={setSlashSel}
+      onSlashPick={(name) => {
+        const c = slashMatches.find((x) => x.name === name);
+        if (c) runSlash(c);
+      }}
+      onToggleSlash={() => { setSlashOpen((v) => !v); setSlashSel(0); }}
+      mentionOptions={mentionMatches.map((a) => ({
+        key: a.slug,
+        label: `@${a.slug}`,
+        desc: `${a.role ? `${a.role} · ` : ""}${a.purpose || a.name}`,
+      }))}
+      mentionSelected={mentionSel}
+      showMentions={showMentions}
+      onMentionHover={setMentionSel}
+      onMentionPick={pickMention}
+      streaming={streamingBuild}
+      onSend={send}
+      onStop={stop}
+      canSend={!!input.trim()}
+      modelOptions={modelOptions}
+      selectedModel={selectedModel}
+      onSelectModel={setSelectedModel}
+      activeId={activeId}
+      messages={messages}
+      ctxNonce={ctxNonce}
+      voiceOn={voiceOn}
+      onToggleVoice={toggleVoice}
+      isBuild={build}
+      vsnap={vsnap}
+      vprefs={vprefs}
+      vsession={vsession}
+      orbRef={orbRef}
+      onUpdatePrefs={vupdatePrefs}
+      onOpenVoiceSettings={() => setVoiceSettings(true)}
+    />
   );
 
   const panelInner = (
@@ -1802,9 +1179,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           better. */}
       {err && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
-      {deleteDialog}
-      {ticketDialog}
-      {newChatDialog}
+      {dialogs}
       <VoiceSettings
         open={voiceSettings}
         onClose={() => setVoiceSettings(false)}
