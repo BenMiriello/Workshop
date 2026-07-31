@@ -88,7 +88,10 @@ export function Menu({
     // re-triggered by the same press that was meant to dismiss it.
     document.addEventListener("pointerdown", onDown);
     document.addEventListener("keydown", onKey, true);
-    listRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    // Focus the LIST, not its first item: focusing an item drew a focus ring
+    // around a row you hadn't chosen, which reads as a border on a random entry.
+    // ArrowDown from here still lands on the first item (`at` is -1).
+    listRef.current?.focus();
     return () => {
       document.removeEventListener("pointerdown", onDown);
       document.removeEventListener("keydown", onKey, true);
@@ -116,6 +119,7 @@ export function Menu({
           id={id}
           ref={listRef}
           role="menu"
+          tabIndex={-1}
           aria-label={label}
           className={cx("ws-menu__list", `ws-menu__list--${align}`, `ws-menu__list--${side}`)}
           // Activating an item closes the menu; individual items don't each
@@ -141,8 +145,9 @@ export function MenuItem({
   children: ReactNode;
   onSelect: () => void;
   icon?: ReactNode;
-  // Present (true or false) marks this menu a single-choice picker: every item
-  // reserves the check column so the labels stay aligned.
+  // Marks the chosen entry in a single-choice menu. Only the checked row shows
+  // (and takes space for) the mark — an unchosen row is not indented to reserve
+  // room for something it doesn't have.
   checked?: boolean;
   // "You are here" — for a menu used as navigation. Distinct from `checked`,
   // which is a choice you made; this is where the app currently is.
@@ -158,9 +163,9 @@ export function MenuItem({
       className={cx("ws-menu__item", active && "is-active", danger && "ws-menu__item--danger")}
       onClick={onSelect}
     >
-      {checked !== undefined && (
+      {checked && (
         <span className="ws-menu__check" aria-hidden>
-          {checked && <Check size={14} />}
+          <Check size={14} />
         </span>
       )}
       {icon && <span className="ws-menu__icon" aria-hidden>{icon}</span>}

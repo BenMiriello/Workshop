@@ -96,6 +96,26 @@ function taskScopeFor(contextKey: string): string | null {
   return null;
 }
 
+// Display order for the model picker: most-reached-for first. The backend's
+// list order drives default-model resolution, so this reorders the MENU only —
+// anything the backend serves that isn't named here keeps its original position
+// at the end, so a newly added model still shows up.
+const MODEL_ORDER = [
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-sonnet-5",
+  "claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001",
+];
+function orderModels(ids: string[]): string[] {
+  const rank = (id: string) => {
+    const i = MODEL_ORDER.indexOf(id);
+    return i === -1 ? MODEL_ORDER.length : i;
+  };
+  return [...ids].sort((a, b) => rank(a) - rank(b));
+}
+
 const MODEL_LABELS: Record<string, string> = {
   "claude-opus-5": "Opus 5",
   "claude-opus-4-8": "Opus 4.8",
@@ -2271,7 +2291,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
               </button>
             }
           >
-            {modelOptions.map((id) => (
+            {orderModels(modelOptions).map((id) => (
               <MenuItem key={id} checked={id === selectedModel} onSelect={() => setSelectedModel(id)}>
                 {modelLabel(id)}
               </MenuItem>
