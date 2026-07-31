@@ -1502,6 +1502,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const text = raw.trim();
     if (!text) return;
     setErr(null);
+    // A note describes the LAST thing the operator did. Sending makes it stale,
+    // so it goes with the error it sits beside. Without this the two transient
+    // surfaces had different lifetimes — errors cleared on the next send, notes
+    // never did — and a "Filed as a ticket" banner from twenty minutes ago was
+    // still sitting above a conversation that had long moved on.
+    setNotice(null);
     followLatest();
     // /compact is a Workshop action, not a message. Intercept it here as well as
     // in the autocomplete, so typing it and hitting enter folds the transcript
@@ -2566,7 +2572,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {log}
       {jumpToLatest}
       {egressBanner}
-      {err && messages.length > 0 && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
+      {/* Not gated on message count. It used to require `messages.length > 0`,
+          which silently swallowed every error on a fresh chat — including the
+          model-list load failure, which happens exactly there, and compact's own
+          "this chat has no messages yet", a message that by construction could
+          never be seen. The egress banner is the one case that already says it
+          better. */}
+      {err && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
       {deleteDialog}
       {ticketDialog}
