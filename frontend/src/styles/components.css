@@ -1335,6 +1335,19 @@ a.ws-btn { text-decoration: none; }
 .ws-voice-hintline { font-size: var(--fs-xs); color: var(--muted); }
 .ws-voice-rangeends { display: flex; justify-content: space-between; font-size: var(--fs-xs); color: var(--faint); }
 .ws-range { accent-color: var(--accent); width: 100%; }
+/* Diagnostics readout: label/value pairs, values right-aligned and monospaced so
+   a changing measurement doesn't reflow the column. */
+.ws-voice-diag {
+  display: grid; grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3); margin: var(--space-2) 0 0;
+  font-size: var(--fs-xs);
+}
+.ws-voice-diag dt { color: var(--muted); }
+.ws-voice-diag dd {
+  margin: 0; text-align: right; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); color: var(--fg);
+}
 
 /* Disclosure: an accessible collapse for secondary controls (e.g. the voice
    settings "Advanced" section). The summary is a real button (aria-expanded);

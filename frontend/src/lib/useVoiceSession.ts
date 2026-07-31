@@ -9,6 +9,7 @@ import { voiceApi } from "./voiceApi";
 import {
   VoiceSession,
   DEFAULT_PREFS,
+  normalizeModes,
   type VoicePrefs,
   type VoiceSnapshot,
   type ReplyHandle,
@@ -215,6 +216,11 @@ export function useVoiceSession(
           speed: p.speed ?? DEFAULT_PREFS.speed,
           tts_provider: (p.tts_provider as VoicePrefs["tts_provider"]) ?? DEFAULT_PREFS.tts_provider,
           stt_provider: (p.stt_provider as VoicePrefs["stt_provider"]) ?? DEFAULT_PREFS.stt_provider,
+          // The modality matrix. A prefs file written before it existed carries
+          // only the legacy booleans; normalizeModes below derives the modes
+          // from them rather than snapping back to the default.
+          input_mode: (p.input_mode as VoicePrefs["input_mode"]) ?? DEFAULT_PREFS.input_mode,
+          output_mode: (p.output_mode as VoicePrefs["output_mode"]) ?? DEFAULT_PREFS.output_mode,
           mic_enabled: p.mic_enabled ?? DEFAULT_PREFS.mic_enabled,
           speak_replies: p.speak_replies ?? DEFAULT_PREFS.speak_replies,
           typing_hold: p.typing_hold ?? DEFAULT_PREFS.typing_hold,
@@ -227,9 +233,12 @@ export function useVoiceSession(
           barge_sensitivity: p.barge_sensitivity ?? DEFAULT_PREFS.barge_sensitivity,
           verbosity: (p.verbosity as VoicePrefs["verbosity"]) ?? DEFAULT_PREFS.verbosity,
         };
-        prefsRef.current = merged;
-        setPrefsState(merged);
-        session.setPrefs(merged);
+        // One normalization at the boundary, so nothing downstream has to ask
+        // whether the modes or the legacy booleans are the truthful pair.
+        const norm = normalizeModes(merged);
+        prefsRef.current = norm;
+        setPrefsState(norm);
+        session.setPrefs(norm);
       })
       .catch(() => {});
     return () => {
@@ -247,7 +256,7 @@ export function useVoiceSession(
 
   const updatePrefs = useCallback(
     (patch: Partial<VoicePrefs>) => {
-      const next = { ...prefsRef.current, ...patch };
+      const next = normalizeModes({ ...prefsRef.current, ...patch });
       prefsRef.current = next;
       // (a) React state so the controls repaint now; (b) push merged prefs to the
       // live session (re-resolves providers / applies mute mid-speech).

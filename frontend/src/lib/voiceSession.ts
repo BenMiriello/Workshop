@@ -131,9 +131,16 @@ export type VoiceDiagnostics = {
   micRunning: boolean;
   micSuspended: boolean; // input lane off BY INTENT — not a failure
   secureContext: boolean;
+  deviceLabel: string | null;
   lastTurnMs: number | null;   // endpoint -> first audio
   lastSttMs: number | null;    // duration of the last committed transcription
 };
+
+// Outcome of the "Test microphone" probe: either a transcript (possibly empty,
+// which is itself an answer) or the specific reason we couldn't get one.
+export type MicTestResult =
+  | { ok: true; text: string; ms: number; bytes: number }
+  | { ok: false; reason: string };
 
 export type VoiceSnapshot = {
   state: VoiceState;
@@ -238,6 +245,7 @@ export class VoiceSession {
   private emitted = 0;              // sentences cut from the stream so far
   private tEndpoint = 0;            // mark: when we committed the turn
   private lastTurnMs: number | null = null;  // endpoint -> first audio (footer)
+  private lastSttMs: number | null = null;   // last committed transcription pass
   // Speculative endpointing state.
   private segs: string[] = [];        // transcribed segments of the current utterance
   private eagerFires = 0;             // eager pauses acted on this utterance (cap 2)
@@ -321,6 +329,60 @@ export class VoiceSession {
     };
     return this._snapshot;
   }
+
+  // Deliberately NOT part of the snapshot: rawLevel changes ~60fps and would
+  // re-render the tree every frame. The settings sheet polls this while it's
+  // open; nothing else reads it.
+  diagnostics(): VoiceDiagnostics {
+    const l = this.mic.levels();
+    return {
+      rawLevel: l.raw,
+      noiseFloor: l.floor,
+      threshold: l.threshold,
+      calibrated: l.calibrated,
+      micRunning: this.mic.running,
+      micSuspended: this.micSuspended,
+      secureContext: typeof window !== "undefined" ? window.isSecureContext : false,
+      deviceLabel: this.mic.deviceLabel,
+      lastTurnMs: this.lastTurnMs,
+      lastSttMs: this.lastSttMs,
+    };
+  }
+
+  // "Test microphone": open the mic if it isn't already, record a fixed window,
+  // and transcribe it through the SAME committed path a real turn uses. This is
+  // the one control that answers "is it me, the mic, the model, or the network"
+  // in a single press — every layer it touches is the real one.
+  async testMic(ms = 3000): Promise<MicTestResult> {
+    const pre = micPreflight();
+    if (pre) return { ok: false, reason: pre.message };
+    // Borrow the live mic when a session is running; otherwise stand one up and
+    // put it back exactly as we found it.
+    const borrowed = this.mic.running;
+    if (!borrowed) {
+      try { await this.mic.start({}); }
+      catch (e) { return { ok: false, reason: e instanceof Error ? e.message : String(e) }; }
+    }
+    const wasCapturing = this.capturing;
+    try {
+      if (wasCapturing) {
+        // Don't cut the live segment out from under a turn in progress.
+        return { ok: false, reason: "Busy with a turn — try again once it's finished." };
+      }
+      this.mic.startRecording();
+      await new Promise((r) => setTimeout(r, ms));
+      const blob = await this.mic.stopRecording();
+      if (!blob || blob.size === 0) return { ok: false, reason: "The recorder produced no audio." };
+      const t0 = performance.now();
+      const text = await transcribeBlob(blob);
+      return { ok: true, text, ms: Math.round(performance.now() - t0), bytes: blob.size };
+    } catch (e) {
+      return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+    } finally {
+      if (!borrowed) this.mic.stop();
+    }
+  }
+
   private set(s: VoiceState) {
     // The thinking watchdog is armed while (and only while) we are in `thinking`;
     // any state exit clears it.
@@ -545,6 +607,9 @@ export class VoiceSession {
     this.browserReArms = 0;
     this.set("listening");
     if (this.micOff) return;   // composer-only: no mic capture
+    // No resolved hearing engine (input_mode "text", or every tier unavailable).
+    // "listening" here means "waiting for your turn", which the composer serves.
+    if (!this.sttProvider) return;
     if (this.sttProvider === "browser") this.armBrowserListen();
     else if (this.sttProvider === "native") this.armNativeListen();
     else this.armServerListen();
@@ -697,12 +762,22 @@ export class VoiceSession {
         })
         .catch((e) => {
           this.browserAbort = null;
+          // We tore the recognizer down on purpose (mic muted, session stopped).
+          // Its complaint is our own doing — never surface it, and above all
+          // never let it reach the permission test below. This was B4: muting
+          // read as "Microphone permission denied" and killed the session.
+          if (this.micSuspended || this.micOff) return;
           const msg = String((e as Error)?.message || e);
           // Permission denied is permanent — a re-arm just fails identically and
-          // spins forever. Flag it fatal so the UI drops voiceOn.
+          // spins forever. With a text lane still available, degrade instead of
+          // bricking: report it as a standing mic condition and keep the
+          // composer live. Only voice-only input has nothing left to fall to.
           if (/not-allowed|denied|service-not-allowed/i.test(msg)) {
-            this.error = "Microphone permission denied.";
-            this.fatal = true;
+            this.micFail = "notAllowed";
+            this.error = "Microphone permission denied. Allow it in the browser's site settings, then tap the mic.";
+            this.micOff = true;
+            this.mic.stop();
+            if (this.cfg.prefs.input_mode === "voice") this.fatal = true;
             this.emit();
             return;
           }
@@ -719,6 +794,7 @@ export class VoiceSession {
   // consecutive misfires so a wedged recognizer can't spin an infinite loop.
   private reArmBrowser(failMsg?: string) {
     if (this.state !== "listening") return;
+    if (this.micSuspended || this.micOff) return;   // intentionally off — stay off
     if (++this.browserReArms >= 3) {
       this.error = failMsg ? `stt: ${failMsg}` : "No speech detected. Tap the mic to retry.";
       this.browserReArms = 0;
@@ -767,8 +843,10 @@ export class VoiceSession {
     const spoke = !!blob && blob.size > 0;
     let sttFailed = false;
     if (spoke) {
+      const t0 = performance.now();
       try { const t = await transcribeBlob(blob!); if (t) this.segs.push(t); }
       catch { sttFailed = true; /* keep whatever segments we have */ }
+      this.lastSttMs = Math.round(performance.now() - t0);
     }
     // The preview has served its purpose; the committed segments now own the
     // pending text. Clearing here stops a stale partial double-printing next to

@@ -1864,14 +1864,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
                     <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
                   </div>
                 )}
-                {/* A step-exhausted turn usually HAS written an answer, so
-                    without this it reads as a turn that finished when it was
-                    actually cut off mid-task. */}
-                {m.meta?.stopped === "max_steps" && !m.meta?.timeout && (
-                  <div className="chat-timeout-tag">
-                    <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at its step limit, send "continue"
-                  </div>
-                )}
                 {renderAssistant(m, idle && i === lastAssistantIdx)}
               </>
             ) : (

@@ -315,6 +315,12 @@ export class MicStream {
   // transcription pass when there is speech to preview.
   get inSpeech(): boolean { return this.speaking; }
 
+  // Which input device the browser actually gave us. Not necessarily the one the
+  // OS shows as default, which is a common source of "it works everywhere else".
+  get deviceLabel(): string | null {
+    return this.stream?.getAudioTracks()[0]?.label || null;
+  }
+
   // Reset the rolling peak and report what it was. The no-signal watchdog calls
   // this on an interval: a peak of ~0 over a whole window means the track is
   // producing silence (unplugged, muted in the OS, or a dead WebView capture).

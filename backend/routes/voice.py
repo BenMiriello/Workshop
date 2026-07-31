@@ -206,6 +206,8 @@ class PrefsBody(BaseModel):
     voice: str | None = None
     speed: float | None = None
     verbosity: str | None = None
+    input_mode: str | None = None
+    output_mode: str | None = None
     mic_enabled: bool | None = None
     speak_replies: bool | None = None
     typing_hold: bool | None = None
