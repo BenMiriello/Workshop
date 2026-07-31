@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import {
+  Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight,
+  ListTodo, Play,
+} from "lucide-react";
 import { Button, Input, StateBlock } from "../../ui";
 
 // Items an agent raised that need the operator.
@@ -31,6 +35,11 @@ export type InboxItem = {
   body: string;
   options: string[];
   chat_id: string | null;
+  // What this item is ABOUT. An inbox row that cannot reach the work it
+  // describes makes the operator go find it by hand, which is most of the
+  // reason the old attention surfaces went unread.
+  ticket_id: string | null;
+  run_id: string | null;
 };
 
 type Counts = { notify: number; question: number; review: number };
@@ -67,6 +76,7 @@ export default function InboxStrip({
   // how you read the detail and reach the actions. Without this every row
   // carries its body and its buttons and four of them fill a phone screen.
   const [expanded, setExpanded] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     const q = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : "";
@@ -188,6 +198,28 @@ export default function InboxStrip({
                 {isOpen && (
                   <div className="chat-inbox__detail">
                     {it.body && <p className="chat-inbox__body">{it.body}</p>}
+
+                    {/* Where the thing being asked about actually lives. */}
+                    {(it.ticket_id || it.run_id) && (
+                      <div className="chat-inbox__actions">
+                        {it.ticket_id && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => navigate(
+                              `/tickets/${encodeURIComponent(it.scope)}/${encodeURIComponent(it.ticket_id!)}`)}
+                          >
+                            <ListTodo size={14} aria-hidden /> Open ticket
+                          </Button>
+                        )}
+                        {it.run_id && (
+                          <Button size="sm" variant="ghost"
+                                  onClick={() => navigate(`/runs/${encodeURIComponent(it.run_id!)}`)}>
+                            <Play size={14} aria-hidden /> Open run
+                          </Button>
+                        )}
+                      </div>
+                    )}
 
                     {it.kind === "question" && (
                       <div className="chat-inbox__actions">
