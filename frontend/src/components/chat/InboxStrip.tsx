@@ -1,20 +1,27 @@
 import { useCallback, useEffect, useState } from "react";
-import { Bell, Check, X, MessageCircleQuestion, ClipboardCheck, Info } from "lucide-react";
-import { Button, Input, Tag, catFor } from "../../ui";
+import { Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight } from "lucide-react";
+import { Button, Input, StateBlock } from "../../ui";
 
-// Items an agent raised that need the operator, shown above the transcript.
+// Items an agent raised that need the operator.
 //
 // NOT typed by entity. A finished run, a blocked agent and a proposal awaiting
 // approval are one kind of thing (something wants you) with three verbs, which
-// is what makes a single stack coherent instead of a pile of mixed nouns:
+// is what makes a single list coherent instead of a pile of mixed nouns:
 //
 //   question  the agent is stuck and is asking rather than guessing  -> answer
 //   review    the agent proposes something                           -> approve / reject
 //   notify    FYI, safe to ignore                                    -> dismiss
 //
-// The store is global; this is the per-chat view of it. What a chat does not
-// show inline is still counted here ("and N more"), because a filtered view
-// that cannot tell you what it filtered out is how things get missed.
+// SHAPE. This is a panel behind a toolbar toggle, not an inline banner. The
+// first cut rendered every open item inline at full size, always: on a phone
+// that pushed the log and the composer off-screen entirely, and with no cap it
+// grew without bound. An interrupt surface has to be bounded in every
+// direction — count, height, and row height — or it stops being a signal and
+// becomes the page.
+//
+// Even when closed the component stays mounted, polling and reporting its count
+// upward, so the toolbar badge is live without the operator opening anything to
+// find out whether it should be.
 export type InboxItem = {
   id: string;
   kind: "notify" | "question" | "review";
@@ -34,50 +41,77 @@ const KIND_ICON = {
   notify: Info,
 } as const;
 
+// At most this many rows are rendered. The rest are reachable through the
+// footer link rather than by scrolling a list that has no natural end.
+const MAX_ROWS = 4;
+
 export default function InboxStrip({
   chatId,
+  open,
+  onCountChange,
+  onClose,
   onOpenGlobal,
 }: {
   chatId: string | null;
+  open: boolean;
+  onCountChange: (n: number) => void;
+  onClose: () => void;
   onOpenGlobal: () => void;
 }) {
   const [items, setItems] = useState<InboxItem[] | null>(null);
   const [globalCounts, setGlobalCounts] = useState<Counts | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  // One row at a time is expanded. A collapsed row is one line; expanding is
+  // how you read the detail and reach the actions. Without this every row
+  // carries its body and its buttons and four of them fill a phone screen.
+  const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const q = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : "";
     try {
       const r = await fetch(`/api/inbox${q}`);
-      if (!r.ok) { setItems([]); return; }
+      if (!r.ok) { setErr(`/api/inbox → ${r.status}`); setItems([]); return; }
       const j = await r.json();
+      setErr(null);
       setItems(j.items || []);
       setGlobalCounts(j.global_counts || null);
-    } catch {
+    } catch (e) {
       // A failed poll leaves the last good state on screen rather than blanking
-      // the strip: an inbox that empties itself on a network blip is worse than
+      // the panel: an inbox that empties itself on a network blip is worse than
       // one that is briefly stale.
+      setErr(String(e));
       setItems((v) => v ?? []);
     }
   }, [chatId]);
 
   useEffect(() => {
     void load();
-    // Agents act on their own schedule, so this has to poll. 20s is under the
-    // threshold where the operator would notice a lag and well above anything
-    // that would cost meaningfully; it pauses while the tab is hidden.
+    // Agents act on their own schedule, so this polls. 20s is under the point
+    // where the operator would notice a lag; it pauses while the tab is hidden.
     const t = window.setInterval(() => { if (!document.hidden) void load(); }, 20000);
     const onVis = () => { if (!document.hidden) void load(); };
     document.addEventListener("visibilitychange", onVis);
     return () => { window.clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, [load]);
 
+  useEffect(() => { onCountChange(items ? items.length : 0); }, [items, onCountChange]);
+
+  // Escape closes, matching every other transient panel in the app.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   const resolve = useCallback(async (id: string, answer: string | null, dismissed: boolean) => {
     setBusy(id);
-    // Optimistic: the operator acted, so the item goes now. It is re-fetched
-    // straight after, which corrects the rare case where the write failed.
+    // Optimistic: the operator acted, so the row goes now. A re-fetch follows,
+    // which corrects the rare case where the write failed.
     setItems((v) => (v || []).filter((i) => i.id !== id));
+    setExpanded((e) => (e === id ? null : e));
     try {
       await fetch(`/api/inbox/${encodeURIComponent(id)}/resolve`, {
         method: "POST",
@@ -90,90 +124,129 @@ export default function InboxStrip({
     }
   }, [load]);
 
-  if (!items || items.length === 0) {
-    // No empty state. This is an interrupt surface: when nothing needs the
-    // operator it must take zero space and say nothing at all.
-    return null;
-  }
+  // Mounted-but-closed is the normal state: it keeps the badge count live and
+  // renders nothing.
+  if (!open) return null;
 
-  const elsewhere = globalCounts
-    ? (globalCounts.notify + globalCounts.question + globalCounts.review) - items.length
+  const total = items?.length ?? 0;
+  const shown = (items || []).slice(0, MAX_ROWS);
+  const overflow = total - shown.length;
+  const globalTotal = globalCounts
+    ? globalCounts.notify + globalCounts.question + globalCounts.review
     : 0;
+  const elsewhere = Math.max(0, globalTotal - total);
 
   return (
     <div className="chat-inbox" role="region" aria-label="Agents needing you">
-      {items.map((it) => {
-        const Icon = KIND_ICON[it.kind] ?? Info;
-        return (
-          <div key={it.id} className={`chat-inbox__item chat-inbox__item--${it.kind}`}>
-            <div className="chat-inbox__head">
-              <Icon size={14} strokeWidth={1.8} aria-hidden />
-              <Tag hue={catFor(`agent:${it.agent}`)}>{it.agent}</Tag>
-              <span className="chat-inbox__title">{it.title}</span>
-              <button
-                type="button"
-                className="chat-inbox__dismiss"
-                onClick={() => void resolve(it.id, null, true)}
-                title="Dismiss"
-                aria-label={`Dismiss: ${it.title}`}
-              >
-                <X size={14} aria-hidden />
-              </button>
-            </div>
-            {it.body && <p className="chat-inbox__body">{it.body}</p>}
-
-            {it.kind === "question" && (
-              <div className="chat-inbox__actions">
-                {it.options.length > 0 ? (
-                  it.options.map((o) => (
-                    <Button key={o} size="sm" variant="ghost"
-                            onClick={() => void resolve(it.id, o, false)}>
-                      {o}
-                    </Button>
-                  ))
-                ) : (
-                  <>
-                    <Input
-                      value={answers[it.id] || ""}
-                      onChange={(e) => setAnswers((a) => ({ ...a, [it.id]: e.target.value }))}
-                      placeholder="Answer…"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && (answers[it.id] || "").trim()) {
-                          void resolve(it.id, answers[it.id].trim(), false);
-                        }
-                      }}
+      {err && items && items.length === 0 ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load the inbox"
+          hint={<><code>{err}</code></>}
+          action={<Button size="sm" variant="ghost" onClick={() => void load()}>Retry</Button>}
+        />
+      ) : items === null ? (
+        <div className="chat-inbox__empty">Loading…</div>
+      ) : total === 0 ? (
+        <div className="chat-inbox__empty">
+          Nothing waiting on you. Agents raise questions and reviews here.
+        </div>
+      ) : (
+        <ul className="chat-inbox__list">
+          {shown.map((it) => {
+            const Icon = KIND_ICON[it.kind] ?? Info;
+            const isOpen = expanded === it.id;
+            return (
+              <li key={it.id} className={`chat-inbox__item chat-inbox__item--${it.kind}`}>
+                <div className="chat-inbox__row">
+                  <button
+                    type="button"
+                    className="chat-inbox__toggle"
+                    onClick={() => setExpanded(isOpen ? null : it.id)}
+                    aria-expanded={isOpen}
+                  >
+                    <Icon size={14} strokeWidth={1.8} aria-hidden className="chat-inbox__kind" />
+                    <span className="chat-inbox__agent">{it.agent}</span>
+                    <span className="chat-inbox__title">{it.title}</span>
+                    <ChevronRight
+                      size={14}
+                      aria-hidden
+                      className={`chat-inbox__caret${isOpen ? " is-open" : ""}`}
                     />
-                    <Button
-                      size="sm"
-                      variant="primary"
-                      disabled={!(answers[it.id] || "").trim() || busy === it.id}
-                      onClick={() => void resolve(it.id, (answers[it.id] || "").trim(), false)}
-                    >
-                      Send
-                    </Button>
-                  </>
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-inbox__dismiss"
+                    onClick={() => void resolve(it.id, null, true)}
+                    title="Dismiss"
+                    aria-label={`Dismiss: ${it.title}`}
+                  >
+                    <X size={14} aria-hidden />
+                  </button>
+                </div>
+
+                {isOpen && (
+                  <div className="chat-inbox__detail">
+                    {it.body && <p className="chat-inbox__body">{it.body}</p>}
+
+                    {it.kind === "question" && (
+                      <div className="chat-inbox__actions">
+                        {it.options.length > 0 ? (
+                          it.options.map((o) => (
+                            <Button key={o} size="sm" variant="ghost"
+                                    onClick={() => void resolve(it.id, o, false)}>
+                              {o}
+                            </Button>
+                          ))
+                        ) : (
+                          <>
+                            <Input
+                              value={answers[it.id] || ""}
+                              onChange={(e) => setAnswers((a) => ({ ...a, [it.id]: e.target.value }))}
+                              placeholder="Answer…"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && (answers[it.id] || "").trim()) {
+                                  void resolve(it.id, answers[it.id].trim(), false);
+                                }
+                              }}
+                            />
+                            <Button
+                              size="sm"
+                              variant="primary"
+                              disabled={!(answers[it.id] || "").trim() || busy === it.id}
+                              onClick={() => void resolve(it.id, (answers[it.id] || "").trim(), false)}
+                            >
+                              Send
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {it.kind === "review" && (
+                      <div className="chat-inbox__actions">
+                        <Button size="sm" variant="primary" onClick={() => void resolve(it.id, "approved", false)}>
+                          <Check size={14} aria-hidden /> Approve
+                        </Button>
+                        <Button size="sm" variant="ghost" onClick={() => void resolve(it.id, "rejected", false)}>
+                          Reject
+                        </Button>
+                      </div>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
-            {it.kind === "review" && (
-              <div className="chat-inbox__actions">
-                <Button size="sm" variant="primary" onClick={() => void resolve(it.id, "approved", false)}>
-                  <Check size={14} aria-hidden /> Approve
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => void resolve(it.id, "rejected", false)}>
-                  Reject
-                </Button>
-              </div>
-            )}
-          </div>
-        );
-      })}
-
-      {elsewhere > 0 && (
+      {(overflow > 0 || elsewhere > 0) && (
         <button type="button" className="chat-inbox__more" onClick={onOpenGlobal}>
-          <Bell size={13} strokeWidth={1.8} aria-hidden />
-          {elsewhere} more in other scopes
+          {overflow > 0 && `${overflow} more here`}
+          {overflow > 0 && elsewhere > 0 && " · "}
+          {elsewhere > 0 && `${elsewhere} in other scopes`}
+          <ChevronRight size={13} strokeWidth={1.8} aria-hidden />
         </button>
       )}
     </div>

@@ -1106,55 +1106,92 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-byline span { font-weight: 600; letter-spacing: 0.01em; }
 
-/* ---- Inbox strip: agents needing the operator, above the transcript ----
-   An interrupt surface, so it is quiet by default and takes zero space when
-   empty (the component returns null). Kind is carried by icon + a left accent
-   on the question/review rows, not by a box: per DS rule 6 hierarchy comes from
-   position, weight and color. The accent is the one exception and it is load-
-   bearing — it is what lets a question be found at a glance in a stack. */
+/* ---- Inbox panel: agents needing the operator -------------------------
+   A panel behind a toolbar toggle, sized like the task panel. Every dimension
+   is bounded: at most 4 rows render, the panel caps at a fraction of the
+   viewport and scrolls inside itself, and a collapsed row is exactly one line.
+   The first version was an unbounded inline stack of full-size cards, which on
+   a phone pushed the log and composer off-screen. `flex: 0 0 auto` + max-height
+   is what keeps it from ever taking the log's space. */
 .chat-inbox {
-  display: flex; flex-direction: column; gap: var(--space-2);
-  padding: var(--space-2) var(--space-3) 0;
+  flex: 0 0 auto;
+  display: flex; flex-direction: column;
+  max-height: 40vh;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-inset);
 }
-.chat-inbox__item {
-  background: var(--card-bg);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
+@media (max-width: 640px) {
+  /* Tighter on a phone: the log is the point of the screen, not the panel. */
+  .chat-inbox { max-height: 34vh; }
 }
+.chat-inbox__empty {
+  color: var(--muted); font-size: var(--fs-xs);
+  padding: var(--space-2) var(--space-1);
+}
+.chat-inbox__list { list-style: none; margin: 0; padding: 0; }
+.chat-inbox__item { border-radius: var(--radius-sm); }
+.chat-inbox__item + .chat-inbox__item { margin-top: 1px; }
 /* Only the two kinds that WANT something are marked. A notification is the
    quiet default; marking everything would mark nothing. */
-.chat-inbox__item--question { box-shadow: inset 3px 0 0 var(--accent); }
-.chat-inbox__item--review { box-shadow: inset 3px 0 0 var(--warn); }
-.chat-inbox__head {
+.chat-inbox__item--question .chat-inbox__kind { color: var(--accent); }
+.chat-inbox__item--review .chat-inbox__kind { color: var(--warn); }
+.chat-inbox__item--notify .chat-inbox__kind { color: var(--muted); }
+
+.chat-inbox__row { display: flex; align-items: center; gap: var(--space-1); }
+.chat-inbox__row:hover { background: var(--card-hover); border-radius: var(--radius-sm); }
+/* The whole row is the expander. One line, never two: min-width:0 on the flex
+   child plus ellipsis on the title is what stops a long title from wrapping and
+   silently doubling every row's height. */
+.chat-inbox__toggle {
+  flex: 1 1 auto; min-width: 0;
   display: flex; align-items: center; gap: var(--space-2);
-  color: var(--muted);
+  padding: 0.4rem 0.45rem;
+  background: transparent; border: none; border-radius: var(--radius-sm);
+  color: var(--fg); font: inherit; font-size: var(--fs-sm);
+  text-align: left; cursor: pointer;
+}
+.chat-inbox__kind { flex: 0 0 auto; }
+.chat-inbox__agent {
+  flex: 0 0 auto; max-width: 8rem;
+  color: var(--muted); font-size: var(--fs-xs);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chat-inbox__title {
   flex: 1 1 auto; min-width: 0;
-  color: var(--fg); font-size: var(--fs-sm); font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.chat-inbox__caret {
+  flex: 0 0 auto; color: var(--muted);
+  transition: transform var(--motion-fast, 120ms) ease;
+}
+.chat-inbox__caret.is-open { transform: rotate(90deg); }
 .chat-inbox__dismiss {
   flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
-  width: 1.6rem; height: 1.6rem; padding: 0;
+  width: 1.75rem; height: 1.75rem; padding: 0;
   color: var(--muted); background: transparent; border: none;
   border-radius: var(--radius-sm); cursor: pointer;
 }
 .chat-inbox__dismiss:hover { color: var(--fg); background: var(--card-hover); }
+
+.chat-inbox__detail { padding: 0 0.45rem 0.5rem 2rem; }
 .chat-inbox__body {
-  margin: var(--space-2) 0 0;
+  margin: 0 0 var(--space-2);
   color: var(--muted); font-size: var(--fs-sm); line-height: 1.45;
+  /* Clamped: a long body must not turn the panel into a document. Expanding a
+     row is a preview, not the full record. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden;
 }
 .chat-inbox__actions {
-  display: flex; align-items: center; flex-wrap: wrap;
-  gap: var(--space-2); margin-top: var(--space-3);
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2);
 }
-.chat-inbox__actions .ws-input { flex: 1 1 12rem; min-width: 0; }
+.chat-inbox__actions .ws-input { flex: 1 1 9rem; min-width: 0; }
 .chat-inbox__more {
-  display: inline-flex; align-items: center; gap: 0.3rem;
+  display: inline-flex; align-items: center; gap: 0.2rem;
   align-self: flex-start;
-  padding: 0.25rem 0.4rem;
+  margin-top: var(--space-1); padding: 0.3rem 0.45rem;
   color: var(--muted); background: transparent; border: none;
   border-radius: var(--radius-sm);
   font: inherit; font-size: var(--fs-xs); cursor: pointer;

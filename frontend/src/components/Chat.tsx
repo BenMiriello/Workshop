@@ -4,7 +4,7 @@ import {
   Plus, Trash2, CornerDownLeft, Square, Wrench, Maximize2, ChevronLeft,
   WifiOff, ChevronRight, X, ListTodo, ListPlus, Clock, Slash, AudioLines,
   PanelsTopLeft, Mic, MicOff, Loader, Settings2, AlertTriangle, PhoneOff, Play,
-  UserPlus, FoldVertical, ArrowDown, MoreVertical, ChevronDown, MessagesSquare, Bot,
+  FoldVertical, ArrowDown, Bell, MoreVertical, ChevronDown, MessagesSquare, Bot,
 } from "lucide-react";
 import { ConfirmDialog, StateBlock, Button, Markdown, Menu, MenuItem, MenuSeparator } from "../ui";
 import { scopeLabel } from "../lib/tasks";
@@ -461,86 +461,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // still there) but disorienting mid-conversation, so it asks first.
   const [confirmNew, setConfirmNew] = useState(false);
 
-  // P4: participants on the active thread. Populated from getThread + the
-  // /participants routes; canonical form is `agent:<slug>`. Empty on threads
-  // that have never been assigned an agent.
-  const [participants, setParticipants] = useState<string[]>([]);
-  // Agents you can add to this chat. Fetched so the control can OFFER them:
-  // the previous version was a bare text box asking you to type a slug, which
-  // means you had to already know the answer to use it.
-  const [agentChoices, setAgentChoices] = useState<{ slug: string; name: string }[]>([]);
-  const [agentsErr, setAgentsErr] = useState(false);
-
-  const addParticipant = useCallback(async (slug: string) => {
-    const s = slug.trim();
-    if (!activeId || !s) return;
-    try {
-      const r = await fetch(`/api/chat/threads/${encodeURIComponent(activeId)}/participants`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ slug: s }),
-      });
-      if (r.ok) {
-        const t = await r.json();
-        setParticipants(t.participants ?? []);
-      }
-    } catch {
-      /* leave participants as they are; the tag list is the source of truth */
-    }
-  }, [activeId]);
-
-  // Load the agent roster once a thread is open, so the add-agent menu has real
-  // names in it. A failure is remembered (not swallowed) so the menu can say it
-  // couldn't load the list instead of just looking empty.
-  useEffect(() => {
-    if (!activeId) return;
-    let cancelled = false;
-    fetch("/api/agents/")
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
-      .then((list: { slug?: string; name?: string }[]) => {
-        if (cancelled) return;
-        setAgentChoices(
-          (Array.isArray(list) ? list : [])
-            .filter((a) => a.slug)
-            .map((a) => ({ slug: a.slug as string, name: a.name || (a.slug as string) })),
-        );
-        setAgentsErr(false);
-      })
-      .catch(() => { if (!cancelled) setAgentsErr(true); });
-    return () => { cancelled = true; };
-  }, [activeId]);
-
-  const removeParticipant = useCallback(async (p: string) => {
-    if (!activeId) return;
-    const slug = p.startsWith("agent:") ? p.slice(6) : p;
-    const r = await fetch(`/api/chat/threads/${encodeURIComponent(activeId)}/participants/${encodeURIComponent(slug)}`, {
-      method: "DELETE",
-    });
-    if (r.ok) {
-      const t = await r.json();
-      setParticipants(t.participants ?? []);
-    }
-  }, [activeId]);
-
-  // Whenever the active thread changes, pull its participants list so the
-  // toolbar chips reflect the current chat rather than the previous one.
-  useEffect(() => {
-    if (!activeId) {
-      setParticipants([]);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const t = await chatApi.getThread(activeId);
-        if (!cancelled) setParticipants(((t as unknown) as { participants?: string[] }).participants ?? []);
-      } catch {
-        if (!cancelled) setParticipants([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeId]);
-
   // Messages typed while a build turn is streaming are queued (a session can't
   // run two turns at once) and sent automatically when the turn finishes. They
   // render as pending user bubbles below the live response.
@@ -595,6 +515,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => { cancelled = true; };
   }, [activeId]);
 
+  // The inbox lives behind a toolbar toggle, exactly like the task panel. It
+  // used to render inline and always open: on a phone that pushed the log and
+  // the composer off-screen, and with no cap on item count it was a wall rather
+  // than a signal. The badge carries the count so nothing is hidden; the panel
+  // is opened deliberately.
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [inboxCount, setInboxCount] = useState(0);
   const [slashSel, setSlashSel] = useState(0);
   const [mentionSel, setMentionSel] = useState(0);
   // The slash BUTTON opens the command list as a menu. It is deliberately
@@ -1805,8 +1732,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // unique job (start a new chat) is now the + button.
   const activeThreadTitle = activeId ? threads.find((t) => t.id === activeId)?.title : undefined;
   // Agents not already in this chat — the only ones worth offering.
-  const inChat = new Set(participants.map((p) => (p.startsWith("agent:") ? p.slice(6) : p)));
-  const available = agentChoices.filter((a) => !inChat.has(a.slug));
   const toolbar = (
     <div className="chat-toolbar">
       {variant === "full" && (
@@ -1858,54 +1783,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {/* Spacer pushes the per-thread action buttons to the right on desktop; on
           mobile the toolbar wraps and the actions flow onto the next line. */}
       <span className="chat-tb__spacer" />
-      {/* P4: participants control. Renders each agent currently in this chat
-          as a small removable tag, plus a compact "Add" input to invite
-          another agent by slug. An agent in a chat is a property of the
-          chat, not its scope. */}
-      {activeId && (
-        <>
-          {participants.map((p) => {
-            const slug = p.startsWith("agent:") ? p.slice(6) : p;
-            return (
-              <button
-                key={p}
-                className="chat-tb__btn chat-tb__btn--wide"
-                title={`Remove ${slug} from this chat`}
-                aria-label={`Remove participant ${slug}`}
-                onClick={() => void removeParticipant(p)}
-              >
-                <span className="chat-tb__btn-text">{slug}</span>
-                <X size={12} aria-hidden />
-              </button>
-            );
-          })}
-          {/* Pick an agent from the ones that exist. Asking the operator to type
-              a slug into a blank box required already knowing the answer. */}
-          <Menu
-            label="Add an agent to this chat"
-            align="end"
-            trigger={
-              <button className="chat-tb__btn" title="Add an agent to this chat" aria-label="Add agent">
-                <UserPlus size={16} aria-hidden />
-              </button>
-            }
-          >
-            {agentsErr ? (
-              <MenuItem onSelect={() => navigate("/agents")}>Couldn't load agents — open Agents</MenuItem>
-            ) : available.length === 0 ? (
-              <MenuItem onSelect={() => navigate("/agents")}>
-                {agentChoices.length ? "All agents are already here" : "No agents yet — create one"}
-              </MenuItem>
-            ) : (
-              available.map((a) => (
-                <MenuItem key={a.slug} icon={<UserPlus size={14} />} onSelect={() => void addParticipant(a.slug)}>
-                  {a.name}
-                </MenuItem>
-              ))
-            )}
-          </Menu>
-        </>
-      )}
       {/* File-as-ticket and file-and-run stay VISIBLE. They were moved into the
           overflow in the header rework; that was not asked for — these two were
           flagged for discussion, not relocation — so they are back on the row. */}
@@ -1929,6 +1806,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           aria-busy={spawning === "run"}
         >
           {spawning === "run" ? <Loader size={16} aria-hidden className="ws-spin" /> : <Play size={16} aria-hidden />}
+        </button>
+      )}
+      {activeId && (
+        <button
+          className={`chat-tb__btn chat-tb__tasks${inboxOpen ? " is-active" : ""}`}
+          onClick={() => setInboxOpen((o) => !o)}
+          title={inboxCount ? `${inboxCount} waiting on you` : "Nothing waiting"}
+          aria-label="Agent inbox"
+          aria-expanded={inboxOpen}
+        >
+          <Bell size={16} aria-hidden />
+          {inboxCount > 0 && <span className="chat-tb__badge">{inboxCount}</span>}
         </button>
       )}
       {taskScope && (
@@ -2627,7 +2516,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           </button>
         </div>
       )}
-      <InboxStrip chatId={activeId} onOpenGlobal={() => navigate("/work?tab=inbox")} />
+      <InboxStrip
+        chatId={activeId}
+        open={inboxOpen}
+        onCountChange={setInboxCount}
+        onClose={() => setInboxOpen(false)}
+        onOpenGlobal={() => navigate("/work?tab=inbox")}
+      />
       {taskPanel}
       {log}
       {jumpToLatest}
