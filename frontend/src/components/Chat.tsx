@@ -418,6 +418,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
   const pendingRef = useRef<ChatSegment[]>(pendingSegments);
   pendingRef.current = pendingSegments;
+  // Messages the operator sent DURING the running turn and that the turn
+  // accepted. `at` is how many reply segments had streamed when it landed, so
+  // the log can cut the live turn at that point and show the message between
+  // what came before it and what came after. They live here rather than in
+  // `messages` because `messages` is rendered above the live overlay — putting
+  // them there placed a later message above earlier output.
+  const [interjections, setInterjections] = useState<{ at: number; text: string }[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // Starting a new chat leaves the current one — cheap to undo (the thread is
   // still there) but disorienting mid-conversation, so it asks first.
@@ -815,6 +822,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     sendBuildRef.current(q.join("\n\n"));
   }, [setQueue]);
 
+  // Interjections belong to ONE live turn. Once that turn is over and its
+  // overlay is gone, the server transcript carries those messages, so drop the
+  // local copies rather than letting them double up. Keyed off the overlay
+  // rather than added to each of the eight places that reset it.
+  useEffect(() => {
+    if (!streaming && pendingSegments.length === 0 && interjections.length) setInterjections([]);
+  }, [streaming, pendingSegments.length, interjections.length]);
+
   // A queue with nothing running must drain ITSELF.
   //
   // dispatchNext used to be reachable from exactly two places: the stream's
@@ -1147,7 +1162,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   useEffect(() => {
     if (atBottomRef.current) scrollToBottom();
     else if (streaming || pendingSegments.length > 0 || messages.length) setShowJumpToLatest(true);
-  }, [messages, pendingSegments, queued, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
+  }, [messages, pendingSegments, interjections, queued, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
 
   // Sending is an explicit intent to follow the conversation again, so it always
   // returns to the bottom regardless of where the log was scrolled.
@@ -1399,7 +1414,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       void chatApi.injectIntoThread(threadId, text)
         .then((r) => {
           if (r.delivered) {
-            setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString(), meta: { injected: true } }]);
+            // NOT into `messages` — that list renders ABOVE the live turn's
+            // overlay, so a message sent DURING the turn jumped above output
+            // that was already on screen before it. Record it as an
+            // interjection pinned to how much of the reply had streamed when it
+            // landed; the log splits the live turn there and renders it in
+            // real order (see `log`).
+            setInterjections((x) => [...x, { at: pendingRef.current.length, text }]);
             followLatest();
           } else {
             setQueue([...queuedRef.current, text]);
@@ -1826,6 +1847,61 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   ) : null;
 
+  // The live turn, cut at every point the operator interjected. With no
+  // interjections (the common case) this is exactly one assistant bubble
+  // carrying the streamed segments plus the working indicator — unchanged. With
+  // them, the reply is split so each message sits between the output that
+  // preceded it and the output that followed, which is the order things
+  // actually happened in.
+  const liveTurnBlocks = (() => {
+    const cuts = interjections.map((x) => Math.min(x.at, pendingSegments.length));
+    const bounds = [0, ...cuts, pendingSegments.length];
+    const blocks: ReactNode[] = [];
+    for (let k = 0; k < bounds.length - 1; k++) {
+      const slice = pendingSegments.slice(bounds[k], bounds[k + 1]);
+      const isLastSlice = k === bounds.length - 2;
+      // The working indicator belongs to the tail of the reply, so it renders
+      // below the newest interjection rather than stranded above it.
+      const showWorking = streaming && isLastSlice;
+      if (slice.length || showWorking) {
+        blocks.push(
+          <div className="chat-msg assistant" key={`live-a${k}`}>
+            <div className="chat-bubble">
+              {slice.length > 0 && (
+                <AssistantTurn
+                  segments={slice}
+                  isLatest={isLastSlice}
+                  model={selectedModel}
+                  cardCtx={cardCtx}
+                  streaming
+                />
+              )}
+              {showWorking && (
+                <div className="chat-working" role="status" aria-live="polite">
+                  <span className="chat-working__label">
+                    {reconnecting ? "Reconnecting" : "Working"}
+                  </span>
+                  <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
+                  {elapsed > 0 && <span className="chat-working__time">{formatElapsed(elapsed)}</span>}
+                </div>
+              )}
+            </div>
+          </div>,
+        );
+      }
+      if (k < interjections.length) {
+        blocks.push(
+          <div className="chat-msg user" key={`live-ij${k}`}>
+            <div className="chat-bubble" title="Sent mid-turn; the running turn picked it up">
+              {interjections[k].text}
+            </div>
+          </div>,
+        );
+      }
+    }
+    return <>{blocks}</>;
+  })();
+
   const log = (
     <div className="chat-log" ref={scrollRef} onScroll={onLogScroll}>
       {loadingThreads && messages.length === 0 ? (
@@ -1885,26 +1961,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         </div>
         </Fragment>
       ))}
-      {(streaming || pendingSegments.length > 0) && (
-        <div className="chat-msg assistant">
-          <div className="chat-bubble">
-            {pendingSegments.length > 0 && (
-              <AssistantTurn segments={pendingSegments} isLatest model={selectedModel} cardCtx={cardCtx} streaming />
-            )}
-            {streaming && (
-              <div className="chat-working" role="status" aria-live="polite">
-                <span className="chat-working__label">
-                  {reconnecting ? "Reconnecting" : "Working"}
-                </span>
-                <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
-                {streaming && elapsed > 0 && (
-                  <span className="chat-working__time">{formatElapsed(elapsed)}</span>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {(streaming || pendingSegments.length > 0) && liveTurnBlocks}
       {queued.map((q, i) => (
         <div key={`q${i}`} className="chat-msg user">
           <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">{q}</div>
