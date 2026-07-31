@@ -576,6 +576,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }
   }, [activeId, spawning]);
   const [slashSel, setSlashSel] = useState(0);
+  // The slash BUTTON opens the command list as a menu. It is deliberately
+  // separate from "the operator is typing a /command": the button used to work
+  // by writing "/" into the composer, which meant tapping it destroyed whatever
+  // had been typed. A picker must never edit the thing you were writing.
+  const [slashOpen, setSlashOpen] = useState(false);
   const slug = buildSlug(contextKey);
   const taskScope = taskScopeFor(contextKey);
 
@@ -869,6 +874,24 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setMessages((m) => [...m, ...q.map((content) => ({ role: "user" as const, content, ts }))]);
     sendBuildRef.current(q.join("\n\n"));
   }, [setQueue]);
+
+  // A button-opened slash menu dismisses like any other popover. (The typed
+  // variant closes itself when the "/" stops being a command.)
+  useEffect(() => {
+    if (!slashOpen) return;
+    const onDown = (e: PointerEvent) => {
+      const el = e.target as HTMLElement;
+      if (el.closest(".chat-slash-menu") || el.closest(".chat-slash-btn")) return;
+      setSlashOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSlashOpen(false); };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [slashOpen]);
 
   // Interjections belong to ONE live turn. Once that turn is over and its
   // overlay is gone, the server transcript carries those messages, so drop the
@@ -1404,7 +1427,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
     if (!id) { setErr("Nothing to compact — this chat has no messages yet."); return; }
-    if (streaming) { setErr("Wait for the current turn to finish before compacting."); return; }
+    // Deliberately NOT gated on `streaming`. Folding the stored transcript is a
+    // server-side operation on the saved thread and is independent of whatever
+    // turn is in flight; refusing while a turn ran meant /compact was rejected
+    // almost every time it was reached for, since that is exactly when context
+    // is under pressure. The live-session half is what has to wait, and it
+    // queues below rather than being dropped.
     setErr(null);
     setCompacting(true);
     try {
@@ -1414,8 +1442,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       // re-read it rather than guessing at the new number.
       setCtxNonce((n) => n + 1);
       if (r.live_session) {
-        setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
-        void sendBuildRef.current("/compact");
+        // The CLI's own /compact is the only thing that frees the live window,
+        // and it runs as a normal turn — so behind a running turn it queues
+        // instead of opening a second one.
+        if (streamingRef.current) {
+          setQueue([...queuedRef.current, "/compact"]);
+        } else {
+          setMessages((m) => [...m, { role: "user", content: "/compact", ts: new Date().toISOString() }]);
+          void sendBuildRef.current("/compact");
+        }
       } else if (r.folded === 0) {
         setErr("Nothing to compact — the transcript is already short.");
       }
@@ -1424,7 +1459,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     } finally {
       setCompacting(false);
     }
-  }, [streaming]);
+  }, [setQueue]);
 
   // Submit a concrete string as a turn (used by send() and by slash passthrough).
   const submitText = useCallback((raw: string) => {
@@ -1549,7 +1584,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     { name: "delete", desc: "Delete the current chat", available: !!activeId, kind: "local", run: () => { if (activeId) setConfirmDeleteId(activeId); } },
     { name: "tasks", desc: "Toggle the task list", available: !!taskScope, kind: "local", run: () => setTasksOpen((o) => !o) },
     { name: "expand", desc: "Open this chat full screen", available: variant !== "full" && !hideExpand, kind: "local", run: () => popOut() },
-    { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => { setInput("/"); inputRef.current?.focus(); } },
+    { name: "help", desc: "Show available commands", available: true, kind: "local", run: () => setSlashOpen(true) },
     // /deploy — jump to the project's Deploys panel when the chat is bound to
     // one, else to the cross-project /deploys index. The actual "kick a deploy"
     // action still lives at those pages; the command is a keyboard shortcut.
@@ -1574,14 +1609,21 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   ];
   // Visible only when the input is a single "/"-prefixed token (a command being
   // typed), filtered to available commands matching the typed prefix.
-  const slashActive = input.startsWith("/") && !input.includes("\n");
-  const slashQuery = slashActive ? input.slice(1).toLowerCase().trimStart().split(" ")[0] : "";
-  const slashMatches = slashActive
+  const slashTyped = input.startsWith("/") && !input.includes("\n");
+  const slashQuery = slashTyped ? input.slice(1).toLowerCase().trimStart().split(" ")[0] : "";
+  // Typed: filter by what's been typed. Button-opened: the whole list, because
+  // nothing was typed to filter by.
+  const slashMatches = slashTyped
     ? slashCommands.filter((c) => c.available && c.name.startsWith(slashQuery))
-    : [];
-  const showSlash = slashActive && slashMatches.length > 0;
+    : slashOpen
+      ? slashCommands.filter((c) => c.available)
+      : [];
+  const showSlash = (slashTyped || slashOpen) && slashMatches.length > 0;
   const runSlash = (c: SlashCommand) => {
-    setInput("");
+    // Only clear the composer when its contents WERE the command being typed.
+    // Picking from the button-opened menu leaves your draft exactly as it was.
+    if (slashTyped) setInput("");
+    setSlashOpen(false);
     setSlashSel(0);
     if (c.kind === "passthrough") { submitText(`/${c.name}`); return; }
     c.run?.();
@@ -2362,8 +2404,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           <button
             className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
             onMouseDown={(e) => e.preventDefault()}
-            onClick={() => { setInput(input.startsWith("/") ? "" : "/"); inputRef.current?.focus(); }}
+            onClick={() => { setSlashOpen((v) => !v); setSlashSel(0); }}
             aria-label="Slash commands"
+            aria-expanded={showSlash}
             title="Slash commands"
           >
             <Slash size={16} aria-hidden />
