@@ -651,3 +651,64 @@ reconcile with the server correctly. No change needed.
   with all three fixes present in it.
 - Thread `47b637e7`'s stale 142,183-token reading was cleared in place, so the meter is honest
   now and not only for future compactions.
+
+---
+
+## 10. Mid-turn message delivery (2026-07-30, commit `3c0871a`)
+
+Closes the half of statement 10 that §8c marked done but only half-satisfied. The spec was
+"it should not interrupt the current work... but you should pick up all of the new messages
+if I send new messages after your current turn **or step** is over." §5a-bis C delivered the
+*whole-queue drain*, which fixed batching but left pickup latency at the full remaining
+duration of the turn. The operator restated it: a message should enter "the next time there
+is a point between actions of the agent."
+
+### 10a. Mechanism
+
+Turns run with `--input-format stream-json`, so the CLI's stdin stays open for the life of
+the run and it reads pending input at each boundary between steps. The opening prompt goes in
+the same way instead of as an argv positional.
+
+The channel is a **FIFO** in the turn's journal dir, not a pipe, because turn processes are
+deliberately detached to survive a backend restart — a pipe dies with the parent. It is opened
+**O_RDWR**: an fd that is its own writer never reports EOF, so the CLI keeps reading after an
+injector closes its handle. Opened O_RDONLY the run would end the first time a message landed.
+
+`POST /api/chat/turns/{turn_id}/inject`. `delivered: false` is not an error — it means the
+turn ended between the operator hitting enter and the request landing, and the client queues
+the message as the next turn. The message is never dropped.
+
+### 10b. Two things that would have broken every turn
+
+- **The CLI does not exit when a turn finishes** under stream-json input; it idles waiting for
+  more stdin. The `result` line is the end of the turn, so the process is retired there:
+  SIGTERM to the whole group first (it owns MCP servers and tool subprocesses, and this now
+  runs on *every* turn rather than only on a timeout), SIGKILL as fallback.
+- **Its exit status then reports our signal, not the turn's outcome.** Read naively that
+  renders every successful turn as "ended unexpectedly (exit -15)" — the exact string the
+  operator was drowning in. A turn that produced a result line is `rc=0` by definition now.
+
+An injected message is stored above the live assistant placeholder, so the thread does not
+read out of order and a later fresh session re-assembling history still sees it.
+
+### 10c. Evidence
+
+- Agent mid-way through five `sleep 4` calls took an injected instruction at the next step
+  boundary and acted on it: 2 tool calls instead of 5, final text `Sleep 1 finished.PELICAN`,
+  no error, nothing about ending unexpectedly.
+- A first probe run showed the same delivery with the model *declining* to switch (the prompt
+  had said "do not skip any") and saying so mid-turn — which is itself proof of receipt, and
+  a useful reminder that delivery is the engine's job and compliance is the model's.
+- `--resume` still carries session context across the new stdin path (answered `PELICAN` on a
+  later turn in a fresh process).
+- All three spawn paths pass: full-agentic, `tools_disabled`, narrow `allowed_tools`.
+- No claude processes leaked. Injecting into an ended turn returns false in 0.000s rather than
+  hanging on a FIFO open.
+
+### 10d. Note for whoever is next
+
+`a49d5f3` committed the voice WIP that had been failing `tsc -b` since 07-27, so the frontend
+build is unblocked and §9c's warning is now historical. Two other sessions committed to this
+tree during this work (`263ed66`, `a49d5f3`, `f19a9fd` — the last a chat header restructure
+touching the same file). Nothing was clobbered, but re-read before editing and stage only your
+own files; see the `duplicate-agent-file-race` memory.
