@@ -51,11 +51,16 @@
 .ws-faint { color: var(--faint); }
 .ws-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
-/* Universal focus treatment */
+/* Universal focus treatment.
+   NOTE: deliberately does NOT set border-radius. It used to force
+   `border-radius: var(--radius-sm)` on every focused descendant, which RESHAPED
+   the element while focused — the chat input (--radius-lg) squared off its
+   corners the moment you clicked into it, and every rounded control did the
+   same. A focus indicator must not change the geometry of the thing it
+   indicates; it follows the element's own radius. */
 .ws-root :focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-  border-radius: var(--radius-sm);
 }
 
 /* ---- LAYOUT: Stack / Row ------------------------------------------------- */

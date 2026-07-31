@@ -47,12 +47,18 @@ export function Menu({
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const id = useId();
+  // Whether this menu is being driven by the keyboard. Focus is only sent back
+  // to the trigger when it is: a programmatic .focus() after a mouse/touch pick
+  // re-triggers the global :focus-visible ring, which looks like a border the
+  // app stuck on the control for no reason the operator can see.
+  const viaKeyboard = useRef(false);
 
   const close = useCallback((restoreFocus = true) => {
     setOpen(false);
-    if (restoreFocus) {
+    if (restoreFocus && viaKeyboard.current) {
       wrapRef.current?.querySelector<HTMLElement>("[data-ws-menu-trigger]")?.focus();
     }
+    viaKeyboard.current = false;
   }, []);
 
   useEffect(() => {
@@ -71,6 +77,7 @@ export function Menu({
         return;
       }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) return;
+      viaKeyboard.current = true;
       const items = Array.from(
         listRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [],
       );
@@ -106,6 +113,8 @@ export function Menu({
         "aria-controls": open ? id : undefined,
         onClick: (e: React.MouseEvent) => {
           (trigger.props.onClick as ((e: React.MouseEvent) => void) | undefined)?.(e);
+          // detail === 0 means the click came from Enter/Space, not a pointer.
+          viaKeyboard.current = e.detail === 0;
           setOpen((v) => !v);
         },
       })
