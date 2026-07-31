@@ -214,7 +214,7 @@ function TicketsTab() {
                 style={{ cursor: "pointer" }}
               >
                 <Stack gap="sm">
-                  <span style={{ fontWeight: 600 }}>{taskTitle(t) || "(untitled)"}</span>
+                  <span className="ws-wrap" style={{ fontWeight: 600 }}>{taskTitle(t) || "(untitled)"}</span>
                   <Row wrap style={{ gap: "var(--space-2)" }}>
                     <StatusPill status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusPill>
                     <Tag hue={catFor(t.scope || "workshop")}>{scopeLabel(t.scope)}</Tag>
@@ -589,7 +589,7 @@ function EditTicket({
                     <li key={i} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
                       <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                         <Tag hue={catFor(String(e.kind || "note"))}>{String(e.kind || "note")}</Tag>
-                        <span style={{ flex: "1 1 12rem", wordBreak: "break-word" }}>{String(e.ref ?? "")}</span>
+                        <span className="ws-wrap" style={{ flex: "1 1 12rem", minWidth: 0 }}>{String(e.ref ?? "")}</span>
                         {e.ts && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{fmtTs(e.ts)}</span>}
                       </Row>
                     </li>
@@ -610,7 +610,7 @@ function EditTicket({
                     <li key={job.id} style={{ padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}>
                       <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                         <StatusDot status={jobStatusKind(job.status)}>{job.status ?? "unknown"}</StatusDot>
-                        <span style={{ flex: "1 1 12rem", wordBreak: "break-word" }}>{job.title || job.id}</span>
+                        <span className="ws-wrap" style={{ flex: "1 1 12rem", minWidth: 0 }}>{job.title || job.id}</span>
                         <button
                           type="button"
                           className="ws-bc__link"
@@ -854,12 +854,12 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
           {request.raised_by && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>raised by {request.raised_by}</span>}
         </Row>
 
-        <span style={{ fontWeight: 600 }}>{request.ask || request.question}</span>
+        <span className="ws-wrap" style={{ fontWeight: 600 }}>{request.ask || request.question}</span>
         {request.why && <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>{request.why}</p>}
         {request.unblocks_if && (
-          <Row style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
             <KeyRound size={14} strokeWidth={1.8} aria-hidden />
-            <span style={{ fontSize: "var(--fs-sm)" }}>{request.unblocks_if}</span>
+            <span className="ws-wrap" style={{ fontSize: "var(--fs-sm)" }}>{request.unblocks_if}</span>
           </Row>
         )}
         {request.options && request.options.length > 0 && (
@@ -883,7 +883,7 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
             <li key={`${t.scope}:${t.id}`} style={{ padding: "var(--space-1) 0" }}>
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                 <StatusDot status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusDot>
-                <span style={{ flex: "1 1 12rem", wordBreak: "break-word", fontSize: "var(--fs-sm)" }}>{taskTitle(t) || t.id}</span>
+                <span className="ws-wrap" style={{ flex: "1 1 12rem", minWidth: 0, fontSize: "var(--fs-sm)" }}>{taskTitle(t) || t.id}</span>
               </Row>
             </li>
           ))}

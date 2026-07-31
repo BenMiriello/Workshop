@@ -227,7 +227,7 @@ export default function TicketDetail() {
               <ArrowLeft aria-hidden />
             </Link>
             <TicketIcon aria-hidden />
-            <span>{loading ? "Ticket" : titleOf(task) || id}</span>
+            <span className="ws-wrap">{loading ? "Ticket" : titleOf(task) || id}</span>
           </Row>
         }
         sub={

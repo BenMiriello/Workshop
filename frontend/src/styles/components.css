@@ -47,6 +47,17 @@
 }
 
 .ws-mono { font-family: var(--font-mono); }
+
+/* Free text that can contain paths, URLs, ids or hashes.
+   A single unbreakable 60-character token (a doc path in a ticket title, a
+   store URI in a block request) sets its element's MIN-CONTENT width. Inside a
+   grid or flex track that forces the track wider than a phone viewport, and the
+   whole page scrolls sideways — `min-width: 0` on the item does not help,
+   because the text itself refuses to break. Anything rendering operator- or
+   model-generated text uses this. */
+.ws-wrap { overflow-wrap: anywhere; }
+/* Inline code in body copy is the most common carrier of such a token. */
+.ws-root :not(pre) > code { overflow-wrap: anywhere; }
 .ws-muted { color: var(--muted); }
 .ws-faint { color: var(--faint); }
 .ws-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
@@ -67,7 +78,10 @@
 .ws-stack { display: flex; flex-direction: column; gap: var(--space-4); }
 .ws-stack--sm { gap: var(--space-2); }
 .ws-stack--lg { gap: var(--space-6); }
-.ws-row { display: flex; align-items: center; gap: var(--space-3); }
+/* min-width:0 so a Row nested inside another flex or grid parent can shrink
+   below its content width. A flex item defaults to min-width:auto, which is the
+   structural half of the same sideways-scroll bug .ws-wrap addresses in text. */
+.ws-row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .ws-row--wrap { flex-wrap: wrap; }
 .ws-row--between { justify-content: space-between; }
 .ws-row--end { justify-content: flex-end; }
