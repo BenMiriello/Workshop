@@ -712,3 +712,42 @@ build is unblocked and §9c's warning is now historical. Two other sessions comm
 tree during this work (`263ed66`, `a49d5f3`, `f19a9fd` — the last a chat header restructure
 touching the same file). Nothing was clobbered, but re-read before editing and stage only your
 own files; see the `duplicate-agent-file-race` memory.
+
+## 11. The orphaned queue (2026-07-30, commit `69b821b`)
+
+Reported as two things: messages sent mid-turn being ignored until the turn ended, and — worse
+— a message that sat unread for an hour while a later "continue" was picked up and acted on
+*past* it.
+
+The second one is the real find, and it is not a latency bug. **That message was never sent
+at all.** `dispatchNext`, the only thing that delivers queued messages, was reachable from
+exactly two places: the stream's `finish()` handler and `stop()`. Both mean "a turn ended in
+THIS tab". Every other way a turn can end orphaned the queue permanently — reload, tab closed
+and reopened, stream dropped past its reconnect budget, backend restart, or the turn finishing
+while the tab was asleep. The queue was then faithfully restored from storage on the next
+load, rendered as pending bubbles, and nothing in the program would ever send it. Anything
+typed afterwards went out as its own turn (nothing was streaming), sailing straight past it.
+
+A pending-looking message that is actually lost. Same family as everything else in §9: state
+on screen that no longer corresponds to anything real.
+
+Fix: whenever something is queued and no turn is running, it sends. Queued means the operator
+already hit enter, so delivery is owed and must not depend on which tab witnessed the turn
+end. A 250ms timer plus a live `streaming` mirror re-checked at fire time stops it opening a
+second turn alongside one that is mid-start (`sendBuild` sets `streaming` before its POST
+resolves).
+
+Note this also produced §10-shaped symptoms on the old build: a message queued during a turn
+whose `finish()` never fired in that tab would look exactly like "it waited for the turn and
+then still did nothing."
+
+Re-verified §10 through the ROUTE this time rather than the service: an agent four sleeps deep
+took the routed message, stopped after the first, answered KESTREL; transcript came out
+ordered user / injected-user / assistant with the injected flag set; injecting into the
+finished turn returned `delivered:false` in 0.000s.
+
+**Housekeeping:** commit `69b821b` also carries a leftover `Chat.tsx` hunk from a concurrent
+session's voice work (the `MicFailKind` message map). Its supporting types were already
+committed in `a49d5f3`, and HEAD builds clean from an isolated worktree, so nothing is broken
+— but it is not mine and it landed in my commit. Stage explicitly in this tree; three other
+sessions committed to it during this work.
