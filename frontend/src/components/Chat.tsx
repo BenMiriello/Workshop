@@ -1712,6 +1712,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           </Menu>
         </>
       )}
+      {/* File-as-ticket and file-and-run stay VISIBLE. They were moved into the
+          overflow in the header rework; that was not asked for — these two were
+          flagged for discussion, not relocation — so they are back on the row. */}
+      {activeId && (
+        <button
+          className="chat-tb__btn"
+          onClick={() => { if (spawning === false) void spawnTaskFromChat(false); }}
+          title="File this chat as a tracked ticket"
+          aria-label="File as a ticket"
+          aria-busy={spawning === "file"}
+        >
+          {spawning === "file" ? <Loader size={16} aria-hidden className="ws-spin" /> : <ListPlus size={16} aria-hidden />}
+        </button>
+      )}
+      {activeId && (
+        <button
+          className="chat-tb__btn"
+          onClick={() => { if (spawning === false) void spawnTaskFromChat(true); }}
+          title="File this chat as a ticket and run it now"
+          aria-label="File as a ticket and run it now"
+          aria-busy={spawning === "run"}
+        >
+          {spawning === "run" ? <Loader size={16} aria-hidden className="ws-spin" /> : <Play size={16} aria-hidden />}
+        </button>
+      )}
       {taskScope && (
         <button
           className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
@@ -1732,9 +1757,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       >
         <Plus size={16} aria-hidden />
       </button>
-      {/* Overflow. Everything here is real, but none of it is per-turn work:
-          filing the conversation as tracked work, finding another chat, and
-          deleting this one. They were four unlabelled icons in a second row. */}
+      {/* Overflow: only the things that are genuinely rare or destructive —
+          finding another chat, going full screen, deleting this one. Actions
+          you take on a conversation stay on the row where you can see them. */}
       <Menu
         label="Chat actions"
         align="end"
@@ -1754,19 +1779,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         )}
         {activeId && (
           <>
-            <MenuSeparator />
-            <MenuItem
-              icon={spawning === "file" ? <Loader size={14} className="ws-spin" /> : <ListPlus size={14} />}
-              onSelect={() => { if (spawning === false) void spawnTaskFromChat(false); }}
-            >
-              File as a ticket
-            </MenuItem>
-            <MenuItem
-              icon={spawning === "run" ? <Loader size={14} className="ws-spin" /> : <Play size={14} />}
-              onSelect={() => { if (spawning === false) void spawnTaskFromChat(true); }}
-            >
-              File as a ticket and run it now
-            </MenuItem>
             <MenuSeparator />
             <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => setConfirmDeleteId(activeId)}>
               Delete chat…
