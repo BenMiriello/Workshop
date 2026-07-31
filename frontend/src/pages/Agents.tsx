@@ -2,14 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Gauge, Compass, FileStack } from "lucide-react";
 import type { ReactNode } from "react";
-import type { BuildAgent, Project } from "@shared/types";
+import type { Project } from "@shared/types";
 import {
   Badge,
   Button,
   Card,
   CardGrid,
   Field,
-  Input,
   Modal,
   PageHeader,
   Row,
@@ -61,14 +60,6 @@ type SupervisorStatus = {
 
 type Job = { id: string; agent_id?: string; status?: string; started_at?: string };
 
-const NEW_PROJECT = "__new__";
-
-const titleCase = (slug: string) =>
-  slug.split("-").map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(" ");
-
-const slugify = (s: string) =>
-  s.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 48);
-
 // Recency label for a card: within the last 24h ("Today 3:42 PM"), else a plain
 // date ("Jun 18"). Empty when there's no usable timestamp.
 function activityLabel(iso?: string): string {
@@ -80,134 +71,6 @@ function activityLabel(iso?: string): string {
     return `Today ${d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
   }
   return d.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-// Auto-generate a non-colliding builder slug + readable name for the modal.
-function deriveBuilderName(projectSlug: string, existing: BuildAgent[]): { slug: string; name: string } {
-  const taken = new Set(existing.map((a) => a.slug));
-  let n = 1;
-  while (taken.has(`${projectSlug}-builder-${n}`)) n += 1;
-  return { slug: `${projectSlug}-builder-${n}`, name: `${titleCase(projectSlug)} builder ${n}` };
-}
-
-function NewBuilderModal({
-  open, projects, existing, onCancel, onCreated, onNewProject,
-}: {
-  open: boolean;
-  projects: Project[] | null;
-  existing: BuildAgent[];
-  onCancel: () => void;
-  onCreated: (slug: string) => void;
-  onNewProject: () => void;
-}) {
-  const [projectSlug, setProjectSlug] = useState("");
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugTouched, setSlugTouched] = useState(false);
-  const [nameTouched, setNameTouched] = useState(false);
-  const [purpose, setPurpose] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open && !projectSlug && projects && projects.length) {
-      setProjectSlug(projects[0].slug);
-    }
-  }, [open, projectSlug, projects]);
-
-  const defaults = useMemo(
-    () =>
-      projectSlug && projectSlug !== NEW_PROJECT
-        ? deriveBuilderName(projectSlug, existing)
-        : { slug: "", name: "" },
-    [projectSlug, existing],
-  );
-  const effectiveName = nameTouched ? name : defaults.name;
-  const effectiveSlug = slugTouched ? slug : slugify(effectiveName) || defaults.slug;
-
-  const submit = async () => {
-    if (projectSlug === NEW_PROJECT) { onNewProject(); return; }
-    if (!projectSlug || !effectiveSlug || !effectiveName.trim()) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const r = await fetch("/api/agents/build", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          slug: effectiveSlug,
-          name: effectiveName.trim(),
-          purpose: purpose.trim(),
-          project_slug: projectSlug,
-        }),
-      });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      const a = await r.json();
-      onCreated(a.slug);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const noProjects = !!projects && projects.length === 0;
-  const isNewProject = projectSlug === NEW_PROJECT;
-
-  return (
-    <Modal open={open} onClose={onCancel} title="New agent">
-      <Stack>
-        <p className="ws-muted">
-          A builder is a Claude Code session scoped to a project. Pick the project,
-          then name the builder (or keep the suggested name).
-        </p>
-        <Field label="Project" required>
-          <Select
-            value={projectSlug}
-            onChange={(e) => setProjectSlug(e.target.value)}
-            disabled={busy || !projects}
-            autoFocus
-          >
-            {!projects && <option value="">Loading…</option>}
-            {noProjects && <option value="">No projects yet</option>}
-            {projects?.map((p) => (
-              <option key={p.slug} value={p.slug}>{p.title}</option>
-            ))}
-            <option value={NEW_PROJECT}>New project…</option>
-          </Select>
-        </Field>
-        {!isNewProject && !noProjects && (
-          <>
-            <Field label="Name" required>
-              <Input value={effectiveName} onChange={(e) => { setName(e.target.value); setNameTouched(true); }} />
-            </Field>
-            <Field label="Slug" help="kebab-case · used as the agent's id">
-              <Input
-                value={effectiveSlug}
-                onChange={(e) => { setSlug(slugify(e.target.value)); setSlugTouched(true); }}
-                spellCheck={false}
-              />
-            </Field>
-            <Field label="Purpose" help="One sentence. What is this agent working on?">
-              <Input value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="e.g. build the landing-page hero section" />
-            </Field>
-          </>
-        )}
-        {err && <StateBlock variant="error" title="Couldn't start agent" hint={<code>{err}</code>} />}
-        <Row end>
-          <Button variant="ghost" onClick={onCancel} disabled={busy}>Cancel</Button>
-          <Button
-            variant="primary"
-            onClick={submit}
-            disabled={busy || !projectSlug || (!isNewProject && (noProjects || !effectiveSlug || !effectiveName.trim()))}
-            loading={busy}
-          >
-            {isNewProject ? "New project…" : "Start agent"}
-          </Button>
-        </Row>
-      </Stack>
-    </Modal>
-  );
 }
 
 // --- Templates + groups (P4) ------------------------------------------------
@@ -390,12 +253,10 @@ function FromTemplateModal({
 export default function Agents() {
   const nav = useNavigate();
   const [agents, setAgents] = useState<RosterAgent[] | null>(null);
-  const [build, setBuild] = useState<BuildAgent[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [sup, setSup] = useState<SupervisorStatus | null>(null);
-  const [spawning, setSpawning] = useState(false);
   const [templating, setTemplating] = useState(false);
   // Scope-kind filter (C3). Persists in URL-less local state; view preference,
   // commits on change per the design system.
@@ -403,15 +264,13 @@ export default function Agents() {
 
   const loadAll = useCallback(async () => {
     try {
-      const [aR, bR, pR, jR] = await Promise.all([
+      const [aR, pR, jR] = await Promise.all([
         fetch("/api/agents/"),
-        fetch("/api/agents/build"),
         fetch("/api/projects/"),
         fetch("/api/jobs?limit=200"),
       ]);
       if (!aR.ok) throw new Error(`${aR.status} ${await aR.text()}`);
       setAgents((await aR.json()) as RosterAgent[]);
-      setBuild(bR.ok ? await bR.json() : []);
       setProjects(pR.ok ? await pR.json() : []);
       setJobs(jR.ok ? (await jR.json()).jobs || [] : []);
     } catch (e) {
@@ -481,38 +340,37 @@ export default function Agents() {
             <Link to="/agents/new">
               <Button variant="primary" size="sm"><Plus aria-hidden /> New agent</Button>
             </Link>
-            <Button variant="ghost" size="sm" onClick={() => setSpawning(true)}>
-              <Plus aria-hidden /> New builder
-            </Button>
             <Button variant="ghost" size="sm" onClick={() => setTemplating(true)}>
               <FileStack aria-hidden /> From template
             </Button>
             <Link to="/work?tab=runs">
-              <Button variant="ghost" size="sm"><ListChecks aria-hidden /> Jobs</Button>
+              <Button variant="ghost" size="sm"><ListChecks aria-hidden /> Runs</Button>
             </Link>
           </Row>
         }
       />
 
       {sup && (() => {
-        // At-a-glance strip: builders live/idle + assistant count. Autonomy
-        // moved off this strip to the PageHeader pill (view-only) plus the
-        // canonical toggle on /settings (C6).
-        const builders = agents.filter((a) => a.runtime === "builder");
-        const assistants = agents.filter((a) => a.runtime === "assistant");
-        const liveBuilds = builders.filter((a) => a.state === "running").length;
-        const idleBuilds = builders.filter((a) => a.state !== "running").length;
+        // At-a-glance strip, keyed on ROLE. It used to count `runtime` --
+        // "Builders" vs "Assistants" -- but runtime is how an agent executes,
+        // not what it is. The entity model (6.1) types agents by role, and every
+        // builder now resolves to `maker`, so this reads as the roster it
+        // actually is. Live/idle stays on makers: they hold the long sessions.
+        const makers = agents.filter((a) => a.role === "maker");
+        const others = agents.filter((a) => a.role !== "maker");
+        const liveBuilds = makers.filter((a) => a.state === "running").length;
+        const idleBuilds = makers.length - liveBuilds;
         const builderDot: StatusKind = liveBuilds > 0 ? "running" : "ok";
         return (
           <Card style={{ marginBottom: "var(--space-5)", padding: "var(--space-4)" }}>
             <Row between wrap style={{ rowGap: "var(--space-4)" }}>
               <div>
-                <SectionLabel>Builders</SectionLabel>
+                <SectionLabel>Makers</SectionLabel>
                 <Row><StatusDot status={builderDot}>{liveBuilds} live · {idleBuilds} idle</StatusDot></Row>
               </div>
               <div>
-                <SectionLabel>Assistants</SectionLabel>
-                <Row><StatusDot status="ok">{assistants.length} {assistants.length === 1 ? "assistant" : "assistants"}</StatusDot></Row>
+                <SectionLabel>Other roles</SectionLabel>
+                <Row><StatusDot status="ok">{others.length} {others.length === 1 ? "agent" : "agents"}</StatusDot></Row>
               </div>
             </Row>
           </Card>
@@ -587,9 +445,13 @@ export default function Agents() {
                           becomes a small metadata line below (per operator
                           direction: role/latitude/autonomy/scope first; runtime
                           is plumbing). */}
+                      {/* Role is the type. It is always set for a maker (a
+                          builder resolves to one); an assistant may genuinely
+                          have none, and "no role" is the honest label for that
+                          rather than falling back to naming the runtime. */}
                       {a.role
                         ? <Tag hue={catFor(`role:${a.role}`)}>{a.role}</Tag>
-                        : <Tag hue={isBuilder ? "turquoise" : "violet"}>{a.runtime}</Tag>}
+                        : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
                     </Row>
                     <p className="ws-card__meta">{a.purpose || (isBuilder ? (a.project_slug ? `linked to ${a.project_slug}` : "freestanding") : "assistant")}</p>
                     {(a.autonomy_mode || a.autonomy || a.depth || a.latitude) && (
@@ -618,7 +480,7 @@ export default function Agents() {
                     <p className="ws-card__meta">{triggerSummary(a.triggers)}</p>
                     <p className="ws-card__meta ws-muted">
                       {lastJob ? (
-                        <>last job: {lastJob.status} · {activityLabel(lastJob.started_at)}</>
+                        <>last run: {lastJob.status} · {activityLabel(lastJob.started_at)}</>
                       ) : (
                         <>next: {nextScheduled(a.triggers)}</>
                       )}
@@ -633,8 +495,8 @@ export default function Agents() {
                     type="button"
                     className="ws-agent-card__workbench"
                     onClick={() => nav(`/agents/${encodeURIComponent(a.id)}`)}
-                    title="Agent settings (triggers · jobs · config)"
-                    aria-label="Builder settings"
+                    title="Agent settings (triggers · runs · config)"
+                    aria-label="Agent settings"
                   >
                     <SlidersHorizontal size={16} aria-hidden />
                   </button>
@@ -649,15 +511,6 @@ export default function Agents() {
       {/* Autonomy + GPU/Ollama controls moved back to Settings (C6). The read-
           only status pill in the PageHeader shows the state at a glance and
           links to the canonical toggle in /settings. */}
-
-      <NewBuilderModal
-        open={spawning}
-        projects={projects}
-        existing={build || []}
-        onCancel={() => setSpawning(false)}
-        onCreated={(slug) => { setSpawning(false); nav(`/agents/${encodeURIComponent(slug)}/chat`); }}
-        onNewProject={() => { setSpawning(false); nav("/projects/new"); }}
-      />
 
       <FromTemplateModal
         open={templating}

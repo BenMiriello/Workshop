@@ -133,6 +133,39 @@ ROLES = ("maker", "reviewer", "triager", "keeper", "broker")
 # It reads as `keeper` so an existing definition keeps dispatching unchanged.
 ROLE_ALIASES = {"memory": "keeper"}
 
+# How an agent may be INTERACTED WITH, as two independent opt-ins. Prior art:
+# Linear's agent SDK splits exactly this way (`app:mentionable` /
+# `app:assignable`), for the reason that they are different products. Talking to
+# an agent and handing it work are unrelated capabilities, and most agents want
+# neither -- they are triggered, they work, and they report. Defaulting both to
+# False is what keeps a notes-reviewing keeper from showing up in an @-mention
+# list where it would only confuse the picker.
+#
+#   mentionable  -- may be @-mentioned in a chat and replies inline, attributed
+#   delegatable  -- may be handed a ticket to work
+def _coerce_bool(v: object) -> bool:
+    """Frontmatter booleans arrive as real bools from YAML, but a hand-edited
+    definition can carry the string. Accept both; anything else is False."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in ("true", "yes", "on", "1")
+    return False
+
+
+def _role_for_runtime(runtime: str) -> str | None:
+    """The role a runtime implies when the definition does not state one.
+
+    A builder IS a maker: it runs the ralph sweep, writes the tree and commits
+    (primitive-roles 2026-07-18, section 2). Every builder definition predates the
+    role enum and so carries `role: None`, which left the entire agent surface
+    keyed on `runtime` because that was the only field with a value in it. The
+    entity model keys agents on ROLE, so the default belongs here — one rule at
+    the read boundary — rather than as a fallback repeated at each display site.
+    Assistants imply nothing; an assistant with no role is genuinely unroled.
+    """
+    return "maker" if runtime == "builder" else None
+
 
 def _coerce_depth(v: object) -> str:
     return v if v in DEPTHS else DEFAULT_DEPTH
@@ -292,7 +325,9 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "capabilities": fm.get("capabilities") or [],
         "triggers": triggers.definition_triggers(fm),
         "limits": fm.get("limits") or dict(DEFAULT_LIMITS),
-        "role": _coerce_role(fm.get("role")),
+        "role": _coerce_role(fm.get("role")) or _role_for_runtime(runtime),
+        "mentionable": _coerce_bool(fm.get("mentionable")),
+        "delegatable": _coerce_bool(fm.get("delegatable")),
         "depth": _coerce_depth(fm.get("depth")),
         "fanout": _coerce_fanout(fm.get("fanout")),
         "latitude": _coerce_latitude(fm.get("latitude")),
@@ -328,7 +363,9 @@ def _record_from_build_state(slug: str, raw: dict) -> dict:
         "capabilities": [],
         "triggers": [],
         "limits": dict(DEFAULT_LIMITS),
-        "role": None,
+        "role": _role_for_runtime("builder"),
+        "mentionable": False,
+        "delegatable": False,
         "depth": DEFAULT_DEPTH,
         "fanout": DEFAULT_FANOUT,
         "latitude": None,
@@ -506,7 +543,8 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
               project_slug: str | None, letta_agent_id: str | None,
               role: str | None = None, depth: str | None = None,
               fanout: str | None = None, latitude: str | None = None,
-              autonomy: str | None = None,
+              autonomy: str | None = None, mentionable: bool = False,
+              delegatable: bool = False,
               template: str | None = None, retired: bool = False) -> dict:
     fm: dict[str, Any] = {
         "name": name,
@@ -522,6 +560,11 @@ def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,
     valid_role = _validate_role(role)
     if valid_role:
         fm["role"] = valid_role
+    # False is the default and the safe state, so only True is worth writing.
+    if mentionable:
+        fm["mentionable"] = True
+    if delegatable:
+        fm["delegatable"] = True
     if depth is not None and _coerce_depth(depth) != DEFAULT_DEPTH:
         fm["depth"] = depth
     if fanout is not None and _coerce_fanout(fanout) != DEFAULT_FANOUT:
@@ -609,7 +652,8 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
            capabilities: list | None = None, memory: Any = None,
            role: str | None = None, depth: str | None = None,
            fanout: str | None = None, latitude: str | None = None,
-           autonomy: str | None = None,
+           autonomy: str | None = None, mentionable: bool | None = None,
+           delegatable: bool | None = None,
            body: str | None = None) -> dict:
     """Write changes to the definition file. If the agent has no definition file
     yet (e.g. a builder synthesized from build_agents.json), one is created from
@@ -633,6 +677,7 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             project_slug=rec.get("project_slug"), letta_agent_id=rec.get("letta_agent_id"),
             role=rec.get("role"), depth=rec.get("depth"), fanout=rec.get("fanout"),
             latitude=rec.get("latitude"), autonomy=rec.get("autonomy"),
+            mentionable=bool(rec.get("mentionable")), delegatable=bool(rec.get("delegatable")),
         )
         existing_body = rec.get("definition") or ""
 
@@ -687,6 +732,14 @@ def update(slug: str, *, name: str | None = None, purpose: str | None = None,
             fm["autonomy"] = valid_autonomy
         else:
             fm.pop("autonomy", None)
+    # Interaction opt-ins: False is the default, so clearing means removing the
+    # key rather than writing `mentionable: false`.
+    for _flag, _val in (("mentionable", mentionable), ("delegatable", delegatable)):
+        if _val is not None:
+            if _val:
+                fm[_flag] = True
+            else:
+                fm.pop(_flag, None)
     new_body = existing_body if body is None else body
 
     fm.setdefault("runtime", rec["runtime"])

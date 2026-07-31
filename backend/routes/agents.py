@@ -163,6 +163,8 @@ async def list_agents():
             # breaks. Coherence-migration C7 flips the frontend + backend swap.
             "autonomy_mode": a.get("autonomy") or "reactive",
             "role": a.get("role"),
+            "mentionable": bool(a.get("mentionable")),
+            "delegatable": bool(a.get("delegatable")),
             "depth": a.get("depth") or "standard",
             "fanout": a.get("fanout") or "read-only",
             # null = inherit, and it must stay null over the wire: defaulting it
@@ -813,6 +815,8 @@ async def get_agent(agent_id: str):
         # See list_agents comment. Autonomy-model per-agent MODE lives here until
         # C7 flips the field name.
         "autonomy_mode": rec.get("autonomy") or "reactive",
+        "mentionable": bool(rec.get("mentionable")),
+        "delegatable": bool(rec.get("delegatable")),
         "queue": snap["queue"],
         "awaiting": snap["awaiting"],
         "linked_ticket_ids": linked_ticket_ids[:50],
@@ -837,6 +841,11 @@ class AgentDefinitionUpdate(BaseModel):
     autonomy: str | None = None        # per-agent mode: reactive | supervised | autonomous
                                        # (autonomy-model 2026-07-18; "" or the
                                        # reactive default clears the emitted field)
+    # Interaction opt-ins, independent of each other and of role. Both default
+    # False: an agent is not conversational and not delegatable until it is
+    # deliberately made so.
+    mentionable: bool | None = None     # may be @-mentioned in a chat
+    delegatable: bool | None = None     # may be handed a ticket
     definition: str | None = None  # the markdown body (persona / instructions)
 
 
@@ -863,6 +872,8 @@ async def update_agent_definition(agent_id: str, body: AgentDefinitionUpdate):
             fanout=body.fanout,
             latitude=body.latitude,
             autonomy=body.autonomy,
+            mentionable=body.mentionable,
+            delegatable=body.delegatable,
             body=body.definition,
         )
     except KeyError:
