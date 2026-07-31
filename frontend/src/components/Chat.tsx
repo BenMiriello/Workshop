@@ -425,7 +425,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   activeIdRef.current = activeId;
   // Composer text is a persisted draft (survives reload, syncs across tabs /
   // devices) keyed by this chat's contextKey - see lib/draftSync.
-  const [input, setInput] = useDraft(contextKey);
+  const [input, setInput, clearInput] = useDraft(contextKey);
   const [streaming, setStreaming] = useState(false);
   // Live mirror, so the queue-drain timer can re-check liveness at the moment it
   // fires rather than acting on the value captured when it was scheduled.
@@ -1537,7 +1537,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const send = useCallback(() => {
     const text = input.trim();
     if (!text) return;
-    setInput("");
+    // clearInput, not setInput(""): a send-clear must be written through to
+    // every synced surface immediately and then defended, or a stale copy from
+    // another tab/device can restore the text you just sent.
+    clearInput();
     // In voice mode a typed message runs through the voice engine too (so the
     // reply is spoken and uses the warm worker); slash-commands still go the
     // normal chat route.
@@ -1547,7 +1550,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     } else {
       submitText(text);
     }
-  }, [input, submitText, voiceOn, vsession, setInput]);
+  }, [input, submitText, voiceOn, vsession, clearInput]);
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The mention picker owns the same keys as the slash menu while it is open,

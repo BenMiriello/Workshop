@@ -430,6 +430,51 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
     return labels, (not has_source)
 
 
+def turn_contract(timeout_s: float | int = 900) -> str:
+    """The rule that decides when a turn ends. Re-sent on EVERY turn.
+
+    Why this exists: an agent in this chat has no way to observe the stop
+    condition it is subject to. A turn ends the moment the model emits a
+    message containing only text and no tool call — so writing a closing
+    summary IS the stop signal, indistinguishable from finishing. The model
+    experiences writing "I'll continue with the next phase" as making a plan;
+    the harness experiences it as the end of the session. Nothing resumes.
+
+    That mismatch produced the platform's most common failure: a turn that
+    announces continuation and then stops dead, repeatedly, across a long piece
+    of work. It is not fixable with timers or nudges, because it is not a
+    motivation problem. It is a rule the agent was never told.
+
+    So tell it, every turn, next to the other volatile facts about its
+    environment.
+    """
+    minutes = max(1, round(float(timeout_s) / 60))
+    return (
+        "=== HOW THIS TURN ENDS (re-read every turn) ===\n"
+        "This turn ends the moment you emit a message that is ONLY text, with no "
+        "tool call. There is no loop behind you: nothing resumes, no timer fires, "
+        "and the operator sees a finished turn. A closing summary IS the stop "
+        "signal.\n"
+        "\n"
+        "Therefore:\n"
+        "- While work remains, keep calling tools. Narrate progress as text "
+        "ALONGSIDE tool calls; the chat streams those segments live, so the "
+        "operator sees what you are doing without the turn ending.\n"
+        "- Never write \"continuing\", \"next I'll...\", or a phase summary and "
+        "then stop. Announcing continuation and then emitting terminal text is "
+        "the same action as saying you are done, and worse, because it is "
+        "inaccurate.\n"
+        "- Write the final text block ONLY when the work actually asked for is "
+        "finished, or when you are genuinely blocked or the task was a question.\n"
+        "- If you must stop with work outstanding, say plainly what is done, what "
+        "is not, and why. Never imply a continuation that cannot happen.\n"
+        "\n"
+        f"There is NO step cap on a turn. The only bound is a {minutes}-minute wall "
+        "clock. Running long is fine and expected; stopping early is the failure "
+        "mode."
+    )
+
+
 def runtime_briefing(provider: "ContextProvider") -> str:
     """Templated environment briefing for a build provider (empty for others).
 

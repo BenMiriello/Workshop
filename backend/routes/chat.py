@@ -953,6 +953,9 @@ async def thread_context(thread_id: str):
         cwd=(str(provider.dir) if is_build_mode else None),
         is_build=is_build_mode,
     )
+    # Same stop rule on the first turn as on every resumed one, so behaviour
+    # does not differ between a fresh chat and a continued one.
+    preamble = chat_context.turn_contract(CHAT_TIMEOUT_S) + "\n\n" + preamble
     # Mirror what a real turn sends. Every provider folds the oldest turns into a
     # running summary (see _maybe_compact); only the summary + the tail after
     # `compacted_through` actually go to the model, so count that, not everything.
@@ -1064,6 +1067,11 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     runtime briefing (a builder's cwd/stack/ports) or the provider's live app
     state, plus any notes retrieved for this specific message."""
     parts: list[str] = []
+    # The stop rule goes FIRST, every turn. An agent cannot observe the
+    # condition that ends its own turn; being told once at session start is not
+    # enough, because that instruction is thousands of tokens back by the time
+    # it matters. See chat_context.turn_contract.
+    parts.append(chat_context.turn_contract(CHAT_TIMEOUT_S))
     briefing = chat_context.runtime_briefing(provider)
     if briefing:
         parts.append(briefing)

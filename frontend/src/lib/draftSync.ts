@@ -25,6 +25,7 @@ const LS_PREFIX = "ws-chat-draft:";
 const ACTIVE_MS = 3000; // "actively editing" window after a keystroke
 const BROADCAST_DEBOUNCE_MS = 120;
 const SERVER_DEBOUNCE_MS = 600;
+const JUST_SENT_MS = 8000;  // adopts are refused this long after a send
 
 // Stable per-tab id — one per page load is enough to suppress self-echo.
 const CLIENT_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -87,7 +88,7 @@ function serverPut(p: DraftPayload) {
 
 // Drop-in replacement for useState<string>("") for a chat composer. Returns the
 // current draft for `contextKey` and a setter that persists + syncs it.
-export function useDraft(contextKey: string): [string, (v: string) => void] {
+export function useDraft(contextKey: string): [string, (v: string) => void, () => void] {
   const [draft, setDraftState] = useState<string>(() => lsRead(contextKey).text);
 
   const tsRef = useRef<number>(lsRead(contextKey).ts); // ts of our current value
@@ -97,6 +98,9 @@ export function useDraft(contextKey: string): [string, (v: string) => void] {
   const bcTimer = useRef<number | undefined>(undefined);
   const srvTimer = useRef<number | undefined>(undefined);
   const pendingSrv = useRef<DraftPayload | null>(null);
+  // When the composer was last cleared by SEND. Any adopt within this window is
+  // a stale copy racing a deliberate clear, and is refused.
+  const clearedAtRef = useRef<number>(0);
 
   // Apply an incoming value (from another surface/device) without re-broadcasting.
   const adopt = useCallback((text: string, ts: number) => {
@@ -106,6 +110,10 @@ export function useDraft(contextKey: string): [string, (v: string) => void] {
   }, []);
 
   const editing = () => Date.now() - lastEditRef.current < ACTIVE_MS;
+  // A send is stickier than a keystroke: cross-device echoes can arrive well
+  // after the editing window, and restoring sent text is worse than dropping a
+  // late edit from elsewhere.
+  const justSent = () => Date.now() - clearedAtRef.current < JUST_SENT_MS;
 
   // Load this key's draft on mount / when switching contexts, then reconcile
   // with the server (adopt if the server copy is newer and we're not typing).
@@ -117,7 +125,7 @@ export function useDraft(contextKey: string): [string, (v: string) => void] {
     let cancelled = false;
     serverGet(contextKey).then((s) => {
       if (cancelled || !s) return;
-      if (s.ts > tsRef.current && !editing()) adopt(s.text, s.ts);
+      if (s.ts > tsRef.current && !editing() && !justSent()) adopt(s.text, s.ts);
     });
     return () => { cancelled = true; };
   }, [contextKey, adopt]);
@@ -128,6 +136,7 @@ export function useDraft(contextKey: string): [string, (v: string) => void] {
       if (p.client_id === CLIENT_ID) return; // our own echo
       if (p.ts <= tsRef.current) return;      // not newer
       if (editing()) return;                  // we're typing — keep ours
+      if (justSent()) return;                 // just sent — never restore it
       adopt(p.text, p.ts);
     };
     let set = subs.get(contextKey);
@@ -137,7 +146,7 @@ export function useDraft(contextKey: string): [string, (v: string) => void] {
     const onFocus = () => {
       if (document.visibilityState === "hidden") return;
       serverGet(keyRef.current).then((s) => {
-        if (s && s.ts > tsRef.current && !editing()) adopt(s.text, s.ts);
+        if (s && s.ts > tsRef.current && !editing() && !justSent()) adopt(s.text, s.ts);
       });
     };
     window.addEventListener("focus", onFocus);
@@ -183,5 +192,35 @@ export function useDraft(contextKey: string): [string, (v: string) => void] {
     }, SERVER_DEBOUNCE_MS);
   }, []);
 
-  return [draft, setDraft];
+  // Clearing on SEND is different from clearing by editing, and has to be
+  // immediate + authoritative.
+  //
+  // setDraft only SCHEDULES its writes: the broadcast is debounced 120ms and
+  // the server PUT 600ms. That leaves windows where the just-sent text is
+  // still the newest copy somewhere else — another tab or device that has not
+  // heard about the clear yet, or a server copy the clear has not reached —
+  // and the adopt paths (focus, visibilitychange, BroadcastChannel) will
+  // happily restore it once the 3s "actively editing" guard lapses. The result
+  // is a message that sends and then reappears in the composer, occasionally,
+  // which is exactly what it looks like from outside.
+  //
+  // So: write through synchronously to every surface, and hold a guard that
+  // refuses any adopt until the clear has certainly propagated. A send is a
+  // deliberate act; nothing arriving afterwards should be able to undo it.
+  const clearNow = useCallback(() => {
+    const key = keyRef.current;
+    const ts = Date.now();
+    tsRef.current = ts;
+    lastEditRef.current = ts; // also holds the editing() guard
+    clearedAtRef.current = ts;
+    setDraftState("");
+    lsWrite(key, "", ts);
+    window.clearTimeout(bcTimer.current);
+    window.clearTimeout(srvTimer.current);
+    pendingSrv.current = null;
+    channel?.postMessage({ key, text: "", ts, client_id: CLIENT_ID } as DraftPayload);
+    void serverPut({ key, text: "", ts, client_id: CLIENT_ID });
+  }, []);
+
+  return [draft, setDraft, clearNow];
 }
