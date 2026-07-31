@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Plus, Trash2, CornerDownLeft, Square, Maximize2, ChevronLeft,
@@ -20,6 +20,8 @@ import {
 } from "./chat/chatScope";
 import { orderModels, modelLabel, modelDisplay, contextWindowFor, MODEL_LABELS } from "./chat/models";
 import { useMessageQueue } from "./chat/useMessageQueue";
+import { useLogScroll } from "./chat/useLogScroll";
+import { useVoiceSettle } from "./chat/useVoiceSettle";
 import {
   chatApi,
   type ChatMsg,
@@ -216,21 +218,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const slug = buildSlug(contextKey);
   const taskScope = taskScopeFor(contextKey);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const composerRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const finishingRef = useRef(false);
   // The turn currently running, if any. A message sent while it runs is handed
   // straight to it (it lands at the next boundary between the agent's actions)
   // instead of waiting for the whole turn to end.
   const liveTurnRef = useRef<string | null>(null);
-  // Whether the log is scrolled to (near) the bottom - so focus/keyboard/viewport
-  // changes only re-pin when the user was already following the latest messages.
-  const atBottomRef = useRef(true);
-  // New content arrived while scrolled up: offer a way back instead of dragging
-  // the view down.
-  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   // Stream resilience: count consecutive reconnect attempts (reset on any event
   // received, so a healthy long turn never trips the cap), and self-reference
   // attachStream so a drop handler can re-attach without a render cycle.
@@ -311,11 +304,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // interfaces write the SAME thread - see useVoiceSession + voice_worker).
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceSettings, setVoiceSettings] = useState(false);
-  // The just-finished spoken exchange, held locally so the overlay keeps showing
-  // the user+assistant bubbles while the thread refetch is in flight - no frame
-  // where the exchange vanishes then pops back (D4). Cleared once the refetch has
-  // landed the persisted messages, so the swap into the log is a single commit.
-  const [settling, setSettling] = useState<{ user: string; assistant: string } | null>(null);
   // The orb element: the mic-level halo is written here directly (a CSS var) by
   // the session's onLevel callback, off the React render path (Phase 3 item 3).
   const orbRef = useRef<HTMLButtonElement>(null);
@@ -400,79 +388,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }
   }, [voiceOn, vsnap.fatal, vsnap.error]);
 
-  // Overlay settle (D4). When a spoken turn finishes we must never drop the frame
-  // where the just-finished exchange lives: the live overlay only renders during
-  // thinking|speaking, and the persisted-message refetch is async. So on finish we
-  // snapshot the exchange into `settling` (kept rendered), then poll getThread
-  // until the persisted turn has landed (the worker persists a beat after playback)
-  // and swap `messages` + clear `settling` in ONE commit. The poll is ref-driven,
-  // not tied to the effect's cleanup, so the next turn starting (a benign
-  // listening→thinking transition) can't cancel an in-flight settle - turn N stays
-  // on screen (as the settling overlay, above turn N+1's live overlay) until its
-  // messages land.
-  const settlePollRef = useRef<{ cancelled: boolean } | null>(null);
-  const startSettle = useCallback((id: string, user: string, assistant: string, baseLen: number) => {
-    const handle = { cancelled: false };
-    settlePollRef.current = handle;
-    setSettling({ user, assistant });
-    let tries = 0;
-    const finishSettle = (msgs: ChatMsg[] | null) => {
-      if (handle.cancelled) return;
-      if (msgs) setMessages(msgs);
-      // Only clear if this settle is still the active one (a newer turn may have
-      // taken over) - the swap into the log is a single commit either way.
-      setSettling((s) => (settlePollRef.current === handle ? null : s));
-      if (settlePollRef.current === handle) settlePollRef.current = null;
-      void refreshThreads();
-    };
-    const poll = () => {
-      if (handle.cancelled) return;
-      chatApi.getThread(id)
-        .then((t) => {
-          if (handle.cancelled) return;
-          if (t.messages.length > baseLen) finishSettle(t.messages);   // the new turn persisted
-          else if (++tries >= 8) finishSettle(t.messages);             // give up: swap what we have
-          else window.setTimeout(poll, 250);
-        })
-        .catch(() => {
-          if (handle.cancelled) return;
-          if (++tries >= 8) finishSettle(null);
-          else window.setTimeout(poll, 250);
-        });
-    };
-    poll();
-  }, [refreshThreads]);
-
-  const prevVoiceState = useRef(vsnap.state);
-  // useLayoutEffect (not useEffect): the live overlay unmounts on the same commit
-  // that flips state away from speaking/thinking, so `settling` must be set BEFORE
-  // the browser paints, or there is a one-frame gap where the just-finished
-  // exchange is absent (the vanish-then-pop this redesign set out to kill).
-  useLayoutEffect(() => {
-    const prev = prevVoiceState.current;
-    prevVoiceState.current = vsnap.state;
-    if (!voiceOn) return;
-    const finished = (prev === "speaking" || prev === "thinking")
-      && (vsnap.state === "listening" || vsnap.state === "idle");
-    if (!finished || !activeId) return;
-    const user = vsnap.lastUser;
-    const assistant = vsnap.sentences.map((s) => s.text).join(" ").trim();
-    if (!user && !assistant) { void refreshThreads(); return; }
-    startSettle(activeId, user, assistant, messagesRef.current.length);
-    // vsnap.lastUser/sentences are read at the finish transition; state is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vsnap.state, voiceOn, activeId, startSettle]);
-
-  // Cancel any in-flight settle and drop the overlay when voice turns off, the
-  // thread switches, or the component unmounts, so a stale poll can't overwrite
-  // the log of another thread and the overlay can't flash back on re-entry.
-  useEffect(() => {
-    if (!voiceOn) {
-      if (settlePollRef.current) settlePollRef.current.cancelled = true;
-      setSettling(null);
-    }
-    return () => { if (settlePollRef.current) settlePollRef.current.cancelled = true; };
-  }, [voiceOn, activeId]);
+  // A finished spoken exchange stays on screen until its persisted messages
+  // land — see useVoiceSettle for why this needs a layout effect and a
+  // ref-driven poll.
+  const { settling } = useVoiceSettle({
+    voiceOn, activeId, vsnap, messagesRef,
+    setMessages: (msgs) => setMessages(msgs),
+    refreshThreads: () => { void refreshThreads(); },
+  });
 
   // A button-opened slash menu dismisses like any other popover. (The typed
   // variant closes itself when the "/" stops being a command.)
@@ -776,80 +699,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     };
   }, [activeId, streaming]);
 
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight });
-  }, []);
-  // The ONLY writer of atBottomRef. Anything else writing it (the render-driven
-  // effect below used to) destroys the position tracking and defeats every guard
-  // that depends on it.
-  const onLogScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    atBottomRef.current = atBottom;
-    setShowJumpToLatest((v) => (atBottom ? false : v));
-  }, []);
-
-  // Follow the conversation only while the operator is actually following it.
-  // This effect fires on every streamed token; unguarded (and re-asserting
-  // "we're at the bottom" as it used to) it hard-scrolled the log down on every
-  // token, so scrolling up to read an earlier message while a turn streamed was
-  // impossible. Leaving the bottom is not a trap: new content while scrolled up
-  // raises a jump-to-latest affordance instead of yanking the view.
-  useEffect(() => {
-    if (atBottomRef.current) scrollToBottom();
-    else if (streaming || pendingSegments.length > 0 || messages.length) setShowJumpToLatest(true);
-  }, [messages, pendingSegments, interjections, queue.items, streaming, vsnap.state, vsnap.sentences, vsnap.lastUser, scrollToBottom]);
-
-  // Sending is an explicit intent to follow the conversation again, so it always
-  // returns to the bottom regardless of where the log was scrolled.
-  const followLatest = useCallback(() => {
-    atBottomRef.current = true;
-    setShowJumpToLatest(false);
-    scrollToBottom();
-  }, [scrollToBottom]);
-
-  // Keep the log pinned to the bottom when the composer is focused and the mobile
-  // keyboard opens/closes (which resizes the visual viewport). Only re-pin when
-  // the user was already at the bottom (atBottomRef), so scrolling up to read
-  // history isn't yanked back down.
-  //
-  // Focus itself does NOT scroll. It used to, unconditionally: tapping the
-  // composer to start typing threw you to the newest message, discarding
-  // wherever you had scrolled to. Reading something further up and then
-  // replying to it is an ordinary thing to do, and focusing an input is not a
-  // request to go anywhere.
-  useEffect(() => {
-    if (!inputFocused) return;
-    const vv = window.visualViewport;
-    const onResize = () => { if (atBottomRef.current) scrollToBottom(); };
-    vv?.addEventListener("resize", onResize);
-    return () => vv?.removeEventListener("resize", onResize);
-  }, [inputFocused, scrollToBottom]);
-
-  useEffect(() => {
-    if (inputFocused && atBottomRef.current) scrollToBottom();
-  }, [input, inputFocused, scrollToBottom]);
-
-  // The composer sits in flow above nothing — it SHARES the column with the log,
-  // so every row the textarea grows by is a row the log loses. Re-pin whenever
-  // the composer changes height, or the bottom message slides underneath it: you
-  // scroll down to read the last reply, go back to typing, the composer grows,
-  // and the thing you were reading is gone. Nothing else notices that resize —
-  // it isn't a render, a viewport change, or a scroll — so an observer on the
-  // element is what closes the gap.
-  useEffect(() => {
-    const el = composerRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(() => { if (atBottomRef.current) scrollToBottom(); });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [scrollToBottom]);
-
   // Elapsed-time ticker for the working indicator. The clock starts when a turn
   // begins streaming and keeps running across reconnects (streaming stays true),
-  // so "Working… 45s" reflects the real turn duration, not the last reconnect.
+  // so "Working... 45s" reflects the real turn duration, not the last reconnect.
   useEffect(() => {
     if (!streaming) { setElapsed(0); turnStartRef.current = 0; return; }
     if (!turnStartRef.current) turnStartRef.current = Date.now();
@@ -859,22 +711,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     return () => window.clearInterval(id);
   }, [streaming]);
 
-  // Auto-grow the composer: 2.5 lines tall by default, grows with content.
-  const autosize = useCallback(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    // Grow to fit content, capped at the CSS max-height (3 rows) - read it so
-    // the JS cap can't drift from the stylesheet; beyond that it scrolls.
-    const max = parseFloat(getComputedStyle(el).maxHeight) || 96;
-    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
-  }, []);
-  // useLayoutEffect, not useEffect: the scroll-to-bottom effects above also fire
-  // on `input`, and passive effects run in declaration order — so resizing here
-  // passively meant every scroll was computed against the composer's PREVIOUS
-  // height and landed short by exactly the row that had just been added. Layout
-  // effects run first regardless of order, so the measurement is never stale.
-  useLayoutEffect(() => { autosize(); }, [input, autosize]);
+  // Following the conversation, composer sizing, and the jump-to-latest
+  // affordance are one behaviour — see useLogScroll for the rules and the bugs
+  // each of them exists to prevent.
+  const {
+    scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest,
+  } = useLogScroll({
+    input,
+    inputFocused,
+    followDeps: [messages, pendingSegments, interjections, queue.items, streaming,
+                 vsnap.state, vsnap.sentences, vsnap.lastUser],
+    hasContent: streaming || pendingSegments.length > 0 || messages.length > 0,
+  });
 
   // (There is no in-chat "open another thread" path any more. Switching
   // conversations goes through the chat list, which navigates here with
