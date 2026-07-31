@@ -198,6 +198,18 @@ export const chatApi = {
       body: JSON.stringify({ content }),
     }).then(j<{ delivered: boolean; reason: string }>),
 
+  // Same, addressed by CHAT rather than by turn. The client knows which
+  // conversation it is in; the server resolves which turn is running on it.
+  // Routing by turn id meant injection only worked in the component mount that
+  // started the turn — a second tab, another device, or a re-attached turn had
+  // no id to send and silently fell back to queueing.
+  injectIntoThread: (threadId: string, content: string) =>
+    fetch(`/api/chat/threads/${threadId}/inject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    }).then(j<{ delivered: boolean; turn_id: string | null; reason: string }>),
+
   sendMessage: (id: string, content: string, model?: string) =>
     fetch(`/api/chat/threads/${id}/messages`, {
       method: "POST",

@@ -1387,10 +1387,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // Queueing is now only the fallback for the narrow case where the turn ends
     // between hitting enter and the request landing. The message is never lost:
     // either the running turn took it, or it becomes the next turn.
-    if (streaming) {
-      const turnId = liveTurnRef.current;
-      if (!turnId) { setQueue([...queuedRef.current, text]); return; }
-      void chatApi.injectIntoTurn(turnId, text)
+    // Addressed by CHAT, not by turn id. Gating this on a turn id held in a ref
+    // meant injection only fired in the component mount that started the turn:
+    // a second tab, another device, a turn adopted after a backend restart, or
+    // a reload that re-attached by another path all had no id to send, so the
+    // message silently went back to the queue and waited out the whole turn —
+    // the exact behaviour this was supposed to end. The client knows which
+    // conversation it is in; the server resolves which turn is live on it.
+    const threadId = activeIdRef.current;
+    if (streaming && threadId) {
+      void chatApi.injectIntoThread(threadId, text)
         .then((r) => {
           if (r.delivered) {
             setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString(), meta: { injected: true } }]);
@@ -1402,6 +1408,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         .catch(() => { setQueue([...queuedRef.current, text]); });
       return;
     }
+    if (streaming) { setQueue([...queuedRef.current, text]); return; }
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
@@ -2303,6 +2310,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         prefs={vprefs}
         updatePrefs={vupdatePrefs}
         caps={vsnap.caps}
+        session={vsession}
       />
     </div>
   );

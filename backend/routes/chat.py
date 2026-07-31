@@ -1295,6 +1295,54 @@ class InjectMessage(BaseModel):
     content: str
 
 
+def _live_turn_id(thread: dict) -> str | None:
+    """The turn currently running on this thread, per the STORED transcript.
+
+    Server-derived on purpose. Routing an injection through a turn id the client
+    happened to be holding meant it only worked in the one component mount that
+    started the turn: a second tab, another device, a turn adopted after a
+    backend restart, or a reload that re-attached by a different path all had no
+    id to send and silently fell back to queueing. The thread itself knows which
+    turn is live — ask it."""
+    msgs = thread.get("messages") or []
+    if not msgs:
+        return None
+    last = msgs[-1]
+    meta = last.get("meta") or {}
+    if last.get("role") == "assistant" and meta.get("streaming"):
+        return meta.get("turn_id")
+    return None
+
+
+@router.post("/threads/{thread_id}/inject")
+async def inject_into_thread(thread_id: str, body: InjectMessage):
+    """Hand a message to whatever turn is running on this thread.
+
+    The client should not have to know a turn id to talk to its own chat. It
+    knows which conversation it is in; the server resolves the rest."""
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(400, "empty message")
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    turn_id = _live_turn_id(t)
+    if not turn_id:
+        return {"delivered": False, "reason": "no turn is running on this chat"}
+    delivered = build_streaming.inject(turn_id, content)
+    if delivered:
+        try:
+            chat_store.insert_message_before_live_turn(
+                thread_id, "user", content, meta={"injected": True})
+        except Exception as e:
+            log.warning("thread %s: could not persist injected message: %s", thread_id, e)
+    return {
+        "delivered": delivered,
+        "turn_id": turn_id,
+        "reason": "" if delivered else "the running turn is not accepting input",
+    }
+
+
 @router.post("/turns/{turn_id}/inject")
 async def inject_into_turn(turn_id: str, body: InjectMessage):
     """Hand a message to a turn that is already running.
