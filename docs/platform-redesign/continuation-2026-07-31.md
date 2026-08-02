@@ -272,11 +272,30 @@ tickets whose acceptance is "produce a design doc" being satisfied by producing
    One ticket was cancelled for arguing against itself — it proposed a sort and
    noted in the same sentence that it was "currently a no-op".
 
-   Judgement calls left OPEN rather than guessed: the remaining twelve
-   `[SEC-*]` findings (four need root), B8 resilience, the settings-UI concept,
-   the note-capture model, routing doc-tail open questions to a real surface,
-   and the toolbar overhaul, whose Design-System pass over runs/jobs/agents is
-   still unverified even though its chat linkage is now done.
+   **Third pass, operator-directed: 40 → 21, to start fresh.** The first two
+   passes closed what was *provably done*. This one archives what is no longer
+   *worth doing*, on four tests — superseded design phase, premise no longer
+   true, gated on something that never happened, or self-described as optional.
+   Nineteen cancelled: the whole 2026-07-18 design residue (the settings-UI
+   concept, the note-capture model, the three-ticket preference thread, B8, the
+   agent-generalize ticket), the C1/C2/C4 autonomous-queue mechanics (autonomy
+   is off by design until step 5, so dispatch machinery is work against an
+   unproven loop), and the "consider / optional / if it feels off" tail across
+   commute, location and notes-app. Two of those closed on live data: both
+   OwnTracks tickets asked "is the track dense enough" and journeys now record
+   coverage 1.0 at 500-785 points.
+
+   **The twelve `[SEC-*]` findings were deliberately NOT archived.** They are
+   not stale; they are unfixed, and three were re-verified as live exposures
+   this same day. Clearing a queue by dropping security findings would be
+   tidying, not triage.
+
+   What survives is 21: twelve security findings, P5, the toolbar Design-System
+   pass, the by-chat usage view, the one budget row that needs the operator, the
+   three commute journey-learning items, the notes CodeMirror editor and the
+   notes backup decision. Nothing cancelled is lost — the ticket text and a
+   reason are kept on every one, so re-filing against the current plan is a
+   copy-paste.
 2. **Add a dry-run**: `queue_runner.sh --plan` printing the next N picks with
    reasons, changing nothing.
 3. **Type the tickets**: at minimum executable vs judgement, so a maker can never
