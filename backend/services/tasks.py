@@ -375,19 +375,43 @@ def _split_overlong_title(head: str) -> tuple[str, str]:
                 cut = m
         if cut is not None:
             return head[: cut.start()].rstrip(" .:;,"), head[cut.end():].strip()
-    # Nothing to cut on: elide at a word boundary and keep the whole line as the
-    # body. The bracket guard deliberately does NOT apply here — a cut claims to
-    # be a complete title, an elision already says "there is more" with its
-    # ellipsis, and forcing balance on a preview only makes it shorter and less
-    # informative.
+    # Nothing to cut on: elide at a word boundary and put the REMAINDER in the
+    # body — not the whole line. Keeping the whole line was the bug: the title's
+    # words then appeared twice, so opening a ticket showed the title and then
+    # the same sentence again underneath. And because the preview was PREPENDED
+    # each pass, lowering TITLE_MAX made a second preview stack on the first.
+    #
+    # The bracket guard deliberately does NOT apply here. A cut claims to be a
+    # complete title; an elision already says "there is more" with its ellipsis,
+    # and forcing balance on a preview only makes it shorter and less useful.
     space = head.rfind(" ", 0, _TITLE_ELIDE)
     head_cut = space if space >= _TITLE_MIN_CUT else _TITLE_ELIDE
-    return head[:head_cut].rstrip(" .:;,") + "…", head
+    return head[:head_cut].rstrip(" .:;,") + "…", head[head_cut:].strip()
+
+
+def _undo_stacked_preview(body: str) -> str:
+    """Drop an elided title line that the NEXT line just repeats.
+
+    Repairs this function's own earlier output. An elided title used to be
+    prepended while the whole original line was kept below it, so every pass at a
+    new TITLE_MAX stacked another preview: one ticket ended up as
+    "...secrets out of…" / "...secrets out of container env into a…" / the real
+    line. Collapsing them on read means stored records heal themselves and a
+    future threshold change cannot accumulate again.
+    """
+    while True:
+        head, sep, rest = body.partition("\n")
+        if not sep or not head.endswith("…"):
+            return body
+        stem = head[:-1].rstrip(" .:;,")
+        if len(stem) < _TITLE_MIN_CUT or not rest.startswith(stem):
+            return body
+        body = rest
 
 
 def _normalize_text(text) -> str:
     """Guarantee the first line of a task's text reads as a title."""
-    body = str(text or "").strip()
+    body = _undo_stacked_preview(str(text or "").strip())
     head, sep, rest = body.partition("\n")
     if len(head) <= TITLE_MAX:
         return body

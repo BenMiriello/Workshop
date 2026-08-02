@@ -66,8 +66,8 @@ def test_a_cut_never_leaves_a_bracket_open():
     title = _title(text)
     assert title != "DEFERRED DECISION (operator must weigh in"
     assert title.endswith("…")
-    # An elision keeps the whole line; nothing is lost to the guard.
-    assert _body(text) == text
+    # Falling through to an elision loses nothing: title + body is the line.
+    assert (title.rstrip("…").rstrip() + " " + _body(text)).split() == text.split()
 
 
 def test_split_keeps_the_later_lines_as_the_body():
@@ -76,13 +76,56 @@ def test_split_keeps_the_later_lines_as_the_body():
     assert body.endswith("Objective: the rest of the spec.\nOutput: a thing.")
 
 
+def test_an_elided_title_is_not_repeated_by_the_body():
+    """The bug the operator kept seeing: open a ticket, read the title twice.
+
+    The elided preview used to be PREPENDED with the whole original line left
+    below it, so the title's words appeared again immediately underneath.
+    """
+    text = "Rewire " + "everything everywhere all at once " * 8
+    text = text.strip()
+    title, body = _title(text), _body(text)
+    assert title.endswith("…")
+    assert not body.startswith(title.rstrip("…")[:28])
+    # Still lossless: the body picks up exactly where the title stopped.
+    assert (title.rstrip("…").rstrip() + " " + body).split() == text.split()
+
+
+def test_normalizing_is_idempotent():
+    """Running it twice must not stack a second preview on the first.
+
+    Lowering TITLE_MAX from 120 to 80 did exactly that in the live store: one
+    ticket ended up as three lines, two of them elided previews of the third.
+    """
+    for text in [
+        "Rewire " + "everything everywhere all at once " * 8,
+        "[SEC-M2] open-wearables: get vendor secrets out of container env into a "
+        "non-committed secret store, and rotate every one of them",
+        "A short one\nwith a body",
+    ]:
+        once = tasks._normalize_text(text.strip())
+        assert tasks._normalize_text(once) == once
+
+
+def test_a_stacked_preview_from_an_older_threshold_is_repaired():
+    stacked = (
+        "[SEC-M2] open-wearables: get vendor secrets out of…\n"
+        "[SEC-M2] open-wearables: get vendor secrets out of container env into a…\n"
+        "[SEC-M2] open-wearables: get vendor secrets out of container env into a "
+        "non-committed secret store"
+    )
+    out = tasks._normalize_text(stacked)
+    assert out.count("[SEC-M2]") == 1
+
+
 def test_split_is_lossless_when_there_is_nothing_to_cut_on():
     # No sentence break anywhere: the title becomes an elided preview and the
-    # whole line survives in the body, so no words are ever destroyed.
+    # body continues from exactly where it stopped. Lossless by CONTINUATION,
+    # not by repeating the line — see the no-repeat test above.
     text = "Execute a deep review pass over " + "the entity model and ticket set " * 6
     text = text.strip()
     assert _title(text).endswith("…")
-    assert _body(text) == text
+    assert (_title(text).rstrip("…").rstrip() + " " + _body(text)).split() == text.split()
 
 
 def test_elided_preview_breaks_on_a_word():

