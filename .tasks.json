@@ -3918,7 +3918,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "audit 2026-08-02: the bidirectional chat/work linkage half is DONE and verified \u2014 RunDetail already linked back to its originating chat, and four dead /work?ticket= links (two on RunDetail, one per agent ticket badge) now resolve through one ticketHref helper; /api/agents/{id} gained linked_ticket_scope, without which those ids were unaddressable. The toolbar half is done too: no person+/play controls remain, the inbox bell is integrated, and mobile sideways scroll on Work is fixed. STILL OPEN: a systematic Design-System pass over the runs/jobs/agents pages for ownership/status/action.",
+          "ts": "2026-08-02T17:38:27+00:00"
+        }
+      ],
       "source": {
         "kind": "chat",
         "ref": "47b637e74ab74a2f916cd0c1037d97e8"
@@ -3929,7 +3935,7 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-31T17:33:43+00:00",
-      "updated": "2026-07-31T17:33:43+00:00",
+      "updated": "2026-08-02T17:38:27+00:00",
       "owner": "operator",
       "blocked_request": null
     }
