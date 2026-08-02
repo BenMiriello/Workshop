@@ -243,10 +243,40 @@ tickets whose acceptance is "produce a design doc" being satisfied by producing
    `triage 2026-08-02 -> <status>: <why>`, which is the raw material asked for
    here, and the two supersession pairs are joined with `relates_to` — the
    closest existing link, since nothing yet means "this replaces that" (5.3
-   failure mode 2). Judgement calls left OPEN rather than guessed: the fifteen
-   `[SEC-*]` findings, B8 resilience, the settings-UI concept, the note-capture
-   model, and the toolbar overhaul, which is substantially delivered by P1-P3
-   but whose bidirectional chat linkage was not verified.
+   failure mode 2).
+
+   **Second pass, same day: 65 → 40.** The first pass closed what a design doc
+   or a commit message proved. The second closed what the *running system*
+   proved, which turned out to be much more — 24 more tickets, and the lesson
+   is that a queue drifts out of date silently in a way that only checking can
+   surface:
+
+   - **Seven of budget's eight "BLOCKED, needs operator apply" tickets were
+     already applied.** They named exact files; every one of those edits is in
+     the tree (`_payoff_view`, the `cadence`/`strategy` schema, the PLAID env
+     strip). Nobody closed them. The eighth is genuinely open and stays open —
+     it writes money config, which is the operator's action, not a triage pass's.
+   - **Three security findings are no longer true.** `ss -ltn` says nothing
+     listens on 6379 at all, `:9000` is loopback-bound, and `tailscale serve
+     status` has no 8443 and nothing pointed at `:5173`. Three others were
+     re-verified as still exposed and now carry today's evidence, including
+     Letta, which was confirmed by probe rather than inspection: `GET
+     /v1/agents/` returns 200 with no credentials.
+   - **notes-app's 2026-07-12 scaffold checklist was all satisfied**, and the
+     app moved in-process (`app_registry` → `routes/notes.py`), so "first run
+     via the App panel" describes a path that no longer exists.
+   - **Commute's "location is the weak link"** closed on its own data:
+     journey coverage is 1.0 at 500-785 points where the ticket was filed
+     against 8-10 points at 0.07.
+
+   One ticket was cancelled for arguing against itself — it proposed a sort and
+   noted in the same sentence that it was "currently a no-op".
+
+   Judgement calls left OPEN rather than guessed: the remaining twelve
+   `[SEC-*]` findings (four need root), B8 resilience, the settings-UI concept,
+   the note-capture model, routing doc-tail open questions to a real surface,
+   and the toolbar overhaul, whose Design-System pass over runs/jobs/agents is
+   still unverified even though its chat linkage is now done.
 2. **Add a dry-run**: `queue_runner.sh --plan` printing the next N picks with
    reasons, changing nothing.
 3. **Type the tickets**: at minimum executable vs judgement, so a maker can never

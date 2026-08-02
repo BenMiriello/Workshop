@@ -175,11 +175,11 @@
       Output: general chat gets a bounded read/small-write tool surface, and persona() is rewritten around the five principles in docs/platform-redesign/work-placement-and-preference-learning-2026-07-18.md - do small things now; hand off what needs the reviewer gate/touches/retry/receipt; offload context-heavy READING to a subagent (not necessarily a ticket); THE OPERATOR'S EXPRESSED WISH OUTRANKS ALL OF IT; say what you handed off in one line. Principles to reason with, not rules that fire.
       Start from: chat_context.py:1004-1005 (allowlist), :679-708 (persona), :166-175 (TASK_PROPOSAL_BUILD_RULE, already close to target), effective_allowed_tools:1065.
       Boundaries: Do not add hard blocks or refusal paths. The policy must bend to an explicit request. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.
-- [ ] Write-boundary reminder on the file-write tool
+- [x] Write-boundary reminder on the file-write tool
       Objective: Surface the work-placement reminder at the moment the tradeoff becomes real - when the agent is about to write - rather than at the start of a turn.
       Output: a short reminder attached at the write boundary noting that multi-file writes usually want the queue's review gate, and that a single small edit inline is fine. It REMINDS and lets the agent decide; it must never block or refuse.
       Start from: the chat tool wiring in chat_context.py / llm_router tool_flags:385. Depends on the widened tool surface. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.
-- [ ] Per-thread chat mode: orchestrated (default) vs direct
+- [x] Per-thread chat mode: orchestrated (default) vs direct
       Objective: Let the operator swap any chat back to a traditional chat experience at any time, so leniency is safe.
       Output: a `mode` field on the thread record defaulting to `orchestrated`; `direct` = traditional chat, no auto-ticketing and no cards, but an explicit "file this" STILL works. Toggle exposed in the chat toolbar, switchable mid-thread without losing thread identity.
       Start from: chat_store.py:53-66 (thread record), :57-59 + set_thread_model:68 (exact precedent), list projection :116-119; read it where the provider resolves (chat.py:1006, :800) and let it modulate effective_allowed_tools (chat_context.py:1065) + which persona fragments _build_prompt appends (:704-708). POST /threads/{id}/rescope (chat.py:344) is precedent for rebinding a thread in place.
@@ -224,7 +224,7 @@
       Output: Cards carry a link to the created ticket(s) and a back-link to the originating chat; a multi-ticket action opens a picker rather than a single destination.
       Start from: shared/knowledge/orchestration-surface-requirements-addendum-re-s-19f743cb2c2.md lines 13-16 (verbatim operator ask). The B1 ticket de5890ca shipped card-collapse/auto-run/related-work but never covered linking or the picker.
       Boundaries: frontend + the card emit path only. Do not redesign the ticket schema.
-- [ ] Restore the missing source note: 'Orchestration-surface requirements (raw)'
+- [x] Restore the missing source note: 'Orchestration-surface requirements (raw)'
       Objective: Six ticket bodies instruct a worker to read a verbatim requirements note that DOES NOT EXIST; only two addenda to it survive. Reconstruct it or correct the six tickets so no worker is sent to a missing document.
       Output: Either the note is restored to shared/knowledge/ and indexed in MEMORY.md, or the six ticket bodies stop citing it. Grep for the phrase returns matches in real notes, not only in TODO.md and .tasks.json.
       Start from: grep -rl 'Orchestration-surface requirements (raw)' -> matches ONLY TODO.md and .tasks.json. The two surviving addenda are in shared/knowledge/orchestration-surface-requirements-addendum-re-s-*.md. This is the confirmed mechanism by which the card-linking ask was dropped: workers wrote design docs without ever reading the source request.
@@ -234,19 +234,19 @@
       Output: Open operator-decisions appear in the Work UI (or an equivalent reviewed surface) rather than only in doc tails. Includes the time-sensitive one: latitude-model-2026-07-18.md flags renaming `latitude` as 'cheap before E1, expensive after E4'.
       Start from: synthesis-agent-protocols-2026-07-16.md:331-345 (5 operator-owned questions, incl. 'is an autonomous agent a third identity kind' which it marks 'the one that matters'); work-placement-and-preference-learning-2026-07-18.md:277-282; latitude-model-2026-07-18.md:303-312; primitive-roles-2026-07-18.md:556-588.
       Boundaries: surfacing only. Do not answer the questions on the operator's behalf.
-- [ ] Decide the fate of three agents that have never run
+- [x] Decide the fate of three agents that have never run
       Objective: workshop-overseer, email-triager, and plaid-watcher are registered and have never executed once. Retire them or wire them.
       Output: Each is either removed from the registry or given a routable trigger and verified to fire once.
       Start from: synthesis-agent-protocols-2026-07-16.md:341-345 recommends retiring the overseer and asks whether the other two were wanted. `bash scripts/dispatch_triggers.sh` now prints skip-unroutable/skip-no-triggers lines naming them.
       Boundaries: registry + triggers. Do not build new agent runtimes here.
-- [ ] L4: stop re-running the full reviewer inside eval_criteria
+- [x] L4: stop re-running the full reviewer inside eval_criteria
       Objective: Remove one redundant full gate run per task. L1-L3 shipped; L4 was silently never ticketed.
       Output: eval_criteria no longer triggers a second complete reviewer pass; per-task wall time drops measurably.
       Start from: docs/platform-redesign/work-placement-and-preference-learning-2026-07-18.md:243 (the L4 table row, 'medium' risk).
       Boundaries: scripts/ only. Do not weaken the committed-work done-gate.
 - [ ] [SEC-C3] Verify inbound IPv6 firewall policy (root)
       Host has globally-routable IPv6 and Redis/Ollama/ComfyUI/SMB/ssh bind [::]. Confirm ufw/ip6tables default-deny inbound on IPv6 for 6379/8188/11434/11435/445/139/22/111. This gates whether the unauth all-interface services are LAN/tailnet-only or internet-exposed. Run: sudo ufw status verbose + sudo ip6tables -L -n. See docs/security-audit-2026-07-18.md.
-- [ ] [SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys…
+- [x] [SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys…
       [SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys, no requirepass, protected-mode no). Known RCE via CONFIG SET dir/dbfilename + SAVE. Set requirepass and rebind publish to loopback (or docker net). Also password intergen-redis :6380. Needs stack owner + root for firewall. USAGE-FLAG: LAN clients of lovelace lose direct access. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-C1] Docker-socket access = root-equivalent, and it is LOAD-BEARING (do not just remove the group)
       CORRECTION to the first-pass finding: the Workshop backend runs user apps as containers via docker compose (services/container_runtime.py), so workshop-backend.service launches uvicorn through `sg docker` (drop-in docker-group.conf) and NEEDS clawd-a in the docker group. `gpasswd -d clawd-a docker` would break the app runner + backend startup. Real consequences to address: (a) any RCE in the backend escalates to host root via the docker socket; (b) clawd-a, benmiriello, simonsays share ONE docker daemon, so the clawd-a<->simonsays cluster separation cannot hold at the docker layer (clawd-a can read every user's files via a container mount - confirmed). Options (architectural, product decision): rootless / per-user Docker daemon (isolates clusters + drops root-equivalence), OR a docker-socket-proxy (e.g. tecnativa) restricting the API to the compose calls the runner makes, OR run the app-runner as a dedicated unprivileged user. Discuss which direction; benmiriello/simonsays docker membership is their own concern. See docs/security-audit-2026-07-18.md C1.
@@ -258,7 +258,7 @@
       /usr/bin/git' = arbitrary code exec as clawd-house (git -c core.pager/editor/alias/hooks). Drop the rule, or swap for a wrapper with a fixed repo path and no user-supplied -c/args, owned by clawd-house. Needs root. USAGE-FLAG: if clawd-a commits clawd-house docs via this, needs the wrapper - decide the exact allowed command. See docs/security-audit-2026-07-18.md.
 - [ ] [SEC-H4] Loopback-bind ComfyUI (:8188, all interfaces, unauthenticated)
       ComfyUI has file R/W + custom-node code-exec surface, LAN+tailnet reachable. Bind loopback (or tailscale IP) and front with an authenticated Serve entry. Owned by another host user + root for firewall. See docs/security-audit-2026-07-18.md.
-- [ ] [SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth…
+- [x] [SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth…
       [SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth, mutating service add/start/stop actions) exposed tailnet-wide via Serve 8449. Confirm Flask debug=False (else remote RCE console). Add auth or drop the 8449 Serve mapping. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-H6] Scope the mobile WebView native bridge before building
       It exposes secureStore.get/set/remove to web JS with originWhitelist ['*'] and data:/about: allowed, so any page/XSS can read the device token (full API bearer for bank/location/health) - undermines the HttpOnly cookie design. Replace with write-only provisionDeviceToken(fixed key), restrict originWhitelist to the real origin, reject data:/about:/non-origin subframes. See docs/security-audit-2026-07-18.md.
@@ -274,7 +274,7 @@
       _registration_open() (routes/auth.py) returns True unless WORKSHOP_REGISTRATION_OPEN is explicitly falsey; a deploy that forgets the var opens internet-facing signup. Require explicit =1 to open. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-L1] Hygiene: tighten world-readable (0644) auth material. chmod 600 .runtime/auth.db and infra/letta/.env
       chmod -R go= ~/.claude/file-history. Only benmiriello+root can currently reach these (not simonsays/clawd-b) so defense-in-depth, but needlessly loose. See docs/security-audit-2026-07-18.md.
-- [ ] [SEC-L2] Hygiene: stop serving the Vite dev server (:5173) to the tailnet via Serve 8443…
+- [x] [SEC-L2] Hygiene: stop serving the Vite dev server (:5173) to the tailnet via Serve 8443…
       [SEC-L2] Hygiene: stop serving the Vite dev server (:5173) to the tailnet via Serve 8443 (source/source-map/fs exposure). Drop the mapping or point Serve at the built bundle; if kept set server.fs.strict:true. See docs/security-audit-2026-07-18.md.
 - [x] [SEC-L3] Hygiene: disable FastAPI /docs + /openapi.json in production on the workshop instances…
       [SEC-L3] Hygiene: disable FastAPI /docs + /openapi.json in production on the workshop instances (API is 401-gated, but the surface is disclosed). See docs/security-audit-2026-07-18.md.

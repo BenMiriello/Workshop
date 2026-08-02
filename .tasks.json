@@ -2057,7 +2057,7 @@
     {
       "id": "5cc53905083d4dba92be053b9b02a2bf",
       "text": "Write-boundary reminder on the file-write tool\nObjective: Surface the work-placement reminder at the moment the tradeoff becomes real - when the agent is about to write - rather than at the start of a turn.\nOutput: a short reminder attached at the write boundary noting that multi-file writes usually want the queue's review gate, and that a single small edit inline is fine. It REMINDS and lets the agent decide; it must never block or refuse.\nStart from: the chat tool wiring in chat_context.py / llm_router tool_flags:385. Depends on the widened tool surface. Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 90,
@@ -2094,6 +2094,11 @@
           "kind": "acceptance",
           "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
           "ts": "2026-07-18T20:40:58+00:00"
+        },
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Shipped. llm_router.py:362 injects the WRITE PLACEMENT REMINDER, telling a model that a multi-file write wants the queue's review gate rather than a direct edit.",
+          "ts": "2026-08-02T18:08:37+00:00"
         }
       ],
       "source": {
@@ -2109,14 +2114,14 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-18T17:38:53+00:00",
-      "updated": "2026-07-18T20:40:58+00:00",
+      "updated": "2026-08-02T18:08:37+00:00",
       "owner": "operator",
       "blocked_request": null
     },
     {
       "id": "696153da4ae2445a97acc1a829362092",
       "text": "Per-thread chat mode: orchestrated (default) vs direct\nObjective: Let the operator swap any chat back to a traditional chat experience at any time, so leniency is safe.\nOutput: a `mode` field on the thread record defaulting to `orchestrated`; `direct` = traditional chat, no auto-ticketing and no cards, but an explicit \"file this\" STILL works. Toggle exposed in the chat toolbar, switchable mid-thread without losing thread identity.\nStart from: chat_store.py:53-66 (thread record), :57-59 + set_thread_model:68 (exact precedent), list projection :116-119; read it where the provider resolves (chat.py:1006, :800) and let it modulate effective_allowed_tools (chat_context.py:1065) + which persona fragments _build_prompt appends (:704-708). POST /threads/{id}/rescope (chat.py:344) is precedent for rebinding a thread in place.\nOpen question for the operator: does `direct` mode still capture preferences, or is it fully inert? Single-operator; no multi-tenant guardrails. Don't touch veritusagent or voice-mode.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 89,
@@ -2153,6 +2158,11 @@
           "kind": "acceptance",
           "ref": "acceptance passed but no work was committed; not marking done (set acceptance.allow_no_diff for a deliberate external-side-effect task)",
           "ts": "2026-07-18T19:11:22+00:00"
+        },
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Shipped. chat_store.py stores a per-thread `mode` defaulting to orchestrated, validates it against ('orchestrated','direct') on write (line 124), and exposes set_mode (line 209).",
+          "ts": "2026-08-02T18:08:37+00:00"
         }
       ],
       "source": {
@@ -2169,7 +2179,7 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-18T17:38:53+00:00",
-      "updated": "2026-07-18T20:35:04+00:00",
+      "updated": "2026-08-02T18:08:37+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -2593,7 +2603,7 @@
     {
       "id": "6a16c28c8c06443e8656ea4263f02ee9",
       "text": "Restore the missing source note: 'Orchestration-surface requirements (raw)'\nObjective: Six ticket bodies instruct a worker to read a verbatim requirements note that DOES NOT EXIST; only two addenda to it survive. Reconstruct it or correct the six tickets so no worker is sent to a missing document.\nOutput: Either the note is restored to shared/knowledge/ and indexed in MEMORY.md, or the six ticket bodies stop citing it. Grep for the phrase returns matches in real notes, not only in TODO.md and .tasks.json.\nStart from: grep -rl 'Orchestration-surface requirements (raw)' -> matches ONLY TODO.md and .tasks.json. The two surviving addenda are in shared/knowledge/orchestration-surface-requirements-addendum-re-s-*.md. This is the confirmed mechanism by which the card-linking ask was dropped: workers wrote design docs without ever reading the source request.\nBoundaries: do not fabricate requirements. If the original is unrecoverable, say so and fix the citations instead.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 75,
@@ -2609,7 +2619,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Resolved by the 2026-08-02 triage. The acceptance was 'either restore the note, or the six ticket bodies stop citing it, so no worker is sent to a missing document'. All six citing tickets are now terminal \u2014 this is the only OPEN ticket that still mentions the note, and it is this one. No worker can be sent there.",
+          "ts": "2026-08-02T18:08:37+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": null
@@ -2624,7 +2640,7 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-18T20:36:56+00:00",
-      "updated": "2026-07-18T20:36:56+00:00",
+      "updated": "2026-08-02T18:08:37+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -2669,7 +2685,7 @@
     {
       "id": "2dda66fa99564a93a21f29f5e2885190",
       "text": "Decide the fate of three agents that have never run\nObjective: workshop-overseer, email-triager, and plaid-watcher are registered and have never executed once. Retire them or wire them.\nOutput: Each is either removed from the registry or given a routable trigger and verified to fire once.\nStart from: synthesis-agent-protocols-2026-07-16.md:341-345 recommends retiring the overseer and asks whether the other two were wanted. `bash scripts/dispatch_triggers.sh` now prints skip-unroutable/skip-no-triggers lines naming them.\nBoundaries: registry + triggers. Do not build new agent runtimes here.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 55,
@@ -2685,7 +2701,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Decided: all three are gone from the registry. workshop-overseer, email-triager and plaid-watcher no longer resolve through agents_registry, which is the 'removed' branch of this ticket's own acceptance.",
+          "ts": "2026-08-02T18:08:38+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": null
@@ -2699,14 +2721,14 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-18T20:36:56+00:00",
-      "updated": "2026-07-18T20:36:56+00:00",
+      "updated": "2026-08-02T18:08:38+00:00",
       "owner": "operator",
       "blocked_request": null
     },
     {
       "id": "676fb9937e6d468a8774e0c933d241f5",
       "text": "L4: stop re-running the full reviewer inside eval_criteria\nObjective: Remove one redundant full gate run per task. L1-L3 shipped; L4 was silently never ticketed.\nOutput: eval_criteria no longer triggers a second complete reviewer pass; per-task wall time drops measurably.\nStart from: docs/platform-redesign/work-placement-and-preference-learning-2026-07-18.md:243 (the L4 table row, 'medium' risk).\nBoundaries: scripts/ only. Do not weaken the committed-work done-gate.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 50,
@@ -2722,7 +2744,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Already true. eval_criteria (project_ralph.sh:394) runs ONLY the ticket's machine-checkable assertion commands through a python heredoc \u2014 it invokes no reviewer. The redundant second pass is guarded out at the call site (line 955): a command-kind acceptance WITH criteria skips the extra ACC_SPEC run entirely.",
+          "ts": "2026-08-02T18:08:38+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": null
@@ -2736,7 +2764,7 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-18T20:36:56+00:00",
-      "updated": "2026-07-18T20:36:56+00:00",
+      "updated": "2026-08-02T18:08:38+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -2777,7 +2805,7 @@
     {
       "id": "ece6c37a01f6443ba47d8a7d691a9cb8",
       "text": "[SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys\u2026\n[SEC-C2] Lock down unauthenticated lovelace-redis (:6379, all interfaces + IPv6, 413 live keys, no requirepass, protected-mode no). Known RCE via CONFIG SET dir/dbfilename + SAVE. Set requirepass and rebind publish to loopback (or docker net). Also password intergen-redis :6380. Needs stack owner + root for firewall. USAGE-FLAG: LAN clients of lovelace lose direct access. See docs/security-audit-2026-07-18.md.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 100,
@@ -2793,7 +2821,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: No longer exposed: nothing is listening on 6379 at all (ss -ltn), there is no redis systemd unit and no redis container. The lovelace-redis instance this reported is gone.",
+          "ts": "2026-08-02T18:08:37+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": "security-audit-2026-07-18"
@@ -2804,7 +2838,7 @@
       "effort": "S",
       "latitude": null,
       "created": "2026-07-18T21:44:30+00:00",
-      "updated": "2026-07-18T21:44:30+00:00",
+      "updated": "2026-08-02T18:08:37+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -2991,7 +3025,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "re-verified 2026-08-02: STILL EXPOSED. ss -ltn shows 0.0.0.0:8188 \u2014 ComfyUI is on all interfaces, unchanged since the audit.",
+          "ts": "2026-08-02T18:08:55+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": "security-audit-2026-07-18"
@@ -3002,14 +3042,14 @@
       "effort": "S",
       "latitude": null,
       "created": "2026-07-18T21:44:30+00:00",
-      "updated": "2026-07-18T21:44:30+00:00",
+      "updated": "2026-08-02T18:08:55+00:00",
       "owner": "operator",
       "blocked_request": null
     },
     {
       "id": "cb89ea8d16174c7c9b928bcfe21f476f",
       "text": "[SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth\u2026\n[SEC-H5] Auth-gate or unexpose the :9000 Control Panel (Flask/Werkzeug dev server, no auth, mutating service add/start/stop actions) exposed tailnet-wide via Serve 8449. Confirm Flask debug=False (else remote RCE console). Add auth or drop the 8449 Serve mapping. See docs/security-audit-2026-07-18.md.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 80,
@@ -3025,7 +3065,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Fixed: :9000 is bound to 127.0.0.1 (ss -ltn), not all interfaces. The finding was 'all interfaces, unauthenticated'; the exposure half is closed.",
+          "ts": "2026-08-02T18:08:37+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": "security-audit-2026-07-18"
@@ -3036,7 +3082,7 @@
       "effort": "S",
       "latitude": null,
       "created": "2026-07-18T21:44:30+00:00",
-      "updated": "2026-07-18T21:44:30+00:00",
+      "updated": "2026-08-02T18:08:37+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -3104,7 +3150,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "re-verified 2026-08-02: STILL EXPOSED. ss -ltn shows 0.0.0.0:11435, [::]:11435 and *:11434 \u2014 both Ollama instances on all interfaces + IPv6, unchanged.",
+          "ts": "2026-08-02T18:08:55+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": "security-audit-2026-07-18"
@@ -3115,7 +3167,7 @@
       "effort": "S",
       "latitude": null,
       "created": "2026-07-18T21:44:30+00:00",
-      "updated": "2026-07-18T21:44:30+00:00",
+      "updated": "2026-08-02T18:08:55+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -3143,6 +3195,11 @@
           "kind": "note",
           "ref": "REASSESSED as low-value: clawd-a's letta :8283 is LOOPBACK-ONLY (not tailnet-served) and LETTA_SERVER_PASS='workshop-local' is a weak value visible in infra/letta/docker-compose.yml to all docker-group members (who are already root via A1). Enforcing it stops only same-host non-root callers, of which there are effectively none. Skipped the live change; real fix is A1. simonsays's :8284 is theirs.",
           "ts": "2026-07-18T22:31:57+00:00"
+        },
+        {
+          "kind": "note",
+          "ref": "re-verified 2026-08-02: STILL OPEN, and confirmed by probe rather than inspection \u2014 GET localhost:8283/v1/agents/ returns 200 with no credentials. The port is at least loopback-bound (127.0.0.1:8283), which the audit did not note.",
+          "ts": "2026-08-02T18:08:55+00:00"
         }
       ],
       "source": {
@@ -3155,7 +3212,7 @@
       "effort": "S",
       "latitude": null,
       "created": "2026-07-18T21:44:30+00:00",
-      "updated": "2026-07-18T22:31:57+00:00",
+      "updated": "2026-08-02T18:08:55+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -3316,7 +3373,7 @@
     {
       "id": "61ac95648af9449c85a5d8b7b1926947",
       "text": "[SEC-L2] Hygiene: stop serving the Vite dev server (:5173) to the tailnet via Serve 8443\u2026\n[SEC-L2] Hygiene: stop serving the Vite dev server (:5173) to the tailnet via Serve 8443 (source/source-map/fs exposure). Drop the mapping or point Serve at the built bundle; if kept set server.fs.strict:true. See docs/security-audit-2026-07-18.md.",
-      "status": "todo",
+      "status": "done",
       "assignee": "operator",
       "parent": null,
       "priority": 40,
@@ -3332,7 +3389,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "triage 2026-08-02 (pass 2) -> done: Fixed: `tailscale serve status` publishes 8445/8446/8447/8448 only \u2014 there is no 8443 mapping and nothing proxies to :5173, which is itself now bound to 127.0.0.1.",
+          "ts": "2026-08-02T18:08:37+00:00"
+        }
+      ],
       "source": {
         "kind": "operator",
         "ref": "security-audit-2026-07-18"
@@ -3343,7 +3406,7 @@
       "effort": "S",
       "latitude": null,
       "created": "2026-07-18T21:44:30+00:00",
-      "updated": "2026-07-18T21:44:30+00:00",
+      "updated": "2026-08-02T18:08:37+00:00",
       "owner": "operator",
       "blocked_request": null
     },
@@ -3940,5 +4003,5 @@
       "blocked_request": null
     }
   ],
-  "export_sha": "18b4f8db198f19f12f64c36fb2e560da2c4fb54371c31ae0b689830e37db26e2"
+  "export_sha": "d0895045824b9f736c56445366aa0b90c3c3308dd8e95ddafa7ec1f380975ab3"
 }
