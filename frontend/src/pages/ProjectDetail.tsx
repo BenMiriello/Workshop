@@ -363,7 +363,7 @@ function TaskRow({
         </Select>
         <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
         <span
-          className="ws-clamp ws-clamp-1"
+          className="ws-truncate"
           title={taskTitle(task)}
           style={{
             flex: "1 1 16rem",

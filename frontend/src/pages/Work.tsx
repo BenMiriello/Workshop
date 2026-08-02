@@ -92,11 +92,11 @@ function TicketCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
 
   return (
     <Card interactive compact className="ws-ticket-card" onClick={onOpen} style={{ cursor: "pointer" }}>
-      <span className="ws-ticket-card__title ws-clamp" title={title}>
+      <span className="ws-ticket-card__title ws-truncate" title={title}>
         {title || "(untitled)"}
       </span>
       {desc && (
-        <span className="ws-ticket-card__desc ws-clamp" title={desc}>{desc}</span>
+        <span className="ws-ticket-card__desc ws-truncate" title={desc}>{desc}</span>
       )}
       <div className="ws-ticket-card__pills">
         <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
@@ -233,7 +233,7 @@ function TicketsTab() {
             Showing the first {OVERFLOW_AT} of {tasks.length} tickets. Narrow by status or scope to see the rest.
           </p>
         )}
-        <CardGrid>
+        <CardGrid className="ws-ticket-grid">
           {shown.map((t) => (
             <li key={`${t.scope}:${t.id}`}>
               <TicketCard
@@ -899,7 +899,7 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
             <li key={`${t.scope}:${t.id}`} style={{ padding: "var(--space-1) 0" }}>
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                 <StatusDot status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusDot>
-                <span className="ws-clamp ws-clamp-1" style={{ flex: "1 1 12rem", minWidth: 0, fontSize: "var(--fs-sm)" }}
+                <span className="ws-truncate" style={{ flex: "1 1 12rem", minWidth: 0, fontSize: "var(--fs-sm)" }}
                       title={taskTitle(t)}>{taskTitle(t) || t.id}</span>
               </Row>
             </li>

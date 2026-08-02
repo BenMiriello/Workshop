@@ -492,7 +492,7 @@ export default function TaskPanel({
       <Stack gap="sm">
         <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
           <StatusPill status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusPill>
-          <span className="ws-clamp" title={taskTitle(t)}
+          <span className="ws-truncate" title={taskTitle(t)}
                 style={{ flex: "1 1 12rem", minWidth: 0, fontWeight: 600 }}>{taskTitle(t) || "(untitled)"}</span>
         </Row>
         <Row wrap style={{ gap: "var(--space-3)" }}>
