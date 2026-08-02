@@ -1,8 +1,9 @@
 import type { RefObject } from "react";
-import type { ChatMsg, ChatSegment } from "../../lib/chat";
+import type { ChatMsg, ChatSegment, MsgStatus } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 import type { UiCardCtx } from "./uiCardActions";
 import MessageList from "./MessageList";
+import StatusNote from "./StatusNote";
 import LiveTurn from "./LiveTurn";
 import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 
@@ -22,7 +23,7 @@ export default function ChatLog({
   loading, error, messages, isBuild, inFlight, overflowed,
   compactedThrough, selectedModel, cardCtx, onRetryUnsent,
   streaming, pendingSegments, interjections, workingLabel, elapsed,
-  queued,
+  queued, queuedStatus,
   voiceOn, settling, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
@@ -43,6 +44,9 @@ export default function ChatLog({
   workingLabel: string;
   elapsed: number;
   queued: string[];
+  // Progress on a queued message, keyed by its text so it stays under the entry
+  // it belongs to as other messages queue up behind it.
+  queuedStatus: { for: string; status: MsgStatus } | null;
   voiceOn: boolean;
   settling: { user: string; assistant: string } | null;
   vsnap: VoiceSnapshot;
@@ -96,6 +100,7 @@ export default function ChatLog({
           <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">
             {q}
           </div>
+          {queuedStatus?.for === q && <StatusNote status={queuedStatus.status} />}
         </div>
       ))}
 

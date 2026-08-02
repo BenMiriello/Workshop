@@ -4,6 +4,7 @@ import { Button } from "../../ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
+import StatusNote from "./StatusNote";
 import { modelDisplay } from "./models";
 
 // The persisted transcript.
@@ -20,6 +21,8 @@ import { modelDisplay } from "./models";
 //  - THE UNSENT MARK. An optimistic bubble that quietly never reached the server
 //    is exactly what "my messages keep disappearing" felt like from outside. It
 //    is marked, and it offers the retry.
+//  - THE STATUS LINE. Progress on work a message set off belongs under that
+//    message, not in a bar above the log — see StatusNote.
 
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx) {
   if (m.meta?.error) return m.content;
@@ -95,6 +98,7 @@ export default function MessageList({
             {m.meta?.notes?.map((n, j) => (
               <div key={j} className="chat-note">{n}</div>
             ))}
+            {m.meta?.status && <StatusNote status={m.meta.status} />}
           </div>
         </Fragment>
       ))}

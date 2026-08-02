@@ -8,6 +8,10 @@ export type ChatSegment =
   | { t: "text"; text: string }
   | { t: "tool"; name: string; input: string };
 
+// Progress on something a message kicked off. `busy` is still-happening, and is
+// what earns the animated dots.
+export type MsgStatus = { text: string; busy?: boolean };
+
 export type ChatMsg = {
   role: "user" | "assistant";
   content: string;
@@ -35,6 +39,13 @@ export type ChatMsg = {
     // than queued behind it — so it reached the agent at the next boundary
     // between its actions.
     injected?: boolean;
+    // A transient line UNDER this message reporting on something the message
+    // itself set off and that is still going (today: /compact's server-side
+    // fold). Client-only and never persisted: it describes right now, so a
+    // reload should not resurrect it. It lives on the message, rather than in a
+    // bar above the log, so it can never appear out of order relative to what
+    // was said after it.
+    status?: MsgStatus;
     // Ordered text/tool segments (assistant turns). Absent on plain messages.
     segments?: ChatSegment[];
     // True while the turn is still streaming; turn_id lets a reload reconnect

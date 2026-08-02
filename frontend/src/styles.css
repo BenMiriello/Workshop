@@ -797,6 +797,14 @@ input[type="range"].grad::-moz-range-thumb {
 
 /* Action confirmations (e.g. "Updated plan: ..."). */
 .chat-note { margin-top: 0.3rem; font-size: 0.74rem; color: var(--accent); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem; }
+/* Progress on something a message set off, under that message — see
+   chat/StatusNote. Muted + the working dots, deliberately NOT `.chat-note`'s
+   accent card: a note records something that happened, this reports something
+   still happening, and they must not read as the same kind of thing. */
+.chat-status {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: 0.3rem; font-size: var(--fs-sm); color: var(--muted);
+}
 .chat-err { padding: 0.4rem 0.8rem; font-size: 0.78rem; color: var(--danger); }
 
 /* "Turn into task" confirmation: a calm one-line note under the toolbar. */

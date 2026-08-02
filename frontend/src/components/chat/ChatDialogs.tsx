@@ -1,7 +1,7 @@
 import { ConfirmDialog } from "../../ui";
 import { scopeLabel } from "../../lib/tasks";
 import TicketDraftsDialog from "./TicketDraftsDialog";
-import type { ChatNotice } from "./ChatNotice";
+import type { FiledNotice } from "./FiledNotice";
 
 // Everything the chat opens over itself: filing tickets, and the two
 // confirmations.
@@ -25,7 +25,7 @@ export default function ChatDialogs({
   activeThreadTitle?: string;
   ticketsOpen: boolean;
   onCloseTickets: () => void;
-  onFiled: (n: Extract<ChatNotice, { kind: "ticket" }>) => void;
+  onFiled: (n: FiledNotice) => void;
   confirmNew: boolean;
   onCancelNew: () => void;
   onConfirmNew: () => void;
@@ -40,7 +40,7 @@ export default function ChatDialogs({
         open={ticketsOpen}
         chatId={activeId}
         onClose={onCloseTickets}
-        onFiled={(m) => onFiled({ kind: "ticket", ...m })}
+        onFiled={onFiled}
       />
 
       <ConfirmDialog

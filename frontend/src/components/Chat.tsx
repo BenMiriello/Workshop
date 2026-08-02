@@ -6,7 +6,7 @@ import {
 import { StateBlock, Button } from "../ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
-import { NoticeBar, type ChatNotice } from "./chat/ChatNotice";
+import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
 import ChatComposer from "./chat/ChatComposer";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
@@ -133,9 +133,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // must know whether a turn is running, and a finished turn must dispatch what
   // is queued behind it. The stream is declared first (the queue reads its
   // `streaming` directly) and reaches the queue through a ref filled in below.
-  // A note about the last thing the operator did. Declared here because the
-  // compaction hook writes it. See chat/ChatNotice for the kinds.
-  const [notice, setNotice] = useState<ChatNotice | null>(null);
+  // Set only when this chat files a ticket — see chat/FiledNotice for why that
+  // is the only thing allowed above the log.
+  const [notice, setNotice] = useState<FiledNotice | null>(null);
 
   const queueRef = useRef<MessageQueue | null>(null);
 
@@ -183,9 +183,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   queueRef.current = queue;
 
   // /compact reaches BOTH homes of a chat's context — see useCompaction.
-  const { compacting, compactedThrough, setCompactedThrough, ctxNonce, compact } = useCompaction({
+  const {
+    compacting, compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
+  } = useCompaction({
     activeIdRef, streamingRef, isBuild: effectiveMode === "build", queue,
-    setMessages, setNotice, setErr,
+    setMessages, setErr,
     sendTurn: (t) => void sendBuildRef.current(t),
   });
 
@@ -921,6 +923,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       workingLabel={reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}
       elapsed={elapsed}
       queued={queue.items}
+      queuedStatus={queuedStatus}
       voiceOn={voiceOn}
       settling={settling}
       vsnap={vsnap}

@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
-import { chatApi, type ChatMsg } from "../../lib/chat";
-import type { ChatNotice } from "./ChatNotice";
+import { chatApi, type ChatMsg, type MsgStatus } from "../../lib/chat";
 import type { MessageQueue } from "./useMessageQueue";
 
 // /compact — reclaim context now.
@@ -16,11 +15,33 @@ import type { MessageQueue } from "./useMessageQueue";
 // Running (2) as a normal turn is deliberate: the fold then appears in the
 // transcript with a reply, instead of being an invisible state change.
 //
+// EVERYTHING /compact SAYS, IT SAYS IN THE LOG. This used to report itself in
+// the notice bar under the toolbar, which produced exactly the sequence the
+// operator described: a banner pinned above the transcript for the ~30s the
+// server-side fold takes, and only then a "/compact" bubble down in the chat —
+// two announcements of one action, in two places, in the wrong order. Worse, a
+// message sent during that window rendered ABOVE the banner in reading order,
+// because a bar above the log has no position in time at all. The request is a
+// bubble in the log from the instant it is made, and its progress is a status
+// line under that bubble.
+//
+// THE RESULT IS NOT ANNOUNCED. The fold divider MessageList already draws from
+// `compacted_through` says "N earlier messages folded into the running summary"
+// and survives a reload; a second sentence saying the same thing in a different
+// voice is exactly the duplication this chat had too much of. The status line
+// only ever means "this is happening", and it clears when it stops happening.
+//
 // Not gated on `streaming`. Folding the stored transcript is a server-side
 // operation on the saved thread, independent of whatever turn is in flight, and
 // refusing while a turn ran meant /compact was rejected almost every time it was
 // reached for — which is exactly when context is under pressure. Only the
 // live-session half has to wait, and it queues rather than being dropped.
+
+const BUSY_NOW: MsgStatus = { text: "Compacting the conversation", busy: true };
+const BUSY_QUEUED: MsgStatus = {
+  text: "Compacting. The live session folds when the running turn finishes",
+  busy: true,
+};
 
 export type Compaction = {
   compacting: boolean;
@@ -30,24 +51,26 @@ export type Compaction = {
   // messages.length, which is what otherwise drives that read.
   ctxNonce: number;
   compact: () => Promise<void>;
+  // Set only while the request is sitting in the queue rather than in the log.
+  queuedStatus: { for: string; status: MsgStatus } | null;
 };
 
 export function useCompaction({
   activeIdRef, streamingRef, isBuild, queue,
-  setMessages, setNotice, setErr, sendTurn,
+  setMessages, setErr, sendTurn,
 }: {
   activeIdRef: React.MutableRefObject<string | null>;
   streamingRef: React.MutableRefObject<boolean>;
   isBuild: boolean;
   queue: MessageQueue;
   setMessages: React.Dispatch<React.SetStateAction<ChatMsg[]>>;
-  setNotice: (n: ChatNotice | null) => void;
   setErr: (m: string | null) => void;
   sendTurn: (text: string) => void;
 }): Compaction {
   const [compacting, setCompacting] = useState(false);
   const [compactedThrough, setCompactedThrough] = useState(0);
   const [ctxNonce, setCtxNonce] = useState(0);
+  const [queuedStatus, setQueuedStatus] = useState<{ for: string; status: MsgStatus } | null>(null);
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
@@ -55,37 +78,35 @@ export function useCompaction({
     setErr(null);
     setCompacting(true);
 
+    // The request goes into the log NOW, at the moment it was made, carrying its
+    // own progress. `ts` identifies it so the no-op paths can take this exact
+    // bubble back out again.
+    const requestTs = new Date().toISOString();
+    const isRequest = (m: ChatMsg) => m.ts === requestTs && m.content === "/compact";
+    const setStatus = (status?: MsgStatus) =>
+      setMessages((m) => m.map((x) => (isRequest(x) ? { ...x, meta: { ...x.meta, status } } : x)));
+    const dropRequestBubble = () => setMessages((m) => m.filter((x) => !isRequest(x)));
+
     // Queue the live-session half UP FRONT when a turn is already running. It
     // used to be queued only after the server fold returned — seconds of round
     // trip during which the running turn kept streaming — so the "/compact"
     // bubble landed below a wall of output that arrived after it was asked for,
     // and read as though the request had been ignored and picked up at random.
-    const preQueued = streamingRef.current && isBuild;
-    if (preQueued) queue.push("/compact");
-
-    // Put the request in the log at the moment it was made. `ts` is kept so the
-    // no-op paths can take this exact bubble back out again.
-    const requestTs = new Date().toISOString();
-    if (!preQueued && !streamingRef.current) {
-      setMessages((m) => [...m, { role: "user", content: "/compact", ts: requestTs }]);
+    let preQueued = streamingRef.current && isBuild;
+    if (preQueued) {
+      queue.push("/compact");
+      setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
+    } else {
+      setMessages((m) => [...m, {
+        role: "user", content: "/compact", ts: requestTs, meta: { status: BUSY_NOW },
+      }]);
     }
-    const dropRequestBubble = () =>
-      setMessages((m) => m.filter((x) => !(x.ts === requestTs && x.content === "/compact")));
-
-    // Without a note here the only feedback is the finished result, so a slow
-    // (or failed) pass is indistinguishable from a button that did nothing.
-    setNotice({
-      kind: "compaction",
-      busy: true,
-      text: preQueued
-        ? "Compacting. The live session folds when the running turn finishes."
-        : "Compacting the conversation…",
-    });
 
     try {
       const r = await chatApi.compactThread(id);
       setCompactedThrough(r.compacted_through);
       setCtxNonce((n) => n + 1);
+
       if (r.live_session) {
         if (!preQueued) {
           if (streamingRef.current) {
@@ -93,37 +114,44 @@ export function useCompaction({
             // which renders its own pending bubble — so drop ours or the request
             // shows twice.
             dropRequestBubble();
+            preQueued = true;
             queue.push("/compact");
+            setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
           } else {
+            // The live half runs as an ordinary turn: its reply streams in below
+            // this bubble and the working indicator reads "Compacting", so this
+            // line's job is done.
+            setStatus(undefined);
             sendTurn("/compact");
           }
-          setNotice(null);
         }
       } else {
         // No live session after all — take the speculative entry back out rather
         // than letting a literal "/compact" reach a model as text.
-        if (preQueued) queue.drop("/compact");
+        if (preQueued) {
+          queue.drop("/compact");
+          setQueuedStatus(null);
+        }
         if (r.folded === 0) {
           // Nothing happened, so nothing should be left claiming it did.
           dropRequestBubble();
-          setNotice(null);
           setErr("Nothing to compact — the transcript is already short.");
         } else {
-          setNotice({
-            kind: "compaction",
-            text: `Compacted ${r.folded} messages into the running summary.`,
-          });
+          // The fold divider is the report; this line has nothing left to add.
+          setStatus(undefined);
         }
       }
     } catch (e) {
-      if (preQueued) queue.drop("/compact");
+      if (preQueued) {
+        queue.drop("/compact");
+        setQueuedStatus(null);
+      }
       dropRequestBubble();
-      setNotice(null);
       setErr(`Couldn't compact: ${String(e)}`);
     } finally {
       setCompacting(false);
     }
-  }, [activeIdRef, streamingRef, isBuild, queue, setMessages, setNotice, setErr, sendTurn]);
+  }, [activeIdRef, streamingRef, isBuild, queue, setMessages, setErr, sendTurn]);
 
-  return { compacting, compactedThrough, setCompactedThrough, ctxNonce, compact };
+  return { compacting, compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus };
 }
