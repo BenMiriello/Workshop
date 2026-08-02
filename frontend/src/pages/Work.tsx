@@ -214,7 +214,9 @@ function TicketsTab() {
                 style={{ cursor: "pointer" }}
               >
                 <Stack gap="sm">
-                  <span className="ws-wrap" style={{ fontWeight: 600 }}>{taskTitle(t) || "(untitled)"}</span>
+                  <span className="ws-clamp" style={{ fontWeight: 600 }} title={taskTitle(t)}>
+                    {taskTitle(t) || "(untitled)"}
+                  </span>
                   <Row wrap style={{ gap: "var(--space-2)" }}>
                     <StatusPill status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusPill>
                     <Tag hue={catFor(t.scope || "workshop")}>{scopeLabel(t.scope)}</Tag>
@@ -883,7 +885,8 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
             <li key={`${t.scope}:${t.id}`} style={{ padding: "var(--space-1) 0" }}>
               <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                 <StatusDot status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusDot>
-                <span className="ws-wrap" style={{ flex: "1 1 12rem", minWidth: 0, fontSize: "var(--fs-sm)" }}>{taskTitle(t) || t.id}</span>
+                <span className="ws-clamp ws-clamp-1" style={{ flex: "1 1 12rem", minWidth: 0, fontSize: "var(--fs-sm)" }}
+                      title={taskTitle(t)}>{taskTitle(t) || t.id}</span>
               </Row>
             </li>
           ))}

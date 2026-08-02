@@ -53,6 +53,7 @@ import {
   TASK_STATUSES,
   taskStatusKind,
   taskStatusLabel,
+  title as taskTitle,
 } from "../lib/tasks";
 import { useCrumbLabel } from "../components/appNav";
 import { chatApi, type ThreadSummary } from "../lib/chat";
@@ -347,7 +348,6 @@ function TaskRow({
   onDelete: (task: Task) => void;
 }) {
   const kids = childrenOf(task.id, task.owner);
-  const firstLine = (task.text || "").split("\n")[0];
   return (
     <li>
       <Row wrap style={{ paddingLeft: `calc(${depth} * var(--space-5))`, paddingTop: "var(--space-2)", paddingBottom: "var(--space-2)", borderBottom: "1px solid var(--border)" }}>
@@ -363,13 +363,16 @@ function TaskRow({
         </Select>
         <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
         <span
+          className="ws-clamp ws-clamp-1"
+          title={taskTitle(task)}
           style={{
             flex: "1 1 16rem",
+            minWidth: 0,
             textDecoration: task.status === "done" ? "line-through" : "none",
             color: task.status === "done" ? "var(--muted)" : "inherit",
           }}
         >
-          {firstLine}
+          {taskTitle(task)}
         </span>
         <Link
           to={`/work?scope=${encodeURIComponent(`project:${slug}`)}`}

@@ -320,6 +320,59 @@ def _assignee_from_legacy(task: dict) -> str | None:
     return owner if str(owner).startswith("agent:") else f"agent:{owner}"
 
 
+# ---- the title convention, enforced -----------------------------------------
+# A ticket's FIRST LINE is its title and the rest is the spec; the frontend
+# (lib/tasks.ts) splits on exactly that. Nothing ENFORCED it, so every producer
+# that emitted one long paragraph produced a ticket whose title was the entire
+# spec — 25 of 79 open tickets had a first line over 200 characters, and a list
+# of those renders as one wall of text where every row looks the same length.
+#
+# Enforced here rather than in each producer because the producers are prompts.
+# A model that ignores "a short imperative line, under 80 characters" is not a
+# bug to fix once; it is the steady state, and the store is the only place that
+# sees every write. Living in _normalize also means it runs on READ, so tickets
+# already on disk heal the next time they are loaded and no migration is needed.
+#
+# The split is LOSSLESS. Nothing is ever truncated away: a clean clause boundary
+# moves the remainder down into the body, and when there is no boundary worth
+# cutting on the title becomes an elided preview while the WHOLE original line
+# stays as the body.
+TITLE_MAX = 120        # a first line longer than this is a spec, not a title
+_TITLE_MIN_CUT = 30    # a cut leaving less than this is a fragment, not a title
+_TITLE_ELIDE = 96      # where a preview is elided when there is nothing to cut on
+# End of a clause: sentence punctuation followed by space, or a spaced dash. The
+# match IS the separator, so the text before it keeps its punctuation and the
+# text after it starts the body.
+_CLAUSE_BREAK = re.compile(r"(?<=[.:;?!])\s+|\s+[-—–]\s+")
+
+
+def _split_overlong_title(head: str) -> tuple[str, str]:
+    """(title, the part of `head` that belongs in the body)."""
+    # Prefer the LAST clause boundary that still fits, so the title is the most
+    # complete thought that can be a title rather than the first fragment.
+    cut = None
+    for m in _CLAUSE_BREAK.finditer(head[: TITLE_MAX + 1]):
+        if m.start() >= _TITLE_MIN_CUT:
+            cut = m
+    if cut is not None:
+        return head[: cut.start()].rstrip(" .:;,"), head[cut.end():].strip()
+    # No boundary to cut on: elide on a word boundary and keep the line entire.
+    space = head.rfind(" ", 0, _TITLE_ELIDE)
+    head_cut = space if space >= _TITLE_MIN_CUT else _TITLE_ELIDE
+    return head[:head_cut].rstrip(" .:;,") + "…", head
+
+
+def _normalize_text(text) -> str:
+    """Guarantee the first line of a task's text reads as a title."""
+    body = str(text or "").strip()
+    head, sep, rest = body.partition("\n")
+    if len(head) <= TITLE_MAX:
+        return body
+    title, spilled = _split_overlong_title(head)
+    tail = f"{spilled}\n{rest}" if (spilled and rest) else (spilled or rest)
+    return f"{title}\n{tail}" if tail else title
+
+
 def _normalize_acceptance(acc) -> dict | None:
     """Coerce a stored acceptance into a well-formed record, losslessly. Preserves
     every existing key (kind/spec/allow_no_diff/...) verbatim so callers that read
@@ -433,7 +486,7 @@ def _normalize(task: dict) -> dict:
         src = {"kind": "operator", "ref": None}
     rec = {
         "id": str(task.get("id") or _new_id()),
-        "text": str(task.get("text") or "").strip(),
+        "text": _normalize_text(task.get("text")),
         "status": status,
         "assignee": assignee,
         "parent": task.get("parent") or None,
@@ -1060,7 +1113,7 @@ def add(
     source: dict | None = None,
     provenance: str | None = None,
 ) -> dict:
-    text = (text or "").strip()
+    text = _normalize_text(text)
     if not text:
         raise ValueError("text required")
     # Validated (not coerced) on the write path: an unknown value raises so the
@@ -1153,7 +1206,7 @@ def update(
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if text is not None:
-        text = text.strip()
+        text = _normalize_text(text)
         if not text:
             raise ValueError("text required")
     if latitude is not None:

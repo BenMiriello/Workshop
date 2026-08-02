@@ -58,6 +58,23 @@
 .ws-wrap { overflow-wrap: anywhere; }
 /* Inline code in body copy is the most common carrier of such a token. */
 .ws-root :not(pre) > code { overflow-wrap: anywhere; }
+
+/* A title that comes from free text, clamped to a fixed number of lines.
+   Model- and operator-written titles cannot be trusted to be short, and a list
+   whose rows each render several hundred characters is not a list — every row
+   fills its card, so they all look the same size and none of them scan. Two
+   lines by default (a card), one for a dense row. Always pair with `title=` so
+   the full text is still one hover away, and with a detail view that shows it
+   whole. */
+.ws-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 2);
+  line-clamp: var(--clamp-lines, 2);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.ws-clamp-1 { --clamp-lines: 1; }
 .ws-muted { color: var(--muted); }
 .ws-faint { color: var(--faint); }
 .ws-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
