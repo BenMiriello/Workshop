@@ -33,9 +33,17 @@ if [ "${1:-}" = "--deferred" ]; then
   # whole session's backend work being "shipped" but not running.
   #
   # So: poll the same condition the guard checks, and restart the moment it
-  # clears. `--deferred <seconds>` still caps the wait (default 30 minutes) so
-  # a wedged turn can't leave a restarter parked forever.
-  max_wait="${2:-1800}"
+  # clears. `--deferred <seconds>` still caps the wait so a wedged turn can't
+  # leave a restarter parked forever.
+  #
+  # The cap was 30 minutes, and that became wrong when the turn time limit was
+  # removed: an agentic turn now runs until the work is done, routinely past
+  # half an hour. The old default reproduced the exact failure the polling was
+  # added to fix — /tmp/workshop-backend.log has "gave up waiting for turn to
+  # end" followed by hours of the backend serving code nobody shipped. Six
+  # hours is longer than any turn that is still healthy, and a wedged one is a
+  # problem the operator wants to see rather than have quietly restarted.
+  max_wait="${2:-21600}"
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   turns="$REPO_ROOT/.runtime/turns"
   setsid bash -c '
