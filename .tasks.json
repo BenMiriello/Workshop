@@ -3947,7 +3947,13 @@
       "last_heartbeat": null,
       "claim_pid": null,
       "job_ids": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "kind": "note",
+          "ref": "status 2026-08-02: P6 is DONE, including the 7.4 self-knowledge preamble and the gap found while wiring it \u2014 the mention path was computing the chat's knowledge scope and discarding it, so an agent read no memory layers at all. P5 is NOT started: a Run can ask (blocked tickets reach the inbox) but is still fire-and-forget, not a Session with waiting/working/blocked/done and structured activities, nothing is renamed, and the read_chat tool (D12) does not exist. This ticket is now P5 only.",
+          "ts": "2026-08-02T18:10:46+00:00"
+        }
+      ],
       "source": {
         "kind": "chat",
         "ref": "47b637e74ab74a2f916cd0c1037d97e8"
@@ -3958,7 +3964,7 @@
       "effort": null,
       "latitude": null,
       "created": "2026-07-31T16:44:29+00:00",
-      "updated": "2026-07-31T16:44:29+00:00",
+      "updated": "2026-08-02T18:10:46+00:00",
       "owner": "operator",
       "blocked_request": null
     },
