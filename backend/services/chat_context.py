@@ -360,6 +360,79 @@ def role_preamble(
     )
 
 
+def agent_self_preamble(
+    *,
+    name: str,
+    slug: str,
+    role: str,
+    scope: str,
+    cwd: str,
+    tools_active: bool,
+    capabilities: list[str] | None = None,
+    triggers: list | None = None,
+    mentionable: bool = False,
+    delegatable: bool = False,
+) -> str:
+    """Who an agent is, for the agent — agent-interaction-model §7.4.
+
+    "Each agent should know what it's doing, where it is, what it has access to."
+    That is a prompt-assembly problem, not a memory one, and this is the same
+    discipline `role_preamble` above uses: every line is DERIVED from the record
+    and from the run config the caller is about to pass to start_turn, so the
+    block cannot drift from the enforced values the way a hand-written per-agent
+    paragraph does. Nothing here is written per agent, and adding a sentence to
+    an agent's definition cannot make this claim something untrue.
+
+    The bounds are derived too. `You must not` is not boilerplate: each line is
+    there only when the record makes it true (no tools => it genuinely cannot
+    act; not delegatable => it genuinely does not take tickets). A constraint
+    that is asserted whether or not it holds teaches a model to discount all of
+    them.
+    """
+    caps = [c for c in (capabilities or []) if str(c).strip()]
+    trig = [t for t in (triggers or []) if t]
+    reach = []
+    if mentionable:
+        reach.append(f"@{slug} in a chat whose scope reaches yours")
+    if delegatable:
+        reach.append("being handed a ticket")
+    if trig:
+        kinds = sorted({str((t or {}).get("kind") or "trigger") for t in trig})
+        reach.append(f"your own {'/'.join(kinds)} trigger" + ("s" if len(trig) > 1 else ""))
+
+    lines = [
+        f"You are {name} (@{slug}), a {role} agent in {operator_name()}'s Workshop.",
+        f"SCOPE: {scope} — where you work and the corpus you can see.",
+        f"WORKSPACE: {cwd}",
+    ]
+    lines.append(
+        "TOOLS: the Claude Code toolset, in your workspace." if tools_active
+        else "TOOLS: none this turn. You cannot read files, run commands, or "
+             "change anything — answer from what is given below."
+    )
+    if caps:
+        lines.append("CAPABILITIES: " + ", ".join(caps) + ".")
+    if reach:
+        lines.append("REACHED BY: " + "; ".join(reach) + ".")
+
+    musts = [f"Take on work outside {scope} — say so and name what does handle it."]
+    if not tools_active:
+        musts.append("Claim you will do something, or that you did: you have no "
+                     "tool to do it with.")
+    if not delegatable:
+        musts.append("Accept a ticket or promise follow-up work — you are not a "
+                     "delegate.")
+    musts.append("Answer as the assistant, or as another agent. You were "
+                 "addressed by name.")
+
+    return (
+        "=== WHO YOU ARE (from your agent record — this is the enforced truth) ===\n"
+        + "\n".join(lines)
+        + "\nYOU MUST NOT:\n"
+        + "\n".join(f"  - {m}" for m in musts)
+    )
+
+
 # ----------------------------------------------------------- runtime briefing
 # The single highest-leverage builder fix (researched against v0/Bolt/Lovable/
 # Replit/Cursor): every build platform injects a TEMPLATED environment briefing

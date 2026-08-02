@@ -131,7 +131,7 @@ def mentionable_agents(chat_scope: str) -> list[dict]:
     for a in roster:
         if not a.get("mentionable") or a.get("retired"):
             continue
-        home = _home_scope(a)
+        home = home_scope(a)
         if not scope_allows(chat, home):
             continue
         out.append({
@@ -164,7 +164,7 @@ def resolve(content: str, chat_scope: str) -> dict | None:
     return None
 
 
-def _home_scope(agent: dict[str, Any]) -> str:
+def home_scope(agent: dict[str, Any]) -> str:
     """The scope address an agent lives in, from its registry record."""
     if agent.get("project_slug"):
         return f"project:{agent['project_slug']}"

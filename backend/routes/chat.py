@@ -1422,16 +1422,45 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 
     definition = (rec.get("definition") or "").strip()
     role = rec.get("role") or "agent"
+    # Decided ONCE, here, and then both used and described. The self-preamble is
+    # built from this same value, so what the agent is told about its tools is
+    # the value that was enforced rather than a parallel sentence about it.
+    tools_active = role == "maker"
+
     parts = [
-        f"You are {agent['name']} ({slug}), a {role} agent in the operator's Workshop.",
-        f"Your scope is {agent['scope']}. You are answering INSIDE a chat, because "
-        f"the operator addressed you directly with @{slug}.",
-        "Answer as yourself, briefly and directly. Do not greet, do not introduce "
-        "yourself, and do not restate the question. If it is outside what you do, "
-        "say so in one line and name who or what would handle it.",
+        chat_context.agent_self_preamble(
+            name=agent["name"], slug=slug, role=role, scope=agent["scope"], cwd=cwd,
+            tools_active=tools_active,
+            capabilities=rec.get("capabilities"), triggers=rec.get("triggers"),
+            mentionable=bool(rec.get("mentionable")),
+            delegatable=bool(rec.get("delegatable")),
+        ),
+        f"You are answering INSIDE a chat, because the operator addressed you "
+        f"directly with @{slug}. Answer as yourself, briefly and directly. Do not "
+        "greet, do not introduce yourself, and do not restate the question.",
     ]
     if definition:
         parts.append("=== YOUR DEFINITION ===\n" + definition)
+
+    # An agent reads the union of the layers it learns from, exactly as a chat
+    # does: workshop (house style) + role:<role> (how this KIND of work is done
+    # well) + its place + its OWN private notes. P6 built this and the mention
+    # path — the only path where an agent actually speaks — was not reading it,
+    # so two keepers in two projects still shared nothing. Its own home scope,
+    # not the chat's: it brings what IT knows into someone else's conversation.
+    try:
+        aindex, aused = knowledge.layered_index_block(
+            _mentions.home_scope(rec or agent), role, private=f"agent:{slug}")
+    except Exception as e:
+        log.warning("agent knowledge index failed for %s: %s", slug, e)
+        aindex, aused = "", []
+    if aindex:
+        parts.append(
+            "=== WHAT YOU KNOW (layers, narrowest last - a narrower note wins) ===\n"
+            + aindex
+        )
+        log.debug("agent knowledge layers for %s: %s", slug, aused)
+
     if convo:
         parts.append("=== RECENT CONVERSATION (context; do not reply to it) ===\n" + convo)
     parts.append("=== THE OPERATOR ASKS YOU ===\n" + (question or content))
@@ -1440,11 +1469,11 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     turn = await build_streaming.start_turn(
         thread_id=thread_id, agent_slug=slug, prompt=prompt, model=model,
         cwd=cwd, session_id=None, resume=False, timeout_s=CHAT_TIMEOUT_S,
-        allowed_tools=None if role == "maker" else [],
-        mcp_servers=[], tools_disabled=(role != "maker"),
+        allowed_tools=None if tools_active else [],
+        mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug,
     )
-    _ = kscope  # scope resolution is carried by cwd; kept for the memory phase
+    _ = kscope  # the CHAT's scope; the agent reads its own layers above
     return turn
 
 

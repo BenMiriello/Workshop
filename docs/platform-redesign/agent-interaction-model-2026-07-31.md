@@ -543,8 +543,23 @@ it was learned. `approve()` honours the operator-approved target and re-derives
 only the sources, because re-deriving the target made Approve a silent no-op
 whenever the registry did not know a scope's role.
 
-Not in P6: the self-knowledge preamble. An agent reads the union but is not yet
-told, in words, what it is and what it knows.
+**P6 self-knowledge (7.4) — done, 2026-08-02.**
+`chat_context.agent_self_preamble` states an agent's identity, role, scope,
+workspace, tools, capabilities and reachability, every line derived from the
+record and from the run config the caller is about to pass to `start_turn` —
+the same discipline `role_preamble` uses, and the reason it cannot drift the
+way a hand-written per-agent paragraph does. `YOU MUST NOT` is derived too: a
+bound appears only when the record makes it true, because a constraint asserted
+whether or not it holds teaches a model to discount all of them.
+
+Found while wiring it, and the more consequential half: **the mention path was
+not reading the memory layers at all.** `_start_agent_turn` computed the chat's
+knowledge scope and dropped it (`_ = kscope`), so P6's whole point — two agents
+of one role get better together — was unrealized on the only path where an
+agent actually speaks. It now reads its OWN union (`workshop` + `role:<role>` +
+its place + `agent:<slug>`), because what it brings into someone else's
+conversation is what IT knows. `read_layers` gained the private layer its own
+docstring had been promising: it described four and returned three.
 
 **P5 — not started.** A Run can now *ask* (see the P4 note above), but it is
 still a fire-and-forget process, not a Session with `waiting/working/blocked/

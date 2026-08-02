@@ -287,7 +287,8 @@ def _mtime_iso(f: Path) -> str | None:
     return datetime.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")
 
 
-def read_layers(scope_key: str, role: str | None = None) -> list[str]:
+def read_layers(scope_key: str, role: str | None = None,
+                private: str | None = None) -> list[str]:
     """The scopes an agent READS, widest first, narrowest last.
 
     This is the read-union that makes shared and specialized learning coexist:
@@ -307,6 +308,12 @@ def read_layers(scope_key: str, role: str | None = None) -> list[str]:
     other reader. With it, instances of a role get better together without
     becoming islands and without becoming everyone's business.
 
+    `private` is the fourth layer and is passed only when the reader IS a
+    particular agent (`agent:<slug>`), because it is the narrowest thing there
+    is: what this one instance tried and how it went. A chat has a place but no
+    private layer, which is why this is a separate argument rather than being
+    folded into `scope_key` — the caller that has both must be able to say so.
+
     Deduped and order-preserving; a scope that is its own layer appears once.
     """
     layers: list[str] = ["workshop"]
@@ -316,6 +323,8 @@ def read_layers(scope_key: str, role: str | None = None) -> list[str]:
             layers.append(f"role:{r}")
     if scope_key and scope_key not in layers:
         layers.append(scope_key)
+    if private and private not in layers:
+        layers.append(private)
     seen: set[str] = set()
     out: list[str] = []
     for s in layers:
@@ -326,7 +335,8 @@ def read_layers(scope_key: str, role: str | None = None) -> list[str]:
     return out
 
 
-def layered_index_block(scope_key: str, role: str | None = None) -> tuple[str, list[str]]:
+def layered_index_block(scope_key: str, role: str | None = None,
+                        private: str | None = None) -> tuple[str, list[str]]:
     """`index_block` over the read-union. Returns (text, scopes_used).
 
     Each layer is labelled, because an unlabelled merge tells the model what is
@@ -336,7 +346,7 @@ def layered_index_block(scope_key: str, role: str | None = None) -> tuple[str, l
     """
     blocks: list[str] = []
     used: list[str] = []
-    for sk in read_layers(scope_key, role):
+    for sk in read_layers(scope_key, role, private):
         try:
             b = index_block(sk)
         except Exception:
