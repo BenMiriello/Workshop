@@ -16,6 +16,7 @@ import {
 } from "../ui";
 import type { StatusKind } from "../ui";
 import { type Job, jobStatusKind } from "../lib/jobs";
+import { ticketHref, runTicketScope } from "../lib/tasks";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -490,12 +491,12 @@ export default function JobDetail() {
                   second status pill next to job.status. That created a "which
                   one is the truth?" ambiguity; a run has one status, and the
                   ticket has its own. Link to the ticket instead. */}
-              {(job as { task_id?: string }).task_id && (
+              {job.task_id && (
                 <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
-                     onClick={() => nav(`/work?ticket=${encodeURIComponent((job as { task_id?: string }).task_id!)}`)}>
+                     onClick={() => nav(ticketHref(runTicketScope(job), job.task_id!))}>
                   <ListChecks aria-hidden />
                   <span>Linked ticket</span>
-                  <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{(job as { task_id?: string }).task_id}</span>
+                  <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{job.task_id}</span>
                 </Row>
               )}
             </Stack>
@@ -569,11 +570,11 @@ export default function JobDetail() {
                         <MessageSquare aria-hidden /> Follow up in the chat that started this
                       </Button>
                     )}
-                    {(job as { task_id?: string }).task_id && (
+                    {job.task_id && (
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => nav(`/work?ticket=${encodeURIComponent((job as { task_id?: string }).task_id!)}`)}
+                        onClick={() => nav(ticketHref(runTicketScope(job), job.task_id!))}
                       >
                         <ListChecks aria-hidden /> Open the ticket
                       </Button>

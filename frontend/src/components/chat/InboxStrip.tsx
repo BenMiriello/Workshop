@@ -5,6 +5,7 @@ import {
   ListTodo, Play,
 } from "lucide-react";
 import { Button, Input, StateBlock } from "../../ui";
+import { ticketHref } from "../../lib/tasks";
 
 // Items an agent raised that need the operator.
 //
@@ -206,8 +207,7 @@ export default function InboxStrip({
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={() => navigate(
-                              `/tickets/${encodeURIComponent(it.scope)}/${encodeURIComponent(it.ticket_id!)}`)}
+                            onClick={() => navigate(ticketHref(it.scope, it.ticket_id!))}
                           >
                             <ListTodo size={14} aria-hidden /> Open ticket
                           </Button>

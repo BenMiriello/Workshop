@@ -36,6 +36,7 @@ import {
   type TriggerKind,
   type UnifiedAgent,
 } from "../lib/agentTriggers";
+import { ticketHref } from "../lib/tasks";
 
 // One Agent, one config surface. `runtime` is a field, not a separate noun.
 // This page is the definition (editable), triggers + limits, the grant set
@@ -53,6 +54,9 @@ type AgentDetailData = UnifiedAgent & {
   mentionable?: boolean;
   delegatable?: boolean;
   linked_ticket_ids?: string[];
+  // The one scope every linked ticket lives in; a ticket is addressed by
+  // (scope, id), so without this the ids are unlinkable.
+  linked_ticket_scope?: string | null;
   linked_run_ids?: string[];
   linked_chat_ids?: string[];
 };
@@ -838,7 +842,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                   </span>
                   <Row wrap style={{ gap: "var(--space-1)", marginTop: "var(--space-1)" }}>
                     {agent.linked_ticket_ids.slice(0, 10).map((tid) => (
-                      <Link key={tid} to={`/work?ticket=${encodeURIComponent(tid)}`} style={{ textDecoration: "none" }}>
+                      <Link key={tid} to={ticketHref(agent.linked_ticket_scope || "workshop", tid)} style={{ textDecoration: "none" }}>
                         <Badge><ListChecks size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{tid.slice(0, 8)}</Badge>
                       </Link>
                     ))}

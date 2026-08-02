@@ -687,18 +687,38 @@ async def memory_effective_query(persona_path: str = ""):
     return resolve_memory_tree(persona_path)
 
 
+def _agent_scope_key(rec: dict) -> str | None:
+    """The task scope this agent's tickets live in, as a scope KEY.
+
+    A key, not a path, because the UI has to be able to LINK to it and a
+    filesystem path is not a link. This was only ever derived as a path, so the
+    agent detail page listed ticket ids it had no way to address: every badge
+    under "Tickets (N)" pointed at `/work?ticket=<id>`, a query string nothing
+    parses. Returning the key is what lets those become real ticket links.
+    """
+    pslug = rec.get("project_slug")
+    if pslug:
+        return f"project:{pslug}"
+    slug = rec.get("slug") or rec.get("id")
+    if rec.get("runtime") == "builder" and slug:
+        return f"build:{slug}"
+    return None
+
+
 def _agent_scope_root(rec: dict) -> _P | None:
     """The tree this agent's tasks live in: its linked project dir, else a
     builder's own cwd. Assistant agents with no project link have no code tree,
-    so their queue snapshot is empty."""
-    pslug = rec.get("project_slug")
-    if pslug:
-        pd = build_agents._project_dir(pslug)
-        if pd is not None:
-            return _P(pd)
-    if rec.get("runtime") == "builder" and rec.get("cwd"):
-        return _P(rec["cwd"])
-    return None
+    so their queue snapshot is empty.
+
+    Resolved from the scope key through task_scope, so the tree the server reads
+    and the scope the UI links to cannot disagree."""
+    from services import task_scope
+    key = _agent_scope_key(rec)
+    root = task_scope.root_for_context(key) if key else None
+    if root is None and rec.get("runtime") == "builder" and rec.get("cwd"):
+        # A builder that predates the build-agents registry still has a tree.
+        root = rec["cwd"]
+    return _P(root) if root else None
 
 
 def _agent_queue_snapshot(rec: dict) -> dict:
@@ -820,6 +840,10 @@ async def get_agent(agent_id: str):
         "queue": snap["queue"],
         "awaiting": snap["awaiting"],
         "linked_ticket_ids": linked_ticket_ids[:50],
+        # Every id above came from ONE store, so they share one scope. Sent
+        # because a ticket is addressed by (scope, id) and the client cannot
+        # re-derive the scope without duplicating the routing rule above.
+        "linked_ticket_scope": _agent_scope_key(rec),
         "linked_run_ids": linked_run_ids[:50],
         "linked_chat_ids": linked_chat_ids[:50],
     }

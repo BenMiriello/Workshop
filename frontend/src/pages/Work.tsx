@@ -43,6 +43,7 @@ import {
   joinText,
   scopeLabel,
   scopeHref,
+  ticketHref,
 } from "../lib/tasks";
 
 // The Work surface (plan D4 / sub-decision b): one nav item, three tabs.
@@ -209,7 +210,7 @@ function TicketsTab() {
                 compact
                 onClick={() => {
                   setNotice(null);
-                  nav(`/tickets/${encodeURIComponent(t.scope || "workshop")}/${encodeURIComponent(t.id)}`);
+                  nav(ticketHref(t.scope || "workshop", t.id));
                 }}
                 style={{ cursor: "pointer" }}
               >

@@ -11,6 +11,7 @@ import {
 import {
   type Task, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, joinText, scopeLabel, scopeHref,
+  ticketHref,
   latitudeDesc, latitudeSourceLabel,
 } from "../lib/tasks";
 
@@ -444,7 +445,7 @@ export default function TicketDetail() {
                       <span className="ws-card__meta">depends on</span>
                       <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
                         {dependsOn.map((tid) => (
-                          <Link key={tid} to={`/tickets/${encodeURIComponent(scope)}/${encodeURIComponent(tid)}`}
+                          <Link key={tid} to={ticketHref(scope, tid)}
                                 style={{ fontSize: "var(--fs-sm)" }}>
                             <Tag hue="orchid">{tid}</Tag>
                           </Link>
@@ -457,7 +458,7 @@ export default function TicketDetail() {
                       <span className="ws-card__meta">relates to</span>
                       <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
                         {relatesTo.map((tid) => (
-                          <Link key={tid} to={`/tickets/${encodeURIComponent(scope)}/${encodeURIComponent(tid)}`}
+                          <Link key={tid} to={ticketHref(scope, tid)}
                                 style={{ fontSize: "var(--fs-sm)" }}>
                             <Tag hue="turquoise">{tid}</Tag>
                           </Link>

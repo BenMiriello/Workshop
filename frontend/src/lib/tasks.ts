@@ -231,6 +231,26 @@ export function scopeLabel(scope?: string): string {
   return `${kindLabel}: ${slug}`;
 }
 
+// The canonical route for one ticket. Four screens were building this string by
+// hand and a fifth (RunDetail's "Linked ticket") built a DIFFERENT one —
+// `/work?ticket=<id>` — which nothing reads: Work parses only `scope`, so the
+// link silently landed on an unfiltered ticket list. A route spelled in five
+// places is a route that will be spelled wrong in one of them.
+//
+// A scope is required rather than defaulted, because guessing `workshop` for a
+// project ticket produces a link that resolves to a 404 detail page instead of
+// failing where the mistake is.
+export function ticketHref(scope: string, id: string): string {
+  return `/tickets/${encodeURIComponent(scope || "workshop")}/${encodeURIComponent(id)}`;
+}
+
+// The scope a Run's ticket lives in. A Run is bound to a project or it is not,
+// and its ticket sits in that project's queue or the workshop root — the same
+// rule task_scope.root_for_context applies server-side.
+export function runTicketScope(job: { project_slug?: string }): string {
+  return job.project_slug ? `project:${job.project_slug}` : "workshop";
+}
+
 // The in-app route a scope links to (project detail / agent detail), or null
 // when the scope has no dedicated page (workshop root, build agents).
 export function scopeHref(scope?: string): string | null {
