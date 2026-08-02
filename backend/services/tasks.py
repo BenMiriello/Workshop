@@ -337,26 +337,49 @@ def _assignee_from_legacy(task: dict) -> str | None:
 # moves the remainder down into the body, and when there is no boundary worth
 # cutting on the title becomes an elided preview while the WHOLE original line
 # stays as the body.
-TITLE_MAX = 120        # a first line longer than this is a spec, not a title
-_TITLE_MIN_CUT = 30    # a cut leaving less than this is a fragment, not a title
-_TITLE_ELIDE = 96      # where a preview is elided when there is nothing to cut on
-# End of a clause: sentence punctuation followed by space, or a spaced dash. The
-# match IS the separator, so the text before it keeps its punctuation and the
-# text after it starts the body.
-_CLAUSE_BREAK = re.compile(r"(?<=[.:;?!])\s+|\s+[-—–]\s+")
+TITLE_MAX = 80         # a first line longer than this is a spec, not a title
+_TITLE_MIN_CUT = 28    # a cut leaving less than this is a fragment, not a title
+_TITLE_ELIDE = 72      # where a preview is elided when there is nothing to cut on
+# Where a title may end, best first. The match IS the separator, so the text
+# before it keeps its punctuation and the text after it starts the body.
+#   1. end of a sentence or clause — a whole thought.
+#   2. a comma or a closed parenthetical — a weaker seam, but "[SEC-A5]
+#      Personal-data partition is app-layer only (contextvar)" is a real title
+#      and the sentence tier alone would never find it.
+_CLAUSE_BREAKS = (
+    re.compile(r"(?<=[.:;?!])\s+|\s+[-—–]\s+"),
+    re.compile(r"(?<=[,)])\s+"),
+)
+
+
+def _balanced(s: str) -> bool:
+    """No bracket left hanging open."""
+    return s.count("(") == s.count(")") and s.count("[") == s.count("]")
 
 
 def _split_overlong_title(head: str) -> tuple[str, str]:
-    """(title, the part of `head` that belongs in the body)."""
-    # Prefer the LAST clause boundary that still fits, so the title is the most
+    """(title, the part of `head` that belongs in the body).
+
+    Cuts are rejected where they would leave a bracket open. Without that guard
+    the comma tier turns "DEFERRED DECISION (operator must weigh in; gated on
+    ...)" into "DEFERRED DECISION (operator must weigh in" — an unbalanced
+    fragment, which reads worse than the over-long line it replaced. A title
+    that is merely long is honest; one that looks like it was chopped is not.
+    """
+    # Prefer the LAST boundary that still fits, so the title is the most
     # complete thought that can be a title rather than the first fragment.
-    cut = None
-    for m in _CLAUSE_BREAK.finditer(head[: TITLE_MAX + 1]):
-        if m.start() >= _TITLE_MIN_CUT:
-            cut = m
-    if cut is not None:
-        return head[: cut.start()].rstrip(" .:;,"), head[cut.end():].strip()
-    # No boundary to cut on: elide on a word boundary and keep the line entire.
+    for pattern in _CLAUSE_BREAKS:
+        cut = None
+        for m in pattern.finditer(head[: TITLE_MAX + 1]):
+            if m.start() >= _TITLE_MIN_CUT and _balanced(head[: m.start()]):
+                cut = m
+        if cut is not None:
+            return head[: cut.start()].rstrip(" .:;,"), head[cut.end():].strip()
+    # Nothing to cut on: elide at a word boundary and keep the whole line as the
+    # body. The bracket guard deliberately does NOT apply here — a cut claims to
+    # be a complete title, an elision already says "there is more" with its
+    # ellipsis, and forcing balance on a preview only makes it shorter and less
+    # informative.
     space = head.rfind(" ", 0, _TITLE_ELIDE)
     head_cut = space if space >= _TITLE_MIN_CUT else _TITLE_ELIDE
     return head[:head_cut].rstrip(" .:;,") + "…", head

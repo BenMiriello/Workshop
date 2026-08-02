@@ -405,6 +405,41 @@ a.ws-btn { text-decoration: none; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
+/* Ticket card (Work → Tickets), built to match its sibling tab's .ws-job-card:
+   strong line, muted line, pill row, meta line. Before this it was a bold title
+   and a row of chips and nothing else, so a card had no hierarchy — a title that
+   filled two lines simply WAS the card, and every card looked the same weight
+   and the same size regardless of what it said.
+
+   `height: 100%` + `margin-top: auto` on the pills is what makes a grid of these
+   read as a grid: the pill rows line up along the bottom instead of floating
+   wherever each title happened to stop. */
+.ws-ticket-card { display: flex; flex-direction: column; height: 100%; gap: var(--space-2); }
+.ws-ticket-card__title {
+  font-weight: var(--fw-semi);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+}
+/* The muted second line is what gives the title something to be stronger THAN.
+   It is also the only place a reader learns what a ticket is about when its
+   title had to be elided. */
+.ws-ticket-card__desc {
+  color: var(--muted); font-size: var(--fs-sm); line-height: var(--lh-tight);
+}
+.ws-ticket-card__pills {
+  display: flex; align-items: center; gap: var(--space-2);
+  margin-top: auto; padding-top: var(--space-1);
+  flex-wrap: nowrap; overflow: hidden;
+}
+.ws-ticket-card__pills > * { flex: 0 0 auto; }
+/* Priority and effort are ONE muted line, not two loose labels sitting next to
+   two pills. Four different visual weights in one row is what made the old row
+   read as unstyled. */
+.ws-ticket-card__meta {
+  color: var(--muted); font-size: var(--fs-xs);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Build-agent card cell: the card body links to the chat; a corner button opens
    the full workbench. The button is a sibling of the card link (valid HTML), so
    the cell is the positioning context and reserves room so the button never sits

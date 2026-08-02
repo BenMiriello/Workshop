@@ -76,6 +76,37 @@ function fmtTs(ts?: string): string {
 
 // ---- Tickets tab -----------------------------------------------------------
 
+// One ticket in the grid: strong line, muted line, pills, meta — the same four
+// bands its sibling tab's run card uses, so the two tabs read as one surface.
+//
+// The description is collapsed to a single run of text on purpose. A ticket body
+// is `Objective: ...\nOutput: ...\nStart from: ...`, and preserving those breaks
+// in a two-line preview shows one and a half labels and no content.
+function TicketCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
+  const title = taskTitle(task);
+  const desc = taskDescription(task).replace(/\s+/g, " ").trim();
+  const meta = [
+    typeof task.priority === "number" && task.priority !== 0 ? `priority ${task.priority}` : null,
+    task.effort ? `effort ${task.effort}` : null,
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <Card interactive compact className="ws-ticket-card" onClick={onOpen} style={{ cursor: "pointer" }}>
+      <span className="ws-ticket-card__title ws-clamp" title={title}>
+        {title || "(untitled)"}
+      </span>
+      {desc && (
+        <span className="ws-ticket-card__desc ws-clamp" title={desc}>{desc}</span>
+      )}
+      <div className="ws-ticket-card__pills">
+        <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
+        <Tag hue={catFor(task.scope || "workshop")}>{scopeLabel(task.scope)}</Tag>
+      </div>
+      {meta && <span className="ws-ticket-card__meta">{meta}</span>}
+    </Card>
+  );
+}
+
 function TicketsTab() {
   const nav = useNavigate();
   const [params] = useSearchParams();
@@ -205,31 +236,13 @@ function TicketsTab() {
         <CardGrid>
           {shown.map((t) => (
             <li key={`${t.scope}:${t.id}`}>
-              <Card
-                interactive
-                compact
-                onClick={() => {
+              <TicketCard
+                task={t}
+                onOpen={() => {
                   setNotice(null);
                   nav(ticketHref(t.scope || "workshop", t.id));
                 }}
-                style={{ cursor: "pointer" }}
-              >
-                <Stack gap="sm">
-                  <span className="ws-clamp" style={{ fontWeight: 600 }} title={taskTitle(t)}>
-                    {taskTitle(t) || "(untitled)"}
-                  </span>
-                  <Row wrap style={{ gap: "var(--space-2)" }}>
-                    <StatusPill status={taskStatusKind(t.status)}>{taskStatusLabel(t.status)}</StatusPill>
-                    <Tag hue={catFor(t.scope || "workshop")}>{scopeLabel(t.scope)}</Tag>
-                    {typeof t.priority === "number" && t.priority !== 0 && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>priority {t.priority}</span>
-                    )}
-                    {t.effort && (
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>effort {t.effort}</span>
-                    )}
-                  </Row>
-                </Stack>
-              </Card>
+              />
             </li>
           ))}
         </CardGrid>

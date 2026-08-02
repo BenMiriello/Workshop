@@ -7,6 +7,7 @@ import {
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Textarea, Markdown,
+  catFor,
 } from "../ui";
 import {
   type Task, TASK_STATUSES, taskStatusKind, taskStatusLabel,
@@ -236,7 +237,10 @@ export default function TicketDetail() {
             {task && (
               <>
                 <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
-                <Badge>{scopeLabel(scope)}</Badge>
+                {/* A hued Tag, matching Work's ticket card. The same scope
+                    rendering as a neutral Badge here and a coloured Tag there
+                    made one fact look like two different kinds of fact. */}
+                <Tag hue={catFor(scope || "workshop")}>{scopeLabel(scope)}</Tag>
                 {scopeLink && (
                   <Link to={scopeLink} style={{ fontSize: "var(--fs-xs)" }}>
                     scope <ExternalLink size={10} aria-hidden />

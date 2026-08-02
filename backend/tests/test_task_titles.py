@@ -20,6 +20,10 @@ def _body(text: str) -> str:
     return out.split("\n", 1)[1] if "\n" in out else ""
 
 
+def _balanced_brackets(s: str) -> bool:
+    return s.count("(") == s.count(")") and s.count("[") == s.count("]")
+
+
 def test_short_title_is_left_alone():
     text = "Fix the commute alerter\nObjective: it stopped firing on Fridays."
     assert tasks._normalize_text(text) == text
@@ -34,15 +38,36 @@ def test_overlong_first_line_splits_on_the_last_clause_that_fits():
     # The real shape this was built for: a paragraph filed as a title, with the
     # actual title sitting in front of a colon.
     text = (
-        "Generalize the workshop Agent concept so named scoped agents emerge "
-        "from the shared pipeline with minimal config: an Agent = slug + "
-        "persona + memory scope + triggers."
+        "Generalize the workshop Agent concept: an Agent = slug + persona + "
+        "memory scope + triggers, and the pipeline supplies everything else."
     )
-    assert _title(text) == (
-        "Generalize the workshop Agent concept so named scoped agents emerge "
-        "from the shared pipeline with minimal config"
-    )
+    assert _title(text) == "Generalize the workshop Agent concept"
     assert _body(text).startswith("an Agent = slug")
+
+
+def test_comma_tier_when_there_is_no_sentence_boundary():
+    """A closed parenthetical is a real title; the sentence tier never sees it."""
+    text = ("[SEC-A5] Personal-data partition is app-layer only (contextvar), so a "
+            "same-uid agent reads every owner's files regardless of the API gate")
+    assert _title(text) == "[SEC-A5] Personal-data partition is app-layer only (contextvar)"
+    assert _body(text).startswith("so a same-uid agent")
+
+
+def test_a_cut_never_leaves_a_bracket_open():
+    """The guard that makes the comma tier safe.
+
+    Without it this cuts at the comma inside the parenthetical and yields
+    "DEFERRED DECISION (operator must weigh in" — a fragment presented as a
+    whole title, which reads as damaged. Rejecting that cut falls through to an
+    elision, whose ellipsis says "there is more" honestly.
+    """
+    text = ("DEFERRED DECISION (operator must weigh in, and it is gated on the "
+            "system being proven first) about the service naming")
+    title = _title(text)
+    assert title != "DEFERRED DECISION (operator must weigh in"
+    assert title.endswith("…")
+    # An elision keeps the whole line; nothing is lost to the guard.
+    assert _body(text) == text
 
 
 def test_split_keeps_the_later_lines_as_the_body():
