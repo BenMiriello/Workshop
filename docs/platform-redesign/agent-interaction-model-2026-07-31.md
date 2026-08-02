@@ -525,4 +525,28 @@ list stayed empty. The delay is a positional arg (`--deferred <seconds>`);
 anything longer than a turn works, or poll for the turn to end. Worth fixing
 properly in the script rather than remembering.
 
-**P5-P6 — not started.** Session rename, memory layers.
+**P4 completed, second half.** `services/run_inbox.py` reconciles blocked
+Tickets into `question` items (dedupe key `task:<scope>:<id>`, closed when the
+Ticket unblocks), which is P4's "Session `awaiting` raises a question item" —
+the one part of P4 that `8146c93` did not carry. Reconciliation runs on the
+open-state listing rather than at block time, so a block raised by any path
+reaches the inbox and a stale item cannot outlive its Ticket.
+
+**P6 — done.** `role:<role>` is a scope kind in `services/knowledge.py`
+(`shared/knowledge/roles/<role>/`); `read_layers` assembles the union
+`workshop` + `role:<role>` + place, and `layered_index_block` renders it
+labelled per layer so a reader can tell whose knowledge it is holding.
+`services/memory_promotion.py` proposes a note held by `PROMOTE_AT = 3` or more
+distinct narrow scopes as a `review` item, and approval COPIES it up rather
+than moving it — a note earning wider standing does not stop being true where
+it was learned. `approve()` honours the operator-approved target and re-derives
+only the sources, because re-deriving the target made Approve a silent no-op
+whenever the registry did not know a scope's role.
+
+Not in P6: the self-knowledge preamble. An agent reads the union but is not yet
+told, in words, what it is and what it knows.
+
+**P5 — not started.** A Run can now *ask* (see the P4 note above), but it is
+still a fire-and-forget process, not a Session with `waiting/working/blocked/
+done` and structured activities, and nothing is renamed. The `read_chat` tool
+(D12) does not exist.

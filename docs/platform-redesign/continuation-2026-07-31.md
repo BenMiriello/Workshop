@@ -193,6 +193,9 @@ endpoint now clears both and reports which.
 
 ### 5.2 Why it stays off
 
+*(Triaged 2026-08-02 — see 5.4 step 1. The queue is now 36. What follows is the
+state that motivated the pause and is kept as written.)*
+
 The queue holds **46 `todo` tickets**, and they are mostly July-18 design-phase
 items: "Design the orchestration surface", "Produce the ordered build-ticket
 set", "B7: shared-scope context", "B8: resilience", several "deep design pass"
@@ -231,8 +234,19 @@ tickets whose acceptance is "produce a design doc" being satisfied by producing
 
 ### 5.4 Suggested sequence when this is picked up
 
-1. **Triage the 46.** Cancel superseded, keep what is real, and record WHY each
-   was cancelled — that record is the raw material for the supersession relation.
+1. ~~**Triage the 46.**~~ **Done 2026-08-02.** The root queue is 46 → 36 open;
+   across every scope, 79 → 65. Six cancelled (four project-template "First
+   task" stubs; one duplicate — the by-chat usage view was filed twice 90
+   minutes apart from two chat scopes, which dedupe missed because `provenance`
+   is per-source; one superseded), eight closed as done against the accepted
+   doc or the commit that delivered them. Every one carries an evidence note
+   `triage 2026-08-02 -> <status>: <why>`, which is the raw material asked for
+   here, and the two supersession pairs are joined with `relates_to` — the
+   closest existing link, since nothing yet means "this replaces that" (5.3
+   failure mode 2). Judgement calls left OPEN rather than guessed: the fifteen
+   `[SEC-*]` findings, B8 resilience, the settings-UI concept, the note-capture
+   model, and the toolbar overhaul, which is substantially delivered by P1-P3
+   but whose bidirectional chat linkage was not verified.
 2. **Add a dry-run**: `queue_runner.sh --plan` printing the next N picks with
    reasons, changing nothing.
 3. **Type the tickets**: at minimum executable vs judgement, so a maker can never

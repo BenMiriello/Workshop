@@ -34,3 +34,7 @@
 - Tickets generated from chat should propose 0..N distinct tickets with self-descriptive text and confidence levels, not squash to one
 - Ticket drafts persist on threads and can be revisited without re-running generation
 - Agents are configurations with opt-in mentionable and delegatable capabilities; most agents should have neither
+- Comprehensive system analysis required before features; piecemeal approaches without coherence review unacceptable
+- Proactive cleanup and ownership preferred over incremental feature-stacking
+- Chat composer input retention fixed via clearNow; watch for recurrence on mobile with IME events
+- Autonomy disabled until queue has supersession relations, dry-run capability, blast-radius tracking
