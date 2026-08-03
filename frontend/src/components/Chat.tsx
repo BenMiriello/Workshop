@@ -280,9 +280,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
   const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
 
-  // A one-shot "start blank", held in a ref so consuming it does not re-run the
-  // loader, and so a re-render cannot re-arm it.
+  // The two URL intents — `?new=1` (start blank) and `?thread=<id>` (open this
+  // conversation) — are ONE-SHOT: each is something the operator just clicked,
+  // so it is consumed on use and cannot be re-armed by a re-render. They are
+  // held in refs for that reason. The persisted selection is not an intent; it
+  // is the fallback for a mount the URL says nothing about.
   const startNewRef = useRef(!!startNew);
+  const linkedThreadRef = useRef<string | null>(initialThreadId ?? null);
+  // Re-arm when the URL names a different thread while this Chat stays mounted
+  // (list -> chat -> back -> another chat keeps the same route). Declared above
+  // the loader so it lands first in the same commit.
+  useEffect(() => {
+    linkedThreadRef.current = initialThreadId ?? null;
+  }, [initialThreadId]);
   // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
   // the persisted selection instead of blanking a thread that now exists.
   const stripNewParam = useCallback(() => {
@@ -418,34 +428,56 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         const list = await chatApi.listThreads(scope);
         if (cancelled) return;
         setThreads(list);
-        // Choose the active thread ONCE per scope, honoring (in priority order):
-        //   0. `?new=1` from a New-chat button → blank, and RECORD the intent
-        //      under the scope key, which only this component can compute
-        //   1. the thread we're already on   → re-hydrate it, never snap to newest
-        //   2. an explicit new-chat intent   → stay blank (this is what makes
-        //      "New chat" / "/clear" survive a reload instead of re-adopting)
-        //   3. an initialThreadId link       → resume a specific thread
-        //   4. the last thread open in this scope → restore it across a refresh
-        //   5. otherwise the most-recent thread
+        // Choosing the active thread, in ONE order, from two kinds of input:
+        //
+        //   URL intent (a click that just happened) — outranks everything:
+        //     `?new=1`      → blank, and record it under the scope key, which
+        //                     only this component can compute
+        //     `?thread=<id>`→ that conversation
+        //   Persisted state (what to do when the URL says nothing):
+        //     the thread we're already on → re-hydrate, never snap to newest
+        //     NEW_CHAT recorded           → stay blank across reloads
+        //     the last thread in scope    → restore it
+        //     otherwise                   → the most recent thread
+        //
+        // The link outranking NEW_CHAT is the whole point: a recorded "I want a
+        // blank chat" is older than the click asking for a specific one. Ranked
+        // the other way, every chat in the list opened blank once New chat had
+        // been pressed; ranked with no link intent at all, New chat reopened the
+        // thread you had just left. Both are the same bug, which is why they are
+        // now one rule instead of two special cases.
         const has = (id: string | null | undefined): boolean => !!id && list.some((x) => x.id === id);
         if (startNewRef.current) {
-          // Consume it: the flag is a one-shot instruction, not a mode. Left set,
-          // reloading after sending the first message would blank the thread the
-          // operator had just started.
           startNewRef.current = false;
+          // The two URL intents are mutually exclusive; taking one disarms the
+          // other so a stale `?thread` can't undo an explicit New chat.
+          linkedThreadRef.current = null;
           writeSelection(scope, NEW_CHAT);
           stripNewParam();
         }
+        const linked = linkedThreadRef.current;
+        linkedThreadRef.current = null;
         const stored = readSelection(scope);
-        const current = activeIdRef.current;
-        let target: string | null;
-        if (has(current)) target = current;
-        else if (stored === NEW_CHAT) target = null;
-        else if (has(initialThreadId)) target = initialThreadId ?? null;
-        else if (has(stored)) target = stored;
-        else target = list.length ? list[0].id : null;
-        if (target) {
-          const t = await chatApi.getThread(target);
+        // Where this scope lands with no link: the persisted ranking.
+        const fallbackTarget = (): string | null => {
+          const current = activeIdRef.current;
+          if (has(current)) return current;
+          if (stored === NEW_CHAT) return null;
+          if (has(stored)) return stored;
+          return list.length ? list[0].id : null;
+        };
+        // A linked thread is fetched by id, not looked up in `list`: the chat
+        // list spans every context, so the thread the operator clicked need not
+        // live in THIS scope. If it's gone, fall back as if no link were given
+        // rather than stranding the chat on an error.
+        let t: Thread | null = null;
+        if (linked) t = await chatApi.getThread(linked).catch(() => null);
+        if (cancelled) return;
+        if (!t) {
+          const target = fallbackTarget();
+          t = target ? await chatApi.getThread(target) : null;
+        }
+        if (t) {
           if (cancelled) return;
           setActiveId(t.id);
           writeSelection(scope, t.id);
@@ -466,9 +498,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       }
     })();
     return () => { cancelled = true; closeStream(); };
-    // hydrate is stable enough; scope drives the reload.
+    // hydrate is stable enough; scope and the linked thread drive the reload —
+    // the URL naming a different conversation has to re-run this even when the
+    // route (and therefore the scope) is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
+  }, [scope, initialThreadId]);
 
   // Liveness is SERVER state — a turn running in another tab or on another
   // device must not render as an idle chat. See useTurnLiveness.
