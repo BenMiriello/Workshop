@@ -76,9 +76,14 @@ export type ChatProps = {
   // Open a SPECIFIC thread on mount (e.g. resuming a draft project chat from a
   // link) instead of the most-recent one for this scope.
   initialThreadId?: string;
+  // Start BLANK, outranking every restore rule below. Set from `?new=1` (see
+  // lib/chatSelection.newChatHref) because a "New chat" button elsewhere in the
+  // app knows the context key but cannot compute the scope the selection is
+  // keyed by — so it states the intent and lets this component record it.
+  startNew?: boolean;
 };
 
-export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand, initialThreadId }: ChatProps) {
+export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand, initialThreadId, startNew }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
 
@@ -142,7 +147,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // The live turn: its SSE channel, resilience, and what "still running" means.
   // See useTurnStream for the rules a dropped connection has to obey.
   const {
-    streaming, streamingRef, reconnecting, elapsed,
+    streaming, logBusyRef, reconnecting, elapsed,
     pendingSegments, setPendingSegments,
     attach: attachStream, anchorStart, stop, closeStream, hasOpenStream,
     markStarting, markFailed, segmentCount,
@@ -162,6 +167,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }]),
   });
 
+  // Does a turn still own the TAIL of the log? The render-time twin of
+  // useTurnStream's logBusyRef, and the same condition ChatLog renders the live
+  // band on — so "there is a turn at the end of the transcript" has exactly one
+  // answer, whoever asks. `streaming` alone is not that answer: it goes false
+  // while the reply is still being read back from the server.
+  const logBusy = streaming || pendingSegments.length > 0;
+
   // Messages typed while a build turn is streaming are queued (a session can't
   // run two turns at once) and sent automatically when the turn finishes. They
   // render as pending user bubbles below the live response. The durability and
@@ -169,7 +181,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const sendBuildRef = useRef<(t: string) => void>(() => {});
   const queue = useMessageQueue({
     scope: effectiveMode === "build" ? contextKey : activeProvider,
-    streaming, loadingThreads, streamingRef,
+    streaming, loadingThreads, logBusyRef,
     send: (t) => sendBuildRef.current(t),
     appendUserMessages: (texts) => {
       const ts = new Date().toISOString();
@@ -186,7 +198,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const {
     compacting, compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
   } = useCompaction({
-    activeIdRef, streamingRef, isBuild: effectiveMode === "build", queue,
+    activeIdRef, logBusyRef, isBuild: effectiveMode === "build", queue,
     setMessages, setErr,
     sendTurn: (t) => void sendBuildRef.current(t),
   });
@@ -267,6 +279,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
   const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
+
+  // A one-shot "start blank", held in a ref so consuming it does not re-run the
+  // loader, and so a re-render cannot re-arm it.
+  const startNewRef = useRef(!!startNew);
+  // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
+  // the persisted selection instead of blanking a thread that now exists.
+  const stripNewParam = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("new")) return;
+    url.searchParams.delete("new");
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  }, []);
   const activeProviderObj = useMemo(
     () => providers.find((p) => p.key === providerKey),
     [providers, providerKey],
@@ -394,6 +419,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (cancelled) return;
         setThreads(list);
         // Choose the active thread ONCE per scope, honoring (in priority order):
+        //   0. `?new=1` from a New-chat button → blank, and RECORD the intent
+        //      under the scope key, which only this component can compute
         //   1. the thread we're already on   → re-hydrate it, never snap to newest
         //   2. an explicit new-chat intent   → stay blank (this is what makes
         //      "New chat" / "/clear" survive a reload instead of re-adopting)
@@ -401,6 +428,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         //   4. the last thread open in this scope → restore it across a refresh
         //   5. otherwise the most-recent thread
         const has = (id: string | null | undefined): boolean => !!id && list.some((x) => x.id === id);
+        if (startNewRef.current) {
+          // Consume it: the flag is a one-shot instruction, not a mode. Left set,
+          // reloading after sending the first message would blank the thread the
+          // operator had just started.
+          startNewRef.current = false;
+          writeSelection(scope, NEW_CHAT);
+          stripNewParam();
+        }
         const stored = readSelection(scope);
         const current = activeIdRef.current;
         let target: string | null;
@@ -635,7 +670,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // turn, which is the only timing the CLI acts on them.
     const isSlashCommand = /^\/[a-zA-Z][\w:-]*(\s|$)/.test(text);
     const threadId = activeIdRef.current;
-    if (streaming && isSlashCommand) { queue.push(text); return; }
+    if (logBusy && isSlashCommand) { queue.push(text); return; }
     if (streaming && threadId) {
       void chatApi.injectIntoThread(threadId, text)
         .then((r) => {
@@ -655,11 +690,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         .catch(() => { queue.push(text); });
       return;
     }
-    if (streaming) { queue.push(text); return; }
+    // Not streaming any more, but the finished turn is still occupying the tail
+    // of the log while its reply lands in `messages`. Appending here is exactly
+    // what put a new message ABOVE a turn that had already completed — the queue
+    // renders below the live band, which is the truthful place for something
+    // that has not been sent yet. It drains a beat later, in order.
+    if (logBusy) { queue.push(text); return; }
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
-  }, [streaming, sendBuild, queue, compact, followLatest]);
+  }, [streaming, logBusy, sendBuild, queue, compact, followLatest]);
 
   // Composer text change. In voice mode, keep the engine's typing-hold aware of
   // whether the composer currently holds text (so it defers taking its turn).
@@ -918,6 +958,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       cardCtx={cardCtx}
       onRetryUnsent={retryUnsent}
       streaming={streaming}
+      logBusy={logBusy}
       pendingSegments={pendingSegments}
       interjections={interjections}
       workingLabel={reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}

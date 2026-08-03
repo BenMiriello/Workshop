@@ -44,6 +44,17 @@ const LIVENESS_POLL_MS = 10_000;
 export type TurnStream = {
   streaming: boolean;
   streamingRef: React.MutableRefObject<boolean>;
+  // "A turn still owns the TAIL of the log." True while streaming AND through
+  // the settle that follows, until the turn's output has become a persisted
+  // message. THIS, not `streaming`, is the question every send has to ask.
+  //
+  // The two are not the same and the gap between them is a bug factory. A turn
+  // stops streaming before its reply reaches `messages` — on finish there is a
+  // getThread round trip, and Stop resolves the same way. In that gap a send
+  // that consulted `streaming` took the not-streaming path, appended straight to
+  // `messages`, and rendered ABOVE the finished turn still sitting in the live
+  // band. One flag, one answer, every exit path.
+  logBusyRef: React.MutableRefObject<boolean>;
   reconnecting: boolean;
   // Seconds elapsed on the live turn, for the working indicator. Anchored to the
   // turn's real start so a reload mid-turn shows true elapsed time rather than
@@ -101,6 +112,11 @@ export function useTurnStream({
   const [reconnecting, setReconnecting] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
+  // Kept in sync on every render, exactly like streamingRef. The live band is
+  // rendered on the same condition (see ChatLog), so this is literally "is a
+  // turn occupying the end of the transcript right now".
+  const logBusyRef = useRef(false);
+  logBusyRef.current = streaming || pendingSegments.length > 0;
   const pendingRef = useRef<ChatSegment[]>(pendingSegments);
   pendingRef.current = pendingSegments;
 
@@ -190,16 +206,39 @@ export function useTurnStream({
       liveTurnRef.current = null;
       es.close();
       sseRef.current = null;
-      setStreaming(false);
-      setReconnecting(false);
       reconnectsRef.current = 0;
-      turnStartRef.current = 0;
+
+      // READ FIRST, THEN RETIRE THE TURN IN ONE COMMIT.
+      //
+      // This used to flip `streaming` off, then await getThread, then clear the
+      // segments — so for a whole network round trip the turn was "not
+      // streaming" while still rendered as the live band BELOW `messages`.
+      // Anything the operator sent in that window took the not-streaming path,
+      // appended to `messages`, and landed ABOVE a turn that had already
+      // finished. That is the out-of-order message.
+      //
+      // Fetching first collapses the window. While the read is in flight the
+      // turn is still live in every sense the rest of the app can observe, so a
+      // message sent then QUEUES (below the live turn, which is the truthful
+      // place for something not yet sent) instead of jumping above it. There is
+      // exactly one moment where the live turn becomes its persisted message,
+      // and React batches these into a single commit.
+      let server: ChatMsg[] | null = null;
       try {
         const t = await chatApi.getThread(threadId);
-        cb.current.onMessages(t.messages);
-        const last = t.messages[t.messages.length - 1];
+        server = t.messages;
+      } catch { /* keep what is on screen; the liveness poll resyncs */ }
+
+      setStreaming(false);
+      setReconnecting(false);
+      turnStartRef.current = 0;
+      if (server) {
+        cb.current.onMessages(server);
+        const last = server[server.length - 1];
         if (last?.meta?.notes?.length) cb.current.onNotes();
-      } catch { /* ignore */ }
+      }
+      // Safe now, and only now: the server's copy of this turn is in `messages`,
+      // which is the invariant stated at the top of this file.
       setPendingSegments([]);
       cb.current.onTurnEnd(isFirst);
       cb.current.dispatchQueue();
@@ -268,7 +307,7 @@ export function useTurnStream({
   }, [streaming]);
 
   return {
-    streaming, streamingRef, reconnecting, elapsed,
+    streaming, streamingRef, logBusyRef, reconnecting, elapsed,
     pendingSegments, setPendingSegments, liveTurnRef,
     attach, anchorStart, stop, closeStream, hasOpenStream,
     markStarting, markFailed, segmentCount,

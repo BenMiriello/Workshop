@@ -15,6 +15,9 @@ export default function FocusedChat() {
   // reopened from the Projects page) rather than the most recent one.
   const [search] = useSearchParams();
   const initialThreadId = search.get("thread") || undefined;
+  // `?new=1` is an explicit "start blank here", set by newChatHref. It outranks
+  // every restore rule inside Chat; see lib/chatSelection.
+  const startNew = search.get("new") === "1";
 
   // P5: legacy agent:<slug> URLs that point at a thread the backend has
   // since promoted (context_key rewritten to general or project:<slug>)
@@ -44,5 +47,12 @@ export default function FocusedChat() {
   // One shared implementation — see lib/useVisualViewport.
   useVisualViewport();
 
-  return <Chat contextKey={contextKey} variant="full" initialThreadId={initialThreadId} />;
+  return (
+    <Chat
+      contextKey={contextKey}
+      variant="full"
+      initialThreadId={initialThreadId}
+      startNew={startNew}
+    />
+  );
 }

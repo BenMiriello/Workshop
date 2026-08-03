@@ -38,6 +38,20 @@ export function writeSelection(scope: string, sel: string | null): void {
   }
 }
 
+// The route that starts a BLANK chat on a surface. Every "New chat" button
+// outside the chat itself must use this and nothing else.
+//
+// The intent has to travel in the URL rather than in the selection store,
+// because the store is keyed by the resolved SCOPE (the provider a data chat is
+// on) and only Chat can compute that — a caller on the Chats page or a project
+// page knows the context key and nothing more. That mismatch is precisely the
+// bug: "New chat" navigated to /chat/general, Chat mounted, found no explicit
+// intent, fell through to "restore the last selection for this scope", and
+// reopened the conversation the operator had just asked to leave.
+export function newChatHref(contextKey: string): string {
+  return `/chat/${encodeURIComponent(contextKey)}?new=1`;
+}
+
 // Provider choice is keyed by CONTEXT KEY (the chat surface itself), so the
 // focused chat reopens on the provider you left it on instead of snapping back
 // to its default and hiding every thread you started under the other one.

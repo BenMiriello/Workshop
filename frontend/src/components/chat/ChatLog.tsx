@@ -22,7 +22,7 @@ export default function ChatLog({
   scrollRef, onScroll,
   loading, error, messages, isBuild, inFlight, overflowed,
   compactedThrough, selectedModel, cardCtx, onRetryUnsent,
-  streaming, pendingSegments, interjections, workingLabel, elapsed,
+  streaming, logBusy, pendingSegments, interjections, workingLabel, elapsed,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
 }: {
@@ -39,6 +39,10 @@ export default function ChatLog({
   cardCtx: UiCardCtx;
   onRetryUnsent: (index: number, text: string) => void;
   streaming: boolean;
+  // A turn owns the tail of the log: streaming, or still settling its reply
+  // into `messages`. Computed once in Chat so this condition cannot drift
+  // apart from the one the send path uses to decide queue-vs-append.
+  logBusy: boolean;
   pendingSegments: ChatSegment[];
   interjections: { at: number; text: string }[];
   workingLabel: string;
@@ -83,7 +87,7 @@ export default function ChatLog({
         onRetryUnsent={onRetryUnsent}
       />
 
-      {(streaming || pendingSegments.length > 0) && (
+      {logBusy && (
         <LiveTurn
           segments={pendingSegments}
           interjections={interjections}

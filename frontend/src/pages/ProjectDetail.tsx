@@ -57,6 +57,7 @@ import {
 } from "../lib/tasks";
 import { useCrumbLabel } from "../components/appNav";
 import { chatApi, type ThreadSummary } from "../lib/chat";
+import { newChatHref } from "../lib/chatSelection";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 import AppServicesPanel from "../components/AppServicesPanel";
 import DeploysPanel from "../components/DeploysPanel";
@@ -935,7 +936,9 @@ export default function ProjectDetail() {
       <section style={{ marginBottom: "var(--space-6)" }}>
         <Row between style={{ marginBottom: "var(--space-3)" }}>
           <SectionLabel icon={<MessagesSquare aria-hidden />}>Chat</SectionLabel>
-          <Button variant="ghost" size="sm" onClick={() => nav(`/chat/${encodeURIComponent(`project:${slug}`)}`)}>
+          {/* NEW chat, so it states that intent — the two "Open chat" buttons on
+              this page deliberately restore the last one instead. */}
+          <Button variant="ghost" size="sm" onClick={() => nav(newChatHref(`project:${slug}`))}>
             <Plus aria-hidden /> New chat
           </Button>
         </Row>

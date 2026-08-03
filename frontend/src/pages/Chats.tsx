@@ -15,6 +15,7 @@ import {
   type SegmentedOption,
 } from "../ui";
 import { chatApi, type ThreadSummary } from "../lib/chat";
+import { newChatHref } from "../lib/chatSelection";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
@@ -85,7 +86,7 @@ export default function Chats() {
     load();
   }, [load]);
 
-  const newChat = () => nav("/chat/general");
+  const newChat = () => nav(newChatHref("general"));
 
   // Most-recent first, then apply the context-kind and text filters.
   const sorted = useMemo(

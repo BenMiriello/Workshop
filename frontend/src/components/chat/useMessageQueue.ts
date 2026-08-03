@@ -61,14 +61,14 @@ export function useMessageQueue({
   scope,
   streaming,
   loadingThreads,
-  streamingRef,
+  logBusyRef,
   send,
   appendUserMessages,
 }: {
   scope: string;
   streaming: boolean;
   loadingThreads: boolean;
-  streamingRef: React.MutableRefObject<boolean>;
+  logBusyRef: React.MutableRefObject<boolean>;
   send: (text: string) => void;
   appendUserMessages: (texts: string[]) => void;
 }): MessageQueue {
@@ -153,10 +153,10 @@ export function useMessageQueue({
     // second turn alongside it.
     const t = window.setTimeout(() => {
       drainingRef.current = false;
-      if (!streamingRef.current && itemsRef.current.length) dispatch();
+      if (!logBusyRef.current && itemsRef.current.length) dispatch();
     }, 250);
     return () => { window.clearTimeout(t); drainingRef.current = false; };
-  }, [streaming, loadingThreads, items, dispatch, streamingRef]);
+  }, [streaming, loadingThreads, items, dispatch, logBusyRef]);
 
   // Memoized: see the sendRef/appendRef note above — the identity of this object
   // is load-bearing for the caller's dep arrays.

@@ -56,11 +56,11 @@ export type Compaction = {
 };
 
 export function useCompaction({
-  activeIdRef, streamingRef, isBuild, queue,
+  activeIdRef, logBusyRef, isBuild, queue,
   setMessages, setErr, sendTurn,
 }: {
   activeIdRef: React.MutableRefObject<string | null>;
-  streamingRef: React.MutableRefObject<boolean>;
+  logBusyRef: React.MutableRefObject<boolean>;
   isBuild: boolean;
   queue: MessageQueue;
   setMessages: React.Dispatch<React.SetStateAction<ChatMsg[]>>;
@@ -92,7 +92,7 @@ export function useCompaction({
     // trip during which the running turn kept streaming — so the "/compact"
     // bubble landed below a wall of output that arrived after it was asked for,
     // and read as though the request had been ignored and picked up at random.
-    let preQueued = streamingRef.current && isBuild;
+    let preQueued = logBusyRef.current && isBuild;
     if (preQueued) {
       queue.push("/compact");
       setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
@@ -109,7 +109,7 @@ export function useCompaction({
 
       if (r.live_session) {
         if (!preQueued) {
-          if (streamingRef.current) {
+          if (logBusyRef.current) {
             // A turn started while the fold was in flight. Hand it to the queue,
             // which renders its own pending bubble — so drop ours or the request
             // shows twice.
@@ -151,7 +151,7 @@ export function useCompaction({
     } finally {
       setCompacting(false);
     }
-  }, [activeIdRef, streamingRef, isBuild, queue, setMessages, setErr, sendTurn]);
+  }, [activeIdRef, logBusyRef, isBuild, queue, setMessages, setErr, sendTurn]);
 
   return { compacting, compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus };
 }
