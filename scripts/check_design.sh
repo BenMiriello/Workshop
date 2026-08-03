@@ -148,19 +148,17 @@ print("design: clean" + (f" (added lines vs {rev})" if mode == "added" else ""))
 PYEOF
 
 # --- published-bundle freshness ---------------------------------------------
-# Not a design rule and never fatal: a WARNING that the built bundle is older
-# than the source it is built from.
-#
-# Two origins serve this UI (docs/ui-origins.md): the tailnet one runs Vite from
-# SOURCE, so a change is live the moment it is saved, while workshop.benmiriello.com
-# serves frontend/dist and is stale until the build runs. The drift is invisible
-# from whichever origin you happen to be looking at, which is exactly how a fix
-# gets reported as shipped while the public site still serves the old code.
-DIST_JS="$(ls -t "$FE/dist/assets/"*.js 2>/dev/null | head -1)"
-if [ -n "$DIST_JS" ]; then
-  NEWER="$(find "$FE/src" -type f -newer "$DIST_JS" -print -quit 2>/dev/null)"
-  if [ -n "$NEWER" ]; then
-    echo "warn: frontend/dist is older than frontend/src — the public origin is stale."
-    echo "      run: bash scripts/build_workshop_public.sh"
-  fi
+# Not a design rule and never fatal: a WARNING when what an origin SERVES is not
+# what the source SAYS (docs/ui-origins.md). Delegated to ui_sync.sh rather than
+# reimplemented here — a second definition of "stale" is exactly how a checker
+# and the thing it checks drift apart. This first read mtimes, which meant every
+# `git checkout` cried stale and every `touch` hid a real one.
+bash "$WORKSHOP/scripts/ui_sync.sh" --warn
+
+# The automation only helps if it is switched on, and core.hooksPath is local
+# config that no clone or fresh checkout inherits. Say so rather than let a tree
+# silently stop rebuilding.
+if [ "$(git -C "$WORKSHOP" config core.hooksPath 2>/dev/null)" != ".githooks" ]; then
+  echo "warn: tracked git hooks are not installed — the public bundle will NOT rebuild on commit."
+  echo "      run: bash scripts/install_hooks.sh"
 fi

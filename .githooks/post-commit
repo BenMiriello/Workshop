@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# post-commit — keep the public bundle in step with committed UI work.
+#
+# The sync problem was never that the build is hard; it is that it is a SEPARATE
+# THING TO REMEMBER, done by hand, after the work already feels finished. So it
+# is attached to the event that already means "this work is real": the commit.
+# (Committing as you go is already the repo rule — see CLAUDE.md.)
+#
+# Three guards, because an automatic publish is only safe if it can never
+# publish the wrong thing:
+#   1. the canonical worktree only — a linked worktree under branches/ or
+#      projects/ building into frontend/dist would push UNMERGED code to the
+#      public origin, which is the worst possible version of this bug;
+#   2. the default branch only — same reason;
+#   3. only when the commit actually touched UI inputs.
+# The edge serves dist from disk per request, so no restart is involved and no
+# in-flight request (or chat SSE stream) is dropped.
+#
+# Runs in the background: a commit must never wait on a bundler. Output goes to
+# tmp/ui-build.log, and `scripts/ui_sync.sh` is what tells you if it worked —
+# the log is for diagnosing, not for trusting.
+set -uo pipefail
+
+CANONICAL=/home/clawd-a/workshop
+DEFAULT_BRANCH=main
+
+[ "${WORKSHOP_NO_AUTOBUILD:-0}" = "1" ] && exit 0
+
+TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+[ "$TOPLEVEL" = "$CANONICAL" ] || exit 0
+# A linked worktree shares the common dir but has its own git dir; both checks
+# together mean "the real tree at the real path".
+[ "$(git rev-parse --git-dir)" = "$(git rev-parse --git-common-dir)" ] || exit 0
+[ "$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" = "$DEFAULT_BRANCH" ] || exit 0
+
+CHANGED="$(git diff-tree --no-commit-id --name-only -r -m --first-parent HEAD 2>/dev/null)"
+
+# The edge's OWN code changing is a different job: it needs a restart, which
+# drops in-flight requests, so it stays a deliberate act. Say so where it will
+# be seen (the terminal running the commit), rather than doing it silently.
+if printf '%s\n' "$CHANGED" | grep -q '^backend/workshop_public_app\.py$'; then
+  echo "post-commit: the public EDGE changed — it needs a restart to take effect:"
+  echo "             bash scripts/build_workshop_public.sh --restart-edge"
+fi
+
+# frontend/dist is gitignored, so anything matching here is genuinely an input.
+printf '%s\n' "$CHANGED" | grep -qE '^frontend/' || exit 0
+
+mkdir -p "$CANONICAL/tmp"
+# flock -w: a burst of commits queues instead of racing two bundlers into the
+# same dist directory; the last one to run leaves dist matching current source.
+nohup flock -w 600 "$CANONICAL/tmp/.ui-build.lock" \
+  bash "$CANONICAL/scripts/build_workshop_public.sh" \
+  >> "$CANONICAL/tmp/ui-build.log" 2>&1 &
+disown 2>/dev/null || true
+echo "post-commit: rebuilding the public bundle in the background (tmp/ui-build.log)"
+exit 0
