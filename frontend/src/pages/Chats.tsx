@@ -16,39 +16,17 @@ import {
 } from "../ui";
 import { chatApi, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
+import { scopeKind, scopeLabel } from "../components/chat/chatScope";
 
 // Cross-context chat discovery. Chat and Project are loosely coupled: a chat is
 // its own object with an optional context binding (general / project / app /
 // agent). This page lists every thread regardless of where it is bound, so a
 // conversation is never lost just because you navigated away from its context.
 
-function contextLabel(key: string): string {
-  if (!key || key === "general") return "Workshop";
-  if (!key.includes(":")) return `App · ${key}`; // app chats bind a bare app id
-  const [kind, rest] = key.split(":", 2);
-  if (kind === "project") return `Project · ${rest}`;
-  // Both build: and agent: are Agent scopes; the runtime distinction is
-  // plumbing per entity-model 2026-07-18 §6. Label them the same in the
-  // chat list; the AgentDetail is where runtime shows.
-  if (kind === "build" || kind === "agent") return `Agent · ${rest}`;
-  if (kind === "app") return `App · ${rest}`;
-  return key;
-}
-
-// Classify a context key into scope kinds (per entity-model §2 scope
-// addressing: workshop / project:<slug> / app:<name> / agent:<slug>). App chats
-// bind a BARE app id (finance, budget, ...), not `app:<id>`; a bare non-general
-// key is an app. build: and agent: both collapse to "agent" — they are two
-// runtimes of the same scope kind.
-type ContextKind = "workshop" | "project" | "agent" | "app" | "other";
-function contextKind(key: string): ContextKind {
-  if (!key || key === "general") return "workshop";
-  if (!key.includes(":")) return "app"; // bare app id
-  const kind = key.split(":", 1)[0];
-  if (kind === "project" || kind === "app") return kind;
-  if (kind === "build" || kind === "agent") return "agent";
-  return "other";
-}
+// How a scope key reads, and what kind of place it is, come from chat/chatScope
+// — the same functions the chat's own scope picker uses. They were duplicated
+// here, which meant the list and the picker could name the same scope
+// differently and neither would be wrong.
 
 // Scope-kind view filter (C17). Commits on change (a view preference).
 type FilterKind = "all" | "workshop" | "project" | "app" | "agent";
@@ -101,7 +79,7 @@ export default function Chats() {
     const needle = q.trim().toLowerCase();
     return sorted.filter((t) => {
       if (kind !== "all") {
-        const k = contextKind(t.context_key);
+        const k = scopeKind(t.context_key);
         // P3: the Agent filter matches BOTH context_key-derived agent chats
         // (legacy shape) AND any chat carrying an agent as a participant
         // under the new model. That lets a workshop-scope chat with agent:X
@@ -120,7 +98,7 @@ export default function Chats() {
       return (
         (t.title || "").toLowerCase().includes(needle) ||
         (t.last_message || "").toLowerCase().includes(needle) ||
-        contextLabel(t.context_key).toLowerCase().includes(needle) ||
+        scopeLabel(t.context_key).toLowerCase().includes(needle) ||
         participantMatch
       );
     });
@@ -222,7 +200,7 @@ export default function Chats() {
                     {t.title || "New chat"}
                   </strong>
                   <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
-                    <Tag hue={catFor(t.context_key)}>{contextLabel(t.context_key)}</Tag>
+                    <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
                     {/* P3: participants column — every agent in this chat as
                         a small tag. An agent is a PARTICIPANT of a chat, not
                         the chat's home; this row makes that visible instead

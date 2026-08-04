@@ -755,6 +755,18 @@ a.ws-btn { text-decoration: none; }
 .ws-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-menu__hint { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--muted); }
 .ws-menu__sep { height: 1px; margin: var(--space-1) 0; background: var(--border); }
+/* Group heading inside a menu. Same uppercase motif as .ws-section-label, so a
+   grouped menu reads like the rest of the system; the space above it (not a
+   rule between rows) is what separates one group from the last. */
+.ws-menu__group {
+  padding: var(--space-2) var(--space-3) var(--space-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
+  letter-spacing: var(--label-spacing);
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.ws-menu__group:first-child { padding-top: var(--space-1); }
 
 /* ---- STATE BLOCKS: loading / empty / error ------------------------------- */
 .ws-state {

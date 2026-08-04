@@ -1,11 +1,24 @@
 import {
-  Bell, ChevronDown, ChevronLeft, ListPlus, ListTodo, Maximize2, MessagesSquare,
-  MoreVertical, PanelsTopLeft, Plus, Trash2,
+  Bell, Blocks, Bot, ChevronDown, ChevronLeft, FolderGit2, Home, ListPlus, ListTodo,
+  Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Trash2,
 } from "lucide-react";
-import { Menu, MenuItem, MenuSeparator } from "../../ui";
+import { Menu, MenuItem, MenuLabel, MenuSeparator } from "../../ui";
 import type { Provider } from "../../lib/chat";
-import type { ChatMode, ChatVariant } from "./chatScope";
+import {
+  SCOPE_GROUPS, scopeKind, scopeLabel, scopeName,
+  type ChatMode, type ChatVariant, type ScopeKind,
+} from "./chatScope";
 import type { ChatDrawer } from "./drawers";
+
+// One icon per scope KIND, not per scope: the icon says what kind of place a
+// row is, and the name says which one. Sixteen project rows all carrying the
+// same folder is the point — that is how you see the group at a glance.
+function ScopeIcon({ kind }: { kind: ScopeKind }) {
+  if (kind === "project") return <FolderGit2 size={14} aria-hidden />;
+  if (kind === "app") return <Blocks size={14} aria-hidden />;
+  if (kind === "agent") return <Bot size={14} aria-hidden />;
+  return <Home size={14} aria-hidden />;
+}
 
 // The chat header: where you are on the left, what you can do on the right.
 //
@@ -17,6 +30,14 @@ import type { ChatDrawer } from "./drawers";
 //    the other per-turn controls. The one picker that belongs here is the scope
 //    picker, because changing it changes what the chat can see and which thread
 //    list you are in: it changes the whole surface.
+//
+//    That picker used to be labelled "Assistant" and rendered the provider
+//    directory flat, so asking for a scope handed you a list of assistants —
+//    with `project:<slug>` sitting in it wearing an assistant's label. The keys
+//    were already scopes; only the framing was wrong. It now names and groups
+//    them as places (Workshop / Projects / Apps / Agents). Which assistant
+//    answers is derived from the scope server-side (`get_provider`), which is
+//    the right way round: you pick a place, the place decides who replies.
 //  - A second ticket button. File-as-ticket and file-and-run were one verb plus
 //    a boolean, rendered as two unlabelled icons sharing a busy lock — so while
 //    the first spun for 35-55s the second silently did nothing, and both filed
@@ -28,7 +49,7 @@ import type { ChatDrawer } from "./drawers";
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle,
-  showProviderPicker, providers, activeProvider, activeProviderLabel, onChooseProvider,
+  showProviderPicker, providers, activeProvider, onChooseProvider,
   drawer, onSetDrawer, inboxCount, taskScope, openTaskCount,
   onBack, onOpenWorkbench, onFileTicket, onNewChat, onDelete, onPopOut, onNavigate,
 }: {
@@ -39,9 +60,12 @@ export default function ChatToolbar({
   activeId: string | null;
   activeThreadTitle?: string;
   showProviderPicker: boolean;
+  // The scopes this chat can be in. Still the provider directory, because a
+  // provider key IS a scope key (`general`, an app id, `project:<slug>`,
+  // `build:<slug>`) — what changes here is that they are named and grouped as
+  // the places they are, instead of listed as assistants to talk to.
   providers: Provider[];
   activeProvider: string;
-  activeProviderLabel: string;
   onChooseProvider: (key: string) => void;
   drawer: ChatDrawer;
   onSetDrawer: (next: (d: ChatDrawer) => ChatDrawer) => void;
@@ -84,23 +108,35 @@ export default function ChatToolbar({
 
       {showProviderPicker && providers.length > 1 && mode === "data" ? (
         <Menu
-          label="Assistant"
+          label="Scope"
           align="start"
           trigger={
-            <button className="chat-tb__picker" title="Which assistant to talk to">
-              <span className="chat-tb__picker-val">{activeProviderLabel}</span>
+            <button className="chat-tb__picker" title="Which scope this chat is in">
+              <span className="chat-tb__picker-val">{scopeLabel(activeProvider)}</span>
               <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
             </button>
           }
         >
-          {providers.map((p) => (
-            <MenuItem key={p.key} checked={p.key === activeProvider} onSelect={() => onChooseProvider(p.key)}>
-              {p.label}
-            </MenuItem>
-          ))}
+          {SCOPE_GROUPS.flatMap(({ kind, label }) => {
+            const inGroup = providers.filter((p) => scopeKind(p.key) === kind);
+            if (!inGroup.length) return [];
+            return [
+              label ? <MenuLabel key={`h:${kind}`}>{label}</MenuLabel> : null,
+              ...inGroup.map((p) => (
+                <MenuItem
+                  key={p.key}
+                  icon={<ScopeIcon kind={kind} />}
+                  checked={p.key === activeProvider}
+                  onSelect={() => onChooseProvider(p.key)}
+                >
+                  {scopeName(p.key)}
+                </MenuItem>
+              )),
+            ];
+          })}
         </Menu>
       ) : showProviderPicker && providers.length === 1 && mode === "data" ? (
-        <span className="chat-tb__picker is-static">{providers[0].label}</span>
+        <span className="chat-tb__picker is-static">{scopeLabel(providers[0].key)}</span>
       ) : null}
 
       {/* Which conversation you are in — a label, not a control. */}

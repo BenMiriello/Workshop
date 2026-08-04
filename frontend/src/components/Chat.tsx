@@ -974,7 +974,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       showProviderPicker={showProviderPicker}
       providers={providers}
       activeProvider={activeProvider}
-      activeProviderLabel={activeProviderObj?.label ?? activeProvider}
       onChooseProvider={chooseProvider}
       drawer={drawer}
       onSetDrawer={setDrawer}

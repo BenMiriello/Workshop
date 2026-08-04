@@ -187,3 +187,14 @@ export function MenuItem({
 export function MenuSeparator() {
   return <div className="ws-menu__sep" role="separator" />;
 }
+
+// A heading for a group of related items, in the same uppercase motif as
+// SectionLabel. Grouping a long menu by kind is hierarchy done with position
+// and weight rather than with rules between rows (design rule 6), so this is
+// what a grouped menu uses instead of stacking separators.
+//
+// `role="presentation"` because the heading is not selectable and must not be
+// announced as a menu item; the visual grouping is the affordance.
+export function MenuLabel({ children }: { children: ReactNode }) {
+  return <div className="ws-menu__group" role="presentation">{children}</div>;
+}

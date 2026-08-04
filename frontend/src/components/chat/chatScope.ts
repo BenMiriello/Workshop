@@ -26,6 +26,68 @@ export function projectSlugFor(contextKey: string): string | null {
   return null;
 }
 
+// ---- What a scope key MEANS ------------------------------------------------
+// A chat's contextKey is its scope: the place the conversation lives, which
+// decides the thread list you are in and where its work files. These two
+// functions are the only place that decides how such a key reads, because the
+// chat list and the toolbar's scope picker both name the same scopes and must
+// never name them differently.
+//
+// Related but deliberately separate: `scopeLabel` in lib/tasks.ts names TASK
+// scope keys, a near-identical key space that differs in two ways (the workshop
+// root is `workshop` there and `general` here, and it has no notion of app
+// scopes). Unifying them means settling the context_key/scope axis, which is a
+// migration, not a rename. Do not add a third naming function in the meantime.
+
+export type ScopeKind = "workshop" | "project" | "app" | "agent" | "other";
+
+// App chats bind a BARE app id (finance, budget, …), not `app:<id>`. build: and
+// agent: are two runtimes of one scope kind (entity model 2026-07-18 §6), so
+// they collapse here; the runtime distinction shows on AgentDetail, not in a
+// list of places.
+export function scopeKind(key: string): ScopeKind {
+  if (!key || key === "general" || key === "workshop") return "workshop";
+  if (!key.includes(":")) return "app";
+  const kind = key.split(":", 1)[0];
+  if (kind === "project" || kind === "app") return kind;
+  if (kind === "build" || kind === "agent") return "agent";
+  return "other";
+}
+
+export function scopeLabel(key: string): string {
+  if (!key || key === "general" || key === "workshop") return "Workshop";
+  if (!key.includes(":")) return `App · ${key}`;
+  const [kind, rest] = key.split(":", 2);
+  if (kind === "project") return `Project · ${rest}`;
+  if (kind === "build" || kind === "agent") return `Agent · ${rest}`;
+  if (kind === "app") return `App · ${rest}`;
+  return key;
+}
+
+// Inside a GROUPED picker the heading already names the kind, so an item shows
+// only its own name. The full "Project · foo" form is for surfaces with no
+// heading above the row: the chat list, and the picker's own trigger.
+export function scopeName(key: string): string {
+  if (!key || key === "general" || key === "workshop") return "Workshop";
+  if (!key.includes(":")) return key; // a bare app id, shown as the chat list shows it
+  const [, rest] = key.split(":", 2);
+  return rest || key;
+}
+
+// Group headings for the scope picker, in the order they read best: the widest
+// scope first, then the places work actually happens, then individual agents.
+// Workshop takes no heading — it is one row, and "Workshop" above "Workshop"
+// says it twice; sitting unlabelled at the top is what makes it read as the
+// root. `other` takes none either: an unrecognised key is shown rather than
+// hidden, but it does not deserve a section.
+export const SCOPE_GROUPS: { kind: ScopeKind; label: string }[] = [
+  { kind: "workshop", label: "" },
+  { kind: "project", label: "Projects" },
+  { kind: "app", label: "Apps" },
+  { kind: "agent", label: "Agents" },
+  { kind: "other", label: "" },
+];
+
 // The task-store scope a chat maps to, or null when the chat has no task queue
 // (general chat, app docks). build/project/agent chats all get the shared
 // TaskPanel; the contextKey IS the scope key for those.
