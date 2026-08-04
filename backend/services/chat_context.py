@@ -977,11 +977,21 @@ class ProjectContextProvider(ContextProvider):
         self.key = f"project:{slug}"
         # Honor the registry's `dir` (the self/platform project points at the
         # monorepo root, not projects/<slug>); fall back to the conventional path.
+        #
+        # The registry is read through routes.projects.REGISTRY — the same
+        # accessor _project_slugs() uses — because this looked it up at
+        # `<projects_root>/../projects.json`, which is not where it lives
+        # (`.runtime/projects.json`). Inside a bare except, that missing file
+        # meant the branch NEVER fired: the self project silently resolved to
+        # `projects/workshop`, a stub holding nothing but `knowledge/`, so a
+        # chat in the workshop project scope ran its tools against the wrong
+        # tree, and `is_self` was False everywhere. A path spelled twice is a
+        # path that will be spelled wrong in one of them.
         self.dir = _projects_root() / slug
         self.is_self = False
         try:
-            reg = _projects_root().parent / "projects.json"
-            rec = (json.loads(reg.read_text()).get("projects") or {}).get(slug) if reg.exists() else None
+            from routes.projects import REGISTRY as _reg
+            rec = (json.loads(_reg.read_text()).get("projects") or {}).get(slug) if _reg.exists() else None
             if rec:
                 if rec.get("dir"):
                     self.dir = _Path(rec["dir"])
