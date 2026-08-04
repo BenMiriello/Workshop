@@ -18,7 +18,7 @@ import {
 } from "./chat/slashCommands";
 import { type ChatDrawer } from "./chat/drawers";
 import {
-  deriveMode, buildSlug, projectSlugFor, taskScopeFor,
+  deriveMode, buildSlug, projectSlugFor, taskScopeFor, composerPlaceholder,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { MODEL_LABELS } from "./chat/models";
@@ -1102,9 +1102,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       placeholder={
         voiceOn
           ? (vprefs.mic_enabled ? "Talk, or type a message..." : "Type a message (mic muted)...")
-          // Provider-neutral: this default also applies when the picker is
-          // switched to an app assistant, so it cannot name one scope.
-          : (placeholder ?? (effectiveMode === "build" ? "Tell the agent what to build..." : "Message the assistant..."))
+          // Names the scope you are typing into (see composerPlaceholder). A
+          // host that passes its own placeholder still wins.
+          : (placeholder ?? composerPlaceholder(scope))
       }
       focused={inputFocused}
       onFocusChange={setInputFocused}

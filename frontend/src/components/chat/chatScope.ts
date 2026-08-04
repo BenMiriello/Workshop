@@ -74,6 +74,28 @@ export function scopeName(key: string): string {
   return rest || key;
 }
 
+// What the composer says when it is empty. It names WHERE you are typing,
+// because that is the thing a chat surface most needs to make obvious and the
+// one thing the operator cannot otherwise see at a glance.
+//
+// It used to say "Message the assistant..." everywhere, chosen deliberately as
+// provider-neutral so it could not name the wrong scope. But neutral is not the
+// same as correct: in a project or the workshop there is no "the assistant" to
+// message, so the one always-visible label in the chat described a thing that
+// was not there. Naming the place is both accurate and useful.
+//
+// Articles are per kind because they have to read as English: a project and an
+// app take "the", an agent is a proper name and takes none.
+export function composerPlaceholder(key: string): string {
+  switch (scopeKind(key)) {
+    case "project": return `Message the ${scopeName(key)} project...`;
+    case "app": return `Message the ${scopeName(key)} app...`;
+    case "agent": return `Message ${scopeName(key)}...`;
+    case "workshop": return "Message the workshop...";
+    default: return `Message ${scopeName(key)}...`;
+  }
+}
+
 // Group headings for the scope picker, in the order they read best: the widest
 // scope first, then the places work actually happens, then individual agents.
 // Workshop takes no heading — it is one row, and "Workshop" above "Workshop"
