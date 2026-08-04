@@ -37,7 +37,7 @@ import {
 } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
 import {
-  NEW_CHAT, readSelection, writeSelection, readProvider, writeProvider,
+  NEW_CHAT, DEFAULT_SCOPE, resolveScope, readSelection, writeSelection, readProvider, writeProvider, writeQueue,
 } from "../lib/chatSelection";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -244,23 +244,71 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // attachStream so a drop handler can re-attach without a render cycle.
 
 
-  // Provider list (scoped to this app, or the full cross-context list). The
-  // provider drives `scope`, which is the thread list you can see — so snapping
-  // back to the default on every mount stranded every chat started under the
-  // other provider. Restore the one this surface was left on.
+  // The two URL intents — `?new=1` (start blank) and `?thread=<id>` (open this
+  // conversation) — are ONE-SHOT: each is something the operator just clicked,
+  // so it is consumed on use and cannot be re-armed by a re-render. They are
+  // held in refs for that reason. The persisted selection is not an intent; it
+  // is the fallback for a mount the URL says nothing about.
+  //
+  // Both are declared ABOVE the scope resolver, because the resolver has to READ
+  // them (the intent decides the scope) without CONSUMING them (the thread
+  // loader does that, once, after the scope is settled).
+  const startNewRef = useRef(!!startNew);
+  const linkedThreadRef = useRef<string | null>(initialThreadId ?? null);
+  // Re-arm when the URL names a different thread, or asks for a new chat, while
+  // this Chat stays mounted (list -> chat -> back -> another chat keeps the same
+  // route). Declared above the loader so they land first in the same commit.
+  useEffect(() => {
+    linkedThreadRef.current = initialThreadId ?? null;
+  }, [initialThreadId]);
+  useEffect(() => {
+    if (startNew) startNewRef.current = true;
+  }, [startNew]);
+
+  // Which scope this mount belongs in — resolved ONCE, before any thread loads.
+  //
+  // `scope` is the thread list you can see, and it is the SAME axis as a
+  // thread's server-side context_key: list_threads filters on an exact match. So
+  // a thread already knows where it lives, and opening one can never be a
+  // question about which scope the picker happens to be left on.
+  //
+  // It used to be exactly that question, and that is the bug behind every
+  // variant of "my chats open blank / open the wrong one":
+  //   * activeProvider started at contextKey and then flipped asynchronously
+  //     once listProviders resolved, so the thread loader ran TWICE — the first
+  //     pass burned the one-shot URL intent under the wrong scope, and the
+  //     second pass ran with no intent left and fell back to whatever this scope
+  //     was last on. `?new=1` reopened an old chat; `?thread=<id>` opened a
+  //     different one, or nothing, because the linked thread wasn't in the scope
+  //     the picker had drifted to. Whether it misbehaved depended on which of
+  //     two async calls landed first, which is why it looked intermittent.
+  //   * the remembered provider is keyed by contextKey, and nearly every chat
+  //     lives at /chat/general — so it was in practice ONE global "last scope I
+  //     picked" that every chat inherited. Switch the picker to the budget
+  //     assistant once and every chat opened afterwards came up in budget scope.
+  //
+  // The order below is intent-first, exactly like the thread loader's:
+  //   ?thread=<id> → the thread's own context_key. Server state wins; a chat
+  //                  always opens in the scope it actually belongs to.
+  //   ?new=1       → the surface the button was clicked on. A blank chat starts
+  //                  in the workshop-wide scope ("general") unless it was
+  //                  launched from a scoped surface (a project, an app dock),
+  //                  in which case it inherits that. It never inherits the
+  //                  picker's memory.
+  //   neither      → the provider this surface was last left on: a bare return
+  //                  to a chat you were already in.
+  // The resolved scope is written back, so the picker shows where you are and
+  // the memory can't disagree with the thread on screen.
+  const [providersReady, setProvidersReady] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    chatApi
-      .listProviders(scoped ? contextKey : undefined)
-      .then((list) => {
+    (async () => {
+      let list: Provider[] = [];
+      try {
+        list = await chatApi.listProviders(scoped ? contextKey : undefined);
         if (cancelled) return;
         setProviders(list);
-        if (effectiveMode !== "data" || !list.length) return;
-        const remembered = readProvider(contextKey);
-        if (remembered && list.some((p) => p.key === remembered)) setActiveProvider(remembered);
-        else if (!list.some((p) => p.key === contextKey)) setActiveProvider("general");
-      })
-      .catch((e) => {
+      } catch (e) {
         // NOT non-essential, which is what this used to claim. This list is the
         // live source for the model picker; when it fails the picker silently
         // falls back to the frontend's hardcoded MODEL_LABELS, which can offer
@@ -268,9 +316,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         // divergence that made a newly added model invisible. Say it failed
         // rather than presenting a stale list as the real one.
         if (!cancelled) setErr(`Couldn't load the model/assistant list: ${e}. The picker may be showing stale options.`);
-      });
+      }
+      if (cancelled) return;
+      if (effectiveMode === "data" && list.length) {
+        const linked = linkedThreadRef.current;
+        let linkedThreadHome: string | null = null;
+        if (linked) {
+          // Read-only peek: the loader still fetches and adopts this thread.
+          const t = await chatApi.getThread(linked).catch(() => null);
+          if (cancelled) return;
+          if (t) linkedThreadHome = String(t.context_key || DEFAULT_SCOPE);
+        }
+        const next = resolveScope({
+          contextKey,
+          knownScopes: list.map((p) => p.key),
+          linkedThreadHome,
+          startNew: startNewRef.current,
+          remembered: readProvider(contextKey),
+        });
+        setActiveProvider(next);
+        writeProvider(contextKey, next);
+      }
+      if (!cancelled) setProvidersReady(true);
+    })();
     return () => { cancelled = true; };
-  }, [contextKey, effectiveMode, scoped]);
+  }, [contextKey, effectiveMode, scoped, initialThreadId, startNew]);
 
   const chooseProvider = useCallback((key: string) => {
     setActiveProvider(key);
@@ -279,20 +349,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
   const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
-
-  // The two URL intents — `?new=1` (start blank) and `?thread=<id>` (open this
-  // conversation) — are ONE-SHOT: each is something the operator just clicked,
-  // so it is consumed on use and cannot be re-armed by a re-render. They are
-  // held in refs for that reason. The persisted selection is not an intent; it
-  // is the fallback for a mount the URL says nothing about.
-  const startNewRef = useRef(!!startNew);
-  const linkedThreadRef = useRef<string | null>(initialThreadId ?? null);
-  // Re-arm when the URL names a different thread while this Chat stays mounted
-  // (list -> chat -> back -> another chat keeps the same route). Declared above
-  // the loader so it lands first in the same commit.
-  useEffect(() => {
-    linkedThreadRef.current = initialThreadId ?? null;
-  }, [initialThreadId]);
   // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
   // the persisted selection instead of blanking a thread that now exists.
   const stripNewParam = useCallback(() => {
@@ -420,6 +476,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   );
 
   useEffect(() => {
+    // Gate: never load a thread under a scope that is still being resolved.
+    // Without this the loader runs once on the initial guess and again on the
+    // real scope, and the one-shot URL intents are consumed by the first pass.
+    if (!providersReady) return;
     let cancelled = false;
     (async () => {
       setErr(null);
@@ -502,7 +562,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // the URL naming a different conversation has to re-run this even when the
     // route (and therefore the scope) is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, initialThreadId]);
+  }, [scope, initialThreadId, providersReady]);
 
   // Liveness is SERVER state — a turn running in another tab or on another
   // device must not render as an idle chat. See useTurnLiveness.
@@ -585,9 +645,23 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   const removeThread = useCallback(async (id: string) => {
     await chatApi.deleteThread(id);
-    if (id === activeId) newChat();
+    // Deleting the conversation you are looking at has to take you somewhere.
+    // The focused route is nothing BUT that conversation, so staying put left a
+    // chat page addressing a thread the server no longer has — the composer
+    // aimed at a dead id and the transcript stuck on its last render. Leave for
+    // the chat list, which is the surface that still has something to show.
+    // A docked/panel chat has no route to leave, so it falls back to blank.
+    if (id === activeId) {
+      writeSelection(scope, NEW_CHAT);
+      writeQueue(id, []);
+      if (variant === "full") {
+        navigate("/chats");
+        return;
+      }
+      newChat();
+    }
     refreshThreads();
-  }, [activeId, newChat, refreshThreads]);
+  }, [activeId, newChat, refreshThreads, scope, variant, navigate]);
 
   // The universal turn sender. EVERY chat (general, app, project, build) streams
   // through POST /threads/{id}/turns + the SSE channel, so every turn shows its

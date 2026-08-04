@@ -19,6 +19,14 @@ const PROVIDER_PREFIX = "ws-chat-provider:";
 // Not a thread id — no thread exists until the first message is sent.
 export const NEW_CHAT = "new";
 
+// The workshop-wide scope: where a blank chat starts when nothing scoped it.
+// A New chat launched from a project or an app dock inherits THAT surface
+// instead; only an unscoped one lands here. It is never inherited from the
+// picker's memory — "the scope I last looked at" is not "the scope this new
+// conversation belongs to", and conflating the two is what made every new chat
+// come up under whichever assistant was selected last.
+export const DEFAULT_SCOPE = "general";
+
 // Thread selection is keyed by SCOPE (the provider / context whose thread list
 // the picker shows), because that is the list the selection indexes into.
 export function readSelection(scope: string): string | null {
@@ -50,6 +58,34 @@ export function writeSelection(scope: string, sel: string | null): void {
 // reopened the conversation the operator had just asked to leave.
 export function newChatHref(contextKey: string): string {
   return `/chat/${encodeURIComponent(contextKey)}?new=1`;
+}
+
+// Which scope a chat mount belongs in. Pure, so the rule can be read and tested
+// on its own instead of being inferred from the order two async calls happen to
+// resolve in — which is what it used to be, and why it broke intermittently.
+//
+// `scope` is the same axis as a thread's server-side context_key (list_threads
+// filters on an exact match), so this is never a guess: a thread knows where it
+// lives. Intent-first, matching the thread loader's own ranking:
+//   1. a linked thread's home  — opening a chat opens it where it actually is
+//   2. New chat → this surface — general unless launched from a scoped surface
+//   3. what this surface was last left on — a bare return to a chat
+// The picker's memory is LAST. It is "the scope I looked at", never "the scope
+// this conversation belongs to"; ranking it above the intents is what made one
+// assistant selection leak into every chat opened afterwards.
+export function resolveScope(input: {
+  contextKey: string;
+  knownScopes: string[];
+  linkedThreadHome: string | null;
+  startNew: boolean;
+  remembered: string | null;
+}): string {
+  const { contextKey, knownScopes, linkedThreadHome, startNew, remembered } = input;
+  const known = (k: string | null): boolean => !!k && knownScopes.includes(k);
+  const surface = known(contextKey) ? contextKey : DEFAULT_SCOPE;
+  if (linkedThreadHome) return known(linkedThreadHome) ? linkedThreadHome : DEFAULT_SCOPE;
+  if (startNew) return surface;
+  return known(remembered) ? (remembered as string) : surface;
 }
 
 // Provider choice is keyed by CONTEXT KEY (the chat surface itself), so the
