@@ -126,6 +126,55 @@ def narrow_tools(role: str | None, requested: list[str] | None) -> list[str]:
     return keep
 
 
+# Actions that cannot be undone, as CLI tool-deny patterns.
+#
+# The rule current practice converged on: an agent runs freely through
+# reversible steps and stops before anything irreversible. Editing a file in a
+# worktree, committing locally, writing a note or a ticket, running tests — all
+# undoable, none worth interrupting a human for. Pushing, merging, deploying,
+# sending, spending and deleting outside the worktree are not.
+#
+# Enforced with --disallowedTools rather than a hook, deliberately: the hooks
+# directory is user-scope and SHARED with the masini bridge, so a guard added
+# there changes another surface. This is per-run, in our own flag builder, and
+# affects exactly the process it is passed to.
+#
+# `Bash(...)` patterns match the command prefix. They are a coordination
+# boundary, not a sandbox — a determined agent can spell a command differently,
+# and the real fix is SEC-A1's separate execution identity. What they stop is
+# the ordinary case: an unattended run doing the one thing nobody can take back.
+IRREVERSIBLE_PATTERNS: tuple[str, ...] = (
+    "Bash(git push:*)",
+    "Bash(git push --force:*)",
+    "Bash(gh pr merge:*)",
+    "Bash(gh release:*)",
+    "Bash(npm publish:*)",
+    "Bash(docker push:*)",
+    "Bash(rm -rf /:*)",
+    "Bash(sudo:*)",
+    "Bash(shutdown:*)",
+    "Bash(reboot:*)",
+)
+
+
+def disallowed_for(*, unattended: bool) -> list[str]:
+    """Tool patterns denied for this run.
+
+    Keyed on whether anyone is WATCHING, not on the role. "Irreversible actions
+    require approval" is only satisfiable when someone is there to approve: a
+    manually invoked agent can ask the operator who just invoked it, an
+    unattended one has nobody, so for it the answer is no rather than a prompt
+    into the void.
+    """
+    return list(IRREVERSIBLE_PATTERNS) if unattended else []
+
+
+def is_unattended(autonomy: str | None) -> bool:
+    """Does this agent run without a human present? `reactive` agents run only
+    on manual invocation, so the operator is there by definition."""
+    return (autonomy or "reactive") in ("supervised", "autonomous")
+
+
 def describe(role: str | None) -> str:
     """One line for the UI: what this role may write, in words.
 

@@ -400,6 +400,7 @@ def tool_flags(
     *,
     tools_disabled: bool = False,
     allowed_tools: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
 ) -> tuple[list[str], dict, bool]:
     """The tool / MCP / permission CLI flags for one of the three tool modes,
@@ -433,6 +434,12 @@ def tool_flags(
         flags = ["--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": servers_subset})]
         flags += (["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
         flags += ["--allowedTools", *allowed_tools, "--permission-mode", "bypassPermissions"]
+        # Deny list applies AFTER the allow list, which is what makes it a
+        # reversibility gate rather than a second allowlist: a maker keeps Bash
+        # and loses exactly the commands that cannot be undone. See
+        # agent_authority.IRREVERSIBLE_PATTERNS.
+        if disallowed_tools:
+            flags += ["--disallowedTools", *disallowed_tools]
         _write_tools = {"Write", "Edit", "MultiEdit"}
         if _write_tools & set(allowed_tools):
             flags += ["--append-system-prompt", _WRITE_BOUNDARY_NUDGE]

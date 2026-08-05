@@ -104,3 +104,38 @@ class TestDescription:
         assert aa.describe("broker") != aa.describe(None)
         assert "Releases information only" in aa.describe("broker")
         assert "No role declared" in aa.describe(None)
+
+
+class TestReversibility:
+    """Run freely through reversible steps; stop before what cannot be undone.
+
+    Keyed on whether anyone is WATCHING rather than on the role, because
+    "irreversible actions require approval" is only satisfiable when there is
+    someone to approve. A manual invocation has the operator right there; an
+    unattended run has nobody, so for it the answer is no rather than a prompt
+    into the void.
+    """
+
+    def test_unattended_runs_lose_the_irreversible_commands(self):
+        denied = aa.disallowed_for(unattended=True)
+        assert "Bash(git push:*)" in denied
+        assert "Bash(gh pr merge:*)" in denied
+
+    def test_a_watched_run_denies_nothing(self):
+        assert aa.disallowed_for(unattended=False) == []
+
+    def test_reactive_is_watched(self):
+        """Reactive means manual invocation only, so a human is present."""
+        assert aa.is_unattended("reactive") is False
+        assert aa.is_unattended(None) is False
+
+    def test_supervised_and_autonomous_are_unattended(self):
+        assert aa.is_unattended("supervised") is True
+        assert aa.is_unattended("autonomous") is True
+
+    def test_the_deny_list_does_not_take_away_ordinary_work(self):
+        """A maker must still be able to edit and commit locally, or the gate
+        has stopped the work rather than the irreversible part of it."""
+        denied = set(aa.disallowed_for(unattended=True))
+        for ordinary in ("Bash(git commit:*)", "Edit", "Write", "Bash(pytest:*)"):
+            assert ordinary not in denied

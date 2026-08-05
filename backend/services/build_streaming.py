@@ -399,6 +399,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      cwd: str, session_id: str | None, resume: bool,
                      timeout_s: float = 0,
                      allowed_tools: list[str] | None = None,
+                     disallowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
                      tools_disabled: bool = False,
                      speaker: str | None = None) -> Turn:
@@ -430,7 +431,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "speaker": speaker,
         "owner_id": owner_id, "prompt": prompt,
         "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
-        "allowed_tools": allowed_tools, "mcp_servers": mcp_servers,
+        "allowed_tools": allowed_tools, "disallowed_tools": disallowed_tools,
+        "mcp_servers": mcp_servers,
         "tools_disabled": bool(tools_disabled),
     }
     _write_meta(meta)
@@ -461,6 +463,7 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         _tflags, tool_env, _block = llm_router.tool_flags(
             tools_disabled=bool(meta.get("tools_disabled")),
             allowed_tools=meta.get("allowed_tools"),
+            disallowed_tools=meta.get("disallowed_tools"),
             mcp_servers=meta.get("mcp_servers"),
         )
         cmd.extend(_tflags)

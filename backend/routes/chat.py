@@ -1517,6 +1517,12 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     # An explicit `tools:` on the definition may narrow this, never widen it.
     agent_tools = agent_authority.narrow_tools(role, rec.get("tools"))
     tools_active = bool(agent_tools)
+    # Reversibility gate. A mention is a manual invocation — the operator is
+    # right there — so nothing is denied here; the list is non-empty only for a
+    # run nobody is watching. Passed explicitly rather than defaulted so the
+    # unattended path cannot forget it.
+    agent_denied = agent_authority.disallowed_for(
+        unattended=agent_authority.is_unattended(rec.get("autonomy")))
 
     # This agent's session IN THIS THREAD. Every mention used to spawn with no
     # session, so an agent rebuilt its preamble, definition and knowledge layers
@@ -1542,7 +1548,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         turn = await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=slug, prompt="\n\n".join(resumed), model=model,
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
-            allowed_tools=agent_tools,
+            allowed_tools=agent_tools, disallowed_tools=agent_denied,
             mcp_servers=[], tools_disabled=not tools_active,
             speaker=slug,
         )
@@ -1591,7 +1597,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     turn = await build_streaming.start_turn(
         thread_id=thread_id, agent_slug=slug, prompt=prompt, model=model,
         cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
-        allowed_tools=agent_tools,
+        allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug,
     )
