@@ -17,30 +17,33 @@ one we have does.
 
 ## 1. The problem, counted
 
-There are **seven** ways an agent is defined in this tree:
+**CORRECTED 2026-08-04 (after building P1a).** The first draft of this section
+said seven, and counted templates and groups among them. That was wrong:
+`fork_from_template` and `adopt_group` both call `create()`, which writes the
+canonical definition file. They are FACTORIES for the one format, not rival
+formats. Miscounting them inflated the problem and would have sent a build at
+two things that needed no change. The real count was five, and is now four:
 
-| # | Mechanism | Count | Shape |
-|---|---|---|---|
-| 1 | `agents/<slug>.md`, `projects/*/agents/<slug>.md` | 10 | frontmatter + body |
-| 2 | `.runtime/build_agents.json` synthesis (`_record_from_build_state`) | 5 of 12 builders | JSON runtime state promoted to identity |
-| 3 | `~/.claude/agents/*.md` (Claude Code native subagents) | 2 | frontmatter + body, different field names |
-| 4 | Templates (`list_templates`) | 3 | a fourth shape |
-| 5 | Groups (`list_groups`) | 2 | a fifth |
-| 6 | App personas (`ContextProvider` subclasses) | 4 | Python classes: persona, tools, model, live context |
-| 7 | `per_channel_agents.py` (masini Discord) | n/a | explicitly excluded from the registry by rule |
+| # | Mechanism | Status |
+|---|---|---|
+| 1 | `agents/<slug>.md`, `projects/*/agents/<slug>.md` — frontmatter + body | **canonical** |
+| 2 | `.runtime/build_agents.json` synthesis (`_record_from_build_state`) | **REMOVED** (P1a) |
+| 3 | `~/.claude/agents/*.md` — Claude Code native subagents, different field names | open |
+| 4 | App personas — `ContextProvider` subclasses in Python | open |
+| 5 | `per_channel_agents.py` (masini Discord) | excluded by rule |
 
-Mechanism 2 is how five "agents" existed without anyone declaring them: a process
-ran, wrote runtime state, and the registry synthesised an identity from it. That
-is the "let it run and find out" model, and it is the direct cause of the twelve
-leftover builders.
+Mechanism 2 was how five of the twelve builders existed without anyone declaring
+them: a process ran, wrote runtime state, and the roster promoted that state to
+an identity — the "let it run and find out" model. It is gone. Every agent now
+carries `source: definition`, verified: the roster went from 15 records to 10,
+all of them declared, and the runtime state of the undeclared five is untouched
+in `build_agents.json`, so no history was lost. They are no longer Agents, which
+is correct: an undeclared process is a Run.
 
-Mechanism 6 is agent-like in every functional sense (persona, tool allowlist,
-model, injected context) and is invisible to the agent registry.
-
-And what the enum actually buys today: **`role` gates exactly one expression in
-the entire codebase** — `tools_active = role == "maker"` (`routes/chat.py:1484`).
-`reviewer`, `triager`, `keeper` and `broker` are behaviourally identical to each
-other and to `None`. `participants` has no behaviour at all (audited 2026-07-31).
+And what the enum bought before P2: **`role` gated exactly one expression in the
+entire codebase** — `tools_active = role == "maker"` (`routes/chat.py`). reviewer,
+triager, keeper and broker were behaviourally identical to each other and to
+`None`. `participants` still has no behaviour at all (audited 2026-07-31).
 
 ## 2. What the research says
 
@@ -124,14 +127,16 @@ autonomy:     supervised             # see Layer 3
 
 The body is the system prompt. Nothing else defines an agent:
 
-- **(2) dies**: `build_agents.json` becomes state-only. It may never synthesise an
+- **(2) DONE**: `build_agents.json` is state-only. It may never synthesise an
   identity. An undeclared process is a Run, not an Agent.
-- **(4)(5) become emitters**: a template or group *writes one of these files* and
-  then has no further existence.
-- **(6) migrates**: each app persona gets a definition file; the `ContextProvider`
-  subclass keeps only the code that cannot be declared (the live snapshot function).
-- **(3) unifies**: native subagents live under the same schema.
-- **(7) declares or is not an agent.**
+- **(3) unifies**: native subagents live under the same schema. Note they are
+  user-scope (`~/.claude/agents/`) and SHARED with the masini bridge, so this
+  one cannot be done without testing both surfaces.
+- **(4) migrates**: each app persona gets a definition file; the
+  `ContextProvider` subclass keeps only the code that cannot be declared (the
+  live snapshot function).
+- **(5) declares or is not an agent.**
+- Templates and groups need no change: they already emit the canonical file.
 
 ### Layer 2 — Authority: a role is the set of writes
 

@@ -351,38 +351,6 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
     return rec
 
 
-def _record_from_build_state(slug: str, raw: dict) -> dict:
-    """Synthesize a builder record from build_agents.json when no definition file
-    exists yet (pre-migration, or a builder whose triggers were never edited)."""
-    project_slug = raw.get("project_slug")
-    return {
-        "slug": slug,
-        "runtime": "builder",
-        "name": raw.get("name") or slug,
-        "purpose": raw.get("purpose") or "",
-        "capabilities": [],
-        "triggers": [],
-        "limits": dict(DEFAULT_LIMITS),
-        "role": _role_for_runtime("builder"),
-        "mentionable": False,
-        "delegatable": False,
-        "depth": DEFAULT_DEPTH,
-        "fanout": DEFAULT_FANOUT,
-        "latitude": None,
-        "autonomy": DEFAULT_AUTONOMY,
-        "memory": None,
-        "template": None,
-        "project_slug": project_slug,
-        "letta_agent_id": None,
-        "scope": "project" if project_slug else "user",
-        "definition": "",
-        "definition_path": None,
-        "retired": raw.get("state") == "retired",
-        "source": "build_state",
-        "id": slug,
-    }
-
-
 def _merge_build_state(rec: dict, state: dict) -> None:
     for k in ("state", "claude_session", "last_active", "created", "cwd", "branch_slug"):
         if k in state:
@@ -486,16 +454,23 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
         out.append(r)
         seen.add(slug)
 
-    # Builder fallback: build agents without a definition file yet.
-    for slug, st in build_state.items():
-        if slug in seen:
-            continue
-        r = _record_from_build_state(slug, st)
-        _merge_build_state(r, st)
-        _correct_liveness(r, live_slugs)
-        if not include_retired and (r.get("retired") or r.get("state") == "retired"):
-            continue
-        out.append(r)
+    # NO builder fallback. An agent is what a DEFINITION FILE declares; runtime
+    # state is evidence that something ran, and running is not a way to become
+    # an agent.
+    #
+    # This used to synthesize a record from build_agents.json for any slug with
+    # no definition file, which is how five of the twelve builders came to exist
+    # as "agents" without anyone declaring one: a process ran, wrote its state,
+    # and the roster promoted that state to an identity. Everything downstream
+    # then treated it as a peer of a real agent — it appeared in the roster, in
+    # the chat scope picker, and in the count the operator kept asking about.
+    #
+    # Their runtime state is untouched and still in build_agents.json (sessions,
+    # cwd, last_active), so nothing about their history is lost. They are simply
+    # no longer Agents, which is correct: an undeclared process is a Run.
+    #
+    # To make one of them an agent again, write it a definition file. That is
+    # the whole point — it takes an act of declaration.
 
     out.sort(key=lambda a: a.get("last_active") or a.get("created") or "", reverse=True)
     return out
