@@ -158,10 +158,49 @@ what is actually known. `--replay-user-messages` (CLI flag, present in 2.1.143)
 re-emits stdin messages on stdout for acknowledgment and is the way to earn a
 real receipt; wiring it is its own step and is NOT done here.
 
+### 3.6 A queued message keeps the time it was typed
+
+Messages typed while a turn ran used to drain into one turn as a single joined
+blob, stored with one timestamp — the instant the queue drained. Two costs: the
+model could not tell a burst typed inside a minute from thoughts spread over an
+afternoon, and the client (which had rendered them as separate bubbles all along)
+disagreed with the server the moment you reloaded.
+
+The durable queue format now carries `sentAt`, stamped when enter is pressed —
+the only moment observable later; deriving it at dispatch would record when the
+queue drained, which is the confusion being removed. The turn POST carries
+`parts`, and the server stores them as the separate messages they were, at their
+real times, marked `queued`. `arrival_notice` counts `queued` and `during_turn`
+together: both mean *written before you had answered any of them*.
+
+The old `string[]` queue migrates in place rather than being dropped — a queued
+message is one enter has already been pressed on, so discarding it on upgrade
+would be message loss.
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
   of its plan (2a). The fix makes that honest and legible, not instant. Making it
   instant means interrupting the turn, which is a different feature with a
   different cost, and the operator has not asked for work in flight to be killed.
+- **A real receipt.** `delivered` still means "the bytes reached the process".
+  `--replay-user-messages` (present in CLI 2.1.143) re-emits stdin messages on
+  stdout for acknowledgment and is how this earns a true one; not wired.
 - **SEC-A1.** Unrelated, still open.
+
+## 5. Built
+
+| § | Change | Verified by |
+|---|---|---|
+| 3.1 | `ended_at` on every finalized assistant message | test, both branches |
+| 3.2 | mid-turn messages filed AFTER, with `during_turn`/`at_segment` | test |
+| 3.3 | `arrival_notice` states the sequence and times | test + live helper run |
+| 3.4 | realtime channel declared in `turn_contract` | probes 1 vs 3 |
+| 3.5 | composer says "Handed to the turn in progress" | — |
+| 3.6 | queued parts keep their send times | test + live store round trip |
+
+Two defects were found in this work by re-auditing it rather than by running it:
+`finalize`'s no-placeholder branch set no `ended_at`, and the arrival notice was
+built from the route's PRE-append thread snapshot — which cannot contain the
+queued messages just written, so it silently never fired for the case it exists
+for. Both fixed and pinned.
