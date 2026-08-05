@@ -19,8 +19,9 @@
 #     route by the agent's ROLE through ROLE_HANDLERS (see below). Cap: one agent
 #     sweep per tick.
 #
-# Honors the global AUTONOMY_DISABLED flag (skips entirely). Never blocks: each
-# sweep is launched detached (setsid) and returns immediately.
+# Honors the global autonomy override via scripts/autonomy_gate.sh (skips
+# entirely). Never blocks: each sweep is launched detached (setsid) and returns
+# immediately.
 
 set -u
 

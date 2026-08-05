@@ -3,7 +3,7 @@
 #
 # Mirrors frontends_watchdog.sh, but for the autonomy run-state instead of the
 # dev servers. Two jobs, both pure reconciliation (it never LAUNCHES work, so it
-# is safe to run even while AUTONOMY_DISABLED is set):
+# is safe to run even while the autonomy brake is engaged):
 #
 #   1. Jobs stuck `running` whose launching process is dead get closed `failed`
 #      (jobs.reconcile_stuck). A crashed/killed sweep otherwise lingers forever as

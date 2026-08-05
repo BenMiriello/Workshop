@@ -11,10 +11,13 @@
 # Contract:
 #   - ONE runner per tree (flock). A second invocation exits 0 immediately, so
 #     the watchdog can fire it blindly as an "ensure running" call.
-#   - Honors the same off-switches as every other autonomous path: the global
-#     .runtime/AUTONOMY_DISABLED flag and the pause-until guard. Checked EVERY
-#     iteration, so flipping the flag stops work within one poll without killing
-#     the runner.
+#   - Honors the same off-switch as every other autonomous path: the ONE
+#     autonomy override, read through scripts/autonomy_gate.sh, plus the
+#     pause-until guard. Checked EVERY iteration, so releasing or engaging the
+#     brake takes effect within one poll without killing the runner.
+#     (It used to test .runtime/AUTONOMY_DISABLED directly. That file is gone;
+#     when there were two switches in two formats, the API could report autonomy
+#     clear while every tick here skipped.)
 #   - Each iteration is a bounded project_ralph.sh sweep. The sweep owns
 #     claim/lease/fencing/acceptance/receipt/budget admission; this loop owns
 #     only "keep sweeping".

@@ -126,9 +126,16 @@ def clear(by: str = "operator") -> dict[str, Any]:
     is an overlay, never a mutation of the agents themselves, so nothing has to
     be restored from a log.
 
-    Clearing this is now sufficient: the legacy AUTONOMY_DISABLED flag that used
-    to gate the shell loop independently is gone, and every gate reads this file
-    through one function."""
+    Clearing this is sufficient TODAY: the legacy AUTONOMY_DISABLED flag file is
+    deleted, nothing writes it any more, and every live gate (dispatch_triggers,
+    queue_runner, project_ralph, cron_agent) reads this file through the one
+    function in scripts/autonomy_gate.sh.
+
+    The union read above is deliberately KEPT rather than deleted with it. It can
+    only ever make the answer more conservative, and copies of the old scripts —
+    which do write the flag — still exist under scratch/. Restoring one of those
+    without the union would give a brake that reports clear while a loop skips,
+    which is the exact failure this was consolidated to end."""
     import time
     return _write({
         "engaged": False,
