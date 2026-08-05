@@ -142,7 +142,8 @@ def _agent_scope_dir(slug: str) -> Path:
 
 
 def apply_task_patch(context_key: str | None, reply: str,
-                     thread_id: str | None = None) -> tuple[str, list[str]]:
+                     thread_id: str | None = None,
+                     chat_mode: str | None = None) -> tuple[str, list[str]]:
     """Find a ``task-patch`` block, apply add/update/note against this chat's
     scope store, strip the block, and return (cleaned_reply, notes). No-op (the
     reply unchanged, empty notes) when there is no block or no task scope.
@@ -158,6 +159,12 @@ def apply_task_patch(context_key: str | None, reply: str,
         return reply, []
     root = root_for_context(context_key)
     cleaned = _PATCH_BLOCK.sub("", reply).strip()
+    # Direct mode means work stays in the conversation. The prompt says so, but
+    # a prompt is a request and this is the enforcement: a chat in Direct mode
+    # cannot file, whatever the model emits. Strip the block and say why, rather
+    # than filing a ticket the operator did not ask this chat to create.
+    if chat_mode == "direct":
+        return cleaned, ["(this chat is in Direct mode, so the task edit was not applied)"]
     if root is None:
         return cleaned, ["(no task scope for this chat, so the task edit was skipped)"]
     try:

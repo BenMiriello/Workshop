@@ -347,6 +347,25 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     writeProvider(contextKey, key);
   }, [contextKey]);
 
+  // How this chat handles work: Direct (stays here, native subagents) or
+  // Orchestrated (leaves as tickets). Server state, mirrored locally so the
+  // control responds immediately; the server re-states the mode to the model on
+  // every turn, so switching mid-conversation takes effect on the next one.
+  const [chatMode, setChatMode] = useState<string>("orchestrated");
+  const chooseChatMode = useCallback((next: "direct" | "orchestrated") => {
+    const id = activeIdRef.current;
+    if (!id) return;
+    const prev = chatMode;
+    setChatMode(next);
+    void chatApi.setThreadMode(id, next).catch((e) => {
+      // Put the control back rather than showing a mode the server does not
+      // have: a chat that looks Direct while the server files tickets is worse
+      // than a visible failure.
+      setChatMode(prev);
+      setErr(`Couldn't switch chat mode: ${e}`);
+    });
+  }, [chatMode]);
+
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
   const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
   // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
@@ -458,6 +477,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       // reload and a compacted thread looked exactly like an uncompacted one.
       setCompactedThrough(Number(t.compacted_through) || 0);
       setCardStates(t.card_states ?? {});
+      // Server state: the mode belongs to the thread, not to this tab.
+      setChatMode(t.mode || "orchestrated");
       const msgs = t.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
@@ -975,6 +996,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       providers={providers}
       activeProvider={activeProvider}
       onChooseProvider={chooseProvider}
+      chatMode={chatMode}
+      onChooseChatMode={chooseChatMode}
       drawer={drawer}
       onSetDrawer={setDrawer}
       inboxCount={inboxCount}

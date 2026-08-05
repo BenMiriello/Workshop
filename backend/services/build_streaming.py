@@ -780,7 +780,7 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
                 applied_notes += (pnotes or [])
             # O2: apply a task-patch block against this chat's task scope.
             from services import task_scope
-            new_text, tnotes = task_scope.apply_task_patch(ctx_key, new_text, (thread or {}).get("id"))
+            new_text, tnotes = task_scope.apply_task_patch(ctx_key, new_text, (thread or {}).get("id"), (thread or {}).get("mode"))
             applied_notes += tnotes
             # Phase 4: capture an explicit operator preference/correction emitted
             # as a ``learning-note`` block into the learnings store.

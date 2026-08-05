@@ -117,6 +117,10 @@ class RescopeThread(BaseModel):
     context_key: str
 
 
+class SetChatMode(BaseModel):
+    mode: str  # direct | orchestrated (chat_context.CHAT_MODES)
+
+
 class CardState(BaseModel):
     """The outcome of acting on an in-chat ui-card, so the card stops offering an
     action that has already been taken. `key` is a stable digest of the card's own
@@ -464,6 +468,23 @@ async def spawn_task(thread_id: str, body: SpawnTask):
             else:
                 resp["job_id"] = run_res["job_id"]
     return resp
+
+
+@router.post("/threads/{thread_id}/mode")
+async def set_chat_mode(thread_id: str, body: SetChatMode):
+    """Switch a chat between Direct and Orchestrated.
+
+    Cheap and reversible, so it commits on change rather than behind a Save. The
+    mode is re-stated to the model on every turn (chat_context.chat_mode_block),
+    which is what lets a switch take effect mid-conversation instead of only on
+    a fresh session."""
+    mode = (body.mode or "").strip().lower()
+    if mode not in chat_context.CHAT_MODES:
+        raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
+    t = chat_store.set_thread_mode(thread_id, mode)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    return {"id": thread_id, "mode": t.get("mode")}
 
 
 @router.post("/threads/{thread_id}/rescope")
@@ -1105,6 +1126,9 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # (and, past MAX_HISTORY, silently drop its own beginning instead).
     summary, history = await _maybe_compact(t, provider.knowledge_scope())
     prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled, summary=summary)
+    # Stated after the persona so it can override the ticket protocols the
+    # persona carries, in the direction that removes capability.
+    prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
     return prompt, is_build_mode
 
 
@@ -1158,6 +1182,7 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     # enough, because that instruction is thousands of tokens back by the time
     # it matters. See chat_context.turn_contract.
     parts.append(chat_context.turn_contract(CHAT_TIMEOUT_S))
+    parts.append(chat_context.chat_mode_block(t.get("mode")))
     marks = chat_store.get_turn_marks(t)
     new_marks: dict[str, object] = {}
     briefing = chat_context.runtime_briefing(provider)
@@ -1362,7 +1387,7 @@ async def send_message(thread_id: str, body: PostMessage):
     cleaned, notes = provider.apply_actions(reply)
     # O2: a task-bound chat can maintain its task list via a task-patch block,
     # applied against THIS scope's store and stripped from the stored reply.
-    cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned, t.get("id"))
+    cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned, t.get("id"), t.get("mode"))
     if tnotes:
         notes = (notes or []) + tnotes
     # Phase 4: an explicit operator preference/correction emitted as a

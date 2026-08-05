@@ -508,6 +508,47 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
     return labels, (not has_source)
 
 
+CHAT_MODES = ("direct", "orchestrated")
+DEFAULT_CHAT_MODE = "orchestrated"
+
+
+def chat_mode_block(mode: str | None) -> str:
+    """How this chat handles work, stated every turn.
+
+    Two modes, and the field already existed (`chat_store.set_thread_mode`) with
+    these two names — it simply had no behaviour, like `participants`. Rather
+    than invent a third vocabulary, this gives the existing names their meaning.
+
+      direct        the conversation does the work itself. Claude Code's native
+                    subagents are available for context isolation, and their
+                    results come back here. Nothing is tracked outside the chat;
+                    the transcript IS the record.
+      orchestrated  work leaves as Tickets, run by Workshop agents under the
+                    governance model, reported back. The Ticket is the record.
+
+    Re-stated on EVERY turn rather than only in the first-turn persona, because
+    the mode is switchable mid-conversation. The protocols themselves are large
+    and are sent once; this line is what makes a later switch take effect, by
+    overriding them in the direction that removes capability (direct) rather
+    than adding it.
+    """
+    if (mode or DEFAULT_CHAT_MODE) == "direct":
+        return (
+            "=== CHAT MODE: DIRECT ===\n"
+            "Work stays in this conversation. Do NOT file tickets, do NOT emit a "
+            "task-proposal card, and do NOT emit a task-patch block; if the "
+            "protocols for those appear earlier in this session, they do not "
+            "apply while the chat is in Direct mode. For work that needs an "
+            "isolated context, use a native subagent and bring the summary back "
+            "here. The transcript is the record."
+        )
+    return (
+        "=== CHAT MODE: ORCHESTRATED ===\n"
+        "Work that outlives this conversation leaves as a Ticket and is reported "
+        "back here. The Ticket is the record; this chat links to it."
+    )
+
+
 def turn_contract(timeout_s: float | int = 0) -> str:
     """The rule that decides when a turn ends. Re-sent on EVERY turn.
 

@@ -171,6 +171,16 @@ export const chatApi = {
   // Move-chat-into-project action). The thread id + history are unchanged; only
   // its context_key moves. Backend validates the key resolves to a real provider
   // (unknown -> 400). Same /api/chat/threads base path as the other calls.
+  // Direct vs Orchestrated. Commits on change: cheap, reversible, and the mode
+  // is re-stated to the model every turn, so a switch takes effect immediately
+  // rather than only on a fresh session.
+  setThreadMode: (id: string, mode: "direct" | "orchestrated") =>
+    fetch(`/api/chat/threads/${id}/mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    }).then(j<{ id: string; mode: string }>),
+
   rescopeThread: (id: string, contextKey: string) =>
     fetch(`/api/chat/threads/${id}/rescope`, {
       method: "POST",
