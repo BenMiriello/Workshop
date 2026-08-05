@@ -30,7 +30,8 @@ set -u
 
 WORKSHOP=/home/clawd-a/workshop
 AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
-AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
+# One switch, read through services/autonomy_override. Fails closed.
+source "$WORKSHOP/scripts/autonomy_gate.sh"
 AUTONOMY_OVERRIDE=$WORKSHOP/.runtime/autonomy-override.json
 RALPH=$WORKSHOP/scripts/ralph.sh
 REVIEWER=$WORKSHOP/scripts/reviewer.sh
@@ -566,7 +567,7 @@ log() { echo "[$(ts)] [project_ralph] $*" >> "$LOG"; echo "[project_ralph] $*"; 
 # (--force) is a deliberate foreground action and bypasses both, along with
 # the per-project mode gate below.
 _is_autonomy_off() {
-  [[ -f "$AUTONOMY_FLAG" ]] && return 0
+  autonomy_engaged && return 0
   [[ -f "$AUTONOMY_OVERRIDE" ]] || return 1
   if python3 -c "import json,sys; sys.exit(0 if json.load(open('$AUTONOMY_OVERRIDE')).get('engaged') else 1)" 2>/dev/null; then
     return 0

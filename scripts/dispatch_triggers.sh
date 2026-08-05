@@ -25,8 +25,8 @@
 set -u
 
 WORKSHOP=/home/clawd-a/workshop
-AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
-AUTONOMY_OVERRIDE=$WORKSHOP/.runtime/autonomy-override.json
+# One switch, read through services/autonomy_override. Fails closed.
+source "$WORKSHOP/scripts/autonomy_gate.sh"
 PROJECT_RALPH=$WORKSHOP/scripts/project_ralph.sh
 MEMORY_KEEPER=$WORKSHOP/scripts/memory_keeper_run.sh
 TRIAGER=$WORKSHOP/scripts/triager_run.sh
@@ -35,25 +35,14 @@ LOG=$WORKSHOP/.runtime/dispatch.log
 ts() { date -Iseconds; }
 log() { echo "[$(ts)] [dispatch] $*" >> "$LOG"; }
 
-# Two independent off-switches: the legacy AUTONOMY_DISABLED flag (kept alive
-# for the maintenance-scripts convention) and the 2026-07-18 JSON overlay at
-# .runtime/autonomy-override.json. Engaged is any-of. The JSON check uses
-# python because we already spawn python below; it stays 1 line, fails closed
-# on a corrupt file (autonomy-model §6).
-if [[ -f "$AUTONOMY_FLAG" ]]; then
-  log "global autonomy off-switch present; dispatching nothing"
+# One switch. This file used to hold a SECOND implementation of the same
+# question — its own json.load of the overlay, next to a flag-file test — which
+# is how the two answers drifted apart in the first place. Both are gone; the
+# union (and the fail-closed rule) live in services/autonomy_override, reached
+# through scripts/autonomy_gate.sh.
+if autonomy_engaged; then
+  log "autonomy engaged ($(autonomy_reason)); dispatching nothing"
   exit 0
-fi
-if [[ -f "$AUTONOMY_OVERRIDE" ]]; then
-  if python3 -c "import json,sys; sys.exit(0 if json.load(open('$AUTONOMY_OVERRIDE')).get('engaged') else 1)" 2>/dev/null; then
-    log "autonomy override engaged; dispatching nothing"
-    exit 0
-  fi
-  # Corrupt/unreadable JSON = fail-closed per autonomy-model §6.
-  if ! python3 -c "import json; json.load(open('$AUTONOMY_OVERRIDE'))" 2>/dev/null; then
-    log "autonomy override file unreadable; failing closed (skipping dispatch)"
-    exit 0
-  fi
 fi
 
 # The decision engine prints one dispatch per line: "TYPE\tSCOPE\tASSIGNEE\tTOKEN".

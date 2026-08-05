@@ -98,3 +98,42 @@ def read() -> dict[str, Any]:
 def is_engaged() -> bool:
     """Convenience: True when background dispatch should be skipped."""
     return bool(read().get("engaged"))
+
+
+def _write(data: dict[str, Any]) -> dict[str, Any]:
+    OVERRIDE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = OVERRIDE_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    tmp.replace(OVERRIDE_PATH)
+    return data
+
+
+def engage(reason: str = "", by: str = "operator") -> dict[str, Any]:
+    """Stop all background work. Records WHY, because an engaged brake with no
+    reason is indistinguishable from one someone forgot about — which is what
+    happened between 2026-07-18 and 2026-08-04."""
+    import time
+    return _write({
+        "engaged": True,
+        "reason": reason or "engaged by operator",
+        "engaged_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "engaged_by": by,
+    })
+
+
+def clear(by: str = "operator") -> dict[str, Any]:
+    """Release the brake. Each agent returns to its own declared autonomy — this
+    is an overlay, never a mutation of the agents themselves, so nothing has to
+    be restored from a log.
+
+    Clearing this is now sufficient: the legacy AUTONOMY_DISABLED flag that used
+    to gate the shell loop independently is gone, and every gate reads this file
+    through one function."""
+    import time
+    return _write({
+        "engaged": False,
+        "reason": None,
+        "engaged_at": None,
+        "engaged_by": by,
+        "cleared_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })

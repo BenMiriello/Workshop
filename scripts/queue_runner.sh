@@ -58,13 +58,14 @@ done
 
 LOG="$WORKSHOP/.runtime/queue-runner.log"
 PIDFILE="$WORKSHOP/.runtime/queue-runner.pid"
-AUTONOMY_FLAG="$WORKSHOP/.runtime/AUTONOMY_DISABLED"
+# One switch, read through services/autonomy_override. Fails closed.
+source "$WORKSHOP/scripts/autonomy_gate.sh"
 AUTONOMY_OVERRIDE="$WORKSHOP/.runtime/autonomy-override.json"
 
 # Off = the legacy flag file OR the 2026-07-18 JSON overlay engaged. Corrupt
 # JSON reads as off (fail-closed per autonomy-model §6).
 is_autonomy_off() {
-  [[ -f "$AUTONOMY_FLAG" ]] && return 0
+  autonomy_engaged && return 0
   [[ -f "$AUTONOMY_OVERRIDE" ]] || return 1
   if python3 -c "import json,sys; sys.exit(0 if json.load(open('$AUTONOMY_OVERRIDE')).get('engaged') else 1)" 2>/dev/null; then
     return 0

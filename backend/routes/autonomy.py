@@ -1,10 +1,13 @@
 """Autonomy power switches and GPU memory control.
 
-Two independent off-switches for the Workshop autonomy stack:
+Two switches for the Workshop autonomy stack:
 
-  1. Cron autonomy disable/enable — drops a flag file that cron_agent.sh
-     and curriculum_tick.sh check at their top and early-exit on. Halts the
-     Ralph loop without touching crontab.
+  1. Cron autonomy disable/enable — engages the override overlay
+     (services/autonomy_override), which every gate reads through one function.
+     Halts the Ralph loop without touching crontab. This used to drop a separate
+     AUTONOMY_DISABLED flag file that only the shell scripts read, so the API
+     and the loop could disagree about whether autonomy was on; that flag is
+     gone and this is the single switch.
   2. Ollama unload — sends keep_alive=0 to each currently-resident model so
      the GPU is freed for other workloads (ComfyUI, another tenant, etc.).
      Ollama itself keeps running; this only evicts resident models.
@@ -33,10 +36,6 @@ from pydantic import BaseModel
 router = APIRouter(tags=["autonomy"])
 
 
-AUTONOMY_FLAG = Path(os.environ.get(
-    "WORKSHOP_AUTONOMY_FLAG",
-    "/home/clawd-a/workshop/.runtime/AUTONOMY_DISABLED",
-))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
@@ -103,7 +102,7 @@ def _queue_runner_state() -> dict:
     return {
         "running": running,
         "pid": pid,
-        "enabled": not AUTONOMY_FLAG.exists(),
+        "enabled": not autonomy_override.is_engaged(),
         "lock_path": str(lock),
         "log_path": str(QUEUE_RUNNER_LOG),
         "last_line": last_line,
@@ -117,37 +116,36 @@ def _queue_runner_state() -> dict:
 
 @router.post("/agents/autonomy/disable")
 async def autonomy_disable():
-    AUTONOMY_FLAG.parent.mkdir(parents=True, exist_ok=True)
-    AUTONOMY_FLAG.write_text(_now_iso() + "\n")
-    return {"ok": True, "disabled": True, "at": _now_iso()}
+    # Writes the ONE switch. This used to touch .runtime/AUTONOMY_DISABLED, a
+    # second off-switch that only the shell loop read — so the API and the loop
+    # could disagree about whether autonomy was on. That flag is gone; the
+    # overlay is what every gate now reads (scripts/autonomy_gate.sh).
+    rec = autonomy_override.engage("disabled from the API")
+    return {"ok": True, "disabled": True, "at": rec.get("engaged_at")}
 
 
 @router.post("/agents/autonomy/enable")
 async def autonomy_enable():
-    try:
-        AUTONOMY_FLAG.unlink()
-    except FileNotFoundError:
-        pass
+    # Clearing this is now SUFFICIENT. Before, an operator could clear the flag
+    # here and still have every tick skip, because the JSON overlay was engaged
+    # and nothing surfaced that. One switch, one writer.
+    autonomy_override.clear()
     return {"ok": True, "disabled": False}
 
 
 @router.get("/agents/autonomy/status")
 async def autonomy_status():
-    flag_text = None
-    if AUTONOMY_FLAG.exists():
-        try:
-            flag_text = AUTONOMY_FLAG.read_text().strip()
-        except OSError:
-            flag_text = ""
+    # One source. `read()` already reports the union of everything that can hold
+    # autonomy off, so the endpoint no longer stats a flag file of its own — that
+    # second read is exactly how the UI came to report "enabled" while every
+    # tick skipped.
     override = autonomy_override.read()
-    # The status endpoint honors either signal: the legacy flag file, or the
-    # 2026-07-18 JSON overlay. Engaged is truthy if EITHER says so.
-    disabled = AUTONOMY_FLAG.exists() or bool(override.get("engaged"))
+    disabled = bool(override.get("engaged"))
     return {
         "cron_autonomy": {
             "disabled": disabled,
-            "disabled_at": flag_text,
-            "flag_path": str(AUTONOMY_FLAG),
+            "disabled_at": override.get("engaged_at"),
+            "reason": override.get("reason"),
         },
         "override": override,
         "queue_runner": _queue_runner_state(),
@@ -158,9 +156,8 @@ async def autonomy_status():
 # ============================================================
 # JSON override overlay (autonomy-model 2026-07-18 §1.2)
 # ============================================================
-# The legacy AUTONOMY_FLAG above remains as a maintenance-scripts guard; the
-# JSON overlay is the operator-facing off-switch, distinct from an individual
-# agent's autonomy field.
+# The overlay is THE off-switch, and it is distinct from an individual agent's
+# autonomy field: this is a brake over everything, that one is a setting.
 
 
 class OverrideEngageIn(BaseModel):
@@ -192,29 +189,19 @@ async def engage_autonomy_override(body: OverrideEngageIn):
 
 @router.delete("/agents/autonomy/override")
 async def clear_autonomy_override():
-    """Clear the override AND the legacy flag file. Each agent immediately
-    resumes its configured mode without a restore step (the field was never
-    mutated).
+    """Clear the override. Each agent immediately resumes its configured mode
+    without a restore step (the field was never mutated).
 
-    Both, because autonomy is gated by `AUTONOMY_FLAG.exists() or
+    There is now ONE switch to clear. This used to have to unlink a second flag
+    file as well, because autonomy was gated by `flag.exists() or
     override.engaged` — two switches read as one truth. Clearing only the
-    overlay left the flag file holding the loop off while the UI reported the
-    override as cleared, with nothing on screen naming the thing still doing it.
-    That is how the pause set for the 2026-07-18 migration survived thirteen
-    days: whoever tried to lift it would have seen it "cleared" and still off.
-    A single control has to reach every switch it claims to represent."""
-    cleared = []
-    try:
-        autonomy_override.OVERRIDE_PATH.unlink()
-        cleared.append("override")
-    except FileNotFoundError:
-        pass
-    try:
-        AUTONOMY_FLAG.unlink()
-        cleared.append("flag")
-    except FileNotFoundError:
-        pass
-    return {**autonomy_override.read(), "cleared": cleared}
+    overlay left the flag holding the loop off while the UI reported the
+    override cleared, with nothing on screen naming the thing still doing it.
+    That is how the pause set for the 2026-07-18 migration survived until
+    2026-08-04: whoever tried to lift it would have seen it "cleared" and still
+    off. The flag is deleted and every gate reads this file."""
+    autonomy_override.clear()
+    return {**autonomy_override.read(), "cleared": ["override"]}
 
 
 # ============================================================
@@ -235,10 +222,7 @@ async def queue_runner_status():
 
 @router.post("/queue/runner/start")
 async def queue_runner_start():
-    try:
-        AUTONOMY_FLAG.unlink()
-    except FileNotFoundError:
-        pass
+    autonomy_override.clear()
     if not QUEUE_WATCHDOG.exists():
         raise HTTPException(500, f"watchdog missing: {QUEUE_WATCHDOG}")
     subprocess.Popen(
@@ -259,8 +243,7 @@ async def queue_runner_stop():
     """Set the off-switch and stop the resident runner + any in-flight sweep.
     The sweep's own lease/reclaim path returns a half-worked ticket to the queue,
     so stopping mid-run loses no tickets."""
-    AUTONOMY_FLAG.parent.mkdir(parents=True, exist_ok=True)
-    AUTONOMY_FLAG.write_text(_now_iso() + "\n")
+    autonomy_override.engage("queue runner stopped from the API")
     state = _queue_runner_state()
     pid = state.get("pid")
     if pid:

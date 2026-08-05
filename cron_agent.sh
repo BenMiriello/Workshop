@@ -83,9 +83,12 @@ workshop_pause_guard "$LOG" "cron_agent"
 # Operator off-switch. Touched by the /agents/autonomy/disable endpoint or by
 # hand. While present, the cron worker exits early without doing any work,
 # without touching crontab or stopping the backend.
-AUTONOMY_FLAG=$WORKSHOP/.runtime/AUTONOMY_DISABLED
-if [[ -f "$AUTONOMY_FLAG" ]]; then
-  echo "[$(date -Iseconds)] autonomy disabled (flag: $AUTONOMY_FLAG); skipping tick" >> "$LOG"
+# ONE switch, read through services/autonomy_override (see scripts/autonomy_gate.sh).
+# This used to test .runtime/AUTONOMY_DISABLED directly, which meant the loop and
+# the API could disagree about whether autonomy was on. Fails closed.
+source "$WORKSHOP/scripts/autonomy_gate.sh"
+if autonomy_engaged; then
+  echo "[$(date -Iseconds)] autonomy engaged ($(autonomy_reason)); skipping tick" >> "$LOG"
   exit 0
 fi
 

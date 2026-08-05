@@ -83,3 +83,40 @@ def test_clearing_both_switches_restores_autonomy(switches):
     flag.unlink()
     override.write_text(json.dumps({"engaged": False}))
     assert ao.is_engaged() is False
+
+
+class TestWriters:
+    """One switch means one writer. Before, the API wrote a flag file that only
+    the shell read, so 'enable' from the UI could leave the loop off."""
+
+    def test_engage_then_clear_round_trips(self, switches):
+        ao.engage("because")
+        assert ao.is_engaged() is True
+        assert ao.read()["reason"] == "because"
+        ao.clear()
+        assert ao.is_engaged() is False
+
+    def test_engage_records_why(self, switches):
+        """An engaged brake with no reason is indistinguishable from one someone
+        forgot about — which is what happened for 17 days."""
+        rec = ao.engage("migration in flight")
+        assert rec["reason"] == "migration in flight"
+        assert rec["engaged_at"]
+        assert rec["engaged_by"] == "operator"
+
+    def test_engage_with_no_reason_still_records_one(self, switches):
+        assert ao.engage("")["reason"]
+
+    def test_clearing_is_sufficient_on_its_own(self, switches):
+        """The point of the collapse: nothing else has to be cleared as well."""
+        ao.engage("x")
+        ao.clear()
+        assert ao.is_engaged() is False
+
+    def test_a_stray_legacy_flag_still_holds_it_off(self, switches):
+        """Belt and braces: if something recreates the old flag, the union read
+        must still catch it rather than silently permitting work."""
+        _, flag = switches
+        ao.clear()
+        flag.touch()
+        assert ao.is_engaged() is True
