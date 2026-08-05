@@ -36,6 +36,22 @@ import type { MessageQueue } from "./useMessageQueue";
 // refusing while a turn ran meant /compact was rejected almost every time it was
 // reached for — which is exactly when context is under pressure. Only the
 // live-session half has to wait, and it queues rather than being dropped.
+//
+// ORDER IS THE CONTRACT. A /compact takes ~30s to fold server-side before its
+// live half can even be sent, and three separate things used to let a message
+// typed during that window overtake it:
+//
+//   a. the queue path was gated on `isBuild`, so an ordinary chat never took it;
+//   b. the late hand-off did `drop the bubble, then queue.push`, and push
+//      APPENDS — so the request re-entered the queue behind a message sent
+//      after it, and rendered below it. That is the reordering the operator
+//      saw: "my message got inserted above compact";
+//   c. nothing marked the fold as busy, so a message typed during it went
+//      straight out as its own turn while /compact was still in flight.
+//
+// (a) is gone, (b) is now insertAt with the position captured before the await,
+// and (c) is `compacting` — lifted into the chat so the composer and the queue
+// both hold off until the request has taken its turn.
 
 const BUSY_NOW: MsgStatus = { text: "Compacting the conversation", busy: true };
 const BUSY_QUEUED: MsgStatus = {
@@ -44,7 +60,6 @@ const BUSY_QUEUED: MsgStatus = {
 };
 
 export type Compaction = {
-  compacting: boolean;
   compactedThrough: number;
   setCompactedThrough: (n: number) => void;
   // Bumped after a fold so the context meter refetches: folding does not change
@@ -56,18 +71,19 @@ export type Compaction = {
 };
 
 export function useCompaction({
-  activeIdRef, logBusyRef, isBuild, queue,
-  setMessages, setErr, sendTurn,
+  activeIdRef, logBusyRef, queue,
+  setCompacting, setMessages, setErr, sendTurn,
 }: {
   activeIdRef: React.MutableRefObject<string | null>;
   logBusyRef: React.MutableRefObject<boolean>;
-  isBuild: boolean;
   queue: MessageQueue;
+  // Owned by the chat, not by this hook: the composer and the message queue both
+  // have to hold while a fold is in flight, and both are declared before it.
+  setCompacting: (v: boolean) => void;
   setMessages: React.Dispatch<React.SetStateAction<ChatMsg[]>>;
   setErr: (m: string | null) => void;
   sendTurn: (text: string) => void;
 }): Compaction {
-  const [compacting, setCompacting] = useState(false);
   const [compactedThrough, setCompactedThrough] = useState(0);
   const [ctxNonce, setCtxNonce] = useState(0);
   const [queuedStatus, setQueuedStatus] = useState<{ for: string; status: MsgStatus } | null>(null);
@@ -87,12 +103,17 @@ export function useCompaction({
       setMessages((m) => m.map((x) => (isRequest(x) ? { ...x, meta: { ...x.meta, status } } : x)));
     const dropRequestBubble = () => setMessages((m) => m.filter((x) => !isRequest(x)));
 
+    // Where in the queue this request belongs, captured NOW. Everything typed
+    // while the fold is in flight goes behind this index, so the command keeps
+    // the position the operator gave it even though it is handed over late.
+    const queuePos = queue.length;
+
     // Queue the live-session half UP FRONT when a turn is already running. It
     // used to be queued only after the server fold returned — seconds of round
     // trip during which the running turn kept streaming — so the "/compact"
     // bubble landed below a wall of output that arrived after it was asked for,
     // and read as though the request had been ignored and picked up at random.
-    let preQueued = logBusyRef.current && isBuild;
+    let preQueued = logBusyRef.current;
     if (preQueued) {
       queue.push("/compact");
       setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
@@ -115,7 +136,7 @@ export function useCompaction({
             // shows twice.
             dropRequestBubble();
             preQueued = true;
-            queue.push("/compact");
+            queue.insertAt(queuePos, "/compact");   // invariant 5, not push
             setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
           } else {
             // The live half runs as an ordinary turn: its reply streams in below
@@ -149,9 +170,12 @@ export function useCompaction({
       dropRequestBubble();
       setErr(`Couldn't compact: ${String(e)}`);
     } finally {
+      // Released only here: until it clears, the composer queues rather than
+      // sends, so nothing typed during the fold can become a turn ahead of the
+      // /compact that is still on its way out.
       setCompacting(false);
     }
-  }, [activeIdRef, logBusyRef, isBuild, queue, setMessages, setErr, sendTurn]);
+  }, [activeIdRef, logBusyRef, queue, setCompacting, setMessages, setErr, sendTurn]);
 
-  return { compacting, compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus };
+  return { compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus };
 }

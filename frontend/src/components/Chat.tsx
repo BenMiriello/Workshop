@@ -179,9 +179,15 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // render as pending user bubbles below the live response. The durability and
   // self-draining rules live in the hook — see useMessageQueue.
   const sendBuildRef = useRef<(t: string) => void>(() => {});
+  // A /compact is in flight. Declared HERE rather than inside useCompaction
+  // because the two things that must hold for it — this queue and submitText —
+  // are both declared before it. While it is set, a typed message joins the
+  // queue instead of becoming a turn, so it cannot overtake the command that
+  // was asked for first. See useCompaction's header.
+  const [compacting, setCompacting] = useState(false);
   const queue = useMessageQueue({
     scope: effectiveMode === "build" ? contextKey : activeProvider,
-    streaming, loadingThreads, logBusyRef,
+    streaming, loadingThreads, held: compacting, logBusyRef,
     send: (t) => sendBuildRef.current(t),
     appendUserMessages: (texts) => {
       const ts = new Date().toISOString();
@@ -196,10 +202,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
 
   // /compact reaches BOTH homes of a chat's context — see useCompaction.
   const {
-    compacting, compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
+    compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
   } = useCompaction({
-    activeIdRef, logBusyRef, isBuild: effectiveMode === "build", queue,
-    setMessages, setErr,
+    activeIdRef, logBusyRef, queue,
+    setCompacting, setMessages, setErr,
     sendTurn: (t) => void sendBuildRef.current(t),
   });
 
@@ -772,6 +778,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // compact() refuses politely while a turn is live, which is the honest
     // answer rather than a silent no-op.
     if (text === "/compact") { void compact(); return; }
+    // A /compact asked for a moment ago is still folding the transcript
+    // server-side and has not yet been able to send its live half. Sending this
+    // now would put a message the operator typed SECOND into the session first,
+    // and the compaction would then land behind it — which is precisely the
+    // "my message got inserted above compact" report. Queue it; the fold
+    // releases the hold and the queue drains in the order things were typed.
+    if (compacting) { queue.push(text); return; }
     // A turn is already running → hand the message TO it. The agent reads
     // pending input at the next boundary between its actions, so it arrives
     // within a step or two instead of after the whole turn. It does not
@@ -828,7 +841,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
-  }, [streaming, logBusy, sendBuild, queue, compact, followLatest]);
+  }, [streaming, logBusy, compacting, sendBuild, queue, compact, followLatest]);
 
   // Composer text change. In voice mode, keep the engine's typing-hold aware of
   // whether the composer currently holds text (so it defers taking its turn).

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readQueue, writeQueue } from "../../lib/chatSelection";
+import { splitFirstTurn } from "./turnBatching";
 
 // Type-ahead: messages sent while a turn is running.
 //
@@ -32,6 +33,13 @@ import { readQueue, writeQueue } from "../../lib/chatSelection";
 //  4. Everything queued behind one turn goes as ONE next turn. Sending them
 //     individually made N queued messages into N sequential turns, so the last
 //     thing typed could wait out several more before being read.
+//     ...EXCEPT a slash command, which is its own turn. Joined to anything else
+//     it stops being a command at all — see turnBatching.
+//  5. The queue is ORDERED BY WHEN THE OPERATOR HIT ENTER, and nothing may take
+//     a position later than the moment it was asked for. `push` appends, which
+//     is right for a message being typed and wrong for a request made earlier
+//     that is only now being handed over — that is what put a "/compact" below
+//     a message sent after it. `insertAt` exists for the second case.
 
 export type MessageQueue = {
   items: string[];
@@ -39,6 +47,12 @@ export type MessageQueue = {
   // Append one message. This is what every caller actually does, and spelling it
   // out stops each of them reaching into the live ref to do it by hand.
   push: (text: string) => void;
+  // Append at a position captured EARLIER (invariant 5). The index is where the
+  // queue ended when the request was made, so a request that has been waiting on
+  // a round trip rejoins ahead of anything typed while it waited.
+  insertAt: (index: number, text: string) => void;
+  // How long the queue is right now — the position a request made NOW would take.
+  length: number;
   // Take one entry back out (the newest match). Used when something queued
   // optimistically turns out not to be needed — a no-op if the queue already
   // drained, which is the right answer: it was sent, so there is nothing to
@@ -61,6 +75,7 @@ export function useMessageQueue({
   scope,
   streaming,
   loadingThreads,
+  held,
   logBusyRef,
   send,
   appendUserMessages,
@@ -68,6 +83,11 @@ export function useMessageQueue({
   scope: string;
   streaming: boolean;
   loadingThreads: boolean;
+  // Something outside a turn owns the conversation right now — currently only a
+  // /compact whose server-side fold is still in flight. Draining under it would
+  // send a later message as a turn BEFORE the command that was asked for first,
+  // which is the reordering this whole hook exists to prevent.
+  held: boolean;
   logBusyRef: React.MutableRefObject<boolean>;
   send: (text: string) => void;
   appendUserMessages: (texts: string[]) => void;
@@ -95,6 +115,12 @@ export function useMessageQueue({
 
   const push = useCallback((text: string) => {
     set([...itemsRef.current, text]);
+  }, [set]);
+
+  const insertAt = useCallback((index: number, text: string) => {
+    const q = itemsRef.current;
+    const i = Math.max(0, Math.min(index, q.length));
+    set([...q.slice(0, i), text, ...q.slice(i)]);
   }, [set]);
 
   const drop = useCallback((text: string) => {
@@ -136,16 +162,21 @@ export function useMessageQueue({
   const dispatch = useCallback(() => {
     const q = itemsRef.current;
     if (!q.length) return;
-    set([]);
-    appendRef.current(q);
-    sendRef.current(q.join("\n\n"));   // invariant 4: one turn, not N
+    // Invariant 4: consecutive messages go as ONE turn, not N — but a command
+    // breaks the batch, because a command joined to anything else is no longer
+    // a command. Whatever is left stays queued in order and the self-drain
+    // (invariant 3) sends it when this turn ends.
+    const [now, rest] = splitFirstTurn(q);
+    set(rest);
+    appendRef.current(now);
+    sendRef.current(now.join("\n\n"));
   }, [set]);
 
   // Invariant 3: whenever there is something queued and no turn is running, send
   // it. Queued means the operator already hit enter; delivery is owed.
   const drainingRef = useRef(false);
   useEffect(() => {
-    if (streaming || loadingThreads || !items.length) return;
+    if (streaming || loadingThreads || held || !items.length) return;
     if (drainingRef.current) return;
     drainingRef.current = true;
     // A tick of slack so a turn that is in the act of starting (the sender sets
@@ -156,12 +187,16 @@ export function useMessageQueue({
       if (!logBusyRef.current && itemsRef.current.length) dispatch();
     }, 250);
     return () => { window.clearTimeout(t); drainingRef.current = false; };
-  }, [streaming, loadingThreads, items, dispatch, logBusyRef]);
+  }, [streaming, loadingThreads, held, items, dispatch, logBusyRef]);
 
   // Memoized: see the sendRef/appendRef note above — the identity of this object
   // is load-bearing for the caller's dep arrays.
   return useMemo(
-    () => ({ items, set, push, drop, dispatch, bindThread, bindBlank, resetToBlank, carryToThread }),
-    [items, set, push, drop, dispatch, bindThread, bindBlank, resetToBlank, carryToThread],
+    () => ({
+      items, length: items.length,
+      set, push, insertAt, drop, dispatch,
+      bindThread, bindBlank, resetToBlank, carryToThread,
+    }),
+    [items, set, push, insertAt, drop, dispatch, bindThread, bindBlank, resetToBlank, carryToThread],
   );
 }
