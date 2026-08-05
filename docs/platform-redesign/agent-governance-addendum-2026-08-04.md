@@ -163,8 +163,8 @@ link is currently open and which is blocking.
 
 ## 6. Plan (supersedes §5 of the parent doc)
 
-**P0 — Truth.** Reject an invalid `role` instead of silently coercing it. Agent
-page leads with the contract; explicit "never run, because X" state.
+**P0 — Truth.** Agent page leads with the contract and renders the activation
+chain (§5) showing which link is blocking; explicit "never run, because X" state.
 
 **P1 — One definition.** The seven mechanisms collapse to one file format.
 

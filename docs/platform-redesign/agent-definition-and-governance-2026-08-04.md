@@ -196,10 +196,12 @@ brake has been engaged since 2026-07-18"), not four empty panels.
 ## 5. Plan
 
 **P0 — Truth (small, no behaviour change).**
-- Reject an invalid `role` on read instead of silently coercing it. `memory-keeper`
-  declares `role: memory`, which is not in the enum, and is quietly served as
-  `keeper`.
-- Agent page leads with the contract; add the explicit "never run, because X" state.
+- Agent page leads with the contract, and renders the *activation chain* with the
+  link that is currently blocking. Add the explicit "never run, because X" state.
+
+  (An earlier draft listed "reject an invalid role" here, on the belief that
+  `memory-keeper`'s `role: memory` was a typo being silently coerced. It is not:
+  `ROLE_ALIASES = {"memory": "keeper"}` is a declared alias. Item withdrawn.)
 
 **P1 — One definition.**
 - `build_agents.json` stops synthesising identities.

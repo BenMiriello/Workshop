@@ -846,6 +846,61 @@ async def get_agent(agent_id: str):
         "linked_ticket_scope": _agent_scope_key(rec),
         "linked_run_ids": linked_run_ids[:50],
         "linked_chat_ids": linked_chat_ids[:50],
+        "activation": _activation_chain(rec),
+    }
+
+
+def _activation_chain(rec: dict) -> dict:
+    """Why this agent does or does not run, as an ordered chain of conditions.
+
+    "Autonomy is on" has never been answerable from this page, because the answer
+    is a conjunction spread across three places: a global brake, the agent's own
+    declared mode, and whether anything can trigger it. An agent that has never
+    run therefore rendered as empty panels with no explanation, which reads as a
+    broken page rather than as a correctly-idle agent.
+
+    So the chain is returned in order, each link with its own verdict, and the
+    FIRST failing link is named. This is a read-only explanation of state that
+    already exists; it grants nothing and gates nothing.
+    """
+    from services import autonomy_override
+
+    brake = autonomy_override.read()
+    autonomy = rec.get("autonomy") or "reactive"
+    triggers = rec.get("triggers") or []
+    # A manual-only trigger set cannot start anything on its own, so it is not a
+    # way in. Distinguish "no triggers" from "only manual".
+    auto_triggers = [t for t in triggers if isinstance(t, dict) and t.get("kind") != "manual"]
+
+    links = [
+        {
+            "id": "brake",
+            "label": "Global autonomy brake is clear",
+            "ok": not brake.get("engaged"),
+            "detail": (brake.get("reason") or "engaged") if brake.get("engaged") else "clear",
+        },
+        {
+            "id": "autonomy",
+            "label": "Agent may run unattended",
+            "ok": autonomy in ("supervised", "autonomous"),
+            "detail": autonomy,
+        },
+        {
+            "id": "trigger",
+            "label": "Something can start it",
+            "ok": bool(auto_triggers),
+            "detail": (", ".join(sorted({str(t.get("kind")) for t in auto_triggers}))
+                       if auto_triggers else
+                       ("manual invocation only" if triggers else "no triggers declared")),
+        },
+    ]
+    blocking = next((l for l in links if not l["ok"]), None)
+    return {
+        "links": links,
+        "blocked_by": blocking["id"] if blocking else None,
+        "runs_unattended": blocking is None,
+        "ever_ran": bool(rec.get("last_active")),
+        "last_active": rec.get("last_active"),
     }
 
 

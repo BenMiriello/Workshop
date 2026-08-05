@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks } from "lucide-react";
+import { Trash2, Plus, Bot, Brain, MessageSquare, Clock, StickyNote, ListChecks, Activity } from "lucide-react";
 import type { Project } from "@shared/types";
 import {
   ActionBar,
@@ -18,6 +18,7 @@ import {
   Select,
   Skeleton,
   StateBlock,
+  StatusDot,
   StatusPill,
   Stack,
   Tag,
@@ -59,6 +60,16 @@ type AgentDetailData = UnifiedAgent & {
   linked_ticket_scope?: string | null;
   linked_run_ids?: string[];
   linked_chat_ids?: string[];
+  // Why this agent does or does not run, as an ordered chain (backend
+  // _activation_chain). Read-only explanation of existing state: it grants
+  // nothing and gates nothing.
+  activation?: {
+    links: { id: string; label: string; ok: boolean; detail: string }[];
+    blocked_by: string | null;
+    runs_unattended: boolean;
+    ever_ran: boolean;
+    last_active?: string | null;
+  };
 };
 
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
@@ -750,6 +761,60 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                   {agent.role === "broker" && "Mediates cross-store access; never reads the data it adjudicates."}
                 </span>
               </Row>
+            </Card>
+          </section>
+        )}
+
+        {/* --- Activation (P0). Why this agent does or does not run. ---
+             An agent is defined by its contract, not discovered by running it,
+             so this sits directly under the role and above the definition, and
+             it renders whether or not the agent has any history.
+
+             Before this, an agent that had never run showed four empty panels
+             and no reason, which reads as a broken page rather than a correctly
+             idle one. "Autonomy is on" is a conjunction spread across a global
+             brake, the agent's declared mode, and whether anything can start it;
+             the chain names the FIRST link that is open. See
+             docs/platform-redesign/agent-governance-addendum-2026-08-04.md §5. */}
+        {agent.activation && (
+          <section>
+            <SectionLabel><Activity size={14} aria-hidden /> Activation</SectionLabel>
+            <Card compact style={{ padding: "var(--space-3)" }}>
+              <Stack gap="sm">
+                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                  <StatusPill status={agent.activation.runs_unattended ? "ok" : "stopped"}>
+                    {agent.activation.runs_unattended ? "Runs unattended" : "Runs only when you ask"}
+                  </StatusPill>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                    {agent.activation.ever_ran
+                      ? <>last active {agent.activation.last_active}</>
+                      : "has never run"}
+                  </span>
+                </Row>
+                <Stack gap="sm">
+                  {agent.activation.links.map((l) => (
+                    <Row key={l.id} style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                      <StatusDot
+                        status={l.ok ? "ok" : (agent.activation!.blocked_by === l.id ? "warn" : "stopped")}
+                      >
+                        {l.label}
+                      </StatusDot>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{l.detail}</span>
+                    </Row>
+                  ))}
+                </Stack>
+                {/* Named plainly rather than left to be inferred from three dots. */}
+                {!agent.activation.runs_unattended && (
+                  <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
+                    {agent.activation.blocked_by === "brake" &&
+                      "The global autonomy brake is engaged, so no agent runs unattended, whatever it declares."}
+                    {agent.activation.blocked_by === "autonomy" &&
+                      "This agent is reactive: it runs only on manual invocation. Set supervised or autonomous to let its triggers fire."}
+                    {agent.activation.blocked_by === "trigger" &&
+                      "Nothing can start this agent on its own. Add a cron or event trigger, or invoke it manually."}
+                  </p>
+                )}
+              </Stack>
             </Card>
           </section>
         )}
