@@ -408,6 +408,74 @@ def app_persona(key: str) -> dict:
     }
 
 
+# Claude Code's own subagent directory. These are agents by every definition
+# this system uses — a name, a description of when to use them, a tool list, and
+# a body that is their system prompt — and they were the last mechanism defining
+# agents outside `agents/<slug>.md`. They are not a rival FORMAT (same markdown +
+# YAML frontmatter, same parser below); what differed was that they carried none
+# of the declaration: no role, no scope, no statement of how they are reached.
+#
+# They still are not roster agents, and the difference is lifecycle, not
+# schema. A roster agent is DISPATCHED: it has triggers, it can run on a
+# schedule, it appears as a chat scope. A native subagent is DELEGATED: it only
+# ever runs because another agent called it, so it has no triggers to enable and
+# no autonomy of its own to grant. Listing them here answers "who can call
+# whom", which is the question the roster cannot.
+#
+# Read-only, and deliberately so. This directory is SHARED with the masini
+# Discord bridge; the Workshop reads it and never writes it.
+NATIVE_AGENTS_DIR = Path(os.environ.get(
+    "CLAUDE_AGENTS_DIR", str(Path.home() / ".claude" / "agents")))
+
+# Surfaces whose agents belong to another tenant. `discord-handler` is the
+# masini bridge's per-message dispatcher: it lives in the same user-scope
+# directory because Claude Code has only one, but it is the messaging surface's
+# agent, not the Workshop's — the same rule that excludes per_channel_agents.py.
+# Named rather than silently filtered, so the exclusion is legible.
+NATIVE_FOREIGN = {"discord-handler": "masini Discord bridge"}
+
+
+def native_subagents() -> list[dict]:
+    """Claude Code subagents visible to this instance, as declaration records.
+
+    Same parser as everything else here. Each record carries `foreign` naming
+    the surface it belongs to when it is not the Workshop's, rather than being
+    dropped — an agent that exists and is not ours is worth seeing exactly once.
+    """
+    out: list[dict] = []
+    try:
+        paths = sorted(NATIVE_AGENTS_DIR.glob("*.md"))
+    except OSError:
+        return out
+    for p in paths:
+        try:
+            fm, body = _parse(p.read_text())
+        except OSError:
+            continue
+        slug = fm.get("name") or p.stem
+        tools = fm.get("tools")
+        out.append({
+            "slug": slug,
+            "name": slug,
+            "description": fm.get("description") or "",
+            "purpose": fm.get("purpose") or "",
+            "role": _coerce_role(fm.get("role")),
+            "scope": fm.get("scope") or "",
+            # `['*']` means "every tool", which is worth rendering as that
+            # rather than as a one-item list containing an asterisk.
+            "tools": [str(t) for t in tools] if isinstance(tools, list) else [],
+            "unrestricted_tools": isinstance(tools, list) and "*" in [str(t) for t in tools],
+            "delegatable": _coerce_bool(fm.get("delegatable")),
+            "mentionable": _coerce_bool(fm.get("mentionable")),
+            "foreign": NATIVE_FOREIGN.get(slug),
+            "definition": body.strip(),
+            "definition_path": str(p),
+            "dispatch": "delegated",
+            "source": "native",
+        })
+    return out
+
+
 def app_persona_keys() -> list[str]:
     """Every app assistant that ships a definition. Used by the tests that pin
     each provider to a file."""

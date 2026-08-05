@@ -24,6 +24,7 @@ import {
   catFor,
   type StatusKind,
 } from "../ui";
+import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
 
@@ -507,6 +508,11 @@ export default function Agents() {
           </CardGrid>
         </>
       )}
+
+      {/* Who can be CALLED, as opposed to who runs. The roster above is agents
+          this workshop DISPATCHES; delegates only run because something invoked
+          them, so they answer the question the roster cannot. */}
+      <DelegatesSection />
 
       {/* Autonomy + GPU/Ollama controls moved back to Settings (C6). The read-
           only status pill in the PageHeader shows the state at a glance and

@@ -28,7 +28,7 @@ two things that needed no change. The real count was five, and is now four:
 |---|---|---|
 | 1 | `agents/<slug>.md`, `projects/*/agents/<slug>.md` — frontmatter + body | **canonical** |
 | 2 | `.runtime/build_agents.json` synthesis (`_record_from_build_state`) | **REMOVED** (P1a) |
-| 3 | `~/.claude/agents/*.md` — Claude Code native subagents, different field names | open |
+| 3 | `~/.claude/agents/*.md` — Claude Code native subagents, different field names | **UNIFIED** (P1c) |
 | 4 | App personas — `ContextProvider` subclasses in Python | **MIGRATED** (P1b) |
 | 5 | `per_channel_agents.py` (masini Discord) | excluded by rule |
 
@@ -60,6 +60,46 @@ raises `AppPersonaMissing` rather than defaulting: an assistant that silently
 falls back to no instructions and no tools still answers, and a confidently wrong
 bot is worse than a visibly broken one. `provider_map` already logs and skips a
 provider that fails to build, so the blast radius is that one app's assistant.
+
+Mechanism 3 (P1c, built 2026-08-04) turned out not to be a rival format at all —
+same markdown, same YAML frontmatter — but the files carried none of the
+declaration: no role, no scope, no statement of how they are reached. Claude Code
+**ignores frontmatter keys it does not know**, verified empirically against CLI
+2.1.143 with a probe subagent carrying `role`, `scope`, `purpose`, `limits`,
+`triggers`, `mentionable` and `delegatable`; it loaded normally alongside a plain
+control. So one file is both a valid native subagent and a declared Workshop
+agent, and `work-reviewer` now says what it is.
+
+Its `tools: ['*']` is gone, and that was a live contradiction rather than a
+tidy-up: the agent's own hard rule reads *"Do not modify any files. You are a
+reviewer. The worker fixes; you judge"*, while its grant included Write and Edit.
+Now `['Read', 'Grep', 'Glob', 'Bash']`. **Bash stays deliberately** — running
+`scripts/reviewer.sh`, `tsc`, `mypy` and `curl` is how this agent READS, and the
+role→tools table in Layer 2 bundles Bash with tree-writing, which is right for a
+dispatched maker and wrong here. Verified by invoking the completion gate against
+a real diff with the narrowed set: it returned its JSON verdict and no tool was
+denied.
+
+**The bug this found is the argument for the whole exercise.** `work-reviewer`'s
+frontmatter has been *invalid YAML* for months: the unquoted `description`
+contains `{complete: bool, reasons: [...]}`, and the `": "` inside it is illegal
+in a plain scalar. Claude Code's parser is lenient and accepted it; the strict
+reader got a parse error and every field read as absent. Nobody could see this
+while exactly one lenient consumer existed. A second consumer found it in one
+afternoon.
+
+`discord-handler` is deliberately untouched: it is the masini Discord bridge's
+per-message dispatcher, excluded by the same rule as mechanism 5. It is *named*
+rather than silently filtered (`NATIVE_FOREIGN`) — an agent that exists and is
+not ours is worth seeing exactly once, with whose it is stated.
+
+Delegates are NOT merged into the roster, and the reason is lifecycle rather than
+schema. A roster agent is **dispatched**: triggers, schedule, chat scope. A
+delegate only runs because another agent called it — no trigger to enable, no
+autonomy of its own to grant — so merging would put rows in the roster with every
+control permanently inert. They get `GET /api/agents/delegates` and their own
+section on the Agents page, which answers the question the roster cannot: **who
+can call whom**.
 
 Two declarative details worth keeping: definitions say `model: sonnet`, resolved
 by the new `llm_router.tier()`, so a file the operator edits by hand never pins a
@@ -156,9 +196,10 @@ The body is the system prompt. Nothing else defines an agent:
 
 - **(2) DONE**: `build_agents.json` is state-only. It may never synthesise an
   identity. An undeclared process is a Run, not an Agent.
-- **(3) unifies**: native subagents live under the same schema. Note they are
-  user-scope (`~/.claude/agents/`) and SHARED with the masini bridge, so this
-  one cannot be done without testing both surfaces.
+- **(3) DONE**: native subagents live under the same schema — Claude Code
+  ignores frontmatter keys it does not know (verified against CLI 2.1.143), so
+  one file is both. They stay out of the roster: delegated, not dispatched.
+  Both surfaces were tested, as this required.
 - **(4) DONE**: each app persona has a definition file under `agents/apps/`; the
   `ContextProvider` subclass keeps only the code that cannot be declared (the
   live snapshot function, and Budget's plan-patch applier).

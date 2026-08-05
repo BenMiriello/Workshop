@@ -187,6 +187,22 @@ async def list_agents():
     return out
 
 
+@router.get("/delegates")
+async def list_delegates():
+    """Claude Code subagents this instance can DELEGATE to.
+
+    Deliberately not part of the roster above, and the difference is lifecycle,
+    not schema — same markdown, same frontmatter, same parser. A roster agent is
+    DISPATCHED: it has triggers, it can run on a schedule, it is a chat scope. A
+    delegate only ever runs because another agent called it, so there is no
+    trigger to enable and no autonomy of its own to grant. Merging the two lists
+    would put rows in the roster with every control permanently inert.
+
+    This answers the question the roster cannot: who can call whom.
+    """
+    return {"delegates": agents_registry.native_subagents()}
+
+
 @router.get("/tools")
 async def list_tools():
     return {"tools": KNOWN_TOOLS}
