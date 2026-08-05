@@ -545,6 +545,38 @@ def clear_thread_context_tokens(thread_id: str) -> dict | None:
     return _write(thread)
 
 
+def get_turn_marks(thread: dict) -> dict:
+    """What this thread has already been TOLD, so a turn can avoid saying it
+    twice. Pure read off a thread dict the caller already has.
+
+      live_hash          digest of the last live-context snapshot sent
+      seen_scope_version the scope change-counter this thread last observed
+
+    These are bookkeeping about the conversation, not part of it, which is why
+    they live on the thread record rather than in the transcript."""
+    marks = thread.get("turn_marks")
+    return dict(marks) if isinstance(marks, dict) else {}
+
+
+def set_turn_marks(thread_id: str, **fields: object) -> dict | None:
+    """Merge bookkeeping marks. Only writes when something actually changed, so
+    a turn that repeats the same state does not rewrite the thread file."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    marks = thread.get("turn_marks")
+    marks = dict(marks) if isinstance(marks, dict) else {}
+    changed = False
+    for k, v in fields.items():
+        if marks.get(k) != v:
+            marks[k] = v
+            changed = True
+    if not changed:
+        return thread
+    thread["turn_marks"] = marks
+    return _write(thread)
+
+
 def set_card_state(thread_id: str, key: str, state: dict) -> dict | None:
     """Persist the outcome of acting on one in-chat ui-card, keyed by a digest of
     the card block. Stored on the thread because it is a fact about this
@@ -579,6 +611,50 @@ def ensure_thread_session(thread_id: str) -> tuple[str, bool] | None:
     thread["claude_session"] = sid
     _write(thread)
     return sid, True
+
+
+def ensure_agent_session(thread_id: str, slug: str) -> tuple[str, bool] | None:
+    """Return (session_id, is_new) for one AGENT speaking in one THREAD.
+
+    Keyed by the pair, deliberately. An @mentioned agent used to spawn with no
+    session at all, so every mention rebuilt its definition, its knowledge
+    layers and the conversation excerpt from nothing — the one place in the
+    system that really did reset on every turn.
+
+    The obvious fix, reusing the agent's own long-lived session, is wrong: the
+    same agent mentioned in two different chats would carry the first chat's
+    context into the second. Per (agent, thread) gives continuity where a
+    conversation is actually continuing, and isolation between conversations
+    that merely share a participant."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    sessions = thread.get("agent_sessions")
+    sessions = dict(sessions) if isinstance(sessions, dict) else {}
+    existing = sessions.get(slug)
+    if existing:
+        return existing, False
+    sid = str(uuid.uuid4())
+    sessions[slug] = sid
+    thread["agent_sessions"] = sessions
+    _write(thread)
+    return sid, True
+
+
+def clear_agent_session(thread_id: str, slug: str) -> dict | None:
+    """Forget one agent's session in this thread, so its next mention starts
+    fresh. The counterpart to clear_thread_session, for the same reason: a
+    session id whose CLI session is gone would fail the whole turn on --resume."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    sessions = thread.get("agent_sessions")
+    if not isinstance(sessions, dict) or slug not in sessions:
+        return thread
+    sessions = dict(sessions)
+    sessions.pop(slug, None)
+    thread["agent_sessions"] = sessions
+    return _write(thread)
 
 
 def clear_thread_session(thread_id: str) -> dict | None:

@@ -154,6 +154,16 @@ def finish(
         budget=budget,
     )
     _append(line)
+    # Tell the conversation that asked for this work that it is over. Here, at
+    # the one terminal point every job passes through, rather than in each
+    # runner — a runner added later would otherwise finish silently and nobody
+    # would notice the report was missing. Best-effort by construction: see
+    # services/run_report.
+    try:
+        from services import run_report
+        run_report.post_for_job(job_id, status)
+    except Exception:
+        pass
     return line
 
 

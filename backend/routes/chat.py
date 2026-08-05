@@ -13,6 +13,7 @@ transcript, so history is fully owned here, not in the model session.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json as _json
 import logging
 import os
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 
 from services import chat_store, chat_context
 from services import task_scope
+from services import scope_version
 from services import ticket_drafts
 from services import knowledge
 from services import skills
@@ -1156,6 +1158,8 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     # enough, because that instruction is thousands of tokens back by the time
     # it matters. See chat_context.turn_contract.
     parts.append(chat_context.turn_contract(CHAT_TIMEOUT_S))
+    marks = chat_store.get_turn_marks(t)
+    new_marks: dict[str, object] = {}
     briefing = chat_context.runtime_briefing(provider)
     if briefing:
         parts.append(briefing)
@@ -1166,7 +1170,54 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
             log.warning("chat live_context failed for %s: %s", provider.key, e)
             live = ""
         if live:
-            parts.append("=== LIVE CONTEXT (current app state) ===\n" + live)
+            # Two things this block has to get right, neither of which it did.
+            #
+            # 1. SUPERSESSION. Every turn appends a fresh snapshot and nothing
+            #    removes the last one, so a twenty-turn conversation holds twenty
+            #    of them and nineteen are wrong. Balances and location genuinely
+            #    move; asked "where am I", the model can read a forty-minute-old
+            #    block as readily as this one. Appending is otherwise the right
+            #    shape (Anthropic's cache invalidates tools -> system -> messages,
+            #    so dynamic state belongs in the appended turn and NEVER in the
+            #    system prompt) — it just has to say which copy counts.
+            #
+            # 2. REPETITION. Re-sending a byte-identical snapshot buys nothing
+            #    and costs its tokens on every turn. When nothing has changed,
+            #    say so in one line and let the earlier block stand.
+            digest = hashlib.sha256(live.encode("utf-8")).hexdigest()[:16]
+            if digest == marks.get("live_hash"):
+                parts.append(
+                    "=== LIVE CONTEXT ===\nUnchanged since the last turn; the most "
+                    "recent LIVE CONTEXT block above is still current."
+                )
+            else:
+                parts.append(
+                    "=== LIVE CONTEXT (current app state) ===\n"
+                    "This REPLACES every earlier LIVE CONTEXT block in this "
+                    "conversation. Older copies are stale — ignore them.\n\n" + live
+                )
+                new_marks["live_hash"] = digest
+
+    # What changed in this scope while this chat was not looking. The counter is
+    # bumped by whoever wrote (services/scope_version), so learning "nothing
+    # happened" costs one integer compare and produces no text at all — which is
+    # the common case. Only a real change spends tokens, and even then it spends
+    # them on a pointer, not on the content: the chat reads the store if and when
+    # it cares.
+    scope_key = task_scope.key_for_root(task_scope.root_for_context(provider.key))
+    if scope_key:
+        try:
+            if scope_version.changed_since(scope_key, marks.get("seen_scope_version")):
+                d = scope_version.describe(scope_key)
+                parts.append(
+                    f"=== SHARED WORK UPDATED ({scope_key}) ===\n"
+                    f"Another chat or agent changed this scope's {d['kind']}s "
+                    f"since your last turn ({d['detail']}, {d['at']}). Read them "
+                    f"before acting on anything that depends on their state."
+                )
+                new_marks["seen_scope_version"] = d["version"]
+        except Exception as e:
+            log.debug("scope freshness check skipped for %s: %s", scope_key, e)
     if not chat_context.is_build_provider(provider) and len(content.strip()) >= 8:
         try:
             hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
@@ -1178,6 +1229,11 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
         if recalled:
             parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append("=== OPERATOR MESSAGE ===\n" + content)
+    # Record what this thread has now been told, AFTER the prompt is built: a
+    # mark written before the turn would suppress the next turn's block even if
+    # this one never reached the model.
+    if new_marks:
+        chat_store.set_turn_marks(t["id"], **new_marks)
     return "\n\n".join(parts)
 
 
@@ -1306,7 +1362,7 @@ async def send_message(thread_id: str, body: PostMessage):
     cleaned, notes = provider.apply_actions(reply)
     # O2: a task-bound chat can maintain its task list via a task-patch block,
     # applied against THIS scope's store and stripped from the stored reply.
-    cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned)
+    cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned, t.get("id"))
     if tnotes:
         notes = (notes or []) + tnotes
     # Phase 4: an explicit operator preference/correction emitted as a
@@ -1427,6 +1483,37 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     # the value that was enforced rather than a parallel sentence about it.
     tools_active = role == "maker"
 
+    # This agent's session IN THIS THREAD. Every mention used to spawn with no
+    # session, so an agent rebuilt its preamble, definition and knowledge layers
+    # from scratch each time it was addressed — the one path in the system that
+    # genuinely did reset on every turn. On a resume none of that is re-sent:
+    # the session already holds it, and only what has happened since is new.
+    got = chat_store.ensure_agent_session(thread_id, slug)
+    sid, is_new = got if got else (None, True)
+    if sid and not is_new and not build_streaming.session_alive(sid, cwd):
+        # Same stale-session guard the chat path uses: resuming a session the
+        # CLI no longer has on disk fails the whole turn.
+        log.info("agent %s in thread %s: session %s is gone; starting fresh", slug, thread_id, sid)
+        chat_store.clear_agent_session(thread_id, slug)
+        got = chat_store.ensure_agent_session(thread_id, slug)
+        sid, is_new = got if got else (None, True)
+
+    if not is_new:
+        # Volatile only: what was said since, and what is being asked now.
+        resumed: list[str] = []
+        if convo:
+            resumed.append("=== RECENT CONVERSATION (context; do not reply to it) ===\n" + convo)
+        resumed.append("=== THE OPERATOR ASKS YOU ===\n" + (question or content))
+        turn = await build_streaming.start_turn(
+            thread_id=thread_id, agent_slug=slug, prompt="\n\n".join(resumed), model=model,
+            cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
+            allowed_tools=None if tools_active else [],
+            mcp_servers=[], tools_disabled=not tools_active,
+            speaker=slug,
+        )
+        _ = kscope  # the CHAT's scope; the agent read its own layers on turn one
+        return turn
+
     parts = [
         chat_context.agent_self_preamble(
             name=agent["name"], slug=slug, role=role, scope=agent["scope"], cwd=cwd,
@@ -1468,7 +1555,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 
     turn = await build_streaming.start_turn(
         thread_id=thread_id, agent_slug=slug, prompt=prompt, model=model,
-        cwd=cwd, session_id=None, resume=False, timeout_s=CHAT_TIMEOUT_S,
+        cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=None if tools_active else [],
         mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug,

@@ -407,6 +407,16 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     except Exception:
         log.debug("index cap enforcement skipped for %s", scope_key, exc_info=True)
 
+    # A note is shared state: another chat in this scope may be talking about
+    # the same thing and have no idea this landed. Bump the scope's counter so
+    # it can find out for the price of an integer compare rather than a search
+    # on every turn. See services/scope_version.
+    try:
+        from services import scope_version
+        scope_version.bump(scope_key, "note", (title or note_id).strip())
+    except Exception:
+        log.debug("scope version bump skipped for %s", scope_key, exc_info=True)
+
     return {"scope": scope_key, "note_id": note_id}
 
 

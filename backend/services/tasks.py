@@ -776,6 +776,19 @@ def _persist(root: Path, tasks: list[dict]) -> None:
     payload = {"version": STORE_VERSION, "tasks": tasks, "export_sha": _sha(rendered)}
     _atomic_write(_store_path(root), json.dumps(payload, indent=2) + "\n")
     _atomic_write(_export_path(root), rendered)
+    # Announce the change to the scope, here rather than at the nine call sites
+    # that reach this function: one write path, one bump, no way to add a tenth
+    # caller that silently skips it. A chat in this scope compares one integer
+    # to learn it is behind, instead of searching the store every turn to learn
+    # it is not. See services/scope_version.
+    try:
+        from services import scope_version, task_scope
+        scope = task_scope.key_for_root(root)
+        if scope:
+            scope_version.bump(scope, "ticket", f"{len(tasks)} tickets")
+    except Exception:
+        # Never let bookkeeping fail a write that already landed on disk.
+        pass
 
 
 # ---- Reconcile (heal out-of-band TODO.md edits) ----------------------------

@@ -71,6 +71,36 @@ def root_for_context(context_key: str | None) -> Path | None:
     return None
 
 
+def key_for_root(root: Path | str | None) -> str | None:
+    """The inverse of root_for_context: which scope does this task store belong
+    to? Returns None for a path that is not a recognised scope root.
+
+    Structural, not registry-driven, so it stays cheap enough to call on every
+    ticket write (which is what bumps the scope's change counter). It mirrors
+    root_for_context branch for branch; the two must be read together.
+
+    A build agent shares its project's tree, so a project root maps back to
+    `project:<slug>` and never to the agent that happened to write there — the
+    change belongs to the place, not to whoever touched it."""
+    if root is None:
+        return None
+    try:
+        p = Path(root).resolve()
+    except (OSError, ValueError):
+        return None
+    try:
+        if p == WORKSHOP_ROOT.resolve():
+            return "workshop"
+    except OSError:
+        pass
+    parent = p.parent.name
+    if parent == "projects":
+        return f"project:{p.name}"
+    if parent == "agent-scopes":
+        return f"agent:{p.name}"
+    return None
+
+
 def root_for_job(job: dict | None) -> Path | None:
     """The task-store directory a Job worked, from its binding. A project sweep
     carries project_slug; an agent sweep carries agent_id ('agent:<slug>'). Lets
@@ -111,10 +141,18 @@ def _agent_scope_dir(slug: str) -> Path:
     return d
 
 
-def apply_task_patch(context_key: str | None, reply: str) -> tuple[str, list[str]]:
+def apply_task_patch(context_key: str | None, reply: str,
+                     thread_id: str | None = None) -> tuple[str, list[str]]:
     """Find a ``task-patch`` block, apply add/update/note against this chat's
     scope store, strip the block, and return (cleaned_reply, notes). No-op (the
-    reply unchanged, empty notes) when there is no block or no task scope."""
+    reply unchanged, empty notes) when there is no block or no task scope.
+
+    `thread_id` is which CONVERSATION filed the ticket, recorded as the source
+    ref. It used to write the context_key there — a scope where an identity
+    belongs, so every ticket filed this way claimed to come from "general"
+    rather than from a chat you could open. The scope is already on the ticket
+    by virtue of which store it lives in; the ref is for getting back to the
+    conversation that wanted it."""
     m = _PATCH_BLOCK.search(reply)
     if not m:
         return reply, []
@@ -150,7 +188,7 @@ def apply_task_patch(context_key: str | None, reply: str) -> tuple[str, list[str
                 depends_on=[str(d) for d in (op.get("depends_on") or [])],
                 acceptance=op.get("acceptance") if isinstance(op.get("acceptance"), dict) else None,
                 touches=[str(t) for t in (op.get("touches") or [])],
-                source={"kind": "chat", "ref": context_key},
+                source={"kind": "chat", "ref": thread_id},
             )
             decision = res.get("decision")
             if decision in ("exact", "merge"):
