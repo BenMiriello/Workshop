@@ -87,6 +87,11 @@ registry-bundles/
 # are forked into instances, never run in place), so they are tracked.
 /agents/*
 !/agents/_templates/
+# The built-in app assistants' definitions (budget, finance, commute, location).
+# Shipped source, not instance state: they define personas that come WITH the
+# app, so they are tracked for the same reason the templates are. Also outside
+# the roster's non-recursive `agents/*.md` glob, so nothing here is dispatched.
+!/agents/apps/
 /commute/legs.json
 /commute/targets.json
 /commute/sources/registry.json

@@ -71,6 +71,22 @@ TEMPLATES_DIR = Path(os.environ.get(
     "WORKSHOP_AGENT_TEMPLATES_DIR", str(USER_AGENTS_DIR / "_templates")))
 GROUPS_DIR = TEMPLATES_DIR / "groups"
 
+# Built-in app assistants (the Budget/Accounts/Commute/Location chat personas).
+# Same file format and same parser as everything else here — that is the entire
+# point of the directory existing. They used to be Python: a ContextProvider
+# subclass with the persona as a concatenated string literal, the tool list as a
+# class attribute, and the model as a constant, which made "what is this agent
+# allowed to do" a question you answered by reading code. Now the declaration is
+# declared and the subclass keeps only what cannot be: the live snapshot, and
+# for Budget the plan-patch applier.
+#
+# Outside the roster: `list_agents` globs `agents/*.md` NON-recursively, so
+# nothing in here is ever dispatched or counted as a roster agent. An app
+# assistant is the face of an installed app, reached by opening that app, not a
+# standing agent with triggers of its own.
+APP_AGENTS_DIR = Path(os.environ.get(
+    "WORKSHOP_APP_AGENTS_DIR", str(USER_AGENTS_DIR / "apps")))
+
 # Frontmatter that belongs to the TEMPLATE, not to the instance it produces. It
 # is stripped on fork and replaced by a single `template: <slug>@<version>` line.
 _TEMPLATE_ONLY_FM = ("template", "template_version", "description")
@@ -349,6 +365,56 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
     }
     rec["id"] = letta_id if (runtime == "assistant" and letta_id) else slug
     return rec
+
+
+class AppPersonaMissing(RuntimeError):
+    """An installed app's assistant has no definition file, or an empty one.
+
+    Raised rather than defaulted. A persona that silently falls back to nothing
+    is an assistant with no instructions and no tools that still answers — the
+    operator gets a confidently wrong bot instead of a broken one, which is the
+    worse of the two failures. `provider_map` already logs and skips a provider
+    that fails to build, so a missing file removes that app's assistant from the
+    picker and leaves every other one working."""
+
+
+def app_persona(key: str) -> dict:
+    """The declaration for a built-in app's chat assistant.
+
+    Returns `{name, purpose, model, tools, mcp_servers, persona}` — `persona`
+    being the body, which is the system prompt. Same parser as the roster
+    (`_parse`), so the two cannot drift into different dialects of frontmatter.
+    """
+    path = APP_AGENTS_DIR / f"{key}.md"
+    try:
+        text = path.read_text()
+    except OSError as e:
+        raise AppPersonaMissing(f"no definition for app assistant '{key}' at {path}") from e
+    fm, body = _parse(text)
+    body = body.strip()
+    if not body:
+        raise AppPersonaMissing(f"app assistant '{key}' has an empty persona ({path})")
+    tools = fm.get("tools")
+    servers = fm.get("mcp_servers")
+    return {
+        "key": key,
+        "name": fm.get("name") or key,
+        "purpose": fm.get("purpose") or "",
+        "model": fm.get("model"),
+        "tools": [str(t) for t in tools] if isinstance(tools, list) else [],
+        "mcp_servers": [str(s) for s in servers] if isinstance(servers, list) else [],
+        "persona": body,
+        "definition_path": str(path),
+    }
+
+
+def app_persona_keys() -> list[str]:
+    """Every app assistant that ships a definition. Used by the tests that pin
+    each provider to a file."""
+    try:
+        return sorted(p.stem for p in APP_AGENTS_DIR.glob("*.md"))
+    except OSError:
+        return []
 
 
 def _merge_build_state(rec: dict, state: dict) -> None:

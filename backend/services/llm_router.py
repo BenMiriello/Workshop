@@ -57,6 +57,32 @@ TIER_OPUS = "claude-opus-4-8"
 TIER_OPUS_5 = "claude-opus-5"
 TIER_FABLE = "claude-fable-5"
 
+# Short tier names, for anything DECLARED rather than coded. A definition file
+# says `model: sonnet` and keeps saying it when the handle behind that tier
+# rotates; writing "claude-sonnet-4-6" into a declaration would pin a file the
+# operator edits by hand to a string only this module should know.
+TIERS = {
+    "haiku": TIER_HAIKU,
+    "sonnet": TIER_SONNET,
+    "sonnet-5": TIER_SONNET_5,
+    "opus": TIER_OPUS,
+    "opus-5": TIER_OPUS_5,
+    "fable": TIER_FABLE,
+}
+
+
+def tier(name: object, default: str = TIER_HAIKU) -> str:
+    """Resolve a short tier name to a model handle. An unknown or absent name
+    falls back to `default` rather than passing an unusable string to the CLI.
+    A full handle is returned unchanged, so either spelling works."""
+    if not isinstance(name, str) or not name.strip():
+        return default
+    n = name.strip().lower()
+    if n in TIERS:
+        return TIERS[n]
+    return name.strip() if n.startswith("claude-") else default
+
+
 # Health thresholds
 OLLAMA_HEALTH_TIMEOUT_S = 3
 OLLAMA_REQUEST_TIMEOUT_S = 60

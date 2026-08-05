@@ -1,9 +1,18 @@
 """Built-in app chat personas — the app-owned half of the chat surface.
 
-Each built-in app that has a chat assistant defines its ContextProvider here
-(persona, live context, tool policy, apply-actions) plus the snapshot helpers it
-needs. `chat_context` owns only the PLATFORM chat plumbing (the ContextProvider
-base, the general + new-project + project/build providers, the role preamble,
+Each built-in app that has a chat assistant contributes two things: a DEFINITION
+(`agents/apps/<key>.md` — name, purpose, model, tools, MCP servers, and the
+system prompt as the body) and the CODE that definition cannot express (the live
+snapshot function, and for Budget the plan-patch applier). The provider classes
+below are that code plus a key; `AppPersona.__init__` reads the rest.
+
+That split is the point. These personas used to be declared in Python — prompt
+as a string literal, tools as a class attribute, model as a constant — which
+made them a second way of defining an agent alongside `agents/<slug>.md`. They
+now share that format and its parser (`agents_registry.app_persona`).
+
+`chat_context` owns only the PLATFORM chat plumbing (the ContextProvider base,
+the general + new-project + project/build providers, the role preamble,
 dispatch); it hardcodes NO app. These personas are wired into the chat surface
 through each app's AppSpec (`app_registry`: `chat_provider` / `chat_snapshot`),
 so a persona appears only when its app is installed and adding a new app's
@@ -270,16 +279,12 @@ _PATCH_BLOCK = re.compile(r"```plan-patch\s*\n(.*?)```", re.DOTALL)
 # Shared Plaid-lookup method heuristics appended to every persona that has the
 # transaction-lookup tools. METHOD only — operator-specific facts live in the
 # per-project memory store, not here.
-_PLAID_LOOKUP_METHOD = (
-    "\n\nLOOKUP METHOD: (1) TRANSFER ATTRIBUTION — to attribute a transfer to a "
-    "person or entity, read the counterparty / source account number: an inflow "
-    "from an account that is not one of the operator's own accounts came from "
-    "someone else. Don't infer the source from amount or memo text alone. "
-    "(2) CUMULATIVE LOOKBACK — when reconstructing a total since an event (a debt "
-    "owed, deposits since a date), set the lookback window to span the entire "
-    "period; never rely on the 90-day search default — pass an explicit `days` "
-    "wide enough to cover from the event to today."
-)
+# The Plaid LOOKUP METHOD paragraph used to live here and be concatenated onto
+# two personas. It now sits in `agents/apps/budget.md` and `agents/apps/finance.md`
+# in full. That is a duplicated paragraph of prose, and it is the right trade: a
+# persona file has to be readable on its own, and one that ended in a reference
+# to a Python constant would put the operator back to reading code to find out
+# what the assistant was told.
 
 
 def _budget_full_context() -> str:
@@ -447,61 +452,44 @@ def _set_path(plan: dict, path: str, value: Any) -> tuple[bool, str]:
 # ============================================================================ #
 # The app persona providers
 # ============================================================================ #
-class BudgetContextProvider(ContextProvider):
-    key = "budget"
-    label = "Budget assistant"
-    allowed_tools = [
-        "mcp__plaid__search_transactions",
-        "mcp__plaid__list_transactions",
-    ]
-    mcp_servers = ["plaid"]
-    default_model = _llm.TIER_SONNET
+class AppPersona(ContextProvider):
+    """A built-in app's chat assistant, DECLARED in `agents/apps/<key>.md`.
+
+    Everything an app assistant is — its name, its system prompt, the tools it
+    may call, the MCP servers behind them, its model — is declaration, and used
+    to be Python: the prompt a concatenated string literal, the tool list a class
+    attribute, the model a constant. So "what is this assistant allowed to do"
+    was a question you answered by reading code, and app personas were one of the
+    competing ways an agent got defined in this system.
+
+    They are now one way, sharing the roster's format and its parser. What stays
+    in Python is only what cannot be declared: `live_context()` (a snapshot
+    function) and, for Budget, `apply_actions()` (it parses a fenced block out of
+    the reply and writes the plan). A subclass below is those methods and a key.
+
+    Not roster agents. `list_agents` globs `agents/*.md` non-recursively, so
+    nothing here is dispatched, triggered, or counted — an app assistant is the
+    face of an installed app, reached by opening that app.
+    """
+
+    def __init__(self) -> None:
+        from services import agents_registry
+
+        d = agents_registry.app_persona(self.key)   # raises if absent/empty
+        self.label = d["name"]
+        self.purpose = d["purpose"]
+        self.allowed_tools = d["tools"]
+        self.mcp_servers = d["mcp_servers"]
+        self.default_model = _llm.tier(d["model"], ContextProvider.default_model)
+        self.definition_path = d["definition_path"]
+        self._persona = d["persona"]
 
     def persona(self) -> str:
-        return (
-            "You are the operator's budgeting assistant, embedded inside the Workshop "
-            "Budget app. The operator's model is a priority allocation waterfall: income → "
-            "necessities → prioritized debt payoffs → prioritized savings buckets (emergency "
-            "fund first) → variable spend targets → leftover.\n\n"
-            "Each turn you receive: (1) the editable plan, (2) live Plaid account balances, "
-            "(3) recent-30-day spending actuals already categorized by bucket. USE THESE. The "
-            "operator's repeated correction: don't invent numbers you can readily see in the "
-            "context. If they ask 'fill in realistic targets', base them on the actual recent "
-            "spend totals shown to you, not made-up defaults.\n\n"
-            "You can READ the live plan + balances + actuals (given below each turn) and you can "
-            "EDIT the plan. To change the plan, include exactly one fenced block in your reply:\n\n"
-            "```plan-patch\n"
-            '{"set": [{"path": "<dotted.path>", "value": <new value>}, ...]}\n'
-            "```\n\n"
-            "Path rules: dotted segments. List items are addressed by their `id`. Examples:\n"
-            "  income.monthly                      -> the monthly income number\n"
-            "  income.per_paycheck\n"
-            "  savings.emergency.target            -> emergency bucket's target\n"
-            "  savings.emergency.planned_monthly\n"
-            "  savings.emergency.target_date       -> 'YYYY-MM-DD' or null\n"
-            "  savings.emergency.note              -> free-text note\n"
-            "  debts.citi.planned_monthly          -> Citi monthly payment\n"
-            "  debts.citi.balance                  -> override balance (live overrides for mask)\n"
-            "  necessities.rent.monthly\n"
-            "  necessities.rent.name               -> rename\n"
-            "  variable.groceries.target           -> monthly groceries budget\n"
-            "  variable.groceries.name             -> rename\n\n"
-            "Only emit a plan-patch when the operator actually asks to change something. Always "
-            "also explain the change in plain words. When only answering a question, do NOT emit a "
-            "patch. Be direct and brief. No emojis.\n\n"
-            "TOOLS: you have a NARROW read-only Plaid lookup tool set in this chat — ad-hoc "
-            "transaction search (mcp__plaid__search_transactions) and date-range listing "
-            "(mcp__plaid__list_transactions). Use them ONLY for questions the injected 30-day "
-            "rollup and balances above can't answer (e.g. 'what did I spend at Whole Foods last "
-            "month', 'find Comcast bills in the last 90 days'). Prefer the context that's already "
-            "in front of you; reach for a lookup only when the answer truly isn't there. You also "
-            "have web search + fetch for quick external lookups (a merchant, a current rate, a "
-            "definition). You do NOT have Read, Bash, Gmail, or file edits. If asked for something "
-            "outside plan edits, these Plaid lookups, and web search (e.g. 'check my emails for the "
-            "Citi statement'), say plainly you can't and point the operator to where to find it. The "
-            "authoritative capability statement is in the preamble above this persona."
-            + _PLAID_LOOKUP_METHOD
-        )
+        return self._persona
+
+
+class BudgetContextProvider(AppPersona):
+    key = "budget"
 
     def live_context(self) -> str:
         return _budget_full_context()
@@ -544,62 +532,22 @@ class BudgetContextProvider(ContextProvider):
         return cleaned, notes
 
 
-class FinanceContextProvider(ContextProvider):
-    """Read-only assistant for the Accounts/Finance page."""
+class FinanceContextProvider(AppPersona):
     key = "finance"
-    label = "Accounts assistant"
-    allowed_tools = [
-        "mcp__plaid__search_transactions",
-        "mcp__plaid__list_transactions",
-        "mcp__plaid__get_holdings",
-        "mcp__plaid__list_investment_transactions",
-    ]
-    mcp_servers = ["plaid"]
-
-    def persona(self) -> str:
-        return (
-            "You are the operator's finance assistant, embedded inside the Workshop "
-            "Accounts page. You can answer questions about live balances, recent transactions, "
-            "and spending patterns — using the snapshot supplied each turn. You CANNOT edit "
-            "anything on this page (no plan to mutate); for budget changes, the operator opens "
-            "the Budget app. Be direct, brief. No emojis. If asked to do something that requires "
-            "writes, say plainly that this view is read-only and point them at the right app."
-            + _PLAID_LOOKUP_METHOD
-        )
 
     def live_context(self) -> str:
         return finance_snapshot() + "\n\n" + spend_snapshot()
 
 
-class CommuteContextProvider(ContextProvider):
+class CommuteContextProvider(AppPersona):
     key = "commute"
-    label = "Commute assistant"
-
-    def persona(self) -> str:
-        return (
-            "You are the operator's commute assistant, embedded inside the Workshop "
-            "Commute app. You see the latest train schedule decision, recent location ping, "
-            "and the brief-tracking state. Answer questions about timing, what the alerter "
-            "is doing, and when the next decision will fire. Be direct, brief. No emojis. "
-            "Read-only — you can't change schedules or send alerts; explain how to do those "
-            "in the operator's terminal if asked."
-        )
 
     def live_context(self) -> str:
         return commute_snapshot() + "\n\n" + location_snapshot()
 
 
-class LocationContextProvider(ContextProvider):
+class LocationContextProvider(AppPersona):
     key = "location"
-    label = "Location assistant"
-
-    def persona(self) -> str:
-        return (
-            "You are the operator's location assistant, embedded inside the Workshop "
-            "Location app. You see the most recent OwnTracks ping (lat/lng/ts) and can answer "
-            "questions about where the operator was last seen and how stale that signal is. "
-            "Read-only. Be direct, brief. No emojis."
-        )
 
     def live_context(self) -> str:
         return location_snapshot()

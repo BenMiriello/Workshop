@@ -29,7 +29,7 @@ two things that needed no change. The real count was five, and is now four:
 | 1 | `agents/<slug>.md`, `projects/*/agents/<slug>.md` — frontmatter + body | **canonical** |
 | 2 | `.runtime/build_agents.json` synthesis (`_record_from_build_state`) | **REMOVED** (P1a) |
 | 3 | `~/.claude/agents/*.md` — Claude Code native subagents, different field names | open |
-| 4 | App personas — `ContextProvider` subclasses in Python | open |
+| 4 | App personas — `ContextProvider` subclasses in Python | **MIGRATED** (P1b) |
 | 5 | `per_channel_agents.py` (masini Discord) | excluded by rule |
 
 Mechanism 2 was how five of the twelve builders existed without anyone declaring
@@ -39,6 +39,33 @@ carries `source: definition`, verified: the roster went from 15 records to 10,
 all of them declared, and the runtime state of the undeclared five is untouched
 in `build_agents.json`, so no history was lost. They are no longer Agents, which
 is correct: an undeclared process is a Run.
+
+Mechanism 4 (P1b, built 2026-08-04) was four `ContextProvider` subclasses whose
+system prompts were concatenated string literals, tool lists were class
+attributes and models were constants — so "what is the Budget assistant allowed
+to do" was a question you answered by reading Python. They are now declared in
+`agents/apps/<key>.md`, read through `agents_registry.app_persona()` — the same
+parser as the roster, which is what stops the two drifting into different
+dialects of frontmatter. The subclass keeps only what a file cannot express:
+`live_context()`, and for Budget `apply_actions()`. Capabilities are unchanged
+and pinned by test (`test_app_personas_declared.py`): same tools, same models,
+same prose, including the shared Plaid LOOKUP METHOD paragraph that used to be a
+Python constant appended to two of them and is now written into both files.
+
+They are deliberately NOT roster agents — `list_agents` globs `agents/*.md`
+non-recursively, so `agents/apps/` is outside it. An app assistant is the face of
+an installed app, reached by opening that app; giving it triggers and a roster
+row would re-create the identity confusion P1a removed. A missing definition
+raises `AppPersonaMissing` rather than defaulting: an assistant that silently
+falls back to no instructions and no tools still answers, and a confidently wrong
+bot is worse than a visibly broken one. `provider_map` already logs and skips a
+provider that fails to build, so the blast radius is that one app's assistant.
+
+Two declarative details worth keeping: definitions say `model: sonnet`, resolved
+by the new `llm_router.tier()`, so a file the operator edits by hand never pins a
+model handle that rotates; and `agents/apps/` needed a `.gitignore` carve-out
+(`!/agents/apps/`) for the same reason `_templates/` has one — these are shipped
+source, not instance state.
 
 And what the enum bought before P2: **`role` gated exactly one expression in the
 entire codebase** — `tools_active = role == "maker"` (`routes/chat.py`). reviewer,
@@ -132,9 +159,9 @@ The body is the system prompt. Nothing else defines an agent:
 - **(3) unifies**: native subagents live under the same schema. Note they are
   user-scope (`~/.claude/agents/`) and SHARED with the masini bridge, so this
   one cannot be done without testing both surfaces.
-- **(4) migrates**: each app persona gets a definition file; the
+- **(4) DONE**: each app persona has a definition file under `agents/apps/`; the
   `ContextProvider` subclass keeps only the code that cannot be declared (the
-  live snapshot function).
+  live snapshot function, and Budget's plan-patch applier).
 - **(5) declares or is not an agent.**
 - Templates and groups need no change: they already emit the canonical file.
 
