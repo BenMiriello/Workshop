@@ -1259,7 +1259,14 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     # whether it was typed while the previous turn was still running, and whether
     # others were typed alongside it before any had been answered. Placed last so
     # nothing separates it from the text it qualifies.
-    arrivals = chat_context.arrival_notice(t.get("messages") or [])
+    # Read the thread FRESH, not from `t`. The route fetches `t` before it
+    # records this turn's user message(s), deliberately — the fresh-session path
+    # uses that pre-append snapshot as history so the current message is not
+    # duplicated into it. But it means `t` cannot see the queued messages just
+    # written by _record_user_turn, and building the notice from it would make
+    # this silently never fire for exactly the case it was written for.
+    fresh = chat_store.get_thread(t.get("id") or "") or t
+    arrivals = chat_context.arrival_notice(fresh.get("messages") or [])
     if arrivals:
         parts.append(arrivals)
     # Record what this thread has now been told, AFTER the prompt is built: a

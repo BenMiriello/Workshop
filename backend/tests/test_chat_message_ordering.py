@@ -162,3 +162,48 @@ class TestQueuedPartsKeepTheirSendTimes:
     def test_an_ordinary_single_message_says_nothing(self):
         msgs = [{"role": "user", "content": "hi", "ts": "2026-08-05T05:00:00+00:00"}]
         assert chat_context.arrival_notice(msgs) == ""
+
+
+class TestRecordUserTurn:
+    """routes/chat._record_user_turn — what the server stores for one turn."""
+
+    def test_a_single_message_is_stored_once(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        rc._record_user_turn(tid, "just one", None)
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["content"] for m in msgs] == ["just one"]
+        assert not (msgs[0].get("meta") or {}).get("queued")
+
+    def test_parts_are_stored_separately_at_their_send_times(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        parts = [rc.TurnPart(text="a", sent_at="2026-08-05T05:56:38+00:00"),
+                 rc.TurnPart(text="b", sent_at="2026-08-05T05:58:02+00:00")]
+        rc._record_user_turn(tid, "a\n\nb", parts)
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["content"] for m in msgs] == ["a", "b"]
+        assert [m["ts"] for m in msgs] == ["2026-08-05T05:56:38+00:00",
+                                           "2026-08-05T05:58:02+00:00"]
+        assert all(m["meta"]["queued"] for m in msgs)
+
+    def test_the_notice_needs_a_FRESH_read_not_the_route_snapshot(self, thread):
+        """The route fetches the thread BEFORE recording (the fresh-session path
+        needs that pre-append snapshot as history). Building the arrival notice
+        from it would make it silently never fire for the queued case."""
+        import routes.chat as rc
+        tid = thread["id"]
+        stale = chat_store.get_thread(tid)
+        rc._record_user_turn(tid, "a\n\nb", [
+            rc.TurnPart(text="a", sent_at="2026-08-05T05:56:38+00:00"),
+            rc.TurnPart(text="b", sent_at="2026-08-05T05:58:02+00:00")])
+        assert chat_context.arrival_notice(stale.get("messages") or []) == ""
+        fresh = chat_store.get_thread(tid)
+        assert "2 of the messages" in chat_context.arrival_notice(fresh["messages"])
+
+    def test_blank_parts_fall_back_to_the_joined_content(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        rc._record_user_turn(tid, "fallback", [rc.TurnPart(text="   "),
+                                               rc.TurnPart(text="")])
+        assert [m["content"] for m in chat_store.get_thread(tid)["messages"]] == ["fallback"]
