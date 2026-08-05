@@ -369,31 +369,42 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
     return msg
 
 
-def insert_message_before_live_turn(thread_id: str, role: str, content: str,
-                                    meta: dict | None = None) -> dict:
-    """Append a message, but keep it ABOVE the in-flight assistant placeholder.
+def append_message_during_turn(thread_id: str, role: str, content: str,
+                               meta: dict | None = None) -> dict:
+    """File a message that arrived WHILE a turn was running.
 
-    A message sent while a turn is running is a real part of the conversation —
-    it has to be in the transcript, or a fresh session re-assembling history
-    from it would never know the operator said anything. But the live turn's
-    assistant message is already the last entry, so a plain append would file
-    the operator's message after a reply that had not been written yet, and the
-    thread would read out of order forever after.
+    A turn is an INTERVAL; a message is a POINT. A message sent at minute twelve
+    of a twenty-minute reply is neither before that reply nor after it, and the
+    transcript has to pick one. This used to pick *before* — it inserted above
+    the streaming placeholder, reasoning that a plain append would file the
+    operator's message after a reply that had not been written yet.
 
-    Slots it in just before that placeholder instead. With no live placeholder
-    this is an ordinary append."""
+    That is backwards for whoever READS the thread later. It produces a
+    transcript saying the operator spoke and then the assistant answered, when
+    the assistant was already twelve minutes into answering something else; a
+    fresh session re-assembling history reads the reply as a response to a
+    message it never saw. Worse, the placeholder is stamped at turn START, so
+    the operator's message also sorted ABOVE a timestamp 91 seconds EARLIER than
+    its own. That is the "my message got inserted above compact" report, on disk.
+
+    So: file it AFTER, which is causally true — the reply did not see it — and
+    record what "after" leaves out:
+
+      during_turn — the turn that was running when this arrived
+      sent_at     — when the operator actually hit enter
+      at_segment  — how much of that reply had streamed by then
+
+    `at_segment` is what lets the transcript still SHOW it inline at the point it
+    landed while the stored order stays causal. One truth, two views, instead of
+    one view baked into storage as though it were the truth.
+    """
     thread = get_thread(thread_id)
     if thread is None:
         raise KeyError(thread_id)
     msg = {"role": role, "content": content, "ts": _now_iso()}
     if meta:
         msg["meta"] = meta
-    msgs = thread["messages"]
-    last = msgs[-1] if msgs else None
-    if last and last.get("role") == "assistant" and (last.get("meta") or {}).get("streaming"):
-        msgs.insert(len(msgs) - 1, msg)
-    else:
-        msgs.append(msg)
+    thread["messages"].append(msg)
     thread["updated_at"] = _now_iso()
     _write(thread)
     return msg
@@ -503,6 +514,13 @@ def finalize_streaming_assistant(
     meta = m.setdefault("meta", {})
     meta["segments"] = segments
     meta["streaming"] = False
+    # A TURN IS AN INTERVAL. `ts` is when this reply began — the placeholder is
+    # appended at turn start and `ts` is never touched again — so on a twenty
+    # minute turn every assistant message claimed it was produced at the instant
+    # the turn opened, and a message the operator sent at minute twelve sorted
+    # ABOVE a timestamp eleven minutes older than its own. Recording the end is
+    # what makes "when did this happen" answerable at all.
+    meta["ended_at"] = _now_iso()
     if error:
         meta["error"] = True
     if timed_out:

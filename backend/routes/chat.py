@@ -1255,6 +1255,13 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
         if recalled:
             parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append("=== OPERATOR MESSAGE ===\n" + content)
+    # Immediately after the message, because it is a fact ABOUT that message:
+    # whether it was typed while the previous turn was still running, and whether
+    # others were typed alongside it before any had been answered. Placed last so
+    # nothing separates it from the text it qualifies.
+    arrivals = chat_context.arrival_notice(t.get("messages") or [])
+    if arrivals:
+        parts.append(arrivals)
     # Record what this thread has now been told, AFTER the prompt is built: a
     # mark written before the turn would suppress the next turn's block even if
     # this one never reached the model.
@@ -1760,6 +1767,29 @@ def _live_turn_id(thread: dict) -> str | None:
     return None
 
 
+def _file_during_turn(thread_id: str, turn_id: str, content: str) -> None:
+    """Record a message that arrived mid-turn, with the context "after" loses.
+
+    See chat_store.append_message_during_turn for why it is filed after rather
+    than above. `at_segment` is how much of the live reply had streamed when this
+    landed, so the transcript can still render it at that point without the
+    STORED order having to lie about what came first."""
+    try:
+        t = chat_store.get_thread(thread_id)
+        at_segment = 0
+        if t:
+            for m in reversed(t.get("messages") or []):
+                if (m.get("meta") or {}).get("turn_id") == turn_id:
+                    at_segment = len((m.get("meta") or {}).get("segments") or [])
+                    break
+        chat_store.append_message_during_turn(
+            thread_id, "user", content,
+            meta={"injected": True, "during_turn": turn_id, "at_segment": at_segment},
+        )
+    except Exception as e:
+        log.warning("thread %s: could not persist injected message: %s", thread_id, e)
+
+
 @router.post("/threads/{thread_id}/inject")
 async def inject_into_thread(thread_id: str, body: InjectMessage):
     """Hand a message to whatever turn is running on this thread.
@@ -1777,13 +1807,16 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         return {"delivered": False, "reason": "no turn is running on this chat"}
     delivered = build_streaming.inject(turn_id, content)
     if delivered:
-        try:
-            chat_store.insert_message_before_live_turn(
-                thread_id, "user", content, meta={"injected": True})
-        except Exception as e:
-            log.warning("thread %s: could not persist injected message: %s", thread_id, e)
+        _file_during_turn(thread_id, turn_id, content)
     return {
+        # NOT "the agent read it". This means the bytes reached the running
+        # process. Measured (docs/platform-redesign/chat-message-ordering-audit-
+        # 2026-08-05.md §2): the model addresses a mid-turn message at the END of
+        # its current plan, skipping every intervening step boundary — 24.5s and
+        # four boundaries in the probe. `queued_for_turn` is what is actually
+        # known, and the composer says that instead of implying it landed.
         "delivered": delivered,
+        "queued_for_turn": delivered,
         "turn_id": turn_id,
         "reason": "" if delivered else "the running turn is not accepting input",
     }
@@ -1793,10 +1826,10 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
 async def inject_into_turn(turn_id: str, body: InjectMessage):
     """Hand a message to a turn that is already running.
 
-    The operator's spec, stated twice: a new message must never interrupt the
-    work in flight — only Stop does that — but it must not have to wait out the
-    entire turn either. It goes in at the next point between the agent's
-    actions, which is how every other chat behaves.
+    A new message never interrupts the work in flight — only Stop does that. It
+    is handed to the running turn, and the agent picks it up when it reaches the
+    end of its current plan (measured; see the audit doc §2 — NOT "within a step
+    or two", which is what this docstring used to claim).
 
     `delivered: false` is not an error. It means the turn finished between the
     operator hitting enter and this request landing, and the client should queue
@@ -1812,14 +1845,13 @@ async def inject_into_turn(turn_id: str, body: InjectMessage):
         # The transcript is the record. A message sent mid-turn is part of the
         # conversation whether or not the turn that received it succeeds, and it
         # has to be stored or a later fresh session would re-assemble history
-        # without it. Slotted above the live assistant placeholder so the thread
-        # does not read out of order.
-        try:
-            chat_store.insert_message_before_live_turn(
-                turn.thread_id, "user", content, meta={"injected": True})
-        except Exception as e:
-            log.warning("turn %s: could not persist injected message: %s", turn_id, e)
-    return {"delivered": delivered, "reason": "" if delivered else "turn is no longer accepting input"}
+        # without it.
+        _file_during_turn(turn.thread_id, turn_id, content)
+    return {
+        "delivered": delivered,
+        "queued_for_turn": delivered,
+        "reason": "" if delivered else "turn is no longer accepting input",
+    }
 
 
 @router.get("/turns/{turn_id}/stream")

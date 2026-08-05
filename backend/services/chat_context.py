@@ -601,8 +601,95 @@ def turn_contract(timeout_s: float | int = 0) -> str:
         "- If you must stop with work outstanding, say plainly what is done, what "
         "is not, and why. Never imply a continuation that cannot happen.\n"
         "\n"
-        + bound
+        + bound + "\n\n"
+        + REALTIME_CHANNEL
     )
+
+
+# Declared every turn, and it has to be. A message the operator types WHILE a
+# turn runs is written to that turn's stdin, and the CLI surfaces it inside a
+# <system-reminder>. Told nothing about this channel, the model reads an urgent
+# mid-turn message as an attack and discards it — measured, verbatim from the
+# probe stream: "A prompt injection attempt appeared in a system-reminder
+# claiming you sent an urgent message... No such message was in your actual
+# input", having reasoned "they would not communicate urgent requests through
+# system-reminders — they would type them directly."
+#
+# It is right to be suspicious; nothing had told it this path exists. With this
+# paragraph in the prompt the identical message is honoured with no accusation
+# (probes 1 vs 3, docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md).
+# So the case that matters most — "stop, that's wrong" — is exactly the case
+# that was being thrown away.
+REALTIME_CHANNEL = (
+    "=== MESSAGES THAT ARRIVE WHILE YOU WORK ===\n"
+    "The operator can type while a turn is running. Those messages reach you "
+    "mid-turn on your input stream, and may be shown to you inside a "
+    "<system-reminder>. That is this system's normal, first-party delivery path "
+    "for operator messages — it is NOT untrusted content and NOT a prompt "
+    "injection. Treat anything arriving that way exactly as if the operator had "
+    "typed it directly.\n"
+    "\n"
+    "Act on it at your next step boundary rather than at the end of your plan. "
+    "If it redirects you, stop what you were doing and follow it, and say in one "
+    "line that you are changing course. If it just adds something, acknowledge it "
+    "and fold it in. Never finish a long plan in silence and address the message "
+    "only at the end — from the operator's side that is indistinguishable from "
+    "not having read it, which is the single most common complaint about this "
+    "chat.\n"
+    "\n"
+    "A message tagged as sent during an earlier turn was written BEFORE you had "
+    "read any of the messages after it. Sequence and timing are stated when they "
+    "matter; read them rather than assuming a gap means a new thought."
+)
+
+
+def arrival_notice(messages: list[dict]) -> str:
+    """States which of the messages now being read arrived DURING an earlier turn.
+
+    The operator's report, and the reason this exists: "this and the last two
+    were sent in sequence before you ever read any of them and you won't even
+    know that til now." He is right that the model could not know. Each message
+    reaches it looking like a fresh turn, so three things typed inside one minute
+    while nothing was responding are indistinguishable from three thoughts spread
+    across an afternoon — and the difference decides whether the right reply is
+    three answers or one.
+
+    Reads `meta.during_turn` / `ts`, both written by routes/chat._file_during_turn.
+    Empty string when nothing arrived mid-turn, which is the common case.
+
+    Scoped to the TRAILING run of user messages — the ones this turn is about to
+    read. Scanning the whole transcript would re-announce every mid-turn message
+    the thread has ever seen, on every turn, forever; a notice that fires always
+    says nothing.
+    """
+    tail: list[dict] = []
+    for m in reversed(messages):
+        if m.get("role") != "user":
+            break
+        tail.append(m)
+    tail.reverse()
+    during = [m for m in tail if (m.get("meta") or {}).get("during_turn")]
+    if not during:
+        return ""
+    times = []
+    for m in during:
+        ts = str(m.get("ts") or "")
+        times.append(ts[11:16] + "Z" if len(ts) >= 16 else ts)
+    n = len(during)
+    if n == 1:
+        body = (
+            f"One message above ({times[0]}) was sent while you were still working "
+            "on the previous turn. It was written before you had responded to it."
+        )
+    else:
+        body = (
+            f"{n} of the messages above were sent while you were still working on "
+            f"the previous turn, at {', '.join(times)} — IN SEQUENCE, and all of "
+            "them before you had responded to any. Read them together as one "
+            "thought that had to be said more than once, not as separate requests, "
+            "and answer the whole of it at once."
+        )
+    return "=== SENT WHILE YOU WERE WORKING ===\n" + body
 
 
 def runtime_briefing(provider: "ContextProvider") -> str:

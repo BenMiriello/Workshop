@@ -3,6 +3,7 @@ import type { ChatSegment } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn } from "./Transcript";
 import WorkingIndicator from "./WorkingIndicator";
+import StatusNote from "./StatusNote";
 
 // The turn currently streaming, cut at every point the operator interjected.
 //
@@ -56,11 +57,19 @@ export default function LiveTurn({
       );
     }
     if (k < interjections.length) {
+      // The status line said "the running turn picked it up". It had not. What
+      // is known is that the message reached the running process; measured
+      // against the CLI, the agent then addresses it when it reaches the end of
+      // its current plan, skipping the step boundaries in between (see
+      // docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md §2).
+      // Claiming it was read is the difference between a chat that is waiting
+      // and a chat that looks broken, so say the true thing.
       blocks.push(
         <div className="chat-msg user" key={`live-ij${k}`}>
-          <div className="chat-bubble" title="Sent mid-turn; the running turn picked it up">
-            {interjections[k].text}
-          </div>
+          <div className="chat-bubble">{interjections[k].text}</div>
+          {isLastSlice && streaming && (
+            <StatusNote status={{ text: "Handed to the turn in progress", busy: true }} />
+          )}
         </div>,
       );
     }

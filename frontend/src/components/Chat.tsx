@@ -800,6 +800,14 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // message silently went back to the queue and waited out the whole turn —
     // the exact behaviour this was supposed to end. The client knows which
     // conversation it is in; the server resolves which turn is live on it.
+    // WHAT "DELIVERED" MEANS, precisely, because the UI used to overstate it:
+    // the bytes reached the running process. Measured against the CLI (see
+    // docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md §2), the
+    // agent then addresses the message at the END of its current plan — 24.5s
+    // and four skipped step boundaries in the probe — not "within a step or
+    // two", which is what the comment below used to claim and what the composer
+    // implied. The message is genuinely handed over; it is not read yet.
+    //
     // ...unless it is a slash command. Injection hands the text to the MODEL;
     // slash commands are handled by the CLI's own command layer, which only runs
     // between turns. A command that arrives mid-turn is swallowed there — not
