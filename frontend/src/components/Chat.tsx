@@ -38,6 +38,7 @@ import {
 import { useDraft } from "../lib/draftSync";
 import {
   NEW_CHAT, DEFAULT_SCOPE, resolveScope, readSelection, writeSelection, readProvider, writeProvider, writeQueue,
+  type QueuedMessage,
 } from "../lib/chatSelection";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -178,7 +179,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // run two turns at once) and sent automatically when the turn finishes. They
   // render as pending user bubbles below the live response. The durability and
   // self-draining rules live in the hook — see useMessageQueue.
-  const sendBuildRef = useRef<(t: string) => void>(() => {});
+  const sendBuildRef = useRef<(t: string, parts?: QueuedMessage[]) => void>(() => {});
   // A /compact is in flight. Declared HERE rather than inside useCompaction
   // because the two things that must hold for it — this queue and submitText —
   // are both declared before it. While it is set, a typed message joins the
@@ -188,7 +189,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   const queue = useMessageQueue({
     scope: effectiveMode === "build" ? contextKey : activeProvider,
     streaming, loadingThreads, held: compacting, logBusyRef,
-    send: (t) => sendBuildRef.current(t),
+    send: (t, parts) => sendBuildRef.current(t, parts),
     appendUserMessages: (texts) => {
       const ts = new Date().toISOString();
       setMessages((m) => [...m, ...texts.map((content) => ({ role: "user" as const, content, ts }))]);
@@ -695,7 +696,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // work (tool calls, interim text) live instead of a blocking spinner. The
   // backend picks the tool surface + session from the provider class; the client
   // is transport-uniform.
-  const sendBuild = useCallback(async (text: string) => {
+  const sendBuild = useCallback(async (text: string, parts?: QueuedMessage[]) => {
     markStarting();
     setTurnIsCompact(text.trim() === "/compact");
     const isFirst = messages.length <= 1;
@@ -721,7 +722,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       const r = await fetch(`/api/chat/threads/${id}/turns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(selectedModel ? { content: text, model: selectedModel } : { content: text }),
+        // `parts` is present only when the queue drained several messages into
+        // this one turn. It carries WHEN EACH WAS TYPED, so the server stores
+        // them as the separate messages they were, at their real times, rather
+        // than one blob stamped with the moment the queue happened to drain.
+        // Without it the model cannot tell a burst typed in one minute from
+        // thoughts spread over an afternoon.
+        body: JSON.stringify({
+          content: text,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          ...(parts && parts.length > 1
+            ? { parts: parts.map((m) => ({ text: m.text, sent_at: m.sentAt })) }
+            : {}),
+        }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
       const { turn_id } = await r.json();

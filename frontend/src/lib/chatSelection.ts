@@ -114,18 +114,39 @@ export function writeProvider(contextKey: string, providerKey: string): void {
 // conversation, not the surface).
 const QUEUE_PREFIX = "ws-chat-queue:";
 
-export function readQueue(threadKey: string): string[] {
+// A queued message carries WHEN IT WAS TYPED, not just what it said.
+//
+// Without it, three messages typed inside one minute while nothing was
+// responding are indistinguishable — to the model reading them — from three
+// thoughts spread across an afternoon, and the difference decides whether the
+// right reply is three answers or one. The operator's report: "this and the last
+// two were sent in sequence before you ever read any of them and you won't even
+// know that til now."
+export type QueuedMessage = { text: string; sentAt: string };
+
+export function readQueue(threadKey: string): QueuedMessage[] {
   try {
     const raw = localStorage.getItem(QUEUE_PREFIX + threadKey);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : [];
+    if (!Array.isArray(parsed)) return [];
+    // Migrates the older `string[]` format in place. A queue written by the
+    // previous build is a message the operator has already hit enter on, so
+    // dropping it would be message loss on upgrade; it just has no send time,
+    // and "" reads as unknown rather than as some fabricated instant.
+    return parsed.flatMap((x): QueuedMessage[] => {
+      if (typeof x === "string") return [{ text: x, sentAt: "" }];
+      if (x && typeof x.text === "string") {
+        return [{ text: x.text, sentAt: typeof x.sentAt === "string" ? x.sentAt : "" }];
+      }
+      return [];
+    });
   } catch {
     return [];
   }
 }
 
-export function writeQueue(threadKey: string, queue: string[]): void {
+export function writeQueue(threadKey: string, queue: QueuedMessage[]): void {
   try {
     if (queue.length) localStorage.setItem(QUEUE_PREFIX + threadKey, JSON.stringify(queue));
     else localStorage.removeItem(QUEUE_PREFIX + threadKey);

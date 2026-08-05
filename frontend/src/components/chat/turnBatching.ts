@@ -29,10 +29,10 @@ export function isCommand(text: string): boolean {
 }
 
 /** Split a queue into (what goes out as the next turn, what keeps waiting). */
-export function splitFirstTurn(queue: string[]): [string[], string[]] {
+export function splitFirstTurn<T extends { text: string }>(queue: T[]): [T[], T[]] {
   if (!queue.length) return [[], []];
-  if (isCommand(queue[0])) return [[queue[0]], queue.slice(1)];
-  const next = queue.findIndex(isCommand);
+  if (isCommand(queue[0].text)) return [[queue[0]], queue.slice(1)];
+  const next = queue.findIndex((m) => isCommand(m.text));
   if (next < 0) return [queue, []];
   return [queue.slice(0, next), queue.slice(next)];
 }

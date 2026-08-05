@@ -654,12 +654,19 @@ def arrival_notice(messages: list[dict]) -> str:
     across an afternoon — and the difference decides whether the right reply is
     three answers or one.
 
-    Reads `meta.during_turn` / `ts`, both written by routes/chat._file_during_turn.
-    Empty string when nothing arrived mid-turn, which is the common case.
+    Two ways a message can have waited, and they mean the same thing to whoever
+    reads it now:
+
+      during_turn — injected into a turn that was already running
+                    (routes/chat._file_during_turn)
+      queued      — typed while a turn ran, delivered as this one
+                    (routes/chat._record_user_turn)
+
+    Empty string when nothing waited, which is the common case.
 
     Scoped to the TRAILING run of user messages — the ones this turn is about to
-    read. Scanning the whole transcript would re-announce every mid-turn message
-    the thread has ever seen, on every turn, forever; a notice that fires always
+    read. Scanning the whole transcript would re-announce every message the
+    thread has ever queued, on every turn, forever; a notice that fires always
     says nothing.
     """
     tail: list[dict] = []
@@ -668,7 +675,8 @@ def arrival_notice(messages: list[dict]) -> str:
             break
         tail.append(m)
     tail.reverse()
-    during = [m for m in tail if (m.get("meta") or {}).get("during_turn")]
+    during = [m for m in tail
+              if (m.get("meta") or {}).get("during_turn") or (m.get("meta") or {}).get("queued")]
     if not during:
         return ""
     times = []

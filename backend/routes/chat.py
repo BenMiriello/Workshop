@@ -1458,11 +1458,61 @@ async def send_message(thread_id: str, body: PostMessage):
 # callers (the voice worker, scripts).
 
 
+class TurnPart(BaseModel):
+    """One message from a queue that drained into this turn, with when it was
+    actually typed."""
+    text: str
+    sent_at: str | None = None
+
+
 class StartTurnIn(BaseModel):
     content: str
     # Optional per-turn model override (short tier name or full id); same
     # semantics as PostMessage.model.
     model: str | None = None
+    # Present only when several queued messages became ONE turn. `content` is
+    # still what the model reads (they are joined); this is how they were sent.
+    # Without it the transcript stored one blob stamped at the instant the queue
+    # drained, so a burst typed in one minute and thoughts spread over an
+    # afternoon were recorded identically — and the client, which had rendered
+    # them as separate bubbles all along, disagreed with the server after a
+    # reload.
+    parts: list[TurnPart] | None = None
+
+
+def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None) -> None:
+    """Persist what the operator actually sent for this turn.
+
+    One message normally. When a queue drained into this turn, the separate
+    messages it held, each at its own send time and marked `queued` so the next
+    prompt can say they were written before any had been answered."""
+    if not parts or len(parts) < 2:
+        chat_store.append_message(thread_id, "user", content)
+        return
+    # One read/modify/write, not N appends. `append_message` stamps `ts` at write
+    # time — the instant the queue drained — and returns a dict belonging to a
+    # thread copy it then discards, so correcting the timestamp afterwards would
+    # write nothing. Build the messages here with their real send times and save
+    # once, which is also the only version of this that is atomic.
+    thread = chat_store.get_thread(thread_id)
+    if thread is None:
+        raise HTTPException(404, "thread not found")
+    added = 0
+    for p in parts:
+        text = (p.text or "").strip()
+        if not text:
+            continue
+        thread["messages"].append({
+            "role": "user",
+            "content": text,
+            "ts": p.sent_at or chat_store._now_iso(),
+            "meta": {"queued": True},
+        })
+        added += 1
+    if not added:
+        chat_store.append_message(thread_id, "user", content)
+        return
+    chat_store.save_thread(thread)
 
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
@@ -1645,7 +1695,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if body.model is not None and model != t.get("model"):
         chat_store.set_thread_model(thread_id, model)
 
-    chat_store.append_message(thread_id, "user", content)
+    _record_user_turn(thread_id, content, body.parts)
 
     # ---- @mention: this message is addressed to an AGENT, not the assistant ----
     # The agent answers in the chat, attributed to it, and the ordinary assistant

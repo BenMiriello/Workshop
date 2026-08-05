@@ -498,7 +498,14 @@ def finalize_streaming_assistant(
         return None
     m = _find_by_turn(thread, turn_id)
     if m is None:
-        meta = {"segments": segments} if segments else {}
+        # No placeholder to update, so this message is born finished and `ts` is
+        # already the end. Set `ended_at` anyway: a consumer that has to ask
+        # "does this one have an end?" before reading it is a consumer that will
+        # eventually forget to, and the whole point of recording the interval is
+        # that every finalized assistant message answers when it finished.
+        meta: dict = {"ended_at": _now_iso()}
+        if segments:
+            meta["segments"] = segments
         if error:
             meta["error"] = True
         if timed_out:

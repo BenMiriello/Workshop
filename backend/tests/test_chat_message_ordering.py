@@ -128,3 +128,37 @@ class TestStoreOrdering:
         assert m["meta"]["ended_at"]
         assert m["meta"]["ended_at"] >= m["ts"]
         assert m["meta"]["streaming"] is False
+
+
+class TestQueuedPartsKeepTheirSendTimes:
+    """A queue that drains several messages into one turn used to store one blob
+    stamped at the instant it drained. The client had rendered them as separate
+    bubbles all along, so client and server disagreed after a reload — and the
+    model could not tell a burst typed in one minute from thoughts spread over an
+    afternoon."""
+
+    def test_queued_messages_are_reported_as_a_sequence(self):
+        msgs = [
+            {"role": "assistant", "content": "prev", "ts": "2026-08-05T05:00:00+00:00"},
+            {"role": "user", "content": "a", "ts": "2026-08-05T05:56:38+00:00",
+             "meta": {"queued": True}},
+            {"role": "user", "content": "b", "ts": "2026-08-05T05:58:02+00:00",
+             "meta": {"queued": True}},
+        ]
+        out = chat_context.arrival_notice(msgs)
+        assert "2 of the messages" in out
+        assert "05:56Z, 05:58Z" in out
+
+    def test_queued_and_injected_count_together(self):
+        """Both mean 'written before you had answered any of them'."""
+        msgs = [
+            {"role": "user", "content": "a", "ts": "2026-08-05T05:56:00+00:00",
+             "meta": {"during_turn": "t1"}},
+            {"role": "user", "content": "b", "ts": "2026-08-05T05:57:00+00:00",
+             "meta": {"queued": True}},
+        ]
+        assert "2 of the messages" in chat_context.arrival_notice(msgs)
+
+    def test_an_ordinary_single_message_says_nothing(self):
+        msgs = [{"role": "user", "content": "hi", "ts": "2026-08-05T05:00:00+00:00"}]
+        assert chat_context.arrival_notice(msgs) == ""

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { readQueue, writeQueue } from "../../lib/chatSelection";
+import { readQueue, writeQueue, type QueuedMessage } from "../../lib/chatSelection";
 import { splitFirstTurn } from "./turnBatching";
 
 // Type-ahead: messages sent while a turn is running.
@@ -42,8 +42,8 @@ import { splitFirstTurn } from "./turnBatching";
 //     a message sent after it. `insertAt` exists for the second case.
 
 export type MessageQueue = {
-  items: string[];
-  set: (next: string[]) => void;
+  items: QueuedMessage[];
+  set: (next: QueuedMessage[]) => void;
   // Append one message. This is what every caller actually does, and spelling it
   // out stops each of them reaching into the live ref to do it by hand.
   push: (text: string) => void;
@@ -89,11 +89,11 @@ export function useMessageQueue({
   // which is the reordering this whole hook exists to prevent.
   held: boolean;
   logBusyRef: React.MutableRefObject<boolean>;
-  send: (text: string) => void;
+  send: (text: string, parts?: QueuedMessage[]) => void;
   appendUserMessages: (texts: string[]) => void;
 }): MessageQueue {
-  const [items, setItems] = useState<string[]>([]);
-  const itemsRef = useRef<string[]>([]);
+  const [items, setItems] = useState<QueuedMessage[]>([]);
+  const itemsRef = useRef<QueuedMessage[]>([]);
   const blankKey = `scope:${scope}`;
   const keyRef = useRef<string>(blankKey);
 
@@ -107,25 +107,29 @@ export function useMessageQueue({
   const appendRef = useRef(appendUserMessages);
   appendRef.current = appendUserMessages;
 
-  const set = useCallback((next: string[]) => {
+  const set = useCallback((next: QueuedMessage[]) => {
     itemsRef.current = next;
     setItems(next);
     writeQueue(keyRef.current, next);
   }, []);
 
   const push = useCallback((text: string) => {
-    set([...itemsRef.current, text]);
+    // Stamped at the moment the operator hit enter, which is the only moment
+    // that can be observed later. Anything derived at dispatch time would record
+    // when the queue drained instead — the very confusion this is here to end.
+    set([...itemsRef.current, { text, sentAt: new Date().toISOString() }]);
   }, [set]);
 
   const insertAt = useCallback((index: number, text: string) => {
     const q = itemsRef.current;
     const i = Math.max(0, Math.min(index, q.length));
-    set([...q.slice(0, i), text, ...q.slice(i)]);
+    set([...q.slice(0, i), { text, sentAt: new Date().toISOString() }, ...q.slice(i)]);
   }, [set]);
 
   const drop = useCallback((text: string) => {
     const q = itemsRef.current;
-    const i = q.lastIndexOf(text);
+    let i = -1;
+    for (let k = q.length - 1; k >= 0; k--) if (q[k].text === text) { i = k; break; }
     if (i >= 0) set([...q.slice(0, i), ...q.slice(i + 1)]);
   }, [set]);
 
@@ -168,8 +172,11 @@ export function useMessageQueue({
     // (invariant 3) sends it when this turn ends.
     const [now, rest] = splitFirstTurn(q);
     set(rest);
-    appendRef.current(now);
-    sendRef.current(now.join("\n\n"));
+    appendRef.current(now.map((m) => m.text));
+    // The joined text is what the model reads; `now` carries the send times
+    // alongside it so the server can record each message at the moment it was
+    // actually typed, instead of collapsing a burst into one timestamp.
+    sendRef.current(now.map((m) => m.text).join("\n\n"), now);
   }, [set]);
 
   // Invariant 3: whenever there is something queued and no turn is running, send

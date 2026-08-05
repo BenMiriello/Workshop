@@ -47,7 +47,7 @@ export default function ChatLog({
   interjections: { at: number; text: string }[];
   workingLabel: string;
   elapsed: number;
-  queued: string[];
+  queued: { text: string; sentAt: string }[];
   // Progress on a queued message, keyed by its text so it stays under the entry
   // it belongs to as other messages queue up behind it.
   queuedStatus: { for: string; status: MsgStatus } | null;
@@ -102,9 +102,9 @@ export default function ChatLog({
       {queued.map((q, i) => (
         <div key={`q${i}`} className="chat-msg user">
           <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">
-            {q}
+            {q.text}
           </div>
-          {queuedStatus?.for === q && <StatusNote status={queuedStatus.status} />}
+          {queuedStatus?.for === q.text && <StatusNote status={queuedStatus.status} />}
         </div>
       ))}
 
