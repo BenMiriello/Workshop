@@ -70,6 +70,9 @@ type AgentDetailData = UnifiedAgent & {
     ever_ran: boolean;
     last_active?: string | null;
   };
+  // What the role permits, derived server-side from the write set so the page
+  // cannot describe a grant the run does not have.
+  authority?: { writes: string[]; describes: string; tools: string[] };
 };
 
 // A Phase-4 resource-scoped grant minted TO this agent (over a Store).
@@ -761,6 +764,21 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                   {agent.role === "broker" && "Mediates cross-store access; never reads the data it adjudicates."}
                 </span>
               </Row>
+              {/* What the role actually permits. Derived server-side from the
+                  write set, so the page cannot promise a grant the run does not
+                  have. Worded as the declaration it is: this is coordination,
+                  and it is not called a security boundary, because the autonomy
+                  loop still shares a uid with everything else (SEC-A1). */}
+              {agent.authority && (
+                <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline", marginTop: "var(--space-2)" }}>
+                  <span style={{ fontSize: "var(--fs-sm)" }}>{agent.authority.describes}</span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    {agent.authority.tools.length
+                      ? <>Tools: <code className="ws-mono">{agent.authority.tools.join(" ")}</code></>
+                      : "No tools: it cannot read or write anything directly."}
+                  </span>
+                </Row>
+              )}
             </Card>
           </section>
         )}

@@ -141,6 +141,16 @@ def _agent_scope_dir(slug: str) -> Path:
     return d
 
 
+def strip_task_patch(reply: str) -> str:
+    """Remove a task-patch block WITHOUT applying it.
+
+    For a speaker that is not permitted to file: the block must not be applied,
+    and it must not be left in the visible reply either, where it would render
+    as raw JSON and read as a ticket that was created. Refusing and cleaning are
+    the same act."""
+    return _PATCH_BLOCK.sub("", reply).strip()
+
+
 def apply_task_patch(context_key: str | None, reply: str,
                      thread_id: str | None = None,
                      chat_mode: str | None = None) -> tuple[str, list[str]]:

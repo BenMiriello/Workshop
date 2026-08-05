@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
 from services import build_agents, dev_servers, jobs, agents_registry, triggers
+from services import agent_authority
 
 router = APIRouter()
 
@@ -847,6 +848,13 @@ async def get_agent(agent_id: str):
         "linked_run_ids": linked_run_ids[:50],
         "linked_chat_ids": linked_chat_ids[:50],
         "activation": _activation_chain(rec),
+        # What this role may write, and the tools that follow from it. Rendered
+        # on the page so the contract is legible without reading the table.
+        "authority": {
+            "writes": sorted(agent_authority.writes_for_role(rec.get("role"))),
+            "describes": agent_authority.describe(rec.get("role")),
+            "tools": agent_authority.narrow_tools(rec.get("role"), rec.get("tools")),
+        },
     }
 
 

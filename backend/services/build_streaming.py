@@ -775,20 +775,51 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             ctx_key = (thread or {}).get("context_key")
             new_text = text
             applied_notes: list[str] = []
+            # Whose reply is this, and what may that speaker write?
+            #
+            # These protocol blocks are mediated writes: a reply containing a
+            # task-patch files a ticket, a note block writes the knowledge
+            # store. When an AGENT is speaking they are the agent's writes, and
+            # a role that does not write tickets must not be able to file one by
+            # emitting a fenced block. The chat's own assistant is not an agent
+            # and is unaffected — it acts for the operator, who is present.
+            _speaker = meta.get("speaker")
+            _role, _is_agent = None, False
+            if _speaker:
+                try:
+                    from services import agents_registry as _ar
+                    _rec = _ar.get(_speaker)
+                    if _rec:
+                        _is_agent, _role = True, _rec.get("role")
+                except Exception:
+                    pass
+
+            def _permitted(target: str) -> bool:
+                if not _is_agent:
+                    return True
+                from services import agent_authority
+                return agent_authority.may_write(_role, target)
             if type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
                 new_text, pnotes = provider.apply_actions(new_text)
                 applied_notes += (pnotes or [])
             # O2: apply a task-patch block against this chat's task scope.
             from services import task_scope
-            new_text, tnotes = task_scope.apply_task_patch(ctx_key, new_text, (thread or {}).get("id"), (thread or {}).get("mode"))
-            applied_notes += tnotes
+            if _permitted("tasks"):
+                new_text, tnotes = task_scope.apply_task_patch(
+                    ctx_key, new_text, (thread or {}).get("id"), (thread or {}).get("mode"))
+                applied_notes += tnotes
+            else:
+                new_text = task_scope.strip_task_patch(new_text)
+                applied_notes.append(f"(a {_role or 'roleless'} agent may not file tickets)")
             # Phase 4: capture an explicit operator preference/correction emitted
             # as a ``learning-note`` block into the learnings store.
-            new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
-            applied_notes += lnotes
+            if _permitted("learnings"):
+                new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
+                applied_notes += lnotes
             # Phase N3: capture a durable scoped ``note`` into the knowledge store.
-            new_text, nnotes = await task_scope.apply_note_block(ctx_key, new_text)
-            applied_notes += nnotes
+            if _permitted("notes"):
+                new_text, nnotes = await task_scope.apply_note_block(ctx_key, new_text)
+                applied_notes += nnotes
             if new_text != text or applied_notes:
                 text = new_text or "(done)"
                 notes = applied_notes or None

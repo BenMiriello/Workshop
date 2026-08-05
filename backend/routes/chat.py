@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from services import chat_store, chat_context
 from services import task_scope
 from services import scope_version
+from services import agent_authority
 from services import ticket_drafts
 from services import knowledge
 from services import skills
@@ -1506,7 +1507,16 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     # Decided ONCE, here, and then both used and described. The self-preamble is
     # built from this same value, so what the agent is told about its tools is
     # the value that was enforced rather than a parallel sentence about it.
-    tools_active = role == "maker"
+    #
+    # Derived from the role's WRITE SET rather than from `role == "maker"`. That
+    # test was the only thing `role` changed anywhere in the codebase, which made
+    # reviewer, triager, keeper and broker identical to each other and to no role
+    # at all — every one of them tools-off, whatever their contract said. A
+    # keeper's tools now follow from the fact that it writes notes, a maker's
+    # from the fact that it writes the tree, and a broker gets reads only.
+    # An explicit `tools:` on the definition may narrow this, never widen it.
+    agent_tools = agent_authority.narrow_tools(role, rec.get("tools"))
+    tools_active = bool(agent_tools)
 
     # This agent's session IN THIS THREAD. Every mention used to spawn with no
     # session, so an agent rebuilt its preamble, definition and knowledge layers
@@ -1532,7 +1542,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         turn = await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=slug, prompt="\n\n".join(resumed), model=model,
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
-            allowed_tools=None if tools_active else [],
+            allowed_tools=agent_tools,
             mcp_servers=[], tools_disabled=not tools_active,
             speaker=slug,
         )
@@ -1581,7 +1591,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     turn = await build_streaming.start_turn(
         thread_id=thread_id, agent_slug=slug, prompt=prompt, model=model,
         cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
-        allowed_tools=None if tools_active else [],
+        allowed_tools=agent_tools,
         mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug,
     )
