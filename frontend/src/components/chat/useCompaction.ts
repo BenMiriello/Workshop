@@ -111,16 +111,16 @@ export function useCompaction({
     setErr(null);
     setCompacting(true);
 
-    // The request goes into the log NOW, at the moment it was made, carrying its
-    // own progress. `ts` identifies it so the no-op paths can take this exact
-    // bubble back out again.
+    // The request goes into the log NOW, at the moment it was made — not when
+    // the server answers. `ts` identifies it so the no-op paths can take this
+    // exact bubble back out again.
     const requestTs = new Date().toISOString();
     const isRequest = (m: ChatMsg) => m.ts === requestTs && m.content === "/compact";
     const dropRequestBubble = () => setMessages((m) => m.filter((x) => !isRequest(x)));
 
-    // Where in the queue this request belongs, captured NOW. Everything typed
-    // while the fold is in flight goes behind this index, so the command keeps
-    // the position the operator gave it even though it is handed over late.
+    // Where in the queue this request belongs, captured NOW rather than when the
+    // round trip returns. Anything typed in between goes behind this index, so
+    // the command keeps the position the operator gave it.
     const queuePos = queue.length;
 
     // Queue the live-session half UP FRONT when a turn is already running, so the
