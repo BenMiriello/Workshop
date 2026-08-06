@@ -21,6 +21,7 @@ import {
   deriveMode, buildSlug, projectSlugFor, taskScopeFor, composerPlaceholder,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
+import type { ChatModeId } from "./chat/chatModes";
 import { MODEL_LABELS } from "./chat/models";
 import { useMessageQueue, type MessageQueue } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
@@ -355,11 +356,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   }, [contextKey]);
 
   // How this chat handles work: Direct (stays here, native subagents) or
-  // Orchestrated (leaves as tickets). Server state, mirrored locally so the
-  // control responds immediately; the server re-states the mode to the model on
-  // every turn, so switching mid-conversation takes effect on the next one.
-  const [chatMode, setChatMode] = useState<string>("orchestrated");
-  const chooseChatMode = useCallback((next: "direct" | "orchestrated") => {
+  // Tickets (leaves as tickets). Server state, mirrored locally so the control
+  // responds immediately; the server re-states the mode to the model on every
+  // turn, so switching mid-conversation takes effect on the next one.
+  //
+  // The seed matches services/chat_store.DEFAULT_CHAT_MODE. It is only what the
+  // control shows for the instant before the thread loads and replaces it, but a
+  // seed that disagrees with the server makes the control flicker to the other
+  // mode on open, which reads as the setting not having stuck.
+  const [chatMode, setChatMode] = useState<ChatModeId>("direct");
+  const chooseChatMode = useCallback((next: ChatModeId) => {
     const id = activeIdRef.current;
     if (!id) return;
     const prev = chatMode;
@@ -485,7 +491,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setCompactedThrough(Number(t.compacted_through) || 0);
       setCardStates(t.card_states ?? {});
       // Server state: the mode belongs to the thread, not to this tab.
-      setChatMode(t.mode || "orchestrated");
+      setChatMode(t.mode || "direct");
       const msgs = t.messages || [];
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {

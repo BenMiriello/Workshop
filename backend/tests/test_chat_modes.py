@@ -31,12 +31,26 @@ class TestModeStatement:
         assert "ORCHESTRATED" in out
         assert "Ticket is the record" in out
 
-    def test_unset_defaults_to_orchestrated(self):
-        """Existing chats have no mode field and must keep working as they did."""
-        assert "ORCHESTRATED" in chat_context.chat_mode_block(None)
+    def test_unset_defaults_to_direct(self):
+        """DIRECT IS THE DEFAULT (2026-08-05, operator's call). Orchestrated was,
+        which made every passing remark a candidate for a ticket. Work that
+        outlives the chat is the exception and should be the thing you ask for.
 
-    def test_junk_defaults_to_orchestrated(self):
-        assert "ORCHESTRATED" in chat_context.chat_mode_block("nonsense")
+        A chat with no stored mode follows the default rather than being pinned
+        to whatever it was created under — otherwise changing the default would
+        only reach chats that do not exist yet."""
+        assert "DIRECT" in chat_context.chat_mode_block(None)
+
+    def test_junk_defaults_to_direct(self):
+        assert "DIRECT" in chat_context.chat_mode_block("nonsense")
+
+    def test_the_default_is_defined_once(self):
+        """It used to be declared in both chat_store and chat_context, which is
+        how a default ends up disagreeing with itself."""
+        from services import chat_store
+        assert chat_context.DEFAULT_CHAT_MODE is chat_store.DEFAULT_CHAT_MODE
+        assert chat_store._clamp_mode(None) == "direct"
+        assert chat_store._clamp_mode("orchestrated") == "orchestrated"
 
 
 class TestFilingGuard:

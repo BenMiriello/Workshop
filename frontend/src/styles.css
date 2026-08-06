@@ -572,6 +572,12 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-tb__picker.is-static:hover { background: transparent; }
 .chat-tb__picker-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-tb__picker-caret { flex: 0 0 auto; color: var(--muted); }
+/* A label that a narrow toolbar drops. Only for triggers whose icon already
+   names the value — the word still appears in the menu, where you are choosing
+   and actually need to read it. */
+@media (max-width: 640px) {
+  .chat-tb__picker-val--wide { display: none; }
+}
 /* Where you are. A label, not a control — the conversation is switched from
    the chat list, not from inside the conversation. */
 .chat-tb__title {

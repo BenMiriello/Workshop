@@ -9,6 +9,7 @@ import {
   type ChatMode, type ChatVariant, type ScopeKind,
 } from "./chatScope";
 import type { ChatDrawer } from "./drawers";
+import { CHAT_MODES, chatModeDef, type ChatModeId } from "./chatModes";
 
 // One icon per scope KIND, not per scope: the icon says what kind of place a
 // row is, and the name says which one. Sixteen project rows all carrying the
@@ -68,10 +69,10 @@ export default function ChatToolbar({
   providers: Provider[];
   activeProvider: string;
   onChooseProvider: (key: string) => void;
-  // Direct | Orchestrated. Absent handler hides the control (a chat with no
-  // thread yet has nothing to set it on).
+  // A ChatModeId (see chatModes). Absent handler hides the control — a chat
+  // with no thread yet has nothing to set it on.
   chatMode?: string;
-  onChooseChatMode?: (mode: "direct" | "orchestrated") => void;
+  onChooseChatMode?: (mode: ChatModeId) => void;
   drawer: ChatDrawer;
   onSetDrawer: (next: (d: ChatDrawer) => ChatDrawer) => void;
   inboxCount: number;
@@ -146,39 +147,40 @@ export default function ChatToolbar({
 
       {/* How this chat handles work. It belongs beside the scope picker for the
           same reason the scope picker belongs here: it changes the whole
-          surface, not one turn. Direct keeps work in the conversation (native
-          subagents, transcript is the record); Orchestrated sends it out as
-          tickets. Commits on change — cheap, reversible, and re-stated to the
-          model every turn so a switch takes effect mid-conversation. */}
+          surface, not one turn. Commits on change — cheap, reversible, and
+          re-stated to the model every turn so a switch takes effect
+          mid-conversation. Labels and icons come from chatModes, so the trigger
+          and the menu cannot describe the same mode differently.
+
+          On a narrow viewport the trigger keeps the ICON and drops the word: the
+          toolbar has more controls than a phone has room for, and an icon that
+          names its mode carries it. The word is always present where you are
+          choosing — in the menu — which is where you need to read it. */}
       {activeId && onChooseChatMode && (
         <Menu
           label="How work is handled"
           align="start"
           trigger={
             <button className="chat-tb__picker" title="How this chat handles work">
-              <span className="chat-tb__picker-val">
-                {chatMode === "direct" ? "Direct" : "Orchestrated"}
+              {(() => { const { Icon } = chatModeDef(chatMode); return <Icon size={14} aria-hidden />; })()}
+              <span className="chat-tb__picker-val chat-tb__picker-val--wide">
+                {chatModeDef(chatMode).label}
               </span>
               <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
             </button>
           }
         >
-          <MenuItem
-            icon={<MessagesSquare size={14} aria-hidden />}
-            checked={chatMode === "direct"}
-            hint="stays in this chat"
-            onSelect={() => onChooseChatMode("direct")}
-          >
-            Direct
-          </MenuItem>
-          <MenuItem
-            icon={<ListTodo size={14} aria-hidden />}
-            checked={chatMode !== "direct"}
-            hint="becomes tickets"
-            onSelect={() => onChooseChatMode("orchestrated")}
-          >
-            Orchestrated
-          </MenuItem>
+          {CHAT_MODES.map(({ id, label, hint, Icon }) => (
+            <MenuItem
+              key={id}
+              icon={<Icon size={14} aria-hidden />}
+              checked={chatModeDef(chatMode).id === id}
+              hint={hint}
+              onSelect={() => onChooseChatMode(id)}
+            >
+              {label}
+            </MenuItem>
+          ))}
         </Menu>
       )}
 
