@@ -46,6 +46,10 @@ The `mobile/` app mirrors the same hierarchy and tokens via `src/styles/tokens.j
 
 Run `bash scripts/check_design.sh` (from repo root) — it flags raw hex, emoji, and `not-allowed` cursors in `.tsx`, and confirms the foundation imports are intact. It is part of the completion gate; a UI change that fails it is **not** done. Also run `cd frontend && npx tsc --noEmit`.
 
+**Tests: `cd frontend && npm test`** (vitest, `*.test.ts` beside the module). There is no DOM/render harness and none is planned — the target is the PURE RULE behind a behaviour, extracted into its own module so it can be executed. `turnBatching` (when a queue becomes a turn) and `transcriptPlan` (where a message sent mid-reply is shown) are the pattern: three chat-ordering regressions in a row lived in logic the backend suite could not see, because the store was right and the renderer moved the words afterwards. When you fix an ordering/sequencing bug, extract the rule and pin it — do not fix it inline in a component.
+
+Note: `scripts/reviewer.sh` runs typecheck + design only; it does not run tests (backend or frontend). Run them yourself.
+
 ## App navigation (one header per app, one source of sections)
 
 Every multi-page app under `pages/apps/<app>` MUST navigate through a single shared

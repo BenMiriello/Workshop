@@ -1,15 +1,26 @@
 import { Fragment } from "react";
 import { AlertTriangle, Bot, Clock, FoldVertical } from "lucide-react";
 import { Button } from "../../ui";
-import type { ChatMsg } from "../../lib/chat";
+import type { ChatMsg, ChatSegment } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import StatusNote from "./StatusNote";
 import { modelDisplay } from "./models";
+import { planTranscript, latestAssistantRow } from "./transcriptPlan";
 
 // The persisted transcript.
 //
-// Three annotations here exist because their absence was itself a bug:
+// IT RENDERS THE SAME SHAPE THE LIVE TURN DID. A message sent while a reply was
+// being written is stored AFTER that reply (causally true) with `at_segment`
+// recording where it landed. This list used to ignore that and render the stored
+// order flat, so the moment a turn ended the operator's message jumped from the
+// middle of the reply to below all of it — and the reply's answer to it ended up
+// above it. That reads as "you never saw my message", and on 2026-08-06 it read
+// that way to the operator, who re-sent a message that had already been acted
+// on. The rule for where it goes lives in transcriptPlan and is now used by both
+// views.
+//
+// Four annotations here exist because their absence was itself a bug:
 //
 //  - THE FOLD MARKER. Compaction never drops raw messages, so without a divider
 //    a compacted thread looks identical to an uncompacted one and the operator
@@ -24,11 +35,15 @@ import { modelDisplay } from "./models";
 //  - THE STATUS LINE. Progress on work a message set off belongs under that
 //    message, not in a bar above the log — see StatusNote.
 
-function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx) {
+function renderAssistantBody(
+  m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx,
+  segmentsOverride?: ChatSegment[],
+) {
   if (m.meta?.error) return m.content;
   const model = m.meta?.model ?? fallbackModel;
-  if (m.meta?.segments && m.meta.segments.length) {
-    return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx} />;
+  const segments = segmentsOverride ?? m.meta?.segments;
+  if (segments && segments.length) {
+    return <AssistantTurn segments={segments} isLatest={isLatest} model={model} cardCtx={cardCtx} />;
   }
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
@@ -47,61 +62,76 @@ export default function MessageList({
   onRetryUnsent: (index: number, text: string) => void;
 }) {
   const threadCfg = modelDisplay(selectedModel);
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") { lastAssistantIdx = i; break; }
-  }
+  const rows = planTranscript(messages);
+  const latestRow = latestAssistantRow(rows);
+  // The fold counts MESSAGES, so it is drawn before the first row belonging to
+  // that message — a split reply must not draw it once per slice.
+  let foldDrawn = false;
 
   return (
     <>
-      {messages.map((m, i) => (
-        <Fragment key={i}>
-          {compactedThrough > 0 && i === compactedThrough && (
-            <div className="chat-fold" role="separator">
-              <FoldVertical size={14} strokeWidth={1.8} aria-hidden />
-              <span>
-                {compactedThrough} earlier {compactedThrough === 1 ? "message" : "messages"} folded
-                into the running summary
-              </span>
+      {rows.map((row, r) => {
+        const m = row.msg;
+        const slice = row.kind === "slice" ? row : null;
+        // A split reply carries its whole-reply annotations on its first slice
+        // and its trailing ones (notes, status) on its last, so neither is
+        // repeated at every cut.
+        const isHead = !slice || slice.head;
+        const isTail = !slice || slice.tail;
+        const drawFold = compactedThrough > 0 && row.index === compactedThrough && !foldDrawn;
+        if (drawFold) foldDrawn = true;
+
+        return (
+          <Fragment key={`${row.index}:${r}`}>
+            {drawFold && (
+              <div className="chat-fold" role="separator">
+                <FoldVertical size={14} strokeWidth={1.8} aria-hidden />
+                <span>
+                  {compactedThrough} earlier {compactedThrough === 1 ? "message" : "messages"} folded
+                  into the running summary
+                </span>
+              </div>
+            )}
+            <div className={`chat-msg ${m.role}`}>
+              <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
+                {m.role === "assistant" ? (
+                  <>
+                    {isHead && m.meta?.agent && (
+                      <div className="chat-byline">
+                        <Bot size={13} strokeWidth={1.8} aria-hidden />
+                        <span>{m.meta.agent}</span>
+                      </div>
+                    )}
+                    {isHead && m.meta?.timeout && (
+                      <div className="chat-timeout-tag">
+                        <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
+                      </div>
+                    )}
+                    {renderAssistantBody(
+                      m, expandLatest && r === latestRow, selectedModel, cardCtx, slice?.segments,
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+                    {m.meta?.unsent && (
+                      <div className="chat-unsent">
+                        <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
+                        <span>Not sent, this message never reached the server.</span>
+                        <Button size="sm" variant="ghost" onClick={() => onRetryUnsent(row.index, m.content)}>Retry</Button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              {isTail && m.meta?.notes?.map((n, j) => (
+                <div key={j} className="chat-note">{n}</div>
+              ))}
+              {isTail && m.meta?.status && <StatusNote status={m.meta.status} />}
             </div>
-          )}
-          <div className={`chat-msg ${m.role}`}>
-            <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
-              {m.role === "assistant" ? (
-                <>
-                  {m.meta?.agent && (
-                    <div className="chat-byline">
-                      <Bot size={13} strokeWidth={1.8} aria-hidden />
-                      <span>{m.meta.agent}</span>
-                    </div>
-                  )}
-                  {m.meta?.timeout && (
-                    <div className="chat-timeout-tag">
-                      <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
-                    </div>
-                  )}
-                  {renderAssistantBody(m, expandLatest && i === lastAssistantIdx, selectedModel, cardCtx)}
-                </>
-              ) : (
-                <>
-                  <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
-                  {m.meta?.unsent && (
-                    <div className="chat-unsent">
-                      <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
-                      <span>Not sent, this message never reached the server.</span>
-                      <Button size="sm" variant="ghost" onClick={() => onRetryUnsent(i, m.content)}>Retry</Button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            {m.meta?.notes?.map((n, j) => (
-              <div key={j} className="chat-note">{n}</div>
-            ))}
-            {m.meta?.status && <StatusNote status={m.meta.status} />}
-          </div>
-        </Fragment>
-      ))}
+          </Fragment>
+        );
+      })}
     </>
   );
 }

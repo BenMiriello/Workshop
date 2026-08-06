@@ -250,6 +250,37 @@ The same measurement re-confirms §2a from the other side: the message is read a
 18s and still not addressed until the plan ends at 44s. Read is not acted on, and
 the UI says "Read by the turn", not "answered".
 
+## 3.10 The renderer must not move a message once the turn ends
+
+§3.2 above says `at_segment` "is what lets the renderer keep showing it inline at
+the point it landed... One truth, two views". **Only the live view was built.**
+`MessageList` ignored `at_segment` and rendered the stored order flat, so the
+instant a turn finished and the log reloaded from the server, a mid-turn message
+jumped from the middle of the reply to below all of it — and the paragraph
+answering it ended up ABOVE it.
+
+Cost, 2026-08-06, from the store and the request log:
+
+```
+#43 assistant turn=9e169b9d  [the whole reply, including its answer to #44]
+#44 user      at_segment=4   "and remove that description text too..."
+#45 user                     "and remove that description text too..."   (re-sent)
+```
+
+One `/inject` at 06:05:01, no second one — so #45 was the operator re-typing a
+message that had already been delivered, acted on and acknowledged mid-turn.
+They then asked: *"why when i said that message the first time did you not act
+or respond?"* The renderer had moved their words below the answer.
+
+The split now lives in `frontend/src/components/chat/transcriptPlan.ts` and BOTH
+views call it (`LiveTurn` uses the same `cutPoints`), so a message cannot change
+position when its turn finishes. Pinned by 20 tests, including the transcript
+above.
+
+This is also why the frontend now has a test runner at all. Three
+ordering regressions in a row lived in logic the 338-test backend suite could not
+see: the store was right each time and the renderer moved the words afterwards.
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
@@ -271,6 +302,12 @@ the UI says "Read by the turn", not "answered".
 | 3.7 | a thread never loses a message (`LostUpdate`, `update_thread`) | race reproduced, then tests |
 | 3.8 | /compact returns in ms; the fold runs detached | timing test (<0.2s vs a 0.4s summarizer) |
 | 3.9 | `--replay-user-messages` receipt | live CLI probe + tests |
+| 3.10 | the finished log shows a mid-turn message where it landed | 20 frontend tests (vitest, new) |
+
+A FOURTH round found §3.10: the design in §3.2 was written, half-implemented, and
+its unimplemented half was described in this document as though it were done.
+Writing "one truth, two views" did not build the second view. Check the renderer,
+not only the store — and prefer a test over a paragraph.
 
 A third round found the defect the first two could not: the ordering work
 described messages that survived, and the ones being erased were invisible to it.

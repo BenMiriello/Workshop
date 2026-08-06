@@ -20,6 +20,6 @@ The earlier v1 design set at [`docs/workshop-v1/`](docs/workshop-v1/) and the 20
 
 **Every change under `frontend/` and `mobile/` MUST follow [`frontend/CLAUDE.md`](frontend/CLAUDE.md)** — the Workshop Design System. In short: build from the `src/ui` primitives + `src/styles/tokens.css`; no inline hex colors; lucide icons only (never emoji); five status kinds; Edit-mode for config/money writes; `ConfirmDialog` for destructive actions; all four list states (loading/empty/error/overflow). Default theme is dark.
 
-Before claiming a UI task done: `bash scripts/check_design.sh` and `cd frontend && npx tsc --noEmit`. The reviewer gate fails on `design_violations` (new inline hex / emoji / `not-allowed` in changed `.tsx`).
+Before claiming a UI task done: `bash scripts/check_design.sh`, `cd frontend && npx tsc --noEmit`, and `cd frontend && npm test` (vitest; pure logic modules only — no DOM harness). The reviewer gate fails on `design_violations` (new inline hex / emoji / `not-allowed` in changed `.tsx`).
 
 Design new screens to the system from the start — there is no "systematize it later" pass.

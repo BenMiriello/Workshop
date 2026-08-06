@@ -4,6 +4,7 @@ import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn } from "./Transcript";
 import WorkingIndicator from "./WorkingIndicator";
 import StatusNote from "./StatusNote";
+import { cutPoints } from "./transcriptPlan";
 
 // The turn currently streaming, cut at every point the operator interjected.
 //
@@ -30,7 +31,9 @@ export default function LiveTurn({
   model: string;
   cardCtx: UiCardCtx;
 }) {
-  const cuts = interjections.map((x) => Math.min(x.at, segments.length));
+  // Same rule the persisted list uses (transcriptPlan.cutPoints), so a message
+  // does not move the instant this turn finishes and the log reloads.
+  const cuts = cutPoints(interjections.map((x) => x.at), segments.length);
   const bounds = [0, ...cuts, segments.length];
   const blocks: ReactNode[] = [];
 

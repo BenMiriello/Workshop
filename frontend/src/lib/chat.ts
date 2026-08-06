@@ -36,9 +36,22 @@ export type ChatMsg = {
     // disappearing" bug.
     unsent?: boolean;
     // Sent while a turn was already running, and handed to that turn rather
-    // than queued behind it — so it reached the agent at the next boundary
-    // between its actions.
+    // than queued behind it.
     injected?: boolean;
+    // Which turn was running when this message arrived, and how much of that
+    // reply had streamed at the time. The store files a mid-turn message AFTER
+    // the reply (causally true — the reply had not seen it) and keeps these so
+    // the transcript can still SHOW it where it landed. See transcriptPlan:
+    // without them the finished log moves the message below the whole reply,
+    // which reads as the message never having been seen.
+    during_turn?: string;
+    at_segment?: number;
+    // Typed while a turn was running and sent as part of the NEXT turn, keeping
+    // the time it was typed rather than the time the queue drained.
+    queued?: boolean;
+    // When the turn that produced this reply finished. `ts` is when it began; a
+    // long turn without this claims to have happened at the instant it opened.
+    ended_at?: string;
     // A transient line UNDER this message reporting on something the message
     // itself set off and that is still going (today: /compact's server-side
     // fold). Client-only and never persisted: it describes right now, so a
