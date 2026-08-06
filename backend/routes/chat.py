@@ -783,6 +783,12 @@ def _distill_sync(to_fold: list[dict]) -> list[str]:
 # that nothing else references.
 _DISTILL_TASKS: set = set()
 
+# Thread ids with a fold in its summarization call right now. See _compact_thread.
+_FOLDING: set[str] = set()
+
+# Background folds, held for the same reason as _DISTILL_TASKS.
+_FOLD_TASKS: set = set()
+
 
 def _schedule_distill(to_fold: list[dict], scope_key: str) -> None:
     """Run distillation OUT of band.
@@ -861,22 +867,47 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
             return summary, tail, 0
         fold_n = len(tail) // 2
     to_fold, keep = tail[:fold_n], tail[fold_n:]
+    tid = thread.get("id") or ""
+    if tid in _FOLDING:
+        # Another fold is already in the summarization call for this thread. Both
+        # would compute the same `ct` and write the same range, so the second
+        # would fold already-folded turns into a summary built without the
+        # first's — losing the difference. One at a time; the loser is a no-op.
+        return summary, tail, 0
+    _FOLDING.add(tid)
     try:
         new_summary = await asyncio.to_thread(_summarize_sync, summary, to_fold)
     except Exception as e:
         log.warning("chat compaction failed for %s: %s", thread.get("id"), e)
         return summary, tail, 0
+    finally:
+        _FOLDING.discard(tid)
     if not new_summary:
         return summary, tail, 0
-    thread["summary"] = new_summary
-    thread["compacted_through"] = ct + fold_n
+
+    # Write the FIELDS THIS FOLD OWNS, onto the thread as it is NOW — never the
+    # snapshot above. That snapshot was read before a summarization call lasting
+    # tens of seconds, and saving it back deleted every message the operator sent
+    # during the fold. (Measured: 11 messages in, 10 on disk, the missing one
+    # theirs. `chat_store._write` now refuses such a write outright.)
+    #
+    # `compacted_through` survives the switch because it counts from the FRONT of
+    # the transcript and appends land at the BACK: the messages this fold covers
+    # are at the same indices no matter how many arrived meanwhile.
+    fields: dict[str, object] = {"summary": new_summary, "compacted_through": ct + fold_n}
     if force:
         # The stored measured value is the pre-fold context size; leaving it
         # would pin the composer meter at its old reading and make /compact look
         # like it did nothing. Drop it so the meter re-estimates from the newly
         # compacted prompt on the next read.
+        fields["context_tokens"] = None
+    chat_store.update_thread(tid, **fields)
+    # Keep the caller's in-memory copy consistent with what was just persisted;
+    # it is building this turn's prompt out of it.
+    thread["summary"] = new_summary
+    thread["compacted_through"] = ct + fold_n
+    if force:
         thread.pop("context_tokens", None)
-    chat_store.save_thread(thread)
     # Scheduled, not awaited: the fold is what the caller asked for and is now
     # saved. See `_schedule_distill`.
     _schedule_distill(to_fold, scope_key)
@@ -906,20 +937,43 @@ async def compact_thread(thread_id: str):
          moved so the client can render a marker rather than a silent no-op.
 
     `live_session` tells the client whether (1) is worth doing — a chat that has
-    not started a session yet has no live window to reclaim."""
+    not started a session yet has no live window to reclaim.
+
+    RETURNS IMMEDIATELY. This used to await the fold, which meant a summarization
+    call — tens of seconds — stood between the operator pressing enter and the
+    visible compaction starting. Their words: "it shows a weird message saying
+    compacting... and then 30s later it starts ACTUALLY compacting." Nothing in
+    (1) depends on (2): the live session's window is reclaimed by the CLI, and
+    the stored fold is housekeeping on a file. Serializing them bought nothing
+    and cost the entire delay.
+
+    So the parts the client actually needs are computed here — how many turns
+    WILL fold (pure arithmetic) and whether there is a live session — and the
+    summarization runs detached. The client starts the visible half at once."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    before = len(t.get("messages", [])) - int(t.get("compacted_through", 0) or 0)
-    summary, tail, folded = await _compact_thread(
-        t, provider.knowledge_scope(), force=True)
+    msgs = t.get("messages", [])
+    ct = int(t.get("compacted_through", 0) or 0)
+    if ct < 0 or ct > len(msgs):
+        ct = 0
+    tail = msgs[ct:]
+    # Same rule _compact_thread(force=True) applies, stated once here so the
+    # client can be told the outcome without waiting for the model call.
+    will_fold = max(0, len(tail) - _COMPACT_KEEP_TAIL)
+
+    if will_fold:
+        task = asyncio.get_running_loop().create_task(
+            _compact_thread(t, provider.knowledge_scope(), force=True))
+        _FOLD_TASKS.add(task)
+        task.add_done_callback(_FOLD_TASKS.discard)
+
     return {
-        "folded": folded,
-        "kept": len(tail),
-        "before": before,
-        "summary": summary,
-        "compacted_through": int(t.get("compacted_through", 0) or 0),
+        "will_fold": will_fold,
+        "kept": min(len(tail), _COMPACT_KEEP_TAIL),
+        "before": len(tail),
+        "compacted_through": ct,
         "live_session": _has_live_session(t, provider),
     }
 

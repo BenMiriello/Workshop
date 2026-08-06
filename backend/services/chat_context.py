@@ -508,8 +508,10 @@ def _detect_stack(dir_path) -> tuple[list[str], bool]:
     return labels, (not has_source)
 
 
-CHAT_MODES = ("direct", "orchestrated")
-DEFAULT_CHAT_MODE = "orchestrated"
+# One definition, in the module that owns the persisted field. Re-declaring them
+# here is how the default came to be stated in two places, and a default stated
+# twice is a default that can disagree with itself.
+from services.chat_store import CHAT_MODES, DEFAULT_CHAT_MODE  # noqa: E402,F401
 
 
 def chat_mode_block(mode: str | None) -> str:
@@ -532,7 +534,11 @@ def chat_mode_block(mode: str | None) -> str:
     overriding them in the direction that removes capability (direct) rather
     than adding it.
     """
-    if (mode or DEFAULT_CHAT_MODE) == "direct":
+    # Clamp rather than test for "direct": an unrecognised value is not a third
+    # mode, and letting it fall through here meant junk silently selected
+    # Orchestrated no matter which mode was the default.
+    from services.chat_store import _clamp_mode
+    if _clamp_mode(mode) == "direct":
         return (
             "=== CHAT MODE: DIRECT ===\n"
             "Work stays in this conversation. Do NOT file tickets, do NOT emit a "

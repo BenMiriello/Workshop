@@ -197,8 +197,11 @@ export const chatApi = {
   // own /compact can reclaim; the caller sends that as a turn.
   compactThread: (id: string) =>
     fetch(`/api/chat/threads/${id}/compact`, { method: "POST" }).then(
+      // Returns in milliseconds: `will_fold` is arithmetic, not the result of
+      // the summarization call, which now runs detached server-side. Waiting for
+      // it is what put ~30s between pressing enter and anything happening.
       j<{
-        folded: number; kept: number; before: number; summary: string;
+        will_fold: number; kept: number; before: number;
         compacted_through: number; live_session: boolean;
       }>,
     ),

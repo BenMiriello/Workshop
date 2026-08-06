@@ -37,9 +37,18 @@ import type { MessageQueue } from "./useMessageQueue";
 // reached for — which is exactly when context is under pressure. Only the
 // live-session half has to wait, and it queues rather than being dropped.
 //
-// ORDER IS THE CONTRACT. A /compact takes ~30s to fold server-side before its
-// live half can even be sent, and three separate things used to let a message
-// typed during that window overtake it:
+// THERE IS NO LONGER A GAP TO FALL INTO. The two halves used to be SERIALIZED:
+// the client awaited the server fold — a summarization call, tens of seconds —
+// and only then sent the live half. That is precisely what the operator kept
+// reporting: "it shows a message saying compacting... and then 30s later it
+// starts ACTUALLY compacting." Nothing in the live half depended on the stored
+// one, so the wait bought nothing and cost the whole delay. The endpoint now
+// answers immediately with the two facts this hook needs (is there a live
+// session, how many turns will fold) and summarizes detached.
+//
+// ORDER IS STILL THE CONTRACT, because a turn can already be running when
+// /compact is asked for. Three separate things used to let a message typed
+// during that window overtake it:
 //
 //   a. the queue path was gated on `isBuild`, so an ordinary chat never took it;
 //   b. the late hand-off did `drop the bubble, then queue.push`, and push
@@ -125,7 +134,12 @@ export function useCompaction({
 
     try {
       const r = await chatApi.compactThread(id);
-      setCompactedThrough(r.compacted_through);
+      // Optimistic: the fold itself is running detached now, so the divider is
+      // drawn from what WILL fold. It is a label on old messages, not a state
+      // anything depends on, and every path that loads a thread (open, switch,
+      // focus resync) overwrites it with the server's number — so a fold that
+      // fails corrects itself rather than needing to be waited for.
+      setCompactedThrough(r.compacted_through + r.will_fold);
       setCtxNonce((n) => n + 1);
 
       if (r.live_session) {
@@ -153,7 +167,7 @@ export function useCompaction({
           queue.drop("/compact");
           setQueuedStatus(null);
         }
-        if (r.folded === 0) {
+        if (r.will_fold === 0) {
           // Nothing happened, so nothing should be left claiming it did.
           dropRequestBubble();
           setErr("Nothing to compact — the transcript is already short.");

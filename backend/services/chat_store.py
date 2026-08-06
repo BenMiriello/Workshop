@@ -22,6 +22,29 @@ def _chat_dir() -> Path:
     return ownership.user_runtime_dir() / "chat"
 
 
+# How a chat handles work. The store owns the field, so it owns the enum; the
+# prompt text for each mode lives in chat_context.chat_mode_block.
+#
+#   direct        the conversation does the work. Native subagents are available
+#                 for context isolation and report back here; the transcript IS
+#                 the record. Labelled "Direct" in the UI.
+#   orchestrated  work leaves as Tickets run by Workshop agents; the Ticket is
+#                 the record. Labelled "Tickets" in the UI — the stored name is
+#                 kept so existing threads need no migration.
+#
+# DIRECT IS THE DEFAULT. Orchestrated was, and it made every passing remark a
+# candidate for a ticket; work that outlives the chat is the exception, and the
+# exception should be the one you ask for. Threads that set a mode explicitly
+# keep it; threads that never did follow the default, which is what "the default"
+# has to mean for it to be changeable at all.
+CHAT_MODES = ("direct", "orchestrated")
+DEFAULT_CHAT_MODE = "direct"
+
+
+def _clamp_mode(mode: str | None) -> str:
+    return mode if mode in CHAT_MODES else DEFAULT_CHAT_MODE
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -83,10 +106,53 @@ def _promote_agent_scope_if_legacy(thread: dict) -> None:
         thread["scope"] = "workshop"
 
 
+class LostUpdate(RuntimeError):
+    """A write would have dropped messages that reached disk after it was read.
+
+    See `_write`. This is a bug in the caller, never a condition to handle: the
+    right response is to stop writing back a stale snapshot, not to retry.
+    """
+
+
 def _write(thread: dict) -> dict:
     _chat_dir().mkdir(parents=True, exist_ok=True)
     _promote_agent_scope_if_legacy(thread)
     p = _path(thread["id"])
+
+    # THE ONE INVARIANT: A THREAD NEVER LOSES A MESSAGE.
+    #
+    # Every mutation here is read-modify-write of the whole file. That is fine
+    # while the gap between read and write holds no `await` — this backend is one
+    # event loop, so such a window is atomic. It is NOT fine when a caller reads a
+    # thread, awaits something slow, and writes the snapshot back: everything
+    # appended in between is silently erased.
+    #
+    # That was not hypothetical. `/compact` read the thread, spent ~30s in a
+    # summarization call, then saved the snapshot — so a message typed during the
+    # fold was deleted from disk. Reproduced: 11 messages written, 10 survived,
+    # and the one that vanished was the operator's. The same shape existed on the
+    # fresh-session turn path, where threshold compaction could erase the very
+    # message that started the turn.
+    #
+    # The fix is `update_thread` (write the fields you own, never the document).
+    # This check is what keeps it fixed: a shrinking transcript is always a lost
+    # update, because nothing in this store ever removes a message — deleting a
+    # chat removes the file. So refuse it loudly rather than losing it quietly.
+    try:
+        prior = json.loads(p.read_text())
+    except (OSError, json.JSONDecodeError):
+        prior = None
+    if isinstance(prior, dict):
+        on_disk = len(prior.get("messages") or [])
+        now = len(thread.get("messages") or [])
+        if now < on_disk:
+            raise LostUpdate(
+                f"refusing to write thread {thread['id']}: {on_disk} messages on disk, "
+                f"{now} in the dict being written. This snapshot was read before "
+                f"{on_disk - now} message(s) arrived; use update_thread() to write "
+                f"individual fields instead of saving a stale thread."
+            )
+
     tmp = p.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(thread, indent=2) + "\n")
     tmp.replace(p)
@@ -100,15 +166,14 @@ def create_thread(
     model: str | None = None,
     scope: str | None = None,
     scope_locked: bool = False,
-    mode: str = "orchestrated",
+    mode: str | None = None,
     participants: list[str] | None = None,
 ) -> dict:
     tid = uuid.uuid4().hex
     # Entity-model 2026-07-18 §7 fields (C11, P1):
     # - scope: the Scope this chat lives in (workshop / project:X / app:Y).
     # - scope_locked: refuses to re-scope silently; the UI must confirm.
-    # - mode: orchestrated (the default; general flow) or direct (bypasses the
-    #   orchestrator persona and talks straight to the assistant).
+    # - mode: direct (the default) or orchestrated. See CHAT_MODES.
     # - participants: agent slugs (as `agent:<slug>`) in this chat. Under the
     #   new model an Agent is a PARTICIPANT of a chat, not the chat's home.
     #   A legacy `agent:<slug>` context_key back-fills this list on read so old
@@ -121,7 +186,7 @@ def create_thread(
         "context_key": context_key or "general",
         "scope": resolved_scope,
         "scope_locked": bool(scope_locked),
-        "mode": mode if mode in ("orchestrated", "direct") else "orchestrated",
+        "mode": _clamp_mode(mode),
         "participants": parts,
         "agent_id": agent_id,
         # Per-thread model preference (full model id) chosen via the composer's
@@ -206,12 +271,12 @@ def set_thread_scope(thread_id: str, scope: str, *, scope_locked: bool | None = 
 
 
 def set_thread_mode(thread_id: str, mode: str) -> dict | None:
-    """Set the per-thread interaction mode. `mode` must be `orchestrated` or
-    `direct`; anything else clamps to `orchestrated`."""
+    """Set the per-thread interaction mode. `mode` must be one of CHAT_MODES;
+    anything else clamps to DEFAULT_CHAT_MODE."""
     thread = get_thread(thread_id)
     if thread is None:
         return None
-    thread["mode"] = mode if mode in ("orchestrated", "direct") else "orchestrated"
+    thread["mode"] = _clamp_mode(mode)
     thread["updated_at"] = _now_iso()
     return _write(thread)
 
@@ -288,7 +353,7 @@ def get_thread(thread_id: str) -> dict | None:
     if "scope_locked" not in t:
         t["scope_locked"] = False
     if not t.get("mode"):
-        t["mode"] = "orchestrated"
+        t["mode"] = DEFAULT_CHAT_MODE
     if t.get("participants") is None:
         t["participants"] = _participants_from_context_key(ck)
     else:
@@ -332,7 +397,7 @@ def list_threads(context_key: str | None = None) -> list[dict]:
             # them explicitly.
             "scope": t.get("scope") or _scope_from_context_key(ck),
             "scope_locked": bool(t.get("scope_locked", False)),
-            "mode": t.get("mode") or "orchestrated",
+            "mode": t.get("mode") or DEFAULT_CHAT_MODE,
             "participants": _normalize_participants(t.get("participants"))
                 if t.get("participants") is not None
                 else _participants_from_context_key(ck),
@@ -411,7 +476,40 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
 
 
 def save_thread(thread: dict) -> dict:
-    """Persist a thread dict the caller already mutated (atomic write)."""
+    """Persist a thread dict the caller already mutated (atomic write).
+
+    Only safe when the caller read this dict and mutated it with no `await` in
+    between. If anything slow happened in the gap, use `update_thread` instead —
+    `_write` will raise `LostUpdate` rather than let a stale snapshot silently
+    delete messages that arrived meanwhile."""
+    thread["updated_at"] = _now_iso()
+    return _write(thread)
+
+
+def update_thread(thread_id: str, **fields: object) -> dict | None:
+    """Apply named top-level fields to a thread, re-reading it first.
+
+    THE WAY TO WRITE AFTER AN AWAIT. A caller that reads a thread, does something
+    slow, and then wants to record a result must not save the document it is
+    holding — the transcript has moved on. It writes the fields it owns, onto
+    whatever the thread is NOW.
+
+    `messages` is not writable here, deliberately: appending is the store's own
+    job (`append_message`, `append_message_during_turn`), and every corruption
+    this function exists to prevent came from someone writing that list back.
+
+    A field set to `None` is REMOVED, which is how a caller unsets one (e.g.
+    compaction dropping the stale `context_tokens` measurement)."""
+    if "messages" in fields:
+        raise ValueError("update_thread cannot write `messages`; append instead")
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    for k, v in fields.items():
+        if v is None:
+            thread.pop(k, None)
+        else:
+            thread[k] = v
     thread["updated_at"] = _now_iso()
     return _write(thread)
 
