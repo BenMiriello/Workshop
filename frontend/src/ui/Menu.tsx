@@ -149,7 +149,7 @@ export function MenuItem({
   checked,
   active,
   danger,
-  hint,
+  title,
 }: {
   children: ReactNode;
   onSelect: () => void;
@@ -162,7 +162,13 @@ export function MenuItem({
   // which is a choice you made; this is where the app currently is.
   active?: boolean;
   danger?: boolean;
-  hint?: ReactNode;
+  // Hover/long-press explanation. A menu row is a NAME you are choosing; the
+  // gloss on it belongs behind hover, the way every other app does it. This
+  // replaces an inline `hint` span that sat in the same flex row as the label
+  // and could not shrink, so a narrow menu clipped the name away to nothing and
+  // left the description at full width — backwards, since the name is the part
+  // you cannot guess.
+  title?: string;
 }) {
   return (
     <button
@@ -170,6 +176,7 @@ export function MenuItem({
       role="menuitem"
       aria-current={active ? "page" : undefined}
       className={cx("ws-menu__item", active && "is-active", danger && "ws-menu__item--danger")}
+      title={title}
       onClick={onSelect}
     >
       {checked && (
@@ -179,7 +186,6 @@ export function MenuItem({
       )}
       {icon && <span className="ws-menu__icon" aria-hidden>{icon}</span>}
       <span className="ws-menu__label">{children}</span>
-      {hint && <span className="ws-menu__hint">{hint}</span>}
     </button>
   );
 }

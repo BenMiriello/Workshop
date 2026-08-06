@@ -170,12 +170,12 @@ export default function ChatToolbar({
             </button>
           }
         >
-          {CHAT_MODES.map(({ id, label, hint, Icon }) => (
+          {CHAT_MODES.map(({ id, label, title, Icon }) => (
             <MenuItem
               key={id}
               icon={<Icon size={14} aria-hidden />}
               checked={chatModeDef(chatMode).id === id}
-              hint={hint}
+              title={title}
               onSelect={() => onChooseChatMode(id)}
             >
               {label}

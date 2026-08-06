@@ -16,13 +16,26 @@ export type ChatModeId = "direct" | "orchestrated";
 export type ChatModeDef = {
   id: ChatModeId;
   label: string;
-  hint: string;
+  // Shown on hover, not printed beside the name. A description that sits in the
+  // row competes with the name for width and wins, which left the menu showing
+  // only glosses.
+  title: string;
   Icon: typeof MessageSquare;
 };
 
 export const CHAT_MODES: ChatModeDef[] = [
-  { id: "direct", label: "Direct", hint: "stays in this chat", Icon: MessageSquare },
-  { id: "orchestrated", label: "Tickets", hint: "becomes tickets", Icon: Ticket },
+  {
+    id: "direct",
+    label: "Direct",
+    title: "Work stays in this conversation. The transcript is the record.",
+    Icon: MessageSquare,
+  },
+  {
+    id: "orchestrated",
+    label: "Tickets",
+    title: "Work leaves as tickets run by agents, and is reported back here. The ticket is the record.",
+    Icon: Ticket,
+  },
 ];
 
 // Direct is the default, matching services/chat_store.DEFAULT_CHAT_MODE. Anything

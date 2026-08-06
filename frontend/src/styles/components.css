@@ -752,8 +752,12 @@ a.ws-btn { text-decoration: none; }
    have somewhere to start from. */
 .ws-menu__list:focus { outline: none; }
 .ws-menu__list:focus-visible { outline: none; }
+/* The row is the NAME of the thing you are choosing, and it gets the whole row.
+   There was a second `.ws-menu__hint` span beside it holding a description, and
+   because the hint could not shrink while the label could, a narrow menu clipped
+   the name to nothing and showed only the gloss. The gloss is now the button's
+   title (hover), which is where a description belongs. */
 .ws-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-menu__hint { flex: 0 0 auto; font-size: var(--fs-xs); color: var(--muted); }
 .ws-menu__sep { height: 1px; margin: var(--space-1) 0; background: var(--border); }
 /* Group heading inside a menu. Same uppercase motif as .ws-section-label, so a
    grouped menu reads like the rest of the system; the space above it (not a
