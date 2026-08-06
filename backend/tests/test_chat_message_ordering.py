@@ -207,3 +207,50 @@ class TestRecordUserTurn:
         rc._record_user_turn(tid, "fallback", [rc.TurnPart(text="   "),
                                                rc.TurnPart(text="")])
         assert [m["content"] for m in chat_store.get_thread(tid)["messages"]] == ["fallback"]
+
+
+class TestAtSegmentIsMeasuredLive:
+    """`at_segment` decides where the transcript shows a mid-turn message.
+
+    It used to be read from the STORED reply, whose segments are written on a
+    throttle — so it lagged what was on screen. The error is one-directional: a
+    low `at_segment` renders the message EARLIER than it arrived, above output it
+    never saw, which is what makes a reply look like an answer to a message it
+    had not read. Ask the live turn instead.
+    """
+
+    def test_it_reads_the_running_turn_not_the_throttled_copy(self, thread):
+        import routes.chat as rc
+        from services import build_streaming
+
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.append_streaming_assistant(tid, "turn-live")
+        # On disk: 2 segments (the last throttled write). In flight: 7.
+        chat_store.update_streaming_assistant(
+            tid, "turn-live", [{"t": "text", "text": "x"}] * 2, "x")
+        turn = build_streaming.Turn(id="turn-live", thread_id=tid, agent_slug="a")
+        turn.segments = [{"t": "text", "text": "x"}] * 7
+        build_streaming.TURNS["turn-live"] = turn
+        try:
+            rc._file_during_turn(tid, "turn-live", "wait")
+        finally:
+            build_streaming.TURNS.pop("turn-live", None)
+
+        msg = chat_store.get_thread(tid)["messages"][-1]
+        assert msg["content"] == "wait"
+        assert msg["meta"]["at_segment"] == 7
+
+    def test_it_falls_back_to_the_stored_count_for_an_adopted_turn(self, thread):
+        """A turn adopted after a restart is not in this process's registry, so
+        the persisted count is the only number available — and is still better
+        than nothing."""
+        import routes.chat as rc
+
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.append_streaming_assistant(tid, "turn-gone")
+        chat_store.update_streaming_assistant(
+            tid, "turn-gone", [{"t": "text", "text": "x"}] * 3, "x")
+        rc._file_during_turn(tid, "turn-gone", "wait")
+        assert chat_store.get_thread(tid)["messages"][-1]["meta"]["at_segment"] == 3

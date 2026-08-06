@@ -281,6 +281,35 @@ This is also why the frontend now has a test runner at all. Three
 ordering regressions in a row lived in logic the 338-test backend suite could not
 see: the store was right each time and the renderer moved the words afterwards.
 
+## 3.11 The ordering principle, stated properly
+
+The operator supplied the rule this whole document had been circling:
+
+> "the sequencing should show the order you could've seen it — if you responded
+> after but didn't see that message before you thought and generated the
+> response it should never insert my message before"
+
+**Everything above a message was produced without it. Everything below it could
+have been influenced by it.** That is the entire contract, and it constrains both
+ends of a reply — which §3.10 only got half right:
+
+- A message must not sit BELOW output that was written after it arrived. (§3.10:
+  the finished log dropped it under everything, so the answer appeared above the
+  question.)
+- A message must not sit ABOVE the reply entirely. The turn had already started;
+  the reply is an answer to the message that STARTED it. `at_segment` is 0
+  whenever nothing has streamed yet, which for a slow opening is the common
+  case — so a floor of 0 made this frequent rather than rare. Real case: 
+  `at_segment: 0` against a 60-segment reply, rendered above all sixty.
+
+So the minimum cut is one segment: after the reply has demonstrably begun. Zero
+only when the reply produced nothing at all, where there is nothing to sit above.
+
+`at_segment` itself was also measured from the STORED reply, whose segments are
+written on a throttle — so it lagged the screen, and the lag pushed messages
+EARLIER, i.e. above output they never saw. It now reads the live turn's segment
+count, falling back to the stored one only for a turn adopted after a restart.
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
@@ -302,7 +331,13 @@ see: the store was right each time and the renderer moved the words afterwards.
 | 3.7 | a thread never loses a message (`LostUpdate`, `update_thread`) | race reproduced, then tests |
 | 3.8 | /compact returns in ms; the fold runs detached | timing test (<0.2s vs a 0.4s summarizer) |
 | 3.9 | `--replay-user-messages` receipt | live CLI probe + tests |
-| 3.10 | the finished log shows a mid-turn message where it landed | 20 frontend tests (vitest, new) |
+| 3.10 | the finished log shows a mid-turn message where it landed | 22 frontend tests (vitest, new) |
+| 3.11 | it is never shown above the reply it arrived during; `at_segment` measured live | frontend + backend tests |
+
+A FIFTH round found §3.11, and the operator found it, not the audit: the rule in
+§3.10 was right in one direction and unbounded in the other. "Order by what could
+have been seen" constrains BOTH ends, and stating it as a floor as well as a
+ceiling is what makes it a rule rather than a fix.
 
 A FOURTH round found §3.10: the design in §3.2 was written, half-implemented, and
 its unimplemented half was described in this document as though it were done.

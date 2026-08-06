@@ -55,16 +55,34 @@ function arrivalsDuring(messages: ChatMsg[], from: number, turnId: string) {
 
 /** Where to cut a reply, given where each arrival says it landed.
  *
- *  Shared by the live overlay and the persisted list so the two cannot disagree
- *  about where a message goes — the whole point being that a message must not
- *  move when the turn it arrived during finishes.
+ *  THE ORDER IS "WHAT COULD HAVE BEEN SEEN". Everything above a message was
+ *  written without it; everything below it could have been influenced by it.
+ *  That is the whole contract of this split, and it constrains both ends:
  *
- *  Clamped into the reply, and monotonic: a later arrival can never be shown
- *  above an earlier one, and a backwards cut would produce a negative-length
- *  slice that silently drops output. A missing position means the end, which is
- *  the honest default — it arrived, we do not know where. */
+ *  - A message cannot sit above output that was already written when it
+ *    arrived. (The bug this file was created for: the finished log dropped it
+ *    below everything, so the answer to it appeared above the question.)
+ *  - A message cannot sit above the reply ENTIRELY, either. The reply was
+ *    already being generated when the message arrived — the turn had started —
+ *    so placing it first claims the reply is a response to it. `at_segment` is
+ *    0 whenever nothing had streamed yet, which for a slow opening is most of
+ *    the time, and the floor of 0 made that the common case rather than a rare
+ *    one. The operator caught it: "if you responded after but didn't see that
+ *    message before you generated the response, it should never insert my
+ *    message before — that makes no sense."
+ *
+ *  So the minimum is one segment: after the reply has demonstrably begun. When
+ *  the reply has produced nothing at all there is nothing to sit above and the
+ *  minimum is 0.
+ *
+ *  Also monotonic: a later arrival can never be shown above an earlier one, and
+ *  a backwards cut would produce a negative-length slice that silently drops
+ *  output. A missing position means the end — it arrived, we do not know where.
+ *
+ *  Shared by the live overlay and the persisted list so the two cannot disagree
+ *  about where a message goes. */
 export function cutPoints(ats: (number | undefined)[], total: number): number[] {
-  let floor = 0;
+  let floor = Math.min(1, total);
   return ats.map((at) => {
     const c = Math.min(Math.max(typeof at === "number" ? at : total, floor), total);
     floor = c;

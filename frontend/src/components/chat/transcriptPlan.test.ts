@@ -93,9 +93,24 @@ describe("an ordinary transcript is untouched", () => {
 });
 
 describe("edges", () => {
-  it("puts an arrival at position 0 above the reply, and keeps the byline on a slice", () => {
+  it("never shows a message above the reply it arrived during", () => {
+    // at_segment 0 means nothing had streamed yet — but the turn had STARTED,
+    // so the reply is not an answer to this message and must not be rendered as
+    // one. The operator caught this: "if you responded after but didn't see that
+    // message before you generated the response, it should never insert my
+    // message before". Minimum position is after the reply has begun.
     expect(shape(planTranscript([A("t1", seg("a", "b")), U("first", { during_turn: "t1", at_segment: 0 })])))
-      .toEqual(["U1", "A0[a+b]^$"]);
+      .toEqual(["A0[a]^", "U1", "A0[b]$"]);
+  });
+
+  it("holds that floor for a long reply with a slow opening", () => {
+    // The real 2026-08-06 case: at_segment 0 against a 60-segment reply. With a
+    // floor of 0 the message rendered above all sixty.
+    const long = seg(...Array.from({ length: 60 }, (_, i) => `s${i}`));
+    const rows = planTranscript([A("t1", long), U("q", { during_turn: "t1", at_segment: 0 })]);
+    expect(rows[0].kind).toBe("slice");
+    expect(rows[1].kind).toBe("message");
+    expect((rows[0] as Extract<TranscriptRow, { kind: "slice" }>).segments).toHaveLength(1);
   });
 
   it("clamps a position past the end", () => {
@@ -124,7 +139,10 @@ describe("edges", () => {
 describe("the cut rule is shared with the live overlay", () => {
   // LiveTurn uses this too. If the two ever disagree, a message jumps position
   // the instant its turn finishes — which is the whole bug.
-  it("clamps into the reply", () => expect(cutPoints([-3, 99], 4)).toEqual([0, 4]));
+  it("clamps into the reply, never above its opening", () =>
+    expect(cutPoints([-3, 99], 4)).toEqual([1, 4]));
+  it("has nothing to sit above when the reply produced nothing", () =>
+    expect(cutPoints([0], 0)).toEqual([0]));
   it("never goes backwards", () => expect(cutPoints([3, 1, 2], 5)).toEqual([3, 3, 3]));
   it("treats a missing position as the end", () => expect(cutPoints([undefined], 6)).toEqual([6]));
   it("passes ordinary cuts through", () => expect(cutPoints([1, 3], 5)).toEqual([1, 3]));

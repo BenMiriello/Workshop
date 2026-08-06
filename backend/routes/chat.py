@@ -1886,13 +1886,24 @@ def _file_during_turn(thread_id: str, turn_id: str, content: str) -> None:
     landed, so the transcript can still render it at that point without the
     STORED order having to lie about what came first."""
     try:
-        t = chat_store.get_thread(thread_id)
+        # Ask the LIVE turn how much it has produced, not the stored copy. The
+        # store is written on a throttle, so it lags what is on screen — and the
+        # error is one-directional: a low `at_segment` renders the message
+        # EARLIER than it arrived, i.e. above output it never saw. That is the
+        # direction that makes a reply look like an answer to a message it had
+        # not read. The persisted count remains the fallback for a turn this
+        # process no longer holds (adopted after a restart).
         at_segment = 0
-        if t:
-            for m in reversed(t.get("messages") or []):
-                if (m.get("meta") or {}).get("turn_id") == turn_id:
-                    at_segment = len((m.get("meta") or {}).get("segments") or [])
-                    break
+        live = build_streaming.get_turn(turn_id)
+        if live is not None:
+            at_segment = len(live.segments)
+        else:
+            t = chat_store.get_thread(thread_id)
+            if t:
+                for m in reversed(t.get("messages") or []):
+                    if (m.get("meta") or {}).get("turn_id") == turn_id:
+                        at_segment = len((m.get("meta") or {}).get("segments") or [])
+                        break
         chat_store.append_message_during_turn(
             thread_id, "user", content,
             meta={"injected": True, "during_turn": turn_id, "at_segment": at_segment},
