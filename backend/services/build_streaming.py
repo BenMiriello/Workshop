@@ -39,9 +39,9 @@ def _stdin_fifo(turn_id: str) -> Path:
     """The turn's realtime input channel.
 
     A turn runs `--input-format stream-json`, so its stdin stays open for the
-    life of the run and the CLI reads whatever arrives at the next boundary
-    BETWEEN steps. That is what lets a message sent while the agent is working
-    reach it now instead of waiting out the whole turn.
+    life of the run and a message sent while the agent is working reaches the
+    process immediately instead of waiting out the whole turn. (Reaching it is
+    not the same as being acted on — see write_to_turn.)
 
     It is a FIFO on disk, not a pipe, for the same reason stdout goes to a file:
     the child is spawned detached and has to survive a backend restart. A pipe
@@ -72,6 +72,11 @@ def write_to_turn(turn_id: str, text: str) -> bool:
     try:
         fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
         os.write(fd, _user_message_line(text).encode())
+        # Written is not read. Remember it so the CLI's echo can be matched to it
+        # and the UI can stop saying "handed over" once it is genuinely read.
+        turn = TURNS.get(turn_id)
+        if turn is not None:
+            turn.awaiting_receipt.append(text)
         return True
     except OSError as e:
         # ENXIO = FIFO open for write with no reader: the turn's process is gone.
@@ -129,6 +134,11 @@ class Turn:
     # Subscribers get notified on each new event so SSE generators can wake
     # without polling. Use a single asyncio.Event reset on each push.
     new_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # Messages written to this turn's stdin that the CLI has not yet echoed back.
+    # See write_to_turn and the `user_echo` branch of _ingest: an entry leaves
+    # this list at the moment the turn is known to have READ it, which is the
+    # only receipt this channel can produce.
+    awaiting_receipt: list[str] = field(default_factory=list)
 
 
 # In-memory turn registry. Build sessions are short-lived enough that this is
@@ -192,15 +202,24 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             return ("_multi", {"events": out, "usage": msg.get("usage")})
         return ("meta", ev)
     if t == "user":
-        # Tool result reply (we don't need to surface tool results to the UI
-        # in detail; just count them). Content is usually a list of blocks, but
-        # some events (e.g. /compact's synthetic user turns) carry a plain string
-        # — guard so a non-dict block can't crash the stream reader.
+        # Two different things arrive as `user`:
+        #
+        #  - a TOOL RESULT going back to the model. Content is a list of blocks
+        #    carrying tool_use_id; the UI only counts these.
+        #  - a REPLAYED STDIN MESSAGE. With --replay-user-messages the CLI
+        #    re-emits each stdin user message once it has actually read it, which
+        #    is the only receipt available for a mid-turn injection. Content is a
+        #    text block (or, for the CLI's synthetic /compact turns, a bare
+        #    string — guard so a non-dict block cannot crash the reader).
         content = ev.get("message", {}).get("content")
-        tool_use_id = None
+        if isinstance(content, str):
+            return ("user_echo", {"text": content})
         if isinstance(content, list) and content and isinstance(content[0], dict):
-            tool_use_id = content[0].get("tool_use_id")
-        return ("tool_result", {"tool_use_id": tool_use_id})
+            b0 = content[0]
+            if b0.get("type") == "text":
+                return ("user_echo", {"text": b0.get("text") or ""})
+            return ("tool_result", {"tool_use_id": b0.get("tool_use_id")})
+        return ("tool_result", {"tool_use_id": None})
     if t == "result":
         return ("result", {
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
@@ -451,6 +470,10 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         "--input-format", "stream-json",
         "--output-format", "stream-json",
         "--verbose",
+        # Re-emit stdin user messages on stdout once read. This is what turns
+        # "the bytes reached the process" into "the turn has read it" — the
+        # difference between a chat that is waiting and one that looks broken.
+        "--replay-user-messages",
     ]
     # Tool surface. Data/assistant turns (allowed_tools set) and tools-off turns
     # get their narrow flags from the SAME helper llm_router.call_cloud uses, so
@@ -633,6 +656,16 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 _seg_tool(payload.get("name"), payload.get("input")); saw_tool = True
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
+            elif kind == "user_echo":
+                # The CLI echoes every stdin user message, including the turn's
+                # own prompt and its synthetic /compact turns. Only an echo that
+                # matches something we injected is a receipt; everything else is
+                # noise and is dropped rather than shown.
+                text = (payload.get("text") or "").strip()
+                if text in turn.awaiting_receipt:
+                    turn.awaiting_receipt.remove(text)
+                    _push(turn, "injection_read", {"text": text})
+                return saw_tool
             _push(turn, kind, payload)
         return saw_tool
 
@@ -1001,10 +1034,16 @@ def get_turn(turn_id: str) -> Turn | None:
 def inject(turn_id: str, text: str) -> bool:
     """Deliver a message into a turn that is currently running.
 
-    The operator's spec: a new message must not abort the work in flight, but it
-    must not have to wait out the whole turn either — it lands at the next point
-    between the agent's actions. Writing it to the turn's stdin is exactly that;
-    the CLI reads pending input at each step boundary.
+    A new message must not abort the work in flight. Writing it to the turn's
+    stdin delivers it without doing so.
+
+    WHEN it is acted on is a separate question, and the answer is not the one
+    this docstring used to give. Measured against the CLI (see
+    docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md §2): the
+    model surfaces the message but addresses it at the END of its current plan,
+    skipping the step boundaries in between. The turn contract now asks for the
+    next boundary instead; `--replay-user-messages` is what tells us it was read
+    at all.
 
     Returns False when the turn is no longer accepting input, which is the
     caller's cue to queue it as the next turn instead. The message is never

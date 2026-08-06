@@ -23,7 +23,7 @@ export default function LiveTurn({
   segments, interjections, streaming, workingLabel, elapsed, model, cardCtx,
 }: {
   segments: ChatSegment[];
-  interjections: { at: number; text: string }[];
+  interjections: { at: number; text: string; read?: boolean }[];
   streaming: boolean;
   workingLabel: string;
   elapsed: number;
@@ -57,18 +57,30 @@ export default function LiveTurn({
       );
     }
     if (k < interjections.length) {
-      // The status line said "the running turn picked it up". It had not. What
-      // is known is that the message reached the running process; measured
-      // against the CLI, the agent then addresses it when it reaches the end of
-      // its current plan, skipping the step boundaries in between (see
-      // docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md §2).
-      // Claiming it was read is the difference between a chat that is waiting
-      // and a chat that looks broken, so say the true thing.
+      // THREE STATES, AND THE LINE SAYS WHICH ONE IT IS.
+      //
+      // This used to claim "the running turn picked it up" from the moment the
+      // write succeeded, which was only ever true of the bytes. Then it said
+      // "handed over" and kept saying it for the whole turn — accurate, but a
+      // pulsing "handed over" that never resolves is what the operator read as
+      // the message sitting unread.
+      //
+      // `read` arrives when the turn echoes the message back
+      // (--replay-user-messages), so "the turn has read this" is now a fact
+      // rather than an inference. It still does not mean ACTED ON: measured, the
+      // model addresses a mid-turn message at the end of its current plan (see
+      // docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md §2),
+      // which is why the line says read and not answered.
+      const ij = interjections[k];
       blocks.push(
         <div className="chat-msg user" key={`live-ij${k}`}>
-          <div className="chat-bubble">{interjections[k].text}</div>
+          <div className="chat-bubble">{ij.text}</div>
           {isLastSlice && streaming && (
-            <StatusNote status={{ text: "Handed to the turn in progress", busy: true }} />
+            <StatusNote
+              status={ij.read
+                ? { text: "Read by the turn in progress", busy: false }
+                : { text: "Handed to the turn in progress", busy: true }}
+            />
           )}
         </div>,
       );

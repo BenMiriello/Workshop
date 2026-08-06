@@ -1,6 +1,9 @@
 # Chat message delivery and ordering — audit and design (2026-08-05)
 
-> **STATUS: AUDITED, MEASURED, BEING BUILT.** Every claim below is either quoted
+> **STATUS: AUDITED, MEASURED, BUILT.** §3.1-3.9 are implemented and pinned by
+> tests; §4 lists what is deliberately still open.
+>
+> **ORIGINAL STATUS: AUDITED, MEASURED, BEING BUILT.** Every claim below is either quoted
 > from stored state or measured against the live CLI (2.1.143) with the probes in
 > `scratch/inject_probe*.py`. Nothing here is recalled or inferred.
 
@@ -177,15 +180,82 @@ The old `string[]` queue migrates in place rather than being dropped — a queue
 message is one enter has already been pressed on, so discarding it on upgrade
 would be message loss.
 
+## 3.7 A thread never loses a message
+
+Found on 2026-08-05, after the sections above had shipped, when the operator
+reported the same family of symptoms unchanged.
+
+Every mutation in `chat_store` is read-modify-write of the whole thread file.
+That is safe while no `await` sits between the read and the write — this backend
+is one event loop, so such a window is atomic. `/compact` broke the rule by
+design: it read the thread, spent tens of seconds in a summarization call, then
+saved the snapshot back. **Every message the operator sent during the fold was
+deleted from disk.** Reproduced before fixing: 11 messages written, 10 survived,
+and the one that vanished was theirs.
+
+The same shape existed on the fresh-session turn path, where threshold
+compaction (`_maybe_compact`) holds the pre-append snapshot and could erase the
+very message that started the turn.
+
+This is why the earlier ordering work did not resolve the complaint: **ordering
+only describes messages that still exist.**
+
+The store now holds one invariant, enforced in `_write`: a shrinking transcript
+is always a lost update, because nothing in the store ever removes a message
+(deleting a chat removes the file). A stale save raises `LostUpdate` instead of
+losing data quietly. Callers that must write after an await use `update_thread`,
+which applies named fields onto the thread as it is NOW and refuses `messages`
+outright. `compacted_through` survives the change because it counts from the
+front while appends land at the back.
+
+## 3.8 /compact stops making the operator wait for housekeeping
+
+The client awaited the server fold before sending the half that is actually
+visible — the CLI's own `/compact`, which runs as a turn. Nothing in the visible
+half depended on the fold, so the wait bought nothing and cost the entire delay:
+
+> "it shows a weird message saying compacting... and then 30s later it starts
+> ACTUALLY compacting"
+
+The endpoint now returns in milliseconds with the two facts the client needs —
+whether there is a live session, and how many turns will fold (arithmetic, not a
+model call) — and summarizes detached. One fold at a time per thread; two
+concurrent folds would each cover the same range and lose the difference.
+
+The "Compacting the conversation" status line is gone with the wait it existed to
+cover; a status that resolves in 50ms is a flash, and that flash is what the
+operator described as "a weird one-off message, not in a bubble, on the user
+side". While the turn runs the live indicator already reads "Compacting".
+
+## 3.9 A receipt that is real (§3.5, now done)
+
+`--replay-user-messages` is wired. Measured against the CLI with
+`scratch/probe_replay.py`:
+
+| t | event |
+|---|---|
+| 0s | prompt sent; **the CLI echoes it back** (so an echo is not by itself a receipt) |
+| 14s | "MARKER-INJECTED-MESSAGE" injected |
+| **18s** | **the CLI echoes the injected message — it has been read** |
+| 26s, 34s, 42s | three more tool calls |
+| 44s | turn ends |
+
+So the receipt is available **26 seconds before the turn ends**, and the composer
+can stop pulsing "Handed to the turn in progress" the moment it is genuinely
+read. Because the CLI echoes every stdin message, including the turn's own
+prompt, only an echo matching something this server injected is treated as a
+receipt (`Turn.awaiting_receipt`).
+
+The same measurement re-confirms §2a from the other side: the message is read at
+18s and still not addressed until the plan ends at 44s. Read is not acted on, and
+the UI says "Read by the turn", not "answered".
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
   of its plan (2a). The fix makes that honest and legible, not instant. Making it
   instant means interrupting the turn, which is a different feature with a
   different cost, and the operator has not asked for work in flight to be killed.
-- **A real receipt.** `delivered` still means "the bytes reached the process".
-  `--replay-user-messages` (present in CLI 2.1.143) re-emits stdin messages on
-  stdout for acknowledgment and is how this earns a true one; not wired.
 - **SEC-A1.** Unrelated, still open.
 
 ## 5. Built
@@ -196,10 +266,18 @@ would be message loss.
 | 3.2 | mid-turn messages filed AFTER, with `during_turn`/`at_segment` | test |
 | 3.3 | `arrival_notice` states the sequence and times | test + live helper run |
 | 3.4 | realtime channel declared in `turn_contract` | probes 1 vs 3 |
-| 3.5 | composer says "Handed to the turn in progress" | — |
+| 3.5 | composer distinguishes handed-over from read | probe + tests |
 | 3.6 | queued parts keep their send times | test + live store round trip |
+| 3.7 | a thread never loses a message (`LostUpdate`, `update_thread`) | race reproduced, then tests |
+| 3.8 | /compact returns in ms; the fold runs detached | timing test (<0.2s vs a 0.4s summarizer) |
+| 3.9 | `--replay-user-messages` receipt | live CLI probe + tests |
 
-Two defects were found in this work by re-auditing it rather than by running it:
+A third round found the defect the first two could not: the ordering work
+described messages that survived, and the ones being erased were invisible to it.
+The lesson is in §3.7 — audit the STORE's invariants, not only the order it
+presents.
+
+Two earlier defects were found by re-auditing rather than by running:
 `finalize`'s no-placeholder branch set no `ended_at`, and the arrival notice was
 built from the route's PRE-append thread snapshot — which cannot contain the
 queued messages just written, so it silently never fired for the case it exists

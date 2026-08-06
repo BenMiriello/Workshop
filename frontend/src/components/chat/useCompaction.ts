@@ -62,7 +62,15 @@ import type { MessageQueue } from "./useMessageQueue";
 // and (c) is `compacting` — lifted into the chat so the composer and the queue
 // both hold off until the request has taken its turn.
 
-const BUSY_NOW: MsgStatus = { text: "Compacting the conversation", busy: true };
+// There is no "compacting now" status any more. It existed to cover the ~30s the
+// server fold used to take, and covering a wait is its only job — now that the
+// request turns into a running turn in milliseconds, it would flash and vanish.
+// That flash is what the operator described as "a weird one-off message, not in
+// a bubble, on the user side, saying compacting". While the turn runs, the live
+// indicator already reads "Compacting", which is one statement in one place.
+//
+// The queued wait is REAL — it lasts until the running turn finishes — so it
+// keeps its line.
 const BUSY_QUEUED: MsgStatus = {
   text: "Compacting. The live session folds when the running turn finishes",
   busy: true,
@@ -108,8 +116,6 @@ export function useCompaction({
     // bubble back out again.
     const requestTs = new Date().toISOString();
     const isRequest = (m: ChatMsg) => m.ts === requestTs && m.content === "/compact";
-    const setStatus = (status?: MsgStatus) =>
-      setMessages((m) => m.map((x) => (isRequest(x) ? { ...x, meta: { ...x.meta, status } } : x)));
     const dropRequestBubble = () => setMessages((m) => m.filter((x) => !isRequest(x)));
 
     // Where in the queue this request belongs, captured NOW. Everything typed
@@ -117,19 +123,15 @@ export function useCompaction({
     // the position the operator gave it even though it is handed over late.
     const queuePos = queue.length;
 
-    // Queue the live-session half UP FRONT when a turn is already running. It
-    // used to be queued only after the server fold returned — seconds of round
-    // trip during which the running turn kept streaming — so the "/compact"
-    // bubble landed below a wall of output that arrived after it was asked for,
-    // and read as though the request had been ignored and picked up at random.
+    // Queue the live-session half UP FRONT when a turn is already running, so the
+    // request holds the place the operator gave it instead of landing below
+    // whatever the running turn streamed in the meantime.
     let preQueued = logBusyRef.current;
     if (preQueued) {
       queue.push("/compact");
       setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
     } else {
-      setMessages((m) => [...m, {
-        role: "user", content: "/compact", ts: requestTs, meta: { status: BUSY_NOW },
-      }]);
+      setMessages((m) => [...m, { role: "user", content: "/compact", ts: requestTs }]);
     }
 
     try {
@@ -154,9 +156,7 @@ export function useCompaction({
             setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
           } else {
             // The live half runs as an ordinary turn: its reply streams in below
-            // this bubble and the working indicator reads "Compacting", so this
-            // line's job is done.
-            setStatus(undefined);
+            // this bubble and the working indicator reads "Compacting".
             sendTurn("/compact");
           }
         }
@@ -171,10 +171,8 @@ export function useCompaction({
           // Nothing happened, so nothing should be left claiming it did.
           dropRequestBubble();
           setErr("Nothing to compact — the transcript is already short.");
-        } else {
-          // The fold divider is the report; this line has nothing left to add.
-          setStatus(undefined);
         }
+        // Otherwise the fold divider is the report, and it is already drawn.
       }
     } catch (e) {
       if (preQueued) {
