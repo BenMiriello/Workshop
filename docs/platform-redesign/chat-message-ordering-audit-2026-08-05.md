@@ -377,6 +377,32 @@ but nothing positions by it. The lesson is the one the operator named: **when th
 standard behaviour is the ask, build the standard behaviour.** A novel ordering
 model needed a reason, and there wasn't one.
 
+## 3.14 REVERTED: the delivery-state line. A message is just a message.
+
+§3.5 and §3.9 put a line under the operator's own mid-turn message reading
+"Handed to the turn in progress", then "Read by the turn in progress" once the
+CLI echoed it back. Both are withdrawn.
+
+> "why did you add a 'read by the run in progress' indicator instead of just
+> inserting the user message(s) in the chat flow... I keep telling you to just do
+> the normal aichat thing... you just invented some new unwanted ui pattern"
+
+Correct. **Standard chat does not annotate your own messages with delivery
+state.** The message appears in the flow, in send order, and that is the whole
+interaction. A pulsing status under it is what made a perfectly normal message
+look stuck — the indicator created the very impression it was added to dispel.
+
+Removed: the status line, the `injection_read` event, `Turn.awaiting_receipt`,
+and the client listener. `--replay-user-messages` and the `user_echo`
+classification STAY, because they are load-bearing for a different reason: the
+CLI echoes every stdin message (the turn's prompt, /compact's synthetic turns, a
+subagent's sidechain prompt) and those have to be recognised in order to be
+dropped. Recognition is the job; the receipt was the invention.
+
+Note the shape of the mistake, which is the same as §3.13: a real measurement
+(the echo genuinely arrives 26s before the turn ends) was treated as a licence to
+build UI for it. Knowing something does not mean the interface should say it.
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
@@ -393,15 +419,22 @@ model needed a reason, and there wasn't one.
 | 3.2 | mid-turn messages filed AFTER, with `during_turn`/`at_segment` | test |
 | 3.3 | `arrival_notice` states the sequence and times | test + live helper run |
 | 3.4 | realtime channel declared in `turn_contract` | probes 1 vs 3 |
-| 3.5 | composer distinguishes handed-over from read | probe + tests |
+| ~~3.5~~ | ~~composer distinguishes handed-over from read~~ | **REVERTED — see 3.14** |
 | 3.6 | queued parts keep their send times | test + live store round trip |
 | 3.7 | a thread never loses a message (`LostUpdate`, `update_thread`) | race reproduced, then tests |
 | 3.8 | /compact returns in ms; the fold runs detached | timing test (<0.2s vs a 0.4s summarizer) |
-| 3.9 | `--replay-user-messages` receipt | live CLI probe + tests |
+| ~~3.9~~ | ~~`--replay-user-messages` receipt~~ | **REVERTED — see 3.14**; the flag stays, the receipt does not |
 | ~~3.10~~ | ~~splice the reply at `at_segment`~~ | **REVERTED — see 3.13** |
 | ~~3.11~~ | ~~floor the splice at one segment~~ | **REVERTED — see 3.13** |
 | 3.12 | one turn per thread; the second mid-turn message finds the turn | backend tests (regression pinned) |
 | 3.13 | the log is append-only in send order; the splice is deleted | the ordinary chat rule, no parameters to get wrong |
+| 3.14 | no delivery-state annotation on the operator's own messages | the ordinary chat rule again |
+
+An EIGHTH round deleted §3.5 and §3.9 for the same reason as the seventh, and
+the pattern is now unmistakable: **every part of this that was invented had to be
+removed, and every part that was the ordinary chat behaviour survived.** Four
+sections withdrawn, all of them things nobody asked for. The measurements were
+real; building interface out of them was the error.
 
 A SEVENTH round DELETED §3.10 and §3.11 rather than fixing them again. Three
 rounds of adjusting where to splice a reply were three rounds spent defending an

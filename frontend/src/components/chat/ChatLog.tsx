@@ -56,9 +56,8 @@ export default function ChatLog({
   logBusy: boolean;
   pendingSegments: ChatSegment[];
   // Sent while the live turn was already running. Rendered below it, in the
-  // order sent. `read` flips when the turn echoes the message back, which is
-  // the only evidence it has been taken off the input stream.
-  sentDuringTurn: { text: string; read?: boolean }[];
+  // order sent, as ordinary messages.
+  sentDuringTurn: { text: string }[];
   workingLabel: string;
   elapsed: number;
   queued: { text: string; sentAt: string }[];
@@ -112,17 +111,15 @@ export default function ChatLog({
         />
       )}
 
-      {/* Sent during the turn above: below it, because that is when they were
-          sent. The line says what is actually known — handed to the turn, or
-          read by it — never that it has been acted on. */}
+      {/* Sent during the turn above, so they render below it. NOTHING MARKS
+          THEM. A message you sent is a message: same bubble, same place in the
+          flow, no badge and no delivery state. There was a "Handed to the turn
+          / Read by the turn" line here and it was an invented pattern nobody
+          asked for — standard chat does not annotate your own messages, and
+          annotating them is what made a normal message look like a stuck one. */}
       {sentDuringTurn.map((m, i) => (
         <div key={`d${i}`} className="chat-msg user">
           <div className="chat-bubble">{m.text}</div>
-          <StatusNote
-            status={m.read
-              ? { text: "Read by the turn in progress", busy: false }
-              : { text: "Handed to the turn in progress", busy: true }}
-          />
         </div>
       ))}
 

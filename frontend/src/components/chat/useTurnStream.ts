@@ -90,7 +90,6 @@ export function useTurnStream({
   onTurnEnd,
   onError,
   onNotes,
-  onInjectionRead,
   activeIdRef,
   dispatchQueue,
   appendSegmentsAsMessage,
@@ -103,11 +102,6 @@ export function useTurnStream({
   // The finished turn applied a provider action (e.g. an app persona editing a
   // budget plan); it rides in the final message's meta.notes.
   onNotes: () => void;
-  // The running turn has READ a message injected into it. Distinct from the
-  // write succeeding: --replay-user-messages echoes each stdin message back only
-  // once the CLI has taken it off the stream, which is the only receipt this
-  // channel can produce.
-  onInjectionRead: (text: string) => void;
   activeIdRef: React.MutableRefObject<string | null>;
   dispatchQueue: () => void;
   // Stop could not reach the server: fold what is on screen into the log rather
@@ -137,10 +131,8 @@ export function useTurnStream({
   const attachRef = useRef<(turnId: string, threadId: string, isFirst: boolean) => void>(() => {});
 
   // Callers pass inline lambdas; refs keep `attach` referentially stable.
-  const cb = useRef({ onMessages, onTurnEnd, onError, onNotes, onInjectionRead,
-                     dispatchQueue, appendSegmentsAsMessage });
-  cb.current = { onMessages, onTurnEnd, onError, onNotes, onInjectionRead,
-                 dispatchQueue, appendSegmentsAsMessage };
+  const cb = useRef({ onMessages, onTurnEnd, onError, onNotes, dispatchQueue, appendSegmentsAsMessage });
+  cb.current = { onMessages, onTurnEnd, onError, onNotes, dispatchQueue, appendSegmentsAsMessage };
 
   const anchorStart = useCallback((startedMs: number) => {
     turnStartRef.current = Number.isFinite(startedMs) ? startedMs : Date.now();
@@ -203,13 +195,6 @@ export function useTurnStream({
       try {
         const p = JSON.parse((e as MessageEvent).data).payload || {};
         fold({ kind: "tool_result", tool_use_id: p.tool_use_id, text: p.text });
-      } catch { /* ignore */ }
-    });
-    es.addEventListener("injection_read", (e) => {
-      markAlive();
-      try {
-        const t = JSON.parse((e as MessageEvent).data).payload?.text;
-        if (t) cb.current.onInjectionRead(String(t));
       } catch { /* ignore */ }
     });
     es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm

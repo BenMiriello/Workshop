@@ -136,12 +136,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // `messages` only because the server's copy arrives when the turn ends; until
   // then this is the client's record of them.
   //
-  // `read` flips when the turn echoes the message back (--replay-user-messages),
-  // which is the difference between "the bytes reached the process" and "the
-  // turn has it". Saying the second when only the first is known is what made a
-  // delivered message look unread.
-  const [sentDuringTurn, setSentDuringTurn] =
-    useState<{ text: string; read?: boolean }[]>([]);
+  const [sentDuringTurn, setSentDuringTurn] = useState<{ text: string }[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // Starting a new chat leaves the current one — cheap to undo (the thread is
   // still there) but disorienting mid-conversation, so it asks first.
@@ -173,13 +168,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     },
     onError: setErr,
     onNotes: () => onAction?.(),
-    onInjectionRead: (text) => setSentDuringTurn((x) => {
-      const i = x.findIndex((m) => m.text === text && !m.read);
-      if (i < 0) return x;
-      const copy = x.slice();
-      copy[i] = { ...copy[i], read: true };
-      return copy;
-    }),
     activeIdRef,
     dispatchQueue: () => queueRef.current?.dispatch(),
     appendSegmentsAsMessage: (segs) => setMessages((m) => [...m, {

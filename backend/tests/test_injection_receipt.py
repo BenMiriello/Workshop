@@ -1,17 +1,15 @@
-"""A message handed to a running turn now reports when it was READ.
+"""Echoed stdin messages are recognised so they can be DROPPED.
 
-`delivered` only ever meant "the bytes reached the process". The composer said
-"Handed to the turn in progress" and kept saying it, pulsing, for the rest of the
-turn — which is what the operator described as the message sitting unread.
+`--replay-user-messages` (CLI 2.1.143) makes the CLI re-emit every stdin user
+message on stdout: the turn's own prompt, its synthetic /compact turns, a
+subagent's prompt on the sidechain, and anything injected mid-turn. None of it is
+output. Recognising the shape is what keeps it out of the transcript — a tool
+result and an echoed message arrive as the same `user` event type.
 
-`--replay-user-messages` (CLI 2.1.143) re-emits each stdin user message on stdout
-once the CLI has taken it off the stream. Measured with scratch/probe_replay.py
-against the real CLI: a message injected at t=14s echoed at t=18s, while three
-more tool calls followed and the turn did not end until t=44s. So the receipt is
-available 26 seconds before the turn ends, and it is genuinely a receipt.
-
-It is NOT an "acted on" signal — the same probe shows the model finishing its
-plan first. The UI says "Read by the turn", which is the thing that is known.
+There WAS a receipt built on this: an `injection_read` event driving a "Read by
+the turn in progress" line under the operator's own message. That was an invented
+pattern — standard chat does not annotate your messages with delivery state — and
+it is gone. What remains is the classification, which is load-bearing.
 """
 from services import build_streaming as bs
 
@@ -50,42 +48,29 @@ class TestClassification:
         assert payload["tool_use_id"] is None
 
 
-class TestOnlyOurInjectionsAreAcknowledged:
-    """The CLI echoes EVERY stdin user message, starting with the turn's own
-    prompt (confirmed by the probe). Acknowledging that would put the whole
-    assembled prompt on screen as though the operator had typed it."""
+class TestEchoesAreNotShown:
+    def test_no_echo_reaches_the_event_stream(self):
+        """An echo of the operator's own message would render it a second time —
+        once where they sent it, once wherever the CLI got round to reading it.
+        Every `user_echo` is dropped, whatever its origin."""
+        import inspect
+        src = inspect.getsource(bs._drive_turn)
+        i = src.index('elif kind == "user_echo":')
+        branch = src[i:src.index("_push(turn, kind, payload)", i)]
+        assert "return saw_tool" in branch
+        assert "_push" not in branch
 
-    def _turn(self):
+    def test_nothing_tracks_delivery_state_any_more(self):
+        """The "Read by the turn in progress" line was an invented pattern. Its
+        bookkeeping went with it — a Turn holds no receipt list."""
         t = bs.Turn(id="t1", thread_id="th1", agent_slug="a")
-        return t
-
-    def test_the_prompt_echo_is_not_a_receipt(self):
-        t = self._turn()
-        t.awaiting_receipt.append("wait, stop")
-        kind, payload = bs._parse_stream_event(
-            _user_event('[{"type": "text", "text": "=== OPERATOR MESSAGE ===\\nbuild the thing"}]'))
-        assert kind == "user_echo"
-        assert payload["text"] not in t.awaiting_receipt
-
-    def test_an_injected_message_matches_once(self):
-        t = self._turn()
-        t.awaiting_receipt.append("wait, stop")
-        assert "wait, stop" in t.awaiting_receipt
-        t.awaiting_receipt.remove("wait, stop")
-        # A second echo of the same text has nothing left to acknowledge, so it
-        # cannot mark a later message with identical wording as already read.
-        assert "wait, stop" not in t.awaiting_receipt
-
-    def test_two_identical_messages_each_need_their_own_receipt(self):
-        t = self._turn()
-        t.awaiting_receipt.extend(["ping", "ping"])
-        t.awaiting_receipt.remove("ping")
-        assert t.awaiting_receipt == ["ping"]
+        assert not hasattr(t, "awaiting_receipt")
 
 
 class TestTheFlagIsPassed:
     def test_replay_is_requested(self):
-        """Without it the CLI emits no echo at all and the receipt never exists."""
+        """Still required: without it the CLI emits no user echoes at all, and
+        the sidechain subagent prompts this reader classifies never appear."""
         import inspect
         src = inspect.getsource(bs._spawn_and_drive)
         assert "--replay-user-messages" in src
