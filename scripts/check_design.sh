@@ -62,9 +62,19 @@ if [[ "$MODE" == "full" ]]; then
   grep -q 'styles/components.css' "$FE/src/main.tsx"  || miss+=("main.tsx missing components.css import")
   [[ -f "$FE/src/styles/tokens.css" ]]                || miss+=("src/styles/tokens.css missing")
   [[ -f "$FE/src/styles/components.css" ]]            || miss+=("src/styles/components.css missing")
+  [[ -f "$FE/src/styles/palette.mjs" ]]               || miss+=("src/styles/palette.mjs (color model) missing")
+  grep -q 'palettes.css' "$FE/src/styles/tokens.css"  || miss+=("tokens.css no longer imports palettes.css — color layer detached")
   [[ -f "$FE/CLAUDE.md" ]]                            || miss+=("frontend/CLAUDE.md missing")
   if [[ ${#miss[@]} -gt 0 ]]; then
     printf 'FOUNDATION BROKEN:\n'; printf '  - %s\n' "${miss[@]}"; exit 2
+  fi
+
+  # palettes.css / palettes.gen.ts / tokens.generated.js are GENERATED from
+  # palette.mjs. Editing the model and forgetting to regenerate is invisible
+  # until the app paints the old colors, so fail here instead.
+  if ! node "$WORKSHOP/scripts/gen-tokens.mjs" --check; then
+    echo "COLOR TOKENS STALE — run 'npm run gen:tokens' from frontend/"
+    exit 2
   fi
 fi
 

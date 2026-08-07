@@ -1,0 +1,685 @@
+/* =============================================================================
+   Workshop Design System — PALETTES  (GENERATED — do not edit by hand)
+   -----------------------------------------------------------------------------
+   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
+   Edit palette.mjs, then run `npm run gen:tokens` from frontend/.
+
+   5 palettes x { light, dark }. `data-palette` and `data-theme` both live on
+   <html>; the pre-React bootstrap in index.html sets them before first paint.
+   Imported by tokens.css, so every entry point picks it up automatically.
+   ========================================================================== */
+
+/* ---- Violet — The Workshop default. Refined violet on inky violet-navy. ------------------------------------ */
+[data-palette="violet"],
+[data-palette="violet"][data-theme="light"],
+:root:not([data-palette]),
+:root:not([data-palette])[data-theme="light"] {
+  --bg: #f5f5fa;
+  --bg-inset: #ececf3;
+  --fg: #1a1923;
+  --muted: #69687a;
+  --faint: #9a99ab;
+  --card: #ffffff;
+  --card-hover: #fbfbff;
+  --card-ring: transparent;
+  --border: #e7e7f0;
+  --border-strong: #d6d6e3;
+  --field-bg: #efeff6;
+  --accent: #7551da;
+  --accent-hover: #653ec6;
+  --accent-active: #5635a9;
+  --accent-fg: #ffffff;
+  --accent-soft: #ecebfd;
+  --ok: #1d7a51;
+  --ok-solid: #289a68;
+  --ok-soft: #daf1e4;
+  --running: #6039bd;
+  --running-solid: #7551da;
+  --running-soft: #ecebfd;
+  --stopped: #585868;
+  --stopped-solid: #878798;
+  --stopped-soft: #ededf2;
+  --warn: #8a5e0f;
+  --warn-solid: #ba7b00;
+  --warn-soft: #f7eccf;
+  --danger: #a8404f;
+  --danger-solid: #cb5a6a;
+  --danger-soft: #f6e2e5;
+  --danger-hover: #b34a59;
+  --scrim: rgba(17, 15, 30, 0.55);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(117, 81, 218, 0.5);
+  --shadow-sm: 0 1px 2px rgba(26, 24, 40, 0.05);
+  --shadow-card: 0 1px 2px rgba(26, 24, 40, 0.04), 0 4px 16px rgba(26, 24, 40, 0.05);
+  --shadow-md: 0 8px 28px rgba(26, 24, 40, 0.1);
+  --shadow-lg: 0 24px 60px rgba(26, 24, 40, 0.16);
+  color-scheme: light;
+}
+
+[data-palette="violet"][data-theme="dark"],
+:root:not([data-palette])[data-theme="dark"] {
+  --bg: #0f0e17;
+  --bg-inset: #16151f;
+  --fg: #ebebf3;
+  --muted: #9998ac;
+  --faint: #65647a;
+  --card: #191824;
+  --card-hover: #201f2d;
+  --card-ring: #272636;
+  --border: #262534;
+  --border-strong: #36344a;
+  --field-bg: #14131d;
+  --accent: #9c86f6;
+  --accent-hover: #b1a4f9;
+  --accent-active: #c5bdfc;
+  --accent-fg: #090618;
+  --accent-soft: rgba(156, 134, 246, 0.16);
+  --ok: #62d29d;
+  --ok-solid: #45c089;
+  --ok-soft: rgba(69, 192, 137, 0.16);
+  --running: #b1a4f9;
+  --running-solid: #9c86f6;
+  --running-soft: rgba(156, 134, 246, 0.18);
+  --stopped: #9594a6;
+  --stopped-solid: #6f6e80;
+  --stopped-soft: rgba(111, 110, 128, 0.15);
+  --warn: #e6b24a;
+  --warn-solid: #d6921f;
+  --warn-soft: rgba(214, 146, 31, 0.16);
+  --danger: #e9889a;
+  --danger-solid: #d96576;
+  --danger-soft: rgba(217, 101, 118, 0.16);
+  --danger-hover: #ec97a6;
+  --scrim: rgba(5, 4, 16, 0.62);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(156, 134, 246, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="violet"][data-theme="system"],
+  [data-palette="violet"]:not([data-theme="light"]):not([data-theme="dark"]),
+  :root:not([data-palette])[data-theme="system"],
+  :root:not([data-palette]):not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #0f0e17;
+    --bg-inset: #16151f;
+    --fg: #ebebf3;
+    --muted: #9998ac;
+    --faint: #65647a;
+    --card: #191824;
+    --card-hover: #201f2d;
+    --card-ring: #272636;
+    --border: #262534;
+    --border-strong: #36344a;
+    --field-bg: #14131d;
+    --accent: #9c86f6;
+    --accent-hover: #b1a4f9;
+    --accent-active: #c5bdfc;
+    --accent-fg: #090618;
+    --accent-soft: rgba(156, 134, 246, 0.16);
+    --ok: #62d29d;
+    --ok-solid: #45c089;
+    --ok-soft: rgba(69, 192, 137, 0.16);
+    --running: #b1a4f9;
+    --running-solid: #9c86f6;
+    --running-soft: rgba(156, 134, 246, 0.18);
+    --stopped: #9594a6;
+    --stopped-solid: #6f6e80;
+    --stopped-soft: rgba(111, 110, 128, 0.15);
+    --warn: #e6b24a;
+    --warn-solid: #d6921f;
+    --warn-soft: rgba(214, 146, 31, 0.16);
+    --danger: #e9889a;
+    --danger-solid: #d96576;
+    --danger-soft: rgba(217, 101, 118, 0.16);
+    --danger-hover: #ec97a6;
+    --scrim: rgba(5, 4, 16, 0.62);
+    --err: var(--danger);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(156, 134, 246, 0.55);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-card: none;
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+    color-scheme: dark;
+  }
+}
+
+/* ---- Cobalt — A calm, conventional blue on cool slate surfaces. ------------------------------------ */
+[data-palette="cobalt"],
+[data-palette="cobalt"][data-theme="light"] {
+  --bg: #f3f6fa;
+  --bg-inset: #eaedf3;
+  --fg: #161a23;
+  --muted: #626b7a;
+  --faint: #939cab;
+  --card: #ffffff;
+  --card-hover: #fafbff;
+  --card-ring: transparent;
+  --border: #e4e8f0;
+  --border-strong: #d1d8e3;
+  --field-bg: #edf0f6;
+  --accent: #0066dd;
+  --accent-hover: #0057be;
+  --accent-active: #0049a2;
+  --accent-fg: #ffffff;
+  --accent-soft: #e3eefe;
+  --ok: #1d7a51;
+  --ok-solid: #289a68;
+  --ok-soft: #daf1e4;
+  --running: #0052b3;
+  --running-solid: #0066dd;
+  --running-soft: #e3eefe;
+  --stopped: #525a68;
+  --stopped-solid: #818998;
+  --stopped-soft: #ebeef2;
+  --warn: #8a5e0f;
+  --warn-solid: #ba7b00;
+  --warn-soft: #f7eccf;
+  --danger: #a8404f;
+  --danger-solid: #cb5a6a;
+  --danger-soft: #f6e2e5;
+  --danger-hover: #b34a59;
+  --scrim: rgba(11, 17, 30, 0.55);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(0, 102, 221, 0.5);
+  --shadow-sm: 0 1px 2px rgba(19, 27, 40, 0.05);
+  --shadow-card: 0 1px 2px rgba(19, 27, 40, 0.04), 0 4px 16px rgba(19, 27, 40, 0.05);
+  --shadow-md: 0 8px 28px rgba(19, 27, 40, 0.1);
+  --shadow-lg: 0 24px 60px rgba(19, 27, 40, 0.16);
+  color-scheme: light;
+}
+
+[data-palette="cobalt"][data-theme="dark"] {
+  --bg: #0b0f17;
+  --bg-inset: #12171f;
+  --fg: #e8ecf3;
+  --muted: #929bac;
+  --faint: #5d677b;
+  --card: #141a24;
+  --card-hover: #1a212d;
+  --card-ring: #212836;
+  --border: #202734;
+  --border-strong: #2d374a;
+  --field-bg: #10151d;
+  --accent: #589afc;
+  --accent-hover: #80b3fe;
+  --accent-active: #a4c8ff;
+  --accent-fg: #020919;
+  --accent-soft: rgba(88, 154, 252, 0.16);
+  --ok: #62d29d;
+  --ok-solid: #45c089;
+  --ok-soft: rgba(69, 192, 137, 0.16);
+  --running: #80b3fe;
+  --running-solid: #589afc;
+  --running-soft: rgba(88, 154, 252, 0.18);
+  --stopped: #8e97a6;
+  --stopped-solid: #687080;
+  --stopped-soft: rgba(104, 112, 128, 0.15);
+  --warn: #e6b24a;
+  --warn-solid: #d6921f;
+  --warn-soft: rgba(214, 146, 31, 0.16);
+  --danger: #e9889a;
+  --danger-solid: #d96576;
+  --danger-soft: rgba(217, 101, 118, 0.16);
+  --danger-hover: #ec97a6;
+  --scrim: rgba(2, 5, 16, 0.62);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(88, 154, 252, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="cobalt"][data-theme="system"],
+  [data-palette="cobalt"]:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #0b0f17;
+    --bg-inset: #12171f;
+    --fg: #e8ecf3;
+    --muted: #929bac;
+    --faint: #5d677b;
+    --card: #141a24;
+    --card-hover: #1a212d;
+    --card-ring: #212836;
+    --border: #202734;
+    --border-strong: #2d374a;
+    --field-bg: #10151d;
+    --accent: #589afc;
+    --accent-hover: #80b3fe;
+    --accent-active: #a4c8ff;
+    --accent-fg: #020919;
+    --accent-soft: rgba(88, 154, 252, 0.16);
+    --ok: #62d29d;
+    --ok-solid: #45c089;
+    --ok-soft: rgba(69, 192, 137, 0.16);
+    --running: #80b3fe;
+    --running-solid: #589afc;
+    --running-soft: rgba(88, 154, 252, 0.18);
+    --stopped: #8e97a6;
+    --stopped-solid: #687080;
+    --stopped-soft: rgba(104, 112, 128, 0.15);
+    --warn: #e6b24a;
+    --warn-solid: #d6921f;
+    --warn-soft: rgba(214, 146, 31, 0.16);
+    --danger: #e9889a;
+    --danger-solid: #d96576;
+    --danger-soft: rgba(217, 101, 118, 0.16);
+    --danger-hover: #ec97a6;
+    --scrim: rgba(2, 5, 16, 0.62);
+    --err: var(--danger);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(88, 154, 252, 0.55);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-card: none;
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+    color-scheme: dark;
+  }
+}
+
+/* ---- Teal — Blue-green accent over marine neutrals. The quietest scheme. ------------------------------------ */
+[data-palette="teal"],
+[data-palette="teal"][data-theme="light"] {
+  --bg: #f1f7f8;
+  --bg-inset: #e7eef0;
+  --fg: #111d1f;
+  --muted: #5b6e73;
+  --faint: #8c9fa4;
+  --card: #ffffff;
+  --card-hover: #f8fcfd;
+  --card-ring: transparent;
+  --border: #e1eaec;
+  --border-strong: #ccdbde;
+  --field-bg: #eaf1f3;
+  --accent: #00787a;
+  --accent-hover: #006668;
+  --accent-active: #005657;
+  --accent-fg: #ffffff;
+  --accent-soft: #dbf3f3;
+  --ok: #1d7a51;
+  --ok-solid: #289a68;
+  --ok-soft: #daf1e4;
+  --running: #006061;
+  --running-solid: #00787a;
+  --running-soft: #dbf3f3;
+  --stopped: #4b5d62;
+  --stopped-solid: #788c90;
+  --stopped-soft: #e9eff0;
+  --warn: #8a5e0f;
+  --warn-solid: #ba7b00;
+  --warn-soft: #f7eccf;
+  --danger: #a8404f;
+  --danger-solid: #cb5a6a;
+  --danger-soft: #f6e2e5;
+  --danger-hover: #b34a59;
+  --scrim: rgba(3, 21, 25, 0.55);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(0, 120, 122, 0.5);
+  --shadow-sm: 0 1px 2px rgba(10, 30, 34, 0.05);
+  --shadow-card: 0 1px 2px rgba(10, 30, 34, 0.04), 0 4px 16px rgba(10, 30, 34, 0.05);
+  --shadow-md: 0 8px 28px rgba(10, 30, 34, 0.1);
+  --shadow-lg: 0 24px 60px rgba(10, 30, 34, 0.16);
+  color-scheme: light;
+}
+
+[data-palette="teal"][data-theme="dark"] {
+  --bg: #071114;
+  --bg-inset: #0d191b;
+  --fg: #e5eef0;
+  --muted: #899fa4;
+  --faint: #526c72;
+  --card: #0e1c1f;
+  --card-hover: #132428;
+  --card-ring: #182c30;
+  --border: #182a2e;
+  --border-strong: #213c42;
+  --field-bg: #0b1719;
+  --accent: #00b1b4;
+  --accent-hover: #2ec9cc;
+  --accent-active: #7cd8da;
+  --accent-fg: #000c0c;
+  --accent-soft: rgba(0, 177, 180, 0.16);
+  --ok: #62d29d;
+  --ok-solid: #45c089;
+  --ok-soft: rgba(69, 192, 137, 0.16);
+  --running: #2ec9cc;
+  --running-solid: #00b1b4;
+  --running-soft: rgba(0, 177, 180, 0.18);
+  --stopped: #869a9f;
+  --stopped-solid: #607479;
+  --stopped-soft: rgba(96, 116, 121, 0.15);
+  --warn: #e6b24a;
+  --warn-solid: #d6921f;
+  --warn-soft: rgba(214, 146, 31, 0.16);
+  --danger: #e9889a;
+  --danger-solid: #d96576;
+  --danger-soft: rgba(217, 101, 118, 0.16);
+  --danger-hover: #ec97a6;
+  --scrim: rgba(0, 7, 10, 0.62);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(0, 177, 180, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="teal"][data-theme="system"],
+  [data-palette="teal"]:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #071114;
+    --bg-inset: #0d191b;
+    --fg: #e5eef0;
+    --muted: #899fa4;
+    --faint: #526c72;
+    --card: #0e1c1f;
+    --card-hover: #132428;
+    --card-ring: #182c30;
+    --border: #182a2e;
+    --border-strong: #213c42;
+    --field-bg: #0b1719;
+    --accent: #00b1b4;
+    --accent-hover: #2ec9cc;
+    --accent-active: #7cd8da;
+    --accent-fg: #000c0c;
+    --accent-soft: rgba(0, 177, 180, 0.16);
+    --ok: #62d29d;
+    --ok-solid: #45c089;
+    --ok-soft: rgba(69, 192, 137, 0.16);
+    --running: #2ec9cc;
+    --running-solid: #00b1b4;
+    --running-soft: rgba(0, 177, 180, 0.18);
+    --stopped: #869a9f;
+    --stopped-solid: #607479;
+    --stopped-soft: rgba(96, 116, 121, 0.15);
+    --warn: #e6b24a;
+    --warn-solid: #d6921f;
+    --warn-soft: rgba(214, 146, 31, 0.16);
+    --danger: #e9889a;
+    --danger-solid: #d96576;
+    --danger-soft: rgba(217, 101, 118, 0.16);
+    --danger-hover: #ec97a6;
+    --scrim: rgba(0, 7, 10, 0.62);
+    --err: var(--danger);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(0, 177, 180, 0.55);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-card: none;
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+    color-scheme: dark;
+  }
+}
+
+/* ---- Plum — Warm magenta accent on plum-tinted neutrals. ------------------------------------ */
+[data-palette="plum"],
+[data-palette="plum"][data-theme="light"] {
+  --bg: #f8f4f8;
+  --bg-inset: #f0ebef;
+  --fg: #1e181e;
+  --muted: #726671;
+  --faint: #a397a2;
+  --card: #ffffff;
+  --card-hover: #fdfafd;
+  --card-ring: transparent;
+  --border: #ece6eb;
+  --border-strong: #ddd4dc;
+  --field-bg: #f3eef2;
+  --accent: #b335a1;
+  --accent-hover: #9f1f8f;
+  --accent-active: #881b7a;
+  --accent-fg: #ffffff;
+  --accent-soft: #f8e7f4;
+  --ok: #1d7a51;
+  --ok-solid: #289a68;
+  --ok-soft: #daf1e4;
+  --running: #971988;
+  --running-solid: #b335a1;
+  --running-soft: #f8e7f4;
+  --stopped: #605660;
+  --stopped-solid: #90858f;
+  --stopped-soft: #f0ecf0;
+  --warn: #8a5e0f;
+  --warn-solid: #ba7b00;
+  --warn-soft: #f7eccf;
+  --danger: #a8404f;
+  --danger-solid: #cb5a6a;
+  --danger-soft: #f6e2e5;
+  --danger-hover: #b34a59;
+  --scrim: rgba(23, 14, 23, 0.55);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(179, 53, 161, 0.5);
+  --shadow-sm: 0 1px 2px rgba(33, 23, 32, 0.05);
+  --shadow-card: 0 1px 2px rgba(33, 23, 32, 0.04), 0 4px 16px rgba(33, 23, 32, 0.05);
+  --shadow-md: 0 8px 28px rgba(33, 23, 32, 0.1);
+  --shadow-lg: 0 24px 60px rgba(33, 23, 32, 0.16);
+  color-scheme: light;
+}
+
+[data-palette="plum"][data-theme="dark"] {
+  --bg: #130d13;
+  --bg-inset: #1b141a;
+  --fg: #f0eaef;
+  --muted: #a396a2;
+  --faint: #70616f;
+  --card: #1e171e;
+  --card-hover: #271d26;
+  --card-ring: #2f242e;
+  --border: #2d232d;
+  --border-strong: #40323f;
+  --field-bg: #191218;
+  --accent: #d571c3;
+  --accent-hover: #e094d1;
+  --accent-active: #eab1de;
+  --accent-fg: #120310;
+  --accent-soft: rgba(213, 113, 195, 0.16);
+  --ok: #62d29d;
+  --ok-solid: #45c089;
+  --ok-soft: rgba(69, 192, 137, 0.16);
+  --running: #e094d1;
+  --running-solid: #d571c3;
+  --running-soft: rgba(213, 113, 195, 0.18);
+  --stopped: #9e929d;
+  --stopped-solid: #786c77;
+  --stopped-soft: rgba(120, 108, 119, 0.15);
+  --warn: #e6b24a;
+  --warn-solid: #d6921f;
+  --warn-soft: rgba(214, 146, 31, 0.16);
+  --danger: #e9889a;
+  --danger-solid: #d96576;
+  --danger-soft: rgba(217, 101, 118, 0.16);
+  --danger-hover: #ec97a6;
+  --scrim: rgba(10, 3, 10, 0.62);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(213, 113, 195, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="plum"][data-theme="system"],
+  [data-palette="plum"]:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #130d13;
+    --bg-inset: #1b141a;
+    --fg: #f0eaef;
+    --muted: #a396a2;
+    --faint: #70616f;
+    --card: #1e171e;
+    --card-hover: #271d26;
+    --card-ring: #2f242e;
+    --border: #2d232d;
+    --border-strong: #40323f;
+    --field-bg: #191218;
+    --accent: #d571c3;
+    --accent-hover: #e094d1;
+    --accent-active: #eab1de;
+    --accent-fg: #120310;
+    --accent-soft: rgba(213, 113, 195, 0.16);
+    --ok: #62d29d;
+    --ok-solid: #45c089;
+    --ok-soft: rgba(69, 192, 137, 0.16);
+    --running: #e094d1;
+    --running-solid: #d571c3;
+    --running-soft: rgba(213, 113, 195, 0.18);
+    --stopped: #9e929d;
+    --stopped-solid: #786c77;
+    --stopped-soft: rgba(120, 108, 119, 0.15);
+    --warn: #e6b24a;
+    --warn-solid: #d6921f;
+    --warn-soft: rgba(214, 146, 31, 0.16);
+    --danger: #e9889a;
+    --danger-solid: #d96576;
+    --danger-soft: rgba(217, 101, 118, 0.16);
+    --danger-hover: #ec97a6;
+    --scrim: rgba(10, 3, 10, 0.62);
+    --err: var(--danger);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(213, 113, 195, 0.55);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-card: none;
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+    color-scheme: dark;
+  }
+}
+
+/* ---- Sandstone — Warm paper and charcoal with a cool indigo accent. ------------------------------------ */
+[data-palette="sandstone"],
+[data-palette="sandstone"][data-theme="light"] {
+  --bg: #f8f5f1;
+  --bg-inset: #f0ece7;
+  --fg: #1f1912;
+  --muted: #73685b;
+  --faint: #a5998c;
+  --card: #ffffff;
+  --card-hover: #fdfbf8;
+  --card-ring: transparent;
+  --border: #ede7e1;
+  --border-strong: #ded6cc;
+  --field-bg: #f3efea;
+  --accent: #4161db;
+  --accent-hover: #324fc7;
+  --accent-active: #2a43aa;
+  --accent-fg: #ffffff;
+  --accent-soft: #e6edfe;
+  --ok: #1d7a51;
+  --ok-solid: #289a68;
+  --ok-soft: #daf1e4;
+  --running: #2e49be;
+  --running-solid: #4161db;
+  --running-soft: #e6edfe;
+  --stopped: #62584c;
+  --stopped-solid: #918679;
+  --stopped-soft: #f0ede9;
+  --warn: #8a5e0f;
+  --warn-solid: #ba7b00;
+  --warn-soft: #f7eccf;
+  --danger: #a8404f;
+  --danger-solid: #cb5a6a;
+  --danger-soft: #f6e2e5;
+  --danger-hover: #b34a59;
+  --scrim: rgba(25, 16, 4, 0.55);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(65, 97, 219, 0.5);
+  --shadow-sm: 0 1px 2px rgba(34, 25, 12, 0.05);
+  --shadow-card: 0 1px 2px rgba(34, 25, 12, 0.04), 0 4px 16px rgba(34, 25, 12, 0.05);
+  --shadow-md: 0 8px 28px rgba(34, 25, 12, 0.1);
+  --shadow-lg: 0 24px 60px rgba(34, 25, 12, 0.16);
+  color-scheme: light;
+}
+
+[data-palette="sandstone"][data-theme="dark"] {
+  --bg: #140e07;
+  --bg-inset: #1c150d;
+  --fg: #f0ebe5;
+  --muted: #a5988a;
+  --faint: #736453;
+  --card: #20180f;
+  --card-hover: #281f14;
+  --card-ring: #30261a;
+  --border: #2f2519;
+  --border-strong: #423423;
+  --field-bg: #1a130b;
+  --accent: #7395f9;
+  --accent-hover: #92aefb;
+  --accent-active: #afc5fe;
+  --accent-fg: #040819;
+  --accent-soft: rgba(115, 149, 249, 0.16);
+  --ok: #62d29d;
+  --ok-solid: #45c089;
+  --ok-soft: rgba(69, 192, 137, 0.16);
+  --running: #92aefb;
+  --running-solid: #7395f9;
+  --running-soft: rgba(115, 149, 249, 0.18);
+  --stopped: #9f9487;
+  --stopped-solid: #7a6e60;
+  --stopped-soft: rgba(122, 110, 96, 0.15);
+  --warn: #e6b24a;
+  --warn-solid: #d6921f;
+  --warn-soft: rgba(214, 146, 31, 0.16);
+  --danger: #e9889a;
+  --danger-solid: #d96576;
+  --danger-soft: rgba(217, 101, 118, 0.16);
+  --danger-hover: #ec97a6;
+  --scrim: rgba(11, 4, 0, 0.62);
+  --err: var(--danger);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(115, 149, 249, 0.55);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-card: none;
+  --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-palette="sandstone"][data-theme="system"],
+  [data-palette="sandstone"]:not([data-theme="light"]):not([data-theme="dark"]) {
+    --bg: #140e07;
+    --bg-inset: #1c150d;
+    --fg: #f0ebe5;
+    --muted: #a5988a;
+    --faint: #736453;
+    --card: #20180f;
+    --card-hover: #281f14;
+    --card-ring: #30261a;
+    --border: #2f2519;
+    --border-strong: #423423;
+    --field-bg: #1a130b;
+    --accent: #7395f9;
+    --accent-hover: #92aefb;
+    --accent-active: #afc5fe;
+    --accent-fg: #040819;
+    --accent-soft: rgba(115, 149, 249, 0.16);
+    --ok: #62d29d;
+    --ok-solid: #45c089;
+    --ok-soft: rgba(69, 192, 137, 0.16);
+    --running: #92aefb;
+    --running-solid: #7395f9;
+    --running-soft: rgba(115, 149, 249, 0.18);
+    --stopped: #9f9487;
+    --stopped-solid: #7a6e60;
+    --stopped-soft: rgba(122, 110, 96, 0.15);
+    --warn: #e6b24a;
+    --warn-solid: #d6921f;
+    --warn-soft: rgba(214, 146, 31, 0.16);
+    --danger: #e9889a;
+    --danger-solid: #d96576;
+    --danger-soft: rgba(217, 101, 118, 0.16);
+    --danger-hover: #ec97a6;
+    --scrim: rgba(11, 4, 0, 0.62);
+    --err: var(--danger);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(115, 149, 249, 0.55);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-card: none;
+    --shadow-md: 0 8px 28px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.62);
+    color-scheme: dark;
+  }
+}

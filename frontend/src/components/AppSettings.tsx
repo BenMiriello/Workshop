@@ -76,14 +76,27 @@ export function SettingsSection({
 }
 
 // Label-beside-value row. Uses the inline-field grid; a hairline separates rows.
-export function SettingsRow({ label, children }: { label: string; children: ReactNode }) {
+// `hint` is a caption under the control — for a setting whose current value
+// needs a word of explanation (e.g. what a color scheme is meant to feel like).
+export function SettingsRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <div
       className="ws-field ws-field--inline"
       style={{ alignItems: "baseline", padding: "var(--space-2) 0", borderBottom: "1px solid var(--border)" }}
     >
       <span className="ws-field__label ws-muted">{label}</span>
-      <span>{children}</span>
+      <span>
+        {children}
+        {hint && <span className="ws-field__help" style={{ display: "block", marginTop: "var(--space-2)" }}>{hint}</span>}
+      </span>
     </div>
   );
 }

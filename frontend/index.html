@@ -27,18 +27,25 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <!-- Pre-React theme bootstrap. Applies the persisted theme to <html> before
-         any paint so there's no light/dark flash. Mirrors kitchen.js applyTheme:
-         localStorage["ws-theme"] is "light" | "dark" | "system". Default is
-         "dark" — the app paints dark on first visit; the Settings switch can
-         move it to light or system (follow OS). -->
+    <!-- Pre-React appearance bootstrap. Applies both axes to <html> before any
+         paint so there's no light/dark or wrong-scheme flash.
+           localStorage["ws-theme"]   = "light" | "dark" | "system"  (default dark)
+           localStorage["ws-palette"] = one of the five ids in palettes.gen.ts
+                                        (default violet)
+         Settings is the only writer of either; see src/ui/theme.ts. The palette
+         list is duplicated here because this runs before any module loads —
+         keep it in step with PALETTE_IDS if a palette is ever added. -->
     <script>
       (function () {
+        var PALETTES = ["violet", "cobalt", "teal", "plum", "sandstone"];
+        var root = document.documentElement;
         try {
-          var t = localStorage.getItem("ws-theme") || "dark";
-          document.documentElement.setAttribute("data-theme", t);
+          root.setAttribute("data-theme", localStorage.getItem("ws-theme") || "dark");
+          var p = localStorage.getItem("ws-palette");
+          root.setAttribute("data-palette", PALETTES.indexOf(p) >= 0 ? p : "violet");
         } catch (e) {
-          document.documentElement.setAttribute("data-theme", "dark");
+          root.setAttribute("data-theme", "dark");
+          root.setAttribute("data-palette", "violet");
         }
       })();
     </script>

@@ -38,3 +38,51 @@ two stop drifting (they were hand-synced before).
   `gen:tokens`, then reconcile `tokens.generated.js` into `tokens.js` (the
   Expo-consumed module that also carries the usage docs + `makeTheme` helper).
   The generated file is the diff oracle; review it before promoting changes.
+
+## 1.1.0 — configurable color schemes
+
+Five palettes, each in light and dark. Appearance is now two independent axes:
+`data-theme` (light/dark/system) × `data-palette` (violet/cobalt/teal/plum/
+sandstone), both on `<html>`, both picked in Settings → Appearance.
+
+**The canonical color source moved.** `tokens.css` no longer defines any color;
+it owns the theme-independent scales and `@import`s the generated `palettes.css`.
+The model is `src/styles/palette.mjs`:
+
+- An OKLCh tonal ramp (M3-shaped: fixed tones read off a hue, neutrals from the
+  same hue at near-zero chroma). The ramp tones were measured FROM the previous
+  hand-tuned violet theme, so that look is now one instance of the model rather
+  than a special case — `Violet` is still the default and its surface anchors are
+  byte-identical.
+- Five palette seeds (brand hue, neutral hue, two chroma scales). Four cool hues
+  spaced across the arc that cannot be misread as status (197/258/290/334), plus
+  Sandstone: warm neutrals with a cool indigo accent.
+- A pinned status tone table. `ok`/`warn`/`danger` are identical in every
+  palette, solved once against every scheme's surfaces.
+
+Generator: `scripts/gen-tokens.mjs` now emits three files — `palettes.css`,
+`palettes.gen.ts` (typed menu for the picker), `tokens.generated.js` (Expo). It
+no longer parses CSS; it imports the model. `--check` mode runs inside
+`scripts/check_design.sh`, so a stale generated file fails the gate.
+
+New/changed API:
+
+- `usePalette()`, `applyPalette()`, `getStoredPalette()`, `useResolvedMode()`,
+  `type PaletteId` — from `ui/theme`.
+- `PalettePicker` — the five-swatch radiogroup. Each swatch is a live preview
+  (it carries `data-palette`/`data-theme`, so it renders that scheme's real
+  tokens).
+- `PALETTE_META`, `DEFAULT_PALETTE` re-exported from the generated list.
+- `makeTheme(scheme, paletteId)` in `tokens.js` takes a second argument;
+  `palettes`, `paletteMeta`, `defaultPalette` are exported. The old
+  `palette.light/.dark` still resolves, to the default palette.
+- `SettingsRow` accepts `hint`.
+- New token `--scrim` (modal overlay; was a hardcoded rgba).
+
+Contrast: every text token now clears AA on `--bg`, `--card` and `--bg-inset` in
+all ten schemes, and every solid mark clears 3:1. Two values moved as a result —
+the light-mode gold `--warn-solid` (was 2.63:1 on white) and the light `--accent`
+(one step darker; the original failed AA on `--bg-inset`). Pinned in
+`src/styles/palette.test.ts`.
+
+`--accent-fg` is no longer always white. `.ws-btn--primary` spinners use it.

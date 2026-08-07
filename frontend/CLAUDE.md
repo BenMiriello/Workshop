@@ -30,9 +30,26 @@ Both CSS files are imported in `src/main.tsx` **before** `styles.css`. `styles.c
 | **change** (immediately) | theme, filters, reveal/hide, source `<select>`, segmented view switches | view preferences — cheap, reversible, no write |
 | **submit** (explicit Save) | budget, coords, configs, prompts, cron, secrets | writes config or money — deliberate, not accidental |
 
-## Theming
+## Theming — two axes, one generated color layer
 
-`data-theme` on `<html>` is `light | dark | system`. **Default is `dark`** (set by the pre-React bootstrap in `index.html` and `getStoredTheme()`). The Settings theme switch is the only writer — it uses `useTheme()` and persists to `localStorage["ws-theme"]`. There is **one** brand accent (refined violet); it is not user-selectable. Differentiation comes from the `--cat-*` suite.
+Appearance is `data-theme` × `data-palette`, both on `<html>`, both applied by the pre-React bootstrap in `index.html` before first paint:
+
+| attribute | values | storage | default | writer |
+|---|---|---|---|---|
+| `data-theme` | `light \| dark \| system` | `localStorage["ws-theme"]` | `dark` | Settings → Appearance (`useTheme()`) |
+| `data-palette` | `violet \| cobalt \| teal \| plum \| sandstone` | `localStorage["ws-palette"]` | `violet` | Settings → Appearance (`usePalette()`) |
+
+**Color is generated, not hand-written.** The model lives in `src/styles/palette.mjs` (OKLCh tonal ramp + five palette seeds + the pinned status tone table). `scripts/gen-tokens.mjs` emits three files from it — `palettes.css` (all ten schemes), `palettes.gen.ts` (the typed menu), `tokens.generated.js` (the same hexes for Expo). To change a color: **edit `palette.mjs`, then `npm run gen:tokens`.** Editing a generated file is wasted work; `check_design.sh` fails on a stale one. `tokens.css` `@import`s `palettes.css`, so every entry point picks it up.
+
+Rules the model enforces, checked by `src/styles/palette.test.ts` (53 assertions across all ten schemes):
+
+- **One brand accent per scheme**, and it is not separately selectable — picking a palette picks the accent. (Multiple simultaneous accents were tried and dropped.)
+- **`ok` / `warn` / `danger` are byte-identical in all five palettes.** Status is meaning; meaning does not move when someone restyles. Only `running` (the accent) and `stopped` (the neutral) follow the palette.
+- **Every text token clears WCAG AA (4.5:1) on `--bg`, `--card` AND `--bg-inset`**; every solid mark clears 3:1. Accent tone is *solved* per hue, not fixed, because a teal at a given lightness is far lighter to the eye than a violet.
+- **`--accent-fg` is not always white** — it is whichever end of the ramp contrasts more (teal light mode gets a near-black foreground). Never hardcode `#fff` on an accent fill.
+- The `--cat-*` categorical suite is deliberately palette-INdependent: a tag color is an identity, so it must not change when the scheme does.
+
+Adding a palette: add a seed to `PALETTES` in `palette.mjs`, add the id to the `PALETTES` array in the `index.html` bootstrap, run `npm run gen:tokens`, run the tests. The Settings picker builds itself from the generated list.
 
 ## Charts (recharts)
 

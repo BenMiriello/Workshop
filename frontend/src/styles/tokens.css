@@ -1,139 +1,32 @@
 /* =============================================================================
-   Workshop Design System — TOKENS  (refined violet + categorical suite)
+   Workshop Design System — TOKENS
    -----------------------------------------------------------------------------
-   Theming: [data-theme="light"|"dark"|"system"] on <html>.
-   Legacy vars (--bg --fg --muted --card --border --accent --err) preserved.
+   Two axes on <html>:
+     [data-theme="light"|"dark"|"system"]      — mode
+     [data-palette="violet"|"cobalt"|"teal"|"plum"|"sandstone"]  — color scheme
 
-   Color philosophy:
+   COLOR IS NOT DEFINED HERE. The five palettes x two modes live in the
+   generated palettes.css, imported below; the model that produces them is
+   frontend/src/styles/palette.mjs (edit that, then `npm run gen:tokens`).
+   This file owns only the theme-INDEPENDENT scales: space, type, radii,
+   controls, z, motion, and the categorical suite.
+
+   Color philosophy (enforced by palette.mjs + palette.test.ts):
      • Hierarchy from tonal surfaces + soft shadow + space — not borders.
-     • ONE brand accent — a refined violet (between indigo & orchid). It is not
-       a user choice.
-     • Status = meaning only: ok (green) · running (violet, pulses) ·
-       stopped (slate) · warn (gold) · danger (clay-rose).
-     • A separate CATEGORICAL / accent suite (--cat-*) differentiates tags /
-       sources / agents / chart series — violet, turquoise, blue, indigo,
-       orchid, slate. Cool tones that can't be read as status.
+     • ONE brand accent per scheme. The scheme is a personal choice; the
+       accent within it is not.
+     • Status = meaning only: ok (green) · running (accent, pulses) ·
+       stopped (neutral) · warn (gold) · danger (clay-rose). ok/warn/danger are
+       IDENTICAL in all five palettes — meaning does not move when you restyle.
+     • A separate CATEGORICAL suite (--cat-*) differentiates tags / sources /
+       agents / chart series. Also identical in all five palettes: a tag color
+       is an identity, so it must not change when the scheme does. Cool tones
+       that can't be read as status.
 
    Font: Hanken Grotesk (UI) + JetBrains Mono (ids/endpoints/numbers-as-code).
    ========================================================================== */
 
-/* ---- LIGHT (default) — cool porcelain --------------------------------------- */
-:root,
-[data-theme="light"] {
-  --bg:            #f5f5fa;
-  --bg-inset:      #ececf3;
-  --fg:            #1a1923;
-  --muted:         #6a6879;
-  --faint:         #9b99ab;
-  --card:          #ffffff;
-  --card-hover:    #fbfbff;
-  --card-ring:     transparent;
-  --border:        #e7e7f0;
-  --border-strong: #d6d6e3;
-  --field-bg:      #efeff6;
-
-  /* accent — refined VIOLET (between indigo & orchid) */
-  --accent:        #7a57e0;
-  --accent-hover:  #6845cd;
-  --accent-active: #593bb0;
-  --accent-fg:     #ffffff;
-  --accent-soft:   #efeafc;
-
-  /* status — text / solid / soft */
-  --ok:        #1d7a51;  --ok-solid:      #2f9f6d;  --ok-soft:      #daf1e4;
-  --running:   #5d42c6;  --running-solid: #7a57e0;  --running-soft: #efeafc;
-  --stopped:   #585868;  --stopped-solid: #9594a6;  --stopped-soft: #ededf2;
-  --warn:      #8a5e0f;  --warn-solid:    #d6921f;  --warn-soft:    #f7eccf;
-  --danger:    #a8404f;  --danger-solid:  #cb5a6a;  --danger-soft:  #f6e2e5;
-  --danger-hover: #b34a59;
-  --err: var(--danger);
-
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(122, 87, 224, 0.5);
-
-  --shadow-sm:   0 1px 2px rgba(26, 25, 45, 0.05);
-  --shadow-card: 0 1px 2px rgba(26, 25, 45, 0.04), 0 4px 16px rgba(26, 25, 50, 0.05);
-  --shadow-md:   0 8px 28px rgba(26, 25, 50, 0.10);
-  --shadow-lg:   0 24px 60px rgba(26, 25, 50, 0.16);
-
-  color-scheme: light;
-}
-
-/* ---- DARK — inky violet-navy ------------------------------------------------ */
-[data-theme="dark"] {
-  --bg:            #0f0e17;
-  --bg-inset:      #16151f;
-  --fg:            #ecebf3;
-  --muted:         #9a98ac;
-  --faint:         #66647a;
-  --card:          #191824;
-  --card-hover:    #201f2d;
-  --card-ring:     #272636;
-  --border:        #262534;
-  --border-strong: #36344a;
-  --field-bg:      #14131d;
-
-  --accent:        #9d86f5;
-  --accent-hover:  #b3a3f8;
-  --accent-active: #c8bcfb;
-  --accent-fg:     #100b1c;
-  --accent-soft:   rgba(157, 134, 245, 0.16);
-
-  --ok:        #62d29d;  --ok-solid:      #45c089;  --ok-soft:      rgba(69, 192, 137, 0.16);
-  --running:   #b4a4f7;  --running-solid: #9d86f5;  --running-soft: rgba(157, 134, 245, 0.18);
-  --stopped:   #9594a6;  --stopped-solid: #6f6e80;  --stopped-soft: rgba(149, 148, 166, 0.15);
-  --warn:      #e6b24a;  --warn-solid:    #d6921f;  --warn-soft:    rgba(214, 146, 31, 0.16);
-  --danger:    #e9889a;  --danger-solid:  #d96576;  --danger-soft:  rgba(217, 101, 118, 0.16);
-  --danger-hover: #ec97a6;
-  --err: var(--danger);
-
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(157, 134, 245, 0.55);
-
-  --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-card: none;
-  --shadow-md:   0 8px 28px rgba(0, 0, 0, 0.5);
-  --shadow-lg:   0 24px 60px rgba(0, 0, 0, 0.62);
-
-  color-scheme: dark;
-}
-
-/* ---- SYSTEM (no forced theme → follow OS) ----------------------------------- */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]):not([data-theme="dark"]),
-  [data-theme="system"] {
-    --bg:            #0f0e17;
-    --bg-inset:      #16151f;
-    --fg:            #ecebf3;
-    --muted:         #9a98ac;
-    --faint:         #66647a;
-    --card:          #191824;
-    --card-hover:    #201f2d;
-    --card-ring:     #272636;
-    --border:        #262534;
-    --border-strong: #36344a;
-    --field-bg:      #14131d;
-
-    --accent:        #9d86f5;
-    --accent-hover:  #b3a3f8;
-    --accent-active: #c8bcfb;
-    --accent-fg:     #100b1c;
-    --accent-soft:   rgba(157, 134, 245, 0.16);
-
-    --ok:        #62d29d;  --ok-solid:      #45c089;  --ok-soft:      rgba(69, 192, 137, 0.16);
-    --running:   #b4a4f7;  --running-solid: #9d86f5;  --running-soft: rgba(157, 134, 245, 0.18);
-    --stopped:   #9594a6;  --stopped-solid: #6f6e80;  --stopped-soft: rgba(149, 148, 166, 0.15);
-    --warn:      #e6b24a;  --warn-solid:    #d6921f;  --warn-soft:    rgba(214, 146, 31, 0.16);
-    --danger:    #e9889a;  --danger-solid:  #d96576;  --danger-soft:  rgba(217, 101, 118, 0.16);
-    --danger-hover: #ec97a6;
-    --err: var(--danger);
-
-    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px rgba(157, 134, 245, 0.55);
-    --shadow-sm:   0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-card: none;
-    --shadow-md:   0 8px 28px rgba(0, 0, 0, 0.5);
-    --shadow-lg:   0 24px 60px rgba(0, 0, 0, 0.62);
-    color-scheme: dark;
-  }
-}
+@import "./palettes.css";
 
 /* ---- THEME-INDEPENDENT SCALES ----------------------------------------------- */
 :root {
@@ -151,7 +44,8 @@
   /* Categorical / accent suite — tags · sources · agents · chart series.
      A curated handful built around the brand violet + turquoise, plus cool
      complements. Deliberately NOT green/gold/red so they never read as
-     ok/warn/danger. Theme-independent; tint with color-mix() for chip fills. */
+     ok/warn/danger, and deliberately NOT palette-dependent so an agent keeps
+     the same color when you switch scheme. Tint with color-mix() for chips. */
   --cat-violet:    #7a57e0;
   --cat-turquoise: #10b4bf;
   --cat-blue:      #3f7df0;

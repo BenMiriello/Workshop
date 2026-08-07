@@ -3,7 +3,13 @@
 // Every primitive is a thin className wrapper over components.css — no inline
 // styles, no CSS-in-JS. See frontend/CLAUDE.md for the rules that govern these.
 export { cx } from "./cx";
-export { useTheme, applyTheme, getStoredTheme, type ThemeMode } from "./theme";
+export {
+  useTheme, applyTheme, getStoredTheme,
+  usePalette, applyPalette, getStoredPalette, useResolvedMode,
+  type ThemeMode, type PaletteId,
+} from "./theme";
+export { PalettePicker } from "./PalettePicker";
+export { PALETTE_META, DEFAULT_PALETTE, type PaletteMeta } from "../styles/palettes.gen";
 export { statusClass, catClass, catFor, type StatusKind, type CatHue } from "./status";
 
 export { Stack, Row, Spacer, SectionLabel, PageHeader, Toolbar, Card, CardGrid, Stat, Divider, ProgressBar, StackedBar } from "./layout";

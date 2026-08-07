@@ -1,11 +1,16 @@
 /* =============================================================================
    Workshop Design System — MOBILE TOKENS
-   Mirrors tokens.css as a plain JS object for the Expo app's StyleSheet.
-   Keep in sync with tokens.css.
+   The scales as a plain JS object for the Expo app's StyleSheet, since CSS
+   custom properties don't reach React Native.
+
+   COLOR is not defined here. It comes from tokens.generated.js, which
+   scripts/gen-tokens.mjs emits from palette.mjs — the same model, and the same
+   numbers, as the web's palettes.css. This file owns the theme-independent
+   scales only (space, type, radii, controls, motion), mirroring tokens.css.
 
    Usage (Expo / RN):
      import { tokens, makeTheme } from "./tokens";
-     const t = makeTheme(scheme);        // scheme: "light" | "dark"
+     const t = makeTheme(scheme, paletteId);   // "light"|"dark", "violet"|...
      const styles = StyleSheet.create({
        card:  { backgroundColor: t.card, borderRadius: tokens.radius.lg, padding: tokens.space[5] },
        title: { color: t.fg, fontFamily: tokens.font.sans, fontSize: tokens.fs.lg, fontWeight: "600" },
@@ -13,48 +18,21 @@
      });
    ========================================================================== */
 
-const palette = {
-  light: {
-    bg: "#f5f5fa", bgInset: "#ececf3", fg: "#1a1923", muted: "#6a6879", faint: "#9b99ab",
-    card: "#ffffff", cardHover: "#fbfbff", cardRing: "transparent",
-    border: "#e7e7f0", borderStrong: "#d6d6e3", fieldBg: "#efeff6",
-    accent: "#7a57e0", accentHover: "#6845cd", accentActive: "#593bb0", accentFg: "#ffffff", accentSoft: "#efeafc",
-    ok: "#1d7a51", okSolid: "#2f9f6d", okSoft: "#daf1e4",
-    running: "#5d42c6", runningSolid: "#7a57e0", runningSoft: "#efeafc",
-    stopped: "#585868", stoppedSolid: "#9594a6", stoppedSoft: "#ededf2",
-    warn: "#8a5e0f", warnSolid: "#d6921f", warnSoft: "#f7eccf",
-    danger: "#a8404f", dangerSolid: "#cb5a6a", dangerSoft: "#f6e2e5", dangerHover: "#b34a59",
-    shadowColor: "#1a1932", shadowOpacity: 0.10,
-  },
-  dark: {
-    bg: "#0f0e17", bgInset: "#16151f", fg: "#ecebf3", muted: "#9a98ac", faint: "#66647a",
-    card: "#191824", cardHover: "#201f2d", cardRing: "#272636",
-    border: "#262534", borderStrong: "#36344a", fieldBg: "#14131d",
-    accent: "#9d86f5", accentHover: "#b3a3f8", accentActive: "#c8bcfb", accentFg: "#100b1c", accentSoft: "rgba(157,134,245,0.16)",
-    ok: "#62d29d", okSolid: "#45c089", okSoft: "rgba(69,192,137,0.16)",
-    running: "#b4a4f7", runningSolid: "#9d86f5", runningSoft: "rgba(157,134,245,0.18)",
-    stopped: "#9594a6", stoppedSolid: "#6f6e80", stoppedSoft: "rgba(149,148,166,0.15)",
-    warn: "#e6b24a", warnSolid: "#d6921f", warnSoft: "rgba(214,146,31,0.16)",
-    danger: "#e9889a", dangerSolid: "#d96576", dangerSoft: "rgba(217,101,118,0.16)", dangerHover: "#ec97a6",
-    shadowColor: "#000000", shadowOpacity: 0.5,
-  },
-};
+import { palettes, paletteMeta, defaultPalette, categorical } from "./tokens.generated.js";
 
-/* Categorical / differentiation — tags · sources · agents · chart series.
-   Cool jewel tones, deliberately NOT green/gold/red so they never read as
-   ok/warn/danger. Theme-independent. */
-const categorical = {
-  violet:    "#7a57e0",
-  turquoise: "#10b4bf",
-  blue:      "#3f7df0",
-  indigo:    "#5160ee",
-  orchid:    "#b35fd6",
-  slate:     "#7c8aa0",
-};
+/* Default chart series order. Categorical, never status hues — a trending line
+   must not read as good/bad. Same six in every palette (see tokens.css). */
+const chartSeries = [
+  categorical.violet,
+  categorical.turquoise,
+  categorical.orchid,
+  categorical.blue,
+  categorical.indigo,
+];
 
-/* Default chart series order (brand accent first, then categorical). Pass the
-   array straight to a recharts <Line>/<Area> stroke/fill map. */
-const chartSeries = [categorical.violet, categorical.turquoise, categorical.orchid, categorical.blue, categorical.indigo];
+/* Back-compat: `palette.light` / `palette.dark` used to be the only scheme.
+   That is now the default palette's two modes. */
+const palette = palettes[defaultPalette];
 
 const tokens = {
   space: { 0: 0, 1: 4, 2: 8, 3: 12, 4: 16, 5: 24, 6: 32, 7: 48, 8: 64 },
@@ -68,20 +46,25 @@ const tokens = {
   control:  { h: 32, hSm: 28, hLg: 38, padX: 14, padXSm: 10, padXLg: 18, fieldPadX: 12 },
   density:  { rowPadY: 6, controlH: 32 },
   motion:   { fast: 120, base: 200, slow: 320, easeOut: [0.16, 1, 0.3, 1], easeInOut: [0.4, 0, 0.2, 1] },
+  palettes,
+  paletteMeta,
+  defaultPalette,
   palette,
   categorical,
   chartSeries,
 };
 
-// Flat theme object for a given scheme.
-function makeTheme(scheme = "light") {
-  return Object.assign({}, palette[scheme] || palette.light);
+// Flat theme object for a given mode + color scheme. Unknown ids fall back to
+// the default palette in light, so a stale stored preference can't blank the UI.
+function makeTheme(scheme = "light", paletteId = defaultPalette) {
+  const p = palettes[paletteId] || palettes[defaultPalette];
+  return Object.assign({}, p[scheme] || p.light);
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { tokens, palette, categorical, chartSeries, makeTheme };
+  module.exports = { tokens, palettes, palette, paletteMeta, defaultPalette, categorical, chartSeries, makeTheme };
 }
 if (typeof window !== "undefined") {
-  window.WorkshopTokens = { tokens, palette, categorical, chartSeries, makeTheme };
+  window.WorkshopTokens = { tokens, palettes, palette, paletteMeta, defaultPalette, categorical, chartSeries, makeTheme };
 }
-export { tokens, palette, categorical, chartSeries, makeTheme };
+export { tokens, palettes, palette, paletteMeta, defaultPalette, categorical, chartSeries, makeTheme };
