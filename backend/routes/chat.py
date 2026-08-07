@@ -1748,6 +1748,24 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if not content:
         raise HTTPException(400, "empty message")
 
+    # ---- ONE TURN PER THREAD ---------------------------------------------
+    # If a turn is already running here, this message JOINS it instead of
+    # starting a rival. The decision belongs on the server: a browser only knows
+    # whether ITS OWN stream is open, so a second tab, a dropped SSE, or a reload
+    # each believe the chat is idle and cheerfully start another turn. That is
+    # not hypothetical — it produced two turns streaming into one thread at the
+    # same time, with the operator's message going to neither.
+    #
+    # Joining is also what the operator actually wants from a message typed
+    # during a turn: delivered now, at the running turn's next step boundary,
+    # rather than queued behind everything it is doing.
+    live_turn = _live_turn_id(t)
+    if live_turn and build_streaming.inject(live_turn, content):
+        at_segment = _file_during_turn(thread_id, live_turn, content)
+        return {"turn_id": live_turn, "injected": True, "at_segment": at_segment}
+    # A live turn that refuses input is wedged or finishing; fall through and
+    # start a turn rather than dropping the message.
+
     provider = chat_context.get_provider(t.get("context_key"))
 
     # Resolve + persist the model (explicit > thread > provider default). 400 on
@@ -1867,18 +1885,39 @@ def _live_turn_id(thread: dict) -> str | None:
     started the turn: a second tab, another device, a turn adopted after a
     backend restart, or a reload that re-attached by a different path all had no
     id to send and silently fell back to queueing. The thread itself knows which
-    turn is live — ask it."""
+    turn is live — ask it.
+
+    SCANS BACKWARDS, and this is the whole point. It used to look only at
+    `msgs[-1]`, which was correct exactly until mid-turn messages started being
+    filed AFTER the streaming placeholder (the ordering fix, §3.2 of the audit).
+    From then on, the FIRST message injected into a turn made the last message a
+    user message — so every message after it was told "no turn is running", fell
+    back to the queue, and either sat there for the rest of the turn or drained
+    into a SECOND turn running concurrently on the same thread. Observed live:
+    one thread with turns 2c7dc100 and 470bd00c both streaming at once.
+
+    A stale `streaming` flag must not wedge the thread either: a turn this
+    process no longer holds, or one already complete, is not live. Only the
+    stored flag AND a running turn object count."""
     msgs = thread.get("messages") or []
-    if not msgs:
-        return None
-    last = msgs[-1]
-    meta = last.get("meta") or {}
-    if last.get("role") == "assistant" and meta.get("streaming"):
-        return meta.get("turn_id")
+    for m in reversed(msgs):
+        meta = m.get("meta") or {}
+        if m.get("role") != "assistant" or not meta.get("streaming"):
+            continue
+        turn_id = meta.get("turn_id")
+        if not turn_id:
+            return None
+        live = build_streaming.get_turn(turn_id)
+        # No turn object = adopted-elsewhere or lost to a restart; the reconnect
+        # path owns that case. Complete = the flag is stale and self-heals on the
+        # next thread read. Either way, not somewhere to deliver a message.
+        if live is None or live.complete:
+            return None
+        return turn_id
     return None
 
 
-def _file_during_turn(thread_id: str, turn_id: str, content: str) -> None:
+def _file_during_turn(thread_id: str, turn_id: str, content: str) -> int:
     """Record a message that arrived mid-turn, with the context "after" loses.
 
     See chat_store.append_message_during_turn for why it is filed after rather
@@ -1908,8 +1947,10 @@ def _file_during_turn(thread_id: str, turn_id: str, content: str) -> None:
             thread_id, "user", content,
             meta={"injected": True, "during_turn": turn_id, "at_segment": at_segment},
         )
+        return at_segment
     except Exception as e:
         log.warning("thread %s: could not persist injected message: %s", thread_id, e)
+        return 0
 
 
 @router.post("/threads/{thread_id}/inject")

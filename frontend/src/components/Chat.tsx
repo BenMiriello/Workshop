@@ -755,8 +755,21 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         }),
       });
       if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const { turn_id } = await r.json();
-      attachStream(turn_id, id, isFirst);
+      const res = await r.json();
+      if (res.injected) {
+        // A turn was already running on this thread and the server handed this
+        // message to it rather than starting a rival. Only a client that thought
+        // the chat was idle gets here — a second tab, a dropped stream, a reload
+        // — so the right response is to show the message where the server put it
+        // and attach to the turn that is actually running.
+        setMessages((m) => {
+          const i = m.length - 1;
+          if (i < 0 || m[i].role !== "user" || m[i].content !== text) return m;
+          return m.slice(0, i);   // it belongs inside the live turn, not above it
+        });
+        setInterjections((x) => [...x, { at: Number(res.at_segment) || 0, text }]);
+      }
+      attachStream(res.turn_id, id, isFirst);
     } catch (e) {
       setErr(String(e));
       markFailed();

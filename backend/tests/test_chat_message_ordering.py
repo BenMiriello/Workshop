@@ -254,3 +254,102 @@ class TestAtSegmentIsMeasuredLive:
             tid, "turn-gone", [{"t": "text", "text": "x"}] * 3, "x")
         rc._file_during_turn(tid, "turn-gone", "wait")
         assert chat_store.get_thread(tid)["messages"][-1]["meta"]["at_segment"] == 3
+
+
+class TestOneTurnPerThread:
+    """A message sent while a turn runs JOINS that turn. It must never start a
+    second one, and the server must be the one deciding — a browser only knows
+    whether its own stream is open.
+
+    Observed live on 2026-08-07: thread 919bc949 had turns 2c7dc100 and 470bd00c
+    both streaming at once, and the operator's message reached neither.
+    """
+
+    def _live(self, turn_id, thread_id):
+        from services import build_streaming
+        t = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
+        build_streaming.TURNS[turn_id] = t
+        return t
+
+    def test_the_second_mid_turn_message_still_finds_the_turn(self, thread):
+        """THE REGRESSION. `_live_turn_id` looked only at the last message, which
+        stopped being the streaming placeholder the moment a mid-turn message was
+        filed after it — so message one injected and message two was told nothing
+        was running."""
+        import routes.chat as rc
+        from services import build_streaming
+
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.append_streaming_assistant(tid, "turn-1")
+        self._live("turn-1", tid)
+        try:
+            assert rc._live_turn_id(chat_store.get_thread(tid)) == "turn-1"
+            # First mid-turn message lands AFTER the placeholder…
+            chat_store.append_message_during_turn(
+                tid, "user", "first", meta={"injected": True, "during_turn": "turn-1"})
+            # …and the turn must still be findable for the second.
+            assert rc._live_turn_id(chat_store.get_thread(tid)) == "turn-1"
+            chat_store.append_message_during_turn(
+                tid, "user", "second", meta={"injected": True, "during_turn": "turn-1"})
+            assert rc._live_turn_id(chat_store.get_thread(tid)) == "turn-1"
+        finally:
+            build_streaming.TURNS.pop("turn-1", None)
+
+    def test_a_finished_turn_is_not_live(self, thread):
+        import routes.chat as rc
+        from services import build_streaming
+
+        tid = thread["id"]
+        chat_store.append_streaming_assistant(tid, "turn-done")
+        t = self._live("turn-done", tid)
+        t.complete = True
+        try:
+            assert rc._live_turn_id(chat_store.get_thread(tid)) is None
+        finally:
+            build_streaming.TURNS.pop("turn-done", None)
+
+    def test_a_stale_streaming_flag_does_not_wedge_the_thread(self, thread):
+        """A turn lost to a restart leaves `streaming: True` behind. If that
+        counted as live, every later message would be injected into a process
+        that no longer exists — the thread would take no new turns at all."""
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_streaming_assistant(tid, "turn-vanished")
+        assert rc._live_turn_id(chat_store.get_thread(tid)) is None
+
+    def test_an_idle_thread_has_no_live_turn(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "hi")
+        assert rc._live_turn_id(chat_store.get_thread(tid)) is None
+
+    def test_the_turn_route_joins_instead_of_starting_a_rival(self, thread, monkeypatch):
+        import asyncio
+        import routes.chat as rc
+        from services import build_streaming
+
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.append_streaming_assistant(tid, "turn-1")
+        live = self._live("turn-1", tid)
+        live.segments = [{"t": "text", "text": "x"}] * 5
+
+        started = []
+        monkeypatch.setattr(build_streaming, "inject", lambda tid_, text: True)
+
+        async def never(*a, **kw):
+            started.append(a)
+            raise AssertionError("a second turn must not be started")
+        monkeypatch.setattr(build_streaming, "start_turn", never)
+
+        try:
+            r = asyncio.run(rc.start_streaming_turn(tid, rc.StartTurnIn(content="joining")))
+        finally:
+            build_streaming.TURNS.pop("turn-1", None)
+
+        assert r == {"turn_id": "turn-1", "injected": True, "at_segment": 5}
+        assert not started
+        last = chat_store.get_thread(tid)["messages"][-1]
+        assert last["content"] == "joining"
+        assert last["meta"]["during_turn"] == "turn-1"

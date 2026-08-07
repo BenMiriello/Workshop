@@ -310,6 +310,40 @@ written on a throttle — so it lagged the screen, and the lag pushed messages
 EARLIER, i.e. above output they never saw. It now reads the live turn's segment
 count, falling back to the stored one only for a turn adopted after a restart.
 
+## 3.12 One turn per thread, decided by the server
+
+The operator, still: *"My new chat messages are STILL not being inserted as soon
+as possible - still just hanging there while many system messages execute."*
+
+Two defects, and the first is a REGRESSION CAUSED BY §3.2.
+
+**`_live_turn_id` looked only at `msgs[-1]`.** That was correct until §3.2 started
+filing mid-turn messages AFTER the streaming placeholder. From that commit on,
+the first message injected into a turn made the last message a user message — so
+every subsequent message on that turn was told "no turn is running", fell back to
+the client queue, and either sat there for the rest of the turn or drained into a
+turn of its own. The first mid-turn message worked; the second never did. It now
+scans backwards for the most recent streaming assistant message, and requires a
+live, incomplete turn object so a stale flag cannot wedge the thread.
+
+**The browser decided whether to inject or start a turn.** A client knows only
+whether ITS OWN stream is open, so a second tab, a dropped SSE or a reload each
+believe the chat is idle. Combined with the above this produced, live on
+2026-08-07, one thread with turns `2c7dc100` and `470bd00c` both streaming at
+once and the operator's message reaching neither:
+
+```
+#3 assistant streaming=True  turn=2c7dc100  segs=88
+#5 user      12:07:50        (no during_turn — started a rival turn)
+#6 assistant streaming=True  turn=470bd00c  segs=37
+```
+
+`POST /threads/{id}/turns` now joins a running turn instead of starting a second
+one, and returns `{injected: true, at_segment}` so a stale client renders the
+message where the server put it and attaches to the turn that is actually
+running. Falling through to a new turn is kept for a turn that refuses input, so
+a wedged turn cannot swallow a message.
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
@@ -333,6 +367,13 @@ count, falling back to the stored one only for a turn adopted after a restart.
 | 3.9 | `--replay-user-messages` receipt | live CLI probe + tests |
 | 3.10 | the finished log shows a mid-turn message where it landed | 22 frontend tests (vitest, new) |
 | 3.11 | it is never shown above the reply it arrived during; `at_segment` measured live | frontend + backend tests |
+| 3.12 | one turn per thread; the second mid-turn message finds the turn | backend tests (regression pinned) |
+
+A SIXTH round found §3.12, and it is the most instructive: **the ordering fix in
+§3.2 broke the delivery path in a way none of the ordering work could see.**
+Moving a message below the placeholder invalidated an assumption made somewhere
+else entirely — that the placeholder is last. Changing where a record sits means
+auditing everything that located it by position.
 
 A FIFTH round found §3.11, and the operator found it, not the audit: the rule in
 §3.10 was right in one direction and unbounded in the other. "Order by what could
