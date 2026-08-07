@@ -383,11 +383,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // seed that disagrees with the server makes the control flicker to the other
   // mode on open, which reads as the setting not having stuck.
   const [chatMode, setChatMode] = useState<ChatModeId>("direct");
+  // A blank chat has no thread to write the mode to, so the choice is held here
+  // and applied at creation. Without this the control was hidden until after the
+  // first message — exactly when it is too late, because that message is the one
+  // that decides whether work leaves the conversation. A ref because the sender
+  // reads it at send time, not at render time.
+  const chatModeRef = useRef<ChatModeId>(chatMode);
+  chatModeRef.current = chatMode;
   const chooseChatMode = useCallback((next: ChatModeId) => {
     const id = activeIdRef.current;
-    if (!id) return;
     const prev = chatMode;
     setChatMode(next);
+    if (!id) return;   // no thread yet: applied when this chat is created
     void chatApi.setThreadMode(id, next).catch((e) => {
       // Put the control back rather than showing a mode the server does not
       // have: a chat that looks Direct while the server files tickets is worse
@@ -396,6 +403,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       setErr(`Couldn't switch chat mode: ${e}`);
     });
   }, [chatMode]);
+
+  // What a NEW chat starts in (Settings → Chat). Read once and applied whenever
+  // there is no thread yet, so the blank chat's control shows the mode the next
+  // message will actually run in rather than a hardcoded guess.
+  useEffect(() => {
+    let live = true;
+    void chatApi.getChatPrefs()
+      .then((p) => { if (live && !activeIdRef.current) setChatMode(p.default_mode); })
+      .catch(() => { /* the platform default stands */ });
+    return () => { live = false; };
+  }, []);
 
   const scope = effectiveMode === "build" ? contextKey : activeProvider;
   const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
@@ -727,7 +745,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     try {
       let id = activeId;
       if (!id) {
-        const t = await chatApi.createThread(scope);
+        // Carry the mode chosen on the blank chat into the thread it becomes,
+        // so the very first turn runs in the mode the toolbar was showing.
+        const t = await chatApi.createThread(scope, "", chatModeRef.current);
         id = t.id;
         setActiveId(id);
         // Put the new thread in the picker immediately and record it as the

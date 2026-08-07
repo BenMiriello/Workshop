@@ -156,7 +156,11 @@ export default function ChatToolbar({
           toolbar has more controls than a phone has room for, and an icon that
           names its mode carries it. The word is always present where you are
           choosing — in the menu — which is where you need to read it. */}
-      {activeId && onChooseChatMode && (
+      {/* Shown on a BLANK chat too, not just an existing one: the mode decides
+          where the first message's work goes, so hiding it until a thread exists
+          hid it until after the decision had been made. On a blank chat the
+          choice is held client-side and applied when the thread is created. */}
+      {onChooseChatMode && (
         <Menu
           label="How work is handled"
           align="start"

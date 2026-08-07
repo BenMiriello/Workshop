@@ -307,6 +307,11 @@ def _extract_text_from_stream_json(stdout: str) -> str:
             continue
         if ev.get("type") != "assistant":
             continue
+        # A sidechain event is a SUBAGENT's output, not the turn's reply. Without
+        # this the subagent's interim text is concatenated into the answer the
+        # operator reads. See build_streaming._parse_stream_event.
+        if ev.get("parent_tool_use_id"):
+            continue
         msg = ev.get("message") or {}
         for block in msg.get("content") or []:
             if isinstance(block, dict) and block.get("type") == "text":
@@ -346,6 +351,11 @@ def _extract_segments_from_stream_json(stdout: str) -> list[dict]:
         except json.JSONDecodeError:
             continue
         if ev.get("type") != "assistant":
+            continue
+        # Sidechain (subagent) steps are the delegate's work, not this turn's.
+        # The blocking path renders one chip for the Agent call itself; the
+        # streaming path (build_streaming) nests the steps under it.
+        if ev.get("parent_tool_use_id"):
             continue
         msg = ev.get("message") or {}
         for block in msg.get("content") or []:

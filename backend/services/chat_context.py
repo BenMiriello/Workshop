@@ -278,6 +278,81 @@ USE_SKILL_PROTOCOL = (
     "just reply normally. Emit at most one use_skill block per reply."
 )
 
+# When to delegate to a subagent, and when a Ticket is the right shape instead.
+#
+# The two mechanisms were being confused because nothing ever said what
+# separates them, so "this is a lot of work" pulled toward a ticket even when the
+# work was one long READ. The line is what the work needs, not how big it is:
+#
+#   a subagent buys CONTEXT ISOLATION and nothing else — it starts clean, does a
+#   bounded piece of reading or checking, and returns a summary into this reply.
+#   The chat is still the thing doing the work, and the transcript is still the
+#   record. That costs one tool call.
+#
+#   a Ticket buys DURABILITY: a reviewer gate, touches enforcement, retries, a
+#   receipt, and a record that outlives the conversation. That costs a queue slot
+#   and a worker who never saw this chat.
+#
+# So: needs to survive the chat -> Ticket. Needs a clean window and comes back
+# here -> subagent. Neither -> just do it, which is still the common case.
+DELEGATION_RULE = (
+    "=== SUBAGENTS (delegating inside this chat) ===\n"
+    "You can launch a subagent with the Agent tool. It runs in its own clean "
+    "context and returns a summary into this reply; its intermediate steps never "
+    "enter this conversation's window. Launch several in one turn when the pieces "
+    "are independent.\n\n"
+    "USE ONE WHEN the work is a bounded read or check whose intermediate output "
+    "would crowd out the conversation: searching a large tree, reading many files "
+    "to answer one question, digesting logs or a long document, running a "
+    "verification pass, or several independent lookups that can go at once. Say "
+    "in one line what you delegated and report what came back.\n\n"
+    "DO NOT USE ONE for something you can answer or do directly (a single read, "
+    "one edit, a command you already know) — the round trip costs more than the "
+    "work. Do not use one for work that must OUTLIVE this chat: durable, "
+    "reviewable, multi-file change work is a Ticket, because a subagent has no "
+    "reviewer gate, no retry, and leaves no receipt. A subagent is context "
+    "isolation; a Ticket is durability. Size is not the test.\n\n"
+    "NEVER file a ticket merely to get an isolated context, and never delegate "
+    "work whose result you will not check."
+)
+
+
+def delegation_block(tools_active: bool) -> str:
+    """The subagent rule plus the named delegates this instance can call.
+
+    Named subagents come from the same registry the Agents page reads
+    (agents_registry.native_subagents), so what the model is told it can call and
+    what the operator can see are one list. Foreign ones (another surface's
+    agents, e.g. the Discord bridge's) are named as unavailable rather than
+    silently dropped — an agent that exists and is not ours is worth exactly one
+    line. Empty when the chat has no tools at all: describing a tool that isn't
+    there is how the old prompt came to promise subagents a data chat could not
+    launch.
+    """
+    if not tools_active:
+        return ""
+    lines: list[str] = []
+    try:
+        from services import agents_registry
+        for r in agents_registry.native_subagents():
+            if r.get("foreign"):
+                continue
+            desc = (r.get("description") or r.get("purpose") or "").strip().replace("\n", " ")
+            if len(desc) > 160:
+                desc = desc[:157] + "…"
+            lines.append(f"- {r['slug']}" + (f" — {desc}" if desc else ""))
+    except Exception as e:  # a registry hiccup must not cost the chat its rule
+        log.warning("delegation block: native subagents unavailable: %s", e)
+    named = (
+        "\n\nNAMED SUBAGENTS on this instance (pass as `subagent_type`); anything "
+        "else uses the general-purpose worker:\n" + "\n".join(lines)
+        if lines else
+        "\n\nNo named subagents are installed; the general-purpose worker is the "
+        "only delegate."
+    )
+    return DELEGATION_RULE + named
+
+
 # Platform-wide reply style. The operator's standing rule: no em-dashes and no
 # emojis anywhere, including chat replies. Appended to every assistant preamble.
 _STYLE_RULE = (
@@ -355,6 +430,10 @@ def role_preamble(
         f"You have {tools}, operating in {where}. You can read and edit files, "
         "run commands, and search the project.\n\n"
         + egress
+        # Stated here, with the rest of what this session can actually do, so the
+        # rule and the granted tool are computed from the same tools_active flag
+        # and cannot disagree.
+        + "\n\n" + delegation_block(True)
         + "\n\n" + UI_CARD_PROTOCOL
         + "\n\n" + _STYLE_RULE
     )
@@ -1353,12 +1432,21 @@ def is_build_provider(provider: ContextProvider) -> bool:
 # tools the provider declares. Build/project agents already run the full toolset.
 WEB_TOOLS = ["WebSearch", "WebFetch"]
 
+# The CLI's subagent tool, granted on the same footing as web. Every chat is
+# told (chat_mode_block, DELEGATION_RULE) that it can push a big read into an
+# isolated context and bring back the summary — and until this was granted, a
+# data chat had no such tool and the instruction was simply false. Verified
+# against CLI 2.1.143: `--tools Agent` enables it, the emitted tool_use name is
+# `Agent`, and `Task` is the older accepted spelling.
+SUBAGENT_TOOL = "Agent"
+
 
 def effective_allowed_tools(provider: ContextProvider) -> list[str]:
-    """A data provider's declared MCP tools + the shared web tools, de-duped and
-    order-stable. This is the SINGLE place that grants web, so the route and
-    capability_for can't drift. Not used for build providers (full toolset)."""
-    return list(dict.fromkeys([*provider.allowed_tools, *WEB_TOOLS]))
+    """A data provider's declared MCP tools + the shared web tools + the subagent
+    tool, de-duped and order-stable. This is the SINGLE place that grants the
+    shared surface, so the route and capability_for can't drift. Not used for
+    build providers (full toolset)."""
+    return list(dict.fromkeys([*provider.allowed_tools, *WEB_TOOLS, SUBAGENT_TOOL]))
 
 
 def capability_for(

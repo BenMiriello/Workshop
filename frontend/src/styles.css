@@ -801,6 +801,48 @@ input[type="range"].grad::-moz-range-thumb {
   max-height: 30vh; overflow: auto;
 }
 
+/* ---- Subagent: one row for a whole delegation ----
+   Reads as a sibling of .chat-tool because it sits in the same list and is the
+   same kind of thing (one step the turn took), but it is the only step that
+   CONTAINS other steps, so its body is inset and its name carries the accent.
+   No extra border: the inset background and the icon carry the nesting. */
+.chat-agent {
+  margin: 0.3rem 0; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-inset); overflow: hidden;
+}
+.chat-agent__head {
+  display: flex; align-items: center; gap: 0.4rem;
+  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-xs); text-align: left; cursor: pointer;
+}
+.chat-agent__head:hover { color: var(--fg); }
+.chat-agent__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-agent.is-open .chat-agent__chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-agent__chev { transition: none; } }
+.chat-agent__icon { flex: 0 0 auto; color: var(--accent); }
+.chat-agent__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
+.chat-agent__preview {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
+}
+/* Still working: the only animated thing here, matching the `running` status
+   kind's rule that motion means in-flight and nothing else. */
+.chat-agent__meta { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.8; }
+.chat-agent.is-running .chat-agent__meta { color: var(--accent); animation: ws-pulse 1.6s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .chat-agent.is-running .chat-agent__meta { animation: none; } }
+.chat-agent__body { border-top: 1px solid var(--border); padding: 0.35rem 0.5rem 0.4rem; }
+/* The delegate's own steps, one level in — a nested step must never read as a
+   step the turn itself took. */
+.chat-agent__steps { padding-left: 0.6rem; border-left: 2px solid var(--border); }
+.chat-agent__result { margin-top: 0.4rem; font-size: var(--fs-sm); }
+.chat-agent__result-label {
+  display: block; margin-bottom: 0.2rem;
+  font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
 /* Action confirmations (e.g. "Updated plan: ..."). */
 .chat-note { margin-top: 0.3rem; font-size: 0.74rem; color: var(--accent); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem; }
 /* Progress on something a message set off, under that message — see

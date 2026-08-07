@@ -18,6 +18,7 @@ import {
   UserRound,
   LogOut,
   Smartphone,
+  MessageSquare,
 } from "lucide-react";
 import {
   Button,
@@ -26,11 +27,19 @@ import {
   Segmented,
   StatusDot,
   useTheme,
+  usePalette,
+  useResolvedMode,
+  PalettePicker,
+  PALETTE_META,
   StatusPill,
   Input,
+  Skeleton,
+  StateBlock,
   type SegmentedOption,
   type ThemeMode,
 } from "../ui";
+import { chatApi } from "../lib/chat";
+import { CHAT_MODES, chatModeDef, type ChatModeId } from "../components/chat/chatModes";
 import { useAuth } from "../auth/AuthProvider";
 import Services from "./Services";
 import Events from "./Events";
@@ -75,6 +84,7 @@ export default function Settings() {
       <AccountSection />
       <DeviceSection />
       <AppearanceSection />
+      <ChatSection />
       <BaseAppsSection />
       <PlatformSection />
       <HealthSection />
@@ -415,8 +425,9 @@ function DeviceTokens() {
 }
 
 // ----------------------------------------------------------------------------
-// Appearance — theme switch (the only writer of localStorage["ws-theme"]).
-// Commits ON CHANGE (a view preference): light / dark / system. Default dark.
+// Appearance — the only writer of localStorage["ws-theme"] and ["ws-palette"].
+// Two independent axes: mode (light/dark/system, default dark) and color scheme
+// (five palettes, default violet). Both commit ON CHANGE — view preferences.
 // ----------------------------------------------------------------------------
 const THEME_OPTIONS: SegmentedOption<ThemeMode>[] = [
   { value: "light", label: <><Sun size={15} strokeWidth={1.8} aria-hidden /> Light</> },
@@ -426,10 +437,81 @@ const THEME_OPTIONS: SegmentedOption<ThemeMode>[] = [
 
 function AppearanceSection() {
   const [theme, setTheme] = useTheme();
+  const [palette, setPalette] = usePalette();
+  const mode = useResolvedMode(theme);
+  const current = PALETTE_META.find((p) => p.id === palette);
   return (
     <Section icon={Palette} title="Appearance">
       <Row label="theme">
         <Segmented options={THEME_OPTIONS} value={theme} onChange={setTheme} ariaLabel="Theme" />
+      </Row>
+      <Row label="color scheme" hint={current?.blurb}>
+        <PalettePicker value={palette} onChange={setPalette} mode={mode} />
+      </Row>
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Chat — the mode a NEW chat starts in.
+//
+// Commits ON CHANGE: it is a preference about future chats, not a write to any
+// conversation. Existing chats keep the mode they were created with, so this can
+// never reroute work already in flight; the per-chat control in the chat toolbar
+// is what changes a conversation you are in.
+// ----------------------------------------------------------------------------
+const CHAT_MODE_OPTIONS: SegmentedOption<ChatModeId>[] = CHAT_MODES.map(({ id, label, Icon }) => ({
+  value: id,
+  label: <><Icon size={15} strokeWidth={1.8} aria-hidden /> {label}</>,
+}));
+
+function ChatSection() {
+  const [mode, setMode] = useState<ChatModeId | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    void chatApi.getChatPrefs()
+      .then((p) => { if (live) setMode(p.default_mode); })
+      .catch((e) => { if (live) setErr(String(e)); });
+    return () => { live = false; };
+  }, []);
+
+  const choose = (next: ChatModeId) => {
+    const prev = mode;
+    setMode(next);
+    setErr(null);
+    void chatApi.setChatPrefs(next).catch((e) => {
+      // Show the stored value, not the one that failed to store.
+      setMode(prev);
+      setErr(String(e));
+    });
+  };
+
+  return (
+    <Section icon={MessageSquare} title="Chat">
+      <Row label="new chats">
+        {err ? (
+          <StateBlock
+            variant="error"
+            title="Couldn't load chat settings"
+            hint={`GET /api/chat/prefs failed: ${err}`}
+          />
+        ) : mode === null ? (
+          <Skeleton width="12rem" style={{ height: "var(--control-h)" }} />
+        ) : (
+          <Segmented
+            options={CHAT_MODE_OPTIONS}
+            value={mode}
+            onChange={choose}
+            ariaLabel="Mode for new chats"
+          />
+        )}
+      </Row>
+      <Row label="">
+        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+          {chatModeDef(mode ?? undefined).title} Existing chats keep the mode they were started in.
+        </span>
       </Row>
     </Section>
   );

@@ -96,6 +96,11 @@ class CreateThread(BaseModel):
     # not as its home scope. Optional at create; UI can add/remove after.
     participants: list[str] | None = None
     scope: str | None = None
+    # How this chat handles work (direct | orchestrated). Omitted means "use the
+    # operator's default for new chats" — the toolbar sends it only when the mode
+    # was chosen before the first message, which is the whole point of showing
+    # the control on a blank chat.
+    mode: str | None = None
 
 
 class ParticipantIn(BaseModel):
@@ -215,10 +220,30 @@ async def remove_draft(key: str):
 
 @router.post("/threads")
 async def new_thread(body: CreateThread):
+    if body.mode is not None and body.mode not in chat_context.CHAT_MODES:
+        raise HTTPException(400, f"mode must be one of {list(chat_context.CHAT_MODES)}")
     return chat_store.create_thread(
         context_key=body.context_key, title=body.title, agent_id=body.agent_id,
-        scope=body.scope, participants=body.participants,
+        scope=body.scope, participants=body.participants, mode=body.mode,
     )
+
+
+class ChatPrefs(BaseModel):
+    default_mode: str
+
+
+@router.get("/prefs")
+async def get_chat_prefs():
+    """Operator-level chat settings. One field so far: the mode a NEW chat starts
+    in. Existing chats keep the mode they were created with."""
+    return {"default_mode": chat_store.get_default_mode(), "modes": list(chat_context.CHAT_MODES)}
+
+
+@router.post("/prefs")
+async def set_chat_prefs(body: ChatPrefs):
+    if body.default_mode not in chat_context.CHAT_MODES:
+        raise HTTPException(400, f"default_mode must be one of {list(chat_context.CHAT_MODES)}")
+    return {"default_mode": chat_store.set_default_mode(body.default_mode)}
 
 
 @router.post("/threads/{thread_id}/participants")

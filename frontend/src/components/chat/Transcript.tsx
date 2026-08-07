@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ChevronRight, Wrench } from "lucide-react";
+import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { Markdown } from "../../ui";
 import type { ChatSegment } from "../../lib/chat";
+import { agentSummary } from "./segments";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -129,20 +130,70 @@ export function AnswerBody({
   );
 }
 
-// The "work" of an assistant turn — its tool calls + interim text. On the most
-// recent turn the latest few steps stay inline and older ones fold into a
-// re-openable accordion; on older turns all of it folds away (just the answer
-// shows). Tool calls themselves stay individually expandable (ToolChip).
+// ---- Subagent: one row for the whole delegation ---------------------------
+// A subagent exists to keep its working context OUT of this conversation, so it
+// renders as one row, not as a run of steps the turn appears to have taken
+// itself. The row says who was asked and what for; opening it shows what the
+// delegate actually did and what it reported back. Same collapse language as
+// ToolChip, one level in, so a nested step never reads as a top-level one.
+function AgentChip({ seg }: { seg: Extract<ChatSegment, { t: "agent" }> }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`chat-agent${open ? " is-open" : ""}${seg.done ? "" : " is-running"}`}>
+      <button
+        type="button"
+        className="chat-agent__head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={seg.input || seg.name}
+      >
+        <ChevronRight size={13} aria-hidden className="chat-agent__chev" />
+        <Bot size={12} aria-hidden className="chat-agent__icon" />
+        <span className="chat-agent__name">{seg.name}</span>
+        {seg.input && <span className="chat-agent__preview">{seg.input}</span>}
+        <span className="chat-agent__meta">{agentSummary(seg)}</span>
+      </button>
+      {open && (
+        <div className="chat-agent__body">
+          {seg.steps.length > 0 && (
+            <div className="chat-agent__steps">
+              {seg.steps.map((s, i) =>
+                s.t === "tool"
+                  ? <ToolChip key={i} name={s.name} input={s.input} />
+                  : s.t === "text" && s.text.trim()
+                    ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div>
+                    : null,
+              )}
+            </div>
+          )}
+          {seg.result && (
+            <div className="chat-agent__result">
+              <span className="chat-agent__result-label">Reported back</span>
+              <Markdown>{seg.result}</Markdown>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The "work" of an assistant turn — its tool calls, subagents, and interim text.
+// On the most recent turn the latest few steps stay inline and older ones fold
+// into a re-openable accordion; on older turns all of it folds away (just the
+// answer shows). Tool calls and subagents stay individually expandable.
 function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay }) {
   const [open, setOpen] = useState(false);
   const inlineCount = isLatest ? cfg.recentSteps : 0;
   const older = inlineCount > 0 ? work.slice(0, Math.max(0, work.length - inlineCount)) : work;
   const recent = inlineCount > 0 ? work.slice(Math.max(0, work.length - inlineCount)) : [];
-  const olderTools = older.filter((s) => s.t === "tool").length;
+  const olderTools = older.filter((s) => s.t === "tool" || s.t === "agent").length;
   const renderSeg = (s: ChatSegment, i: number) =>
     s.t === "tool"
       ? <ToolChip key={i} name={s.name} input={s.input} />
-      : (s.text.trim() ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div> : null);
+      : s.t === "agent"
+        ? <AgentChip key={i} seg={s} />
+        : (s.text.trim() ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div> : null);
   return (
     <div className="chat-work">
       {older.length > 0 && (

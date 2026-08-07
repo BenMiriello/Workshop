@@ -139,6 +139,12 @@ class Turn:
     # this list at the moment the turn is known to have READ it, which is the
     # only receipt this channel can produce.
     awaiting_receipt: list[str] = field(default_factory=list)
+    # Open subagent segments by their Agent tool_use id. A subagent's own steps
+    # arrive as sidechain events carrying `parent_tool_use_id`; this is how they
+    # find the segment they belong under instead of flattening into the parent's
+    # work. Rebuilt from the journal on re-attach (the drive loop re-reads from
+    # offset 0), so it never has to survive a restart.
+    agent_segs: dict[str, dict] = field(default_factory=dict)
 
 
 # In-memory turn registry. Build sessions are short-lived enough that this is
@@ -155,6 +161,38 @@ def _make_turn(thread_id: str, agent_slug: str) -> Turn:
 def _push(turn: Turn, kind: str, payload: dict) -> None:
     turn.events.append(TurnEvent(kind=kind, payload=payload))
     turn.new_event.set()
+
+
+# The CLI's subagent tool. `Agent` is the name it emits (CLI 2.1.143); `Task`
+# was the older name and is still accepted on `--tools`, so both are recognised
+# here rather than pinning the reader to one CLI version.
+SUBAGENT_TOOLS = ("Agent", "Task")
+
+
+def _subagent_label(block: dict) -> str | None:
+    """For an Agent tool_use, which subagent was launched — the frontmatter name
+    when one was asked for (`work-reviewer`), else the built-in general-purpose
+    worker. None for any other tool, which is what marks the segment kind."""
+    if block.get("name") not in SUBAGENT_TOOLS:
+        return None
+    inp = block.get("input")
+    if isinstance(inp, dict):
+        st = inp.get("subagent_type") or inp.get("agent_type")
+        if st:
+            return str(st)
+    return "general-purpose"
+
+
+def _tool_result_text(content: object) -> str:
+    """A tool result flattened to a short string. A subagent's result is a list
+    of text blocks (its report, then its agent id); everything else is already a
+    string. Capped like _summarize_tool_input — this rides the SSE channel."""
+    if isinstance(content, list):
+        parts = [str(b.get("text") or "") for b in content
+                 if isinstance(b, dict) and b.get("type") == "text"]
+        content = "\n".join(p for p in parts if p)
+    s = str(content or "")
+    return s if len(s) <= 600 else s[:597] + "…"
 
 
 def _parse_stream_event(line: str) -> tuple[str, dict] | None:
@@ -176,6 +214,12 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     except json.JSONDecodeError:
         return None
     t = ev.get("type")
+    # A SIDECHAIN event: emitted by a subagent the turn launched, not by the
+    # turn's own model. The CLI marks every one with the id of the Agent tool_use
+    # that started it, which is the only way to tell "my subagent ran ls" from "I
+    # ran ls" — without it a subagent's steps flatten into the parent's work and
+    # its interim text lands in the parent's answer. Verified against CLI 2.1.143.
+    parent = ev.get("parent_tool_use_id")
     if t == "assistant":
         # An assistant message containing content blocks. Forward text blocks
         # as "text" events; tool_use blocks as "tool".
@@ -184,11 +228,16 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         for block in msg.get("content", []) or []:
             if isinstance(block, dict):
                 if block.get("type") == "text":
-                    out.append(("text", {"content": block.get("text", "")}))
+                    out.append(("text", {"content": block.get("text", ""), "parent": parent}))
                 elif block.get("type") == "tool_use":
                     out.append(("tool", {
                         "name": block.get("name"),
                         "input": _summarize_tool_input(block.get("input", {})),
+                        # The id is what a later sidechain event points back at,
+                        # and what the closing tool_result names.
+                        "id": block.get("id"),
+                        "agent": _subagent_label(block),
+                        "parent": parent,
                     }))
         # Multi-block: return a synthetic "compound" wrapper; the caller pushes
         # each individually. (We just return the FIRST here; the loop in
@@ -199,7 +248,7 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             # size (input + cached input tokens) of the latest model call — the
             # honest "how full is the window" signal that also drops after an
             # in-session /compact, unlike counting the stored transcript.
-            return ("_multi", {"events": out, "usage": msg.get("usage")})
+            return ("_multi", {"events": out, "usage": msg.get("usage"), "parent": parent})
         return ("meta", ev)
     if t == "user":
         # Two different things arrive as `user`:
@@ -211,15 +260,23 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         #    is the only receipt available for a mid-turn injection. Content is a
         #    text block (or, for the CLI's synthetic /compact turns, a bare
         #    string — guard so a non-dict block cannot crash the reader).
+        #
+        # A subagent's own prompt arrives here too, as a text block carrying
+        # `parent_tool_use_id`. It is neither of the above: `parent` rides along
+        # so the receipt path can tell an operator injection from a sidechain.
         content = ev.get("message", {}).get("content")
         if isinstance(content, str):
-            return ("user_echo", {"text": content})
+            return ("user_echo", {"text": content, "parent": parent})
         if isinstance(content, list) and content and isinstance(content[0], dict):
             b0 = content[0]
             if b0.get("type") == "text":
-                return ("user_echo", {"text": b0.get("text") or ""})
-            return ("tool_result", {"tool_use_id": b0.get("tool_use_id")})
-        return ("tool_result", {"tool_use_id": None})
+                return ("user_echo", {"text": b0.get("text") or "", "parent": parent})
+            return ("tool_result", {
+                "tool_use_id": b0.get("tool_use_id"),
+                "text": _tool_result_text(b0.get("content")),
+                "parent": parent,
+            })
+        return ("tool_result", {"tool_use_id": None, "text": "", "parent": parent})
     if t == "result":
         return ("result", {
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
@@ -235,6 +292,105 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     if t == "system":
         return ("meta", {"subtype": ev.get("subtype")})
     return ("meta", {"type": t})
+
+
+# --------------------------------------------------------------- segment model
+#
+# A turn renders as ordered segments: text the operator reads, tool chips, and
+# `agent` segments — one per subagent launched, with that subagent's own steps
+# nested INSIDE it. The nesting is the point. A delegate exists to keep its
+# working context out of this conversation, so its steps must not flatten into
+# the parent's work and its interim text must never join the parent's answer.
+#
+# Extracted from _drive_turn's closures so the routing is addressable on its own:
+# it is the part with the actual rules, and it was previously reachable only by
+# running a subprocess. See tests/test_subagent_stream.py.
+
+
+def _seg_text(turn: "Turn", s: str) -> None:
+    if not s:
+        return
+    if turn.segments and turn.segments[-1].get("t") == "text":
+        turn.segments[-1]["text"] += s
+    else:
+        turn.segments.append({"t": "text", "text": s})
+
+
+def _seg_tool(turn: "Turn", name, inp) -> None:
+    turn.segments.append({"t": "tool", "name": name or "?", "input": inp or ""})
+
+
+def _seg_agent(turn: "Turn", payload: dict) -> None:
+    """A subagent launch becomes ONE segment that its steps nest under, not a
+    tool chip followed by a flat run of somebody else's work."""
+    seg = {
+        "t": "agent",
+        "name": payload.get("agent") or "general-purpose",
+        "input": payload.get("input") or "",
+        "id": payload.get("id") or "",
+        "steps": [],
+        "done": False,
+        "result": "",
+    }
+    turn.segments.append(seg)
+    if seg["id"]:
+        turn.agent_segs[seg["id"]] = seg
+
+
+def _agent_step(turn: "Turn", parent: str, seg: dict) -> bool:
+    """Route a sidechain event under the subagent that produced it. Returns False
+    when the parent is unknown, which is the caller's cue to treat the event as
+    ordinary top-level work rather than drop it — an orphan step (a journal
+    tailed from mid-stream) is still real work that happened."""
+    host = turn.agent_segs.get(parent)
+    if host is None:
+        return False
+    steps = host.setdefault("steps", [])
+    if seg.get("t") == "text" and steps and steps[-1].get("t") == "text":
+        steps[-1]["text"] += seg.get("text") or ""
+    else:
+        steps.append(seg)
+    return True
+
+
+def _turn_content(turn: "Turn") -> str:
+    """The operator-visible answer: TOP-LEVEL text only. A subagent's interim
+    text lives in its own segment's steps and is not part of the reply."""
+    return "".join(s["text"] for s in turn.segments if s.get("t") == "text").strip()
+
+
+def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
+    """Fold one parsed event into the turn's segments. Returns whether it was a
+    tool-ish event (the driver's cue to persist promptly)."""
+    if kind == "_multi":
+        saw_tool = False
+        for k2, p2 in payload.get("events", []):
+            saw_tool = _segment_ingest(turn, k2, p2) or saw_tool
+        return saw_tool
+    nested = payload.get("parent")
+    if kind == "text":
+        text = payload.get("content", "")
+        if not (nested and _agent_step(turn, nested, {"t": "text", "text": text})):
+            _seg_text(turn, text)
+        return False
+    if kind == "tool":
+        step = {"t": "tool", "name": payload.get("name") or "?", "input": payload.get("input") or ""}
+        if not (nested and _agent_step(turn, nested, step)):
+            if payload.get("agent"):
+                _seg_agent(turn, payload)
+            else:
+                _seg_tool(turn, payload.get("name"), payload.get("input"))
+        return True
+    if kind == "tool_result":
+        # The Agent tool's own result closes its segment. Nested tool results
+        # (parent set) are the subagent's internal plumbing and are not rendered;
+        # its report comes back in this one.
+        host = turn.agent_segs.get(payload.get("tool_use_id") or "")
+        if host is not None:
+            host["done"] = True
+            host["result"] = payload.get("text") or ""
+            return True
+    return False
 
 
 def _ctx_tokens_from_usage(u: object) -> int:
@@ -592,23 +748,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     offset = 0
     last_persist = 0.0
 
-    def _seg_text(s: str) -> None:
-        if not s:
-            return
-        if turn.segments and turn.segments[-1].get("t") == "text":
-            turn.segments[-1]["text"] += s
-        else:
-            turn.segments.append({"t": "text", "text": s})
-
-    def _seg_tool(name, inp) -> None:
-        turn.segments.append({"t": "tool", "name": name or "?", "input": inp or ""})
-
-    def _content() -> str:
-        return "".join(s["text"] for s in turn.segments if s.get("t") == "text").strip()
-
     def _persist() -> None:
         try:
-            chat_store.update_streaming_assistant(turn.thread_id, turn.id, turn.segments, _content())
+            chat_store.update_streaming_assistant(
+                turn.thread_id, turn.id, turn.segments, _turn_content(turn))
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
 
@@ -619,11 +762,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         kind, payload = parsed
         saw_tool = False
         if kind == "_multi":
+            saw_tool = _segment_ingest(turn, kind, payload)
             for k2, p2 in payload.get("events", []):
-                if k2 == "text":
-                    _seg_text(p2.get("content", ""))
-                elif k2 == "tool":
-                    _seg_tool(p2.get("name"), p2.get("input")); saw_tool = True
                 _push(turn, k2, p2)
             # Track the latest assistant call's context size (preferred signal —
             # it's the exact input the final model call read).
@@ -650,17 +790,19 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     state["last_ctx"] = ctx
             _push(turn, "result", payload)
         else:
-            if kind == "text":
-                _seg_text(payload.get("content", ""))
-            elif kind == "tool":
-                _seg_tool(payload.get("name"), payload.get("input")); saw_tool = True
+            if kind in ("text", "tool", "tool_result"):
+                saw_tool = _segment_ingest(turn, kind, payload)
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
             elif kind == "user_echo":
                 # The CLI echoes every stdin user message, including the turn's
                 # own prompt and its synthetic /compact turns. Only an echo that
                 # matches something we injected is a receipt; everything else is
-                # noise and is dropped rather than shown.
+                # noise and is dropped rather than shown. A sidechain echo is the
+                # subagent's PROMPT, never an operator message — it can collide
+                # with a queued injection's text, so it is excluded by origin.
+                if payload.get("parent"):
+                    return saw_tool
                 text = (payload.get("text") or "").strip()
                 if text in turn.awaiting_receipt:
                     turn.awaiting_receipt.remove(text)
@@ -714,7 +856,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         await asyncio.sleep(0.15)
 
     _cleanup_turn_input(turn.id)
-    turn.final_text = _content()
+    turn.final_text = _turn_content(turn)
     lost = False
     if state["saw_result"]:
         # The result line is the authoritative end of a turn, and we are the one

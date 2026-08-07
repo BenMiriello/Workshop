@@ -45,6 +45,44 @@ def _clamp_mode(mode: str | None) -> str:
     return mode if mode in CHAT_MODES else DEFAULT_CHAT_MODE
 
 
+# The operator's chosen default for NEW chats, overriding DEFAULT_CHAT_MODE.
+# Lives beside the threads it applies to, one small file per owner. A chat stores
+# its mode at creation, so changing this never rewrites a conversation that
+# already exists — "default" means the mode a new chat starts in, and nothing more.
+_PREFS_FILE = "prefs.json"
+
+
+def _prefs_path() -> Path:
+    return _chat_dir() / _PREFS_FILE
+
+
+def _read_prefs() -> dict:
+    try:
+        data = json.loads(_prefs_path().read_text())
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def get_default_mode() -> str:
+    """The mode a new chat starts in: the operator's setting, else the platform
+    default. Clamped, so a hand-edited junk value can't create unreachable chats."""
+    return _clamp_mode(_read_prefs().get("default_mode"))
+
+
+def set_default_mode(mode: str) -> str:
+    """Persist the default for new chats. Returns the stored (clamped) value."""
+    value = _clamp_mode(mode)
+    prefs = _read_prefs()
+    prefs["default_mode"] = value
+    p = _prefs_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(prefs, indent=2))
+    tmp.replace(p)
+    return value
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -186,7 +224,8 @@ def create_thread(
         "context_key": context_key or "general",
         "scope": resolved_scope,
         "scope_locked": bool(scope_locked),
-        "mode": _clamp_mode(mode),
+        # An explicit mode wins; otherwise the operator's default for new chats.
+        "mode": _clamp_mode(mode) if mode is not None else get_default_mode(),
         "participants": parts,
         "agent_id": agent_id,
         # Per-thread model preference (full model id) chosen via the composer's
@@ -370,7 +409,7 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         # The composer-draft store lives alongside threads (chat/drafts.json); it is
         # not a thread. Skip it, and skip any file that isn't a well-formed thread
         # (missing id / partial write) so ONE bad file can't 500 the whole list.
-        if p.name == "drafts.json":
+        if p.name in ("drafts.json", _PREFS_FILE):
             continue
         try:
             t = json.loads(p.read_text())
@@ -382,6 +421,18 @@ def list_threads(context_key: str | None = None) -> list[dict]:
             continue
         msgs = t.get("messages", [])
         title = t.get("title", "New chat")
+        # When the OPERATOR last spoke in this chat. This is what orders the
+        # list, not `updated_at`: a turn that finishes, an agent that reports
+        # back, or a background write all bump updated_at, so a chat the
+        # operator has not touched in days could sit above the one they were
+        # just in. The question the list answers is "where was I", and only a
+        # user message answers it. Threads with no user message yet fall back to
+        # when they were created, so a brand-new chat still sorts to the top.
+        last_user_at = next(
+            (m.get("ts") for m in reversed(msgs)
+             if isinstance(m, dict) and m.get("role") == "user" and m.get("ts")),
+            None,
+        )
         # Until auto-naming runs (or if it never can), show the first-user-message
         # seed instead of a bare "New chat".
         if title in (None, "", "New chat") and t.get("_seed_title"):
@@ -406,11 +457,18 @@ def list_threads(context_key: str | None = None) -> list[dict]:
             "title": title,
             "created_at": t.get("created_at"),
             "updated_at": t.get("updated_at"),
+            "last_user_at": last_user_at,
             "message_count": len(msgs),
             "last_message": ((last.get("content") or "")[:120] if isinstance(last, dict) else ""),
         })
-    out.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
+    out.sort(key=_recency_key, reverse=True)
     return out
+
+
+def _recency_key(summary: dict) -> str:
+    """Order by when the operator last spoke, falling back to creation. Never
+    updated_at — see the note on last_user_at."""
+    return summary.get("last_user_at") or summary.get("created_at") or ""
 
 
 def append_message(thread_id: str, role: str, content: str, meta: dict | None = None) -> dict:

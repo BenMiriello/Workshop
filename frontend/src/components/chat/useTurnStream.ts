@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chatApi, type ChatMsg, type ChatSegment } from "../../lib/chat";
+import { applyStreamEvent, type StreamEvent } from "./segments";
 
 // The live turn: its SSE channel, its resilience, and what "still running" means.
 //
@@ -168,17 +169,10 @@ export function useTurnStream({
     setStreaming(true);
     setPendingSegments([]);
 
-    const pushText = (content: string) =>
-      setPendingSegments((segs) => {
-        if (!content) return segs;
-        const last = segs[segs.length - 1];
-        if (last && last.t === "text") {
-          const copy = segs.slice();
-          copy[copy.length - 1] = { t: "text", text: last.text + content };
-          return copy;
-        }
-        return [...segs, { t: "text", text: content }];
-      });
+    // One reducer for every segment-shaped event, mirroring the server's
+    // _segment_ingest so the live turn and the reloaded one agree — in
+    // particular about which steps belong to a subagent rather than to the turn.
+    const fold = (ev: StreamEvent) => setPendingSegments((segs) => applyStreamEvent(segs, ev));
 
     const es = new EventSource(`/api/chat/turns/${turnId}/stream`);
     sseRef.current = es;
@@ -190,13 +184,25 @@ export function useTurnStream({
 
     es.addEventListener("text", (e) => {
       markAlive();
-      try { pushText(JSON.parse((e as MessageEvent).data).payload?.content || ""); } catch { /* ignore */ }
+      try {
+        const p = JSON.parse((e as MessageEvent).data).payload || {};
+        fold({ kind: "text", content: p.content || "", parent: p.parent });
+      } catch { /* ignore */ }
     });
     es.addEventListener("tool", (e) => {
       markAlive();
       try {
         const p = JSON.parse((e as MessageEvent).data).payload || {};
-        setPendingSegments((s) => [...s, { t: "tool", name: p.name || "?", input: p.input || "" }]);
+        fold({ kind: "tool", name: p.name, input: p.input, id: p.id, agent: p.agent, parent: p.parent });
+      } catch { /* ignore */ }
+    });
+    // Only a subagent's own result is rendered (it closes that subagent's
+    // segment); every other tool result is plumbing and the reducer drops it.
+    es.addEventListener("tool_result", (e) => {
+      markAlive();
+      try {
+        const p = JSON.parse((e as MessageEvent).data).payload || {};
+        fold({ kind: "tool_result", tool_use_id: p.tool_use_id, text: p.text });
       } catch { /* ignore */ }
     });
     es.addEventListener("injection_read", (e) => {

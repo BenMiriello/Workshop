@@ -53,6 +53,64 @@ class TestModeStatement:
         assert chat_store._clamp_mode("orchestrated") == "orchestrated"
 
 
+class TestSubagentsAreReal:
+    """Direct mode tells the model to delegate to a native subagent instead of
+    filing. For months a data chat had no tool that could do it: the allowlist
+    was the declared MCP tools plus web, and the CLI reported no subagent tool at
+    all when asked (probe, 2026-08-07). An instruction to use a capability that
+    was not granted is just a lie the model then has to work around."""
+
+    def test_the_subagent_tool_is_granted_to_a_data_chat(self):
+        p = chat_context.ContextProvider()
+        assert chat_context.SUBAGENT_TOOL in chat_context.effective_allowed_tools(p)
+
+    def test_it_is_granted_centrally_not_per_provider(self):
+        """A provider that declares nothing still gets it, for the same reason
+        web is granted here: one place, so the route and capability_for can't
+        disagree about what the session can do."""
+        p = chat_context.ContextProvider()
+        p.allowed_tools = []
+        assert chat_context.effective_allowed_tools(p) == ["WebSearch", "WebFetch", "Agent"]
+
+    def test_the_granted_name_matches_what_the_cli_emits(self):
+        """`Agent` is the tool name in CLI 2.1.143 (`Task` is the older spelling,
+        still accepted on --tools). Granting a name the CLI does not know would
+        fail silently: the flag is accepted and the tool never appears."""
+        from services import build_streaming
+        assert chat_context.SUBAGENT_TOOL in build_streaming.SUBAGENT_TOOLS
+
+    def test_the_rule_separates_a_subagent_from_a_ticket(self):
+        """The operator's actual question: what needs a ticket and what does not.
+        Isolation vs durability, not size."""
+        rule = chat_context.DELEGATION_RULE
+        assert "context isolation" in rule and "durability" in rule
+        assert "Size is not the test" in rule
+
+    def test_the_rule_ships_with_the_capabilities_the_model_is_given(self):
+        out = chat_context.role_preamble(tools_active=True)
+        assert "SUBAGENTS" in out
+        assert "Agent tool" in out
+
+    def test_a_tools_off_session_is_not_told_it_can_delegate(self):
+        assert "SUBAGENTS" not in chat_context.role_preamble(tools_active=False)
+        assert chat_context.delegation_block(False) == ""
+
+    def test_installed_subagents_are_named_so_they_can_be_called(self):
+        """`subagent_type` only works if the model knows the names. They come
+        from the same registry the Agents page reads."""
+        from services import agents_registry
+        ours = [r for r in agents_registry.native_subagents() if not r.get("foreign")]
+        block = chat_context.delegation_block(True)
+        for r in ours:
+            assert r["slug"] in block
+
+    def test_another_surfaces_agent_is_not_offered(self):
+        """discord-handler belongs to the masini bridge. Offering it as a
+        delegate here would hand this chat's work to another tenant's agent."""
+        block = chat_context.delegation_block(True)
+        assert "discord-handler" not in block
+
+
 class TestFilingGuard:
     PATCH = 'Sure.\n\n```task-patch\n{"add":[{"text":"Should not be filed"}]}\n```\n'
 

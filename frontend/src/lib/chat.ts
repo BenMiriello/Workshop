@@ -188,12 +188,27 @@ export const chatApi = {
         : `/api/chat/threads`,
     ).then(j<ThreadSummary[]>),
 
-  createThread: (contextKey: string, title = "") =>
+  // `mode` is sent only when the operator chose one on the blank chat before
+  // sending; omitted, the server applies their default for new chats.
+  createThread: (contextKey: string, title = "", mode?: "direct" | "orchestrated") =>
     fetch(`/api/chat/threads`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_key: contextKey, title }),
+      body: JSON.stringify({ context_key: contextKey, title, ...(mode ? { mode } : {}) }),
     }).then(j<Thread>),
+
+  // Operator-level chat settings. One field: the mode a NEW chat starts in.
+  // Existing chats keep the mode they were created with, so this never rewrites
+  // a conversation in flight.
+  getChatPrefs: () =>
+    fetch(`/api/chat/prefs`).then(j<{ default_mode: "direct" | "orchestrated"; modes: string[] }>),
+
+  setChatPrefs: (defaultMode: "direct" | "orchestrated") =>
+    fetch(`/api/chat/prefs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_mode: defaultMode }),
+    }).then(j<{ default_mode: "direct" | "orchestrated" }>),
 
   getThread: (id: string) => fetch(`/api/chat/threads/${id}`).then(j<Thread>),
 

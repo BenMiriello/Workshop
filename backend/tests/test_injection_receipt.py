@@ -23,7 +23,13 @@ def _user_event(content):
 class TestClassification:
     def test_a_replayed_text_message_is_an_echo(self):
         line = _user_event('[{"type": "text", "text": "stop, wrong file"}]')
-        assert bs._parse_stream_event(line) == ("user_echo", {"text": "stop, wrong file"})
+        kind, payload = bs._parse_stream_event(line)
+        assert kind == "user_echo"
+        assert payload["text"] == "stop, wrong file"
+        # An operator message has no sidechain origin. A subagent's PROMPT
+        # arrives in exactly this shape and does carry one, which is the only
+        # thing that separates them. See test_subagent_stream.
+        assert payload["parent"] is None
 
     def test_a_tool_result_is_not_an_echo(self):
         line = _user_event('[{"type": "tool_result", "tool_use_id": "tu_1", "content": "ok"}]')
@@ -35,7 +41,8 @@ class TestClassification:
         """The CLI's synthetic /compact turns carry a plain string. It must not
         crash the reader, and it is filtered out later by not matching anything
         we injected."""
-        assert bs._parse_stream_event(_user_event('"compacted"')) == ("user_echo", {"text": "compacted"})
+        kind, payload = bs._parse_stream_event(_user_event('"compacted"'))
+        assert (kind, payload["text"]) == ("user_echo", "compacted")
 
     def test_empty_content_does_not_crash(self):
         kind, payload = bs._parse_stream_event(_user_event("[]"))
