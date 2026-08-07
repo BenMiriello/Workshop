@@ -89,18 +89,40 @@ it is. Human fields first, execution metadata namespaced underneath.
 ### Decisions
 
 **D1. `title` and `body` are stored fields.** `text` survives as a derived
-property (`title + "\n\n" + body`) for TODO.md export, dedup, and every legacy
-reader; `_normalize_text`'s title clamp and `_undo_stacked_preview` are deleted.
-Migration splits every existing record on the first line and *rejoins* the
-ellipsis spill: if line 1 ends in `…` and line 2 exists, drop the ellipsis and
-merge line 2's leading fragment back into the body. Title max becomes 120 (Jira's
-limit is 255, Linear's is soft, GitHub's is 256; 120 is a house rule for
-readability, enforced as a warning at 80 and a hard stop at 120).
+property for TODO.md export, dedup, and every legacy reader. Migration splits
+every existing record on the first line and *rejoins* the ellipsis spill: if line
+1 ends in `…` and line 2 exists, drop the ellipsis and merge line 2's leading
+fragment back into the body. Title max becomes 120 (Jira's limit is 255, Linear's
+is soft, GitHub's is 256; 120 is a house rule for readability, enforced as a
+warning at 80 and a hard stop at 120).
 
-**D2. Execution metadata moves under `exec`, in the same record.** Not a second
-store: one file, one lock, one atomic write. The namespace exists to draw the
-sync boundary in one obvious place. Rule: **nothing under `exec` ever crosses to
-an external tracker, and nothing outside it is workshop-private.**
+*As shipped (`010a9a4`), two details differ from this paragraph and the shipped
+form is the correct one:*
+
+- *The join is `title + "\n" + body`, one newline, not two. Two newlines would
+  change the TODO.md export for every record that already had a body, turning a
+  cosmetic migration into a whole-file diff on 145 tickets and a reconcile loop
+  risk. One newline reproduces the existing bytes exactly.*
+- *`_undo_stacked_preview` is kept, not deleted. It repairs a shape that still
+  exists on disk (a preview stacked by an older threshold). Nothing emits
+  previews anymore, but the reader that heals them has to outlive the writer that
+  made them.*
+
+**D2. Execution metadata is namespaced under `exec`.** Not a second store: one
+file, one lock, one atomic write. The namespace exists to draw the sync boundary
+in one obvious place. Rule: **nothing under `exec` ever crosses to an external
+tracker, and nothing outside it is workshop-private.**
+
+*As shipped: `exec` is a read-side PROJECTION and storage stays flat. Moving the
+storage would have broken every existing reader of `task["touches"]`,
+`task["attempts"]` and seven other fields across the sweep, the CLI, the reviewer
+and the frontend, for no gain the projection does not already deliver. The
+boundary is what matters, and it is now explicit in two constants,
+`SYNCABLE_FIELDS` and `EXEC_FIELDS`, with a test asserting they are disjoint.
+`_for_storage` strips the projections (`text`, `exec`, `blocked_request`) on the
+way to disk, so there is exactly one stored copy of every value — which is the
+two-sources-of-truth failure ADR 0001 was right to fear, avoided by construction
+rather than by discipline.*
 
 **D3. `draft` becomes a real status.** It is Triage/Backlog in every other tool
 and it is where a ticket sits until it passes the readiness check (§6). Full
@@ -429,10 +451,33 @@ Phases, each independently shippable and each with its own proof:
 Phases 1 to 4 are entirely local, need no network, and deliver most of the trust
 the operator asked for. Phases 5 to 7 are the integration.
 
-**Status:** phase 1 shipped 2026-08-07 (commit `010a9a4`): `title`/`body` stored,
-`text` projected, ellipsis clamp removed, `draft` + `labels` + `scoped_by` added,
-`SYNCABLE_FIELDS` and the `exec` projection in place, 31 titles repaired across
-25 stores, migration idempotent, 347 backend + 38 frontend tests green.
+**Status: phase 1 is complete, 2026-08-07** (commits `010a9a4` + follow-up).
+`title`/`body` stored, `text` projected, the ellipsis clamp removed, `draft` +
+`labels` + `scoped_by` added, `SYNCABLE_FIELDS` / `EXEC_FIELDS` and the `exec`
+projection in place, the API patching each half independently, the frontend
+sending the pair.
+
+Proof, measured rather than asserted:
+
+| Claim | Result |
+|---|---|
+| Every ticket carries the pair | 179/179 across 25 stores |
+| Elided titles repaired | 32 → 0 |
+| Titles over the 120 cap | 0 |
+| Stale `text` keys left on disk | 0 |
+| Migration is idempotent | second `--write` run reports 0 changes, 0 export diffs |
+| Backend tests | 359 pass (was 342; +17 for the new shape) |
+| Frontend | `tsc --noEmit` clean, 38 vitest pass, `check_design.sh` clean |
+
+Two repairs needed a second pass and are worth recording, because both were cases
+where the first implementation looked done and was not:
+
+- The rejoin guard rejected any spill starting with a capital letter, which left
+  one real ticket elided (`...(Ron ··8202 /…`). An unbalanced bracket in the title
+  is now also accepted as proof of a mid-construct cut.
+- The repair ran only on the legacy read path, so a record that had *already*
+  gained its pair could never heal. It now runs on both branches. Without that,
+  the migration silently plateaued at 31 of 32.
 
 ---
 
