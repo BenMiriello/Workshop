@@ -607,13 +607,11 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: 0.62rem; font-weight: var(--fw-semi); line-height: 1;
   background: var(--accent); color: var(--accent-fg); border-radius: 999px;
 }
-/* Mobile: the header is now short enough to stay on one row. Drop the thread
-   title first (the log itself tells you where you are) rather than letting the
-   actions wrap onto a second line — that second row of unlabelled icons was
-   the thing that made this header unreadable. */
-@media (max-width: 640px) {
-  .chat-tb__title { display: none; }
-}
+/* Mobile used to drop the thread title here to make room (the scope name and
+   the two-way mode picker both competed for the same row). Now the scope
+   picker is icon-only under 640px and the mode picker is a single Tickets
+   icon, so there is room to keep the title — the one thing on this bar that
+   says which conversation you are in. */
 
 /* Compaction fold marker. Compaction never drops raw messages, so this divider
    is the only visible evidence that /compact did anything at all. */
@@ -631,12 +629,26 @@ input[type="range"].grad::-moz-range-thumb {
   margin-top: 0.35rem; font-size: 0.72rem; color: var(--warn-solid);
 }
 
-/* Jump-to-latest: shown only when new content arrives while scrolled up, so
-   leaving the bottom of the log is not a trap. */
+/* Positions the floating jump-to-latest pill against the log rather than the
+   whole panel, so it sits just above wherever the log currently ends instead
+   of the composer, which may or may not be nearby. */
+.chat-log-wrap { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+
+/* Jump-to-latest: shown when scrolled more than a screen up from the bottom,
+   or when new content arrives while scrolled away from it — see useLogScroll.
+   A floating pill OVER the log, not a full-width bar that takes its own row:
+   it used to push the composer down while visible, which moved the one
+   control the operator was about to reach for the moment new content arrived. */
 .chat-jump {
-  display: flex; justify-content: center;
-  padding: 0 var(--space-3) var(--space-2);
+  position: absolute; left: 50%; bottom: var(--space-3);
+  transform: translateX(-50%); z-index: var(--z-dropdown);
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.4rem 0.8rem;
+  font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--fg);
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 999px; box-shadow: var(--shadow-md); cursor: pointer;
 }
+.chat-jump:hover { background: var(--card-hover); }
 
 /* ---- Log + messages ---- */
 .chat-log {

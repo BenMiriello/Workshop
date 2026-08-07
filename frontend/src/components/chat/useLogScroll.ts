@@ -76,9 +76,17 @@ export function useLogScroll({
   const onLogScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    const atBottom = distance < 80;
     atBottomRef.current = atBottom;
-    setShowJumpToLatest((v) => (atBottom ? false : v));
+    if (atBottom) { setShowJumpToLatest(false); return; }
+    // More than a full window scrolled up: show it regardless of whether
+    // anything new has arrived — "how far back am I" needs no new message to
+    // be worth answering. Short of that, leave whatever the new-content
+    // effect below decided; scrolling within a window of the bottom doesn't
+    // by itself mean the newest message is out of view.
+    const farUp = distance > el.clientHeight;
+    if (farUp) setShowJumpToLatest(true);
   }, []);
 
   const followLatest = useCallback(() => {
@@ -104,9 +112,17 @@ export function useLogScroll({
     return () => vv?.removeEventListener("resize", onResize);
   }, [inputFocused, scrollToBottom]);
 
+  // Typing pins the log the same way new content does — but FOCUSING must
+  // not. This only depends on `input`, not `inputFocused`: tapping into the
+  // composer to reply to something further up used to re-run this on the
+  // focus transition alone and throw the view back to the bottom, discarding
+  // wherever you'd scrolled to read. `inputFocused` is read, not watched.
+  const inputFocusedRef = useRef(inputFocused);
+  useEffect(() => { inputFocusedRef.current = inputFocused; }, [inputFocused]);
   useEffect(() => {
-    if (inputFocused && atBottomRef.current) scrollToBottom();
-  }, [input, inputFocused, scrollToBottom]);
+    if (inputFocusedRef.current && atBottomRef.current) scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, scrollToBottom]);
 
   // The composer growing steals rows from the log.
   useEffect(() => {

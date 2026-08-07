@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import {
   WifiOff, ArrowDown,
 } from "lucide-react";
-import { StateBlock, Button } from "../ui";
+import { StateBlock } from "../ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
 import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
@@ -1143,12 +1143,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     [navigate, contextKey, activeId, cardStates, recordCardState],
   );
 
+  // A small pill floating over the log, not a bar that takes its own row —
+  // it names the affordance and gets out of the way, rather than pushing the
+  // composer down while it's up.
   const jumpToLatest = showJumpToLatest ? (
-    <div className="chat-jump">
-      <Button size="sm" variant="ghost" onClick={followLatest}>
-        <ArrowDown size={14} aria-hidden /> Jump to latest
-      </Button>
-    </div>
+    <button className="chat-jump" onClick={followLatest}>
+      <ArrowDown size={14} aria-hidden /> Jump to latest
+    </button>
   ) : null;
 
   const log = (
@@ -1261,8 +1262,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         onOpenGlobal={() => navigate("/work?tab=inbox")}
       />
       {taskPanel}
-      {log}
-      {jumpToLatest}
+      <div className="chat-log-wrap">
+        {log}
+        {jumpToLatest}
+      </div>
       {egressBanner}
       {/* Not gated on message count. It used to require `messages.length > 0`,
           which silently swallowed every error on a fresh chat — including the

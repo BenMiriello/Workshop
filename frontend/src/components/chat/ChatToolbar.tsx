@@ -1,15 +1,15 @@
 import {
   Bell, Blocks, Bot, ChevronDown, ChevronLeft, FolderGit2, Home, ListPlus, ListTodo,
-  Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Trash2,
+  Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Ticket, Trash2,
 } from "lucide-react";
-import { Menu, MenuItem, MenuLabel, MenuSeparator } from "../../ui";
+import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "../../ui";
 import type { Provider } from "../../lib/chat";
 import {
   SCOPE_GROUPS, scopeKind, scopeLabel, scopeName,
   type ChatMode, type ChatVariant, type ScopeKind,
 } from "./chatScope";
 import type { ChatDrawer } from "./drawers";
-import { CHAT_MODES, chatModeDef, type ChatModeId } from "./chatModes";
+import { chatModeDef, type ChatModeId } from "./chatModes";
 
 // One icon per scope KIND, not per scope: the icon says what kind of place a
 // row is, and the name says which one. Sixteen project rows all carrying the
@@ -112,13 +112,21 @@ export default function ChatToolbar({
         </button>
       )}
 
+      {/* The place icon is always shown, on desktop and mobile alike — it is
+          the one thing on this bar that says where a message you type here
+          actually goes. The name beside it is the part a narrow viewport
+          drops (`--wide`): the icon alone still answers "which kind of
+          place", and the full name is one tap away in the menu. */}
       {showProviderPicker && providers.length > 1 && mode === "data" ? (
         <Menu
           label="Scope"
           align="start"
           trigger={
             <button className="chat-tb__picker" title="Which scope this chat is in">
-              <span className="chat-tb__picker-val">{scopeLabel(activeProvider)}</span>
+              <ScopeIcon kind={scopeKind(activeProvider)} />
+              <span className="chat-tb__picker-val chat-tb__picker-val--wide">
+                {scopeLabel(activeProvider)}
+              </span>
               <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
             </button>
           }
@@ -142,68 +150,22 @@ export default function ChatToolbar({
           })}
         </Menu>
       ) : showProviderPicker && providers.length === 1 && mode === "data" ? (
-        <span className="chat-tb__picker is-static">{scopeLabel(providers[0].key)}</span>
+        <span className="chat-tb__picker is-static">
+          <ScopeIcon kind={scopeKind(providers[0].key)} />
+          <span className="chat-tb__picker-val chat-tb__picker-val--wide">
+            {scopeLabel(providers[0].key)}
+          </span>
+        </span>
       ) : null}
 
-      {/* How this chat handles work. It belongs beside the scope picker for the
-          same reason the scope picker belongs here: it changes the whole
-          surface, not one turn. Commits on change — cheap, reversible, and
-          re-stated to the model every turn so a switch takes effect
-          mid-conversation. Labels and icons come from chatModes, so the trigger
-          and the menu cannot describe the same mode differently.
-
-          On a narrow viewport the trigger keeps the ICON and drops the word: the
-          toolbar has more controls than a phone has room for, and an icon that
-          names its mode carries it. The word is always present where you are
-          choosing — in the menu — which is where you need to read it. */}
-      {/* Shown on a BLANK chat too, not just an existing one: the mode decides
-          where the first message's work goes, so hiding it until a thread exists
-          hid it until after the decision had been made. On a blank chat the
-          choice is held client-side and applied when the thread is created. */}
-      {onChooseChatMode && (
-        <Menu
-          label="How work is handled"
-          align="start"
-          trigger={
-            <button className="chat-tb__picker" title="How this chat handles work">
-              {(() => { const { Icon } = chatModeDef(chatMode); return <Icon size={14} aria-hidden />; })()}
-              <span className="chat-tb__picker-val chat-tb__picker-val--wide">
-                {chatModeDef(chatMode).label}
-              </span>
-              <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
-            </button>
-          }
-        >
-          {CHAT_MODES.map(({ id, label, title, Icon }) => (
-            <MenuItem
-              key={id}
-              icon={<Icon size={14} aria-hidden />}
-              checked={chatModeDef(chatMode).id === id}
-              title={title}
-              onSelect={() => onChooseChatMode(id)}
-            >
-              {label}
-            </MenuItem>
-          ))}
-        </Menu>
-      )}
-
-      {/* Which conversation you are in — a label, not a control. */}
+      {/* Which conversation you are in — a label, not a control. Shown on
+          mobile too now that the scope name and the mode picker no longer
+          compete with it for room. */}
       {activeThreadTitle && <span className="chat-tb__title">{activeThreadTitle}</span>}
       {/* Pushes the actions right on desktop; on mobile the toolbar wraps and
           they flow onto the next line. */}
       <span className="chat-tb__spacer" />
 
-      {activeId && (
-        <button
-          className="chat-tb__btn"
-          onClick={onFileTicket}
-          title="File this chat as a ticket"
-          aria-label="File as a ticket"
-        >
-          <ListPlus size={16} aria-hidden />
-        </button>
-      )}
       {activeId && (
         <button
           className={`chat-tb__btn chat-tb__tasks${inboxOpen ? " is-active" : ""}`}
@@ -216,6 +178,53 @@ export default function ChatToolbar({
           {inboxCount > 0 && <span className="chat-tb__badge">{inboxCount}</span>}
         </button>
       )}
+
+      {/* On/off, not a two-way choice: whether this chat's work leaves as
+          tickets run by agents, or stays in the conversation. Commits on
+          change — cheap, reversible, re-stated to the model every turn, so
+          flipping it takes effect mid-conversation. Shown on a BLANK chat too
+          (no `activeId` guard): the mode decides where the FIRST message's
+          work goes, so hiding the control until a thread exists would hide it
+          until after that decision had already been made — on a blank chat
+          the choice is held client-side and applied when the thread is
+          created. Filing this chat as a ticket is a one-off action on an
+          existing conversation, so that row only appears once one exists;
+          it folds in here instead of owning a second toolbar icon, which
+          used to sit right next to this one wearing an almost-identical
+          glyph. */}
+      {onChooseChatMode && (
+        <Menu
+          label="Tickets"
+          align="end"
+          trigger={
+            <button
+              className={`chat-tb__btn${chatModeDef(chatMode).id === "orchestrated" ? " is-active" : ""}`}
+              title={
+                chatModeDef(chatMode).id === "orchestrated"
+                  ? "Tickets on — work leaves as tickets run by agents"
+                  : "Tickets off — work stays in this conversation"
+              }
+              aria-label="Tickets"
+            >
+              <Ticket size={16} aria-hidden />
+            </button>
+          }
+        >
+          <div className="ws-menu__row">
+            <span>Tickets</span>
+            <Toggle
+              checked={chatModeDef(chatMode).id === "orchestrated"}
+              onChange={(on) => onChooseChatMode(on ? "orchestrated" : "direct")}
+            />
+          </div>
+          {activeId && (
+            <MenuItem icon={<ListPlus size={14} aria-hidden />} onSelect={onFileTicket}>
+              File this chat as a ticket
+            </MenuItem>
+          )}
+        </Menu>
+      )}
+
       {taskScope && (
         <button
           className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
