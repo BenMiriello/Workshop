@@ -175,6 +175,9 @@ export type Task = {
   // Attached by the cross-scope API (routes/tasks_all): the resolved scope key
   // (e.g. "workshop", "project:birds", "agent:foo", "build:bar").
   scope?: string;
+  // Attached by the ticket detail endpoint only (it needs the scope's id set to
+  // resolve dependencies), so it is absent on list rows.
+  readiness?: TicketReadiness;
 };
 
 // The seven task statuses -> the five design status kinds. Meaning, never a new
@@ -241,6 +244,37 @@ export function description(task: TaskTextish | string | null | undefined): stri
 export function cleanTitle(titleLine: string): string {
   return (titleLine ?? "").replace(/\r?\n/g, " ").trim();
 }
+
+// What a ticket does not yet say (backend services/ticket_readiness). Advisory:
+// only a BROKEN ticket (no title, an unresolvable dependency) is refused a run,
+// because 0 of 40 live tickets passed every check when this shipped and a full
+// gate would have stopped the queue rather than improved it. Attached by
+// GET /api/tasks/{scope}/{id}.
+export type TicketReadiness = {
+  ok: boolean;
+  missing: { check: string; why: string }[];
+  warnings: string[];
+};
+
+// The checks that refuse a run, mirroring ticket_readiness.BLOCKING. Everything
+// else is advice, and the UI has to show the difference or the checklist reads
+// as a wall of equally-urgent failures.
+const BLOCKING_CHECKS = new Set(["title", "dependencies"]);
+
+export const isBlockingCheck = (check: string): boolean => BLOCKING_CHECKS.has(check);
+
+// Human labels for each check, so the checklist reads as prose and not as keys.
+const READINESS_LABEL: Record<string, string> = {
+  title: "Title",
+  objective: "Objective",
+  acceptance: "What done looks like",
+  entry_points: "Where to start",
+  boundaries: "Boundaries",
+  dependencies: "Dependencies",
+};
+
+export const readinessLabel = (check: string): string =>
+  READINESS_LABEL[check] ?? check;
 
 // A friendly label for a scope key, for filters and the scope link.
 export function scopeLabel(scope?: string): string {

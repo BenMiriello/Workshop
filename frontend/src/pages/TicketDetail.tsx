@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, Rocket, ExternalLink,
-  Play, CheckCheck, XCircle, KeyRound, ScrollText, Ban,
+  Play, CheckCheck, XCircle, KeyRound, ScrollText, Ban, ClipboardList,
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
@@ -12,7 +12,7 @@ import {
 import {
   type Task, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
-  cleanTitle,
+  cleanTitle, isBlockingCheck, readinessLabel,
   ticketHref,
   latitudeDesc, latitudeSourceLabel,
 } from "../lib/tasks";
@@ -344,6 +344,33 @@ export default function TicketDetail() {
               )}
             </Card>
           </section>
+
+          {/* What the ticket does not yet say -------------------------- */}
+          {task.readiness && !task.readiness.ok && (
+            <section>
+              <SectionLabel icon={<ClipboardList aria-hidden />}>Not yet specified</SectionLabel>
+              <Card>
+                <Stack gap="sm">
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                    A worker never sees the conversation this came from. These are
+                    the questions the ticket does not answer yet.
+                  </span>
+                  {task.readiness.missing.map((m) => (
+                    <StatusDot key={m.check}
+                               status={isBlockingCheck(m.check) ? "danger" : "warn"}>
+                      <strong>{readinessLabel(m.check)}</strong>
+                      <span className="ws-muted"> — {m.why}</span>
+                    </StatusDot>
+                  ))}
+                  {task.readiness.warnings.map((w) => (
+                    <StatusDot key={w} status="warn">
+                      <span className="ws-muted">{w}</span>
+                    </StatusDot>
+                  ))}
+                </Stack>
+              </Card>
+            </section>
+          )}
 
           {/* Status + latitude + assignee ------------------------------ */}
           <section>
