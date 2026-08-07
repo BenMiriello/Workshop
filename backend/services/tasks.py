@@ -900,11 +900,22 @@ def _load(root: Path) -> list[dict]:
 
 
 # Keys `_normalize` PROJECTS rather than stores. Written to disk they would be a
-# second copy of `title`/`body`/`awaiting`/`assignee` that a hand edit could put
-# out of step with the canonical field, which is exactly the two-sources-of-truth
-# failure ADR 0001 was right to fear. Stripped on the way out; re-derived on the
-# way in. `owner` is deliberately NOT stripped: the shell CLI still reads it.
-_PROJECTED_KEYS = ("text", "exec", "blocked_request")
+# second copy of a canonical field that a hand edit could put out of step with it,
+# which is exactly the two-sources-of-truth failure ADR 0001 was right to fear.
+# Stripped on the way out; re-derived on the way in. `owner` is deliberately NOT
+# stripped: the shell CLI still reads it.
+#
+# `text` is deliberately NOT stripped either, and that is a transitional choice
+# rather than a permanent one. A reader running the PREVIOUS version of this
+# module — a long-lived uvicorn that has not restarted, a shell CLI in another
+# checkout — knows only `text`. Omitting it makes every ticket read as empty to
+# that reader, and `reconcile` then treats all of TODO.md as unmatched new work
+# and re-imports the lot, turning a shape change into duplicated tickets. Keeping
+# the key costs a little disk and makes the store readable by both generations.
+# Drift is not possible in the direction that matters: `_normalize` re-derives
+# `text` from title/body on EVERY read, so a stale stored copy is ignored and
+# rewritten. Remove from this exemption once no old reader can still be running.
+_PROJECTED_KEYS = ("exec", "blocked_request")
 
 
 def _for_storage(task: dict) -> dict:
@@ -1619,6 +1630,41 @@ def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,
         found["updated"] = _now()
         _persist(root, tasks)
         return found
+
+
+CLARIFICATION_HEADING = "## Clarifications"
+
+
+def append_clarification(root: Path, task_id: str, *, question: str, answer: str,
+                         assignee: str | None = None) -> dict | None:
+    """Write an answered question INTO the ticket body, where the next attempt
+    will read it.
+
+    This closes the gap that made the whole question path pointless. An answer
+    used to land only in `evidence`, but a worker is handed the ticket's TEXT and
+    nothing else (scripts/project_ralph.sh hands `$TASK_TEXT` to ralph.sh), so the
+    operator could answer a question and the next attempt would ask it again,
+    having never seen the reply. The body is the one field the worker is
+    guaranteed to read, so that is where an answer belongs.
+
+    Appends under a single ``## Clarifications`` heading, so a ticket answered
+    three times has three entries and one heading rather than three headings.
+    """
+    q = " ".join(str(question or "").split()).strip()
+    a = str(answer or "").strip()
+    if not a:
+        return None
+    entry = f"- **Q:** {q}\n  **A:** {a}" if q else f"- {a}"
+    task = get_task(root, task_id, owner=assignee)
+    if task is None:
+        return None
+    body = task.get("body") or ""
+    if CLARIFICATION_HEADING in body:
+        body = f"{body.rstrip()}\n{entry}"
+    else:
+        body = f"{body.rstrip()}\n\n{CLARIFICATION_HEADING}\n{entry}" if body.strip() \
+            else f"{CLARIFICATION_HEADING}\n{entry}"
+    return update(root, task_id, body=body, assignee=assignee)
 
 
 def heartbeat(root: Path, task_id: str, claim_token: int | None, *,
