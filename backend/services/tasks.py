@@ -1564,8 +1564,13 @@ def update(
         # that thinks in questions and a caller that thinks in structured requests
         # cannot produce two different shapes. An empty ask clears the record.
         req = blocked_request if blocked_request is not None else awaiting
+        _asked_before = bool(found.get("awaiting"))
         if req is not None:
             found["awaiting"] = _normalize_awaiting(req)
+        # A question is NEWLY raised when this write puts a request on a task that
+        # did not carry one. Captured here and delivered after the persist, so the
+        # chat is never told about a question that failed to save.
+        _newly_asked = bool(found.get("awaiting")) and not _asked_before
         # Keep the mirror true for THIS call's return value. `found` came from a
         # normalized load, so its `blocked_request` is the pre-update projection
         # until it is re-derived here — exactly the discipline `owner`/`assignee`
@@ -1595,7 +1600,18 @@ def update(
             found["claim_token"] = _as_int(found.get("claim_token"), 0) + 1
         found["updated"] = _now()
         _persist(root, tasks)
-        return found
+    # Outside the lock and after the write: a newly raised question goes to the
+    # chat that filed the ticket, not only to the queue. Here rather than at each
+    # producer because there are several (the CLI's `set-awaiting` and `block`,
+    # the sweep, the reviewer) and a producer that forgets is a question nobody
+    # ever sees — which is the state the audit found the system in. Never raises;
+    # a ticket that correctly stopped to ask must not fail because telling
+    # someone went wrong.
+    if _newly_asked and not (found.get("awaiting") or {}).get("dismissed"):
+        from services import question_report, task_scope
+        question_report.post_for_task(found, found["awaiting"],
+                                      scope=task_scope.key_for_root(root))
+    return found
 
 
 def claim(root: Path, task_id: str, job_id: str, *, assignee: str | None = None,

@@ -70,8 +70,8 @@ def test_cancelled_reads_as_cancelled():
 
 
 def test_owner_lookup_returns_none_for_an_unknown_thread():
-    assert run_report._owner_of_thread("no-such-thread-id") is None
+    assert run_report.owner_of_thread("no-such-thread-id") is None
 
 
 def test_owner_lookup_tolerates_an_empty_id():
-    assert run_report._owner_of_thread("") is None
+    assert run_report.owner_of_thread("") is None

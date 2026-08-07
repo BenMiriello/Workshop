@@ -40,8 +40,11 @@ _RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", str(WORKSHOP_ROOT / ".runtime
 # about it went wrong.
 
 
-def _owner_of_thread(thread_id: str) -> int | None:
-    """Which owner's store holds this thread, or None if no store has it."""
+def owner_of_thread(thread_id: str) -> int | None:
+    """Which owner's store holds this thread, or None if no store has it.
+
+    Public because the question path needs the same answer: a ticket that stopped
+    to ask reaches its chat exactly the way a finished run does."""
     if not thread_id:
         return None
     try:
@@ -122,7 +125,7 @@ def post_for_job(job_id: str, status: str = "done") -> int:
         posted = 0
         previous = ownership.owner_or_none()
         for thread_id, tickets in by_thread.items():
-            owner = _owner_of_thread(thread_id)
+            owner = owner_of_thread(thread_id)
             if owner is None:
                 continue
             try:

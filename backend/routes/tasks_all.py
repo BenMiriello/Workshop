@@ -650,6 +650,25 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
         elif note:
             tasks.update(root, task_id, evidence={"kind": "review", "ref": f"approved: {note}"})
 
+        # The answer goes into the BODY, not only into evidence. A worker is handed
+        # the ticket's text and nothing else, so an answer recorded anywhere else is
+        # invisible to the attempt it was meant to unblock — the task would stop and
+        # ask the same question again. Every releasing action writes it, because
+        # every one of them is an answer: a note, a granted permission, or a rule.
+        answer = note
+        if action == "grant-and-continue" and out.get("grant"):
+            g = out["grant"]
+            granted = f"granted {', '.join(g['verbs'])} on {g['store_uri']}"
+            answer = f"{granted} — {note}" if note else granted
+        elif action == "mint-rule":
+            answer = (body.rule or note).strip()
+        if answer:
+            tasks.append_clarification(
+                root, task_id,
+                question=str(request.get("ask") or request.get("question") or ""),
+                answer=answer,
+            )
+
         # Release. `restore_attempt`: the block was ANSWERED, not failed — a task
         # that stopped to ask a good question twice must not be parked as though it
         # had failed twice. Clearing `blocked_reason` and the request is what
