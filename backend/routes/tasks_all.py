@@ -33,7 +33,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services import (tasks, task_scope, task_dedup, jobs, build_agents, ownership,
-                      knowledge, learnings, permissions, latitude as latitude_svc)
+                      knowledge, learnings, permissions, ticket_readiness,
+                      latitude as latitude_svc)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -389,6 +390,11 @@ async def get_one(scope: str, task_id: str) -> dict:
     rec = dict(t)
     rec["scope"] = scope
     rec["origin"] = _origin_for(t)
+    # What this ticket does not yet say. Computed here rather than in the store so
+    # the store stays free of policy (and so `tasks` and `ticket_readiness` do not
+    # import each other). Advisory: only `blocking()` refuses a run.
+    rec["readiness"] = ticket_readiness.check(
+        t, known_ids={x["id"] for x in tasks.list_tasks(root)})
     return _with_latitude(rec, scope)
 
 
@@ -864,10 +870,22 @@ def launch_task_run(scope: str, task_id: str) -> dict:
 @router.post("/{scope}/{task_id}/run")
 async def run_task(scope: str, task_id: str) -> dict:
     """Run exactly this task now. 409 if a sweep already holds the tree. Single
-    operator: no confirmation gate, no allowlist."""
+    operator: no confirmation gate, no allowlist.
+
+    A ticket that is BROKEN — no title, or a dependency that does not resolve —
+    is refused here rather than burning a run to discover it. Merely
+    underspecified tickets are not refused: measured against the live stores when
+    this shipped, 0 of 40 open tickets passed every readiness check, so a full
+    gate would have stopped all work rather than improving any of it. The rest of
+    the check is reported, not enforced (services/ticket_readiness)."""
     root = _root_for_scope(scope)
     if root is None:
         raise HTTPException(400, f"unknown scope: {scope}")
-    if tasks.get_task(root, task_id) is None:
+    task = tasks.get_task(root, task_id)
+    if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
+    known = {t["id"] for t in tasks.list_tasks(root)}
+    broken = ticket_readiness.blocking(ticket_readiness.check(task, known_ids=known))
+    if broken:
+        raise HTTPException(400, "; ".join(m["why"] for m in broken))
     return launch_task_run(scope, task_id)
