@@ -72,11 +72,6 @@ def write_to_turn(turn_id: str, text: str) -> bool:
     try:
         fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
         os.write(fd, _user_message_line(text).encode())
-        # Written is not read. Remember it so the CLI's echo can be matched to it
-        # and the UI can stop saying "handed over" once it is genuinely read.
-        turn = TURNS.get(turn_id)
-        if turn is not None:
-            turn.awaiting_receipt.append(text)
         return True
     except OSError as e:
         # ENXIO = FIFO open for write with no reader: the turn's process is gone.
@@ -134,11 +129,6 @@ class Turn:
     # Subscribers get notified on each new event so SSE generators can wake
     # without polling. Use a single asyncio.Event reset on each push.
     new_event: asyncio.Event = field(default_factory=asyncio.Event)
-    # Messages written to this turn's stdin that the CLI has not yet echoed back.
-    # See write_to_turn and the `user_echo` branch of _ingest: an entry leaves
-    # this list at the moment the turn is known to have READ it, which is the
-    # only receipt this channel can produce.
-    awaiting_receipt: list[str] = field(default_factory=list)
     # Open subagent segments by their Agent tool_use id. A subagent's own steps
     # arrive as sidechain events carrying `parent_tool_use_id`; this is how they
     # find the segment they belong under instead of flattening into the parent's
@@ -795,18 +785,20 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
             elif kind == "user_echo":
-                # The CLI echoes every stdin user message, including the turn's
-                # own prompt and its synthetic /compact turns. Only an echo that
-                # matches something we injected is a receipt; everything else is
-                # noise and is dropped rather than shown. A sidechain echo is the
-                # subagent's PROMPT, never an operator message — it can collide
-                # with a queued injection's text, so it is excluded by origin.
-                if payload.get("parent"):
-                    return saw_tool
-                text = (payload.get("text") or "").strip()
-                if text in turn.awaiting_receipt:
-                    turn.awaiting_receipt.remove(text)
-                    _push(turn, "injection_read", {"text": text})
+                # DROPPED, ALWAYS. `--replay-user-messages` makes the CLI echo
+                # every stdin user message back: the turn's own prompt, its
+                # synthetic /compact turns, a subagent's prompt on the sidechain,
+                # and anything injected mid-turn. None of it is output, and the
+                # operator's own messages are already in the log where they were
+                # sent — echoing one back would show it twice.
+                #
+                # This branch used to match an echo against a list of pending
+                # injections and emit an `injection_read` receipt, which drove a
+                # "Read by the turn in progress" line under the message. That was
+                # an invented UI pattern: standard chat does not annotate your own
+                # messages with delivery state. The line is gone and so is the
+                # bookkeeping; the classification stays because these events still
+                # have to be recognised in order to be dropped.
                 return saw_tool
             _push(turn, kind, payload)
         return saw_tool
@@ -1079,6 +1071,12 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
     except Exception:
         pass
 
+    # ONE naming path. chat_naming owns the guard ("still unnamed, and a reply
+    # has landed") and reads the thread itself, so this is safe to call after
+    # every turn and will keep trying until a name sticks. There used to be a
+    # second call below routing through routes.chat._maybe_autoname, a function
+    # that no longer exists: it raised AttributeError on every streamed turn into
+    # a best-effort `except` and logged it where nobody looks.
     if not is_error:
         try:
             from services import chat_naming
@@ -1095,14 +1093,6 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
                 _push(turn, "checkpoint", {"sha": sha})
     except Exception as e:
         log.info("turn %s: checkpoint skipped: %s", turn.id, e)
-
-    try:
-        first_user = _first_user_text(turn.thread_id)
-        if first_user and text and not text.startswith("(model exited"):
-            from routes import chat as _chat
-            await _maybe_autoname_stream(_chat, turn.thread_id, first_user, text)
-    except Exception as e:
-        log.info("turn %s: auto-name skipped: %s", turn.id, e)
 
     # The thread now holds the final message; the journal is no longer needed.
     _mark_meta(meta, "done")
@@ -1160,13 +1150,6 @@ def _first_user_text(thread_id: str) -> str:
         if m.get("role") == "user":
             return m.get("content", "")
     return ""
-
-
-async def _maybe_autoname_stream(chat_mod, thread_id: str, user_msg: str, assistant_msg: str) -> None:
-    """Run the route's naming guard+generator for a just-completed streamed turn.
-    chat_mod._maybe_autoname already checks 'first assistant reply + blank title',
-    so this is safe to call unconditionally here."""
-    await chat_mod._maybe_autoname(thread_id, user_msg, assistant_msg)
 
 
 def get_turn(turn_id: str) -> Turn | None:

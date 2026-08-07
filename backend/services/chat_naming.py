@@ -31,10 +31,23 @@ def _first_content(messages: list[dict], role: str) -> str:
 
 
 def generate_title(thread_id: str) -> None:
-    """Blocking: name the thread from its first exchange, if it is still unnamed
-    and exactly one assistant reply has landed. Runs in a worker thread (the
-    model call blocks). Reads the messages itself so either chat path can call it
-    with just the thread id."""
+    """Blocking: name the thread from its FIRST exchange, whenever it is still
+    unnamed and at least one assistant reply has landed. Runs in a worker thread
+    (the model call blocks). Reads the messages itself so either chat path can
+    call it with just the thread id.
+
+    RETRIES UNTIL IT SUCCEEDS, and that is the point. This used to fire only when
+    exactly one assistant reply existed — a single attempt, on one turn, with no
+    second chance. Anything transient that hit that one moment (a rate limit, a
+    restart mid-call, a turn that ended in an error) left the chat named "New
+    chat" forever, because by the next turn the count had moved past 1 and the
+    guard could never be true again. The chat list then fell back to the first-
+    message snippet, which is what "the title is just my message" looks like.
+
+    Naming from the FIRST exchange rather than the latest keeps the title about
+    what the chat IS, and `is_blank_title` below stops it the moment one lands,
+    so this costs one cheap call per turn only while a chat has no name at all.
+    """
     t = chat_store.get_thread(thread_id)
     if t is None or not is_blank_title(t.get("title")):
         return
@@ -43,8 +56,7 @@ def generate_title(thread_id: str) -> None:
         m for m in msgs
         if m.get("role") == "assistant" and (m.get("content") or "").strip()
     ]
-    # Only after the FIRST assistant reply (not on every later turn).
-    if len(assistants) != 1:
+    if not assistants:
         return
     first_user = _first_content(msgs, "user")
     if not first_user:

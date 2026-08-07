@@ -486,7 +486,13 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
     # a `last_message` snippet, so an interim snippet-title is redundant. If a
     # thread somehow never gets named (model unavailable), fall back to a first-
     # user-message snippet so the list never shows a wall of "New chat".
-    if role == "user" and thread.get("title") in (None, "", "New chat"):
+    # FIRST user message only. Rewriting it on every message made the chat list
+    # show whatever the operator said most recently as the chat's name, which
+    # reads as the title being the last message rather than a subject — and it
+    # changed under them each turn. It is a fallback for a chat that could not be
+    # named, so it must be as stable as the name it stands in for.
+    if role == "user" and not thread.get("_seed_title") \
+            and thread.get("title") in (None, "", "New chat"):
         thread["_seed_title"] = content.strip().split("\n")[0][:60] or "New chat"
     _write(thread)
     return msg

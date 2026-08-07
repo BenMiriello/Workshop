@@ -284,8 +284,8 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
     from services import learnings
     try:
         learnings.record_feedback(note, source="chat", scope=scope)
-    except ValueError:
-        return cleaned, [f"(learning note skipped: {scope!r} is not a valid scope)"]
+    except ValueError as e:
+        return cleaned, [f"(learning note skipped: {e})"]
     return cleaned, [f"Captured a preference in learnings ({scope})."]
 
 
@@ -294,7 +294,12 @@ def _note_id_from_title(title: str) -> str:
     segments joined by '-', with a base36 time suffix so a fresh note never
     collides with an existing file. Mirrors the frontend freshNoteId helper."""
     import time
-    base = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")[:48] or "note"
+    # Strip AFTER truncating, not before. `[:48]` can land on a word boundary and
+    # leave a trailing hyphen, and the id then contains `--`, which the store's
+    # kebab rule rejects: the note was silently dropped and the operator was told
+    # `'workshop' is not a valid scope`. Any title long enough to be cut at a
+    # space hit it, which is most real note titles.
+    base = re.sub(r"[^a-z0-9]+", "-", (title or "").lower()).strip("-")[:48].strip("-") or "note"
     return f"{base}-{int(time.time() * 1000):x}"
 
 
@@ -332,6 +337,9 @@ async def apply_note_block(context_key: str | None, reply: str) -> tuple[str, li
     note_id = _note_id_from_title(title or "note")
     try:
         await knowledge.put_note(scope, note_id, title or note_id, body)
-    except ValueError:
-        return cleaned, [f"(note skipped: {scope!r} is not a valid scope)"]
+    except ValueError as e:
+        # Report what actually failed. put_note validates the scope AND the note
+        # id, so blaming the scope for either sent the operator looking at a
+        # scope that was fine while a malformed id went unmentioned.
+        return cleaned, [f"(note skipped: {e})"]
     return cleaned, [f"Saved a note to {scope}."]
