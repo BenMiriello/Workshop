@@ -108,6 +108,40 @@ class TestNaming:
         assert chat_store.get_thread(tid)["title"] == "New chat"
 
 
+class TestRejectsNonTitleOutput:
+    """Asked for "output ONLY the title", the model occasionally answers the
+    conversation instead. Observed on a live thread: the permanent title ended
+    up "I don't have tools available in" — the start of a refusal, saved
+    verbatim because nothing checked it before persisting. This must be
+    treated the same as a failed call: skip, and let the next reply retry."""
+
+    def test_a_refusal_is_not_saved_as_a_title(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+        monkeypatch.setattr(
+            chat_naming.llm_router, "call_cloud",
+            lambda *a, **k: {"text": "I don't have tools available in this context"},
+        )
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_a_later_retry_can_still_succeed(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+        monkeypatch.setattr(
+            chat_naming.llm_router, "call_cloud",
+            lambda *a, **k: {"text": "I'm sorry, I can't help with that"},
+        )
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+        monkeypatch.setattr(
+            chat_naming.llm_router, "call_cloud",
+            lambda *a, **k: {"text": "Subagent Delegation In Chat"},
+        )
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
+
+
 class TestSeedTitle:
     def test_the_seed_is_the_first_message_and_stays_that_way(self, store):
         tid = chat_store.create_thread("general")["id"]

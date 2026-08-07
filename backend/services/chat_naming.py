@@ -30,6 +30,23 @@ def _first_content(messages: list[dict], role: str) -> str:
     return ""
 
 
+# A model asked for "output ONLY the title" occasionally breaks character and
+# answers the *conversation* instead — one thread's permanent title ended up
+# "I don't have tools available in", the start of a refusal-flavored reply to
+# the naming prompt itself, saved verbatim because nothing checked it before
+# persisting. These are the shapes that response takes; reject them and let
+# the retry-every-turn behavior above try again on the next reply rather than
+# locking in whatever the model said.
+_NON_TITLE_STARTS = (
+    "i don't", "i do not", "i can't", "i cannot", "i'm not able", "i am not able",
+    "i'm sorry", "i apologize", "as an ai", "sorry,", "unfortunately",
+)
+
+
+def _looks_like_a_title(title: str) -> bool:
+    return not title.lower().startswith(_NON_TITLE_STARTS)
+
+
 def generate_title(thread_id: str) -> None:
     """Blocking: name the thread from its FIRST exchange, whenever it is still
     unnamed and at least one assistant reply has landed. Runs in a worker thread
@@ -84,6 +101,9 @@ def generate_title(thread_id: str) -> None:
 
     title = (result.get("text") or "").strip().strip('"').strip()
     title = title.splitlines()[0].strip() if title else ""  # first line only
+    if title and not _looks_like_a_title(title):
+        log.info("auto-name skipped (model broke character) for %s: %r", thread_id, title)
+        return
     words = title.split()
     if len(words) > 6:
         title = " ".join(words[:6])
