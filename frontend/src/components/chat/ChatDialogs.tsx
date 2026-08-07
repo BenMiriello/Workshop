@@ -1,10 +1,11 @@
 import { ConfirmDialog } from "../../ui";
 import { scopeLabel } from "../../lib/tasks";
 import TicketDraftsDialog from "./TicketDraftsDialog";
+import RenameChatDialog from "./RenameChatDialog";
 import type { FiledNotice } from "./FiledNotice";
 
-// Everything the chat opens over itself: filing tickets, and the two
-// confirmations.
+// Everything the chat opens over itself: filing tickets, renaming, and the
+// two confirmations.
 //
 // BOTH CONFIRMATIONS ARE DELIBERATE, and they are deliberately different.
 // Starting a new chat is cheap to undo — the thread is still there — but
@@ -17,6 +18,7 @@ export default function ChatDialogs({
   scope,
   activeId, activeThreadTitle,
   ticketsOpen, onCloseTickets, onFiled,
+  renameOpen, renameBusy, onCancelRename, onSaveRename,
   confirmNew, onCancelNew, onConfirmNew,
   confirmDeleteId, confirmDeleteTitle, onCancelDelete, onConfirmDelete,
 }: {
@@ -26,6 +28,10 @@ export default function ChatDialogs({
   ticketsOpen: boolean;
   onCloseTickets: () => void;
   onFiled: (n: FiledNotice) => void;
+  renameOpen: boolean;
+  renameBusy: boolean;
+  onCancelRename: () => void;
+  onSaveRename: (title: string) => void;
   confirmNew: boolean;
   onCancelNew: () => void;
   onConfirmNew: () => void;
@@ -41,6 +47,14 @@ export default function ChatDialogs({
         chatId={activeId}
         onClose={onCloseTickets}
         onFiled={onFiled}
+      />
+
+      <RenameChatDialog
+        open={renameOpen}
+        initialTitle={activeThreadTitle ?? ""}
+        busy={renameBusy}
+        onCancel={onCancelRename}
+        onSave={onSaveRename}
       />
 
       <ConfirmDialog

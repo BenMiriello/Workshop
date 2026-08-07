@@ -1,5 +1,5 @@
 import {
-  Bell, Blocks, Bot, ChevronDown, ChevronLeft, FolderGit2, Home, ListPlus, ListTodo,
+  Bell, Blocks, Bot, ChevronLeft, FolderGit2, Home, ListPlus, ListTodo,
   Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Ticket, Trash2,
 } from "lucide-react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "../../ui";
@@ -53,7 +53,7 @@ export default function ChatToolbar({
   showProviderPicker, providers, activeProvider, onChooseProvider,
   chatMode, onChooseChatMode,
   drawer, onSetDrawer, inboxCount, taskScope, openTaskCount,
-  onBack, onOpenWorkbench, onFileTicket, onNewChat, onDelete, onPopOut, onNavigate,
+  onBack, onOpenWorkbench, onFileTicket, onEditTitle, onNewChat, onDelete, onPopOut, onNavigate,
 }: {
   variant: ChatVariant;
   mode: ChatMode;
@@ -81,6 +81,7 @@ export default function ChatToolbar({
   onBack: () => void;
   onOpenWorkbench: () => void;
   onFileTicket: () => void;
+  onEditTitle: () => void;
   onNewChat: () => void;
   onDelete: (id: string) => void;
   onPopOut: () => void;
@@ -127,7 +128,6 @@ export default function ChatToolbar({
               <span className="chat-tb__picker-val chat-tb__picker-val--wide">
                 {scopeLabel(activeProvider)}
               </span>
-              <ChevronDown size={14} aria-hidden className="chat-tb__picker-caret" />
             </button>
           }
         >
@@ -158,12 +158,16 @@ export default function ChatToolbar({
         </span>
       ) : null}
 
-      {/* Which conversation you are in — a label, not a control. Shown on
-          mobile too now that the scope name and the mode picker no longer
-          compete with it for room. */}
-      {activeThreadTitle && <span className="chat-tb__title">{activeThreadTitle}</span>}
-      {/* Pushes the actions right on desktop; on mobile the toolbar wraps and
-          they flow onto the next line. */}
+      {/* Which conversation you are in — tap to rename it. Shown on mobile too
+          now that the scope name and the mode picker no longer compete with
+          it for room, and the one thing that shrinks when the row is tight. */}
+      {activeThreadTitle && (
+        <button className="chat-tb__title" onClick={onEditTitle} title="Rename chat">
+          {activeThreadTitle}
+        </button>
+      )}
+      {/* Pushes the actions right on desktop; on a narrow viewport the title
+          just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />
 
       {activeId && (

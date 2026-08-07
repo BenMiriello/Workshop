@@ -141,6 +141,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // Starting a new chat leaves the current one — cheap to undo (the thread is
   // still there) but disorienting mid-conversation, so it asks first.
   const [confirmNew, setConfirmNew] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameBusy, setRenameBusy] = useState(false);
 
   // The turn stream and the type-ahead queue each need the other: the queue
   // must know whether a turn is running, and a finished turn must dispatch what
@@ -721,6 +723,20 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     refreshThreads();
   }, [activeId, newChat, refreshThreads, scope, variant, navigate]);
 
+  const saveRename = useCallback(async (title: string) => {
+    if (!activeId) return;
+    setRenameBusy(true);
+    try {
+      const t = await chatApi.renameThread(activeId, title);
+      setThreads((list) => list.map((x) => (x.id === t.id ? { ...x, title: t.title } : x)));
+      setRenameOpen(false);
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setRenameBusy(false);
+    }
+  }, [activeId]);
+
   // The universal turn sender. EVERY chat (general, app, project, build) streams
   // through POST /threads/{id}/turns + the SSE channel, so every turn shows its
   // work (tool calls, interim text) live instead of a blocking spinner. The
@@ -1084,6 +1100,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
       onFileTicket={() => setTicketsOpen(true)}
+      onEditTitle={() => setRenameOpen(true)}
       onNewChat={() => setConfirmNew(true)}
       onDelete={setConfirmDeleteId}
       onPopOut={popOut}
@@ -1099,6 +1116,10 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       ticketsOpen={ticketsOpen}
       onCloseTickets={() => setTicketsOpen(false)}
       onFiled={setNotice}
+      renameOpen={renameOpen}
+      renameBusy={renameBusy}
+      onCancelRename={() => setRenameOpen(false)}
+      onSaveRename={saveRename}
       confirmNew={confirmNew}
       onCancelNew={() => setConfirmNew(false)}
       onConfirmNew={() => { setConfirmNew(false); newChat(); }}
@@ -1146,8 +1167,16 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // A small pill floating over the log, not a bar that takes its own row —
   // it names the affordance and gets out of the way, rather than pushing the
   // composer down while it's up.
+  //
+  // `onMouseDown` preventDefault: with the mobile keyboard open, tapping this
+  // (mousedown) blurs the composer BEFORE the click fires — the keyboard
+  // closing mid-gesture resizes the viewport under the operator's finger, so
+  // the tap lands somewhere else and the click never registers, costing a
+  // second tap to actually jump. Blocking the default keeps the composer
+  // focused (and the keyboard open) through the tap, so the click fires
+  // where it was aimed the first time.
   const jumpToLatest = showJumpToLatest ? (
-    <button className="chat-jump" onClick={followLatest}>
+    <button className="chat-jump" onMouseDown={(e) => e.preventDefault()} onClick={followLatest}>
       <ArrowDown size={14} aria-hidden /> Jump to latest
     </button>
   ) : null;
@@ -1254,15 +1283,19 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     <div className={`chat-panel chat-panel--${variant}`}>
       {toolbar}
       {notice && <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />}
-      <InboxStrip
-        chatId={activeId}
-        open={inboxOpen}
-        onCountChange={setInboxCount}
-        onClose={() => setDrawer(null)}
-        onOpenGlobal={() => navigate("/work?tab=inbox")}
-      />
       {taskPanel}
       <div className="chat-log-wrap">
+        {/* Floats over the top of the log instead of pushing it down — it used
+            to sit in flow and shove the whole transcript downward every time
+            an agent raised something, which shifted the log out from under
+            wherever the operator was reading right as a new item arrived. */}
+        <InboxStrip
+          chatId={activeId}
+          open={inboxOpen}
+          onCountChange={setInboxCount}
+          onClose={() => setDrawer(null)}
+          onOpenGlobal={() => navigate("/work?tab=inbox")}
+        />
         {log}
         {jumpToLatest}
       </div>

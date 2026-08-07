@@ -67,9 +67,13 @@ export function useLogScroll({
   const atBottomRef = useRef(true);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  const scrollToBottom = useCallback(() => {
+  // Instant by default — the auto-follow paths below fire on every streamed
+  // token, and animating each of those fights itself. `smooth` is for the
+  // explicit, one-off jumps (the Jump-to-latest button, sending a message):
+  // an operator-triggered scroll should read as scrolling, not teleporting.
+  const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollRef.current;
-    if (el) el.scrollTo({ top: el.scrollHeight });
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
   // The ONLY writer of atBottomRef.
@@ -92,7 +96,7 @@ export function useLogScroll({
   const followLatest = useCallback(() => {
     atBottomRef.current = true;
     setShowJumpToLatest(false);
-    scrollToBottom();
+    scrollToBottom(true);
   }, [scrollToBottom]);
 
   // Follow only while the operator is actually following.

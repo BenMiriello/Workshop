@@ -542,9 +542,10 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-bottom: 1px solid var(--border);
-  /* Wrap onto multiple rows instead of overflowing off-screen: on a narrow
-     (mobile) viewport the action buttons flow onto a second line rather than
-     pushing the model select past the edge where it can't be reached. */
+  /* Wraps on a wide viewport if it ever has to (a safety net, not the design);
+     forced back to one row under 640px below — a second row of icons was what
+     made the mobile bar unreadable, and the title shrinking is the release
+     valve now instead. */
   flex-wrap: wrap; row-gap: var(--space-2);
 }
 /* Used by the inline "add agent" field. The three stock <select>s that used to
@@ -555,8 +556,10 @@ input[type="range"].grad::-moz-range-thumb {
   background: var(--bg); color: var(--fg);
   border: 1px solid var(--border); border-radius: var(--radius-md);
 }
-/* Scope picker: a quiet text trigger with a single caret, not a boxed select.
-   It reads as a label you can change, which is what it is. */
+/* Scope picker: a quiet text trigger, not a boxed select. It reads as a label
+   you can change, which is what it is. No caret — nothing else on this bar
+   carries one (the Tickets trigger doesn't either), so the icon + label is
+   the whole affordance; a menu is one tap away either way. */
 .chat-tb__picker {
   flex: 0 1 auto; min-width: 0;
   display: inline-flex; align-items: center; gap: 0.25rem;
@@ -571,20 +574,25 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-tb__picker.is-static { cursor: default; }
 .chat-tb__picker.is-static:hover { background: transparent; }
 .chat-tb__picker-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-tb__picker-caret { flex: 0 0 auto; color: var(--muted); }
 /* A label that a narrow toolbar drops. Only for triggers whose icon already
    names the value — the word still appears in the menu, where you are choosing
    and actually need to read it. */
 @media (max-width: 640px) {
   .chat-tb__picker-val--wide { display: none; }
 }
-/* Where you are. A label, not a control — the conversation is switched from
-   the chat list, not from inside the conversation. */
+/* Where you are — and, tapped, how to rename it. Sized and reset to read as
+   the same quiet label it always was; the hover state is the only hint it
+   is a control, the way .chat-tb__picker's is. The negative margin matches
+   the added padding so the bigger hit target doesn't nudge its neighbors. */
 .chat-tb__title {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: var(--fs-sm); color: var(--muted);
+  font: inherit; font-size: var(--fs-sm); color: var(--muted);
+  background: transparent; border: none; cursor: pointer;
+  padding: 0.2rem 0.4rem; margin: -0.2rem -0.4rem;
+  border-radius: var(--radius-sm);
 }
+.chat-tb__title:hover { color: var(--fg); background: var(--card-hover); }
 .chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
@@ -607,11 +615,16 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: 0.62rem; font-weight: var(--fw-semi); line-height: 1;
   background: var(--accent); color: var(--accent-fg); border-radius: 999px;
 }
-/* Mobile used to drop the thread title here to make room (the scope name and
-   the two-way mode picker both competed for the same row). Now the scope
-   picker is icon-only under 640px and the mode picker is a single Tickets
-   icon, so there is room to keep the title — the one thing on this bar that
-   says which conversation you are in. */
+/* Mobile: everything fits ONE row, full stop — a second row of icons was
+   what made this bar unreadable before. Every fixed-size control here is
+   already flex: 0 0 auto (or wrapped in .ws-menu, which is); the title is
+   the one element that shrinks, down to nothing if it has to, ellipsis
+   showing whatever survives. That's why the title stays last to shrink in
+   practice — the scope name is already hidden and everything else is a
+   fixed-width icon, so it is the only thing actually competing for room. */
+@media (max-width: 640px) {
+  .chat-toolbar { flex-wrap: nowrap; }
+}
 
 /* Compaction fold marker. Compaction never drops raw messages, so this divider
    is the only visible evidence that /compact did anything at all. */
@@ -1175,19 +1188,23 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-byline span { font-weight: 600; letter-spacing: 0.01em; }
 
 /* ---- Inbox panel: agents needing the operator -------------------------
-   A panel behind a toolbar toggle, sized like the task panel. Every dimension
-   is bounded: at most 4 rows render, the panel caps at a fraction of the
-   viewport and scrolls inside itself, and a collapsed row is exactly one line.
-   The first version was an unbounded inline stack of full-size cards, which on
-   a phone pushed the log and composer off-screen. `flex: 0 0 auto` + max-height
-   is what keeps it from ever taking the log's space. */
+   A panel behind a toolbar toggle, floating OVER the top of the log rather
+   than pushing it down — .chat-log-wrap (see .chat-log-wrap) is its
+   positioned ancestor. Every dimension is still bounded: at most 4 rows
+   render, the panel caps at a fraction of the viewport and scrolls inside
+   itself, and a collapsed row is exactly one line. The first version was an
+   unbounded inline stack of full-size cards, which on a phone pushed the log
+   and composer off-screen; this version can't push anything, because it no
+   longer takes flow space at all. The shadow reads as "floating above",
+   which is genuinely what it's doing now. */
 .chat-inbox {
-  flex: 0 0 auto;
+  position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-dropdown);
   display: flex; flex-direction: column;
   max-height: 40vh;
   overflow-y: auto; overscroll-behavior: contain;
   padding: var(--space-2) var(--space-3);
   background: var(--bg-inset);
+  box-shadow: var(--shadow-md);
 }
 @media (max-width: 640px) {
   /* Tighter on a phone: the log is the point of the screen, not the panel. */

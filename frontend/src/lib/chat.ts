@@ -236,6 +236,16 @@ export const chatApi = {
   deleteThread: (id: string) =>
     fetch(`/api/chat/threads/${id}`, { method: "DELETE" }).then(j<{ deleted: boolean }>),
 
+  // Overrides the auto-picked title. A chat names itself from its own content
+  // once it has enough to go on — this is the operator saying "no, call it
+  // this" instead.
+  renameThread: (id: string, title: string) =>
+    fetch(`/api/chat/threads/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    }).then(j<ThreadSummary>),
+
   // Fold the STORED transcript into the running summary (half of /compact — the
   // half that shrinks what a fresh session re-reads). `live_session` reports
   // whether this chat also has a live claude session whose window only the CLI's
