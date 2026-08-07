@@ -943,15 +943,17 @@ a.ws-btn { text-decoration: none; }
 .ws-palette.is-selected { color: var(--fg); }
 .ws-palette:focus-visible { outline: none; }
 .ws-palette__preview {
-  width: 76px; height: 50px; padding: 7px; border-radius: var(--radius-md);
+  width: 76px; height: 54px; padding: 5px; border-radius: var(--radius-md);
   background: var(--bg); box-shadow: inset 0 0 0 1px var(--border);
-  display: flex; overflow: hidden;
+  display: flex; flex-direction: column; gap: 4px; overflow: hidden;
   transition: box-shadow var(--dur-base) var(--ease-out), transform var(--dur-base) var(--ease-out);
 }
 .ws-palette:hover .ws-palette__preview { transform: translateY(-1px); }
 .ws-palette:active .ws-palette__preview { transform: scale(0.98); }
 .ws-palette.is-selected .ws-palette__preview { box-shadow: inset 0 0 0 1px var(--border), 0 0 0 2px var(--accent); }
 .ws-palette:focus-visible .ws-palette__preview { box-shadow: var(--focus-ring); }
+/* The scheme's identity color — see the comment in PalettePicker.tsx. */
+.ws-palette__strip { display: block; height: 6px; border-radius: var(--radius-pill); background: var(--_swatch); flex-shrink: 0; }
 .ws-palette__card {
   flex: 1; border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-sm);
   padding: 6px; display: flex; flex-direction: column; justify-content: space-between;

@@ -152,13 +152,17 @@ const RAMP = {
     shadow:       [0.220, 0.030],
     scrim:        [0.180, 0.030],
     scrimAlpha:   0.55,
-    // accent family — [lightness, base chroma] at the brand hue
-    accent:       [0.566, 0.199],
-    accentHover:  [0.508, 0.199],
-    accentActive: [0.456, 0.176],
+    // accent family — [lightness, base chroma] at the brand hue. Chroma was
+    // taken down from the original hand-tuned violet (0.199) to 0.175 — the
+    // original read a bit hot against the muted rest of the UI, most visibly
+    // in the chat bubble, which fills with --accent at full strength (see
+    // ADR 0012 addendum). `p.brandChroma` scales this further per palette.
+    accent:       [0.566, 0.175],
+    accentHover:  [0.508, 0.175],
+    accentActive: [0.456, 0.155],
     accentSoft:   [0.946, 0.025],
     // running = the accent, one step down so it reads as text
-    running:      [0.488, 0.195],
+    running:      [0.488, 0.171],
     // stopped = neutral, never branded loud
     stopped:      [0.466, 0.026],
     stoppedSolid: [0.673, 0.026],
@@ -187,11 +191,11 @@ const RAMP = {
     shadow:       null,            // dark elevation is a ring + true black shadow
     scrim:        [0.120, 0.030],
     scrimAlpha:   0.62,
-    accent:       [0.689, 0.160],
-    accentHover:  [0.761, 0.121],
-    accentActive: [0.827, 0.088],
+    accent:       [0.689, 0.140],
+    accentHover:  [0.761, 0.108],
+    accentActive: [0.827, 0.078],
     accentSoft:   null,            // dark soft tints are alpha over the surface
-    running:      [0.761, 0.121],
+    running:      [0.761, 0.108],
     stopped:      [0.673, 0.026],
     stoppedSolid: [0.545, 0.028],
     stoppedSoft:  null,
@@ -254,7 +258,14 @@ export const PALETTES = [
     blurb: "A calm, conventional blue on cool slate surfaces.",
     brandHue: 258.0,
     neutralHue: 262.0,
-    brandChroma: 1.0,
+    // OKLCh is not perceptually uniform across hue: a blue in the 250-265°
+    // range reads distinctly more vivid than a violet at the SAME chroma (this
+    // is the one hue band the model's own contrast solver can't fix, because
+    // it optimizes for legibility, not for "does this look calm"). Pulled back
+    // hardest of the five for that reason — confirmed against the measured
+    // resolved chroma, which was landing almost fully unclipped (~0.199, i.e.
+    // no gamut relief at all) while violet at the same request looks calmer.
+    brandChroma: 0.74,
     neutralChroma: 0.95,
   },
   {
@@ -263,6 +274,9 @@ export const PALETTES = [
     blurb: "Blue-green accent over marine neutrals. The quietest scheme.",
     brandHue: 197.0,
     neutralHue: 213.0,
+    // No pull-back needed: sRGB's gamut is naturally narrow around 197°, so a
+    // full-chroma request here already gets gamut-clipped to roughly half the
+    // asked-for chroma — teal was the one hue that came out calm on its own.
     brandChroma: 1.0,
     neutralChroma: 0.9,
   },
@@ -272,7 +286,8 @@ export const PALETTES = [
     blurb: "Warm magenta accent on plum-tinted neutrals.",
     brandHue: 334.0,
     neutralHue: 328.0,
-    brandChroma: 1.0,
+    // Magenta has the same non-uniformity as blue, milder: pulled back less.
+    brandChroma: 0.86,
     neutralChroma: 0.8,
   },
   {
@@ -281,7 +296,8 @@ export const PALETTES = [
     blurb: "Warm paper and charcoal with a cool indigo accent.",
     brandHue: 268.0,
     neutralHue: 72.0,
-    brandChroma: 0.95,
+    // Same blue-family hue band as Cobalt (268° vs 258°) — same treatment.
+    brandChroma: 0.78,
     neutralChroma: 0.9,
   },
 ];
@@ -432,6 +448,24 @@ export function buildScheme(paletteId, mode) {
     shadowMd: r.shadows.md(shadowSeed),
     shadowLg: r.shadows.lg(shadowSeed),
   };
+}
+
+/**
+ * A single, mode-independent "identity" swatch for a palette — used ONLY by
+ * the Settings picker, never by app UI. The picker's live preview renders the
+ * scheme's real (very low-chroma) neutrals, which is correct but means a warm
+ * scheme like Sandstone and a cool one like Cobalt can look nearly identical
+ * in a 76x50px chip: near-black and near-white don't show hue well at any
+ * chroma, and the one bright element in the preview (the accent bar) is
+ * deliberately a COOL brand hue even in a warm scheme, so it doesn't carry the
+ * scheme's identity either. This is a moderate, always-visible tone at the
+ * palette's neutral hue, so "warm vs cool" reads at a glance regardless of
+ * which mode is being previewed.
+ * @param {string} paletteId
+ */
+export function identitySwatch(paletteId) {
+  const p = paletteById(paletteId);
+  return oklch(0.66, 0.1 * p.neutralChroma, p.neutralHue);
 }
 
 /** Every scheme, keyed `paletteId.mode`. */

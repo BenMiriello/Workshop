@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PALETTES, MODES, buildScheme, contrast, type Scheme } from "./palette.mjs";
+import { PALETTES, MODES, buildScheme, contrast, paletteById, type Scheme } from "./palette.mjs";
 import { PALETTE_META, DEFAULT_PALETTE } from "./palettes.gen";
 
 // The color system's guarantees, executable. A palette is a personal choice, so
@@ -102,6 +102,20 @@ describe("the palette set is coherent", () => {
     }
   });
 
+  it("blue-family hues (cobalt, sandstone) are pulled back — OKLCh is not uniform there", () => {
+    // A blue in the ~250-270° band reads distinctly more vivid than a violet at
+    // the SAME numeric chroma (confirmed: at chroma 0.199 the resolved cobalt
+    // accent came out #0066dd, essentially unclipped by sRGB gamut, versus
+    // violet's #7551da at the same request). The contrast solver can't catch
+    // this — it optimizes for legibility, not for "does this look calm" — so
+    // it is pinned here as an explicit seed-level constraint instead.
+    const cobalt = paletteById("cobalt");
+    const sandstone = paletteById("sandstone");
+    const violet = paletteById("violet");
+    expect(cobalt.brandChroma).toBeLessThan(violet.brandChroma);
+    expect(sandstone.brandChroma).toBeLessThan(violet.brandChroma);
+  });
+
   it("the five accents are actually five different colors", () => {
     for (const mode of MODES) {
       const accents = PALETTES.map((p) => buildScheme(p.id, mode).accent);
@@ -123,13 +137,17 @@ describe("Violet still is the theme this system started as", () => {
     expect(s.accentFg).toBe("#ffffff");
   });
 
-  it("the light accent is the same violet, one step darker to clear AA", () => {
-    // The original #7a57e0 reads 4.28:1 on --bg-inset, under AA. The solver
-    // takes it down a step. Pin BOTH facts: the exact tone, and that it is
-    // still perceptually the same color as the violet this system shipped with.
+  it("the light accent is the original violet hue, deliberately calmer", () => {
+    // Two changes from the original #7a57e0, both intentional:
+    //  - AA: the original reads 4.28:1 on --bg-inset, under AA; the solver
+    //    darkens a step.
+    //  - Saturation: base chroma was pulled from 0.199 to 0.175 system-wide
+    //    (the operator's read: the accent ran hot against the muted rest of
+    //    the UI, most visibly filling the chat bubble at full strength).
+    // Pin the exact tone, and that hue held (same violet, just calmer/darker).
     const s = buildScheme("violet", "light");
-    expect(s.accent).toBe("#7551da");
-    expect(contrast(s.accent, "#7a57e0")).toBeLessThan(1.1);
+    expect(s.accent).toBe("#7256cc");
+    expect(contrast(s.accent, "#7a57e0")).toBeLessThan(1.3);
   });
 
   it("dark anchors are unchanged", () => {

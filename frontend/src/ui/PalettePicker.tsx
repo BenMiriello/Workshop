@@ -38,7 +38,16 @@ export function PalettePicker({
             className={cx("ws-palette", selected && "is-selected")}
             onClick={() => onChange(p.id)}
           >
-            <span className="ws-palette__preview" data-palette={p.id} data-theme={mode} aria-hidden>
+            {/* --_swatch is the scheme's identity color: a moderate, always-
+                visible tone at its neutral hue (see identitySwatch() in
+                palette.mjs). The live preview below is correct but, at chip
+                size, a warm scheme (Sandstone) and a cool one (Cobalt) can
+                look the same — near-black/near-white surfaces don't show hue,
+                and the one bright element in them (the accent bar) is
+                deliberately a cool brand hue even in a warm scheme. The strip
+                carries the identity the preview can't. */}
+            <span className="ws-palette__preview" data-palette={p.id} data-theme={mode} aria-hidden style={{ ["--_swatch" as string]: p.swatch }}>
+              <span className="ws-palette__strip" />
               <span className="ws-palette__card">
                 <span className="ws-palette__bar" />
                 <span className="ws-palette__dots">

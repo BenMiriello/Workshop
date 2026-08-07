@@ -21,7 +21,7 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { PALETTES, MODES, DEFAULT_PALETTE, buildScheme, CATEGORICAL } from "../frontend/src/styles/palette.mjs";
+import { PALETTES, MODES, DEFAULT_PALETTE, buildScheme, CATEGORICAL, identitySwatch } from "../frontend/src/styles/palette.mjs";
 import { tokens } from "../frontend/src/styles/tokens.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -141,7 +141,8 @@ export const categorical = ${JSON.stringify(CATEGORICAL, null, 2).replace(/\n/g,
 function buildTs() {
   const ids = PALETTES.map((p) => JSON.stringify(p.id)).join(" | ");
   const rows = PALETTES.map(
-    (p) => `  { id: ${JSON.stringify(p.id)}, label: ${JSON.stringify(p.label)}, blurb: ${JSON.stringify(p.blurb)} },`
+    (p) =>
+      `  { id: ${JSON.stringify(p.id)}, label: ${JSON.stringify(p.label)}, blurb: ${JSON.stringify(p.blurb)}, swatch: ${JSON.stringify(identitySwatch(p.id))} },`
   ).join("\n");
   return `/* =============================================================================
    Workshop Design System — PALETTE LIST (GENERATED — do not edit by hand)
@@ -157,6 +158,8 @@ export interface PaletteMeta {
   label: string;
   /** One line describing the scheme's character. */
   blurb: string;
+  /** Mode-independent identity color for the picker swatch. See palette.mjs identitySwatch(). */
+  swatch: string;
 }
 
 export const PALETTE_META: readonly PaletteMeta[] = [

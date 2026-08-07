@@ -86,3 +86,29 @@ the light-mode gold `--warn-solid` (was 2.63:1 on white) and the light `--accent
 `src/styles/palette.test.ts`.
 
 `--accent-fg` is no longer always white. `.ws-btn--primary` spinners use it.
+
+## 1.1.1 — color scheme refinement pass
+
+Two fixes from the first round of real feedback:
+
+- **Accent chroma pulled back, system-wide and per-hue.** The accent ran hot
+  against the rest of the muted UI, most visibly filling the chat bubble
+  (`.chat-msg.user .chat-bubble`, `styles.css`) at full strength. Base chroma
+  dropped 0.199 → 0.175 (light) / 0.160 → 0.140 (dark) across all five
+  palettes. On top of that, `Cobalt` and `Sandstone` (blue-family hues,
+  250-270°) and `Plum` (magenta, 334°) got an additional per-palette
+  `brandChroma` pull-back (0.74 / 0.78 / 0.86) — OKLCh is not perceptually
+  uniform across hue, and a blue at the same numeric chroma as violet reads
+  distinctly more vivid. `Teal` was untouched: sRGB's gamut is narrow enough
+  there that a full-chroma request was already clipping to about half.
+- **The Sandstone swatch didn't read as sandstone.** The picker's preview is a
+  live render of the scheme's real (very low-chroma) surfaces, which is
+  correct but made Sandstone indistinguishable from the cool schemes at chip
+  size — the one bright element in the chip, the accent bar, is deliberately
+  a cool brand hue even in a warm scheme. `identitySwatch()` in `palette.mjs`
+  adds a second, moderate-chroma tone at the palette's NEUTRAL hue, rendered
+  as a strip above the preview; used only in the picker, never in app UI.
+
+`PaletteMeta` gained a `swatch: string` field. `palette.test.ts` gained a
+seed-level assertion that the blue-family palettes carry a lower `brandChroma`
+than Violet, so this can't silently regress.
