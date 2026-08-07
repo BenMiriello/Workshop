@@ -7,13 +7,24 @@ import StatusNote from "./StatusNote";
 import LiveTurn from "./LiveTurn";
 import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 
-// The scrolling transcript, in the order things actually happened:
+// The scrolling transcript, APPEND-ONLY AND IN SEND ORDER:
 //
-//   persisted messages -> the live turn -> queued messages -> the spoken turn
+//   persisted messages
+//     -> the live turn (its working indicator at the tail)
+//     -> messages sent DURING that turn
+//     -> messages queued for the next turn
+//     -> the spoken turn
 //
-// That order is not arbitrary. Queued bubbles sit BELOW the live turn because
-// they have not been sent yet; the settling voice exchange sits above the live
-// voice overlay so a fast follow-up never hides the turn that just finished.
+// That order is the ordinary chat rule and it is not arbitrary. A message typed
+// while a reply is being written goes BELOW that reply and below its working
+// indicator: the work in flight was started without it, so nothing about it can
+// come first. This replaced a scheme that cut the live reply open and rendered
+// the message inside the gap — which put the operator's words above work that
+// had already begun, and was wrong in exactly the way they said it was.
+//
+// Queued bubbles sit below those again because they have not been sent at all
+// yet; the settling voice exchange sits above the live voice overlay so a fast
+// follow-up never hides the turn that just finished.
 //
 // Scroll behaviour is not here — it belongs to useLogScroll, which owns the one
 // writer of "am I at the bottom" and every rule that depends on it.
@@ -22,7 +33,7 @@ export default function ChatLog({
   scrollRef, onScroll,
   loading, error, messages, isBuild, inFlight, overflowed,
   compactedThrough, selectedModel, cardCtx, onRetryUnsent,
-  streaming, logBusy, pendingSegments, interjections, workingLabel, elapsed,
+  streaming, logBusy, pendingSegments, sentDuringTurn, workingLabel, elapsed,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
 }: {
@@ -44,7 +55,10 @@ export default function ChatLog({
   // apart from the one the send path uses to decide queue-vs-append.
   logBusy: boolean;
   pendingSegments: ChatSegment[];
-  interjections: { at: number; text: string }[];
+  // Sent while the live turn was already running. Rendered below it, in the
+  // order sent. `read` flips when the turn echoes the message back, which is
+  // the only evidence it has been taken off the input stream.
+  sentDuringTurn: { text: string; read?: boolean }[];
   workingLabel: string;
   elapsed: number;
   queued: { text: string; sentAt: string }[];
@@ -90,7 +104,6 @@ export default function ChatLog({
       {logBusy && (
         <LiveTurn
           segments={pendingSegments}
-          interjections={interjections}
           streaming={streaming}
           workingLabel={workingLabel}
           elapsed={elapsed}
@@ -98,6 +111,20 @@ export default function ChatLog({
           cardCtx={cardCtx}
         />
       )}
+
+      {/* Sent during the turn above: below it, because that is when they were
+          sent. The line says what is actually known — handed to the turn, or
+          read by it — never that it has been acted on. */}
+      {sentDuringTurn.map((m, i) => (
+        <div key={`d${i}`} className="chat-msg user">
+          <div className="chat-bubble">{m.text}</div>
+          <StatusNote
+            status={m.read
+              ? { text: "Read by the turn in progress", busy: false }
+              : { text: "Handed to the turn in progress", busy: true }}
+          />
+        </div>
+      ))}
 
       {queued.map((q, i) => (
         <div key={`q${i}`} className="chat-msg user">

@@ -71,7 +71,8 @@ export type TurnStream = {
   markStarting: () => void;
   // The POST never succeeded, so no stream will ever attach.
   markFailed: () => void;
-  // How many reply segments have streamed. An interjection is pinned to this so
+  // How many reply segments have streamed. Nothing positions messages by it any
+  // more (they append in send order); kept as a plain progress reading, and
   // the log can split the live turn at the point the message landed.
   segmentCount: () => number;
   // Anchor the elapsed clock to a known start (a reload reattaching mid-turn).

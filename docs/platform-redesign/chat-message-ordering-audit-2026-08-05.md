@@ -344,6 +344,39 @@ message where the server put it and attaches to the turn that is actually
 running. Falling through to a new turn is kept for a turn that refuses input, so
 a wedged turn cannot swallow a message.
 
+## 3.13 REVERTED: the splice. The log is append-only, in send order.
+
+**§3.10 and §3.11 are withdrawn.** They built a scheme that cut a reply open
+where a message arrived and rendered the message inside the gap. Every round of
+it produced another wrong answer, and the operator finally said why:
+
+> "I just sent a message to a chat while it was working and inserted my message
+> ABOVE the working indicator... of course if the system is working it is not
+> working with my new message incorporated in context since I hadn't sent it yet.
+> So the order is wrong in that case! ... I've only ever asked for the standard
+> functionality here."
+
+That is right, and it was right the first time they said it. **The rule is the
+ordinary one every chat uses: the log is append-only, in send order.** A message
+typed while a reply is being written goes BELOW that reply and below its working
+indicator, because that is when it was sent and the reply had not seen it.
+
+The splice never had a reason to exist. §3.2 already files a mid-turn message
+after the reply, which is the same order — the store was correct all along. What
+was added was a renderer that disagreed with the store, and then five rounds of
+adjusting a rule that should not have had parameters.
+
+Removed: `transcriptPlan.ts` and its tests, the interjection splitting in
+`LiveTurn`, and `at_segment`-based positioning. `LiveTurn` is now one bubble with
+its working indicator at the tail; messages sent during it render below it
+(`ChatLog`), then queued messages, in that order. `MessageList` renders the
+stored order flat, which was always correct.
+
+`at_segment` is still recorded — it is a true fact about when a message landed —
+but nothing positions by it. The lesson is the one the operator named: **when the
+standard behaviour is the ask, build the standard behaviour.** A novel ordering
+model needed a reason, and there wasn't one.
+
 ## 4. What this does not fix
 
 - **Latency.** A message sent mid-turn still waits for the agent to reach the end
@@ -365,9 +398,17 @@ a wedged turn cannot swallow a message.
 | 3.7 | a thread never loses a message (`LostUpdate`, `update_thread`) | race reproduced, then tests |
 | 3.8 | /compact returns in ms; the fold runs detached | timing test (<0.2s vs a 0.4s summarizer) |
 | 3.9 | `--replay-user-messages` receipt | live CLI probe + tests |
-| 3.10 | the finished log shows a mid-turn message where it landed | 22 frontend tests (vitest, new) |
-| 3.11 | it is never shown above the reply it arrived during; `at_segment` measured live | frontend + backend tests |
+| ~~3.10~~ | ~~splice the reply at `at_segment`~~ | **REVERTED — see 3.13** |
+| ~~3.11~~ | ~~floor the splice at one segment~~ | **REVERTED — see 3.13** |
 | 3.12 | one turn per thread; the second mid-turn message finds the turn | backend tests (regression pinned) |
+| 3.13 | the log is append-only in send order; the splice is deleted | the ordinary chat rule, no parameters to get wrong |
+
+A SEVENTH round DELETED §3.10 and §3.11 rather than fixing them again. Three
+rounds of adjusting where to splice a reply were three rounds spent defending an
+invention nobody asked for; the operator had described append-only send order
+from the start. **When a repeated fix keeps needing another correction, suspect
+the design, not the parameter** — and when the request is "the standard thing",
+the standard thing is the whole specification.
 
 A SIXTH round found §3.12, and it is the most instructive: **the ordering fix in
 §3.2 broke the delivery path in a way none of the ordering work could see.**

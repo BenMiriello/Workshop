@@ -130,12 +130,18 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // what came before it and what came after. They live here rather than in
   // `messages` because `messages` is rendered above the live overlay — putting
   // them there placed a later message above earlier output.
+  // Messages sent while the live turn was already running. They render BELOW
+  // that turn (see ChatLog) because that is when they were sent and the turn had
+  // not seen them — the ordinary append-only chat order. They are kept out of
+  // `messages` only because the server's copy arrives when the turn ends; until
+  // then this is the client's record of them.
+  //
   // `read` flips when the turn echoes the message back (--replay-user-messages),
   // which is the difference between "the bytes reached the process" and "the
   // turn has it". Saying the second when only the first is known is what made a
   // delivered message look unread.
-  const [interjections, setInterjections] =
-    useState<{ at: number; text: string; read?: boolean }[]>([]);
+  const [sentDuringTurn, setSentDuringTurn] =
+    useState<{ text: string; read?: boolean }[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   // Starting a new chat leaves the current one — cheap to undo (the thread is
   // still there) but disorienting mid-conversation, so it asks first.
@@ -157,7 +163,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     streaming, logBusyRef, reconnecting, elapsed,
     pendingSegments, setPendingSegments,
     attach: attachStream, anchorStart, stop, closeStream, hasOpenStream,
-    markStarting, markFailed, segmentCount,
+    markStarting, markFailed,
   } = useTurnStream({
     onMessages: (msgs) => setMessages(msgs),
     onTurnEnd: (wasFirst) => {
@@ -167,7 +173,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     },
     onError: setErr,
     onNotes: () => onAction?.(),
-    onInjectionRead: (text) => setInterjections((x) => {
+    onInjectionRead: (text) => setSentDuringTurn((x) => {
       const i = x.findIndex((m) => m.text === text && !m.read);
       if (i < 0) return x;
       const copy = x.slice();
@@ -489,8 +495,8 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // local copies rather than letting them double up. Keyed off the overlay
   // rather than added to each of the eight places that reset it.
   useEffect(() => {
-    if (!streaming && pendingSegments.length === 0 && interjections.length) setInterjections([]);
-  }, [streaming, pendingSegments.length, interjections.length]);
+    if (!streaming && pendingSegments.length === 0 && sentDuringTurn.length) setSentDuringTurn([]);
+  }, [streaming, pendingSegments.length, sentDuringTurn.length]);
 
   const hydrate = useCallback(
     (t: Thread) => {
@@ -662,7 +668,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   } = useLogScroll({
     input,
     inputFocused,
-    followDeps: [messages, pendingSegments, interjections, queue.items, streaming,
+    followDeps: [messages, pendingSegments, sentDuringTurn, queue.items, streaming,
                  vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: streaming || pendingSegments.length > 0 || messages.length > 0,
   });
@@ -767,7 +773,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           if (i < 0 || m[i].role !== "user" || m[i].content !== text) return m;
           return m.slice(0, i);   // it belongs inside the live turn, not above it
         });
-        setInterjections((x) => [...x, { at: Number(res.at_segment) || 0, text }]);
+        setSentDuringTurn((x) => [...x, { text }]);
       }
       attachStream(res.turn_id, id, isFirst);
     } catch (e) {
@@ -869,13 +875,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       void chatApi.injectIntoThread(threadId, text)
         .then((r) => {
           if (r.delivered) {
-            // NOT into `messages` — that list renders ABOVE the live turn's
-            // overlay, so a message sent DURING the turn jumped above output
-            // that was already on screen before it. Record it as an
-            // interjection pinned to how much of the reply had streamed when it
-            // landed; the log splits the live turn there and renders it in
-            // real order (see `log`).
-            setInterjections((x) => [...x, { at: segmentCount(), text }]);
+            // NOT into `messages` — that list renders ABOVE the live turn, so
+            // a message sent DURING the turn would jump above output that was
+            // already on screen before it. It goes in the list ChatLog renders
+            // BELOW the live turn, which is where a message sent while a reply
+            // is being written belongs: after it, in send order.
+            setSentDuringTurn((x) => [...x, { text }]);
             followLatest();
           } else {
             queue.push(text);
@@ -1155,7 +1160,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       streaming={streaming}
       logBusy={logBusy}
       pendingSegments={pendingSegments}
-      interjections={interjections}
+      sentDuringTurn={sentDuringTurn}
       workingLabel={reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}
       elapsed={elapsed}
       queued={queue.items}

@@ -4,9 +4,23 @@
 // An assistant turn is an ordered list of segments so text and tool calls keep
 // their interleaving (text → tool → text …) instead of collapsing into one
 // block. Persisted on the message so a reload reconstructs the same turn.
+// One step of an assistant turn. `agent` is a subagent the turn delegated to:
+// its own steps nest INSIDE it rather than flattening into the turn's work, and
+// its interim text never joins the answer. The backend builds the same shape
+// (build_streaming._segment_ingest) so a live turn and a reloaded one render
+// identically.
 export type ChatSegment =
   | { t: "text"; text: string }
-  | { t: "tool"; name: string; input: string };
+  | { t: "tool"; name: string; input: string }
+  | {
+      t: "agent";
+      name: string;          // the subagent: a frontmatter name, or general-purpose
+      input: string;         // what it was asked to do
+      id: string;            // the Agent tool_use id its steps point back at
+      steps: ChatSegment[];  // its own tool calls and interim text
+      done: boolean;
+      result: string;        // what it reported back
+    };
 
 // Progress on something a message kicked off. `busy` is still-happening, and is
 // what earns the animated dots.
@@ -38,13 +52,16 @@ export type ChatMsg = {
     // Sent while a turn was already running, and handed to that turn rather
     // than queued behind it.
     injected?: boolean;
-    // Which turn was running when this message arrived, and how much of that
-    // reply had streamed at the time. The store files a mid-turn message AFTER
-    // the reply (causally true — the reply had not seen it) and keeps these so
-    // the transcript can still SHOW it where it landed. See transcriptPlan:
-    // without them the finished log moves the message below the whole reply,
-    // which reads as the message never having been seen.
+    // Which turn was running when this message arrived. The store files such a
+    // message AFTER that reply, which is both causally true (the reply had not
+    // seen it) and where the log shows it — messages append in send order, the
+    // ordinary chat rule.
     during_turn?: string;
+    // How much of the reply had streamed when it arrived. RECORDED, NOT
+    // RENDERED. It briefly drove a scheme that cut the reply open and showed the
+    // message inside the gap; that put the operator's words above work already
+    // in flight, which is exactly backwards, and it is gone. Kept because old
+    // messages carry it and it is a true fact about when the message landed.
     at_segment?: number;
     // Typed while a turn was running and sent as part of the NEXT turn, keeping
     // the time it was typed rather than the time the queue drained.
