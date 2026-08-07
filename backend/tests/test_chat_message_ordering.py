@@ -8,6 +8,8 @@ quoted in docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md:
   - "you won't even know that til now" — nothing told the next turn that three
     messages had been typed in sequence before any was read.
 """
+import asyncio
+
 import pytest
 
 from services import chat_context, chat_store, ownership
@@ -353,3 +355,46 @@ class TestOneTurnPerThread:
         last = chat_store.get_thread(tid)["messages"][-1]
         assert last["content"] == "joining"
         assert last["meta"]["during_turn"] == "turn-1"
+
+
+class TestOrphanedTurnSelfHeal:
+    """A message left `streaming: True` by a backend restart is not just
+    finished, it's GONE — nothing will ever finalize it. GET /threads/{id}
+    clears the flag either way, but only a truly vanished turn (not one that
+    completed normally) gets `meta.stopped = "interrupted"`, which the client
+    renders instead of a bubble that looks either answered or broken. See
+    "chats keep stalling" / "empty message bubble" — the report that reopened
+    this whole file's reattachment logic on 2026-08-07."""
+
+    def test_a_vanished_turn_is_marked_interrupted(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_streaming_assistant(tid, "turn-vanished")
+        t = asyncio.run(rc.thread(tid))
+        msg = t["messages"][-1]
+        assert msg["meta"]["streaming"] is False
+        assert msg["meta"]["stopped"] == "interrupted"
+
+    def test_a_normally_finished_turn_is_not_marked_interrupted(self, thread):
+        import routes.chat as rc
+        from services import build_streaming
+
+        tid = thread["id"]
+        chat_store.append_streaming_assistant(tid, "turn-done")
+        live = build_streaming.Turn(id="turn-done", thread_id=tid, agent_slug="a")
+        live.complete = True
+        build_streaming.TURNS["turn-done"] = live
+        try:
+            t = asyncio.run(rc.thread(tid))
+        finally:
+            build_streaming.TURNS.pop("turn-done", None)
+        msg = t["messages"][-1]
+        assert msg["meta"]["streaming"] is False
+        assert "stopped" not in msg["meta"]
+
+    def test_an_already_finished_message_is_untouched(self, thread):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "assistant", "done", meta={"streaming": False})
+        t = asyncio.run(rc.thread(tid))
+        assert "stopped" not in (t["messages"][-1].get("meta") or {})

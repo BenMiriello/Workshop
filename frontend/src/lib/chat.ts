@@ -36,9 +36,11 @@ export type ChatMsg = {
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.
     timeout?: boolean;
-    // Any OTHER non-completion ending. Nothing writes this today — the old
-    // "max_steps" value is gone with the step cap — but the field stays so an
-    // older transcript on disk still parses.
+    // Any OTHER non-completion ending. Currently one value in practice:
+    // "interrupted" — the backend self-heal in GET /threads/{id} writes it
+    // when a message is left streaming=true by a turn that is simply GONE
+    // from memory (a backend restart mid-turn), so a reply that will never
+    // be finished doesn't render as either answered or a wordless bubble.
     stopped?: string;
     // The AGENT that produced this reply, when the turn was addressed to one by
     // @mention. Absent on ordinary assistant replies, which is what makes the

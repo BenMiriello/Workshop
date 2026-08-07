@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { AlertTriangle, Bot, Clock, FoldVertical } from "lucide-react";
+import { AlertTriangle, Bot, Clock, FoldVertical, Unplug } from "lucide-react";
 import { Button } from "../../ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
@@ -9,7 +9,7 @@ import { modelDisplay } from "./models";
 
 // The persisted transcript.
 //
-// Three annotations here exist because their absence was itself a bug:
+// These annotations exist because their absence was itself a bug:
 //
 //  - THE FOLD MARKER. Compaction never drops raw messages, so without a divider
 //    a compacted thread looks identical to an uncompacted one and the operator
@@ -23,6 +23,11 @@ import { modelDisplay } from "./models";
 //    is marked, and it offers the retry.
 //  - THE STATUS LINE. Progress on work a message set off belongs under that
 //    message, not in a bar above the log — see StatusNote.
+//  - THE INTERRUPTED TAG. A message left mid-stream by a backend restart is
+//    never going to finish — the self-heal in GET /threads/{id} marks it
+//    `meta.stopped`. Without a tag it rendered as a normal reply that just
+//    happens to be blank (or truncated wherever the last flush landed), which
+//    reads as either "answered with nothing" or "broken", not "interrupted".
 
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx) {
   if (m.meta?.error) return m.content;
@@ -66,7 +71,7 @@ export default function MessageList({
             </div>
           )}
           <div className={`chat-msg ${m.role}`}>
-            <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${m.meta?.timeout ? " chat-bubble--timeout" : ""}`}>
+            <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${(m.meta?.timeout || m.meta?.stopped) ? " chat-bubble--timeout" : ""}`}>
               {m.role === "assistant" ? (
                 <>
                   {m.meta?.agent && (
@@ -78,6 +83,11 @@ export default function MessageList({
                   {m.meta?.timeout && (
                     <div className="chat-timeout-tag">
                       <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
+                    </div>
+                  )}
+                  {m.meta?.stopped && (
+                    <div className="chat-timeout-tag">
+                      <Unplug size={13} strokeWidth={1.8} aria-hidden /> Turn interrupted — send a message to continue
                     </div>
                   )}
                   {renderAssistantBody(m, expandLatest && i === lastAssistantIdx, selectedModel, cardCtx)}

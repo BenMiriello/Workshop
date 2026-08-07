@@ -42,6 +42,22 @@ const MAX_RECONNECTS = 8;
 const RECONNECT_DELAY_MS = 1200;
 const LIVENESS_POLL_MS = 10_000;
 
+// The thread's live turn, if any — the assistant message carrying
+// `meta.streaming`. NOT necessarily the LAST message: a message sent mid-turn
+// files AFTER it now (append-only, in send order), so this scans backward for
+// it instead of checking `messages[messages.length - 1]`. Mirrors the
+// server's `_live_turn_id` (routes/chat.py), which got this same fix first —
+// every caller here that still checked the last message only stopped
+// reattaching, or worse, concluded a running turn had ended, the moment an
+// interjection landed after the placeholder.
+export function findLiveTurn(msgs: ChatMsg[]): ChatMsg | null {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role === "assistant" && m.meta?.streaming && m.meta?.turn_id) return m;
+  }
+  return null;
+}
+
 export type TurnStream = {
   streaming: boolean;
   streamingRef: React.MutableRefObject<boolean>;
@@ -259,8 +275,7 @@ export function useTurnStream({
       if (sseRef.current === es) sseRef.current = null;
       try {
         const t = await chatApi.getThread(threadId);
-        const last = t.messages[t.messages.length - 1];
-        const stillRunning = !!(last && last.role === "assistant" && last.meta?.streaming);
+        const stillRunning = !!findLiveTurn(t.messages);
         if (!stillRunning) { void finish(); return; } // turn really ended — sync + stop
       } catch { /* network error — assume still running and retry */ }
       if (reconnectsRef.current >= MAX_RECONNECTS) {
@@ -333,7 +348,11 @@ export function useTurnLiveness({
   activeId: string | null;
   streaming: boolean;
   hasOpenStream: () => boolean;
-  onReattach: (turnId: string, threadId: string, startedMs: number, msgs: ChatMsg[]) => void;
+  // `during`: any messages filed after the live turn's placeholder (mid-turn
+  // interjections this tab never saw, e.g. sent from another tab/device).
+  onReattach: (
+    turnId: string, threadId: string, startedMs: number, msgs: ChatMsg[], during: ChatMsg[],
+  ) => void;
 }) {
   const cb = useRef(onReattach);
   cb.current = onReattach;
@@ -345,9 +364,13 @@ export function useTurnLiveness({
       try {
         const t = await chatApi.getThread(activeId);
         if (cancelled || hasOpenStream()) return;
-        const last = t.messages[t.messages.length - 1];
-        if (last?.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
-          cb.current(last.meta.turn_id, t.id, Date.parse(last.ts || ""), t.messages.slice(0, -1));
+        const live = findLiveTurn(t.messages);
+        if (live) {
+          const idx = t.messages.indexOf(live);
+          cb.current(
+            live.meta!.turn_id!, t.id, Date.parse(live.ts || ""),
+            t.messages.slice(0, idx), t.messages.slice(idx + 1),
+          );
         }
       } catch { /* transient — try again on the next tick */ }
     };

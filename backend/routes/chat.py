@@ -283,6 +283,17 @@ async def thread(thread_id: str):
             live = build_streaming.get_turn(meta.get("turn_id") or "")
             if live is None or live.complete:
                 meta["streaming"] = False
+                if live is None:
+                    # The turn isn't just finished, it's GONE — nothing will ever
+                    # finalize this message. Whatever `content`/`segments` got
+                    # incrementally persisted before the restart is all there
+                    # will ever be, which can be nothing at all. `stopped` is
+                    # the existing "cut off mid-task" signal
+                    # (finalize_streaming_assistant already sets it for other
+                    # non-completion endings); the client renders it as a calm
+                    # note instead of leaving an unlabeled, possibly empty,
+                    # bubble that reads as either answered or broken.
+                    meta["stopped"] = meta.get("stopped") or "interrupted"
                 m["meta"] = meta
                 changed = True
     if changed:

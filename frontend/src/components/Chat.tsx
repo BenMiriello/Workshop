@@ -26,7 +26,7 @@ import { MODEL_LABELS } from "./chat/models";
 import { useMessageQueue, type MessageQueue } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
 import { useVoiceSettle } from "./chat/useVoiceSettle";
-import { useTurnStream, useTurnLiveness } from "./chat/useTurnStream";
+import { useTurnStream, useTurnLiveness, findLiveTurn } from "./chat/useTurnStream";
 import {
   chatApi,
   type ChatMsg,
@@ -519,14 +519,31 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       // Server state: the mode belongs to the thread, not to this tab.
       setChatMode(t.mode || "direct");
       const msgs = t.messages || [];
-      const last = msgs[msgs.length - 1];
-      if (last && last.role === "assistant" && last.meta?.streaming && last.meta.turn_id) {
+      // The live turn's streaming placeholder is not necessarily the LAST
+      // message any more: a message sent mid-turn files AFTER it now
+      // (append-only, in send order — see chat-message-ordering-audit
+      // §3.7+). This used to check only `msgs[msgs.length - 1]`, which was
+      // right exactly until that ordering change shipped — after that, a
+      // chat reopened with an interjection on it never reattached to its
+      // still-running turn at all: the log rendered as if nothing were
+      // happening (the streaming placeholder sitting there with no live
+      // overlay reads as an empty bubble), right up until the operator sent
+      // a message and the server's `injected: true` path forced a correct
+      // reattach through a different route. `findLiveTurn` — shared with
+      // useTurnStream's own reattach paths, which had the identical bug —
+      // scans backward for it instead, the same way the server's
+      // `_live_turn_id` already does.
+      const live = findLiveTurn(msgs);
+      if (live) {
+        const liveIdx = msgs.indexOf(live);
         // Anchor the elapsed clock to the turn's REAL start (the streaming
         // message's server timestamp), so a reload mid-turn shows the true
         // elapsed time instead of restarting from zero.
-        anchorStart(last.ts ? Date.parse(last.ts) : NaN);
-        setMessages(msgs.slice(0, -1));
-        attachStream(last.meta.turn_id, t.id, false);
+        anchorStart(live.ts ? Date.parse(live.ts) : NaN);
+        setMessages(msgs.slice(0, liveIdx));
+        const during = msgs.slice(liveIdx + 1).filter((m) => m.role === "user");
+        if (during.length) setSentDuringTurn(during.map((m) => ({ text: m.content })));
+        attachStream(live.meta!.turn_id!, t.id, false);
       } else {
         setMessages(msgs);
         setPendingSegments([]);
@@ -628,10 +645,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // device must not render as an idle chat. See useTurnLiveness.
   useTurnLiveness({
     activeId, streaming, hasOpenStream,
-    onReattach: (turnId, threadId, startedMs, msgs) => {
+    onReattach: (turnId, threadId, startedMs, msgs, during) => {
       anchorStart(startedMs);
       setErr(null);
       setMessages(msgs);
+      const interjections = during.filter((m) => m.role === "user");
+      if (interjections.length) setSentDuringTurn(interjections.map((m) => ({ text: m.content })));
       attachStream(turnId, threadId, false);
     },
   });
