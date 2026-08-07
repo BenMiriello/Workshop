@@ -464,10 +464,24 @@ Proof, measured rather than asserted:
 | Every ticket carries the pair | 179/179 across 25 stores |
 | Elided titles repaired | 32 → 0 |
 | Titles over the 120 cap | 0 |
-| Stale `text` keys left on disk | 0 |
+| `exec` / `blocked_request` projections left on disk | 0 |
+| `text` left on disk | 179 — **deliberately**, see below |
 | Migration is idempotent | second `--write` run reports 0 changes, 0 export diffs |
-| Backend tests | 359 pass (was 342; +17 for the new shape) |
+| Backend tests | 412 pass, covering the shape, the question round trip and readiness |
 | Frontend | `tsc --noEmit` clean, 38 vitest pass, `check_design.sh` clean |
+
+**Why `text` is still written to disk.** The design said strip every projection,
+so there is exactly one stored copy of the ticket's words. That is right in
+steady state and wrong during the migration: a reader running the PREVIOUS
+version of the module — a long-lived uvicorn that has not restarted, a shell CLI
+in another checkout — knows only `text`. Omit it and every ticket reads as empty
+to that reader, `reconcile` then treats the whole of TODO.md as unmatched new
+work, and a shape change becomes duplicated tickets. Keeping the key costs a
+little disk and makes the store readable by both generations. Drift is not
+possible in the direction that matters, because `_normalize` re-derives `text`
+from title/body on every read, so a stale stored copy is ignored and rewritten.
+The exemption is transitional and is marked as such in `services/tasks.py`; it
+comes out once no old reader can still be running.
 
 Two repairs needed a second pass and are worth recording, because both were cases
 where the first implementation looked done and was not:
@@ -478,6 +492,41 @@ where the first implementation looked done and was not:
 - The repair ran only on the legacy read path, so a record that had *already*
   gained its pair could never heal. It now runs on both branches. Without that,
   the migration silently plateaued at 31 of 32.
+
+---
+
+### Also shipped, and what is still missing
+
+Phases 3 (questions) and 2 (readiness) followed phase 1 on the same day.
+
+**Questions** (`a8e576f`). The audit read "zero `awaiting` records" as an unused
+schema. The real cause was worse: answering did nothing. A worker is handed
+`$TASK_TEXT` and nothing else, while the review endpoint recorded the operator's
+answer as `evidence` — so an answered ticket would stop and ask the identical
+question on its next attempt. Every releasing action now writes the answer into
+the ticket BODY under one `## Clarifications` heading, and a newly raised
+question is delivered to the chat that filed the ticket, hooked once at the
+`tasks.update` transition into asking rather than at each of the four producers.
+Deny and dismiss write nothing: neither is an answer. 15 tests, one of which
+drives the real chat store in a temp runtime and reads the question back out of
+the transcript.
+
+**Readiness** (`ca515bc`, `2e04482`), and the measurement that changed the
+design. §6 as written above required a ticket to pass every check before it could
+run. Run against the live stores, **0 of 40 open tickets pass** — 39 have no
+`touches` lane and 39 never say what done looks like. That gate would have
+stopped all work on day one. The shipped rule therefore splits the check:
+*broken* is refused (no title, or a `depends_on` that resolves to nothing — zero
+live tickets fail this way, so nothing is wedged), *underspecified* is reported
+on the ticket as a checklist. Ambition about ticket hygiene has to be paid for by
+someone actually writing the lanes; until then a hard gate is just an outage.
+
+**Not built.** From §7: the Questions queue as its own surface on the Work page
+(a question reaches the ticket and the chat, but there is no single list of
+everything waiting on an answer) and the 24-hour decay into the daily digest.
+All of §8 (the invariant checker, `scripts/ticket_audit.py`) and all of §§2-5 and
+§12 (every external tracker: bindings, adapters, triage inbox, sync engine,
+credentials). Phase 1 to 3 are local; nothing talks to a tracker yet.
 
 ---
 
