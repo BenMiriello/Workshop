@@ -406,8 +406,10 @@ def _repair_elided_title(title: str, body: str) -> tuple[str, str]:
 
     Guarded so a human-written title that happens to end in an ellipsis is never
     touched: the rejoined line must actually be over-long (which is the only
-    condition under which the clamp fired) and the spilled fragment must not
-    start a new sentence, which is what a real body's first line does.
+    condition under which the clamp fired), and the spilled fragment must look
+    like a continuation rather than the start of a real body. Two things count as
+    a continuation — a fragment that does not begin a new sentence, or a title
+    left holding an open bracket, which only a mid-construct cut produces.
     """
     if not title.endswith("…") or not body:
         return title, body
@@ -416,7 +418,9 @@ def _repair_elided_title(title: str, body: str) -> tuple[str, str]:
         return title, body
     spill, sep, rest = body.partition("\n")
     spill = spill.strip()
-    if not spill or spill[0].isupper():
+    if not spill:
+        return title, body
+    if spill[0].isupper() and _balanced(stem):
         return title, body
     rejoined = f"{stem} {spill}".strip()
     if len(rejoined) <= TITLE_WARN:
@@ -632,6 +636,11 @@ def _normalize(task: dict) -> dict:
     if task.get("title") is not None:
         title, body = str(task.get("title") or "").strip(), \
             str(task.get("body") or "").strip("\n")
+        # A record can carry an elided title from the retired clamp even after it
+        # has the pair (it was migrated before the repair existed, or hand-edited).
+        # Running the repair on this branch too is what makes healing complete
+        # rather than only reaching records that never migrated.
+        title, body = _repair_elided_title(title, body)
         if len(title) > TITLE_MAX or "\n" in title:
             title, spilled = _split_overlong_title(title.replace("\n", " "))
             body = f"{spilled}\n{body}" if (spilled and body) else (spilled or body)

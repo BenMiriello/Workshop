@@ -157,21 +157,20 @@ class Tracker(Protocol):
     def labels(self) -> list[str]: ...
 ```
 
-Ship GitHub first (the box is already authed as `BenMiriello` via `gh`, so it
-needs no new credential and no new egress). Linear second (clean GraphQL, one
-PAT). Jira third (most configuration surface: cloud id, project key, and a
-transition map that must be read from the workflow, not assumed). Anything else
-is a new adapter file and a row in the status map, no core changes.
+Ship GitHub first, then Linear, then Jira (operator decision, 2026-08-07). Jira
+carries the most configuration surface: a cloud id, a project key, and a
+transition map that must be read from the workflow rather than assumed. Anything
+else is a new adapter file and a row in the status map, no core changes.
 
-**Transport is polling, not webhooks.** This box has no public inbound. Poll every
-60s while a Work/Project view is open, every 10 min in the background, and on an
-explicit Sync now. Egress note: `api.linear.app` and `*.atlassian.net` are
-currently blocked by the environment's egress policy. GitHub works today through
-`gh`. Linear and Jira are blocked until the operator opens those hosts, and this
-plan does not pretend otherwise.
+**Transport is polling, not webhooks.** A self-hosted box has no public inbound.
+Poll every 60s while a Work/Project view is open, every 10 min in the background,
+and on an explicit Sync now. Egress note: `api.linear.app` and `*.atlassian.net`
+are blocked by this environment's egress policy today; `api.github.com` is
+reachable. Linear and Jira are blocked until those hosts are opened, and this plan
+does not pretend otherwise.
 
 **Credentials** live in `secrets_store` under `tracker:<binding-id>`, never in the
-binding record. Registration is in Settings (§3).
+binding record, and are acquired per §12. Registration is in Settings (§3).
 
 ---
 
@@ -422,27 +421,149 @@ Phases, each independently shippable and each with its own proof:
    Proof: the round-trip test in §7. **This is the highest-value phase and should
    arguably go first** — it is the one the audit says has never worked.
 4. **Invariant checker.** `ticket_audit.py`, reviewer-gate integration, health strip.
-5. **GitHub binding.** adapter, bindings, triage inbox, `import` mode only.
+5. **GitHub binding.** GitHub App + device-flow credential source (§12), adapter,
+   bindings, triage inbox, `import` mode only.
 6. **Two-way sync.** shadow merge, conflicts, `sync` mode, publish-local at bind.
 7. **Linear, then Jira** — blocked on egress being opened.
 
 Phases 1 to 4 are entirely local, need no network, and deliver most of the trust
 the operator asked for. Phases 5 to 7 are the integration.
 
+**Status:** phase 1 shipped 2026-08-07 (commit `010a9a4`): `title`/`body` stored,
+`text` projected, ellipsis clamp removed, `draft` + `labels` + `scoped_by` added,
+`SYNCABLE_FIELDS` and the `exec` projection in place, 31 titles repaired across
+25 stores, migration idempotent, 347 backend + 38 frontend tests green.
+
 ---
 
-## 11. Open questions for the operator
+## 11. Decisions taken (were open questions)
 
-1. **Order.** Recommendation: 3, 1, 2, 4, then 5. Questions-plumbing first because
-   an unasked question is the failure mode that actually burns runs; ticket shape
-   second because it is the migration and is best done while the store is small.
-2. **GitHub target granularity.** One binding per project repo is the obvious
-   read, but the workshop root scope has no repo of its own. Does root-scope work
-   go to a dedicated `benmiriello/workshop-tickets` repo, or does the root scope
-   simply stay `off`?
-3. **Linear vs Jira priority.** Linear is a much cleaner adapter and a better fit
-   for one person; Jira is more work and mostly matters if there is a work Jira in
-   play, which the Veritus separation rule would exclude anyway. Recommendation:
-   Linear second, Jira only on demand.
-4. **Egress.** `api.linear.app` and `*.atlassian.net` are blocked from this box
-   today. GitHub via `gh` is not. Confirm before phases 6 and 7 are scheduled.
+Answered by the operator on 2026-08-07.
+
+1. **Order.** Assistant's call. Settled: ticket shape first (done, commit
+   `010a9a4`), questions-plumbing next, then readiness, then the invariant
+   checker, then the GitHub binding. Questions-plumbing ranks above readiness
+   because an unasked question is the failure mode that actually burns runs.
+2. **Binding target.** The user picks the target; there is no implicit one. Where
+   a default is needed, it is the project scope's own repo, and a scope with no
+   repo of its own (the workshop root) binds at the **org level** instead: a
+   GitHub org-wide target, a Linear team, a Jira project. No `workshop-tickets`
+   repo is invented on the operator's behalf.
+3. **Provider order.** Linear second, Jira third.
+4. **Egress and credentials.** Resolved into §12 below: `gh` does not survive to
+   production, and the correct mechanism differs by deployment shape.
+
+---
+
+## 12. Credentials and authentication
+
+Researched 2026-08-07. The question that forced this section: `gh` is authenticated
+on this one box, so is that enough? **No.** `gh` holds one user's OAuth token in
+one home directory. It cannot represent a second user, its token is long-lived and
+tied to a person rather than to the installation, and it dies the moment the
+product has more than one operator. Building phase 5 on `gh` would mean throwing
+phase 5 away.
+
+### The two deployment shapes
+
+|  | Hosted (multi-tenant) | Self-hosted / local (today) |
+|---|---|---|
+| Callback URL | one public `https://<host>/api/trackers/callback/<provider>` | none available |
+| App registration | ours, one per provider | the operator's own, or none |
+| Token storage | per-tenant row, encrypted at rest | `secrets_store` on the box |
+
+These are not two products. They are two `CredentialSource` implementations behind
+the same adapter, which is why the `Tracker` protocol in §2 takes a token and never
+asks where it came from.
+
+```python
+class CredentialSource(Protocol):
+    def token(self) -> str: ...        # a valid access token, refreshed if needed
+    def account(self) -> Account: ...  # who this token acts as
+```
+
+### Per-provider mechanism
+
+**GitHub — a GitHub App, not an OAuth App.** A GitHub App is a first-class
+identity that is installed on an org or selected repos. Its installation access
+tokens are short-lived (1 hour), minted on demand from a JWT signed with the app's
+private key, so no long-lived credential is ever stored. Its rate limit scales
+with the installation rather than being fixed per user, and it keeps working when
+the person who installed it leaves. Permissions needed: Issues read/write,
+Metadata read. (An OAuth App remains the only option for enterprise-level
+resources, which this never touches.)
+
+For the **headless local** case, GitHub also supports the OAuth 2.0 **device
+authorization grant**: the app asks for a device code, the operator enters it at
+`github.com/login/device`, and no callback URL exists at any point. This is what
+makes the GitHub adapter shippable on this box *and* in production without two
+code paths. **This replaces the `gh` shortcut**: it is roughly the same
+implementation effort and it survives to the hosted product, where `gh` does not.
+
+**Linear — OAuth 2.0 with `actor=app`.** By default a Linear token acts as the
+authorizing user. Adding `actor=app` to the authorize URL makes the workspace
+create a dedicated user representing the app, and all mutations (issue creation,
+comments, status changes) are attributed to it. That is the correct attribution
+for an agent that files and updates tickets, and it is what a user-scoped token
+cannot do. Note the token lifetime change: OAuth apps created on or after
+2025-10-01 default to short-lived access tokens (24h) plus a refresh token, so the
+refresher is mandatory, not optional. Scopes: `read`, `write`.
+
+**Jira — OAuth 2.0 3LO, with the rotating-refresh-token footgun.** Access tokens
+last 1 hour. Refresh tokens **rotate**: every refresh returns a new refresh token
+and invalidates the one just used, and the chain expires after ~90 days of
+inactivity. The failure this creates is specific and fatal: crash between "used
+the refresh token" and "persisted the new one" and the binding is permanently
+dead, requiring re-authorization. The refresher therefore persists the new refresh
+token in the same write as the access token, and keeps the previous one until a
+subsequent call has succeeded. After authorizing, the cloud id comes from
+`GET /oauth/token/accessible-resources` (a user may have several sites, so this is
+a required step, not a shortcut), and every API call is then
+`api.atlassian.com/ex/jira/{cloudId}/rest/api/3/...`. Scopes: `read:jira-work`,
+`write:jira-work`, and `offline_access` (without it there is no refresh token at
+all). Attribution: 3LO writes are attributed to the authorizing **user**, not to
+an app; Jira has no `actor=app` equivalent outside Connect/Forge. That is a real
+difference from Linear and the UI should say so at bind time.
+
+### How a self-hosted install gets credentials
+
+Three options, evaluated:
+
+1. **Device flow.** No callback, no app registration by the user, works headless.
+   Available for GitHub. Not offered by Linear or Atlassian.
+2. **Loopback redirect (RFC 8252).** The app opens a browser and listens on
+   `http://127.0.0.1:<ephemeral-port>/`. The spec requires authorization servers
+   to accept any port for loopback URIs, and it is supported broadly (GitHub,
+   Linear, Microsoft, Google, Notion). Atlassian accepts a localhost callback but
+   over `http`, not `https`, and registers a single fixed callback per app, so the
+   port cannot float: the Jira path needs a pinned port.
+3. **Bring your own app credentials.** The operator registers their own OAuth app
+   and pastes the client id and secret into Settings. This is what self-hosted
+   GitLab, Grafana and Sentry do, it needs no cooperation from us, and it is the
+   only mechanism that works for all three providers.
+
+**Decision.** Ship device flow for GitHub (best UX, no registration), loopback for
+Linear, and BYO-credentials + pinned-port loopback for Jira. A `pat` source stays
+as a documented escape hatch for anyone who just wants to paste a token. A
+**hosted callback broker** (our server receives the code and forwards it to the
+local instance) is REJECTED: it makes a self-hosted install depend on our
+infrastructure and routes third-party tokens through it, which is exactly the
+trust property self-hosting is chosen for.
+
+### Refresh, storage, revocation
+
+One refresher, provider-agnostic, run before expiry rather than on 401 (a 401
+retry storm against a rotating-refresh provider is how the Jira footgun fires).
+GitHub installation tokens are never stored, only minted. Linear and Jira tokens
+are stored per binding, and on the hosted side belong in an encrypted column with
+a KMS-managed key, never in the bindings table. Revocation is a first-class action
+in Settings: it deletes the stored token, marks the binding `unlinked` per §5, and
+leaves every ticket's `external_refs` intact.
+
+### What this changes about the phasing
+
+Phase 5 becomes "GitHub App + device flow + adapter" rather than "shell out to
+`gh`". Slightly more work, and it is the version that ships. The multi-tenant
+redesign agent needs exactly two things from this section: the `CredentialSource`
+seam, and the fact that the hosted shape needs one public callback route per
+provider and a per-tenant encrypted token store.

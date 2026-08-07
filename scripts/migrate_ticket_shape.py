@@ -56,11 +56,16 @@ def main() -> int:
             total += 1
             if "title" not in old:
                 missing_pair += 1
-            old_title = (old.get("text") or "").split("\n")[0]
+            # The stored title is either the `title` field or, for a record that
+            # never migrated, the first line of `text`. Comparing against
+            # whichever it is keeps the repair count honest on a re-run.
+            old_title = old.get("title")
+            if old_title is None:
+                old_title = (old.get("text") or "").split("\n")[0]
             if old_title.rstrip().endswith("…") and new["title"] != old_title:
                 repaired += 1
                 rel = store_root.relative_to(Path(args.root))
-                print(f"  repair {rel or '.'}: {old_title[:56]}…")
+                print(f"  repair {rel or '.'}: {old_title[:56]}")
                 print(f"      -> {new['title'][:100]}")
 
         after = tasks.render_markdown(loaded)

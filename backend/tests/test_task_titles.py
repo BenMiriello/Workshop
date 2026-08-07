@@ -153,6 +153,17 @@ def test_an_old_elided_title_is_rejoined(tmp_path):
     assert body == ""
 
 
+def test_an_elided_title_left_holding_an_open_bracket_is_rejoined():
+    """A capitalized spill is normally treated as a real body, but an unbalanced
+    "(" in the title can only come from a cut mid-parenthetical."""
+    title, body = tasks.split_text(
+        "Personalized layer written to operator memory store (Ron ··8202 /…\n"
+        "Mar-2025 job loss / ~$16k / savings-backstop)")
+    assert title.endswith("savings-backstop)")
+    assert not title.endswith("…")
+    assert body == ""
+
+
 def test_a_human_ellipsis_title_is_left_alone():
     """The guard on the repair: a real body under a short elided title is a body,
     not a spill, so rejoining it would corrupt the ticket."""
