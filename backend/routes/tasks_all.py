@@ -273,7 +273,12 @@ async def autonomy_scopes() -> dict:
 
 class TaskCreateIn(BaseModel):
     scope: str = Field(min_length=1)
-    text: str = Field(min_length=1, max_length=4000)
+    # A caller sends `title` (+ optional `body`), or one `text` blob the store
+    # splits. `text` stays for the CLI and older clients; at least one is required.
+    title: str | None = Field(default=None, max_length=tasks.TITLE_MAX)
+    body: str | None = Field(default=None, max_length=8000)
+    text: str | None = Field(default=None, max_length=12000)
+    labels: list[str] | None = None
     priority: int = 0
     effort: str | None = None  # s|m|l hint; set post-create, never a gate
     # strict|standard|open, or null to inherit from the scope (latitude.py).
@@ -288,12 +293,24 @@ async def create(body: TaskCreateIn) -> dict:
     root = _root_for_scope(body.scope)
     if root is None:
         raise HTTPException(400, f"unknown scope: {body.scope}")
+    # Dedup embeds the whole ticket, so the pair is joined back into one blob
+    # here rather than teaching the embedder about the split.
+    if body.title is not None:
+        text = tasks.join_text(body.title, body.body or "")
+    elif body.text:
+        text = body.text
+    else:
+        raise HTTPException(400, "title or text required")
+    if not text.strip():
+        raise HTTPException(400, "title or text required")
     try:
         res = task_dedup.dedup_add(
             root,
-            text=body.text,
+            text=text,
             priority=int(body.priority or 0),
+            labels=body.labels or [],
             source={"kind": "operator", "ref": "work-ui"},
+            scoped_by="operator",
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -341,7 +358,14 @@ class TaskAcceptanceIn(BaseModel):
 
 class TaskPatchIn(BaseModel):
     status: str | None = None
+    # `title` and `body` patch independently: editing a title must not require
+    # resending the whole description. `text` remains accepted for callers that
+    # hold one blob (the CLI, an older client) and the store splits it; sending
+    # both is a 400 rather than a silent precedence rule.
+    title: str | None = None
+    body: str | None = None
     text: str | None = None
+    labels: list[str] | None = None
     priority: int | None = None
     assignee: str | None = None
     effort: str | None = None
@@ -407,7 +431,8 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     if root is None:
         raise HTTPException(400, f"unknown scope: {scope}")
     if all(v is None for v in (
-        body.status, body.text, body.priority, body.assignee, body.effort,
+        body.status, body.title, body.body, body.text, body.labels,
+        body.priority, body.assignee, body.effort,
         body.latitude, body.acceptance, body.max_attempts, body.depends_on,
         body.relates_to,
     )):
@@ -428,7 +453,10 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
         t = tasks.update(
             root, task_id,
             status=body.status,
+            title=body.title,
+            body=body.body,
             text=body.text,
+            labels=body.labels,
             priority=body.priority,
             assignee=body.assignee,
             effort=body.effort,

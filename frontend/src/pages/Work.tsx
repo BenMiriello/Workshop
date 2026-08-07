@@ -40,7 +40,7 @@ import {
   taskStatusLabel,
   title as taskTitle,
   description as taskDescription,
-  joinText,
+  cleanTitle,
   scopeLabel,
   scopeHref,
   ticketHref,
@@ -296,15 +296,15 @@ function CreateTicket({
   const options = scopes.length ? scopes : ["workshop"];
 
   const submit = useCallback(async () => {
-    const text = joinText(titleLine, desc);
-    if (!text.trim()) { setErr("A title is required."); return; }
+    const title = cleanTitle(titleLine);
+    if (!title) { setErr("A title is required."); return; }
     setBusy(true);
     setErr(null);
     try {
       const r = await fetch("/api/tasks", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scope, text, priority: Number(priority) || 0 }),
+        body: JSON.stringify({ scope, title, body: desc, priority: Number(priority) || 0 }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j = await r.json();
@@ -431,7 +431,9 @@ function EditTicket({
     setErr(null);
     try {
       const body = {
-        text: joinText(draft.title, draft.description),
+        // The canonical pair, not the joined blob (services/tasks.py).
+        title: cleanTitle(draft.title),
+        body: draft.description,
         status: draft.status,
         priority: Number(draft.priority) || 0,
         effort: draft.effort,

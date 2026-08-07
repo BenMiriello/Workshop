@@ -28,7 +28,7 @@ import {
   latitudeSourceLabel,
   title as taskTitle,
   description as taskDescription,
-  joinText,
+  cleanTitle,
 } from "../lib/tasks";
 
 // Reusable task panel over the canonical cross-scope Task API. It renders EVERY
@@ -257,7 +257,9 @@ export default function TaskPanel({
         // (the store has no clear path once set).
         const maxAttemptsNum = Number.parseInt(draft.maxAttempts, 10);
         const body: Record<string, unknown> = {
-          text: joinText(draft.title, draft.description),
+          // The canonical pair, not the joined blob (services/tasks.py).
+          title: cleanTitle(draft.title),
+          body: draft.description,
           status: draft.status,
           priority: Number(draft.priority) || 0,
           effort: draft.effort,

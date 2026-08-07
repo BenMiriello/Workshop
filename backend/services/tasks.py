@@ -115,13 +115,29 @@ from pathlib import Path
 from services import latitude as _latitude
 from services import todos
 
+# draft = filed but not yet ready to run (Triage/Backlog in every other tracker).
 # in_review = worker finished, operator is the gate; cancelled = dropped.
 # parked = dead-letter: a poison-pill task that exhausted its attempt cap. Not
 # terminal (the operator still sees it as open work), but next_ready never picks
 # it, so it stops burning the budget every sweep. Self-healing design 2d.
-STATUSES = {"todo", "doing", "in_review", "blocked", "parked", "done", "cancelled"}
+STATUSES = {"draft", "todo", "doing", "in_review", "blocked", "parked", "done",
+            "cancelled"}
 TERMINAL = {"done", "cancelled"}
 DEFAULT_OWNER = "operator"  # canonical assignee for the human
+
+# The sync boundary, in ONE place (ticket-model-and-external-trackers-2026-08-07).
+# These are the only fields that may ever cross to an external tracker; every
+# other field on the record is workshop-private execution state. A field added to
+# the record is private by default: it has to be named here to leave the box.
+SYNCABLE_FIELDS = ("title", "body", "status", "labels", "assignee", "priority")
+
+# The execution fields, named once so the projection below and any future sync
+# adapter agree on what is private. Mirrors `exec` in the design doc; storage
+# stays flat (every existing reader indexes these directly) and `exec` is a
+# read-side projection, the same discipline `owner`/`blocked_request` follow.
+EXEC_FIELDS = ("touches", "latitude", "acceptance", "max_attempts", "attempts",
+               "claim_token", "lease_until", "last_heartbeat", "claim_pid",
+               "job_ids", "evidence", "awaiting", "blocked_reason")
 
 # Self-healing (design 2d + Fix 2): a claim carries a lease so a crashed/killed
 # sweep never strands a task in `doing` forever, but a HEALTHY-but-slow worker must
@@ -320,26 +336,21 @@ def _assignee_from_legacy(task: dict) -> str | None:
     return owner if str(owner).startswith("agent:") else f"agent:{owner}"
 
 
-# ---- the title convention, enforced -----------------------------------------
-# A ticket's FIRST LINE is its title and the rest is the spec; the frontend
-# (lib/tasks.ts) splits on exactly that. Nothing ENFORCED it, so every producer
-# that emitted one long paragraph produced a ticket whose title was the entire
-# spec — 25 of 79 open tickets had a first line over 200 characters, and a list
-# of those renders as one wall of text where every row looks the same length.
+# ---- title and body ---------------------------------------------------------
+# `title` and `body` are STORED fields, the way every tracker on earth models a
+# ticket (ticket-model-and-external-trackers-2026-08-07 D1). `text` survives as a
+# read-side projection (`title` + "\n" + `body`) so TODO.md export, reconcile,
+# dedup and every existing reader keep working byte-identically.
 #
-# Enforced here rather than in each producer because the producers are prompts.
-# A model that ignores "a short imperative line, under 80 characters" is not a
-# bug to fix once; it is the steady state, and the store is the only place that
-# sees every write. Living in _normalize also means it runs on READ, so tickets
-# already on disk heal the next time they are loaded and no migration is needed.
-#
-# The split is LOSSLESS. Nothing is ever truncated away: a clean clause boundary
-# moves the remainder down into the body, and when there is no boundary worth
-# cutting on the title becomes an elided preview while the WHOLE original line
-# stays as the body.
-TITLE_MAX = 80         # a first line longer than this is a spec, not a title
+# This replaces the first-line convention of ADR 0001. That convention needed a
+# SPLIT rule at every boundary, the rule was lossy, and it mangled 32 of 179 live
+# tickets into a title ending in "…". A join rule is one pure function and cannot
+# lose anything. Producers are prompts and will keep emitting one long paragraph,
+# so the store still normalizes on write and on read — but losslessly now: an
+# over-long title moves its remainder DOWN into the body and nothing is elided.
+TITLE_MAX = 120        # hard cap: longer than this and the remainder moves to body
+TITLE_WARN = 80        # a good title is under this; not enforced, reported
 _TITLE_MIN_CUT = 28    # a cut leaving less than this is a fragment, not a title
-_TITLE_ELIDE = 72      # where a preview is elided when there is nothing to cut on
 # Where a title may end, best first. The match IS the separator, so the text
 # before it keeps its punctuation and the text after it starts the body.
 #   1. end of a sentence or clause — a whole thought.
@@ -375,29 +386,54 @@ def _split_overlong_title(head: str) -> tuple[str, str]:
                 cut = m
         if cut is not None:
             return head[: cut.start()].rstrip(" .:;,"), head[cut.end():].strip()
-    # Nothing to cut on: elide at a word boundary and put the REMAINDER in the
-    # body — not the whole line. Keeping the whole line was the bug: the title's
-    # words then appeared twice, so opening a ticket showed the title and then
-    # the same sentence again underneath. And because the preview was PREPENDED
-    # each pass, lowering TITLE_MAX made a second preview stack on the first.
-    #
-    # The bracket guard deliberately does NOT apply here. A cut claims to be a
-    # complete title; an elision already says "there is more" with its ellipsis,
-    # and forcing balance on a preview only makes it shorter and less useful.
-    space = head.rfind(" ", 0, _TITLE_ELIDE)
-    head_cut = space if space >= _TITLE_MIN_CUT else _TITLE_ELIDE
-    return head[:head_cut].rstrip(" .:;,") + "…", head[head_cut:].strip()
+    # Nothing to cut on: break at the last word boundary that fits and move the
+    # remainder into the body. NO ellipsis is emitted — an elided title claimed
+    # information had been dropped when it had not, and because the preview was
+    # written back to the store, a later change to TITLE_MAX stacked a second
+    # preview on the first. A word-boundary break is lossless and idempotent:
+    # re-normalizing the joined text reproduces exactly the same split.
+    space = head.rfind(" ", 0, TITLE_MAX)
+    head_cut = space if space >= _TITLE_MIN_CUT else TITLE_MAX
+    return head[:head_cut].rstrip(" .:;,"), head[head_cut:].strip()
+
+
+def _repair_elided_title(title: str, body: str) -> tuple[str, str]:
+    """Undo an old ellipsis clamp: rejoin "Do the thing…" + its spilled remainder.
+
+    The retired clamp wrote `head[:cut] + "…"` as the title and `head[cut:]` as
+    the FIRST line of the body, so the original line is recoverable exactly by
+    concatenating the two. 32 of 179 live tickets are in this state.
+
+    Guarded so a human-written title that happens to end in an ellipsis is never
+    touched: the rejoined line must actually be over-long (which is the only
+    condition under which the clamp fired) and the spilled fragment must not
+    start a new sentence, which is what a real body's first line does.
+    """
+    if not title.endswith("…") or not body:
+        return title, body
+    stem = title[:-1].rstrip(" .:;,")
+    if len(stem) < _TITLE_MIN_CUT:
+        return title, body
+    spill, sep, rest = body.partition("\n")
+    spill = spill.strip()
+    if not spill or spill[0].isupper():
+        return title, body
+    rejoined = f"{stem} {spill}".strip()
+    if len(rejoined) <= TITLE_WARN:
+        return title, body   # too short to have tripped the clamp; not our output
+    return rejoined, rest
 
 
 def _undo_stacked_preview(body: str) -> str:
     """Drop an elided title line that the NEXT line just repeats.
 
-    Repairs this function's own earlier output. An elided title used to be
+    Repairs the retired clamp's earlier output. An elided title used to be
     prepended while the whole original line was kept below it, so every pass at a
     new TITLE_MAX stacked another preview: one ticket ended up as
     "...secrets out of…" / "...secrets out of container env into a…" / the real
-    line. Collapsing them on read means stored records heal themselves and a
-    future threshold change cannot accumulate again.
+    line. Collapsing them on read means stored records heal themselves. Kept
+    (though nothing emits previews anymore) because stores on disk still carry
+    them.
     """
     while True:
         head, sep, rest = body.partition("\n")
@@ -409,15 +445,50 @@ def _undo_stacked_preview(body: str) -> str:
         body = rest
 
 
+def split_text(text) -> tuple[str, str]:
+    """(title, body) for a blob of ticket text. THE split rule, in one place.
+
+    Idempotent: ``split_text(join_text(*split_text(x))) == split_text(x)`` for any
+    input, which is what makes normalize-on-read safe to run forever.
+    """
+    blob = _undo_stacked_preview(str(text or "").strip())
+    head, _sep, rest = blob.partition("\n")
+    title, body = _repair_elided_title(head.strip(), rest)
+    if len(title) > TITLE_MAX:
+        title, spilled = _split_overlong_title(title)
+        body = f"{spilled}\n{body}" if (spilled and body) else (spilled or body)
+    return title.strip(), body.strip("\n")
+
+
+def join_text(title: str, body: str) -> str:
+    """THE join rule: the projected `text` every legacy reader still sees.
+
+    One newline, not two, so a record that round-trips through the TODO.md
+    export renders byte-identically to how it did when `text` was stored.
+    """
+    title = (title or "").strip()
+    body = (body or "").strip("\n")
+    return f"{title}\n{body}" if body else title
+
+
 def _normalize_text(text) -> str:
-    """Guarantee the first line of a task's text reads as a title."""
-    body = _undo_stacked_preview(str(text or "").strip())
-    head, sep, rest = body.partition("\n")
-    if len(head) <= TITLE_MAX:
-        return body
-    title, spilled = _split_overlong_title(head)
-    tail = f"{spilled}\n{rest}" if (spilled and rest) else (spilled or rest)
-    return f"{title}\n{tail}" if tail else title
+    """Back-compat shim: normalize a text blob through the split/join pair."""
+    return join_text(*split_text(text))
+
+
+def title_warnings(title: str) -> list[str]:
+    """Why this title reads badly, for the readiness check and the UI. Empty is
+    a good title. Length is a WARNING, never a rejection: refusing a long title
+    would just lose the ticket a producer was trying to file."""
+    out: list[str] = []
+    t = (title or "").strip()
+    if not t:
+        out.append("title is empty")
+    if len(t) > TITLE_WARN:
+        out.append(f"title is {len(t)} chars; a title reads best under {TITLE_WARN}")
+    if t.endswith("…") or t.endswith("..."):
+        out.append("title is elided, not written")
+    return out
 
 
 def _normalize_acceptance(acc) -> dict | None:
@@ -519,6 +590,29 @@ def _normalize_awaiting(payload) -> dict | None:
     return rec
 
 
+def _norm_labels(raw) -> list[str]:
+    """Labels as an ordered, deduped list of non-empty strings."""
+    out: list[str] = []
+    for label in (raw or []):
+        s = str(label).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+# A ticket whose scope nobody is accountable for is how a bad spec becomes a
+# mystery. Records written before `scoped_by` existed get the best available
+# answer from where the request came from, rather than a null that reads as "no
+# one" when the truth is "not recorded".
+_SCOPED_BY_FROM_SOURCE = {"operator": "operator", "chat": "operator",
+                          "import": "import", "agent": "agent", "autogen": "agent"}
+
+
+def _scoped_by_from_source(src: dict) -> str:
+    kind = str(src.get("kind") or "operator")
+    return _SCOPED_BY_FROM_SOURCE.get(kind, "operator")
+
+
 def _normalize(task: dict) -> dict:
     """Coerce a stored record into a well-formed canonical Task (defensive
     against hand edits and forward-migrating v1 records losslessly)."""
@@ -531,9 +625,22 @@ def _normalize(task: dict) -> dict:
     src = task.get("source")
     if not isinstance(src, dict):
         src = {"kind": "operator", "ref": None}
+    # title/body are canonical; `text` is projected from them below. A record
+    # written before this (title absent) migrates here on READ, so no store needs
+    # a rewrite pass to load correctly — the repair lands the next time it
+    # persists. Migration is therefore idempotent by construction.
+    if task.get("title") is not None:
+        title, body = str(task.get("title") or "").strip(), \
+            str(task.get("body") or "").strip("\n")
+        if len(title) > TITLE_MAX or "\n" in title:
+            title, spilled = _split_overlong_title(title.replace("\n", " "))
+            body = f"{spilled}\n{body}" if (spilled and body) else (spilled or body)
+    else:
+        title, body = split_text(task.get("text"))
     rec = {
         "id": str(task.get("id") or _new_id()),
-        "text": _normalize_text(task.get("text")),
+        "title": title,
+        "body": body,
         "status": status,
         "assignee": assignee,
         "parent": task.get("parent") or None,
@@ -543,6 +650,10 @@ def _normalize(task: dict) -> dict:
         # scheduling effect. Distinct from depends_on which gates readiness.
         # blocks is DERIVED from the inverse of depends_on and never stored.
         "relates_to": [str(r) for r in (task.get("relates_to") or []) if r],
+        # labels: free strings, the one field every tracker has in common besides
+        # title/body/state/assignee, and the default selection mechanism for an
+        # external import. Deduped, order preserved.
+        "labels": _norm_labels(task.get("labels")),
         "acceptance": acceptance,
         # max_attempts is the per-task cap on worker RUNS (sweep attempts). Read
         # legacy `max_iterations` for back-compat so old stores load unchanged.
@@ -570,6 +681,11 @@ def _normalize(task: dict) -> dict:
         # junk: coercing a typo to "standard" would look like a deliberate
         # per-task default and silently undo a strict scope (latitude.py).
         "latitude": _latitude.coerce(task.get("latitude")),
+        # scoped_by: who wrote this scope (accountability). Distinct from `source`,
+        # which is where the REQUEST came from: a chat-sourced ticket can be scoped
+        # by the ticket-maker, and when a run fails on a bad spec that difference is
+        # the whole question. Defaults from source.kind for records written before it.
+        "scoped_by": str(task.get("scoped_by") or _scoped_by_from_source(src)),
         "created": str(task.get("created") or now),
         "updated": str(task.get("updated") or now),
     }
@@ -580,6 +696,15 @@ def _normalize(task: dict) -> dict:
     # Review tab use for it. Projected, never stored (see the module docstring), so
     # it cannot drift from `awaiting`.
     rec["blocked_request"] = rec["awaiting"]
+    # `text` mirror: title + body under the name every existing reader uses
+    # (TODO.md export, reconcile, dedup, run_inbox, the CLI). Projected from the
+    # canonical pair, never authoritative, so the two can never disagree.
+    rec["text"] = join_text(rec["title"], rec["body"])
+    # `exec` mirror: the workshop-private execution fields, gathered under one key
+    # so the sync boundary is legible at a glance. Storage stays flat (every
+    # reader indexes these directly); this is the projection a sync adapter reads
+    # to know what it must NOT send.
+    rec["exec"] = {k: rec.get(k) for k in EXEC_FIELDS}
     return rec
 
 
@@ -765,6 +890,25 @@ def _load(root: Path) -> list[dict]:
     return [_normalize(t) for t in raw if isinstance(t, dict)]
 
 
+# Keys `_normalize` PROJECTS rather than stores. Written to disk they would be a
+# second copy of `title`/`body`/`awaiting`/`assignee` that a hand edit could put
+# out of step with the canonical field, which is exactly the two-sources-of-truth
+# failure ADR 0001 was right to fear. Stripped on the way out; re-derived on the
+# way in. `owner` is deliberately NOT stripped: the shell CLI still reads it.
+_PROJECTED_KEYS = ("text", "exec", "blocked_request")
+
+
+def _for_storage(task: dict) -> dict:
+    """Strip the projections. Total by construction: a raw record that carries
+    only `text` (an older writer, a hand edit, a caller that built a dict itself)
+    has its canonical pair derived here FIRST, so dropping the projection can
+    never drop the only copy of the ticket's words."""
+    out = {k: v for k, v in task.items() if k not in _PROJECTED_KEYS}
+    if not out.get("title"):
+        out["title"], out["body"] = split_text(task.get("text"))
+    return out
+
+
 def _persist(root: Path, tasks: list[dict]) -> None:
     """Atomically write .tasks.json (version 2, with export_sha) AND regenerate
     the TODO.md export. export_sha lets reconcile detect out-of-band edits."""
@@ -773,7 +917,8 @@ def _persist(root: Path, tasks: list[dict]) -> None:
         # sections). Inert until O7 migrates it properly.
         return
     rendered = render_markdown(tasks)
-    payload = {"version": STORE_VERSION, "tasks": tasks, "export_sha": _sha(rendered)}
+    payload = {"version": STORE_VERSION, "tasks": [_for_storage(t) for t in tasks],
+               "export_sha": _sha(rendered)}
     _atomic_write(_store_path(root), json.dumps(payload, indent=2) + "\n")
     _atomic_write(_export_path(root), rendered)
     # Announce the change to the scope, here rather than at the nine call sites
@@ -794,15 +939,16 @@ def _persist(root: Path, tasks: list[dict]) -> None:
 # ---- Reconcile (heal out-of-band TODO.md edits) ----------------------------
 
 _BOX_TO_STATUS = {" ": "todo", "x": "done", "X": "done", "~": "doing",
-                  "!": "blocked", "?": "in_review", "p": "parked", "-": "cancelled"}
-_LINE_RE = re.compile(r"^(\s*)[-*]\s*\[([ xX~!?p\-])\]\s*(.*?)\s*$")
+                  "!": "blocked", "?": "in_review", "p": "parked", "-": "cancelled",
+                  "d": "draft"}
+_LINE_RE = re.compile(r"^(\s*)[-*]\s*\[([ xX~!?pd\-])\]\s*(.*?)\s*$")
 
 
 def _norm_text(s: str) -> str:
     """Normalize a task's FIRST line for matching (strip trailing status tag,
     collapse whitespace, lowercase). Multi-line bodies match on line one."""
     first = (s or "").split("\n", 1)[0]
-    first = re.sub(r"\s*\((?:doing|blocked|in_review|in review|parked|cancelled)\)\s*$", "", first, flags=re.I)
+    first = re.sub(r"\s*\((?:draft|doing|blocked|in_review|in review|parked|cancelled)\)\s*$", "", first, flags=re.I)
     return re.sub(r"\s+", " ", first).strip().lower()
 
 
@@ -889,7 +1035,12 @@ def reconcile(root: Path) -> bool:
                     match["status"] = status
                     item_changed = True
                 if text.strip() != (match["text"] or "").strip():
-                    match["text"] = text.strip()
+                    # Write through to the canonical pair, not to the `text`
+                    # projection: a hand-edited detail block in TODO.md is a real
+                    # body edit, and setting the mirror alone would be discarded
+                    # by the next load.
+                    match["title"], match["body"] = split_text(text)
+                    match["text"] = join_text(match["title"], match["body"])
                     item_changed = True
                 if item_changed:
                     match["updated"] = now
@@ -912,10 +1063,11 @@ def reconcile(root: Path) -> bool:
 
 # ---- Markdown export -------------------------------------------------------
 
-_STATUS_BOX = {"todo": " ", "doing": "~", "in_review": "?", "blocked": "!",
-               "parked": "p", "done": "x", "cancelled": "-"}
-_STATUS_LABEL = {"doing": "doing", "blocked": "blocked", "in_review": "in_review",
-                 "parked": "parked", "cancelled": "cancelled"}
+_STATUS_BOX = {"draft": "d", "todo": " ", "doing": "~", "in_review": "?",
+               "blocked": "!", "parked": "p", "done": "x", "cancelled": "-"}
+_STATUS_LABEL = {"draft": "draft", "doing": "doing", "blocked": "blocked",
+                 "in_review": "in_review", "parked": "parked",
+                 "cancelled": "cancelled"}
 
 
 def render_markdown(tasks: list[dict], *, header: str = "# TODO\n\n") -> str:
@@ -1157,13 +1309,16 @@ def next_ready(root: Path, *, assignee: str | None = None) -> dict | None:
 def add(
     root: Path,
     *,
-    text: str,
+    text: str | None = None,
+    title: str | None = None,
+    body: str | None = None,
     owner: str = DEFAULT_OWNER,
     assignee: str | None = None,
     parent: str | None = None,
     status: str = "todo",
     priority: int = 0,
     depends_on: list[str] | None = None,
+    labels: list[str] | None = None,
     acceptance: dict | None = None,
     max_attempts: int | None = None,
     touches: list[str] | None = None,
@@ -1172,9 +1327,17 @@ def add(
     latitude: str | None = None,
     source: dict | None = None,
     provenance: str | None = None,
+    scoped_by: str | None = None,
 ) -> dict:
-    text = _normalize_text(text)
-    if not text:
+    # Two ways in, one shape out. A caller with a real title/body pair (the API,
+    # the ticket-maker, an import) passes them; a caller holding one blob (the
+    # CLI, TODO.md reconcile, dedup) passes `text` and the store splits it.
+    if title is not None:
+        title, body = str(title).strip(), str(body or "").strip("\n")
+    else:
+        title, body = split_text(text)
+    text = join_text(title, body)
+    if not title:
         raise ValueError("text required")
     # Validated (not coerced) on the write path: an unknown value raises so the
     # caller sees a 400 instead of persisting a field the cascade will ignore.
@@ -1204,14 +1367,16 @@ def add(
             if gaps:
                 touches = list(touches) + gaps
         task = _normalize({
-            "id": _new_id(), "text": text, "status": status,
+            "id": _new_id(), "title": title, "body": body, "status": status,
             "assignee": assignee if assignee is not None else owner,
             "parent": parent or None, "priority": priority,
-            "depends_on": depends_on or [], "acceptance": acceptance,
+            "depends_on": depends_on or [], "labels": labels or [],
+            "acceptance": acceptance,
             "max_attempts": max_attempts, "touches": touches or [],
             "discovered_from": discovered_from, "effort": effort,
             "latitude": latitude,
             "source": source or {"kind": "operator", "ref": None},
+            "scoped_by": scoped_by,
             "provenance": provenance, "created": now, "updated": now,
         })
         tasks.append(task)
@@ -1225,11 +1390,14 @@ def update(
     *,
     status: str | None = None,
     text: str | None = None,
+    title: str | None = None,
+    body: str | None = None,
     owner: str | None = None,
     assignee: str | None = None,
     priority: int | None = None,
     depends_on: list[str] | None = None,
     relates_to: list[str] | None = None,
+    labels: list[str] | None = None,
     touches: list[str] | None = None,
     blocked_reason: str | None = None,
     acceptance: dict | None = None,
@@ -1265,9 +1433,19 @@ def update(
     a worker's own untokened notes never self-fence its finalize."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
+    # `title`/`body` patch the canonical pair independently — editing a title must
+    # not require resending the whole body, which is the entire reason a tracker
+    # models them separately. `text` remains accepted and splits, so every caller
+    # written against the old signature keeps working.
+    if title is not None:
+        title = str(title).strip()
+        if not title:
+            raise ValueError("title required")
     if text is not None:
-        text = _normalize_text(text)
-        if not text:
+        if title is not None or body is not None:
+            raise ValueError("pass text, or title/body, not both")
+        title, body = split_text(text)
+        if not title:
             raise ValueError("text required")
     if latitude is not None:
         # "" clears the override back to inherit; an unknown value raises.
@@ -1292,7 +1470,7 @@ def update(
         _held_by_worker = (found.get("status") == "doing"
                            and found.get("claim_token") is not None)
         _material_edit = any(v is not None for v in (
-            status, text, assignee, priority, depends_on, blocked_reason,
+            status, title, body, assignee, priority, depends_on, blocked_reason,
             acceptance, max_attempts, effort, latitude, awaiting, blocked_request))
         if status is not None:
             found["status"] = status
@@ -1307,8 +1485,16 @@ def update(
             if status != "doing":
                 found["lease_until"] = None
                 found["claim_pid"] = None
-        if text is not None:
-            found["text"] = text
+        if title is not None:
+            found["title"] = title
+        if body is not None:
+            found["body"] = str(body).strip("\n")
+        if title is not None or body is not None:
+            # Keep the projection true for THIS call's return value; the next
+            # load re-derives it from the pair either way.
+            found["text"] = join_text(found["title"], found["body"])
+        if labels is not None:
+            found["labels"] = _norm_labels(labels)
         if assignee is not None:
             found["assignee"] = assignee
             found["owner"] = assignee

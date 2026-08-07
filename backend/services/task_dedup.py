@@ -344,6 +344,8 @@ def dedup_add(
     touches: list[str] | None = None,
     provenance: str | None = None,
     effort: str | None = None,
+    labels: list[str] | None = None,
+    scoped_by: str | None = None,
 ) -> dict:
     """Create a task from a chat, deduped against open tasks in this scope.
 
@@ -399,7 +401,8 @@ def dedup_add(
             root, text=text, priority=priority, depends_on=depends_on or [],
             acceptance=acceptance, touches=touches or [],
             discovered_from=matched_id, source=src,
-            provenance=prov, effort=effort,
+            provenance=prov, effort=effort, labels=labels or [],
+            scoped_by=scoped_by,
         )
         # Evidence on BOTH sides so the link is navigable either direction.
         tasks.update(root, task["id"],
@@ -422,7 +425,8 @@ def dedup_add(
     task = tasks.add(
         root, text=text, priority=priority, depends_on=depends_on or [],
         acceptance=acceptance, touches=touches or [], source=src,
-        provenance=prov, effort=effort,
+        provenance=prov, effort=effort, labels=labels or [],
+        scoped_by=scoped_by,
     )
     return {
         "decision": "distinct",

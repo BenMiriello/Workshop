@@ -11,7 +11,8 @@ import {
 } from "../ui";
 import {
   type Task, TASK_STATUSES, taskStatusKind, taskStatusLabel,
-  title as titleOf, description as descriptionOf, joinText, scopeLabel, scopeHref,
+  title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
+  cleanTitle,
   ticketHref,
   latitudeDesc, latitudeSourceLabel,
 } from "../lib/tasks";
@@ -137,8 +138,11 @@ export default function TicketDetail() {
     }
   }, [scope, id]);
 
+  // Patches the canonical pair, not the joined blob: the store keeps title and
+  // body as separate fields, and sending `text` would make the server re-split
+  // an edit the operator already split by hand.
   const saveText = useCallback(async () => {
-    await patch({ text: joinText(draftTitle, draftDesc) });
+    await patch({ title: cleanTitle(draftTitle), body: draftDesc });
     setEditing(false);
   }, [draftTitle, draftDesc, patch]);
 

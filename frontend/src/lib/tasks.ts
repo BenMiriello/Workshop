@@ -1,18 +1,19 @@
-// The Task type + status mapping + the title/description convention, in ONE
+// The Task type + status mapping + the title/description accessors, in ONE
 // place. A Task is the canonical unit of work (a "ticket" in UI prose); the
 // store, CLI, and API all say `task`, so every identifier here stays `task`.
 //
-// There is no separate title/description in the store: a task's `text` is
-// multi-line-lossless, so the FIRST line is the title and the remaining lines
-// are the description. `title`/`description`/`joinText` are the single source of
-// truth for that split so no screen re-derives it. Backed by GET /api/tasks and
-// /api/tasks/{scope}/{id}.
+// `title` and `body` are STORED fields on the record (backend services/tasks.py,
+// ticket-model-and-external-trackers-2026-08-07). `text` is still returned as a
+// projection of the two, so the accessors below prefer the real fields and fall
+// back to splitting `text` for a payload cached before the change. Backed by GET
+// /api/tasks and /api/tasks/{scope}/{id}.
 import type { StatusKind } from "../ui";
 
-// All seven shipped statuses (backend services/tasks.py STATUSES). ProjectDetail
+// All eight shipped statuses (backend services/tasks.py STATUSES). ProjectDetail
 // previously knew only four of these and rendered a broken StatusDot for the
 // rest; importing from here fixes that.
 export type TaskStatus =
+  | "draft"
   | "todo"
   | "doing"
   | "in_review"
@@ -22,6 +23,7 @@ export type TaskStatus =
   | "cancelled";
 
 export const TASK_STATUSES: TaskStatus[] = [
+  "draft",
   "todo",
   "doing",
   "in_review",
@@ -122,7 +124,15 @@ export type BlockRequest = {
 
 export type Task = {
   id: string;
+  // Canonical pair. `text` is the server's projection of the two and is kept for
+  // readers that still show one blob.
+  title: string;
+  body: string;
   text: string;
+  labels?: string[];
+  // Who wrote the scope (operator | agent | import). When a run fails on a bad
+  // spec, this is the question being asked.
+  scoped_by?: string;
   status: TaskStatus;
   owner?: string;
   assignee?: string | null;
@@ -171,6 +181,7 @@ export type Task = {
 // color: todo/parked idle-ish, doing live, in_review needs the operator, blocked
 // is stuck, done succeeded, cancelled dropped.
 const TASK_STATUS_KIND: Record<TaskStatus, StatusKind> = {
+  draft: "stopped",
   todo: "stopped",
   doing: "running",
   in_review: "warn",
@@ -185,6 +196,7 @@ export const taskStatusKind = (status?: string): StatusKind =>
 
 // Human labels for the status control / pill. Underscores read poorly in prose.
 const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
+  draft: "draft",
   todo: "todo",
   doing: "doing",
   in_review: "in review",
@@ -197,28 +209,37 @@ const TASK_STATUS_LABEL: Record<TaskStatus, string> = {
 export const taskStatusLabel = (status?: string): string =>
   TASK_STATUS_LABEL[(status ?? "") as TaskStatus] ?? String(status ?? "");
 
-// ---- title / description convention ----------------------------------------
-// First line = title, everything after = description. Saving joins them back
-// with a single newline through the existing tasks.update(text=...).
+// ---- title / description accessors ------------------------------------------
+// The record carries `title` and `body`. These accessors exist so no screen
+// reaches for one or the other directly, and so a bare string (a draft line, a
+// proposal) can be read with the same call. The `text` fallback covers a payload
+// produced before the fields existed; it splits on the first line the way the
+// store's own `split_text` does.
 
-export function title(task: { text?: string } | string | null | undefined): string {
-  const text = typeof task === "string" ? task : task?.text ?? "";
-  return text.split("\n")[0] ?? "";
+type TaskTextish = { title?: string; body?: string; text?: string };
+
+export function title(task: TaskTextish | string | null | undefined): string {
+  if (typeof task === "string") return task.split("\n")[0] ?? "";
+  if (task?.title !== undefined) return task.title;
+  return (task?.text ?? "").split("\n")[0] ?? "";
 }
 
-export function description(task: { text?: string } | string | null | undefined): string {
-  const text = typeof task === "string" ? task : task?.text ?? "";
+export function description(task: TaskTextish | string | null | undefined): string {
+  if (typeof task === "string") {
+    const nl = task.indexOf("\n");
+    return nl === -1 ? "" : task.slice(nl + 1);
+  }
+  if (task?.title !== undefined) return task.body ?? "";
+  const text = task?.text ?? "";
   const nl = text.indexOf("\n");
   return nl === -1 ? "" : text.slice(nl + 1);
 }
 
-// Join an edited title + description back into a single `text` for saving. A
-// title never carries newlines (collapse any pasted-in ones); an empty
-// description yields just the title.
-export function joinText(titleLine: string, desc: string): string {
-  const t = (titleLine ?? "").replace(/\r?\n/g, " ").trim();
-  const d = (desc ?? "").replace(/\r\n/g, "\n").replace(/\s+$/g, "");
-  return d ? `${t}\n${d}` : t;
+// A title never carries newlines: a pasted-in multi-line string collapses to one
+// line before it is sent. Every writer of a title goes through this, so the rule
+// lives here and not in each form.
+export function cleanTitle(titleLine: string): string {
+  return (titleLine ?? "").replace(/\r?\n/g, " ").trim();
 }
 
 // A friendly label for a scope key, for filters and the scope link.
