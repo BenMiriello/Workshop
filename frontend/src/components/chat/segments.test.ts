@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applyStreamEvent, agentSummary, type StreamEvent } from "./segments";
+import { applyStreamEvent, agentSummary, recentWorkStepCount, type StreamEvent } from "./segments";
 import type { ChatSegment } from "../../lib/chat";
 
 // The live reducer must produce what the server persists, because the same turn
@@ -95,6 +95,49 @@ describe("subagent segments", () => {
     const snapshot = JSON.stringify(before);
     applyStreamEvent(before, { kind: "tool", name: "Bash", input: "ls", parent: "tu_1" });
     expect(JSON.stringify(before)).toBe(snapshot);
+  });
+});
+
+describe("recentWorkStepCount", () => {
+  const tool = (name = "Bash"): ChatSegment => ({ t: "tool", name, input: "x" });
+  const text = (t = "noted"): ChatSegment => ({ t: "text", text: t });
+
+  it("folds everything on an older turn", () => {
+    const work = [tool(), tool(), text()];
+    expect(recentWorkStepCount(work, false, 2, 8)).toBe(0);
+  });
+
+  it("keeps the plain trailing window when nothing needs rescuing", () => {
+    const work = [tool(), tool(), tool(), tool()];
+    expect(recentWorkStepCount(work, true, 2, 8)).toBe(2);
+  });
+
+  it("shows everything when the turn is shorter than the window", () => {
+    const work = [tool(), text()];
+    expect(recentWorkStepCount(work, true, 2, 8)).toBe(2);
+  });
+
+  it("widens the window to sweep in a nearby text checkpoint", () => {
+    // An acknowledgment of a mid-turn message, then two more tool calls before
+    // the turn ends. The plain trailing-2 window would fold the ack the moment
+    // those two calls landed — the exact bug this exists to prevent.
+    const work = [tool(), tool(), text("Noted, will fold it in after this."), tool(), tool()];
+    const n = recentWorkStepCount(work, true, 2, 8);
+    expect(n).toBe(3);
+    expect(work.slice(work.length - n).some((s) => s.t === "text")).toBe(true);
+  });
+
+  it("falls back to the plain window for a checkpoint too far back to reach", () => {
+    // A chatty turn must still fold SOMETHING, or a long-enough turn stops
+    // folding at all and the accordion loses its point — growing all the way
+    // to the cap in search of a text segment that isn't there defeats that
+    // just as much as never widening at all.
+    const work = [text("early aside"), ...Array.from({ length: 20 }, () => tool())];
+    expect(recentWorkStepCount(work, true, 2, 8)).toBe(2);
+  });
+
+  it("an empty turn stays empty", () => {
+    expect(recentWorkStepCount([], true, 2, 8)).toBe(0);
   });
 });
 

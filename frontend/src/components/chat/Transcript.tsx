@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { Markdown } from "../../ui";
 import type { ChatSegment } from "../../lib/chat";
-import { agentSummary } from "./segments";
+import { agentSummary, recentWorkStepCount } from "./segments";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -180,11 +180,12 @@ function AgentChip({ seg }: { seg: Extract<ChatSegment, { t: "agent" }> }) {
 
 // The "work" of an assistant turn — its tool calls, subagents, and interim text.
 // On the most recent turn the latest few steps stay inline and older ones fold
-// into a re-openable accordion; on older turns all of it folds away (just the
+// into a re-openable accordion (widened to sweep in a nearby text checkpoint —
+// see recentWorkStepCount); on older turns all of it folds away (just the
 // answer shows). Tool calls and subagents stay individually expandable.
 function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay }) {
   const [open, setOpen] = useState(false);
-  const inlineCount = isLatest ? cfg.recentSteps : 0;
+  const inlineCount = recentWorkStepCount(work, isLatest, cfg.recentSteps, cfg.recentSteps * 4);
   const older = inlineCount > 0 ? work.slice(0, Math.max(0, work.length - inlineCount)) : work;
   const recent = inlineCount > 0 ? work.slice(Math.max(0, work.length - inlineCount)) : [];
   const olderTools = older.filter((s) => s.t === "tool" || s.t === "agent").length;
