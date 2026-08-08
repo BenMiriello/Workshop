@@ -131,9 +131,17 @@ export function Menu({
           tabIndex={-1}
           aria-label={label}
           className={cx("ws-menu__list", `ws-menu__list--${align}`, `ws-menu__list--${side}`)}
-          // Activating an item closes the menu; individual items don't each
-          // have to remember to.
-          onClick={() => close()}
+          // Activating an ITEM closes the menu; individual items don't each have
+          // to remember to. Gated to role="menuitem" rather than "any click in
+          // the list", because a menu can also hold a persistent control (a
+          // Toggle for an on/off setting, not a one-shot action) — that click
+          // was bubbling here too, so tapping the switch closed the menu on the
+          // same tap that flipped it. The operator saw "closes and does
+          // nothing": the state change did happen, but there was nothing left
+          // open to show it having happened.
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest('[role="menuitem"]')) close();
+          }}
         >
           {children}
         </div>

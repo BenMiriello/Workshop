@@ -657,7 +657,10 @@ input[type="range"].grad::-moz-range-thumb {
   transform: translateX(-50%); z-index: var(--z-dropdown);
   display: inline-flex; align-items: center; gap: 0.35rem;
   padding: 0.4rem 0.8rem;
-  font-size: var(--fs-sm); font-weight: var(--fw-semi); color: var(--fg);
+  /* Regular weight: this sits over the transcript and semi-bold read heavier
+     than the message text it floats above, for a pill that is navigation, not
+     something needing to out-weight the conversation. */
+  font-size: var(--fs-sm); font-weight: var(--fw-normal); color: var(--fg);
   background: var(--card); border: 1px solid var(--border);
   border-radius: 999px; box-shadow: var(--shadow-md); cursor: pointer;
 }
