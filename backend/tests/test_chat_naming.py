@@ -65,16 +65,18 @@ class TestNaming:
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
 
-    def test_the_title_describes_the_first_exchange_not_the_latest(self, store, named):
-        """A chat's name is what it is ABOUT. Naming from the newest turn would
-        make the title wander every time the conversation moved on."""
+    def test_the_title_describes_the_latest_exchange(self, store, named):
+        """Naming reads the LATEST exchange, so a chat that opened with a thin,
+        unnameable turn is named from the real content that came after rather
+        than frozen on whatever happened to be first. It still names only once
+        (is_blank_title locks it), so this never makes the title wander."""
         tid = chat_store.create_thread("general")["id"]
         _exchange(tid, "How do subagents work here?", "They run in an isolated context.")
         _exchange(tid, "Now fix the palette generator", "Regenerated the tokens.")
         chat_naming.generate_title(tid)
         prompt = named["prompt"]
-        assert "How do subagents work here?" in prompt
-        assert "palette generator" not in prompt
+        assert "palette generator" in prompt
+        assert "How do subagents work here?" not in prompt
 
     def test_a_named_chat_is_left_alone(self, store, named):
         tid = chat_store.create_thread("general")["id"]
@@ -138,6 +140,66 @@ class TestRejectsNonTitleOutput:
             chat_naming.llm_router, "call_cloud",
             lambda *a, **k: {"text": "Subagent Delegation In Chat"},
         )
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
+
+
+class TestNoTopicAndTheAttemptCap:
+    """When the exchange has no discernible subject the namer answers NONE, and
+    that is treated like a rejection: skip now, try again on the next reply. A
+    chat that is genuinely unnameable stops asking after `_MAX_NAME_ATTEMPTS`
+    content rejections, so it never pays a naming call every turn forever — it
+    keeps its seed / "New chat" fallback. This is the "Compact -> Ready For Next
+    Task" bug: a thin first exchange used to be named permanently anyway."""
+
+    def test_a_none_response_is_not_saved(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid, "Compact", "Ready. What's next?")
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda *a, **k: {"text": "NONE"})
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_a_substantive_later_turn_names_after_a_none(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid, "Compact", "Ready.")
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda *a, **k: {"text": "NONE"})
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+        _exchange(tid, "Split /clear from /new in the composer", "Done.")
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda *a, **k: {"text": "Clear Command Split"})
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "Clear Command Split"
+
+    def test_it_gives_up_after_the_cap_and_makes_no_more_calls(self, store, monkeypatch):
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid, "ok", "Ready.")
+        calls = {"n": 0}
+
+        def none_call(*a, **k):
+            calls["n"] += 1
+            return {"text": "NONE"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", none_call)
+        for _ in range(5):
+            chat_naming.generate_title(tid)
+        assert calls["n"] == chat_naming._MAX_NAME_ATTEMPTS   # 3 calls, not 5
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_transient_failures_do_not_count_toward_the_cap(self, store, monkeypatch):
+        """A rate limit is not a verdict that a chat is unnameable. Five failed
+        calls, then a good one, still names it — the original retry property."""
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid, "How do subagents work here?", "They run isolated.")
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rate limited")))
+        for _ in range(5):
+            chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda *a, **k: {"text": "Subagent Delegation In Chat"})
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
 
