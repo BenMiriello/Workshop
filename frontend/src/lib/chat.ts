@@ -15,7 +15,15 @@ export type ChatSegment =
   | {
       t: "agent";
       name: string;          // the subagent: a frontmatter name, or general-purpose
-      input: string;         // what it was asked to do
+      // ONE LINE: the task, not the instructions. The collapsed chip shows this
+      // and nothing else, clamped, never wrapping — a delegation is one row in
+      // the parent's work, and a chip that unrolled a page of brief was the
+      // loudest thing in a turn while saying the least about it.
+      input: string;
+      // The full brief the delegate was actually handed (backend caps it at
+      // 8000 chars). This is what opening the chip is FOR. Absent on turns
+      // recorded before the backend started sending it.
+      detail?: string;
       id: string;            // the Agent tool_use id its steps point back at
       steps: ChatSegment[];  // its own tool calls and interim text
       done: boolean;
@@ -54,17 +62,26 @@ export type ChatMsg = {
     // Sent while a turn was already running, and handed to that turn rather
     // than queued behind it.
     injected?: boolean;
-    // Which turn was running when this message arrived. The store files such a
-    // message AFTER that reply, which is both causally true (the reply had not
-    // seen it) and where the log shows it — messages append in send order, the
-    // ordinary chat rule.
+    // Which RUN was in flight when this message arrived. The log files it above
+    // that run's reply (the reply does not exist yet when the message lands),
+    // and the transcript selector uses this to find the block it interrupted.
+    during_run?: string;
+    // The same fact under its old name, on messages recorded before the run
+    // rebuild. Read nowhere in the client; kept so the type describes what is
+    // actually on disk.
     during_turn?: string;
-    // How much of the reply had streamed when it arrived. RECORDED, NOT
-    // RENDERED. It briefly drove a scheme that cut the reply open and showed the
-    // message inside the gap; that put the operator's words above work already
-    // in flight, which is exactly backwards, and it is gone. Kept because old
-    // messages carry it and it is a true fact about when the message landed.
+    // How much of the reply had streamed when the message arrived: the index
+    // into the reply's segment stream at which it landed. THE CUT POINT. The
+    // reply's block ends here and a new one begins below the message, so work
+    // that had already been emitted stays above it and work produced after it
+    // reads as having been produced after it. See transcriptBlocks.ts.
     at_segment?: number;
+    // The browser's own id for this send. Present on messages this client sent;
+    // it is what an optimistic bubble is reconciled against, never the text.
+    client_id?: string;
+    // When the run that produced this reply began. `ts` is when it was
+    // committed.
+    started_at?: string;
     // Typed while a turn was running and sent as part of the NEXT turn, keeping
     // the time it was typed rather than the time the queue drained.
     queued?: boolean;
