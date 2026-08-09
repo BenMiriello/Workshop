@@ -204,3 +204,53 @@ describe("pending sends and the context cut", () => {
     expect(compactedThrough(stateOf([user("a")]))).toBe(0);
   });
 });
+
+describe("nothing is lost or duplicated by a cut", () => {
+  // THE SAFETY PROPERTY. Splitting a reply is only acceptable if the pieces
+  // still add up to the reply: concatenating every assistant block's segments,
+  // in render order, must reproduce the original list exactly. Verified against
+  // a real 157-segment turn from the operator's own log before being pinned
+  // here as a shape (text/tool/agent interleaved, cuts at the ends, in the
+  // middle, and past the end).
+  const many: ChatSegment[] = Array.from({ length: 157 }, (_, i) =>
+    i % 7 === 3
+      ? { t: "agent", name: "Explore", input: `job ${i}`, id: `a${i}`, steps: [], done: true, result: "ok" }
+      : i % 3 === 0
+        ? text(`t${i}`)
+        : tool(`Tool${i}`));
+
+  it("holds for cuts at the start, the middle, the end and past the end", () => {
+    const cuts = [0, 1, 7, 40, 100, 156, 157, 900];
+    const s = stateOf([
+      user("go"),
+      ...cuts.map((at, i) => user(`interject ${i}`, { during_run: "r1", at_segment: at })),
+      reply("", { turn_id: "r1", segments: many }),
+    ]);
+    const blocks = selectTranscript(s);
+    const rebuilt: ChatSegment[] = [];
+    const said: string[] = [];
+    for (const b of blocks) {
+      if (b.kind !== "message") continue;
+      if (b.msg.role === "assistant") rebuilt.push(...(b.msg.meta?.segments || []));
+      else said.push(b.msg.content);
+    }
+    expect(rebuilt).toEqual(many);
+    // And every message the operator sent is still there, once, in order.
+    expect(said).toEqual(["go", ...cuts.map((_, i) => `interject ${i}`)]);
+  });
+
+  it("holds for the live turn too", () => {
+    let s = stateOf([
+      user("1", { during_run: "r1", at_segment: 2 }),
+      user("2", { during_run: "r1", at_segment: 9 }),
+    ]);
+    s = threadReducer(s, { type: "runStarted", runId: "r1" });
+    s = threadReducer(s, {
+      type: "eventsReceived", events: [], lastSeq: 0,
+      activeRun: { run_id: "r1", live: { meta: { segments: many } } },
+    });
+    const rebuilt: ChatSegment[] = [];
+    for (const b of selectTranscript(s)) if (b.kind === "live") rebuilt.push(...b.segments);
+    expect(rebuilt).toEqual(many);
+  });
+});
