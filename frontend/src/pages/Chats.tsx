@@ -218,13 +218,19 @@ export default function Chats() {
                         +{(t.participants ?? []).length - 3}
                       </span>
                     )}
-                    <span className="ws-card__meta">{t.message_count}</span>
                   </span>
                 </div>
-                {/* Always rendered (even when empty) so every card reserves the
-                    same 2-line height; the clamp trims longer snippets with an
-                    ellipsis instead of growing the card. */}
-                <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
+                {/* The snippet is always rendered (even when empty) so every card
+                    reserves the same 2-line height; the clamp trims longer
+                    snippets with an ellipsis instead of growing the card.
+                    The message count rides at the END of the snippet line, not up
+                    in the title row: it describes the conversation's length, so it
+                    belongs next to the conversation's last line, and the title row
+                    is already carrying the scope tag and participants. */}
+                <div className="ws-chat-card__last">
+                  <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
+                  <span className="ws-card__meta ws-chat-card__count">{t.message_count}</span>
+                </div>
               </Card>
             ))}
           </div>

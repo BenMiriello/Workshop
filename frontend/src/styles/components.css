@@ -377,8 +377,19 @@ a.ws-btn { text-decoration: none; }
 /* Chat list cards (Chats page): the title row is fixed height; the snippet
    below is always rendered (even blank) and clamped to 2 lines so a card's
    height never depends on whether/how long last_message is. */
+/* Snippet + message count share one row: the snippet takes the slack and clamps,
+   the count never shrinks and sits at the baseline of the snippet's last line. */
+.ws-chat-card__last {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.ws-chat-card__count { flex: none; }
+
 .ws-chat-card__snippet {
   margin: var(--space-1) 0 0;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   display: -webkit-box;
@@ -1328,8 +1339,12 @@ a.ws-btn { text-decoration: none; }
    A centred, viewport-tall column. The Chat panel fills it; the log scrolls
    internally and the composer pins to the bottom (same on mobile and desktop —
    no unbounded growth, no sidebar that dumps on top of the conversation). */
+/* Fills its page container rather than imposing a second, narrower cap — the
+   shell above already applies --page-max, and two stacked caps is what made the
+   chat look like it followed different rules from every other page. Bubbles keep
+   their own relative cap (.chat-msg), which is what actually holds the measure. */
 .ws-chat-full {
-  max-width: var(--measure); width: 100%; margin: 0 auto;
+  max-width: none; width: 100%; margin: 0 auto;
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }
@@ -1350,8 +1365,15 @@ a.ws-btn { text-decoration: none; }
   left: 0; right: 0; width: 100%;
   top: var(--app-top, 0px);
   height: var(--app-vh, 100dvh);
-  margin: 0;
-  max-width: none;
+  /* The chat is a page like any other: same --page-max container, centred. Only
+     the SCROLL behaviour is special (fixed + viewport-tall so the composer rides
+     above the mobile keyboard) — that is not a licence to run full-bleed. It used
+     to be `max-width: none`, which let the topnav and chat toolbar span the whole
+     monitor while the log sat in a narrow column inside them.
+     left/right:0 + width:100% + max-width + auto margins centres a fixed box
+     (CSS 2.1 §10.3.7: the over-constrained case splits the slack evenly). */
+  margin: 0 auto;
+  max-width: var(--page-max);
   padding: 0;
   display: flex; flex-direction: column;
   overflow: hidden;
