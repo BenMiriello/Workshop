@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { Markdown } from "../../ui";
 import type { ChatSegment } from "../../lib/chat";
-import { agentSummary, recentWorkStepCount } from "./segments";
+import { agentBrief, agentChipLine, agentSummary, recentWorkStepCount } from "./segments";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -174,11 +174,22 @@ function WorkText({ text, cfg, expanded }: { text: string; cfg: ModelDisplay; ex
 // ---- Subagent: one row for the whole delegation ---------------------------
 // A subagent exists to keep its working context OUT of this conversation, so it
 // renders as one row, not as a run of steps the turn appears to have taken
-// itself. The row says who was asked and what for; opening it shows what the
-// delegate actually did and what it reported back. Same collapse language as
-// ToolChip, one level in, so a nested step never reads as a top-level one.
+// itself. Same collapse language as ToolChip, one level in, so a nested step
+// never reads as a top-level one.
+//
+// COLLAPSED IS EXACTLY ONE LINE: the task. Not the brief — the brief is a page
+// of instructions, and printing it into the row made a single delegation the
+// loudest thing in a turn while saying the least about it. The one line comes
+// from agentChipLine (newlines folded there, so the string itself cannot wrap)
+// and is ellipsised at the reader's real width by .chat-agent__preview.
+//
+// OPEN SHOWS THE BRIEF, then the steps, then the report. That is the whole
+// reason the chip is a disclosure control: the row says what was delegated, and
+// opening it says what the delegate was actually told, did, and answered.
 function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cfg: ModelDisplay }) {
   const [open, setOpen] = useState(false);
+  const line = agentChipLine(seg);
+  const brief = agentBrief(seg);
   return (
     <div className={`chat-agent${open ? " is-open" : ""}${seg.done ? "" : " is-running"}`}>
       <button
@@ -186,16 +197,25 @@ function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cf
         className="chat-agent__head"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        title={seg.input || seg.name}
+        title={line}
       >
         <ChevronRight size={13} aria-hidden className="chat-agent__chev" />
         <Bot size={12} aria-hidden className="chat-agent__icon" />
         <span className="chat-agent__name">{seg.name}</span>
-        {seg.input && <span className="chat-agent__preview">{seg.input}</span>}
+        <span className="chat-agent__preview">{line}</span>
         <span className="chat-agent__meta">{agentSummary(seg)}</span>
       </button>
       {open && (
         <div className="chat-agent__body">
+          {brief && (
+            <div className="chat-agent__brief">
+              <span className="chat-agent__result-label">Brief</span>
+              {/* Long by nature (the backend caps it at 8000 chars), so it gets
+                  the same length treatment as any other long block rather than
+                  a scroll box of its own. */}
+              <ElidedContent source={brief} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
+            </div>
+          )}
           {seg.steps.length > 0 && (
             <div className="chat-agent__steps">
               {seg.steps.map((s, i) =>

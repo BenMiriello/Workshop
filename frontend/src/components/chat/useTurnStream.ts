@@ -201,7 +201,10 @@ export function useTurnStream({
       markAlive();
       try {
         const p = JSON.parse((e as MessageEvent).data).payload || {};
-        fold({ kind: "tool", name: p.name, input: p.input, id: p.id, agent: p.agent, parent: p.parent });
+        fold({
+          kind: "tool", name: p.name, input: p.input, detail: p.detail,
+          id: p.id, agent: p.agent, parent: p.parent,
+        });
       } catch { /* ignore */ }
     });
     // Only a subagent's own result is rendered (it closes that subagent's

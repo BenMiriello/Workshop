@@ -14,7 +14,9 @@ import type { ChatSegment } from "../../lib/chat";
 export type StreamEvent =
   // A tool call. `parent` is set when a SUBAGENT made it, and `agent` is set
   // when the call IS a subagent launch (the tool the CLI names `Agent`).
-  | { kind: "tool"; name?: string; input?: string; id?: string; agent?: string | null; parent?: string | null }
+  // `detail` is the full brief behind a subagent launch — sent only for those,
+  // and only ever shown when the chip is opened.
+  | { kind: "tool"; name?: string; input?: string; detail?: string | null; id?: string; agent?: string | null; parent?: string | null }
   | { kind: "text"; content?: string; parent?: string | null }
   // The Agent call's own result, which closes its segment.
   | { kind: "tool_result"; tool_use_id?: string | null; text?: string; parent?: string | null };
@@ -75,6 +77,7 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
         t: "agent",
         name: ev.agent,
         input: ev.input || "",
+        ...(ev.detail ? { detail: ev.detail } : {}),
         id: ev.id || "",
         steps: [],
         done: false,
@@ -94,8 +97,39 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
   return copy;
 }
 
+type AgentSegment = Extract<ChatSegment, { t: "agent" }>;
+
+/** THE ONE LINE a collapsed subagent chip shows: what it was asked to do.
+ *
+ *  A delegation is one step of the parent's work, so its chip is one row. The
+ *  brief it was handed is a page of instructions and belongs behind the chip,
+ *  not on it — a chip that unrolled the whole brief was the loudest thing in a
+ *  turn while saying the least about it.
+ *
+ *  Newlines are folded to spaces HERE rather than left to CSS: the string is
+ *  what must be one line, so that a segment recorded before the backend started
+ *  sending a one-line `input` still cannot wrap. Truncation stays with CSS
+ *  (`text-overflow: ellipsis`), which cuts at the width the reader actually
+ *  has instead of at a guessed character count. */
+export function agentChipLine(seg: AgentSegment): string {
+  const raw = (seg.input || "").replace(/\s+/g, " ").trim();
+  return raw || seg.name;
+}
+
+/** What opening the chip reveals: the brief the delegate was actually handed.
+ *
+ *  Empty when there is nothing more to show than the row already says — an
+ *  older segment with no `detail`, or a `detail` that is just the chip line
+ *  again. A disclosure control that opens onto a repeat of its own label is
+ *  worse than no control. */
+export function agentBrief(seg: AgentSegment): string {
+  const detail = (seg.detail || "").trim();
+  if (!detail) return "";
+  return detail.replace(/\s+/g, " ").trim() === agentChipLine(seg) ? "" : detail;
+}
+
 /** One line describing what a subagent did, for the collapsed chip. */
-export function agentSummary(seg: Extract<ChatSegment, { t: "agent" }>): string {
+export function agentSummary(seg: AgentSegment): string {
   const tools = seg.steps.filter((s) => s.t === "tool").length;
   if (!seg.done) return tools ? `working · ${tools} step${tools > 1 ? "s" : ""}` : "working";
   return tools ? `${tools} step${tools > 1 ? "s" : ""}` : "done";

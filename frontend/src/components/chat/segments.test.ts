@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { applyStreamEvent, agentSummary, recentWorkStepCount, type StreamEvent } from "./segments";
+import {
+  agentBrief, agentChipLine, agentSummary, applyStreamEvent, recentWorkStepCount,
+  type StreamEvent,
+} from "./segments";
 import type { ChatSegment } from "../../lib/chat";
 
 // The live reducer must produce what the server persists, because the same turn
@@ -156,5 +159,43 @@ describe("agentSummary", () => {
 
   it("says done when it reported without calling a tool", () => {
     expect(agentSummary(agent({ done: true }))).toBe("done");
+  });
+});
+
+describe("the collapsed chip is one line, and the brief is behind it", () => {
+  const agent = (over: Partial<Extract<ChatSegment, { t: "agent" }>>) =>
+    ({ t: "agent", name: "general-purpose", input: "", id: "x", steps: [], done: false, result: "", ...over }) as Extract<ChatSegment, { t: "agent" }>;
+
+  it("carries the brief through the live reducer", () => {
+    // Without this the brief never reached the client at all and opening a chip
+    // showed the steps and the report but not what was actually asked for.
+    const segs = feed([{
+      kind: "tool", name: "Agent", id: "tu_1", agent: "Explore",
+      input: "Find the chat store", detail: "Search the backend for...",
+    }]);
+    expect(segs[0]).toMatchObject({ t: "agent", input: "Find the chat store", detail: "Search the backend for..." });
+  });
+
+  it("folds a multi-line task into one line, so the row cannot wrap", () => {
+    expect(agentChipLine(agent({ input: "Do the thing\n\nthen report back" })))
+      .toBe("Do the thing then report back");
+  });
+
+  it("falls back to the agent's name when it was given no task line", () => {
+    expect(agentChipLine(agent({ input: "  " }))).toBe("general-purpose");
+  });
+
+  it("reveals the full brief on open", () => {
+    const brief = "Read every file under backend/services and report the ones that write threads.";
+    expect(agentBrief(agent({ input: "Audit the writers", detail: brief }))).toBe(brief);
+  });
+
+  it("reveals nothing when there is no brief to reveal", () => {
+    expect(agentBrief(agent({ input: "Audit the writers" }))).toBe("");
+  });
+
+  it("reveals nothing when the brief is only the chip line again", () => {
+    // A disclosure that opens onto a repeat of its own label is worse than none.
+    expect(agentBrief(agent({ input: "Audit the writers", detail: "Audit the writers" }))).toBe("");
   });
 });

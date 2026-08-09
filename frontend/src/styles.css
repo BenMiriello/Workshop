@@ -915,6 +915,10 @@ input[type="range"].grad::-moz-range-thumb {
 /* The delegate's own steps, one level in — a nested step must never read as a
    step the turn itself took. */
 .chat-agent__steps { padding-left: 0.6rem; border-left: 2px solid var(--border); }
+/* The brief the delegate was handed. First thing inside the opened chip,
+   because it is what the one-line row is hiding — the steps and the report are
+   what the delegate then did about it. */
+.chat-agent__brief { margin-bottom: 0.4rem; font-size: var(--fs-sm); }
 .chat-agent__result { margin-top: 0.4rem; font-size: var(--fs-sm); }
 .chat-agent__result-label {
   display: block; margin-bottom: 0.2rem;
