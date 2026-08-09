@@ -239,18 +239,6 @@ export function selectTranscript(state: ThreadState): TranscriptBlock[] {
   return out;
 }
 
-/** How many messages are behind the context boundary. The composer's estimate
- *  and the divider both want this, and it is a fact about the log. */
-export function compactedThrough(state: ThreadState): number {
-  let count = 0;
-  let cut = 0;
-  for (const ev of committedEvents(state)) {
-    if (ev.kind === "message") count++;
-    else if (ev.kind === "boundary") cut = count;
-  }
-  return cut;
-}
-
 /** Every committed message, flat, in log order. The context meter's local
  *  estimate and the "was this the first exchange" check read this; nothing
  *  renders from it. */

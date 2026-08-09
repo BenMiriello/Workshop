@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
 import {
-  compactedThrough, selectTranscript, splitSegments, type TranscriptBlock,
+  selectTranscript, splitSegments, type TranscriptBlock,
 } from "./transcriptBlocks";
 
 const text = (s: string): ChatSegment => ({ t: "text", text: s });
@@ -197,11 +197,6 @@ describe("pending sends and the context cut", () => {
   it("shows only the latest boundary, as one divider", () => {
     const s = stateOf([user("a"), boundary("compact"), user("b"), boundary("compact")]);
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2"]);
-  });
-
-  it("counts the messages behind the boundary", () => {
-    expect(compactedThrough(stateOf([user("a"), user("b"), boundary("compact"), user("c")]))).toBe(2);
-    expect(compactedThrough(stateOf([user("a")]))).toBe(0);
   });
 });
 
