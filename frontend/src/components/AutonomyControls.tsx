@@ -198,8 +198,8 @@ export default function AutonomyControls() {
               {cronDisabled
                 ? "disabled"
                 : runnerRunning
-                  ? "running (worker resident, draining the queue)"
-                  : "permitted, but no worker running — tickets will queue"}
+                  ? "running (draining the queue)"
+                  : "permitted, but nothing is running. Tickets will queue"}
             </StatusDot>
             <Button
               size="sm"

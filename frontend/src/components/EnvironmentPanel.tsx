@@ -154,12 +154,12 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
         ) : (data?.requirements.length ?? 0) === 0 ? (
           <StateBlock
             title="No environment variables declared"
-            hint="Declare them in workshop.app.json `env_requirements` (the agent can add them): key, description, required, secret, how_to_obtain. They'll appear here to fill." />
+            hint="An agent adds these when the app needs one, and they show up here to fill in." />
         ) : (
           <Stack>
             <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-              Values are stored outside git and injected into the app at start. Secrets are write-only,
-              shown only as Set or Missing. A required value left unset blocks that service from starting.
+              Values are injected when the app starts and are never committed. Secrets show only as Set
+              or Missing. A required value left unset stops that service from starting.
             </p>
             {groups.map(({ group, items }) => (
               <div key={group || "_ungrouped"}>

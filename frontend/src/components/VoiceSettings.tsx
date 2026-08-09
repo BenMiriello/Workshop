@@ -99,7 +99,7 @@ export default function VoiceSettings({
           />
           <span className="ws-voice-hintline">
             {prefs.input_mode === "text"
-              ? "The mic stays off. Nothing here is an error — it's the setting."
+              ? "The mic stays off."
               : prefs.input_mode === "voice"
                 ? "Hands-free: the mic is the only way in."
                 : "Talk or type, whichever is to hand."}
@@ -118,7 +118,7 @@ export default function VoiceSettings({
           />
           <span className="ws-voice-hintline">
             {prefs.output_mode === "text"
-              ? "Captions only. Interrupting and resuming still work — text you've read counts as heard."
+              ? "Captions only. Interrupting and resuming still work."
               : prefs.output_mode === "voice"
                 ? "Spoken aloud, no transcript in the log."
                 : "Spoken aloud and written down."}
@@ -265,7 +265,7 @@ export default function VoiceSettings({
                 <dt>Device</dt>
                 <dd>{diag?.deviceLabel || "—"}</dd>
                 <dt>Secure origin</dt>
-                <dd>{diag?.secureContext ? "yes" : "no — voice input needs https or localhost"}</dd>
+                <dd>{diag?.secureContext ? "yes" : "no, voice input needs https"}</dd>
                 <dt>Hearing</dt>
                 <dd>
                   {caps?.stt ? ENGINE_LABEL[caps.stt] ?? caps.stt : "—"}
@@ -285,14 +285,14 @@ export default function VoiceSettings({
                 </Button>
                 <span className="ws-voice-hintline">
                   {testing
-                    ? "Recording 3 seconds — say something."
+                    ? "Recording 3 seconds. Say something."
                     : testResult
                       ? testResult.ok
                         ? testResult.text
                           ? `Heard: "${testResult.text}" (${testResult.bytes} bytes, ${testResult.ms} ms)`
-                          : `Recorded ${testResult.bytes} bytes but the transcript came back empty — the mic is open and the engine answered, so this is a level or a language problem.`
+                          : `Recorded ${testResult.bytes} bytes, but nothing was transcribed. Check the mic level and the language.`
                         : testResult.reason
-                      : "Records 3 seconds and transcribes it through the real path."}
+                      : "Records 3 seconds and transcribes it."}
                 </span>
               </div>
             </div>

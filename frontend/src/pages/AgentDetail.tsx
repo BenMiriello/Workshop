@@ -478,7 +478,7 @@ function AgentNotes({ slug }: { slug: string }) {
           <Textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            placeholder="Leave a note for this agent. Notes here are read and written by the agent too, and injected into its chat context."
+            placeholder="Leave a note for this agent."
             rows={3}
           />
           <Row>
@@ -503,7 +503,7 @@ function AgentNotes({ slug }: { slug: string }) {
           ) : notes.length === 0 ? (
             <StateBlock
               title="No notes yet"
-              hint="Save a note above to leave context for this agent. The agent writes notes here too, and everything here is injected into its chat context."
+              hint="Notes here are shared with this agent and go into its chat context."
             />
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -850,18 +850,18 @@ function ExistingAgent({ agentId }: { agentId: string }) {
               </Field>
               <Field
                 label="Interaction"
-                help="Both are off by default. Most agents are triggered workers that report through their runs and belong in neither list."
+                help="Off by default. Most agents are triggered workers that report through their runs."
               >
                 <Stack gap="sm">
                   <Checkbox
                     checked={dMentionable}
                     onChange={setDMentionable}
-                    label={`Mentionable — can be @${agent.slug}'d in a chat and answers inline`}
+                    label={`Mentionable: can be @${agent.slug}'d in a chat and answers inline`}
                   />
                   <Checkbox
                     checked={dDelegatable}
                     onChange={setDDelegatable}
-                    label="Delegatable — can be handed a ticket to work"
+                    label="Delegatable: can be handed a ticket to work"
                   />
                 </Stack>
               </Field>

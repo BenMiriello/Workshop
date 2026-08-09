@@ -1048,7 +1048,7 @@ export default function ProjectDetail() {
             hint={<>Add a definition file at <code className="ws-mono">projects/{slug}/agents/&lt;slug&gt;.md</code> to give this project a scoped agent.</>}
           />
         ) : defAgents.length > 100 ? (
-          <StateBlock title="Too many agents to render" hint="Retire unused agent definitions to keep this list readable." />
+          <StateBlock title="Too many agents to render" hint="Retire unused agent definitions." />
         ) : (
           <CardGrid>
             {defAgents.map((a) => (
@@ -1100,7 +1100,7 @@ export default function ProjectDetail() {
             hint="This project's agents hold no capability grants over any Store. Mint one from an agent's detail page (Grants section) to give it scoped access."
           />
         ) : heldGrants.length > 100 ? (
-          <StateBlock title="Too many grants to render" hint="Revoke unused grants from Settings > Grants to keep this list readable." />
+          <StateBlock title="Too many grants to render" hint="Revoke unused grants in Settings > Grants." />
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {heldGrants.map((g) => {
@@ -1223,7 +1223,7 @@ export default function ProjectDetail() {
                   : "All tasks are done. Toggle “Show done” to see them."}
               />
             ) : visibleTasks.length > 400 ? (
-              <StateBlock title="Too many tasks to render" hint="Close out or delete completed tasks to keep this list readable." />
+              <StateBlock title="Too many tasks to render" hint="Close out or delete completed tasks." />
             ) : (
               <Stack>
                 {ownerOrder.map((owner) => {
@@ -1279,7 +1279,7 @@ export default function ProjectDetail() {
             <Textarea
               value={noteBody}
               onChange={(e) => setNoteBody(e.target.value)}
-              placeholder="Leave a note for this project and its agents. Notes here are read and written by both, and injected into this project's chat context."
+              placeholder="Leave a note for this project and its agents."
               rows={3}
             />
             <Row>
@@ -1304,7 +1304,7 @@ export default function ProjectDetail() {
             ) : notes.length === 0 ? (
               <StateBlock
                 title="No notes yet"
-                hint="Save a note above to leave context for this project. Agents that work this project write notes here too, and everything here is injected into the project's chat context."
+                hint="Notes here are shared with this project's agents and go into its chat context."
               />
             ) : (
               <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -1423,7 +1423,7 @@ export default function ProjectDetail() {
                 ) : (repoState?.worktrees ?? []).length > 50 ? (
                   <StateBlock
                     title="Too many worktrees to render"
-                    hint="Run Clean up merged, or merge/discard old branches to keep this list readable."
+                    hint="Run Clean up merged, or merge and discard old branches."
                   />
                 ) : (
                   <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -1507,7 +1507,7 @@ export default function ProjectDetail() {
             </p>
           ) : sideBranches.length > 50 ? (
             <div style={{ paddingTop: "var(--space-3)" }}>
-              <StateBlock title="Too many branches" hint="Merge or discard old ones to keep this list readable." />
+              <StateBlock title="Too many branches" hint="Merge or discard old ones." />
             </div>
           ) : (
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>

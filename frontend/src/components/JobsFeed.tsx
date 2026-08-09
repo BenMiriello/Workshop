@@ -178,7 +178,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
         title={filter === "all" ? "No runs yet" : `No ${filter} jobs`}
         hint={
           filter === "all" ? (
-            <>A Job is recorded for every bounded run. Trigger one with <code>cron_agent.sh</code>, a project sweep, or a manual run.</>
+            "Every run is recorded here. Start one from an agent, a project sweep, or a ticket."
           ) : (
             <>Nothing matches this filter. Switch to <strong>All</strong> to see every job.</>
           )

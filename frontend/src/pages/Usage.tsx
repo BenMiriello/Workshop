@@ -77,9 +77,9 @@ function windowLabel(data: UsageStatus, win: UsageWindow): string {
   }
   if (win === "all") {
     const days = Math.max(1, Math.round(data.window_s / 86400));
-    return `All recorded usage (~${days} day${days === 1 ? "" : "s"} so far) — no cap applies`;
+    return `All recorded usage (~${days} day${days === 1 ? "" : "s"} so far). Reporting only, no cap.`;
   }
-  return `Trailing ${WINDOW_OPTIONS.find((o) => o.value === win)?.label ?? ""} — reporting only, no cap applies`;
+  return `Trailing ${WINDOW_OPTIONS.find((o) => o.value === win)?.label ?? ""}. Reporting only, no cap.`;
 }
 
 // X-axis tick: an ISO timestamp -> a short local clock time (e.g. "3:40 PM").
@@ -359,14 +359,7 @@ export default function Usage() {
           {rows.length === 0 ? (
             <StateBlock
               title="No usage in this window"
-              hint={
-                <>
-                  Nothing has been billed in this window. Work appends to{" "}
-                  <code>.runtime/usage.jsonl</code> — autonomous sweeps (the queue runner, a project
-                  or agent Ralph sweep, a drained event) and interactive chat turns, which are
-                  recorded for reporting but never counted against the cap. Try a longer window.
-                </>
-              }
+              hint="Nothing has been billed in this window. Try a longer one."
             />
           ) : (
             <Stack gap="lg">

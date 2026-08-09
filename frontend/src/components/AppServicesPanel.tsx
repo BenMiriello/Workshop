@@ -169,7 +169,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This project is the running Workshop"
-            hint="Editing it edits the live app you're using: there is no separate deployment. The frontend hot-reloads on save; backend changes need a restart (bash scripts/restart_backend.sh). Use the project chat to make changes." />
+            hint="Editing it edits the live app you're using. The frontend updates on save; backend changes need a backend restart." />
         </Card>
       </section>
     );

@@ -199,7 +199,7 @@ export function BankConnections() {
         onCancel={() => setUnlinking(null)}
         onConfirm={onUnlink}
         title="Unlink this bank?"
-        body={`Removes "${unlinking?.institution_name || "this bank"}" from Workshop and revokes Workshop's access at Plaid. Its balances and transactions will stop appearing. This can't be undone (you can reconnect it later).`}
+        body={`Removes "${unlinking?.institution_name || "this bank"}" and revokes Workshop's access at Plaid. Its balances and transactions stop appearing. You can connect it again later.`}
         confirmLabel="Unlink"
         busy={busy}
       />

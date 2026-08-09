@@ -56,8 +56,8 @@ export default function DelegatesSection() {
         Delegates
       </SectionLabel>
       <p className="ws-muted" style={{ marginTop: "var(--space-1)", marginBottom: "var(--space-3)" }}>
-        Invoked by another agent, never on a schedule — so they have no triggers
-        to enable and no autonomy of their own.
+        Invoked by another agent, never on a schedule, so they have no triggers
+        of their own.
       </p>
 
       {err ? (

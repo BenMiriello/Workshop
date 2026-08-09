@@ -469,10 +469,10 @@ export default function TaskPanel({
             <Input id={`tp-maxatt-${t.id}`} type="number" min={1} value={draft.maxAttempts} onChange={(e) => setField("maxAttempts", e.target.value)} style={{ maxWidth: "6rem" }} />
           </Field>
         </Row>
-        <Field label="Depends on" htmlFor={`tp-deps-${t.id}`} optional help="comma-separated task ids; gates readiness (cycle-guarded)">
+        <Field label="Depends on" htmlFor={`tp-deps-${t.id}`} optional help="comma-separated task ids; this task waits for them">
           <Input id={`tp-deps-${t.id}`} value={draft.dependsOn} onChange={(e) => setField("dependsOn", e.target.value)} placeholder="task id, task id" />
         </Field>
-        <Field label="Relates to" htmlFor={`tp-rel-${t.id}`} optional help="comma-separated task ids; soft link, no scheduling effect">
+        <Field label="Relates to" htmlFor={`tp-rel-${t.id}`} optional help="comma-separated task ids; a link only, no effect on order">
           <Input id={`tp-rel-${t.id}`} value={draft.relatesTo} onChange={(e) => setField("relatesTo", e.target.value)} placeholder="task id, task id" />
         </Field>
         {rowErr && <p className="ws-field__error">{rowErr}</p>}

@@ -352,14 +352,13 @@ export default function TicketDetail() {
               <Card>
                 <Stack gap="sm">
                   <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                    A worker never sees the conversation this came from. These are
-                    the questions the ticket does not answer yet.
+                    A worker only ever sees the ticket, which does not answer these yet.
                   </span>
                   {task.readiness.missing.map((m) => (
                     <StatusDot key={m.check}
                                status={isBlockingCheck(m.check) ? "danger" : "warn"}>
                       <strong>{readinessLabel(m.check)}</strong>
-                      <span className="ws-muted"> — {m.why}</span>
+                      <span className="ws-muted">: {m.why}</span>
                     </StatusDot>
                   ))}
                   {task.readiness.warnings.map((w) => (
@@ -389,7 +388,7 @@ export default function TicketDetail() {
                     <>
                       {task.effective_latitude?.value ? latitudeDesc(task.effective_latitude.value) : ""}
                       {task.effective_latitude?.source
-                        ? ` — ${latitudeSourceLabel(task.effective_latitude.source)}`
+                        ? ` (${latitudeSourceLabel(task.effective_latitude.source)})`
                         : ""}
                     </>
                   }>

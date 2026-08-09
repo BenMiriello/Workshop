@@ -281,10 +281,9 @@ export default function Deploys() {
         <SectionLabel>How this works</SectionLabel>
         <Card>
           <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-            Deploys are configured per-project (open a project and use the Deploys panel).
-            Every attempt is a Job (kind = deploy) and appears in the Work page.
-            The freeze switch above is independent of the workshop autonomy override —
-            freezing agents does NOT freeze deploys, and vice versa.
+            Deploys are configured per project, in that project's Deploys panel.
+            Every attempt shows up as a job on the Work page.
+            The freeze switch above only freezes deploys, not agents.
           </p>
         </Card>
       </section>

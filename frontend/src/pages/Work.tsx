@@ -1071,7 +1071,7 @@ function RuleDialog({
         <Field label="Scope" htmlFor="rule-scope" help="Global rules are injected into every agent's context, forever.">
           <Select id="rule-scope" value={ruleScope} onChange={(e) => setRuleScope(e.target.value)}>
             <option value="">{scopeLabel(scope)} (this ticket's scope)</option>
-            <option value="global">global — every scope, every run</option>
+            <option value="global">global (every scope, every run)</option>
           </Select>
         </Field>
       </Stack>
