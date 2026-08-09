@@ -322,7 +322,7 @@ export default function AutonomyControls() {
         <Row label="operator hold">
           <button
             onClick={async () => {
-              if (!confirm("Reserve GPU for you exclusively for 30 minutes? Workshop and other apps will be preempted.")) return;
+              if (!confirm("Reserve the GPU for yourself for 30 minutes? Workshop and other apps lose it.")) return;
               setBusy("reserve");
               try {
                 await fetch("/api/gpu/broker/reserve", {

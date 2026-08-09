@@ -25,7 +25,7 @@ export default function FinanceSettings() {
   useEffect(() => { load(); }, [load]);
 
   const onInvalidate = async () => {
-    if (!confirm("Drop the Plaid response cache? Next finance load will refetch from Plaid (~4s).")) return;
+    if (!confirm("Clear the cached bank data? The next load fetches it fresh, which takes a few seconds.")) return;
     await fetch("/api/finance/cache/invalidate", { method: "POST" });
     await load();
   };

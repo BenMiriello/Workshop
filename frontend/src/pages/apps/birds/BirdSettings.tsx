@@ -115,8 +115,8 @@ export default function BirdSettings() {
           </section>
 
           <p className="muted" style={{ fontSize: ".82rem" }}>
-            Detection always runs on everything the microphone hears; this setting only
-            changes what is displayed, and applies everywhere in the Birds app.
+            Detection always runs on everything the microphone hears. This only changes
+            what is shown.
           </p>
         </>
       )}
@@ -349,9 +349,8 @@ function AccuracySettings() {
         <Target size={17} strokeWidth={1.8} /> Detection accuracy
       </h3>
       <p className="muted" style={{ fontSize: ".82rem", margin: "0 0 1rem" }}>
-        How cautious detection is. Stricter settings report fewer birds but make the
-        ones it reports far more trustworthy. The confidence threshold and location
-        filter below are also what an auto-confirmed species is judged against.
+        How cautious detection is. Stricter settings report fewer birds, and the ones
+        they do report are far more trustworthy.
       </p>
 
       <div style={{ display: "grid", gap: "1.1rem" }}>
@@ -395,8 +394,7 @@ function AccuracySettings() {
             onChange={(e) => setDraft({ ...draft, new_species_hits: Number(e.target.value) })}
             style={{ width: "100%" }} />
           <div className="muted" style={{ fontSize: ".78rem" }}>
-            A species never heard here before must be detected this many times in a
-            row before it's recorded, so a single odd blip never becomes a sighting.
+            How many times in a row a new species must be heard before it counts.
             Birds already seen here are recorded immediately.
           </div>
         </div>
@@ -418,9 +416,8 @@ function AccuracySettings() {
           <History size={15} strokeWidth={1.8} /> Clean up past detections
         </div>
         <div className="muted" style={{ fontSize: ".78rem", marginBottom: ".6rem" }}>
-          Apply the location filter to everything already recorded, using where and
-          when each detection happened. Impossible species are hidden from all stats
-          and lists. Nothing is deleted; running it again can bring them back.
+          Applies the location filter to everything already recorded. Impossible species
+          are hidden, not deleted, and running it again can bring them back.
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: ".6rem", flexWrap: "wrap" }}>
           <Button variant="ghost" onClick={recompute} disabled={recomputing}>

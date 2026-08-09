@@ -130,7 +130,7 @@ function WeekActivity({ days, onPick, historyDays }: { days: Day[]; onPick: (i: 
       </div>
       <WeatherGutter days={days} />
       <p className="muted" style={{ fontSize: ".76rem", margin: ".4rem 0 0" }}>
-        Predicted detections per day (tap a bar); the I-bar is the likely range and the number above each bar is the species count. Built from {historyDays} day{historyDays === 1 ? "" : "s"} of history and tilted by each day's conditions; it sharpens as history grows.
+        Predicted detections per day (tap a bar). The I-bar is the likely range; the number above it is the species count. Built from {historyDays} day{historyDays === 1 ? "" : "s"} of history.
       </p>
     </section>
   );
@@ -259,7 +259,7 @@ function DayDetail({ day, profiles, regulars, locationId }: {
             </span>
           ))}
           <span className="muted" style={{ fontSize: ".74rem", display: "block", marginTop: ".2rem" }}>
-            Same residents each day for now; the mix will vary by day once there's weather-conditioned history.
+            Same birds each day for now. The mix will vary once there is more history to go on.
           </span>
         </div>
       )}

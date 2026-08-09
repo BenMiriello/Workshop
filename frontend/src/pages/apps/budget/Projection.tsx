@@ -373,10 +373,9 @@ export default function Projection({ budget }: { budget: Budget }) {
       </div>
 
       <p className="muted" style={{ fontSize: "0.76rem" }}>
-        Projection assumes your current plan continues: monthly burn (your set targets, or detected spend where no
-        target is set yet), planned debt payments until each balance clears, and planned contributions split between
-        cash and investments. The shaded cone spans market returns ±{(RETURN_BAND * 100).toFixed(0)}% around the slider.
-        Set real necessity and category targets on the Plan tab to sharpen this.
+        Assumes your current plan continues: your spending targets, planned debt payments until each balance
+        clears, and planned contributions. The shaded band spans market returns ±{(RETURN_BAND * 100).toFixed(0)}%
+        around the slider. Setting category targets on the Plan tab sharpens it.
       </p>
     </div>
   );

@@ -881,7 +881,7 @@ function EditForm({ onSaved, onCancel }: { onSaved: () => void; onCancel: () => 
 
   return (
     <section className="card" style={{ marginTop: "1rem" }}>
-      <h3 className="sec-h">Edit plan: add, rename, retarget or remove anything</h3>
+      <h3 className="sec-h">Edit plan</h3>
 
       {/* Income */}
       <p className="sec-h" style={{ marginTop: "0.6rem" }}>Income</p>

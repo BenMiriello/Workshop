@@ -229,7 +229,7 @@ export default function Location() {
   }, [loadLatest, loadFirstPage, loadTrack]);
 
   const onClear = async () => {
-    if (!confirm("Erase ALL stored location history? This deletes the backend file.")) return;
+    if (!confirm("Erase all stored location history? This can't be undone.")) return;
     try {
       const r = await fetch("/api/location/history", { method: "DELETE" });
       if (!r.ok) throw new Error(await r.text());
@@ -311,12 +311,9 @@ export default function Location() {
         </div>
         <p className="muted" style={{ marginTop: "0.5rem", fontSize: "0.82rem" }}>
           {pointCount} point{pointCount === 1 ? "" : "s"} in {segments.length} segment
-          {segments.length === 1 ? "" : "s"}. The breadcrumb is recorded pings, not
-          continuous tracking. OwnTracks "significant" mode only pings on meaningful
-          movement. When it goes quiet for a while (or flushes a buffered fix from far
-          away), the line breaks into a new segment instead of drawing a long straight
-          line across the gap. Switch the phone to "move" mode for denser tracking
-          (higher battery use). Nothing is deleted server-side.
+          {segments.length === 1 ? "" : "s"}. The phone only reports on real movement, so
+          the line breaks into a new segment across a quiet gap rather than guessing a
+          straight path. Switch it to "move" mode for a denser trail, at more battery.
         </p>
       </div>
 

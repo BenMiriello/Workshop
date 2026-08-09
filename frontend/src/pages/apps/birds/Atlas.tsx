@@ -219,7 +219,7 @@ function PresenceChatter({ rows }: { rows: ScatterPt[] }) {
     <section className="card birds-ins" style={{ padding: "1rem" }}>
       <h3 className="atlas-h3"><ScatterChart size={16} /> Presence ↔ chatter</h3>
       <div dangerouslySetInnerHTML={{ __html: svg }} />
-      <p className="cap-note">Plot presence against raw detections and the false signals separate out: dots above the dashed line talk more than their presence warrants; those below are around constantly but quiet, exactly the over-counting the 15-minute window corrects.</p>
+      <p className="cap-note">Dots above the dashed line talk more than their presence warrants. Those below are around constantly, but quiet.</p>
     </section>
   );
 }
@@ -493,11 +493,11 @@ function ClusterPanel({ data, clusterColors, activeCluster, setActiveCluster, on
         <h3 className="atlas-h3"><TagIcon size={16} /> Call groups</h3>
         <p className="muted" style={{ fontSize: ".85rem", margin: 0 }}>
           {data.has_species_map === false ? (
-            <>Still listening. {n} call{n === 1 ? "" : "s"} so far. Once there are about {SPECIES_SPLIT_MIN},
-            the Atlas starts grouping ones that sound alike. For now, tap any point on the map to hear it.</>
+            <>Still listening. {n} call{n === 1 ? "" : "s"} so far, and grouping starts at about {SPECIES_SPLIT_MIN}.
+            Tap any point on the map to hear it.</>
           ) : (
-            <>These {n} call{n === 1 ? "" : "s"} all sound alike so far, so there's just one group. As the bird's
-            calls vary, the Atlas splits them into groups here. Tap any point on the map to hear it.</>
+            <>These {n} call{n === 1 ? "" : "s"} all sound alike so far, so there's just one group.
+            Tap any point on the map to hear it.</>
           )}
         </p>
       </div>
