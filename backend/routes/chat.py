@@ -925,11 +925,13 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
     # snapshot above. That snapshot was read before a summarization call lasting
     # tens of seconds, and saving it back deleted every message the operator sent
     # during the fold. (Measured: 11 messages in, 10 on disk, the missing one
-    # theirs. `chat_store._write` now refuses such a write outright.)
+    # theirs. The transcript is an append-only log now, so no write can express
+    # that at all — but the snapshot's OTHER fields would still be stale.)
     #
     # `compacted_through` survives the switch because it counts from the FRONT of
     # the transcript and appends land at the BACK: the messages this fold covers
-    # are at the same indices no matter how many arrived meanwhile.
+    # are at the same indices no matter how many arrived meanwhile. The store
+    # records it as the seq of the last folded message, which nothing can shift.
     # A /clear can land while this call was in flight. It advances
     # `compacted_through` to the end of the transcript and drops `summary`
     # outright; writing this fold's `ct + fold_n` afterward would move the
