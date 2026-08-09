@@ -199,9 +199,9 @@ class TestStoreOrdering:
     def test_committing_clears_the_active_run(self, thread):
         tid = thread["id"]
         chat_store.begin_run(tid, "run-3")
-        assert chat_store.active_run(tid) == "run-3"
+        assert chat_store.active_run_id(tid) == "run-3"
         chat_store.commit_run(tid, "run-3", [], "done")
-        assert chat_store.active_run(tid) is None
+        assert chat_store.active_run_id(tid) is None
         assert chat_store.previous_run_id(tid) == "run-3"
 
 

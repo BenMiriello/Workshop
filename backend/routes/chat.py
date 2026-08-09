@@ -869,7 +869,12 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
     messages. Raw messages stay in the thread JSON either way, so the fold is
     always reversible. On a successful fold it also distills durable facts from
     the folded turns into the scope's knowledge (Phase 3)."""
-    msgs = thread.get("messages", [])
+    # Committed messages only. A run in flight renders as a trailing assistant
+    # message (chat_store._live_view) but is not in the record yet, so folding it
+    # would summarize a half-written reply and push the boundary past a message
+    # that does not exist.
+    msgs = [m for m in thread.get("messages", [])
+            if not (m.get("meta") or {}).get("streaming")]
     summary = thread.get("summary", "") or ""
     ct = int(thread.get("compacted_through", 0) or 0)
     if ct < 0 or ct > len(msgs):
@@ -1496,30 +1501,22 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
     if not parts or len(parts) < 2:
         chat_store.append_message(thread_id, "user", content)
         return
-    # One read/modify/write, not N appends. `append_message` stamps `ts` at write
-    # time — the instant the queue drained — and returns a dict belonging to a
-    # thread copy it then discards, so correcting the timestamp afterwards would
-    # write nothing. Build the messages here with their real send times and save
-    # once, which is also the only version of this that is atomic.
-    thread = chat_store.get_thread(thread_id)
-    if thread is None:
-        raise HTTPException(404, "thread not found")
+    # Each part at the time it was actually typed, not the instant the queue
+    # drained. Without that the model cannot tell a burst typed in one minute
+    # from thoughts spread over an afternoon, and `arrival_notice` reads these
+    # times off to say so. Appended one by one: the log assigns each its own seq
+    # and nothing can reorder them, which is what a whole-document write-back
+    # used to be needed for.
     added = 0
     for p in parts:
         text = (p.text or "").strip()
         if not text:
             continue
-        thread["messages"].append({
-            "role": "user",
-            "content": text,
-            "ts": p.sent_at or chat_store._now_iso(),
-            "meta": {"queued": True},
-        })
+        chat_store.append_message_during_turn(
+            thread_id, "user", text, meta={"queued": True}, ts=p.sent_at)
         added += 1
     if not added:
         chat_store.append_message(thread_id, "user", content)
-        return
-    chat_store.save_thread(thread)
 
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
@@ -1910,7 +1907,7 @@ def _live_run_id(thread_id: str) -> str | None:
     running — two turns ended up streaming into one thread at once. Scanning
     backwards fixed that symptom and left the flag itself orphanable by a
     restart. There is no flag any more, and nothing to orphan."""
-    run_id = chat_store.active_run(thread_id)
+    run_id = chat_store.active_run_id(thread_id)
     return run_id if build_streaming.run_is_live(run_id) else None
 
 

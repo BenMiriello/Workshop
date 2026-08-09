@@ -231,7 +231,7 @@ async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
     nothing else is ever going to answer for it, and leaving the chat waiting on
     it is the "chats keep stalling" report."""
     async with chat_log.lock_for(thread_id):
-        active = chat_store.active_run(thread_id)
+        active = chat_store.active_run_id(thread_id)
         if active and active != run_id:
             if run_is_live(active) and not force:
                 return active
@@ -1043,10 +1043,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         # The operator saw "ended unexpectedly (exit -1)" over and over without
         # ever being told what it meant. This is that case, named: the backend
         # was restarted while the turn was in flight and the run did not survive.
-        text = (
-            "Lost when the backend restarted mid-run. Anything already written to "
-            "disk is intact. Send \"continue\" to pick it back up."
-        )
+        text = chat_store.LOST_RUN_TEXT
         is_error = False
     else:
         detail = f": {turn.error}" if turn.error else ""
@@ -1264,6 +1261,10 @@ def reattach_running_turns() -> None:
                 continue
             turn = Turn(id=tid, thread_id=meta["thread_id"], agent_slug=meta.get("agent_slug", ""))
             turn.started = meta.get("started", time.time())
+            # This process did not spawn it, but the process it belongs to did:
+            # its input channel is either on disk or gone for good, which is the
+            # distinction `run_is_ending` needs to make.
+            turn.spawned = True
             TURNS[tid] = turn
             alive = _proc_alive(meta.get("pid"))
             log.info("re-attaching build turn %s (pid=%s alive=%s)", tid, meta.get("pid"), alive)
@@ -1294,7 +1295,7 @@ def reconcile_threads() -> None:
                     continue
                 ownership.set_current_owner(int(user_dir.name))
                 for thread_id in chat_log.list_thread_ids():
-                    run_id = chat_store.active_run(thread_id)
+                    run_id = chat_store.active_run_id(thread_id)
                     if not run_id or run_is_live(run_id):
                         continue
                     log.info("thread %s: run %s did not survive; recording it as lost",

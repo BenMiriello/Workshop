@@ -758,8 +758,12 @@ def _set_boundary(thread_id: str, compacted_through: int, mode: str,
 # reply rendered above all five, reading as if the operator had been ignored.
 
 
-def active_run(thread_id: str) -> str | None:
-    """The id of the run in flight on this thread, or None. One field read."""
+def active_run_id(thread_id: str) -> str | None:
+    """The id of the run in flight on this thread, or None. One field read.
+
+    Distinct from `chat_log.active_run`, which returns the whole `{run_id,
+    started_seq, live}` record the events endpoint hands a client. This is the
+    one field every server-side caller actually wants."""
     meta = chat_log.read_meta(thread_id)
     return (meta or {}).get("active_run_id") or None
 

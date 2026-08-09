@@ -185,7 +185,7 @@ class TestPersistBeforeDeliver:
 
         out = asyncio.run(rc._send(tid, "hold on"))
         assert out == {"turn_id": "run-1", "injected": False, "at_segment": 0}
-        assert chat_store.active_run(tid) == "run-1"
+        assert chat_store.active_run_id(tid) == "run-1"
         bodies = [m["content"] for m in chat_store.get_thread(tid)["messages"]]
         assert bodies.count("hold on") == 1
 
@@ -257,7 +257,7 @@ class TestSameTickRivals:
 
         with pytest.raises(RuntimeError):
             asyncio.run(rc._send(tid, "hello"))
-        assert chat_store.active_run(tid) is None
+        assert chat_store.active_run_id(tid) is None
 
 
 class TestStartupReconcile:
@@ -273,7 +273,7 @@ class TestStartupReconcile:
 
         build_streaming.reconcile_threads()
 
-        assert chat_store.active_run(tid) is None
+        assert chat_store.active_run_id(tid) is None
         events = chat_log.read_events(tid)
         assert [e["state"] for e in events if e["kind"] == "run"] == ["started", "lost"]
         last = chat_store.get_thread(tid)["messages"][-1]
@@ -286,7 +286,7 @@ class TestStartupReconcile:
         chat_store.begin_run(tid, "run-live")
         _live("run-live", tid)
         build_streaming.reconcile_threads()
-        assert chat_store.active_run(tid) == "run-live"
+        assert chat_store.active_run_id(tid) == "run-live"
         assert not [m for m in chat_store.get_thread(tid)["messages"]
                     if m["content"] == chat_store.LOST_RUN_TEXT]
 
@@ -370,7 +370,7 @@ class TestConcurrentSendAndCompact:
         asyncio.run(main())
         bodies = [m["content"] for m in chat_store.get_thread(tid)["messages"]]
         assert bodies.count("the reply") == 1
-        assert chat_store.active_run(tid) is None
+        assert chat_store.active_run_id(tid) is None
 
 
 class TestArrivalNoticeFollowsTheMark:
