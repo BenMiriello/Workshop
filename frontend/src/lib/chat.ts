@@ -150,6 +150,72 @@ export type CardState = {
 
 export type Thread = ThreadSummary & { messages: ChatMsg[] };
 
+// ---- The event log (the wire shapes) ---------------------------------------
+// A thread IS an append-only, sequence-numbered event log; everything else about
+// it is a view. These are those events exactly as the server writes them. The
+// client's model of a thread is built from nothing else — see
+// components/chat/threadStore.
+
+export type EventKind = "message" | "run" | "boundary" | "title";
+
+export type LogEvent = {
+  // 1-based, assigned by the server, monotonic per thread, never reused. A
+  // cursor, not an index: it survives anything the log does later.
+  seq: number;
+  id: string;
+  ts: string;
+  kind: EventKind;
+  // kind === "message"
+  role?: "user" | "assistant";
+  content?: string;
+  client_id?: string;
+  meta?: ChatMsg["meta"];
+  // kind === "run" — a turn's lifecycle marker. The turn itself is not in the
+  // log until it finishes.
+  run_id?: string;
+  state?: "started" | "finished" | "lost";
+  // kind === "boundary" — a context cut made by /compact or /clear.
+  mode?: "compact" | "clear";
+  summary?: string;
+  // kind === "title"
+  title?: string;
+};
+
+// The run in flight. `live` is the server's throttled snapshot of what it has
+// produced so far — the fallback for a run this browser is not streaming.
+export type ActiveRunPayload = {
+  run_id: string;
+  started_seq?: number | null;
+  live?: {
+    run_id?: string;
+    content?: string;
+    ts?: string;
+    meta?: { segments?: ChatSegment[]; model?: string; agent?: string; turn_id?: string };
+  } | null;
+} | null;
+
+export type ThreadEventsPage = {
+  events: LogEvent[];
+  last_seq: number;
+  active_run: ActiveRunPayload;
+};
+
+// This browser's id for one send, stamped before the request leaves and reused
+// verbatim on a retry.
+//
+// It is the ONLY thing an optimistic bubble is reconciled against. The client
+// used to match `messages[messages.length - 1].content === text`, which popped
+// the wrong bubble the moment the operator said the same thing twice and could
+// not tell an optimistic bubble from a committed one at all. The log dedupes on
+// this id, so re-sending after a dropped response cannot show the message twice.
+export function newClientId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  // randomUUID needs a secure context; this app has one, but a non-unique id
+  // would silently mean "the same message" to the server, so never risk it.
+  return `cid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 async function j<T>(r: Response): Promise<T> {
   if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
   return r.json() as Promise<T>;
@@ -234,7 +300,21 @@ export const chatApi = {
       body: JSON.stringify({ default_mode: defaultMode }),
     }).then(j<{ default_mode: "direct" | "orchestrated" }>),
 
+  // The thread's SETTINGS: title, model, mode, card states, scope. Called once
+  // when a chat opens and after a write that changes one of them.
+  //
+  // It also carries `messages`, and nothing in the client reads them any more.
+  // The transcript comes from `threadEvents` and from nowhere else — a
+  // transcript assembled by merging endpoints with local state is the
+  // anti-pattern behind every reorder and eaten-message bug this chat has had.
   getThread: (id: string) => fetch(`/api/chat/threads/${id}`).then(j<Thread>),
+
+  // THE SYNC ENDPOINT. The thread's event log from a cursor, plus the run in
+  // flight. Called on mount, on focus, on reconnect, and after any write; the
+  // client merges it with nothing except the live SSE for the active run.
+  threadEvents: (id: string, after = 0) =>
+    fetch(`/api/chat/threads/${encodeURIComponent(id)}/events?after=${after}`)
+      .then(j<ThreadEventsPage>),
 
   // Re-key a thread onto a new context/provider (used by a ui-card's
   // Move-chat-into-project action). The thread id + history are unchanged; only
@@ -305,28 +385,26 @@ export const chatApi = {
       body: JSON.stringify({ key, ...state }),
     }).then(j<{ card_states: Record<string, CardState> }>),
 
-  // Hand a message to a turn that is ALREADY running. It lands at the next
-  // boundary between the agent's actions rather than waiting out the whole
-  // turn. `delivered: false` is not an error — the turn ended in the meantime
-  // and the caller should queue the message as the next turn instead.
-  injectIntoTurn: (turnId: string, content: string) =>
-    fetch(`/api/chat/turns/${turnId}/inject`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    }).then(j<{ delivered: boolean; reason: string }>),
-
-  // Same, addressed by CHAT rather than by turn. The client knows which
-  // conversation it is in; the server resolves which turn is running on it.
-  // Routing by turn id meant injection only worked in the component mount that
-  // started the turn — a second tab, another device, or a re-attached turn had
-  // no id to send and silently fell back to queueing.
-  injectIntoThread: (threadId: string, content: string) =>
+  // Hand a message to the run already going on this chat. Addressed by CHAT,
+  // not by run id: the client knows which conversation it is in, and the server
+  // resolves which run is live on it. Routing by run id meant injection only
+  // worked in the component mount that started the run — a second tab, another
+  // device, or a re-attached run had no id to send and silently fell back to
+  // queueing, which is the whole thing this was supposed to end.
+  //
+  // The message is PERSISTED BEFORE DELIVERY is attempted, so `delivered: true`
+  // means the chat has it whether or not the running turn took it. Only
+  // `delivered: false` (no run was going) means the endpoint did not take the
+  // message and the caller must send it as a turn.
+  injectIntoThread: (threadId: string, content: string, clientId?: string) =>
     fetch(`/api/chat/threads/${threadId}/inject`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
-    }).then(j<{ delivered: boolean; turn_id: string | null; reason: string }>),
+      body: JSON.stringify(clientId ? { content, client_id: clientId } : { content }),
+    }).then(j<{
+      delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
+      turn_id: string | null; at_segment?: number | null; reason: string;
+    }>),
 
   sendMessage: (id: string, content: string, model?: string) =>
     fetch(`/api/chat/threads/${id}/messages`, {

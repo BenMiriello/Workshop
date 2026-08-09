@@ -3,32 +3,31 @@ import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn } from "./Transcript";
 import WorkingIndicator from "./WorkingIndicator";
 
-// The turn currently streaming: ONE assistant bubble, with the working indicator
-// at its tail.
+// ONE CONTIGUOUS STRETCH of the turn currently running: an assistant bubble,
+// with the working indicator on the stretch that is still being written.
 //
-// IT IS NOT CUT, and this is the correction to several days of getting it wrong.
-// This component used to split the reply wherever a message arrived mid-turn and
-// render that message inside the gap, so the operator's words appeared partway
-// up the reply — and, when nothing had streamed yet, ABOVE the working indicator
-// entirely. That last case is what made the error obvious: the work in flight
-// was started WITHOUT the new message, so nothing about it can precede that work.
+// A turn is not one thing that happened at one moment; it is work over an
+// interval. A message sent during that interval divides it, so a running turn
+// can be several of these, with the operator's messages between them — the work
+// above a message was emitted before it, the work below was produced by a turn
+// that had already been handed it. Where the cuts fall is decided by
+// transcriptBlocks, not here; this renders one piece.
 //
-// The rule is the ordinary one every chat uses, and it is the one that was asked
-// for: THE LOG IS APPEND-ONLY, IN SEND ORDER. A message typed while a reply is
-// being written goes BELOW that reply and below its working indicator, because
-// that is when it was sent and the reply had not seen it. See ChatLog, which
-// renders exactly that order.
+// `working` marks the last piece. It is driven by whether a RUN is in flight
+// (server state), not by whether this tab has a socket open: a turn whose stream
+// dropped past its reconnect budget, or one the operator stopped watching, is
+// still running and still says so.
 export default function LiveTurn({
-  segments, streaming, workingLabel, elapsed, model, cardCtx,
+  segments, working, workingLabel, elapsed, model, cardCtx,
 }: {
   segments: ChatSegment[];
-  streaming: boolean;
+  working: boolean;
   workingLabel: string;
   elapsed: number;
   model: string;
   cardCtx: UiCardCtx;
 }) {
-  if (!segments.length && !streaming) return null;
+  if (!segments.length && !working) return null;
   return (
     <div className="chat-msg assistant">
       <div className="chat-bubble">
@@ -41,7 +40,7 @@ export default function LiveTurn({
             streaming
           />
         )}
-        {streaming && <WorkingIndicator label={workingLabel} elapsed={elapsed} />}
+        {working && <WorkingIndicator label={workingLabel} elapsed={elapsed} />}
       </div>
     </div>
   );

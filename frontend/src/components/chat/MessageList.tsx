@@ -5,11 +5,18 @@ import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import CopyMessage from "./CopyMessage";
+import LiveTurn from "./LiveTurn";
 import StatusNote from "./StatusNote";
 import { modelDisplay } from "./models";
-import { contextCutMark } from "./contextCut";
+import type { TranscriptBlock } from "./transcriptBlocks";
 
-// The persisted transcript.
+// The transcript body: one rendered block per entry the selector produced.
+//
+// It renders a LIST OF BLOCKS, not a list of messages, and the difference is the
+// point. An assistant reply that a mid-turn message interrupted is several
+// blocks — the run of work before the message, the message, the run of work
+// after it — because that is what actually happened. The order and the cuts are
+// decided in transcriptBlocks.ts; nothing is arranged here.
 //
 // These annotations exist because their absence was itself a bug:
 //
@@ -28,11 +35,10 @@ import { contextCutMark } from "./contextCut";
 //    is marked, and it offers the retry.
 //  - THE STATUS LINE. Progress on work a message set off belongs under that
 //    message, not in a bar above the log — see StatusNote.
-//  - THE INTERRUPTED TAG. A message left mid-stream by a backend restart is
-//    never going to finish — the self-heal in GET /threads/{id} marks it
-//    `meta.stopped`. Without a tag it rendered as a normal reply that just
-//    happens to be blank (or truncated wherever the last flush landed), which
-//    reads as either "answered with nothing" or "broken", not "interrupted".
+//  - THE INTERRUPTED TAG. A run the backend could not account for is closed out
+//    with `meta.stopped`. Without a tag it rendered as a normal reply that just
+//    happens to be blank, which reads as either "answered with nothing" or
+//    "broken", not "interrupted".
 
 // One divider, two meanings. `cleared` is the ONLY thing that decides which:
 // a fold's summary is real content the operator can still draw on; a clear's
@@ -77,88 +83,141 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
-export default function MessageList({
-  messages, compactedThrough, clearedContext, selectedModel, cardCtx, expandLatest, onRetryUnsent,
+function MessageBubble({
+  msg, isLatest, selectedModel, cardCtx,
 }: {
-  messages: ChatMsg[];
-  compactedThrough: number;
-  clearedContext: boolean;
+  msg: ChatMsg;
+  isLatest: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
-  // Recency nuance: the most recent assistant answer is expanded and older ones
-  // auto-shorten — but only when nothing is streaming, because a live turn is
-  // itself the most recent thing.
-  expandLatest: boolean;
-  onRetryUnsent: (index: number, text: string) => void;
 }) {
   const threadCfg = modelDisplay(selectedModel);
-  let lastAssistantIdx = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") { lastAssistantIdx = i; break; }
+  return (
+    <div className={`chat-msg ${msg.role}`}>
+      {/* --copyable reserves the inline room the copy button occupies, so the
+          button never lands on top of the last line of text. It is only set
+          when there IS something to copy. */}
+      <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${(msg.meta?.timeout || msg.meta?.stopped) ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
+        <div className="chat-bubble__body">
+          {msg.role === "assistant" ? (
+            <>
+              {msg.meta?.agent && (
+                <div className="chat-byline">
+                  <Bot size={13} strokeWidth={1.8} aria-hidden />
+                  <span>{msg.meta.agent}</span>
+                </div>
+              )}
+              {msg.meta?.timeout && (
+                <div className="chat-timeout-tag">
+                  <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
+                </div>
+              )}
+              {msg.meta?.stopped && (
+                <div className="chat-timeout-tag">
+                  <Unplug size={13} strokeWidth={1.8} aria-hidden /> Turn interrupted. Send a message to continue.
+                </div>
+              )}
+              {renderAssistantBody(msg, isLatest, selectedModel, cardCtx)}
+            </>
+          ) : (
+            <ElidedContent source={msg.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
+          )}
+        </div>
+        {msg.content.trim() && <CopyMessage value={msg.content} />}
+      </div>
+      {msg.meta?.notes?.map((n, j) => (
+        <div key={j} className="chat-note">{n}</div>
+      ))}
+      {msg.meta?.status && <StatusNote status={msg.meta.status} />}
+    </div>
+  );
+}
+
+// A message this browser has sent that the log does not carry yet.
+//
+// `sending`/`sent` render at the same reduced opacity the queue uses for "has
+// not landed in the thread yet" — no badge, no delivery-state text. That was
+// tried ("Handed to the turn / Read by the turn") and a pulsing line under a
+// completely normal message is what made it LOOK stuck.
+//
+// `failed` is different and has to be: the turn never started, so the server has
+// no copy of this message. A bubble that quietly is not real is exactly what
+// "my messages keep disappearing" felt like from outside.
+function PendingBubble({
+  text, status, onRetry,
+}: {
+  text: string;
+  status: "sending" | "sent" | "failed";
+  onRetry: () => void;
+}) {
+  const failed = status === "failed";
+  return (
+    <div className="chat-msg user">
+      <div className={`chat-bubble ${failed ? "" : "chat-bubble--inflight"}${text.trim() ? " chat-bubble--copyable" : ""}`}>
+        <div className="chat-bubble__body">
+          {text}
+          {failed && (
+            <div className="chat-unsent">
+              <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
+              <span>Not sent. This never reached the server.</span>
+              <Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>
+            </div>
+          )}
+        </div>
+        {text.trim() && <CopyMessage value={text} />}
+      </div>
+    </div>
+  );
+}
+
+export default function MessageList({
+  blocks, selectedModel, cardCtx, workingLabel, elapsed, onRetry,
+}: {
+  blocks: TranscriptBlock[];
+  selectedModel: string;
+  cardCtx: UiCardCtx;
+  workingLabel: string;
+  elapsed: number;
+  onRetry: (clientId: string) => void;
+}) {
+  // Recency nuance: the most recent assistant answer is expanded and older ones
+  // auto-shorten — but only when nothing is running, because a live turn is
+  // itself the most recent thing.
+  let latestAssistantKey: string | null = null;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.kind === "live") break;
+    if (b.kind === "message" && b.msg.role === "assistant") { latestAssistantKey = b.key; break; }
   }
-  const cutMark = contextCutMark(compactedThrough, messages.length);
 
   return (
     <>
-      {messages.map((m, i) => (
-        <Fragment key={i}>
-          {cutMark && "atIndex" in cutMark && i === cutMark.atIndex && (
-            <ContextCut count={compactedThrough} cleared={clearedContext} />
+      {blocks.map((b) => (
+        <Fragment key={b.key}>
+          {b.kind === "cut" && <ContextCut count={b.count} cleared={b.cleared} />}
+          {b.kind === "message" && (
+            <MessageBubble
+              msg={b.msg}
+              isLatest={b.key === latestAssistantKey}
+              selectedModel={selectedModel}
+              cardCtx={cardCtx}
+            />
           )}
-          <div className={`chat-msg ${m.role}`}>
-            {/* --copyable reserves the inline room the copy button occupies, so
-                the button never lands on top of the last line of text. It is only
-                set when there IS something to copy. */}
-            <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${(m.meta?.timeout || m.meta?.stopped) ? " chat-bubble--timeout" : ""}${m.content.trim() ? " chat-bubble--copyable" : ""}`}>
-              <div className="chat-bubble__body">
-              {m.role === "assistant" ? (
-                <>
-                  {m.meta?.agent && (
-                    <div className="chat-byline">
-                      <Bot size={13} strokeWidth={1.8} aria-hidden />
-                      <span>{m.meta.agent}</span>
-                    </div>
-                  )}
-                  {m.meta?.timeout && (
-                    <div className="chat-timeout-tag">
-                      <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
-                    </div>
-                  )}
-                  {m.meta?.stopped && (
-                    <div className="chat-timeout-tag">
-                      <Unplug size={13} strokeWidth={1.8} aria-hidden /> Turn interrupted. Send a message to continue.
-                    </div>
-                  )}
-                  {renderAssistantBody(m, expandLatest && i === lastAssistantIdx, selectedModel, cardCtx)}
-                </>
-              ) : (
-                <>
-                  <ElidedContent source={m.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
-                  {m.meta?.unsent && (
-                    <div className="chat-unsent">
-                      <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
-                      <span>Not sent. This never reached the server.</span>
-                      <Button size="sm" variant="ghost" onClick={() => onRetryUnsent(i, m.content)}>Retry</Button>
-                    </div>
-                  )}
-                </>
-              )}
-              </div>
-              {m.content.trim() && <CopyMessage value={m.content} />}
-            </div>
-            {m.meta?.notes?.map((n, j) => (
-              <div key={j} className="chat-note">{n}</div>
-            ))}
-            {m.meta?.status && <StatusNote status={m.meta.status} />}
-          </div>
+          {b.kind === "live" && (
+            <LiveTurn
+              segments={b.segments}
+              working={b.working}
+              workingLabel={workingLabel}
+              elapsed={elapsed}
+              model={selectedModel}
+              cardCtx={cardCtx}
+            />
+          )}
+          {b.kind === "pending" && (
+            <PendingBubble text={b.text} status={b.status} onRetry={() => onRetry(b.clientId)} />
+          )}
         </Fragment>
       ))}
-      {/* The map above only draws the divider AT a message index. /clear always
-          cuts at the tail — nothing there to attach to — so contextCutMark
-          reports that case as "trailing" instead, and it renders here. */}
-      {cutMark && "trailing" in cutMark && (
-        <ContextCut count={compactedThrough} cleared={clearedContext} />
-      )}
     </>
   );
 }

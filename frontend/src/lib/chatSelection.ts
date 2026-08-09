@@ -12,6 +12,8 @@
 // mount. NEW_CHAT is a real, persistable selection — "I asked for a blank chat"
 // has to survive a reload just as much as "I am in thread X" does.
 
+import { newClientId } from "./chat";
+
 const SEL_PREFIX = "ws-chat-sel:";
 const PROVIDER_PREFIX = "ws-chat-provider:";
 
@@ -122,7 +124,12 @@ const QUEUE_PREFIX = "ws-chat-queue:";
 // right reply is three answers or one. The operator's report: "this and the last
 // two were sent in sequence before you ever read any of them and you won't even
 // know that til now."
-export type QueuedMessage = { text: string; sentAt: string };
+//
+// It also carries the browser's id for the send. A queued message is one the
+// operator has already hit enter on, so when it finally goes out it is that
+// same send arriving late — and the bubble on screen has to be matched to the
+// committed event by identity, not by comparing its text.
+export type QueuedMessage = { text: string; sentAt: string; clientId: string };
 
 export function readQueue(threadKey: string): QueuedMessage[] {
   try {
@@ -135,9 +142,16 @@ export function readQueue(threadKey: string): QueuedMessage[] {
     // dropping it would be message loss on upgrade; it just has no send time,
     // and "" reads as unknown rather than as some fabricated instant.
     return parsed.flatMap((x): QueuedMessage[] => {
-      if (typeof x === "string") return [{ text: x, sentAt: "" }];
+      if (typeof x === "string") return [{ text: x, sentAt: "", clientId: newClientId() }];
       if (x && typeof x.text === "string") {
-        return [{ text: x.text, sentAt: typeof x.sentAt === "string" ? x.sentAt : "" }];
+        return [{
+          text: x.text,
+          sentAt: typeof x.sentAt === "string" ? x.sentAt : "",
+          // A queue written by an older build has no id. Minting one here is
+          // right: it has not been sent, so no committed event can be carrying
+          // an id it would need to match.
+          clientId: typeof x.clientId === "string" && x.clientId ? x.clientId : newClientId(),
+        }];
       }
       return [];
     });

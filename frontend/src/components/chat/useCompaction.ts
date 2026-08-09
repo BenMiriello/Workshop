@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
-import { chatApi, type ChatMsg, type MsgStatus } from "../../lib/chat";
+import { chatApi, newClientId, type MsgStatus } from "../../lib/chat";
+import type { ThreadAction } from "./threadStore";
 import type { MessageQueue } from "./useMessageQueue";
 
 // /compact — reclaim context now.
@@ -61,6 +62,15 @@ import type { MessageQueue } from "./useMessageQueue";
 // (a) is gone, (b) is now insertAt with the position captured before the await,
 // and (c) is `compacting` — lifted into the chat so the composer and the queue
 // both hold off until the request has taken its turn.
+//
+// THE REQUEST IS IDENTIFIED BY AN ID, not by its text and timestamp. This used
+// to find its own bubble with `m.ts === requestTs && m.content === "/compact"`
+// and its own queue entry by the string "/compact" — so two compactions in one
+// session, or a "/compact" the operator typed themselves, were the same thing to
+// every retract path here. The request is now one `client_id` from the moment it
+// is made: the pending bubble carries it, the queue entry carries it, the turn
+// is sent with it, and the committed event comes back carrying it, which is what
+// makes the optimistic copy disappear exactly once.
 
 // There is no "compacting now" status any more. It existed to cover the ~30s the
 // server fold used to take, and covering a wait is its only job — now that the
@@ -93,45 +103,40 @@ const BUSY_QUEUED: MsgStatus = {
 //   NO REQUEST BUBBLE. A compact bubble earns its place because the fold it
 //   describes is a real event with a real duration. A /clear that rendered a
 //   "/clear" bubble would be announcing itself in the log AND in the divider
-//   MessageList already draws from `compactedThrough` — exactly the kind of
+//   MessageList already draws from the boundary event — exactly the kind of
 //   double announcement the rest of this file exists to avoid. The divider is
 //   the report, and unlike a bubble it survives reload.
 export type Compaction = {
-  compactedThrough: number;
-  setCompactedThrough: (n: number) => void;
   // Bumped after a fold so the context meter refetches: folding does not change
-  // messages.length, which is what otherwise drives that read.
+  // the message count, which is what otherwise drives that read.
   ctxNonce: number;
   compact: () => Promise<void>;
   // Set only while the request is sitting in the queue rather than in the log.
+  // Keyed by the request's client id, not its text.
   queuedStatus: { for: string; status: MsgStatus } | null;
   clear: () => Promise<void>;
-  // Whether the CURRENT boundary at `compactedThrough` was made by /clear (no
-  // summary survives it) rather than a fold (one does). Server truth, read
-  // from `context_cut` on hydrate/resync, so it survives reload same as the
-  // count itself. The divider is the only reader.
-  clearedContext: boolean;
-  setClearedContext: (v: boolean) => void;
 };
 
 export function useCompaction({
-  activeIdRef, logBusyRef, queue,
-  setCompacting, setMessages, setErr, sendTurn,
+  activeIdRef, runActiveRef, queue, dispatch,
+  setCompacting, setErr, sendTurn, sync,
 }: {
   activeIdRef: React.MutableRefObject<string | null>;
-  logBusyRef: React.MutableRefObject<boolean>;
+  // Is a run in flight on this thread? Server state, read from the store.
+  runActiveRef: React.MutableRefObject<boolean>;
   queue: MessageQueue;
+  dispatch: React.Dispatch<ThreadAction>;
   // Owned by the chat, not by this hook: the composer and the message queue both
   // have to hold while a fold is in flight, and both are declared before it.
   setCompacting: (v: boolean) => void;
-  setMessages: React.Dispatch<React.SetStateAction<ChatMsg[]>>;
   setErr: (m: string | null) => void;
-  sendTurn: (text: string) => void;
+  sendTurn: (text: string, clientId: string) => void;
+  // Pull the log after a boundary lands, so the divider draws from the event
+  // rather than from an optimistic count.
+  sync: () => Promise<void>;
 }): Compaction {
-  const [compactedThrough, setCompactedThrough] = useState(0);
   const [ctxNonce, setCtxNonce] = useState(0);
   const [queuedStatus, setQueuedStatus] = useState<{ for: string; status: MsgStatus } | null>(null);
-  const [clearedContext, setClearedContext] = useState(false);
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
@@ -139,12 +144,11 @@ export function useCompaction({
     setErr(null);
     setCompacting(true);
 
-    // The request goes into the log NOW, at the moment it was made — not when
-    // the server answers. `ts` identifies it so the no-op paths can take this
-    // exact bubble back out again.
-    const requestTs = new Date().toISOString();
-    const isRequest = (m: ChatMsg) => m.ts === requestTs && m.content === "/compact";
-    const dropRequestBubble = () => setMessages((m) => m.filter((x) => !isRequest(x)));
+    // The request shows in the log NOW, at the moment it was made — not when the
+    // server answers. Its client id identifies it, so every no-op path below can
+    // take this exact request back out again and no other.
+    const requestId = newClientId();
+    const dropRequestBubble = () => dispatch({ type: "sendRetracted", clientId: requestId });
 
     // Where in the queue this request belongs, captured NOW rather than when the
     // round trip returns. Anything typed in between goes behind this index, so
@@ -154,46 +158,49 @@ export function useCompaction({
     // Queue the live-session half UP FRONT when a turn is already running, so the
     // request holds the place the operator gave it instead of landing below
     // whatever the running turn streamed in the meantime.
-    let preQueued = logBusyRef.current;
+    let preQueued = runActiveRef.current;
     if (preQueued) {
-      queue.push("/compact");
-      setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
+      queue.push("/compact", requestId);
+      setQueuedStatus({ for: requestId, status: BUSY_QUEUED });
     } else {
-      setMessages((m) => [...m, { role: "user", content: "/compact", ts: requestTs }]);
+      dispatch({ type: "sendStarted", clientId: requestId, text: "/compact", ts: new Date().toISOString() });
     }
 
     try {
       const r = await chatApi.compactThread(id);
-      // Optimistic: the fold itself is running detached now, so the divider is
-      // drawn from what WILL fold. It is a label on old messages, not a state
-      // anything depends on, and every path that loads a thread (open, switch,
-      // focus resync) overwrites it with the server's number — so a fold that
-      // fails corrects itself rather than needing to be waited for.
-      setCompactedThrough(r.compacted_through + r.will_fold);
+      // The divider is drawn from the `boundary` event the fold appended, so it
+      // is read rather than guessed, and it survives a reload for free. The fold
+      // itself runs detached; this sync picks up the boundary that is already
+      // written, and the poll picks up anything that lands later.
+      void sync();
       setCtxNonce((n) => n + 1);
 
       if (r.live_session) {
         if (!preQueued) {
-          if (logBusyRef.current) {
+          if (runActiveRef.current) {
             // A turn started while the fold was in flight. Hand it to the queue,
             // which renders its own pending bubble — so drop ours or the request
             // shows twice.
             dropRequestBubble();
             preQueued = true;
-            queue.insertAt(queuePos, "/compact");   // invariant 5, not push
-            setQueuedStatus({ for: "/compact", status: BUSY_QUEUED });
+            queue.insertAt(queuePos, "/compact", requestId);   // invariant 5, not push
+            setQueuedStatus({ for: requestId, status: BUSY_QUEUED });
           } else {
             // The live half runs as an ordinary turn: its reply streams in below
-            // this bubble and the working indicator reads "Compacting".
-            sendTurn("/compact");
+            // this bubble and the working indicator reads "Compacting". Sent
+            // under the request's own id, so the pending bubble is reconciled
+            // against the committed event instead of showing twice.
+            sendTurn("/compact", requestId);
           }
         }
       } else {
         // No live session after all — take the speculative entry back out rather
         // than letting a literal "/compact" reach a model as text.
         if (preQueued) {
-          queue.drop("/compact");
+          queue.drop(requestId);
           setQueuedStatus(null);
+        } else {
+          dropRequestBubble();
         }
         if (r.will_fold === 0) {
           // Nothing happened, so nothing should be left claiming it did.
@@ -204,7 +211,7 @@ export function useCompaction({
       }
     } catch (e) {
       if (preQueued) {
-        queue.drop("/compact");
+        queue.drop(requestId);
         setQueuedStatus(null);
       }
       dropRequestBubble();
@@ -215,7 +222,7 @@ export function useCompaction({
       // /compact that is still on its way out.
       setCompacting(false);
     }
-  }, [activeIdRef, logBusyRef, queue, setCompacting, setMessages, setErr, sendTurn]);
+  }, [activeIdRef, runActiveRef, queue, dispatch, setCompacting, setErr, sendTurn, sync]);
 
   const clear = useCallback(async () => {
     const id = activeIdRef.current;
@@ -232,20 +239,17 @@ export function useCompaction({
         setErr("Nothing to clear. This chat has no messages yet.");
         return;
       }
-      // No setMessages: the transcript is the entire point of /clear. No
-      // request bubble either — see the file-level /clear comment above.
-      setCompactedThrough(r.compacted_through);
-      setClearedContext(true);
+      // Nothing is written to the transcript: keeping it is the entire point of
+      // /clear. No request bubble either — see the file-level /clear comment
+      // above. The divider comes from the `boundary` event the clear appended.
+      void sync();
       setCtxNonce((n) => n + 1);
     } catch (e) {
       setErr(`Couldn't clear: ${String(e)}`);
     } finally {
       setCompacting(false);
     }
-  }, [activeIdRef, setCompacting, setErr]);
+  }, [activeIdRef, setCompacting, setErr, sync]);
 
-  return {
-    compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
-    clear, clearedContext, setClearedContext,
-  };
+  return { ctxNonce, compact, queuedStatus, clear };
 }

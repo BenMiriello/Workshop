@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { chatApi, type ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 
 // Holding a finished spoken exchange on screen until its persisted messages land.
@@ -25,6 +24,11 @@ import type { VoiceSnapshot } from "../../lib/voiceSession";
 //    own messages land.
 //  - Voice off, a thread switch, or unmount cancels the poll, so a stale settle
 //    cannot overwrite the log of another thread or flash back on re-entry.
+//  - The poll SYNCS THE LOG and asks the store how many messages it holds. It
+//    used to fetch the thread and hand the transcript back for the chat to set,
+//    which made this a second writer of the message list. It is now a reader:
+//    the one endpoint brings the exchange in, and this only decides when to stop
+//    showing the copy it was holding.
 
 const MAX_TRIES = 8;
 const POLL_MS = 250;
@@ -33,28 +37,29 @@ export function useVoiceSettle({
   voiceOn,
   activeId,
   vsnap,
-  messagesRef,
-  setMessages,
+  committedCount,
+  sync,
   refreshThreads,
 }: {
   voiceOn: boolean;
   activeId: string | null;
   vsnap: VoiceSnapshot;
-  messagesRef: React.MutableRefObject<ChatMsg[]>;
-  setMessages: (msgs: ChatMsg[]) => void;
+  /** How many messages the store holds right now. */
+  committedCount: () => number;
+  /** Pull the log up to date. */
+  sync: () => Promise<void>;
   refreshThreads: () => void;
 }): { settling: { user: string; assistant: string } | null } {
   const [settling, setSettling] = useState<{ user: string; assistant: string } | null>(null);
   const pollRef = useRef<{ cancelled: boolean } | null>(null);
 
-  const startSettle = useCallback((id: string, user: string, assistant: string, baseLen: number) => {
+  const startSettle = useCallback((user: string, assistant: string, baseLen: number) => {
     const handle = { cancelled: false };
     pollRef.current = handle;
     setSettling({ user, assistant });
     let tries = 0;
-    const finishSettle = (msgs: ChatMsg[] | null) => {
+    const finishSettle = () => {
       if (handle.cancelled) return;
-      if (msgs) setMessages(msgs);
       // Only clear if this settle is still the active one (a newer turn may have
       // taken over) — the swap into the log is a single commit either way.
       setSettling((s) => (pollRef.current === handle ? null : s));
@@ -63,21 +68,16 @@ export function useVoiceSettle({
     };
     const poll = () => {
       if (handle.cancelled) return;
-      chatApi.getThread(id)
-        .then((t) => {
-          if (handle.cancelled) return;
-          if (t.messages.length > baseLen) finishSettle(t.messages);   // the new turn persisted
-          else if (++tries >= MAX_TRIES) finishSettle(t.messages);     // give up: swap what we have
-          else window.setTimeout(poll, POLL_MS);
-        })
-        .catch(() => {
-          if (handle.cancelled) return;
-          if (++tries >= MAX_TRIES) finishSettle(null);
-          else window.setTimeout(poll, POLL_MS);
-        });
+      void sync().finally(() => {
+        if (handle.cancelled) return;
+        // The exchange persisted, or we have waited long enough that holding a
+        // copy on screen is worse than showing whatever landed.
+        if (committedCount() > baseLen || ++tries >= MAX_TRIES) finishSettle();
+        else window.setTimeout(poll, POLL_MS);
+      });
     };
     poll();
-  }, [refreshThreads, setMessages]);
+  }, [refreshThreads, sync, committedCount]);
 
   const prevVoiceState = useRef(vsnap.state);
   useLayoutEffect(() => {
@@ -90,7 +90,7 @@ export function useVoiceSettle({
     const user = vsnap.lastUser;
     const assistant = vsnap.sentences.map((s) => s.text).join(" ").trim();
     if (!user && !assistant) { refreshThreads(); return; }
-    startSettle(activeId, user, assistant, messagesRef.current.length);
+    startSettle(user, assistant, committedCount());
     // vsnap.lastUser/sentences are read AT the finish transition; state is the
     // trigger, and listing them would re-run this mid-turn.
     // eslint-disable-next-line react-hooks/exhaustive-deps

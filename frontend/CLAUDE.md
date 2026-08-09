@@ -81,7 +81,22 @@ Run `bash scripts/check_design.sh` (from repo root) — it flags raw hex, emoji,
 
 **Tests: `cd frontend && npm test`** (vitest, `*.test.ts` beside the module). There is no DOM/render harness and none is planned — the target is the PURE RULE behind a behaviour, extracted into its own module so it can be executed. `turnBatching` (when a queue of typed-ahead messages becomes a turn) is the pattern.
 
-**Chat log order is append-only, in send order.** Persisted messages, then the live turn with its working indicator at the tail, then messages sent during that turn, then messages queued for the next one. A message typed while a reply is being written renders BELOW that reply: the work in flight was started without it. Do not invent a scheme that splices a message into the middle of a reply — one existed, took five rounds of corrections, and was deleted. When the ask is "the standard chat behaviour", that is the whole specification.
+### Chat log order: a mid-turn message CLOSES the assistant's block
+
+**An assistant block is a contiguous run of work, bounded by the messages that interrupted it.** A message sent while a reply is being written ends that block; work produced after the message starts a NEW block below it. A long turn the operator interrupted five times renders as six stretches of work with the five messages between them, each sitting where it actually landed.
+
+The cut point is `meta.at_segment` on the message — the index into the reply's segment stream at which the server recorded it arriving, read off the LIVE run rather than its throttled snapshot. The rule is implemented once, in `src/components/chat/transcriptBlocks.ts`, and tested in `transcriptBlocks.test.ts`. Nothing else may arrange the transcript.
+
+**Read this before "fixing" it back.** This file used to say the opposite — "append-only, in send order; a message typed while a reply is being written renders BELOW that reply; do not invent a scheme that splices a message into the middle of a reply". Both of the earlier rules came from real corrections, and neither was right:
+
+1. The first scheme did splice, and put the message **above work that had already begun** — in the worst case above the working indicator, when nothing had streamed yet. Wrong: the work in flight was started without that message, so nothing about it can precede that work. That is what took five rounds of corrections and was deleted.
+2. The replacement put the message **below the whole reply**. That fixed case 1 and broke the common case: the reply that finally answered five messages rendered above all five, which reads exactly like being ignored. The operator reported it in those words on 2026-08-09 and explicitly overrode the old rule: "when i send a new message, SUBSEQUENT system messages (any from once you've been able to see that message) should come AFTER in a new block."
+
+Cutting at `at_segment` is neither. The message goes after what had been emitted and before what had not, which is the only placement that is true. Do not restore "renders below the whole reply", and do not reintroduce a splice that ignores `at_segment`.
+
+Below the blocks, in order: messages queued for the next turn (not sent at all yet), then the voice overlay.
+
+**A run in flight is always visible.** The working indicator is driven by whether the SERVER says a run is active (`active_run`), not by whether this tab holds an SSE socket. A turn whose stream dropped past its reconnect budget, one the operator stopped watching, and one started in another tab are all still running, and all still say so with an elapsed clock anchored to the run's real start. See `turnStatus.ts`.
 
 Note: `scripts/reviewer.sh` runs typecheck + design only; it does not run tests (backend or frontend). Run them yourself.
 

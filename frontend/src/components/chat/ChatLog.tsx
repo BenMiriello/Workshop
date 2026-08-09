@@ -1,29 +1,46 @@
 import type { RefObject } from "react";
-import type { ChatMsg, ChatSegment, MsgStatus } from "../../lib/chat";
+import type { MsgStatus } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 import type { UiCardCtx } from "./uiCardActions";
+import type { TranscriptBlock } from "./transcriptBlocks";
 import MessageList from "./MessageList";
 import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
-import LiveTurn from "./LiveTurn";
 import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 
-// The scrolling transcript, APPEND-ONLY AND IN SEND ORDER:
+// The scrolling transcript. It renders BLOCKS the selector produced, in the
+// order it produced them, and arranges nothing itself.
 //
-//   persisted messages
-//     -> the live turn (its working indicator at the tail)
-//     -> messages sent DURING that turn
-//     -> messages queued for the next turn
-//     -> the spoken turn
+// ---------------------------------------------------------------------------
+// THE ORDER RULE, and why it changed
+// ---------------------------------------------------------------------------
 //
-// That order is the ordinary chat rule and it is not arbitrary. A message typed
-// while a reply is being written goes BELOW that reply and below its working
-// indicator: the work in flight was started without it, so nothing about it can
-// come first. This replaced a scheme that cut the live reply open and rendered
-// the message inside the gap — which put the operator's words above work that
-// had already begun, and was wrong in exactly the way they said it was.
+// A message sent while a reply is being written CLOSES that reply's block. The
+// work already emitted stays above it; work produced afterwards starts a new
+// block below it. So a long turn the operator interrupted five times renders as
+// six stretches of work with the five messages between them, each one sitting
+// where it actually landed.
 //
-// Queued bubbles sit below those again because they have not been sent at all
+// This file used to say the opposite, and the history matters because both of
+// the earlier rules were responses to real corrections:
+//
+//   1. The first scheme cut the reply open and put the message in the gap — but
+//      positioned it ABOVE work that had already begun (and, when nothing had
+//      streamed yet, above the working indicator itself). Wrong: the work in
+//      flight was started without that message, so nothing about it can precede
+//      that work.
+//   2. The fix was "append-only, in send order": the message renders BELOW the
+//      whole reply. That got the first case right and made the common case
+//      wrong — the reply that finally answered five messages rendered above all
+//      five, which reads exactly like being ignored, and is what the operator
+//      reported.
+//
+// Cutting at `meta.at_segment` is neither. It is the index into the reply's
+// segment stream at which the message arrived, recorded by the server off the
+// LIVE run, so the message lands after what had been emitted and before what
+// had not. The rule now lives in transcriptBlocks.ts, where it is tested.
+//
+// Queued bubbles sit below everything because they have not been sent at all
 // yet; the settling voice exchange sits above the live voice overlay so a fast
 // follow-up never hides the turn that just finished.
 //
@@ -32,9 +49,8 @@ import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 
 export default function ChatLog({
   scrollRef, onScroll,
-  loading, error, messages, isBuild, inFlight, overflowed,
-  compactedThrough, clearedContext, selectedModel, cardCtx, onRetryUnsent,
-  streaming, logBusy, pendingSegments, sentDuringTurn, workingLabel, elapsed,
+  loading, error, blocks, isBuild, inFlight, overflowed,
+  selectedModel, cardCtx, onRetry, workingLabel, elapsed,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
 }: {
@@ -42,37 +58,24 @@ export default function ChatLog({
   onScroll: () => void;
   loading: boolean;
   error: string | null;
-  messages: ChatMsg[];
+  blocks: TranscriptBlock[];
   isBuild: boolean;
   inFlight: boolean;
   overflowed: boolean;
-  compactedThrough: number;
-  // Whether the boundary at compactedThrough was made by /clear (no summary)
-  // rather than a fold (one survives). MessageList's divider is the only reader.
-  clearedContext: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
-  onRetryUnsent: (index: number, text: string) => void;
-  streaming: boolean;
-  // A turn owns the tail of the log: streaming, or still settling its reply
-  // into `messages`. Computed once in Chat so this condition cannot drift
-  // apart from the one the send path uses to decide queue-vs-append.
-  logBusy: boolean;
-  pendingSegments: ChatSegment[];
-  // Sent while the live turn was already running. Rendered below it, in the
-  // order sent, as ordinary messages.
-  sentDuringTurn: { text: string }[];
+  onRetry: (clientId: string) => void;
   workingLabel: string;
   elapsed: number;
-  queued: { text: string; sentAt: string }[];
-  // Progress on a queued message, keyed by its text so it stays under the entry
-  // it belongs to as other messages queue up behind it.
+  queued: { text: string; sentAt: string; clientId: string }[];
+  // Progress on a queued message, keyed by the id it will be sent with so it
+  // stays under the entry it belongs to as other messages queue up behind it.
   queuedStatus: { for: string; status: MsgStatus } | null;
   voiceOn: boolean;
   settling: { user: string; assistant: string } | null;
   vsnap: VoiceSnapshot;
 }) {
-  const empty = messages.length === 0;
+  const empty = blocks.length === 0;
   const voiceLive = voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking");
 
   return (
@@ -96,51 +99,16 @@ export default function ChatLog({
       )}
 
       <MessageList
-        messages={messages}
-        compactedThrough={compactedThrough}
-        clearedContext={clearedContext}
+        blocks={blocks}
         selectedModel={selectedModel}
         cardCtx={cardCtx}
-        expandLatest={!streaming && pendingSegments.length === 0}
-        onRetryUnsent={onRetryUnsent}
+        workingLabel={workingLabel}
+        elapsed={elapsed}
+        onRetry={onRetry}
       />
 
-      {logBusy && (
-        <LiveTurn
-          segments={pendingSegments}
-          streaming={streaming}
-          workingLabel={workingLabel}
-          elapsed={elapsed}
-          model={selectedModel}
-          cardCtx={cardCtx}
-        />
-      )}
-
-      {/* Sent during the turn above, so they render below it. No badge, no
-          label, no delivery-state text — that was tried ("Handed to the turn
-          / Read by the turn"), and a pulsing line under a completely normal
-          message was what made it LOOK stuck, which is the opposite of what
-          it was for. What it stays is a plain, static, ordinary-chat cue:
-          --chat-bubble--inflight is the exact opacity `--queued` already
-          uses below for "hasn't landed in the thread yet" — no new state, no
-          text, nothing that can pulse or look broken. It clears itself: this
-          array is only ever non-empty while logBusy is true, so a message
-          sitting here goes full-color the moment the turn actually ends and
-          it folds into the persisted transcript. */}
-      {sentDuringTurn.map((m, i) => (
-        <div key={`d${i}`} className="chat-msg user">
-          {/* A pending message is a message: copyable like everything else,
-              same bubble structure MessageList uses so the copy button reserves
-              its inline room and lands on the last row. */}
-          <div className={`chat-bubble chat-bubble--inflight${m.text.trim() ? " chat-bubble--copyable" : ""}`}>
-            <div className="chat-bubble__body">{m.text}</div>
-            {m.text.trim() && <CopyMessage value={m.text} />}
-          </div>
-        </div>
-      ))}
-
-      {queued.map((q, i) => (
-        <div key={`q${i}`} className="chat-msg user">
+      {queued.map((q) => (
+        <div key={q.clientId} className="chat-msg user">
           <div
             className={`chat-bubble chat-bubble--queued${q.text.trim() ? " chat-bubble--copyable" : ""}`}
             title="Queued, sends when the current turn finishes"
@@ -148,7 +116,7 @@ export default function ChatLog({
             <div className="chat-bubble__body">{q.text}</div>
             {q.text.trim() && <CopyMessage value={q.text} />}
           </div>
-          {queuedStatus?.for === q.text && <StatusNote status={queuedStatus.status} />}
+          {queuedStatus?.for === q.clientId && <StatusNote status={queuedStatus.status} />}
         </div>
       ))}
 

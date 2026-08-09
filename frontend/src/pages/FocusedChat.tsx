@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import Chat from "../components/Chat";
+import { chatApi } from "../lib/chat";
 import { useVisualViewport } from "../lib/useVisualViewport";
 
 // Focused-chat route. Mounts Chat in "full" variant: a centred, viewport-tall
@@ -19,27 +20,31 @@ export default function FocusedChat() {
   // every restore rule inside Chat; see lib/chatSelection.
   const startNew = search.get("new") === "1";
 
-  // P5: legacy agent:<slug> URLs that point at a thread the backend has
-  // since promoted (context_key rewritten to general or project:<slug>)
-  // redirect quietly to the current URL so the composer picks the right
-  // provider. Bookmarks keep resolving; the URL just updates to match the
-  // thread's actual home.
+  // P5: legacy `agent:<slug>` URLs that point at a thread the backend has since
+  // promoted (context_key rewritten to general or project:<slug>) redirect
+  // quietly to the thread's real home, so bookmarks keep resolving and the URL
+  // updates to match. THE REDIRECT ONLY; Chat resolves the scope itself and
+  // opens the right conversation either way.
+  //
+  // ONE FIELD, and that is the whole of this read. It used to be a raw fetch of
+  // the thread DOCUMENT — which arrived carrying the entire transcript, a second
+  // copy of a conversation the component below was about to load for itself.
+  // Two components holding two copies of a thread is the shape of every reorder
+  // bug this chat has had. `getThread` is now the thread's SETTINGS endpoint and
+  // nothing reads its `messages`; the transcript has exactly one reader, the
+  // event log.
   useEffect(() => {
     if (!initialThreadId) return;
     let cancelled = false;
-    (async () => {
-      try {
-        const r = await fetch(`/api/chat/threads/${encodeURIComponent(initialThreadId)}`);
-        if (!r.ok) return;
-        const t = await r.json();
+    chatApi.getThread(initialThreadId)
+      .then((t) => {
         const actual = String(t.context_key || "general");
         if (!cancelled && actual !== contextKey) {
           nav(`/chat/${encodeURIComponent(actual)}?thread=${encodeURIComponent(initialThreadId)}`, { replace: true });
         }
-      } catch {
-        // Silently keep the URL as-is; Chat will show its own load-error UI.
-      }
-    })();
+      })
+      // Silently keep the URL as-is; Chat shows its own load-error UI.
+      .catch(() => {});
     return () => { cancelled = true; };
   }, [contextKey, initialThreadId, nav]);
 

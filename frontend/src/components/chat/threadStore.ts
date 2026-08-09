@@ -1,5 +1,9 @@
-import type { ChatMsg, ChatSegment } from "../../lib/chat";
+import type { ActiveRunPayload, ChatSegment, LogEvent } from "../../lib/chat";
 import { applyStreamEvent, type StreamEvent } from "./segments";
+
+// The wire shapes live with the rest of the API surface (lib/chat); re-exported
+// here because this module is where they are reasoned about.
+export type { ActiveRunPayload, EventKind, LogEvent } from "../../lib/chat";
 
 // ONE store per thread. The client's whole model of a conversation lives here,
 // and nothing else owns any part of it.
@@ -18,44 +22,6 @@ import { applyStreamEvent, type StreamEvent } from "./segments";
 //   pending        sends this browser has made that are not committed yet
 //
 // The transcript is not in here. It is derived — see transcriptBlocks.ts.
-
-export type EventKind = "message" | "run" | "boundary" | "title";
-
-/** One event as the server wrote it. `GET /chat/threads/{id}/events` returns
- *  these verbatim, in seq order. */
-export type LogEvent = {
-  seq: number;
-  id: string;
-  ts: string;
-  kind: EventKind;
-  // kind === "message"
-  role?: "user" | "assistant";
-  content?: string;
-  client_id?: string;
-  meta?: ChatMsg["meta"];
-  // kind === "run"
-  run_id?: string;
-  state?: "started" | "finished" | "lost";
-  // kind === "boundary"
-  mode?: "compact" | "clear";
-  summary?: string;
-  // kind === "title"
-  title?: string;
-};
-
-/** `active_run` as the events endpoint reports it. `live` is the server's
- *  throttled snapshot of the running turn — the fallback for a run this browser
- *  is not streaming (another tab, a reload, a dropped socket). */
-export type ActiveRunPayload = {
-  run_id: string;
-  started_seq?: number | null;
-  live?: {
-    run_id?: string;
-    content?: string;
-    ts?: string;
-    meta?: { segments?: ChatSegment[]; model?: string; agent?: string; turn_id?: string };
-  } | null;
-} | null;
 
 export type ActiveRun = {
   runId: string;

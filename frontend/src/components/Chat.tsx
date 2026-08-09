@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import {
-  WifiOff, ArrowDown,
-} from "lucide-react";
+import { WifiOff, ArrowDown } from "lucide-react";
 import { StateBlock } from "../ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
@@ -21,44 +19,44 @@ import {
   deriveMode, buildSlug, projectSlugFor, taskScopeFor, composerPlaceholder,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
-import type { ChatModeId } from "./chat/chatModes";
-import { MODEL_LABELS } from "./chat/models";
-import { useMessageQueue, type MessageQueue } from "./chat/useMessageQueue";
+import { useMessageQueue } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
 import { useVoiceSettle } from "./chat/useVoiceSettle";
-import { useTurnStream, useTurnLiveness, findLiveTurn } from "./chat/useTurnStream";
-import {
-  chatApi,
-  type ChatMsg,
-  type CardState,
-  type Thread,
-  type ThreadSummary,
-  type Provider,
-  shortHttpError,
-} from "../lib/chat";
+import { useTurnStream } from "./chat/useTurnStream";
+import { useThreadLog } from "./chat/useThreadLog";
+import { useChatScope } from "./chat/useChatScope";
+import { useChatThread } from "./chat/useChatThread";
+import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
+import { canDrainQueue } from "./chat/sendPlan";
+import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
+import { committedMessages } from "./chat/transcriptBlocks";
+import { chatApi, type CardState } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
-import {
-  NEW_CHAT, DEFAULT_SCOPE, resolveScope, readSelection, writeSelection, readProvider, writeProvider, writeQueue,
-  type QueuedMessage,
-} from "../lib/chatSelection";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
 
-// Unified Chat component. Replaces ChatPanel + BuildChatPanel.
+// The unified chat. COMPOSITION over one store and a handful of hooks, each of
+// which owns one seam:
 //
-// mode = "data"  → POST /threads/{id}/messages (synchronous response)
-// mode = "build" → POST /threads/{id}/turns + EventSource /turns/{id}/stream
+//   useThreadLog      the thread's event log, read from ONE endpoint by cursor,
+//                     plus the transcript derived from it
+//   useTurnStream     the live run's SSE socket, folding into that same store
+//   useChatScope      which provider/scope this mount is in, and which model
+//   useChatThread     which conversation is open and its settings
+//   useSendPipeline   what happens to a message the operator hit enter on
+//   useMessageQueue   type-ahead, and its five durability invariants
+//   useCompaction     /compact and /clear, and the order they must keep
+//   useLogScroll      following the conversation, and jump-to-latest
+//   useVoiceMode      voice as a mode of this chat, not a separate screen
 //
 // variant controls chrome:
 //   "dock"  - floating bottom-sheet contents
 //   "panel" - inline, fills its host region (build IDE chat column)
 //   "full"  - full-page, centred, fills the viewport (FocusedChat route)
 //
-// All variants share ONE compact toolbar (conversation picker + new/delete +
-// tasks + model + expand) so nothing stacks into wasted vertical rows, and the
-// composer is an auto-growing textarea (~2.5 lines) that stays editable while a
-// turn is streaming. Assistant turns render as ordered text/tool segments that
-// survive a reload and reconnect to the live stream.
+// All variants share ONE compact toolbar (scope picker + new/delete + tasks +
+// model + expand) so nothing stacks into wasted vertical rows, and the composer
+// is an auto-growing textarea that stays editable while a turn is streaming.
 
 // Re-exported: these describe a chat, and callers have always imported them from
 // here. Their definitions now live with the other contextKey derivations.
@@ -72,160 +70,217 @@ export type ChatProps = {
   onAction?: () => void;
   scoped?: boolean;
   // Hide the toolbar's "open full screen" pop-out. Set when the host already
-  // owns a single expand control for the chat (e.g. AgentBuild's region focus),
-  // so there aren't two maximize buttons doing near-identical things.
+  // owns a single expand control for the chat (e.g. AgentBuild's region focus).
   hideExpand?: boolean;
   // Open a SPECIFIC thread on mount (e.g. resuming a draft project chat from a
   // link) instead of the most-recent one for this scope.
   initialThreadId?: string;
-  // Start BLANK, outranking every restore rule below. Set from `?new=1` (see
+  // Start BLANK, outranking every restore rule. Set from `?new=1` (see
   // lib/chatSelection.newChatHref) because a "New chat" button elsewhere in the
   // app knows the context key but cannot compute the scope the selection is
   // keyed by — so it states the intent and lets this component record it.
   startNew?: boolean;
 };
 
-export default function Chat({ contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand, initialThreadId, startNew }: ChatProps) {
+export default function Chat({
+  contextKey, mode, variant = "panel", placeholder, onAction, scoped, hideExpand,
+  initialThreadId, startNew,
+}: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
-
-  const [providers, setProviders] = useState<Provider[]>([]);
-  const showProviderPicker = variant === "full" || effectiveMode === "data";
-  const [activeProvider, setActiveProvider] = useState<string>(contextKey);
-
-  const [selectedModel, setSelectedModel] = useState<string>("");
-
-  const [threads, setThreads] = useState<ThreadSummary[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
-  // The live turn IS the CLI's own /compact. It runs through the ordinary turn
-  // machinery, so without this the indicator said "Working" — the one label that
-  // tells you nothing about the several seconds you are waiting through.
-  const [turnIsCompact, setTurnIsCompact] = useState(false);
-  // Which in-chat cards this thread has already acted on (server-backed), so a
-  // proposal that was filed and run doesn't come back offering to run again.
-  const [cardStates, setCardStates] = useState<Record<string, CardState>>({});
-  // Live mirror of `messages` so effects (the voice overlay-settle poll) can read
-  // the current length without listing `messages` in their dep arrays.
-  const messagesRef = useRef<ChatMsg[]>(messages);
-  messagesRef.current = messages;
-  // Live mirror of activeId so the scope loader can read the thread we're
-  // currently on WITHOUT listing activeId in its deps (which would re-run it on
-  // every thread switch). It uses this to keep an open chat put instead of
-  // snapping to the newest thread.
-  const activeIdRef = useRef<string | null>(activeId);
-  activeIdRef.current = activeId;
-  // Composer text is a persisted draft (survives reload, syncs across tabs /
-  // devices) keyed by this chat's contextKey - see lib/draftSync.
-  const [input, setInput, clearInput] = useDraft(contextKey);
-  // Composer focus: drives mobile keyboard chrome (drop the bottom padding so
-  // there's no dead row between the buttons and the keyboard) + scroll pinning.
-  const [inputFocused, setInputFocused] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [loadingThreads, setLoadingThreads] = useState(true);
-
-  // Messages the operator sent DURING the running turn and that the turn
-  // accepted. `at` is how many reply segments had streamed when it landed, so
-  // the log can cut the live turn at that point and show the message between
-  // what came before it and what came after. They live here rather than in
-  // `messages` because `messages` is rendered above the live overlay — putting
-  // them there placed a later message above earlier output.
-  // Messages sent while the live turn was already running. They render BELOW
-  // that turn (see ChatLog) because that is when they were sent and the turn had
-  // not seen them — the ordinary append-only chat order. They are kept out of
-  // `messages` only because the server's copy arrives when the turn ends; until
-  // then this is the client's record of them.
-  //
-  const [sentDuringTurn, setSentDuringTurn] = useState<{ text: string }[]>([]);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  // Starting a new chat leaves the current one — cheap to undo (the thread is
-  // still there) but disorienting mid-conversation, so it asks first.
-  const [confirmNew, setConfirmNew] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameBusy, setRenameBusy] = useState(false);
-
-  // The turn stream and the type-ahead queue each need the other: the queue
-  // must know whether a turn is running, and a finished turn must dispatch what
-  // is queued behind it. The stream is declared first (the queue reads its
-  // `streaming` directly) and reaches the queue through a ref filled in below.
   // Set only when this chat files a ticket — see chat/FiledNotice for why that
   // is the only thing allowed above the log.
   const [notice, setNotice] = useState<FiledNotice | null>(null);
 
-  const queueRef = useRef<MessageQueue | null>(null);
+  // The two URL intents — `?new=1` (start blank) and `?thread=<id>` (open this
+  // conversation) — are ONE-SHOT: each is something the operator just clicked,
+  // so it is consumed on use and cannot be re-armed by a re-render. Held here
+  // because both the scope resolver (which READS them) and the thread loader
+  // (which CONSUMES them) need the same two.
+  const startNewRef = useRef(!!startNew);
+  const linkedThreadRef = useRef<string | null>(initialThreadId ?? null);
+  useEffect(() => { linkedThreadRef.current = initialThreadId ?? null; }, [initialThreadId]);
+  useEffect(() => { if (startNew) startNewRef.current = true; }, [startNew]);
 
-  // The live turn: its SSE channel, resilience, and what "still running" means.
-  // See useTurnStream for the rules a dropped connection has to obey.
-  const {
-    streaming, logBusyRef, reconnecting, elapsed,
-    pendingSegments, setPendingSegments,
-    attach: attachStream, anchorStart, stop, closeStream, hasOpenStream,
-    markStarting, markFailed,
-  } = useTurnStream({
-    onMessages: (msgs) => setMessages(msgs),
-    onTurnEnd: (wasFirst) => {
-      void refreshThreads();
-      scheduleAutoNameRefetch(wasFirst);
-      setTaskRefetchKey((k) => k + 1);
-    },
-    onError: setErr,
-    onNotes: () => onAction?.(),
-    activeIdRef,
-    dispatchQueue: () => queueRef.current?.dispatch(),
-    appendSegmentsAsMessage: (segs) => setMessages((m) => [...m, {
-      role: "assistant", content: "", ts: new Date().toISOString(), meta: { segments: segs },
-    }]),
+  // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
+  // the persisted selection instead of blanking a thread that now exists.
+  const stripNewParam = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("new")) return;
+    url.searchParams.delete("new");
+    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
+  }, []);
+
+  const scopeState = useChatScope({
+    contextKey, effectiveMode, scoped, initialThreadId, startNew,
+    startNewRef, linkedThreadRef, onError: setErr,
   });
+  const { scope, selectedModel, setSelectedModel } = scopeState;
 
-  // Does a turn still own the TAIL of the log? The render-time twin of
-  // useTurnStream's logBusyRef, and the same condition ChatLog renders the live
-  // band on — so "there is a turn at the end of the transcript" has exactly one
-  // answer, whoever asks. `streaming` alone is not that answer: it goes false
-  // while the reply is still being read back from the server.
-  const logBusy = streaming || pendingSegments.length > 0;
-
-  // Messages typed while a build turn is streaming are queued (a session can't
-  // run two turns at once) and sent automatically when the turn finishes. They
-  // render as pending user bubbles below the live response. The durability and
-  // self-draining rules live in the hook — see useMessageQueue.
-  const sendBuildRef = useRef<(t: string, parts?: QueuedMessage[]) => void>(() => {});
-  // A /compact fold OR a /clear round trip is in flight — both hold this the
-  // same way, for the same reason. Declared HERE rather than inside
-  // useCompaction because the two things that must hold for it — this queue
-  // and submitText — are both declared before it. While it is set, a typed
-  // message joins the queue instead of becoming a turn, so it cannot overtake
-  // the command that was asked for first. See useCompaction's header.
+  // The queue must know how to send, and the sender must know the queue. One of
+  // the two has to be reached through a ref; the send side is the one that
+  // changes identity, so it is the ref.
+  const sendBatchRef = useRef<(text: string, parts: { text: string; sentAt: string; clientId: string }[]) => void>(() => {});
   const [compacting, setCompacting] = useState(false);
+  // "May the queue send now" is computed near the bottom of this component, from
+  // state that is only available once the store and the send pipeline exist. The
+  // boolean is relayed as state (so a change re-triggers the queue's drain) and
+  // the ref carries the value as of THIS render (so the drain cannot act on a
+  // stale `true`). See useMessageQueue.
+  const [canDrain, setCanDrain] = useState(false);
+  const canDrainRef = useRef(false);
   const queue = useMessageQueue({
-    scope: effectiveMode === "build" ? contextKey : activeProvider,
-    streaming, loadingThreads, held: compacting, logBusyRef,
-    send: (t, parts) => sendBuildRef.current(t, parts),
-    appendUserMessages: (texts) => {
-      const ts = new Date().toISOString();
-      setMessages((m) => [...m, ...texts.map((content) => ({ role: "user" as const, content, ts }))]);
-    },
+    scope,
+    canDrain,
+    canDrainNow: () => canDrainRef.current,
+    send: (t, parts) => sendBatchRef.current(t, parts),
   });
-  // Close the loop the stream reads through. Without this assignment
-  // `dispatchQueue` above resolves to null on every finished turn, and the
-  // queue only drains via its own self-draining effect a beat later — the
-  // primary hand-off is simply dead.
-  queueRef.current = queue;
 
-  // /compact reaches BOTH homes of a chat's context — see useCompaction.
-  const {
-    compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
-    clear, clearedContext, setClearedContext,
-  } = useCompaction({
-    activeIdRef, logBusyRef, queue,
-    setCompacting, setMessages, setErr,
-    sendTurn: (t) => void sendBuildRef.current(t),
+  const thread = useChatThread({
+    scope,
+    providersReady: scopeState.providersReady,
+    variant,
+    queue,
+    startNewRef,
+    linkedThreadRef,
+    initialThreadId,
+    stripNewParam,
+    setSelectedModel,
+    onError: setErr,
+    onLeaveForList: () => navigate("/chats"),
   });
+  const { activeId, activeIdRef } = thread;
+
+  // The conversation itself: one store, fed by one endpoint from a cursor.
+  const log = useThreadLog({ threadId: activeId, onError: setErr });
+  const { state, stateRef, dispatch, transcript, sync, runActive } = log;
+  const runActiveRef = useRef(runActive);
+  runActiveRef.current = runActive;
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
+
+  const stream = useTurnStream({
+    dispatch, stateRef, sync,
+    onTurnEnd: () => {
+      void thread.refreshThreads();
+      thread.scheduleAutoNameRefetch(wasFirstExchange(stateRef.current));
+      setTaskRefetchKey((k) => k + 1);
+      // The finished turn applied a provider action (e.g. an app persona editing
+      // a budget plan); it rides in the committed message's meta.notes.
+      const msgs = committedMessages(stateRef.current);
+      if (msgs[msgs.length - 1]?.meta?.notes?.length) onAction?.();
+    },
+    onError: setErr,
+    onDrainQueue: () => queue.dispatch(),
+  });
+
+  // /compact reaches BOTH homes of a chat's context — see useCompaction.
+  const { ctxNonce, compact, queuedStatus, clear } = useCompaction({
+    activeIdRef, runActiveRef, queue, dispatch,
+    setCompacting, setErr, sync,
+    sendTurn: (t, clientId) => sendBatchRef.current(t, [{ text: t, sentAt: new Date().toISOString(), clientId }]),
+  });
+
+  // Following the conversation, composer sizing, and jump-to-latest are one
+  // behaviour — see useLogScroll for the rules and the bugs each prevents.
+  const [input, setInput, clearInput] = useDraft(contextKey);
+  const [inputFocused, setInputFocused] = useState(false);
+  const {
+    scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest,
+  } = useLogScroll({
+    input,
+    inputFocused,
+    followDeps: [transcript, queue.items],
+    hasContent: transcript.length > 0,
+  });
+
+  const pipeline = useSendPipeline({
+    scope, selectedModel, chatModeRef: thread.chatModeRef, activeIdRef,
+    adoptThread: thread.adoptThread,
+    stateRef, dispatch, sync, queue,
+    compacting, compact, clear, setErr,
+    onSend: () => {
+      // A note describes the LAST thing the operator did. Sending makes it
+      // stale, so it goes with the error it sits beside.
+      setNotice(null);
+      followLatest();
+    },
+  });
+  sendBatchRef.current = pipeline.sendBatch;
+
+  // ONE answer to "may the queue send now", shared by the queue and the send
+  // path so they cannot disagree about whether the chat is busy.
+  const drainable = canDrainQueue({
+    compacting, starting: pipeline.starting, runActive, loadingThread: thread.loadingThreads,
+  });
+  canDrainRef.current = drainable;
+  useEffect(() => { setCanDrain(drainable); }, [drainable]);
+
+  // RE-ATTACH, in one place. If the server says a run is in flight on this
+  // thread and this tab has no socket for it, open one. That covers every way a
+  // run can turn up: started here, started in another tab or on another device,
+  // adopted after a backend restart, resumed after a reload, or taken over by a
+  // fresh run when the old one refused a delivery. Liveness is server state; a
+  // local flag can only ever describe this tab, which is why the old
+  // reattach-on-poll + reattach-on-send + reattach-on-drop paths each had their
+  // own copy of this rule and each got it subtly different.
+  const runId = state.activeRun?.runId ?? null;
+  const { attach, hasOpenStream, isDetached, closeStream } = stream;
+  useEffect(() => {
+    // Keyed on the run's ID, not the run object: that object changes on every
+    // streamed segment, and re-running this hundreds of times a turn to
+    // early-return is not free.
+    if (!runId || !activeId) return;
+    if (hasOpenStream() || isDetached(runId)) return;
+    attach(runId);
+  }, [runId, activeId, attach, hasOpenStream, isDetached]);
+
+  // Leaving a thread closes its socket. The store is reset by useThreadLog.
+  useEffect(() => () => closeStream(), [activeId, closeStream]);
+
+  // ---- Voice mode ----------------------------------------------------------
+  // A mode of THIS chat, not a separate screen — see useVoiceMode.
+  const {
+    voiceOn, toggleVoice, settingsOpen: voiceSettings, setSettingsOpen: setVoiceSettings,
+    orbRef, vsession, vsnap, vprefs, vupdatePrefs,
+  } = useVoiceMode({
+    contextKey,
+    model: selectedModel,
+    activeId,
+    onAdoptThread: (id) => {
+      if (!activeIdRef.current) thread.adoptThreadId(id);
+      void thread.refreshThreads();
+    },
+    onFatal: setErr,
+  });
+
+  // A finished spoken exchange stays on screen until its persisted messages
+  // land — see useVoiceSettle.
+  const { settling } = useVoiceSettle({
+    voiceOn, activeId, vsnap,
+    committedCount: () => committedMessages(stateRef.current).length,
+    sync,
+    refreshThreads: () => { void thread.refreshThreads(); },
+  });
+
+  // ---- Drawers, pickers, mentions ------------------------------------------
+  const [drawer, setDrawer] = useState<ChatDrawer>(null);
+  const inboxOpen = drawer === "inbox";
+  const tasksOpen = drawer === "tasks";
+  const [inboxCount, setInboxCount] = useState(0);
   const [openTaskCount, setOpenTaskCount] = useState(0);
-  // Filing this chat as tickets. The dialog owns the drafting, editing and
-  // filing; this only holds whether it is open and where its result note goes.
   const [ticketsOpen, setTicketsOpen] = useState(false);
+  const [slashSel, setSlashSel] = useState(0);
+  const [mentionSel, setMentionSel] = useState(0);
+  // The slash BUTTON opens the command list as a menu. It is deliberately
+  // separate from "the operator is typing a /command": the button used to work
+  // by writing "/" into the composer, which meant tapping it destroyed whatever
+  // had been typed. A picker must never edit the thing you were writing.
+  const [slashOpen, setSlashOpen] = useState(false);
+  const slug = buildSlug(contextKey);
+  const taskScope = taskScopeFor(contextKey);
 
   // P3: agents this chat may @-mention. Server-resolved (the rule is opt-in +
   // scope reach, which is policy, not display), refreshed when the thread moves.
@@ -241,246 +296,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       .catch(() => { if (!cancelled) setMentionable([]); });
     return () => { cancelled = true; };
   }, [activeId]);
-
-  // One auxiliary drawer at a time — see chat/drawers for why.
-  const [drawer, setDrawer] = useState<ChatDrawer>(null);
-  const inboxOpen = drawer === "inbox";
-  const tasksOpen = drawer === "tasks";
-  const [inboxCount, setInboxCount] = useState(0);
-  const [slashSel, setSlashSel] = useState(0);
-  const [mentionSel, setMentionSel] = useState(0);
-  // The slash BUTTON opens the command list as a menu. It is deliberately
-  // separate from "the operator is typing a /command": the button used to work
-  // by writing "/" into the composer, which meant tapping it destroyed whatever
-  // had been typed. A picker must never edit the thing you were writing.
-  const [slashOpen, setSlashOpen] = useState(false);
-  const slug = buildSlug(contextKey);
-  const taskScope = taskScopeFor(contextKey);
-
-  // Stream resilience: count consecutive reconnect attempts (reset on any event
-  // received, so a healthy long turn never trips the cap), and self-reference
-  // attachStream so a drop handler can re-attach without a render cycle.
-
-
-  // The two URL intents — `?new=1` (start blank) and `?thread=<id>` (open this
-  // conversation) — are ONE-SHOT: each is something the operator just clicked,
-  // so it is consumed on use and cannot be re-armed by a re-render. They are
-  // held in refs for that reason. The persisted selection is not an intent; it
-  // is the fallback for a mount the URL says nothing about.
-  //
-  // Both are declared ABOVE the scope resolver, because the resolver has to READ
-  // them (the intent decides the scope) without CONSUMING them (the thread
-  // loader does that, once, after the scope is settled).
-  const startNewRef = useRef(!!startNew);
-  const linkedThreadRef = useRef<string | null>(initialThreadId ?? null);
-  // Re-arm when the URL names a different thread, or asks for a new chat, while
-  // this Chat stays mounted (list -> chat -> back -> another chat keeps the same
-  // route). Declared above the loader so they land first in the same commit.
-  useEffect(() => {
-    linkedThreadRef.current = initialThreadId ?? null;
-  }, [initialThreadId]);
-  useEffect(() => {
-    if (startNew) startNewRef.current = true;
-  }, [startNew]);
-
-  // Which scope this mount belongs in — resolved ONCE, before any thread loads.
-  //
-  // `scope` is the thread list you can see, and it is the SAME axis as a
-  // thread's server-side context_key: list_threads filters on an exact match. So
-  // a thread already knows where it lives, and opening one can never be a
-  // question about which scope the picker happens to be left on.
-  //
-  // It used to be exactly that question, and that is the bug behind every
-  // variant of "my chats open blank / open the wrong one":
-  //   * activeProvider started at contextKey and then flipped asynchronously
-  //     once listProviders resolved, so the thread loader ran TWICE — the first
-  //     pass burned the one-shot URL intent under the wrong scope, and the
-  //     second pass ran with no intent left and fell back to whatever this scope
-  //     was last on. `?new=1` reopened an old chat; `?thread=<id>` opened a
-  //     different one, or nothing, because the linked thread wasn't in the scope
-  //     the picker had drifted to. Whether it misbehaved depended on which of
-  //     two async calls landed first, which is why it looked intermittent.
-  //   * the remembered provider is keyed by contextKey, and nearly every chat
-  //     lives at /chat/general — so it was in practice ONE global "last scope I
-  //     picked" that every chat inherited. Switch the picker to the budget
-  //     assistant once and every chat opened afterwards came up in budget scope.
-  //
-  // The order below is intent-first, exactly like the thread loader's:
-  //   ?thread=<id> → the thread's own context_key. Server state wins; a chat
-  //                  always opens in the scope it actually belongs to.
-  //   ?new=1       → the surface the button was clicked on. A blank chat starts
-  //                  in the workshop-wide scope ("general") unless it was
-  //                  launched from a scoped surface (a project, an app dock),
-  //                  in which case it inherits that. It never inherits the
-  //                  picker's memory.
-  //   neither      → the provider this surface was last left on: a bare return
-  //                  to a chat you were already in.
-  // The resolved scope is written back, so the picker shows where you are and
-  // the memory can't disagree with the thread on screen.
-  const [providersReady, setProvidersReady] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      let list: Provider[] = [];
-      try {
-        list = await chatApi.listProviders(scoped ? contextKey : undefined);
-        if (cancelled) return;
-        setProviders(list);
-      } catch (e) {
-        // NOT non-essential, which is what this used to claim. This list is the
-        // live source for the model picker; when it fails the picker silently
-        // falls back to the frontend's hardcoded MODEL_LABELS, which can offer
-        // models the backend does not serve — the same frontend/backend
-        // divergence that made a newly added model invisible. Say it failed
-        // rather than presenting a stale list as the real one.
-        if (!cancelled) setErr(`Couldn't load the model/assistant list: ${e}. The picker may be showing stale options.`);
-      }
-      if (cancelled) return;
-      if (effectiveMode === "data" && list.length) {
-        const linked = linkedThreadRef.current;
-        let linkedThreadHome: string | null = null;
-        if (linked) {
-          // Read-only peek: the loader still fetches and adopts this thread.
-          const t = await chatApi.getThread(linked).catch(() => null);
-          if (cancelled) return;
-          if (t) linkedThreadHome = String(t.context_key || DEFAULT_SCOPE);
-        }
-        const next = resolveScope({
-          contextKey,
-          knownScopes: list.map((p) => p.key),
-          linkedThreadHome,
-          startNew: startNewRef.current,
-          remembered: readProvider(contextKey),
-        });
-        setActiveProvider(next);
-        writeProvider(contextKey, next);
-      }
-      if (!cancelled) setProvidersReady(true);
-    })();
-    return () => { cancelled = true; };
-  }, [contextKey, effectiveMode, scoped, initialThreadId, startNew]);
-
-  const chooseProvider = useCallback((key: string) => {
-    setActiveProvider(key);
-    writeProvider(contextKey, key);
-  }, [contextKey]);
-
-  // How this chat handles work: Direct (stays here, native subagents) or
-  // Tickets (leaves as tickets). Server state, mirrored locally so the control
-  // responds immediately; the server re-states the mode to the model on every
-  // turn, so switching mid-conversation takes effect on the next one.
-  //
-  // The seed matches services/chat_store.DEFAULT_CHAT_MODE. It is only what the
-  // control shows for the instant before the thread loads and replaces it, but a
-  // seed that disagrees with the server makes the control flicker to the other
-  // mode on open, which reads as the setting not having stuck.
-  const [chatMode, setChatMode] = useState<ChatModeId>("direct");
-  // A blank chat has no thread to write the mode to, so the choice is held here
-  // and applied at creation. Without this the control was hidden until after the
-  // first message — exactly when it is too late, because that message is the one
-  // that decides whether work leaves the conversation. A ref because the sender
-  // reads it at send time, not at render time.
-  const chatModeRef = useRef<ChatModeId>(chatMode);
-  chatModeRef.current = chatMode;
-  const chooseChatMode = useCallback((next: ChatModeId) => {
-    const id = activeIdRef.current;
-    const prev = chatMode;
-    setChatMode(next);
-    if (!id) return;   // no thread yet: applied when this chat is created
-    void chatApi.setThreadMode(id, next).catch((e) => {
-      // Put the control back rather than showing a mode the server does not
-      // have: a chat that looks Direct while the server files tickets is worse
-      // than a visible failure.
-      setChatMode(prev);
-      setErr(`Couldn't switch chat mode: ${e}`);
-    });
-  }, [chatMode]);
-
-  // What a NEW chat starts in (Settings → Chat). Read once and applied whenever
-  // there is no thread yet, so the blank chat's control shows the mode the next
-  // message will actually run in rather than a hardcoded guess.
-  useEffect(() => {
-    let live = true;
-    void chatApi.getChatPrefs()
-      .then((p) => { if (live && !activeIdRef.current) setChatMode(p.default_mode); })
-      .catch(() => { /* the platform default stands */ });
-    return () => { live = false; };
-  }, []);
-
-  const scope = effectiveMode === "build" ? contextKey : activeProvider;
-  const providerKey = effectiveMode === "build" ? contextKey : activeProvider;
-  // Take `?new=1` back out of the URL once acted on, so a refresh is governed by
-  // the persisted selection instead of blanking a thread that now exists.
-  const stripNewParam = useCallback(() => {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has("new")) return;
-    url.searchParams.delete("new");
-    window.history.replaceState({}, "", url.pathname + url.search + url.hash);
-  }, []);
-  const activeProviderObj = useMemo(
-    () => providers.find((p) => p.key === providerKey),
-    [providers, providerKey],
-  );
-  const modelOptions = useMemo(
-    () => activeProviderObj?.models ?? Object.keys(MODEL_LABELS),
-    [activeProviderObj],
-  );
-
-  useEffect(() => {
-    if (selectedModel && modelOptions.includes(selectedModel)) return;
-    const def = activeProviderObj?.default_model;
-    if (def && modelOptions.includes(def)) setSelectedModel(def);
-    else if (modelOptions.length) setSelectedModel(modelOptions[0]);
-  }, [activeProviderObj, modelOptions, selectedModel]);
-
-  const refreshThreads = useCallback(async () => {
-    try {
-      setThreads(await chatApi.listThreads(scope));
-    } catch (e) {
-      setErr(String(e));
-    }
-  }, [scope]);
-
-  const scheduleAutoNameRefetch = useCallback((wasFirstExchange: boolean) => {
-    if (!wasFirstExchange) return;
-    window.setTimeout(() => { void refreshThreads(); }, 2500);
-  }, [refreshThreads]);
-
-  // ---- Voice mode -----------------------------------------------------------
-  // A mode of THIS chat, not a separate screen — see useVoiceMode for the
-  // lifecycle rules (gesture-scoped audio unlock, driving off the flag rather
-  // than the toggle, and what "fatal" is allowed to mean).
-  const {
-    voiceOn, toggleVoice, settingsOpen: voiceSettings, setSettingsOpen: setVoiceSettings,
-    orbRef, vsession, vsnap, vprefs, vupdatePrefs,
-  } = useVoiceMode({
-    contextKey,
-    model: selectedModel,
-    activeId,
-    onAdoptThread: (id) => {
-      if (!activeIdRef.current) {
-        setActiveId(id);
-        // Persist the selection too. Adopting without it left a voice-started
-        // chat unreachable on the next mount: the stored selection still said
-        // NEW_CHAT, so the loader came back blank and the thread the operator
-        // had just been talking to was only findable in the picker.
-        writeSelection(scope, id);
-        queue.carryToThread(id);
-      }
-      void refreshThreads();
-    },
-    onFatal: setErr,
-  });
-
-  // A finished spoken exchange stays on screen until its persisted messages
-  // land — see useVoiceSettle for why this needs a layout effect and a
-  // ref-driven poll.
-  const { settling } = useVoiceSettle({
-    voiceOn, activeId, vsnap, messagesRef,
-    setMessages: (msgs) => setMessages(msgs),
-    refreshThreads: () => { void refreshThreads(); },
-  });
 
   // A button-opened slash menu dismisses like any other popover. (The typed
   // variant closes itself when the "/" stops being a command.)
@@ -500,468 +315,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     };
   }, [slashOpen]);
 
-  // Interjections belong to ONE live turn. Once that turn is over and its
-  // overlay is gone, the server transcript carries those messages, so drop the
-  // local copies rather than letting them double up. Keyed off the overlay
-  // rather than added to each of the eight places that reset it.
-  useEffect(() => {
-    if (!streaming && pendingSegments.length === 0 && sentDuringTurn.length) setSentDuringTurn([]);
-  }, [streaming, pendingSegments.length, sentDuringTurn.length]);
-
-  const hydrate = useCallback(
-    (t: Thread) => {
-      // Point the queue at the thread being loaded BEFORE reading it, so the
-      // read-then-write round trip can't land on the thread we're leaving.
-      queue.bindThread(t.id);
-      // The fold marker is server state, not a one-shot response to clicking
-      // /compact: without reading it back here the divider vanished on every
-      // reload and a compacted thread looked exactly like an uncompacted one.
-      setCompactedThrough(Number(t.compacted_through) || 0);
-      setClearedContext(t.context_cut === "cleared");
-      setCardStates(t.card_states ?? {});
-      // Server state: the mode belongs to the thread, not to this tab.
-      setChatMode(t.mode || "direct");
-      const msgs = t.messages || [];
-      // The live turn's streaming placeholder is not necessarily the LAST
-      // message any more: a message sent mid-turn files AFTER it now
-      // (append-only, in send order — see chat-message-ordering-audit
-      // §3.7+). This used to check only `msgs[msgs.length - 1]`, which was
-      // right exactly until that ordering change shipped — after that, a
-      // chat reopened with an interjection on it never reattached to its
-      // still-running turn at all: the log rendered as if nothing were
-      // happening (the streaming placeholder sitting there with no live
-      // overlay reads as an empty bubble), right up until the operator sent
-      // a message and the server's `injected: true` path forced a correct
-      // reattach through a different route. `findLiveTurn` — shared with
-      // useTurnStream's own reattach paths, which had the identical bug —
-      // scans backward for it instead, the same way the server's
-      // `_live_turn_id` already does.
-      const live = findLiveTurn(msgs);
-      if (live) {
-        const liveIdx = msgs.indexOf(live);
-        // Anchor the elapsed clock to the turn's REAL start (the streaming
-        // message's server timestamp), so a reload mid-turn shows the true
-        // elapsed time instead of restarting from zero.
-        anchorStart(live.ts ? Date.parse(live.ts) : NaN);
-        setMessages(msgs.slice(0, liveIdx));
-        const during = msgs.slice(liveIdx + 1).filter((m) => m.role === "user");
-        if (during.length) setSentDuringTurn(during.map((m) => ({ text: m.content })));
-        attachStream(live.meta!.turn_id!, t.id, false);
-      } else {
-        setMessages(msgs);
-        setPendingSegments([]);
-      }
-    },
-    [attachStream, anchorStart, setPendingSegments, queue],
-  );
-
-  useEffect(() => {
-    // Gate: never load a thread under a scope that is still being resolved.
-    // Without this the loader runs once on the initial guess and again on the
-    // real scope, and the one-shot URL intents are consumed by the first pass.
-    if (!providersReady) return;
-    let cancelled = false;
-    (async () => {
-      setErr(null);
-      setLoadingThreads(true);
-      try {
-        const list = await chatApi.listThreads(scope);
-        if (cancelled) return;
-        setThreads(list);
-        // Choosing the active thread, in ONE order, from two kinds of input:
-        //
-        //   URL intent (a click that just happened) — outranks everything:
-        //     `?new=1`      → blank, and record it under the scope key, which
-        //                     only this component can compute
-        //     `?thread=<id>`→ that conversation
-        //   Persisted state (what to do when the URL says nothing):
-        //     the thread we're already on → re-hydrate, never snap to newest
-        //     NEW_CHAT recorded           → stay blank across reloads
-        //     the last thread in scope    → restore it
-        //     otherwise                   → the most recent thread
-        //
-        // The link outranking NEW_CHAT is the whole point: a recorded "I want a
-        // blank chat" is older than the click asking for a specific one. Ranked
-        // the other way, every chat in the list opened blank once New chat had
-        // been pressed; ranked with no link intent at all, New chat reopened the
-        // thread you had just left. Both are the same bug, which is why they are
-        // now one rule instead of two special cases.
-        const has = (id: string | null | undefined): boolean => !!id && list.some((x) => x.id === id);
-        if (startNewRef.current) {
-          startNewRef.current = false;
-          // The two URL intents are mutually exclusive; taking one disarms the
-          // other so a stale `?thread` can't undo an explicit New chat.
-          linkedThreadRef.current = null;
-          writeSelection(scope, NEW_CHAT);
-          stripNewParam();
-        }
-        const linked = linkedThreadRef.current;
-        linkedThreadRef.current = null;
-        const stored = readSelection(scope);
-        // Where this scope lands with no link: the persisted ranking.
-        const fallbackTarget = (): string | null => {
-          const current = activeIdRef.current;
-          if (has(current)) return current;
-          if (stored === NEW_CHAT) return null;
-          if (has(stored)) return stored;
-          return list.length ? list[0].id : null;
-        };
-        // A linked thread is fetched by id, not looked up in `list`: the chat
-        // list spans every context, so the thread the operator clicked need not
-        // live in THIS scope. If it's gone, fall back as if no link were given
-        // rather than stranding the chat on an error.
-        let t: Thread | null = null;
-        if (linked) t = await chatApi.getThread(linked).catch(() => null);
-        if (cancelled) return;
-        if (!t) {
-          const target = fallbackTarget();
-          t = target ? await chatApi.getThread(target) : null;
-        }
-        if (t) {
-          if (cancelled) return;
-          setActiveId(t.id);
-          writeSelection(scope, t.id);
-          if (t.model) setSelectedModel(t.model);
-          hydrate(t);
-        } else {
-          setActiveId(null);
-          setMessages([]);
-          setPendingSegments([]);
-          // Landing blank: the queue belongs to the blank-chat slot, and
-          // anything already waiting there is still owed delivery.
-          queue.bindBlank();
-        }
-      } catch (e) {
-        if (!cancelled) setErr(String(e));
-      } finally {
-        if (!cancelled) setLoadingThreads(false);
-      }
-    })();
-    return () => { cancelled = true; closeStream(); };
-    // hydrate is stable enough; scope and the linked thread drive the reload —
-    // the URL naming a different conversation has to re-run this even when the
-    // route (and therefore the scope) is unchanged.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, initialThreadId, providersReady]);
-
-  // Liveness is SERVER state — a turn running in another tab or on another
-  // device must not render as an idle chat. See useTurnLiveness.
-  useTurnLiveness({
-    activeId, streaming, hasOpenStream,
-    onReattach: (turnId, threadId, startedMs, msgs, during) => {
-      anchorStart(startedMs);
-      setErr(null);
-      setMessages(msgs);
-      const interjections = during.filter((m) => m.role === "user");
-      if (interjections.length) setSentDuringTurn(interjections.map((m) => ({ text: m.content })));
-      attachStream(turnId, threadId, false);
-    },
-  });
-
-  // Re-sync with the server when the chat comes back to the foreground. The
-  // transcript can have moved on while this tab was hidden (a turn finished, or
-  // the same chat was used on another device), and showing a stale log as though
-  // it were current is the same "browser state does not reflect the backend"
-  // problem in a different place. Skipped while a turn is live (the stream owns
-  // the log) and while an unsent bubble is pending (it isn't on the server, and
-  // re-syncing would silently drop it along with its retry).
-  useEffect(() => {
-    if (!activeId) return;
-    let cancelled = false;
-    const resync = async () => {
-      if (cancelled || streaming || hasOpenStream() || document.hidden) return;
-      if (messagesRef.current.some((m) => m.meta?.unsent)) return;
-      try {
-        const t = await chatApi.getThread(activeId);
-        if (cancelled || streaming || hasOpenStream()) return;
-        if (messagesRef.current.some((m) => m.meta?.unsent)) return;
-        setCompactedThrough(Number(t.compacted_through) || 0);
-        setClearedContext(t.context_cut === "cleared");
-        setCardStates(t.card_states ?? {});
-        setMessages(t.messages || []);
-      } catch { /* leave what's on screen */ }
-    };
-    const onVis = () => { if (!document.hidden) void resync(); };
-    window.addEventListener("focus", resync);
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", resync);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [activeId, streaming]);
-
-  // Following the conversation, composer sizing, and the jump-to-latest
-  // affordance are one behaviour — see useLogScroll for the rules and the bugs
-  // each of them exists to prevent.
-  const {
-    scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest,
-  } = useLogScroll({
-    input,
-    inputFocused,
-    followDeps: [messages, pendingSegments, sentDuringTurn, queue.items, streaming,
-                 vsnap.state, vsnap.sentences, vsnap.lastUser],
-    hasContent: streaming || pendingSegments.length > 0 || messages.length > 0,
-  });
-
-  // (There is no in-chat "open another thread" path any more. Switching
-  // conversations goes through the chat list, which navigates here with
-  // ?thread=<id>; the mount effect above adopts it and persists the selection.)
-
-  const newChat = useCallback(() => {
-    closeStream();
-    setActiveId(null);
-    setMessages([]);
-    setPendingSegments([]);
-    // Move the queue key to the blank-chat slot FIRST. Otherwise clearing the
-    // composer queue for the new chat would wipe the queue still owed to the
-    // thread being left behind.
-    queue.resetToBlank();
-    setErr(null);
-    setSelectedModel("");
-    setCompactedThrough(0);
-    setClearedContext(false);
-    setCardStates({});
-    // Persist the intent so a reload / navigation lands on a blank new chat
-    // rather than silently re-adopting the most-recent thread.
-    writeSelection(scope, NEW_CHAT);
-  }, [queue, scope, closeStream, setPendingSegments]);
-
-  const removeThread = useCallback(async (id: string) => {
-    await chatApi.deleteThread(id);
-    // Deleting the conversation you are looking at has to take you somewhere.
-    // The focused route is nothing BUT that conversation, so staying put left a
-    // chat page addressing a thread the server no longer has — the composer
-    // aimed at a dead id and the transcript stuck on its last render. Leave for
-    // the chat list, which is the surface that still has something to show.
-    // A docked/panel chat has no route to leave, so it falls back to blank.
-    if (id === activeId) {
-      writeSelection(scope, NEW_CHAT);
-      writeQueue(id, []);
-      if (variant === "full") {
-        navigate("/chats");
-        return;
-      }
-      newChat();
-    }
-    refreshThreads();
-  }, [activeId, newChat, refreshThreads, scope, variant, navigate]);
-
-  const saveRename = useCallback(async (title: string) => {
-    if (!activeId) return;
-    setRenameBusy(true);
-    try {
-      const t = await chatApi.renameThread(activeId, title);
-      setThreads((list) => list.map((x) => (x.id === t.id ? { ...x, title: t.title } : x)));
-      setRenameOpen(false);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setRenameBusy(false);
-    }
-  }, [activeId]);
-
-  // The universal turn sender. EVERY chat (general, app, project, build) streams
-  // through POST /threads/{id}/turns + the SSE channel, so every turn shows its
-  // work (tool calls, interim text) live instead of a blocking spinner. The
-  // backend picks the tool surface + session from the provider class; the client
-  // is transport-uniform.
-  const sendBuild = useCallback(async (text: string, parts?: QueuedMessage[]) => {
-    markStarting();
-    setTurnIsCompact(text.trim() === "/compact");
-    const isFirst = messages.length <= 1;
-    try {
-      let id = activeId;
-      if (!id) {
-        // Carry the mode chosen on the blank chat into the thread it becomes,
-        // so the very first turn runs in the mode the toolbar was showing.
-        const t = await chatApi.createThread(scope, "", chatModeRef.current);
-        id = t.id;
-        setActiveId(id);
-        // Put the new thread in the picker immediately and record it as the
-        // selection. Without this a chat you just started was unreachable the
-        // moment you navigated away: it wasn't in the local list, and nothing
-        // remembered you were in it.
-        setThreads((list) => (list.some((x) => x.id === t.id) ? list : [t, ...list]));
-        writeSelection(scope, t.id);
-        // Carry the type-ahead queue across the moment a blank chat becomes a
-        // real thread. Anything typed while this first turn was starting was
-        // stored under the blank-chat key; without moving it, the next hydrate
-        // reads the (empty) thread queue and those messages are never delivered
-        // and never seen again.
-        queue.carryToThread(t.id);
-      }
-      const r = await fetch(`/api/chat/threads/${id}/turns`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // `parts` is present only when the queue drained several messages into
-        // this one turn. It carries WHEN EACH WAS TYPED, so the server stores
-        // them as the separate messages they were, at their real times, rather
-        // than one blob stamped with the moment the queue happened to drain.
-        // Without it the model cannot tell a burst typed in one minute from
-        // thoughts spread over an afternoon.
-        body: JSON.stringify({
-          content: text,
-          ...(selectedModel ? { model: selectedModel } : {}),
-          ...(parts && parts.length > 1
-            ? { parts: parts.map((m) => ({ text: m.text, sent_at: m.sentAt })) }
-            : {}),
-        }),
-      });
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const res = await r.json();
-      if (res.injected) {
-        // A turn was already running on this thread and the server handed this
-        // message to it rather than starting a rival. Only a client that thought
-        // the chat was idle gets here — a second tab, a dropped stream, a reload
-        // — so the right response is to show the message where the server put it
-        // and attach to the turn that is actually running.
-        setMessages((m) => {
-          const i = m.length - 1;
-          if (i < 0 || m[i].role !== "user" || m[i].content !== text) return m;
-          return m.slice(0, i);   // it belongs inside the live turn, not above it
-        });
-        setSentDuringTurn((x) => [...x, { text }]);
-      }
-      attachStream(res.turn_id, id, isFirst);
-    } catch (e) {
-      setErr(String(e));
-      markFailed();
-      // The turn never started, so the server has no copy of this message. Mark
-      // the optimistic bubble instead of leaving it looking delivered: a bubble
-      // that silently isn't real is exactly what "my messages keep disappearing"
-      // felt like from the outside.
-      setMessages((m) => {
-        const i = m.length - 1;
-        if (i < 0 || m[i].role !== "user" || m[i].content !== text) return m;
-        const copy = m.slice();
-        copy[i] = { ...copy[i], meta: { ...copy[i].meta, unsent: true } };
-        return copy;
-      });
-    }
-  }, [activeId, scope, selectedModel, messages.length, attachStream, queue]);
-
-  // Re-send a message that never reached the server (drops the marked bubble and
-  // runs it as a fresh turn).
-  const retryUnsent = useCallback((idx: number, text: string) => {
-    setMessages((m) => m.filter((_, i) => i !== idx));
-    setErr(null);
-    void sendBuildRef.current(text);
-    setMessages((m) => [...m, { role: "user", content: text, ts: new Date().toISOString() }]);
-  }, []);
-
-  // Keep a ref to the latest sendBuild so dispatchNext (used inside attachStream)
-  // can fire a queued turn without a render cycle.
-  sendBuildRef.current = sendBuild;
-
-  // Submit a concrete string as a turn (used by send() and by slash passthrough).
-  const submitText = useCallback((raw: string) => {
-    const text = raw.trim();
-    if (!text) return;
-    setErr(null);
-    // A note describes the LAST thing the operator did. Sending makes it stale,
-    // so it goes with the error it sits beside. Without this the two transient
-    // surfaces had different lifetimes — errors cleared on the next send, notes
-    // never did — and a "Filed as a ticket" banner from twenty minutes ago was
-    // still sitting above a conversation that had long moved on.
-    setNotice(null);
-    followLatest();
-    // /compact is a Workshop action, not a message. Intercept it here as well as
-    // in the autocomplete, so typing it and hitting enter folds the transcript
-    // instead of sending the literal string "/compact" to the model.
-    //
-    // This has to come BEFORE the queue branch. Queued behind a running turn it
-    // was treated as ordinary text and drained into the next turn joined to
-    // whatever else was waiting — so it neither compacted nor read as a message.
-    // compact() refuses politely while a turn is live, which is the honest
-    // answer rather than a silent no-op.
-    if (text === "/compact") { void compact(); return; }
-    // Same interception, same reason: /clear is a Workshop action too, and has
-    // to be caught here as well as in the autocomplete so a stale/partial
-    // picker match (or hitting enter before the picker opens) never lets the
-    // literal string "/clear" reach the model. No live turn to refuse into —
-    // /clear has nothing to queue behind, so this check does not need the
-    // `compacting` guard the paragraph below exists for.
-    if (text === "/clear") { void clear(); return; }
-    // A /compact asked for a moment ago is still folding the transcript
-    // server-side and has not yet been able to send its live half. Sending this
-    // now would put a message the operator typed SECOND into the session first,
-    // and the compaction would then land behind it — which is precisely the
-    // "my message got inserted above compact" report. Queue it; the fold
-    // releases the hold and the queue drains in the order things were typed.
-    if (compacting) { queue.push(text); return; }
-    // A turn is already running → hand the message TO it. The agent reads
-    // pending input at the next boundary between its actions, so it arrives
-    // within a step or two instead of after the whole turn. It does not
-    // interrupt the work in flight; only Stop does that.
-    //
-    // Queueing is now only the fallback for the narrow case where the turn ends
-    // between hitting enter and the request landing. The message is never lost:
-    // either the running turn took it, or it becomes the next turn.
-    // Addressed by CHAT, not by turn id. Gating this on a turn id held in a ref
-    // meant injection only fired in the component mount that started the turn:
-    // a second tab, another device, a turn adopted after a backend restart, or
-    // a reload that re-attached by another path all had no id to send, so the
-    // message silently went back to the queue and waited out the whole turn —
-    // the exact behaviour this was supposed to end. The client knows which
-    // conversation it is in; the server resolves which turn is live on it.
-    // WHAT "DELIVERED" MEANS, precisely, because the UI used to overstate it:
-    // the bytes reached the running process. Measured against the CLI (see
-    // docs/platform-redesign/chat-message-ordering-audit-2026-08-05.md §2), the
-    // agent then addresses the message at the END of its current plan — 24.5s
-    // and four skipped step boundaries in the probe — not "within a step or
-    // two", which is what the comment below used to claim and what the composer
-    // implied. The message is genuinely handed over; it is not read yet.
-    //
-    // ...unless it is a slash command. Injection hands the text to the MODEL;
-    // slash commands are handled by the CLI's own command layer, which only runs
-    // between turns. A command that arrives mid-turn is swallowed there — not
-    // deferred, not passed through as text, just gone. Measured against the CLI
-    // directly (2.1.220): "/compact" injected mid-turn produced no user message,
-    // no command, no fold, and the turn ended normally; the same channel, same
-    // message shape, sent while idle, emitted a fresh session init and a real
-    // reply. Plain text injected mid-turn arrives fine (that's the control), so
-    // this is specific to the leading slash. Queue commands to run as their own
-    // turn, which is the only timing the CLI acts on them.
-    const isSlashCommand = /^\/[a-zA-Z][\w:-]*(\s|$)/.test(text);
-    const threadId = activeIdRef.current;
-    if (logBusy && isSlashCommand) { queue.push(text); return; }
-    if (streaming && threadId) {
-      void chatApi.injectIntoThread(threadId, text)
-        .then((r) => {
-          if (r.delivered) {
-            // NOT into `messages` — that list renders ABOVE the live turn, so
-            // a message sent DURING the turn would jump above output that was
-            // already on screen before it. It goes in the list ChatLog renders
-            // BELOW the live turn, which is where a message sent while a reply
-            // is being written belongs: after it, in send order.
-            setSentDuringTurn((x) => [...x, { text }]);
-            followLatest();
-          } else {
-            queue.push(text);
-          }
-        })
-        .catch(() => { queue.push(text); });
-      return;
-    }
-    // Not streaming any more, but the finished turn is still occupying the tail
-    // of the log while its reply lands in `messages`. Appending here is exactly
-    // what put a new message ABOVE a turn that had already completed — the queue
-    // renders below the live band, which is the truthful place for something
-    // that has not been sent yet. It drains a beat later, in order.
-    if (logBusy) { queue.push(text); return; }
-    const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
-    setMessages((m) => [...m, userMsg]);
-    sendBuild(text);
-  }, [streaming, logBusy, compacting, sendBuild, queue, compact, clear, followLatest]);
-
-  // Composer text change. In voice mode, keep the engine's typing-hold aware of
-  // whether the composer currently holds text (so it defers taking its turn).
-  const onComposerChange = useCallback((v: string) => {
-    setInput(v);
-    if (voiceOn) vsession.setTyping(v.trim().length > 0);
-  }, [setInput, voiceOn, vsession]);
-
   const send = useCallback(() => {
     const text = input.trim();
     if (!text) return;
@@ -970,15 +323,64 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // another tab/device can restore the text you just sent.
     clearInput();
     // In voice mode a typed message runs through the voice engine too (so the
-    // reply is spoken and uses the warm worker); slash-commands still go the
+    // reply is spoken and uses the warm worker); slash commands still go the
     // normal chat route.
     if (voiceOn && !text.startsWith("/")) {
       vsession.submitText(text);
       vsession.setTyping(false);
     } else {
-      submitText(text);
+      pipeline.submitText(text);
     }
-  }, [input, submitText, voiceOn, vsession, clearInput]);
+  }, [input, clearInput, voiceOn, vsession, pipeline]);
+
+  // ---- Slash commands ------------------------------------------------------
+  // Two kinds:
+  //   • "local"       - a Workshop chat action handled here (new chat, etc.).
+  //   • "passthrough" - a Claude Code command (/compact, /cost, /context, …)
+  //                     forwarded RAW to the agent's claude session, where the
+  //                     CLI executes it natively. Any "/x" that isn't listed
+  //                     still passes through when sent.
+  const build = effectiveMode === "build";
+  const popOut = useCallback(() => navigate(`/chat/${encodeURIComponent(contextKey)}`), [navigate, contextKey]);
+  const slashCommands = buildSlashCommands({
+    isBuild: build,
+    hasThread: !!activeId,
+    hasTaskScope: !!taskScope,
+    canExpand: variant !== "full" && !hideExpand,
+    compacting,
+    actions: {
+      newChat: () => thread.newChat(),
+      deleteChat: () => { if (activeId) thread.setConfirmDeleteId(activeId); },
+      toggleTasks: () => setDrawer((d) => (d === "tasks" ? null : "tasks")),
+      toggleInbox: () => setDrawer((d) => (d === "inbox" ? null : "inbox")),
+      popOut,
+      showHelp: () => setSlashOpen(true),
+      openDeploys: () => {
+        const p = projectSlugFor(contextKey);
+        navigate(p ? `/projects/${encodeURIComponent(p)}#deploys` : "/deploys");
+      },
+      compact: () => void compact(),
+      clear: () => void clear(),
+    },
+  });
+  const { typed: slashTyped, matches: slashMatches, show: showSlash } =
+    matchSlash(input, slashCommands, slashOpen);
+  const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
+
+  const pickMention = (s: string) => {
+    setInput(applyMention(input, s));
+    setMentionSel(0);
+    inputRef.current?.focus();
+  };
+  const runSlash = (c: SlashCommand) => {
+    // Only clear the composer when its contents WERE the command being typed.
+    // Picking from the button-opened menu leaves your draft exactly as it was.
+    if (slashTyped) setInput("");
+    setSlashOpen(false);
+    setSlashSel(0);
+    if (c.kind === "passthrough") { pipeline.submitText(`/${c.name}`); return; }
+    c.run?.();
+  };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The mention picker owns the same keys as the slash menu while it is open,
@@ -991,7 +393,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       if (e.key === "Escape") { e.preventDefault(); setMentionSel(0); setInput(input.replace(/@[a-z0-9-]*$/, "")); return; }
       if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); pickMention(mentionMatches[sel].slug); return; }
     }
-    // Slash-command menu owns the arrow/enter/tab/escape keys while it's open.
     if (showSlash) {
       const sel = Math.min(slashSel, slashMatches.length - 1);
       if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((i) => Math.min(i + 1, slashMatches.length - 1)); return; }
@@ -1006,7 +407,6 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     }
   };
 
-  const popOut = () => navigate(`/chat/${encodeURIComponent(contextKey)}`);
   const back = () => {
     // Prefer where you actually came from; otherwise the chat list, which is
     // this surface's parent now that the thread dropdown is gone.
@@ -1014,64 +414,34 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     else navigate("/chats");
   };
 
-  // ---- Slash commands ------------------------------------------------------
-  // Two kinds:
-  //   • "local"       - a Workshop chat action handled here (new chat, etc.).
-  //   • "passthrough" - a Claude Code command (/compact, /cost, /context, …)
-  //                     forwarded RAW to the agent's claude session, where the CLI
-  //                     executes it natively. Build agents only (data/assistant
-  //                     agents are Letta-backed, not claude sessions). Any "/x"
-  //                     that isn't listed still passes through when sent, so the
-  //                     full Claude command set works even though we only surface
-  //                     the useful ones in the autocomplete.
-  // Typing "/" opens the autocomplete; the slash button opens the same menu.
-  const build = effectiveMode === "build";
-  const slashCommands = buildSlashCommands({
-    isBuild: build,
-    hasThread: !!activeId,
-    hasTaskScope: !!taskScope,
-    canExpand: variant !== "full" && !hideExpand,
-    compacting,
-    actions: {
-      newChat: () => newChat(),
-      deleteChat: () => { if (activeId) setConfirmDeleteId(activeId); },
-      toggleTasks: () => setDrawer((d) => (d === "tasks" ? null : "tasks")),
-      toggleInbox: () => setDrawer((d) => (d === "inbox" ? null : "inbox")),
-      popOut: () => popOut(),
-      showHelp: () => setSlashOpen(true),
-      openDeploys: () => {
-        const p = projectSlugFor(contextKey);
-        navigate(p ? `/projects/${encodeURIComponent(p)}#deploys` : "/deploys");
-      },
-      compact: () => void compact(),
-      clear: () => void clear(),
-    },
+  // ---- The live turn's visible state --------------------------------------
+  // A RUN IN FLIGHT IS ALWAYS VISIBLE, and it is visible for as long as the
+  // SERVER says it is running — not for as long as this tab holds a socket. The
+  // elapsed clock is anchored to the run's real start, so a reload mid-turn
+  // shows the true duration and a reconnect does not restart it.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!runActive) return;
+    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    setNowMs(Date.now());
+    return () => window.clearInterval(id);
+  }, [runActive]);
+  const elapsed = elapsedSeconds(state.activeRun?.startedMs ?? null, nowMs);
+  const workingLabel = turnLabel({
+    attached: stream.attached,
+    reconnecting: stream.reconnecting,
+    compacting: pipeline.turnIsCompact,
   });
-  const { typed: slashTyped, matches: slashMatches, show: showSlash } =
-    matchSlash(input, slashCommands, slashOpen);
-  const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
 
-  const pickMention = (slug: string) => {
-    setInput(applyMention(input, slug));
-    setMentionSel(0);
-    inputRef.current?.focus();
-  };
-  const runSlash = (c: SlashCommand) => {
-    // Only clear the composer when its contents WERE the command being typed.
-    // Picking from the button-opened menu leaves your draft exactly as it was.
-    if (slashTyped) setInput("");
-    setSlashOpen(false);
-    setSlashSel(0);
-    if (c.kind === "passthrough") { submitText(`/${c.name}`); return; }
-    c.run?.();
-  };
+  // The committed messages, flat. Read by the context meter's local estimate and
+  // by the egress banner; nothing renders from it (the transcript is `blocks`).
+  const messages = useMemo(() => committedMessages(state), [state]);
 
-  const inFlight = streaming;
-
-  // Egress banner (build only).
+  // ---- Egress banner (build only) -----------------------------------------
   const lastErrorMessage = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].meta?.error) return messages[i].content;
+    const msgs = messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].meta?.error) return msgs[i].content;
     }
     return null;
   }, [messages]);
@@ -1104,12 +474,36 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     </div>
   ) : null;
 
-  // ---- Header: scope + where-you-are on the left, actions on the right ----
-  // The conversation picker used to live here as a third <select>. It is gone:
-  // it duplicated the chat list you reach with back / "All chats", and its one
-  // unique job (start a new chat) is now the + button.
-  const activeThreadTitle = activeId ? threads.find((t) => t.id === activeId)?.title : undefined;
-  // Agents not already in this chat — the only ones worth offering.
+  // ---- In-chat cards -------------------------------------------------------
+  const recordCardState = useCallback(
+    (key: string, cardState: { phase: string; note?: string | null; slug?: string | null; title?: string | null }) => {
+      thread.setCardStates((prev) => ({ ...prev, [key]: cardState }));
+      const id = activeIdRef.current;
+      if (!id) return;
+      void chatApi.setCardState(id, key, cardState as CardState)
+        // The server's map is the authority, not the optimistic patch. Taking
+        // the response back is what keeps a card that has been acted on from
+        // re-offering "File and run" after a reload.
+        .then((r) => { if (r?.card_states) thread.setCardStates(r.card_states); })
+        .catch((e) => {
+          // Previously swallowed with a note that it would "re-sync on the next
+          // action" — it never did. The optimistic state simply diverged: the
+          // card looked filed, the server had no record, and the next load
+          // brought back an un-acted card for work that had already run.
+          setErr(`Couldn't record that action on the server: ${e}. Reload to see the real state of this card.`);
+        });
+    },
+    [thread.setCardStates, activeIdRef],
+  );
+  const cardCtx = useMemo<UiCardCtx>(
+    () => ({
+      navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread,
+      cardStates: thread.cardStates, recordCardState,
+    }),
+    [navigate, contextKey, activeId, thread.cardStates, recordCardState],
+  );
+
+  // ---- Chrome --------------------------------------------------------------
   const toolbar = (
     <ChatToolbar
       variant={variant}
@@ -1117,13 +511,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       slug={slug}
       hideExpand={hideExpand}
       activeId={activeId}
-      activeThreadTitle={activeThreadTitle}
-      showProviderPicker={showProviderPicker}
-      providers={providers}
-      activeProvider={activeProvider}
-      onChooseProvider={chooseProvider}
-      chatMode={chatMode}
-      onChooseChatMode={chooseChatMode}
+      activeThreadTitle={thread.activeThreadTitle}
+      showProviderPicker={variant === "full" || effectiveMode === "data"}
+      providers={scopeState.providers}
+      activeProvider={scopeState.activeProvider}
+      onChooseProvider={scopeState.chooseProvider}
+      chatMode={thread.chatMode}
+      onChooseChatMode={thread.chooseChatMode}
       drawer={drawer}
       onSetDrawer={setDrawer}
       inboxCount={inboxCount}
@@ -1132,9 +526,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
       onFileTicket={() => setTicketsOpen(true)}
-      onEditTitle={() => setRenameOpen(true)}
-      onNewChat={() => setConfirmNew(true)}
-      onDelete={setConfirmDeleteId}
+      onEditTitle={() => thread.setRenameOpen(true)}
+      onNewChat={() => thread.setConfirmNew(true)}
+      onDelete={thread.setConfirmDeleteId}
       onPopOut={popOut}
       onNavigate={navigate}
     />
@@ -1144,95 +538,50 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     <ChatDialogs
       scope={scope}
       activeId={activeId}
-      activeThreadTitle={activeThreadTitle}
+      activeThreadTitle={thread.activeThreadTitle}
       ticketsOpen={ticketsOpen}
       onCloseTickets={() => setTicketsOpen(false)}
       onFiled={setNotice}
-      renameOpen={renameOpen}
-      renameBusy={renameBusy}
-      onCancelRename={() => setRenameOpen(false)}
-      onSaveRename={saveRename}
-      confirmNew={confirmNew}
-      onCancelNew={() => setConfirmNew(false)}
-      onConfirmNew={() => { setConfirmNew(false); newChat(); }}
-      confirmDeleteId={confirmDeleteId}
-      confirmDeleteTitle={confirmDeleteId ? threads.find((t) => t.id === confirmDeleteId)?.title : undefined}
-      onCancelDelete={() => setConfirmDeleteId(null)}
-      onConfirmDelete={async (id) => { setConfirmDeleteId(null); await removeThread(id); }}
+      renameOpen={thread.renameOpen}
+      renameBusy={thread.renameBusy}
+      onCancelRename={() => thread.setRenameOpen(false)}
+      onSaveRename={thread.saveRename}
+      confirmNew={thread.confirmNew}
+      onCancelNew={() => thread.setConfirmNew(false)}
+      onConfirmNew={() => { thread.setConfirmNew(false); thread.newChat(); }}
+      confirmDeleteId={thread.confirmDeleteId}
+      confirmDeleteTitle={thread.confirmDeleteId ? thread.threads.find((t) => t.id === thread.confirmDeleteId)?.title : undefined}
+      onCancelDelete={() => thread.setConfirmDeleteId(null)}
+      onConfirmDelete={async (id) => { thread.setConfirmDeleteId(null); await thread.removeThread(id); }}
     />
   );
 
-  const overflowed = messages.length >= 500;
-
-  // Context passed to any in-chat ui-card: navigation, the current context key,
-  // the active thread id, the rescope wrapper (Move-chat-into-project), and the
-  // server-backed record of which cards have already been acted on.
-  const recordCardState = useCallback(
-    (key: string, state: { phase: string; note?: string | null; slug?: string | null; title?: string | null }) => {
-      setCardStates((prev) => ({ ...prev, [key]: state }));
-      const id = activeIdRef.current;
-      if (!id) return;
-      void chatApi.setCardState(id, key, state)
-        // The server's map is the authority, not the optimistic patch. Taking
-        // the response back is what keeps a card that has been acted on from
-        // re-offering "File and run" after a reload.
-        .then((r) => { if (r?.card_states) setCardStates(r.card_states); })
-        .catch((e) => {
-          // Previously swallowed with a note that it would "re-sync on the next
-          // action" — it never did. The optimistic state simply diverged: the
-          // card looked filed, the server had no record, and the next hydrate
-          // brought back an un-acted card for work that had already run. Say
-          // so instead, so the state on screen and the state on disk agree.
-          setErr(`Couldn't record that action on the server: ${e}. Reload to see the real state of this card.`);
-        });
-    },
-    [],
-  );
-  const cardCtx = useMemo<UiCardCtx>(
-    () => ({
-      navigate, contextKey, threadId: activeId, rescopeThread: chatApi.rescopeThread,
-      cardStates, recordCardState,
-    }),
-    [navigate, contextKey, activeId, cardStates, recordCardState],
-  );
-
-  // A small pill floating over the log, not a bar that takes its own row —
-  // it names the affordance and gets out of the way, rather than pushing the
-  // composer down while it's up.
+  // A small pill floating over the log, not a bar that takes its own row.
   //
   // `onMouseDown` preventDefault: with the mobile keyboard open, tapping this
-  // (mousedown) blurs the composer BEFORE the click fires — the keyboard
-  // closing mid-gesture resizes the viewport under the operator's finger, so
-  // the tap lands somewhere else and the click never registers, costing a
-  // second tap to actually jump. Blocking the default keeps the composer
-  // focused (and the keyboard open) through the tap, so the click fires
-  // where it was aimed the first time.
+  // (mousedown) blurs the composer BEFORE the click fires — the keyboard closing
+  // mid-gesture resizes the viewport under the operator's finger, so the tap
+  // lands somewhere else and the click never registers, costing a second tap.
   const jumpToLatest = showJumpToLatest ? (
     <button className="chat-jump" onMouseDown={(e) => e.preventDefault()} onClick={followLatest}>
       <ArrowDown size={14} aria-hidden /> Jump to latest
     </button>
   ) : null;
 
-  const log = (
+  const logView = (
     <ChatLog
       scrollRef={scrollRef}
       onScroll={onLogScroll}
-      loading={loadingThreads}
+      loading={thread.loadingThreads}
       error={err}
-      messages={messages}
-      isBuild={effectiveMode === "build"}
-      inFlight={inFlight}
-      overflowed={overflowed}
-      compactedThrough={compactedThrough}
-      clearedContext={clearedContext}
+      blocks={transcript}
+      isBuild={build}
+      inFlight={runActive || pipeline.starting}
+      overflowed={state.order.length >= 500}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
-      onRetryUnsent={retryUnsent}
-      streaming={streaming}
-      logBusy={logBusy}
-      pendingSegments={pendingSegments}
-      sentDuringTurn={sentDuringTurn}
-      workingLabel={reconnecting ? "Reconnecting" : turnIsCompact ? "Compacting" : "Working"}
+      onRetry={pipeline.retry}
+      workingLabel={workingLabel}
       elapsed={elapsed}
       queued={queue.items}
       queuedStatus={queuedStatus}
@@ -1252,16 +601,17 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     />
   ) : null;
 
-  // Every chat streams now, so the streaming affordances (Stop, queue-next hint,
-  // composer streaming state) apply whenever a turn is live, regardless of mode.
-  const streamingBuild = streaming;
-
   const composer = (
     <ChatComposer
       composerRef={composerRef}
       inputRef={inputRef}
       input={input}
-      onChange={onComposerChange}
+      onChange={(v) => {
+        setInput(v);
+        // In voice mode, keep the engine's typing-hold aware of whether the
+        // composer currently holds text (so it defers taking its turn).
+        if (voiceOn) vsession.setTyping(v.trim().length > 0);
+      }}
       onKeyDown={onKey}
       placeholder={
         voiceOn
@@ -1290,11 +640,11 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       showMentions={showMentions}
       onMentionHover={setMentionSel}
       onMentionPick={pickMention}
-      streaming={streamingBuild}
+      streaming={runActive}
       onSend={send}
-      onStop={stop}
+      onStop={stream.stopWatching}
       canSend={!!input.trim()}
-      modelOptions={modelOptions}
+      modelOptions={scopeState.modelOptions}
       selectedModel={selectedModel}
       onSelectModel={setSelectedModel}
       activeId={activeId}
@@ -1319,9 +669,9 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       {taskPanel}
       <div className="chat-log-wrap">
         {/* Floats over the top of the log instead of pushing it down — it used
-            to sit in flow and shove the whole transcript downward every time
-            an agent raised something, which shifted the log out from under
-            wherever the operator was reading right as a new item arrived. */}
+            to sit in flow and shove the whole transcript downward every time an
+            agent raised something, which shifted the log out from under wherever
+            the operator was reading right as a new item arrived. */}
         <InboxStrip
           chatId={activeId}
           open={inboxOpen}
@@ -1329,16 +679,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
           onClose={() => setDrawer(null)}
           onOpenGlobal={() => navigate("/work?tab=inbox")}
         />
-        {log}
+        {logView}
         {jumpToLatest}
       </div>
       {egressBanner}
       {/* Not gated on message count. It used to require `messages.length > 0`,
           which silently swallowed every error on a fresh chat — including the
-          model-list load failure, which happens exactly there, and compact's own
-          "this chat has no messages yet", a message that by construction could
-          never be seen. The egress banner is the one case that already says it
-          better. */}
+          model-list load failure, which happens exactly there. */}
       {err && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
       {composer}
       {dialogs}

@@ -1,186 +1,102 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { chatApi, type ChatMsg, type ChatSegment } from "../../lib/chat";
-import { applyStreamEvent, type StreamEvent } from "./segments";
+import type { ThreadAction, ThreadState } from "./threadStore";
 
-// The live turn: its SSE channel, its resilience, and what "still running" means.
+// The live turn's SSE channel, and nothing else.
 //
 // EVERY chat (general, app, project, build) streams through
-// POST /threads/{id}/turns + GET /turns/{id}/stream, so every turn shows its work
-// (tool calls, interim text) live instead of a blocking spinner. The backend
-// picks the tool surface and session from the provider class; the client is
-// transport-uniform.
+// POST /threads/{id}/turns + GET /turns/{id}/stream, so every turn shows its
+// work live instead of a blocking spinner. The backend picks the tool surface
+// and session from the provider class; the client is transport-uniform.
 //
-// THE HARD-WON RULES:
+// WHAT THIS HOOK NO LONGER OWNS. It used to hold the turn's segments, the
+// server's copy of the transcript, and the rule for when a turn stops owning the
+// tail of the log. All three now live in the store: the socket folds events in
+// with `runDelta`, and "is a run in flight" is `state.activeRun`, which is
+// SERVER state. That deletes `pendingSegments` (a client-only cache of a turn's
+// output, with a written invariant about when it could be cleared), the
+// `logBusy`/`streaming` split (two questions whose answers diverged for one
+// round trip on every turn), and the backward scan for a streaming placeholder.
 //
-//  - `pendingSegments` is a render-ahead CACHE of server state, never the only
-//    home of a turn's output. Nothing may clear it until the server's copy of
-//    that turn is in `messages`, or the record of what the turn did disappears
-//    from the log.
-//  - A dropped connection is NOT a finished turn. Proxy idle-timeouts and
-//    network blips are normal on long turns. Finalizing blindly is what made
-//    turns look like they "just stopped": check whether the turn actually
-//    completed server-side and re-attach if it did not. The server replays the
-//    turn's events from the start via Last-Event-ID.
-//  - Running out of reconnect budget on a turn the server says is STILL RUNNING
-//    must not call finish(). That would drop to an idle-looking UI and dispatch
-//    queued messages into a second concurrent turn. Stop retrying, keep the work
-//    on screen, say so plainly, and let the liveness poll re-attach.
+// THE HARD-WON RULES THAT REMAIN, each from a real incident:
+//
+//  - A dropped connection is NOT a finished turn. Proxy idle-timeouts and blips
+//    are normal on long turns. Ask the server whether the run is still active
+//    and re-attach if it is; the stream replays from the start via Last-Event-ID.
 //  - Only a CLOSED socket is terminal. CONNECTING means the browser is already
-//    auto-retrying with Last-Event-ID — let it.
+//    auto-retrying — let it.
 //  - Any inbound frame means healthy: reset the reconnect budget, so one long
 //    turn with the odd drop never exhausts the cap.
-//  - LIVENESS IS SERVER STATE. The local `streaming` flag only knows about turns
-//    THIS tab attached to, so a turn running in another tab, on another device,
-//    or one whose socket died past its budget rendered as a completely idle chat
-//    while work was in flight. Poll while idle and re-attach the moment the
-//    server says a turn is live.
-//  - Stopping reconciles BEFORE handing off. Stop used to drop straight into the
-//    queue dispatch, and the next turn's attach then cleared pendingSegments, so
-//    everything the stopped turn had already done vanished from the transcript.
+//  - Running out of budget must not finish the turn. It stops the socket, not
+//    the run. The transcript keeps showing the run (the store still has it, and
+//    the poll keeps its snapshot current) and the indicator says so.
+//  - Read before retiring. Sync the log FIRST, then flip out of streaming, so
+//    there is no window in which the chat looks idle but the reply is not in
+//    the transcript yet.
 
 const MAX_RECONNECTS = 8;
 const RECONNECT_DELAY_MS = 1200;
-const LIVENESS_POLL_MS = 10_000;
-
-// The thread's live turn, if any — the assistant message carrying
-// `meta.streaming`. NOT necessarily the LAST message: a message sent mid-turn
-// files AFTER it now (append-only, in send order), so this scans backward for
-// it instead of checking `messages[messages.length - 1]`. Mirrors the
-// server's `_live_turn_id` (routes/chat.py), which got this same fix first —
-// every caller here that still checked the last message only stopped
-// reattaching, or worse, concluded a running turn had ended, the moment an
-// interjection landed after the placeholder.
-export function findLiveTurn(msgs: ChatMsg[]): ChatMsg | null {
-  for (let i = msgs.length - 1; i >= 0; i--) {
-    const m = msgs[i];
-    if (m.role === "assistant" && m.meta?.streaming && m.meta?.turn_id) return m;
-  }
-  return null;
-}
 
 export type TurnStream = {
-  streaming: boolean;
-  streamingRef: React.MutableRefObject<boolean>;
-  // "A turn still owns the TAIL of the log." True while streaming AND through
-  // the settle that follows, until the turn's output has become a persisted
-  // message. THIS, not `streaming`, is the question every send has to ask.
-  //
-  // The two are not the same and the gap between them is a bug factory. A turn
-  // stops streaming before its reply reaches `messages` — on finish there is a
-  // getThread round trip, and Stop resolves the same way. In that gap a send
-  // that consulted `streaming` took the not-streaming path, appended straight to
-  // `messages`, and rendered ABOVE the finished turn still sitting in the live
-  // band. One flag, one answer, every exit path.
-  logBusyRef: React.MutableRefObject<boolean>;
+  /** A socket for the current run is open (or being retried) here. Chooses the
+   *  indicator's wording; it is NOT the question "is a turn running", which is
+   *  the store's `activeRun`. */
+  attached: boolean;
   reconnecting: boolean;
-  // Seconds elapsed on the live turn, for the working indicator. Anchored to the
-  // turn's real start so a reload mid-turn shows true elapsed time rather than
-  // restarting from zero, and it keeps running across reconnects.
-  elapsed: number;
-  pendingSegments: ChatSegment[];
-  setPendingSegments: React.Dispatch<React.SetStateAction<ChatSegment[]>>;
-  // The turn currently running, if any. A message sent while it runs is handed
-  // straight to it rather than waiting for the whole turn to end.
-  liveTurnRef: React.MutableRefObject<string | null>;
-  attach: (turnId: string, threadId: string, isFirst: boolean) => void;
-  // A turn is being started by this client: show it as running from the moment
-  // the operator hits send, not from when the POST resolves.
-  markStarting: () => void;
-  // The POST never succeeded, so no stream will ever attach.
-  markFailed: () => void;
-  // How many reply segments have streamed. Nothing positions messages by it any
-  // more (they append in send order); kept as a plain progress reading, and
-  // the log can split the live turn at the point the message landed.
-  segmentCount: () => number;
-  // Anchor the elapsed clock to a known start (a reload reattaching mid-turn).
-  anchorStart: (startedMs: number) => void;
-  stop: () => void;
+  attach: (turnId: string) => void;
+  /** Stop WATCHING this run. The run keeps going; this tab stops reading it and
+   *  will not silently re-attach. */
+  stopWatching: () => void;
   closeStream: () => void;
-  // Whether a stream socket is currently open. The resync and liveness paths
-  // must not act while the stream owns the log.
   hasOpenStream: () => boolean;
+  /** Runs this tab has deliberately stopped watching, so the re-attach effect
+   *  leaves them alone. */
+  isDetached: (runId: string) => boolean;
 };
 
 export function useTurnStream({
-  onMessages,
+  dispatch,
+  stateRef,
+  sync,
   onTurnEnd,
   onError,
-  onNotes,
-  activeIdRef,
-  dispatchQueue,
-  appendSegmentsAsMessage,
+  onDrainQueue,
 }: {
-  // The server's copy of the transcript, after a turn ends or is stopped.
-  onMessages: (msgs: ChatMsg[]) => void;
-  // A turn finished: refresh derived surfaces (thread list, task panel).
-  onTurnEnd: (wasFirstExchange: boolean) => void;
+  dispatch: React.Dispatch<ThreadAction>;
+  stateRef: React.MutableRefObject<ThreadState>;
+  /** Pull the log up to date. Awaited before a turn is retired. */
+  sync: () => Promise<void>;
+  onTurnEnd: () => void;
   onError: (msg: string | null) => void;
-  // The finished turn applied a provider action (e.g. an app persona editing a
-  // budget plan); it rides in the final message's meta.notes.
-  onNotes: () => void;
-  activeIdRef: React.MutableRefObject<string | null>;
-  dispatchQueue: () => void;
-  // Stop could not reach the server: fold what is on screen into the log rather
-  // than losing it.
-  appendSegmentsAsMessage: (segs: ChatSegment[]) => void;
+  onDrainQueue: () => void;
 }): TurnStream {
-  const [streaming, setStreaming] = useState(false);
-  const streamingRef = useRef(false);
-  streamingRef.current = streaming;
+  const [attached, setAttached] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const [pendingSegments, setPendingSegments] = useState<ChatSegment[]>([]);
-  // Kept in sync on every render, exactly like streamingRef. The live band is
-  // rendered on the same condition (see ChatLog), so this is literally "is a
-  // turn occupying the end of the transcript right now".
-  const logBusyRef = useRef(false);
-  logBusyRef.current = streaming || pendingSegments.length > 0;
-  const pendingRef = useRef<ChatSegment[]>(pendingSegments);
-  pendingRef.current = pendingSegments;
 
   const sseRef = useRef<EventSource | null>(null);
   const finishingRef = useRef(false);
-  const liveTurnRef = useRef<string | null>(null);
   const reconnectsRef = useRef(0);
-  const turnStartRef = useRef(0);
-  // Self-reference, so a drop handler can re-attach without a render cycle.
-  const attachRef = useRef<(turnId: string, threadId: string, isFirst: boolean) => void>(() => {});
+  const detachedRef = useRef<Set<string>>(new Set());
+  const attachRef = useRef<(turnId: string) => void>(() => {});
 
   // Callers pass inline lambdas; refs keep `attach` referentially stable.
-  const cb = useRef({ onMessages, onTurnEnd, onError, onNotes, dispatchQueue, appendSegmentsAsMessage });
-  cb.current = { onMessages, onTurnEnd, onError, onNotes, dispatchQueue, appendSegmentsAsMessage };
-
-  const anchorStart = useCallback((startedMs: number) => {
-    turnStartRef.current = Number.isFinite(startedMs) ? startedMs : Date.now();
-  }, []);
+  const cb = useRef({ dispatch, sync, onTurnEnd, onError, onDrainQueue });
+  cb.current = { dispatch, sync, onTurnEnd, onError, onDrainQueue };
 
   const closeStream = useCallback(() => {
     sseRef.current?.close();
     sseRef.current = null;
+    setAttached(false);
+    setReconnecting(false);
   }, []);
 
   const hasOpenStream = useCallback(() => sseRef.current !== null, []);
-  const segmentCount = useCallback(() => pendingRef.current.length, []);
+  const isDetached = useCallback((runId: string) => detachedRef.current.has(runId), []);
 
-  const markStarting = useCallback(() => {
-    setStreaming(true);
-    setPendingSegments([]);
-    turnStartRef.current = Date.now();   // fresh turn: anchor the clock now
-  }, []);
-
-  const markFailed = useCallback(() => setStreaming(false), []);
-
-  const attach = useCallback((turnId: string, threadId: string, isFirst: boolean) => {
+  const attach = useCallback((turnId: string) => {
     sseRef.current?.close();
     finishingRef.current = false;
-    liveTurnRef.current = turnId;
-    setStreaming(true);
-    setPendingSegments([]);
-
-    // One reducer for every segment-shaped event, mirroring the server's
-    // _segment_ingest so the live turn and the reloaded one agree — in
-    // particular about which steps belong to a subagent rather than to the turn.
-    const fold = (ev: StreamEvent) => setPendingSegments((segs) => applyStreamEvent(segs, ev));
+    detachedRef.current.delete(turnId);
+    setAttached(true);
 
     const es = new EventSource(`/api/chat/turns/${turnId}/stream`);
     sseRef.current = es;
@@ -190,31 +106,47 @@ export function useTurnStream({
       setReconnecting(false);
     };
 
+    // One reducer for every segment-shaped event, mirroring the server's
+    // _segment_ingest so the live turn and the reloaded one agree — in
+    // particular about which steps belong to a subagent rather than to the turn.
+    const parse = (e: Event): Record<string, unknown> => {
+      try {
+        return (JSON.parse((e as MessageEvent).data).payload || {}) as Record<string, unknown>;
+      } catch {
+        return {};
+      }
+    };
+
     es.addEventListener("text", (e) => {
       markAlive();
-      try {
-        const p = JSON.parse((e as MessageEvent).data).payload || {};
-        fold({ kind: "text", content: p.content || "", parent: p.parent });
-      } catch { /* ignore */ }
+      const p = parse(e);
+      cb.current.dispatch({
+        type: "runDelta", runId: turnId,
+        event: { kind: "text", content: String(p.content || ""), parent: p.parent as string | null },
+      });
     });
     es.addEventListener("tool", (e) => {
       markAlive();
-      try {
-        const p = JSON.parse((e as MessageEvent).data).payload || {};
-        fold({
-          kind: "tool", name: p.name, input: p.input, detail: p.detail,
-          id: p.id, agent: p.agent, parent: p.parent,
-        });
-      } catch { /* ignore */ }
+      const p = parse(e);
+      cb.current.dispatch({
+        type: "runDelta", runId: turnId,
+        event: {
+          kind: "tool",
+          name: p.name as string, input: p.input as string, detail: p.detail as string | null,
+          id: p.id as string, agent: p.agent as string | null, parent: p.parent as string | null,
+        },
+      });
     });
     // Only a subagent's own result is rendered (it closes that subagent's
-    // segment); every other tool result is plumbing and the reducer drops it.
+    // segment); every other tool result is plumbing the operator already sees
+    // the effect of, and the reducer drops it.
     es.addEventListener("tool_result", (e) => {
       markAlive();
-      try {
-        const p = JSON.parse((e as MessageEvent).data).payload || {};
-        fold({ kind: "tool_result", tool_use_id: p.tool_use_id, text: p.text });
-      } catch { /* ignore */ }
+      const p = parse(e);
+      cb.current.dispatch({
+        type: "runDelta", runId: turnId,
+        event: { kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string },
+      });
     });
     es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm
     es.addEventListener("error", (e) => {
@@ -229,45 +161,26 @@ export function useTurnStream({
     const finish = async () => {
       if (finishingRef.current) return;
       finishingRef.current = true;
-      liveTurnRef.current = null;
       es.close();
       sseRef.current = null;
       reconnectsRef.current = 0;
 
-      // READ FIRST, THEN RETIRE THE TURN IN ONE COMMIT.
+      // READ FIRST, THEN RETIRE, IN ONE COMMIT.
       //
-      // This used to flip `streaming` off, then await getThread, then clear the
-      // segments — so for a whole network round trip the turn was "not
-      // streaming" while still rendered as the live band BELOW `messages`.
-      // Anything the operator sent in that window took the not-streaming path,
-      // appended to `messages`, and landed ABOVE a turn that had already
-      // finished. That is the out-of-order message.
+      // This used to flip out of streaming, then fetch, then clear the segments
+      // — so for a whole round trip the turn was "not streaming" while still
+      // rendered as the live band below the messages, and anything sent in that
+      // window appended above a turn that had already finished.
       //
-      // Fetching first collapses the window. While the read is in flight the
-      // turn is still live in every sense the rest of the app can observe, so a
-      // message sent then QUEUES (below the live turn, which is the truthful
-      // place for something not yet sent) instead of jumping above it. There is
-      // exactly one moment where the live turn becomes its persisted message,
-      // and React batches these into a single commit.
-      let server: ChatMsg[] | null = null;
-      try {
-        const t = await chatApi.getThread(threadId);
-        server = t.messages;
-      } catch { /* keep what is on screen; the liveness poll resyncs */ }
-
-      setStreaming(false);
+      // The sync brings the committed reply AND clears `active_run` in a single
+      // dispatch, so the live block becomes its persisted message in one React
+      // commit with no gap to fall into.
+      await cb.current.sync();
+      cb.current.dispatch({ type: "runCommitted", runId: turnId });
+      setAttached(false);
       setReconnecting(false);
-      turnStartRef.current = 0;
-      if (server) {
-        cb.current.onMessages(server);
-        const last = server[server.length - 1];
-        if (last?.meta?.notes?.length) cb.current.onNotes();
-      }
-      // Safe now, and only now: the server's copy of this turn is in `messages`,
-      // which is the invariant stated at the top of this file.
-      setPendingSegments([]);
-      cb.current.onTurnEnd(isFirst);
-      cb.current.dispatchQueue();
+      cb.current.onTurnEnd();
+      cb.current.onDrainQueue();
     };
     es.addEventListener("done", finish);
     es.addEventListener("end", finish);
@@ -276,14 +189,17 @@ export function useTurnStream({
       if (finishingRef.current) return;
       es.close();
       if (sseRef.current === es) sseRef.current = null;
-      try {
-        const t = await chatApi.getThread(threadId);
-        const stillRunning = !!findLiveTurn(t.messages);
-        if (!stillRunning) { void finish(); return; } // turn really ended — sync + stop
-      } catch { /* network error — assume still running and retry */ }
+      // Did the turn really end, or did the socket? Only the server knows.
+      await cb.current.sync();
+      if (finishingRef.current) return;
+      if (stateRef.current.activeRun?.runId !== turnId) { void finish(); return; }
       if (reconnectsRef.current >= MAX_RECONNECTS) {
+        // OUT OF BUDGET IS NOT THE END OF THE TURN. Stop retrying and stop
+        // claiming a socket, but leave the run in the store: it is still in
+        // flight, the poll keeps its snapshot current, and the indicator reads
+        // "Still running" rather than the transcript going quiet.
         finishingRef.current = true;
-        setStreaming(false);
+        setAttached(false);
         setReconnecting(false);
         cb.current.onError("Lost the connection to this turn. It is still running; reattaching.");
         return;
@@ -291,93 +207,29 @@ export function useTurnStream({
       reconnectsRef.current += 1;
       setReconnecting(true);
       window.setTimeout(() => {
-        if (!finishingRef.current) attachRef.current(turnId, threadId, isFirst);
+        if (!finishingRef.current) attachRef.current(turnId);
       }, RECONNECT_DELAY_MS);
     };
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED) void handleDrop();
     };
-  }, []);
+  }, [stateRef]);
   attachRef.current = attach;
 
-  const stop = useCallback(() => {
-    closeStream();
-    liveTurnRef.current = null;
-    // Claim the finish so a pending drop handler can't re-attach behind us.
+  const stopWatching = useCallback(() => {
+    const runId = stateRef.current.activeRun?.runId;
+    // Claim the finish so a pending drop handler cannot re-attach behind us.
     finishingRef.current = true;
-    setStreaming(false);
-    setReconnecting(false);
-    const id = activeIdRef.current;
-    if (!id) { cb.current.dispatchQueue(); return; }
-    chatApi.getThread(id)
-      .then((t) => { cb.current.onMessages(t.messages); setPendingSegments([]); })
-      .catch(() => {
-        const segs = pendingRef.current;
-        if (segs.length) cb.current.appendSegmentsAsMessage(segs);
-        setPendingSegments([]);
-      })
-      .finally(() => cb.current.dispatchQueue());
-  }, [closeStream, activeIdRef]);
+    if (runId) detachedRef.current.add(runId);
+    closeStream();
+    // The run keeps going, so the transcript keeps showing it — from the
+    // server's snapshot now instead of this socket. Nothing is thrown away,
+    // which is what the old Stop had to reconcile by hand.
+    void cb.current.sync();
+    cb.current.onDrainQueue();
+  }, [closeStream, stateRef]);
 
-  // Elapsed ticker. Starts when a turn begins and keeps running across
-  // reconnects (streaming stays true), so the indicator reflects the real turn
-  // duration rather than the last reconnect.
-  useEffect(() => {
-    if (!streaming) { setElapsed(0); turnStartRef.current = 0; return; }
-    if (!turnStartRef.current) turnStartRef.current = Date.now();
-    const tick = () => setElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, [streaming]);
+  useEffect(() => () => { sseRef.current?.close(); sseRef.current = null; }, []);
 
-  return {
-    streaming, streamingRef, logBusyRef, reconnecting, elapsed,
-    pendingSegments, setPendingSegments, liveTurnRef,
-    attach, anchorStart, stop, closeStream, hasOpenStream,
-    markStarting, markFailed, segmentCount,
-  };
-}
-
-// Liveness is server state — poll the thread while idle and re-attach the moment
-// the server says a turn is live. Separate from the hook above so the caller can
-// give it the thread id it is actually showing.
-export function useTurnLiveness({
-  activeId,
-  streaming,
-  hasOpenStream,
-  onReattach,
-}: {
-  activeId: string | null;
-  streaming: boolean;
-  hasOpenStream: () => boolean;
-  // `during`: any messages filed after the live turn's placeholder (mid-turn
-  // interjections this tab never saw, e.g. sent from another tab/device).
-  onReattach: (
-    turnId: string, threadId: string, startedMs: number, msgs: ChatMsg[], during: ChatMsg[],
-  ) => void;
-}) {
-  const cb = useRef(onReattach);
-  cb.current = onReattach;
-  useEffect(() => {
-    if (!activeId || streaming) return;
-    let cancelled = false;
-    const check = async () => {
-      if (cancelled || hasOpenStream()) return;
-      try {
-        const t = await chatApi.getThread(activeId);
-        if (cancelled || hasOpenStream()) return;
-        const live = findLiveTurn(t.messages);
-        if (live) {
-          const idx = t.messages.indexOf(live);
-          cb.current(
-            live.meta!.turn_id!, t.id, Date.parse(live.ts || ""),
-            t.messages.slice(0, idx), t.messages.slice(idx + 1),
-          );
-        }
-      } catch { /* transient — try again on the next tick */ }
-    };
-    const id = window.setInterval(check, LIVENESS_POLL_MS);
-    return () => { cancelled = true; window.clearInterval(id); };
-  }, [activeId, streaming, hasOpenStream]);
+  return { attached, reconnecting, attach, stopWatching, closeStream, hasOpenStream, isDetached };
 }
