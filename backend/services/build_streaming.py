@@ -321,6 +321,7 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
                     out.append(("tool", {
                         "name": block.get("name"),
                         "input": _summarize_tool_input(block.get("input", {}), block.get("name")),
+                        "detail": _tool_detail(block.get("input", {}), block.get("name")),
                         # The id is what a later sidechain event points back at,
                         # and what the closing tool_result names.
                         "id": block.get("id"),
@@ -415,6 +416,9 @@ def _seg_agent(turn: "Turn", payload: dict) -> None:
         "t": "agent",
         "name": payload.get("agent") or "general-purpose",
         "input": payload.get("input") or "",
+        # The brief, read only when the chip is opened. The one-line `input`
+        # above is what the row says; this is what the row hides.
+        "detail": payload.get("detail") or "",
         "id": payload.get("id") or "",
         "steps": [],
         "done": False,
@@ -543,6 +547,7 @@ def _summarize_tool_input(inp: dict, tool_name: str | None = None) -> str:
     if tool_name in SUBAGENT_TOOLS:
         v = str(inp.get("description") or inp.get("prompt") or "")
         return v if len(v) <= 300 else v[:297] + "…"
+    # A subagent's full brief is not a preview; see _tool_detail.
     for key in ("file_path", "path", "pattern", "command", "url", "query", "prompt"):
         if key in inp:
             v = str(inp[key])
@@ -550,6 +555,24 @@ def _summarize_tool_input(inp: dict, tool_name: str | None = None) -> str:
     # Generic fallback: short keys list.
     keys = ",".join(list(inp.keys())[:4])
     return f"({keys})"
+
+
+# A delegation's chip shows one line: what the agent was asked to do. The brief
+# it was actually handed is the thing you open the chip to read, so it has to
+# survive to the client instead of being truncated into the preview. Only for a
+# subagent launch, and capped well below a file body.
+SUBAGENT_BRIEF_MAX = 8000
+
+
+def _tool_detail(inp: dict, tool_name: str | None = None) -> str | None:
+    """The full brief behind a collapsed chip. None when there is nothing more
+    to show than the preview already says."""
+    if tool_name not in SUBAGENT_TOOLS or not isinstance(inp, dict):
+        return None
+    prompt = str(inp.get("prompt") or "").strip()
+    if not prompt:
+        return None
+    return prompt if len(prompt) <= SUBAGENT_BRIEF_MAX else prompt[:SUBAGENT_BRIEF_MAX - 1] + "…"
 
 
 # ==========================================================================
