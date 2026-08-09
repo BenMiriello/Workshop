@@ -47,11 +47,15 @@ def _looks_like_a_title(title: str) -> bool:
     return not title.lower().startswith(_NON_TITLE_STARTS)
 
 
-def generate_title(thread_id: str) -> None:
-    """Blocking: name the thread from its FIRST exchange, whenever it is still
-    unnamed and at least one assistant reply has landed. Runs in a worker thread
-    (the model call blocks). Reads the messages itself so either chat path can
-    call it with just the thread id.
+def compute_title(thread_id: str) -> str | None:
+    """Blocking: ask a cheap model for a name for this thread, or None.
+
+    READ ONLY. This is the part that is safe to run in a worker thread — it
+    makes the model call and touches nothing. Writing the title back is
+    `apply_title`, on the loop. The two used to be one function that ran whole
+    inside `asyncio.to_thread`, so a ~2s model call sat between a read of the
+    thread and a write of it from OFF the event loop, with everything the
+    operator sent in that window landing in the gap.
 
     RETRIES UNTIL IT SUCCEEDS, and that is the point. This used to fire only when
     exactly one assistant reply existed — a single attempt, on one turn, with no
@@ -67,17 +71,17 @@ def generate_title(thread_id: str) -> None:
     """
     t = chat_store.get_thread(thread_id)
     if t is None or not is_blank_title(t.get("title")):
-        return
+        return None
     msgs = t.get("messages", [])
     assistants = [
         m for m in msgs
         if m.get("role") == "assistant" and (m.get("content") or "").strip()
     ]
     if not assistants:
-        return
+        return None
     first_user = _first_content(msgs, "user")
     if not first_user:
-        return
+        return None
     first_assistant = assistants[0].get("content", "")
 
     prompt = (
@@ -97,24 +101,45 @@ def generate_title(thread_id: str) -> None:
         )
     except Exception as e:
         log.info("auto-name skipped (model call failed) for %s: %s", thread_id, e)
-        return
+        return None
 
     title = (result.get("text") or "").strip().strip('"').strip()
     title = title.splitlines()[0].strip() if title else ""  # first line only
     if title and not _looks_like_a_title(title):
         log.info("auto-name skipped (model broke character) for %s: %r", thread_id, title)
-        return
+        return None
     words = title.split()
     if len(words) > 6:
         title = " ".join(words[:6])
-    if not title:
-        return
+    return title or None
 
-    # Final guard: only rename if still blank (operator may have renamed).
+
+def apply_title(thread_id: str, title: str) -> None:
+    """Write the generated name, if the chat is still unnamed.
+
+    Must run on the event loop: it writes. The guard re-reads rather than
+    trusting what `compute_title` saw, so a name the operator typed during the
+    model call wins."""
     cur = chat_store.get_thread(thread_id)
     if cur is not None and is_blank_title(cur.get("title")):
-        chat_store.rename_thread(thread_id, title)
+        chat_store.rename_thread(thread_id, title, source="auto")
         log.info("auto-named thread %s -> %r", thread_id, title)
+
+
+def generate_title(thread_id: str) -> None:
+    """Name the thread, start to finish, on the calling thread. For callers that
+    are already on the loop and can afford to block (scripts, tests)."""
+    title = compute_title(thread_id)
+    if title:
+        apply_title(thread_id, title)
+
+
+async def name_thread(thread_id: str) -> None:
+    """Name the thread without blocking the loop: the model call goes to a
+    worker thread, the write stays here."""
+    title = await asyncio.to_thread(compute_title, thread_id)
+    if title:
+        apply_title(thread_id, title)
 
 
 def schedule(thread_id: str) -> None:
@@ -125,6 +150,6 @@ def schedule(thread_id: str) -> None:
     except RuntimeError:
         loop = None
     if loop is not None:
-        loop.create_task(asyncio.to_thread(generate_title, thread_id))
+        loop.create_task(name_thread(thread_id))
     else:  # pragma: no cover — no running loop (rare): just do it inline.
         generate_title(thread_id)

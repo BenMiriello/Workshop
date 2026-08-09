@@ -1,14 +1,19 @@
 """A thread never loses a message.
 
-Every mutation in chat_store is read-modify-write of the whole file, which is
-safe only while no `await` sits between the read and the write. `/compact` broke
-that rule by design: it read the thread, spent tens of seconds in a
-summarization call, then saved the snapshot back — deleting everything the
-operator sent during the fold.
+Mutations used to be read-modify-write of one whole JSON document, which is safe
+only while no `await` sits between the read and the write. `/compact` broke that
+rule by design: it read the thread, spent tens of seconds in a summarization
+call, then saved the snapshot back — deleting everything the operator sent during
+the fold. That is the bug behind "I sent a message during compact and it
+vanished", and it outlived the earlier ordering fix because ordering only
+describes messages that still exist.
 
-That is the bug behind "I sent a message during compact and it vanished", and it
-outlived the earlier ordering fix because ordering only describes messages that
-still exist.
+The store used to catch that with a `LostUpdate` tripwire: any write that shrank
+the transcript was refused, because nothing in the store ever removed a message.
+The transcript is now an append-only log (docs/chat-rebuild-spec-2026-08-09.md)
+and there is no operation that writes it as a whole, so the tripwire is gone and
+what it guarded is gone with it. These tests pin the stronger guarantee that
+replaced it: a stale snapshot does not raise, it simply cannot delete anything.
 """
 import asyncio
 
@@ -27,18 +32,25 @@ def thread(tmp_path, monkeypatch):
         ownership.clear_current_owner()
 
 
-class TestWriteRefusesToShrink:
-    def test_saving_a_stale_snapshot_raises(self, thread):
+class TestAStaleSnapshotCannotDelete:
+    def test_saving_a_stale_snapshot_keeps_the_message_it_never_saw(self, thread):
+        """The old store refused this write. The log accepts it and still keeps
+        the message, because "everything else goes back to what I read" is not
+        something an append-only log can be asked to do."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "one")
         stale = chat_store.get_thread(tid)          # read
         chat_store.append_message(tid, "user", "two")  # …meanwhile
         stale["summary"] = "folded"
-        with pytest.raises(chat_store.LostUpdate):
-            chat_store.save_thread(stale)
-        # And the message that would have been erased is still there.
-        msgs = chat_store.get_thread(tid)["messages"]
-        assert [m["content"] for m in msgs] == ["one", "two"]
+        chat_store.save_thread(stale)               # no longer raises
+        t = chat_store.get_thread(tid)
+        assert [m["content"] for m in t["messages"]] == ["one", "two"]
+        assert t["summary"] == "folded"
+
+    def test_the_tripwire_is_gone_because_what_it_guarded_is_gone(self):
+        """`LostUpdate` guarded whole-document writes. There are none."""
+        assert not hasattr(chat_store, "LostUpdate")
+        assert not hasattr(chat_store, "_write")
 
     def test_an_up_to_date_save_still_works(self, thread):
         tid = thread["id"]

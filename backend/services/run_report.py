@@ -49,7 +49,11 @@ def owner_of_thread(thread_id: str) -> int | None:
         return None
     try:
         for d in (_RUNTIME / "users").iterdir():
-            if (d / "chat" / f"{thread_id}.json").is_file():
+            # A thread is a directory of events (chat_log); the flat document is
+            # the pre-2026-08-09 layout, still checked so an owner whose threads
+            # have not been migrated yet is still found.
+            if (d / "chat" / thread_id / "meta.json").is_file() \
+                    or (d / "chat" / f"{thread_id}.json").is_file():
                 try:
                     return int(d.name)
                 except ValueError:

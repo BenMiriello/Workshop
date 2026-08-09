@@ -50,6 +50,15 @@ async def lifespan(app: FastAPI):
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a
     # dead one) so a chat is never left stuck mid-turn.
+    # Chat threads moved from one JSON document each to an append-only event log
+    # (docs/chat-rebuild-spec-2026-08-09.md). One shot, idempotent, non-
+    # destructive: a thread already on the log has no legacy file left to find,
+    # and a migration that fails leaves the original where it was.
+    try:
+        from services import chat_log
+        chat_log.migrate_all_owners()
+    except Exception as e:
+        log.error("chat log migration failed at startup: %s", e)
     try:
         from services import build_streaming
         build_streaming.reattach_running_turns()
