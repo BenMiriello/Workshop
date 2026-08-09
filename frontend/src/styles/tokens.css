@@ -103,6 +103,12 @@
      If a screen seems to want a different width, it doesn't — change this one
      number and every page moves together. */
   --page-max: 1680px;
+  /* The matching horizontal inset. Width alone does not make two pages look
+     alike: the chat sat in the right container but inset its content by 12px
+     while every other page used 24px, so it still read as a different page.
+     Anything that is the full width of a page indents by this and nothing else.
+     Narrowed with the viewport in the mobile block at the end of components.css. */
+  --page-pad-x: var(--space-5);
 
   /* Z-index layers */
   --z-base:     0;

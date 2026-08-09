@@ -540,7 +540,8 @@ input[type="range"].grad::-moz-range-thumb {
 /* ---- Toolbar: a single row of compact controls ---- */
 .chat-toolbar {
   display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  /* Same horizontal inset as every page's content — see --page-pad-x. */
+  padding: var(--space-2) var(--page-pad-x);
   border-bottom: 1px solid var(--border);
   /* Wraps on a wide viewport if it ever has to (a safety net, not the design);
      forced back to one row under 640px below — a second row of icons was what
@@ -676,7 +677,11 @@ input[type="range"].grad::-moz-range-thumb {
   overflow-x: hidden;
   /* Keep a touch swipe inside the log; don't chain it to the page. */
   overscroll-behavior: contain;
-  padding: 0.8rem; display: flex; flex-direction: column; gap: 0.6rem;
+  /* The transcript indents by the SAME amount as content on every other page.
+     This was 0.8rem — close enough to look like a mistake rather than a choice,
+     and the reason the chat never quite lined up with the rest of the app. */
+  padding: var(--space-4) var(--page-pad-x);
+  display: flex; flex-direction: column; gap: 0.6rem;
 }
 .chat-empty { color: var(--muted); font-size: 0.85rem; text-align: center; margin: auto 0; }
 .chat-empty--err { color: var(--danger); }
@@ -959,7 +964,8 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  /* Same horizontal inset as the transcript above it and every other page. */
+  padding: var(--space-3) var(--page-pad-x);
   /* keep the composer above the iOS keyboard / home indicator on mobile */
   padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);

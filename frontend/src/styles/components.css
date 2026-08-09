@@ -831,6 +831,12 @@ a.ws-btn { text-decoration: none; }
   width: 22rem; max-width: calc(100vw - 2 * var(--space-4));
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden;
+  /* The dock hosts the same Chat component as the full page, so it inherits the
+     page inset. It is a 22rem floating panel, not a page: a page-sized indent on
+     both edges would eat a seventh of it. Overriding the token here (rather than
+     giving the chat's rows a second set of dock-specific rules) keeps ONE inset
+     per surface — the rows still just read --page-pad-x. */
+  --page-pad-x: var(--space-3);
 }
 .ws-dock__header {
   display: flex; align-items: center; gap: var(--space-2);
@@ -885,7 +891,7 @@ a.ws-btn { text-decoration: none; }
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) var(--page-pad-x);
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
@@ -893,7 +899,7 @@ a.ws-btn { text-decoration: none; }
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-6) var(--space-5) var(--space-8);
+  padding: var(--space-6) var(--page-pad-x) var(--space-8);
 }
 .ws-brand { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg); text-decoration: none; }
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
@@ -1388,7 +1394,10 @@ a.ws-btn { text-decoration: none; }
    so it doesn't eat the chat's viewport; the nav itself (incl. the hamburger)
    stays put. */
 .ws-app.ws-app--chatfull > .ws-topnav {
-  padding: var(--space-2) var(--space-4);
+  /* Horizontally aligned with every other page (--page-pad-x) so the breadcrumb
+     starts on the same line as page content everywhere. Only the vertical band
+     is slimmer, which is about the chat's viewport, not about its width. */
+  padding: var(--space-2) var(--page-pad-x);
   flex-wrap: nowrap;
   /* The chat toolbar sits directly beneath this and draws its own bottom rule,
      so keeping this one put TWO horizontal lines a few pixels apart at the top
@@ -1515,11 +1524,14 @@ a.ws-btn { text-decoration: none; }
     max-height: 85vh;
     border-radius: var(--radius-xl) var(--radius-xl) 0 0;
   }
-  /* Tighter chrome on phones. The scroller is <main>, so its bottom padding adds
-     the home-indicator inset (viewport-fit=cover); the chat-full surface manages
-     its own edges. The topnav stays one row (never wraps → never grows taller). */
-  .ws-topnav { padding: var(--space-3) var(--space-4); gap: var(--space-3); }
-  .ws-app > main { padding: var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom)); }
+  /* Tighter chrome on phones. Narrowing the ONE inset token moves the topnav,
+     every page's <main>, and the chat's rows together — they used to be three
+     separate numbers here and drifted apart. The scroller is <main>, so its
+     bottom padding adds the home-indicator inset (viewport-fit=cover). The
+     topnav stays one row (never wraps → never grows taller). */
+  :root { --page-pad-x: var(--space-4); }
+  .ws-topnav { gap: var(--space-3); }
+  .ws-app > main { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); padding-top: var(--space-4); }
 }
 
 /* Auth / login screen — a single centered card on a full-height surface. */
