@@ -64,7 +64,7 @@ export function useVoiceComposer(
     errored ? "Voice error"
     : vsnap.state === "speaking" ? "Stop"
     : vsnap.state === "listening" ? "Send now"
-    : vsnap.state === "thinking" ? "Cancel - scrap that"
+    : vsnap.state === "thinking" ? "Cancel"
     : vsnap.state === "connecting" ? "Starting" : "Listening";
 
   const status: VoiceStatus =
@@ -79,9 +79,9 @@ export function useVoiceComposer(
               text:
                 vsnap.state === "connecting" ? "Connecting"
                 : vsnap.state === "thinking" ? "Thinking"
-                : vsnap.state === "speaking" ? "Speaking, Esc to stop"
+                : vsnap.state === "speaking" ? "Speaking. Esc to stop"
                 : vsnap.state === "listening"
-                  ? (vprefs.mic_enabled ? "Listening" : "Mic off — type to send")
+                  ? (vprefs.mic_enabled ? "Listening" : "Mic off. Type to send")
                   : "Voice on",
             };
 

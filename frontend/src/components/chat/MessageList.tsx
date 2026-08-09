@@ -44,7 +44,7 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
         : <FoldVertical size={14} strokeWidth={1.8} aria-hidden />}
       <span>
         {cleared
-          ? `Context cleared — ${count} earlier ${count === 1 ? "message" : "messages"} no longer sent to the model`
+          ? `Context cleared. ${count} earlier ${count === 1 ? "message is" : "messages are"} no longer sent to the model`
           : `${count} earlier ${count === 1 ? "message" : "messages"} folded into the running summary`}
       </span>
     </div>
@@ -105,7 +105,7 @@ export default function MessageList({
                   )}
                   {m.meta?.stopped && (
                     <div className="chat-timeout-tag">
-                      <Unplug size={13} strokeWidth={1.8} aria-hidden /> Turn interrupted — send a message to continue
+                      <Unplug size={13} strokeWidth={1.8} aria-hidden /> Turn interrupted. Send a message to continue.
                     </div>
                   )}
                   {renderAssistantBody(m, expandLatest && i === lastAssistantIdx, selectedModel, cardCtx)}
@@ -116,7 +116,7 @@ export default function MessageList({
                   {m.meta?.unsent && (
                     <div className="chat-unsent">
                       <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
-                      <span>Not sent, this message never reached the server.</span>
+                      <span>Not sent. This never reached the server.</span>
                       <Button size="sm" variant="ghost" onClick={() => onRetryUnsent(i, m.content)}>Retry</Button>
                     </div>
                   )}

@@ -507,7 +507,7 @@ class BudgetContextProvider(AppPersona):
             patch = json.loads(raw)
             ops = patch.get("set", []) if isinstance(patch, dict) else []
         except json.JSONDecodeError:
-            return reply, ["(could not parse a plan edit — left the plan unchanged)"]
+            return reply, ["(could not parse a plan edit. The plan is unchanged)"]
 
         if not ops:
             cleaned = _PATCH_BLOCK.sub("", reply).strip()

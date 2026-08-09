@@ -204,7 +204,7 @@ export default function ChatComposer({
           onClick={onSend}
           disabled={!canSend}
           aria-label="Send (Enter)"
-          title={streaming ? "Send (queues until the current turn finishes)" : "Send (Enter)"}
+          title={streaming ? "Send (queues behind the current turn)" : "Send (Enter)"}
         >
           <CornerDownLeft size={16} aria-hidden />
         </button>
@@ -213,8 +213,8 @@ export default function ChatComposer({
             className="chat-stop"
             onMouseDown={(e) => e.preventDefault()}
             onClick={onStop}
-            aria-label="Stop receiving (turn continues in background)"
-            title="Stop receiving (turn continues in background)"
+            aria-label="Stop watching (the turn keeps running)"
+            title="Stop watching (the turn keeps running)"
           >
             <Square size={16} aria-hidden />
           </button>

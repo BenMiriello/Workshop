@@ -66,7 +66,7 @@ export default function ChatDialogs({
           activeId ? (
             <span>
               This leaves {activeThreadTitle ? `"${activeThreadTitle}"` : "the current chat"} and opens a
-              blank one in {scopeLabel(scope)}. Nothing is deleted — you can come back to it from All chats.
+              blank one in {scopeLabel(scope)}. Nothing is deleted; it stays in All chats.
             </span>
           ) : (
             <span>Opens a blank chat in {scopeLabel(scope)}.</span>

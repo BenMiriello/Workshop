@@ -282,7 +282,7 @@ export function useTurnStream({
         finishingRef.current = true;
         setStreaming(false);
         setReconnecting(false);
-        cb.current.onError("Lost the live connection to this turn. It is still running on the server, reattaching...");
+        cb.current.onError("Lost the connection to this turn. It is still running; reattaching.");
         return;
       }
       reconnectsRef.current += 1;

@@ -897,39 +897,31 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
         is_error = False
     elif timed_out:
         text = (
-            f"This turn was stopped after reaching the {minutes}-minute limit set "
-            "by whatever started it. Any files it changed are already saved — "
-            "send a follow-up (e.g. \"continue\") to pick up where it left off."
+            f"Stopped at the {minutes}-minute limit. Any file changes are saved. "
+            "Send \"continue\" to pick it back up."
         )
         is_error = False
     elif compacted:
-        text = (
-            "Conversation compacted — earlier messages were summarized to free up "
-            "the context window. Continue where you left off."
-        )
+        text = "Compacted. Earlier messages are now a summary."
         is_error = False
     elif rc == 0 and is_command:
         text = "Command ran."
         is_error = False
     elif rc == 0:
-        text = (
-            "The turn finished without a closing message — the steps above are the "
-            "result. Send a follow-up if you want a summary or the next change."
-        )
+        text = "Finished with no closing message. The steps above are the result."
         is_error = False
     elif lost:
         # The operator saw "ended unexpectedly (exit -1)" over and over without
         # ever being told what it meant. This is that case, named: the backend
         # was restarted while the turn was in flight and the run did not survive.
         text = (
-            "This turn was lost when the backend restarted mid-run, so it never "
-            "reported back. Nothing it had written to disk is affected. Send "
-            "\"continue\" to pick the work back up."
+            "Lost when the backend restarted mid-run. Anything already written to "
+            "disk is intact. Send \"continue\" to pick it back up."
         )
         is_error = False
     else:
         detail = f": {turn.error}" if turn.error else ""
-        text = f"The turn ended unexpectedly (exit {rc}){detail}. Try sending it again."
+        text = f"Ended unexpectedly (exit {rc}){detail}."
         is_error = True
     # Provider actions (e.g. an app persona applying a plan-patch to budget.json).
     # Only providers that actually override apply_actions run here, so the general

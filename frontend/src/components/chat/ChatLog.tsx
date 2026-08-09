@@ -90,7 +90,7 @@ export default function ChatLog({
 
       {overflowed && (
         <div className="chat-empty chat-empty--note">
-          Showing the latest messages. Older history is paginated server-side.
+          Showing the latest messages. Scroll up to load older ones.
         </div>
       )}
 

@@ -144,7 +144,7 @@ async function j<T>(r: Response): Promise<T> {
 export function shortHttpError(status: number, statusText: string, body: string): string {
   const b = (body || "").trim();
   const looksHtml = b.startsWith("<") || b.toLowerCase().includes("<!doctype");
-  if (status >= 502 && status <= 504) return `Server unavailable (${status}) — retrying…`;
+  if (status >= 502 && status <= 504) return `Server unavailable (${status}). Retrying.`;
   const detail = !looksHtml && b && b.length <= 200 ? b : "";
   return detail ? `${status} ${detail}` : (`${status} ${statusText || "request failed"}`).trim();
 }

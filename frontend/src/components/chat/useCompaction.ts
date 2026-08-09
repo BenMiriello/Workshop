@@ -135,7 +135,7 @@ export function useCompaction({
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
-    if (!id) { setErr("Nothing to compact — this chat has no messages yet."); return; }
+    if (!id) { setErr("Nothing to compact. This chat has no messages yet."); return; }
     setErr(null);
     setCompacting(true);
 
@@ -198,7 +198,7 @@ export function useCompaction({
         if (r.will_fold === 0) {
           // Nothing happened, so nothing should be left claiming it did.
           dropRequestBubble();
-          setErr("Nothing to compact — the transcript is already short.");
+          setErr("Nothing to compact. The transcript is already short.");
         }
         // Otherwise the fold divider is the report, and it is already drawn.
       }
@@ -219,7 +219,7 @@ export function useCompaction({
 
   const clear = useCallback(async () => {
     const id = activeIdRef.current;
-    if (!id) { setErr("Nothing to clear — this chat has no messages yet."); return; }
+    if (!id) { setErr("Nothing to clear. This chat has no messages yet."); return; }
     setErr(null);
     // Reuses the compact hold: it closes the same window either command needs
     // closed — a message typed right after this call must not become a turn
@@ -229,7 +229,7 @@ export function useCompaction({
     try {
       const r = await chatApi.clearThreadContext(id);
       if (!r.cleared) {
-        setErr("Nothing to clear — this chat has no messages yet.");
+        setErr("Nothing to clear. This chat has no messages yet.");
         return;
       }
       // No setMessages: the transcript is the entire point of /clear. No

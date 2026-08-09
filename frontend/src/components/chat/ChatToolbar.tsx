@@ -205,8 +205,8 @@ export default function ChatToolbar({
               className={`chat-tb__btn${chatModeDef(chatMode).id === "orchestrated" ? " is-active" : ""}`}
               title={
                 chatModeDef(chatMode).id === "orchestrated"
-                  ? "Tickets on — work leaves as tickets run by agents"
-                  : "Tickets off — work stays in this conversation"
+                  ? "Tickets on. Work leaves as tickets run by agents"
+                  : "Tickets off. Work stays in this conversation"
               }
               aria-label="Tickets"
             >

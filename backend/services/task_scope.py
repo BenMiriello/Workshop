@@ -174,13 +174,13 @@ def apply_task_patch(context_key: str | None, reply: str,
     # cannot file, whatever the model emits. Strip the block and say why, rather
     # than filing a ticket the operator did not ask this chat to create.
     if chat_mode == "direct":
-        return cleaned, ["(this chat is in Direct mode, so the task edit was not applied)"]
+        return cleaned, ["(Direct mode: the task edit was not applied)"]
     if root is None:
         return cleaned, ["(no task scope for this chat, so the task edit was skipped)"]
     try:
         patch = json.loads(m.group(1).strip())
     except json.JSONDecodeError:
-        return cleaned, ["(could not parse a task edit, left the tasks unchanged)"]
+        return cleaned, ["(could not parse a task edit. Tasks are unchanged)"]
     if not isinstance(patch, dict):
         return cleaned, []
 
@@ -264,7 +264,7 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
     try:
         block = json.loads(m.group(1).strip())
     except json.JSONDecodeError:
-        return cleaned, ["(could not parse a learning note, nothing was captured)"]
+        return cleaned, ["(could not parse a learning note. Nothing was captured)"]
     if not isinstance(block, dict):
         return cleaned, []
     note = (block.get("note") or "").strip()
@@ -318,7 +318,7 @@ async def apply_note_block(context_key: str | None, reply: str) -> tuple[str, li
     try:
         block = json.loads(m.group(1).strip())
     except json.JSONDecodeError:
-        return cleaned, ["(could not parse a note, nothing was captured)"]
+        return cleaned, ["(could not parse a note. Nothing was captured)"]
     if not isinstance(block, dict):
         return cleaned, []
     title = (block.get("title") or "").strip()

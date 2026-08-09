@@ -368,7 +368,7 @@ export class VoiceSession {
     try {
       if (wasCapturing) {
         // Don't cut the live segment out from under a turn in progress.
-        return { ok: false, reason: "Busy with a turn — try again once it's finished." };
+        return { ok: false, reason: "Busy with a turn. Try again when it finishes." };
       }
       this.mic.startRecording();
       await new Promise((r) => setTimeout(r, ms));
@@ -758,7 +758,7 @@ export class VoiceSession {
       if (!this.lowLevelNudged) {
         this.lowLevelNudged = true;
         this.mic.setSensitivity(Math.min(1, this.cfg.prefs.barge_sensitivity + 0.25));
-        this.error = "Mic level is low — raising sensitivity. Speak up, or raise Mic sensitivity in Voice settings.";
+        this.error = "Mic level is low. Raising sensitivity; speak up, or raise it in Voice settings.";
         this.emit();
       }
       return;
