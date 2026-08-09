@@ -411,7 +411,11 @@ def apply_decision(root: Path, scope_key: str, note_id: str, note_text: str,
         q = str(decision.get("question") or "").strip()
         text = q or _note_title(note_text, note_id)
 
-    res = task_dedup.dedup_add(root, text=text, source=src, provenance=provenance)
+    # The triager wrote this spec, not the operator: a note became a ticket by a
+    # model's judgement about what the note meant. Recorded so a run that fails on
+    # a bad spec points at the triager rather than at whoever wrote the note.
+    res = task_dedup.dedup_add(root, text=text, source=src, provenance=provenance,
+                               scoped_by="agent:triager")
     task = res.get("task") or {}
     tid = task.get("id")
     out["task_ids"] = [tid] if tid else []

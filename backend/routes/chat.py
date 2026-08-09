@@ -17,14 +17,13 @@ import hashlib
 import json as _json
 import logging
 import os
-import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from services import chat_store, chat_context
+from services import chat_store, chat_context, chat_log
 from services import task_scope
 from services import scope_version
 from services import agent_authority
@@ -269,36 +268,44 @@ async def remove_participant(thread_id: str, slug: str):
 
 @router.get("/threads/{thread_id}")
 async def thread(thread_id: str):
+    """The thread as a document: meta plus a `messages` list.
+
+    A run in flight appears as a trailing assistant message carrying
+    `streaming: true` and its `turn_id`, built as a VIEW of `meta.live_message`
+    (chat_store._live_view) rather than stored. There is nothing to self-heal
+    here any more: the flag is derived from `active_run_id`, so it cannot be
+    orphaned, and a run that did not survive a restart is closed out once at
+    startup (build_streaming.reconcile_threads) instead of on every read."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
-    # Self-heal: a message left mid-stream by a backend restart (turn no longer
-    # in memory) would otherwise stay streaming=true forever and make the client
-    # keep trying to reconnect. Clear the flag so its persisted segments render
-    # as final.
-    changed = False
-    for m in t.get("messages", []):
-        meta = m.get("meta") or {}
-        if meta.get("streaming"):
-            live = build_streaming.get_turn(meta.get("turn_id") or "")
-            if live is None or live.complete:
-                meta["streaming"] = False
-                if live is None:
-                    # The turn isn't just finished, it's GONE — nothing will ever
-                    # finalize this message. Whatever `content`/`segments` got
-                    # incrementally persisted before the restart is all there
-                    # will ever be, which can be nothing at all. `stopped` is
-                    # the existing "cut off mid-task" signal
-                    # (finalize_streaming_assistant already sets it for other
-                    # non-completion endings); the client renders it as a calm
-                    # note instead of leaving an unlabeled, possibly empty,
-                    # bubble that reads as either answered or broken.
-                    meta["stopped"] = meta.get("stopped") or "interrupted"
-                m["meta"] = meta
-                changed = True
-    if changed:
-        chat_store.save_thread(t)
     return t
+
+
+@router.get("/threads/{thread_id}/events")
+async def thread_events(thread_id: str, after: int = 0, limit: int | None = None):
+    """The thread's event log from a cursor. THE sync endpoint.
+
+    Everything needed to render a transcript is here: `events` in seq order,
+    `last_seq` to poll from next, and `active_run` with the live snapshot of a
+    turn in progress. A client calls this on mount, on focus, on reconnect and
+    after any write, and merges it with nothing except the live SSE for the
+    active run.
+
+    That is the point. A transcript assembled by merging several endpoints with
+    local state is the anti-pattern behind every reorder and eaten-message bug in
+    this system's history: five owners of the message list, concatenated by
+    convention, disagreeing one pair at a time.
+
+    `after` is a cursor, not an index. `after=0` is the whole log."""
+    data = chat_log.read_thread(thread_id)
+    if data is None:
+        raise HTTPException(404, "thread not found")
+    return {
+        "events": chat_log.read_events(thread_id, after=max(0, after), limit=limit),
+        "last_seq": data["last_seq"],
+        "active_run": data["active_run"],
+    }
 
 
 @router.patch("/threads/{thread_id}")
@@ -474,6 +481,12 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         priority=body.priority or 0,
         effort=(body.effort or "").strip() or None,
         source={"kind": "chat", "ref": thread_id},
+        # The operator asked for the work; the ASSISTANT wrote the spec. `source`
+        # records the first, `scoped_by` the second, and conflating them is what
+        # makes a bad spec untraceable — the field would say the operator wrote a
+        # paragraph a model actually wrote. Distilled-from-thread specs are the
+        # main way tickets get filed, so this is the common case, not an edge.
+        scoped_by="agent:chat",
     )
     resp = {
         "task": result["task"],
@@ -709,38 +722,6 @@ def _build_prompt(
         "change was requested) — no 'You:' prefix."
     )
     return "\n\n".join(parts)
-
-
-# --- Phase 5: skill loader (use_skill one-hop expansion) ---------------------
-# A data-mode assistant sees skill descriptions ambiently and can request a
-# skill's full body by emitting a ```use_skill\n<name>``` block. When it does, we
-# feed that skill's instructions back and let it finish the SAME reply — bounded
-# to a single expansion so a turn can't loop.
-_USE_SKILL_RE = re.compile(r"```use_skill\s*\n\s*([a-z0-9][a-z0-9-]{0,63})\s*\n```", re.IGNORECASE)
-
-
-def _expand_use_skill_sync(prompt: str, reply: str, scope_key: str, model: str,
-                           timeout_s: float, call_kwargs: dict) -> tuple[str, str | None]:
-    m = _USE_SKILL_RE.search(reply)
-    if not m:
-        return reply, None
-    name = m.group(1).strip()
-    sk = skills.get_skill(scope_key, name)
-    if not sk:
-        # Requested a skill that doesn't exist in scope: strip the block so the
-        # operator doesn't see raw protocol, keep whatever prose the model wrote.
-        return _USE_SKILL_RE.sub("", reply).strip() or reply, None
-    expanded = (
-        prompt
-        + f"\n\n=== SKILL LOADED: {name} ===\n{sk['body']}\n\n"
-        "=== CONTINUE ===\nThe skill you requested is now in context above. Complete your "
-        "reply to the operator following its instructions. Do NOT emit another use_skill block."
-    )
-    res = llm_router.call_cloud(expanded, model=model, timeout_s=timeout_s, **call_kwargs)
-    final = (res.get("text") or "").strip()
-    # Guard against a runaway second use_skill; strip any that slipped through.
-    final = _USE_SKILL_RE.sub("", final).strip()
-    return (final or reply), name
 
 
 def _link_build_skills(provider) -> None:
@@ -1417,8 +1398,16 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     # duplicated into it. But it means `t` cannot see the queued messages just
     # written by _record_user_turn, and building the notice from it would make
     # this silently never fire for exactly the case it was written for.
-    fresh = chat_store.get_thread(t.get("id") or "") or t
-    arrivals = chat_context.arrival_notice(fresh.get("messages") or [])
+    tid = t.get("id") or ""
+    fresh = chat_store.get_thread(tid) or t
+    # Which messages waited is a LOOKUP, not a guess about position: a message
+    # handed to run R carries `during_run = R`, and the run that just ended is
+    # the one whose arrivals this turn has not answered. Reading the tail after
+    # the last assistant message (what this used to do) stopped working the
+    # moment the reply started being appended when it FINISHED, because a
+    # delivered message then sits above the reply rather than below it.
+    arrivals = chat_context.arrival_notice(
+        fresh.get("messages") or [], run_id=chat_store.previous_run_id(tid))
     if arrivals:
         parts.append(arrivals)
     # Record what this thread has now been told, AFTER the prompt is built: a
@@ -1431,175 +1420,34 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
 
 @router.post("/threads/{thread_id}/messages")
 async def send_message(thread_id: str, body: PostMessage):
-    t = chat_store.get_thread(thread_id)
-    if t is None:
-        raise HTTPException(404, "thread not found")
+    """Send a message and BLOCK until the reply is committed. Voice and scripts.
+
+    A thin wrapper over the same run pipeline the streaming path uses: start a
+    run (or join the one in flight), await its finalize, return the committed
+    message. There is no second completion path any more.
+
+    That mattered because the two had separate finalize pipelines. Provider
+    actions, task-patch blocks, learning notes and note blocks were applied in
+    BOTH, in code that had already drifted: an action block emitted on a streamed
+    turn and the same block on a blocking turn were handled by different lines.
+    The pipeline now exists once, in build_streaming._commit_turn.
+
+    No deadline. A chat turn has no wall clock (see CHAT_TIMEOUT_S), so neither
+    does waiting for one; the caller's own client timeout is the bound."""
     content = (body.content or "").strip()
     if not content:
         raise HTTPException(400, "empty message")
 
-    provider = chat_context.get_provider(t.get("context_key"))
-    history = t.get("messages", [])
-
-    # Resolve the model up front: explicit body.model > thread.model > provider
-    # default. Persist the choice so it sticks for later turns. (400 on a bad id.)
-    model = _resolve_model(body.model, t, provider)
-    if body.model is not None and model != t.get("model"):
-        chat_store.set_thread_model(thread_id, model)
-
-    prompt, is_build_mode = await _assemble_full_prompt(t, provider, content)
-
-    # Persist the user's message first so it isn't lost if the model call fails.
-    chat_store.append_message(thread_id, "user", content)
-
-    # Build mode (Project chats + Build-agent chats): full agentic toolset
-    # (Read/Write/Edit/Bash/Grep/etc), cwd pinned to the project/agent directory,
-    # a longer timeout, and — for Build-agent chats — a persistent
-    # Claude Code session via --session-id (first turn) / --resume (subsequent).
-    # The narrow-tool / tools_disabled branches don't apply — those are for
-    # Data-mode surfaces.
-    if is_build_mode:
-        _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
-        call_kwargs = {
-            "cwd": str(provider.dir),
-        }
-        # Build runs are often long and are allowed to be. No ceiling: see
-        # CHAT_TIMEOUT_S above.
-        call_timeout = CHAT_TIMEOUT_S
-
-        # Persistent --resume sessions: only for BuildAgentContextProvider for
-        # now (Project chats don't have a dedicated agent record to hang a
-        # session_id on; spawn a Build agent for a project to get that).
-        is_resumed_turn = False
-        if isinstance(provider, chat_context.BuildAgentContextProvider):
-            from services import build_agents as _ba
-            try:
-                sid, is_new = _ba.ensure_session_id(provider.slug)
-                call_kwargs["session_id"] = sid
-                call_kwargs["resume"] = not is_new
-                is_resumed_turn = not is_new
-            except KeyError:
-                # Agent went away between provider construction and call; just
-                # do a stateless turn rather than 500ing the chat.
-                pass
-
-        # On resumed turns the session already holds persona + prior context, so
-        # we skip the full _build_prompt rebuild — but we STILL re-send the
-        # runtime briefing (cwd/stack/ports/how-to-run can change between turns,
-        # and the resumed session never re-reads it otherwise). This is the
-        # researched "refresh the environment block every turn" pattern.
-        if is_resumed_turn:
-            briefing = chat_context.runtime_briefing(provider)
-            prompt = (briefing + "\n\n=== OPERATOR MESSAGE ===\n" + content) if briefing else content
-    elif ENABLE_CHAT_TOOLS:
-        # Every data/assistant agent gets web access (built-in WebSearch/WebFetch)
-        # plus whatever MCP tools it declares — web tools need no MCP server. See
-        # chat_context.effective_allowed_tools (single source of truth, mirrored
-        # by capability_for so the preamble can't drift).
-        call_kwargs = {
-            "allowed_tools": chat_context.effective_allowed_tools(provider),
-            "mcp_servers": list(provider.mcp_servers),
-        }
-        call_timeout = CHAT_TIMEOUT_S
-    else:
-        call_kwargs = {"tools_disabled": True}
-        call_timeout = CHAT_TIMEOUT_S
-
-    try:
-        # call_cloud subprocesses `claude -p` and blocks for up to call_timeout —
-        # push it off the event loop so other API requests (budget edits, refreshes,
-        # parallel chat turns) don't stall behind a single in-flight chat call.
-        result = await asyncio.to_thread(
-            llm_router.call_cloud,
-            prompt,
-            model=model,
-            timeout_s=call_timeout,
-            **call_kwargs,
-        )
-        reply = result.get("text", "").strip()
-        if result.get("recovered"):
-            # The CLI exited non-zero but we salvaged the assistant text from
-            # the stream-json transcript. For tools_disabled this is a config
-            # regression; for the narrow-tool path it usually means the CLI
-            # tripped mid-synthesis, which is benign as long as the recovered
-            # text is a complete reply. Either way: log so it's visible.
-            log.warning(
-                "chat completion recovered (provider=%s) after exit=%d stop_reason=%s",
-                provider.key, result.get("exit_code"), result.get("stop_reason"),
-            )
-        # Phase 5: if a data-mode assistant asked for a skill, feed the body back
-        # and let it finish this reply (one bounded hop). Build mode is skipped —
-        # builders open skills natively from their cwd.
-        if not is_build_mode and "use_skill" in reply:
-            try:
-                reply, used_skill = await asyncio.to_thread(
-                    _expand_use_skill_sync, prompt, reply,
-                    provider.knowledge_scope(), model, call_timeout, call_kwargs,
-                )
-                if used_skill:
-                    log.info("chat used skill '%s' (scope=%s)", used_skill, provider.knowledge_scope())
-            except Exception as e:
-                log.warning("use_skill expansion failed: %s", e)
-    except Exception as e:
-        # Surface the actual error detail to the operator — bare "CloudCallFailed"
-        # is opaque and leaves them guessing whether it's a transient blip, an
-        # auth issue, or a CLI-missing problem. The detail is already in
-        # backend logs but the operator reads the chat bubble first.
-        log.warning("chat completion failed: %s", e, exc_info=True)
-        detail = str(e)[:240] if str(e) else type(e).__name__
-        err = f"(model call failed: {detail})"
-        msg = chat_store.append_message(thread_id, "assistant", err, meta={"error": True})
-        return {"message": msg, "notes": []}
-
-    cleaned, notes = provider.apply_actions(reply)
-    # O2: a task-bound chat can maintain its task list via a task-patch block,
-    # applied against THIS scope's store and stripped from the stored reply.
-    cleaned, tnotes = task_scope.apply_task_patch(t.get("context_key"), cleaned, t.get("id"), t.get("mode"))
-    if tnotes:
-        notes = (notes or []) + tnotes
-    # Phase 4: an explicit operator preference/correction emitted as a
-    # ``learning-note`` block is captured into the learnings store here,
-    # deterministically (in addition to compaction-time distillation).
-    cleaned, lnotes = task_scope.apply_learning_note(t.get("context_key"), cleaned)
-    if lnotes:
-        notes = (notes or []) + lnotes
-    # Phase N3: a chat can leave a durable scoped ``note`` in the knowledge store
-    # (the Notes substrate), captured deterministically in this same finalize path.
-    cleaned, nnotes = await task_scope.apply_note_block(t.get("context_key"), cleaned)
-    if nnotes:
-        notes = (notes or []) + nnotes
-    if not cleaned:
-        cleaned = "(done)"
-    meta: dict = {}
-    if notes:
-        meta["notes"] = notes
-    # If the turn actually called tools (web search, workshop queries, an app's
-    # MCP tools), surface them as chips so a data/assistant chat reads like a
-    # real agent turn instead of a flat answer. Render = the tool calls as the
-    # turn's "work", then the action-cleaned text as the answer. (UI-card fences
-    # like project-proposal survive apply_actions and render inside the answer;
-    # only server-side actions such as a budget plan-patch are stripped.)
-    raw_segments = result.get("segments") or []
-    tool_segs = [s for s in raw_segments if s.get("t") == "tool"]
-    if tool_segs:
-        meta["segments"] = tool_segs + ([{"t": "text", "text": cleaned}] if cleaned else [])
-    msg = chat_store.append_message(thread_id, "assistant", cleaned, meta=meta or None)
-
-    # Auto-checkpoint a build turn so the builder's work is a recoverable
-    # timeline (doc 05 history substrate). Best-effort, off the event loop.
-    if is_build_mode:
-        try:
-            from services import checkpoints, app_runner
-            if not app_runner.is_self_dir(str(provider.dir)):
-                await asyncio.to_thread(checkpoints.checkpoint, str(provider.dir), f"{provider.key} turn")
-        except Exception as e:
-            log.info("build checkpoint skipped: %s", e)
-
-    # Auto-name the thread after the first exchange (non-blocking so it never
-    # delays this reply; scheduled as a background task; the reply returns now).
-    chat_naming.schedule(thread_id)
-
-    return {"message": msg, "notes": notes}
+    out = await _send(thread_id, content, body.model)
+    turn = build_streaming.get_turn(out["turn_id"])
+    if turn is None:
+        # The run finished and was reaped between starting it and looking it up.
+        # Its message is committed; hand back the tail of the thread.
+        t = chat_store.get_thread(thread_id) or {}
+        msgs = [m for m in (t.get("messages") or []) if m.get("role") == "assistant"]
+        return {"message": msgs[-1] if msgs else None, "notes": []}
+    await turn.finished.wait()
+    return {"message": turn.committed, "notes": turn.notes or []}
 
 
 # ---- SSE streaming for Build chats -----------------------------------------
@@ -1675,7 +1523,7 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
 
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
-                                    content: str, model: str):
+                                    content: str, model: str, run_id: str):
     """Run one turn AS the mentioned agent, inside the chat.
 
     The agent answers with its own definition, its own memory scope and its own
@@ -1766,7 +1614,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
             allowed_tools=agent_tools, disallowed_tools=agent_denied,
             mcp_servers=[], tools_disabled=not tools_active,
-            speaker=slug,
+            speaker=slug, run_id=run_id,
         )
         _ = kscope  # the CHAT's scope; the agent read its own layers on turn one
         return turn
@@ -1815,7 +1663,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=[], tools_disabled=not tools_active,
-        speaker=slug,
+        speaker=slug, run_id=run_id,
     )
     _ = kscope  # the CHAT's scope; the agent reads its own layers above
     return turn
@@ -1837,59 +1685,69 @@ async def list_mentionable(thread_id: str):
     return {"scope": scope, "agents": _mentions.mentionable_agents(scope)}
 
 
-@router.post("/threads/{thread_id}/turns")
-async def start_streaming_turn(thread_id: str, body: StartTurnIn):
-    t = chat_store.get_thread(thread_id)
-    if t is None:
-        raise HTTPException(404, "thread not found")
-    content = (body.content or "").strip()
-    if not content:
-        raise HTTPException(400, "empty message")
+async def _run_for_message(thread_id: str, t: dict, content: str,
+                           model: str | None, parts: list[TurnPart] | None,
+                           *, take_over: str | None = None,
+                           already_recorded: bool = False) -> "build_streaming.Turn":
+    """Claim a run for this message and start it. THE send path.
 
-    # ---- ONE TURN PER THREAD ---------------------------------------------
-    # If a turn is already running here, this message JOINS it instead of
-    # starting a rival. The decision belongs on the server: a browser only knows
-    # whether ITS OWN stream is open, so a second tab, a dropped SSE, or a reload
-    # each believe the chat is idle and cheerfully start another turn. That is
-    # not hypothetical — it produced two turns streaming into one thread at the
-    # same time, with the operator's message going to neither.
-    #
-    # Joining is also what the operator actually wants from a message typed
-    # during a turn: delivered now, at the running turn's next step boundary,
-    # rather than queued behind everything it is doing.
-    live_turn = _live_turn_id(t)
-    if live_turn and build_streaming.inject(live_turn, content):
-        at_segment = _file_during_turn(thread_id, live_turn, content)
-        return {"turn_id": live_turn, "injected": True, "at_segment": at_segment}
-    # A live turn that refuses input is wedged or finishing; fall through and
-    # start a turn rather than dropping the message.
+    The claim is taken FIRST, before a single await, and held until the
+    subprocess is spawned. Prompt assembly awaits (knowledge search, note
+    retrieval, a summarizer), and every one of those awaits used to be a window
+    a second POST could start a rival turn through — observed live: one thread
+    with two turns streaming at once and the operator's message reaching
+    neither. Now the second POST takes the thread's write lock, sees
+    `active_run_id`, and joins.
 
+    `already_recorded` means the message is in the log because a delivery was
+    attempted and refused; recording it again would show it twice."""
     provider = chat_context.get_provider(t.get("context_key"))
-
-    # Resolve + persist the model (explicit > thread > provider default). 400 on
-    # a bad id. Build providers no longer hard-force sonnet — opus is selectable.
-    model = _resolve_model(body.model, t, provider)
-    if body.model is not None and model != t.get("model"):
+    if model is not None and model != t.get("model"):
         chat_store.set_thread_model(thread_id, model)
+    model = model or _resolve_model(None, t, provider)
 
-    _record_user_turn(thread_id, content, body.parts)
-
-    # ---- @mention: this message is addressed to an AGENT, not the assistant ----
-    # The agent answers in the chat, attributed to it, and the ordinary assistant
-    # stays out of it. Resolution is scope-bounded and opt-in (services/mentions);
-    # anything that does not resolve is ordinary text and falls through, so an
-    # email address or a stray "@" can never fail a message.
     from services import mentions as _mentions
     _chat_scope = knowledge.scope_for_context(t.get("context_key") or "general")
     _mentioned = _mentions.resolve(content, _chat_scope)
-    if _mentioned is not None:
-        turn = await _start_agent_mention_turn(
-            thread_id=thread_id, thread=t, agent=_mentioned, content=content, model=model)
-        return {"turn_id": turn.id}
+    speaker = _mentioned["slug"] if _mentioned is not None else None
 
-    # ---- Build-agent providers: the persistent Claude Code session path --------
+    run_id = build_streaming.new_run_id()
+    joined = await build_streaming.claim_run(
+        thread_id, run_id, model=model, agent=speaker, force=bool(take_over))
+    if joined is not None:
+        raise build_streaming.RunInFlight(joined)
+
+    try:
+        if not already_recorded:
+            _record_user_turn(thread_id, content, parts)
+        # ---- @mention: this message is addressed to an AGENT, not the assistant.
+        # The agent answers in the chat, attributed to it, and the ordinary
+        # assistant stays out of it. Resolution is scope-bounded and opt-in
+        # (services/mentions); anything that does not resolve is ordinary text and
+        # falls through, so an email address or a stray "@" can never fail a message.
+        if _mentioned is not None:
+            return await _start_agent_mention_turn(
+                thread_id=thread_id, thread=t, agent=_mentioned, content=content,
+                model=model, run_id=run_id)
+        return await _start_assistant_turn(
+            thread_id=thread_id, t=t, provider=provider, content=content,
+            model=model, run_id=run_id)
+    except Exception:
+        # The claim outlives nothing. Give the thread back so the next message is
+        # not told a run is in flight that never spawned.
+        chat_store.release_run(thread_id, run_id)
+        raise
+
+
+async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
+                                model: str, run_id: str):
+    """Spawn the turn for an ordinary (non-mention) message.
+
+    Build-agent chats carry the AGENT's persistent Claude Code session; every
+    other chat (project, general, app assistant) carries ONE session per THREAD,
+    so a conversation continues instead of being re-derived each turn. The tool
+    surface still differs by provider; only the continuity is shared."""
     if isinstance(provider, chat_context.BuildAgentContextProvider):
-        history = t.get("messages", [])
         from services import build_agents as _ba
         try:
             sid, is_new = _ba.ensure_session_id(provider.slug)
@@ -1920,21 +1778,12 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
             prompt, _ = await _assemble_full_prompt(t, provider, content)
             resume_flag = False
         _link_build_skills(provider)  # native .claude/skills discovery (Phase 5)
-        turn = await build_streaming.start_turn(
+        return await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
-            timeout_s=CHAT_TIMEOUT_S,
+            timeout_s=CHAT_TIMEOUT_S, run_id=run_id,
         )
-        return {"turn_id": turn.id}
 
-    # ---- Every other chat (project, general, app assistants): ONE persistent
-    #      claude session per THREAD. A chat is a conversation, so it continues
-    #      instead of being re-derived: the session carries what it already read,
-    #      ran, and decided. Previously these all spawned stateless, which is why a
-    #      chat mid-task visibly restarted from scratch on every message and redid
-    #      work it had already finished. The tool surface still differs by provider
-    #      (project = full agentic in the project tree; data = web + declared MCP),
-    #      only the continuity is now shared. --------------------------------------
     is_project = chat_context.is_build_provider(provider)
     if is_project:
         _link_build_skills(provider)
@@ -1961,114 +1810,188 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     else:
         prompt, _ = await _assemble_full_prompt(t, provider, content)
         resume_flag = False
-    turn = await build_streaming.start_turn(
+    return await build_streaming.start_turn(
         thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
         prompt=prompt, model=model, cwd=cwd,
         session_id=sid, resume=resume_flag,
-        timeout_s=CHAT_TIMEOUT_S,
+        timeout_s=CHAT_TIMEOUT_S, run_id=run_id,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
-    return {"turn_id": turn.id}
+
+
+async def _send(thread_id: str, content: str, model_in: str | None = None,
+                parts: list[TurnPart] | None = None) -> dict:
+    """Send one message into a chat: deliver it to the run in flight, or start
+    one for it. Returns `{turn_id, injected, at_segment}`.
+
+    ---- ONE RUN PER THREAD -------------------------------------------------
+    If a run is already going here, this message JOINS it instead of starting a
+    rival. The decision belongs on the server: a browser only knows whether ITS
+    OWN stream is open, so a second tab, a dropped SSE, or a reload each believe
+    the chat is idle and cheerfully start another turn.
+
+    Joining is also what the operator actually wants from a message typed during
+    a turn: delivered now, at the running turn's next step boundary, rather than
+    queued behind everything it is doing.
+
+    ---- PERSIST, THEN DELIVER ----------------------------------------------
+    The message is written to the log before anything is written to the run's
+    input channel, so the transcript can never be behind what the model read. If
+    delivery then fails, the message is already recorded and a fresh run is
+    started for it; it is not written twice.
+    """
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    try:
+        model = chat_context.normalize_model(model_in)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    take_over: str | None = None
+    already_recorded = False
+    run_id = _live_run_id(thread_id)
+    if run_id:
+        at_segment = _file_during_run(thread_id, run_id, content)
+        if build_streaming.inject(run_id, content):
+            return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
+        if not build_streaming.run_is_ending(run_id):
+            # Claimed but not spawned yet: it is about to start and will read
+            # this message as history. Starting a rival for it is the one thing
+            # that must not happen here.
+            return {"turn_id": run_id, "injected": False, "at_segment": at_segment}
+        # It has spawned and its input channel is gone: it is finishing and will
+        # never read this. The message is already in the log, so take the thread
+        # over and give it a run of its own without writing it twice.
+        log.info("thread %s: run %s is finishing; starting a fresh run for this message",
+                 thread_id, run_id)
+        take_over, already_recorded = run_id, True
+
+    try:
+        turn = await _run_for_message(thread_id, t, content, model, parts,
+                                      take_over=take_over,
+                                      already_recorded=already_recorded)
+    except build_streaming.RunInFlight as e:
+        # Another POST won the same event-loop tick. Join its run rather than
+        # starting a rival, which is the whole reason the claim is atomic.
+        at_segment = (_file_during_run(thread_id, e.run_id, content)
+                      if not already_recorded else _at_segment(e.run_id, thread_id))
+        build_streaming.inject(e.run_id, content)
+        return {"turn_id": e.run_id, "injected": True, "at_segment": at_segment}
+    return {"turn_id": turn.id, "injected": False, "at_segment": None}
+
+
+@router.post("/threads/{thread_id}/turns")
+async def start_streaming_turn(thread_id: str, body: StartTurnIn):
+    content = (body.content or "").strip()
+    if not content:
+        raise HTTPException(400, "empty message")
+    out = await _send(thread_id, content, body.model, body.parts)
+    if out["injected"]:
+        return {"turn_id": out["turn_id"], "injected": True,
+                "at_segment": out["at_segment"]}
+    return {"turn_id": out["turn_id"]}
 
 
 class InjectMessage(BaseModel):
     content: str
 
 
-def _live_turn_id(thread: dict) -> str | None:
-    """The turn currently running on this thread, per the STORED transcript.
+def _live_run_id(thread_id: str) -> str | None:
+    """The run currently going on this thread, or None. One field read.
 
-    Server-derived on purpose. Routing an injection through a turn id the client
-    happened to be holding meant it only worked in the one component mount that
-    started the turn: a second tab, another device, a turn adopted after a
-    backend restart, or a reload that re-attached by a different path all had no
-    id to send and silently fell back to queueing. The thread itself knows which
-    turn is live — ask it.
+    Server-derived, and now trivially so: `meta.active_run_id` names it and
+    `build_streaming.run_is_live` says whether this process is still driving it.
 
-    SCANS BACKWARDS, and this is the whole point. It used to look only at
-    `msgs[-1]`, which was correct exactly until mid-turn messages started being
-    filed AFTER the streaming placeholder (the ordering fix, §3.2 of the audit).
-    From then on, the FIRST message injected into a turn made the last message a
-    user message — so every message after it was told "no turn is running", fell
-    back to the queue, and either sat there for the rest of the turn or drained
-    into a SECOND turn running concurrently on the same thread. Observed live:
-    one thread with turns 2c7dc100 and 470bd00c both streaming at once.
+    This used to scan the transcript backwards for an assistant message flagged
+    `streaming`, which was fragile in exactly the way the rebuild removes. It
+    first looked only at the last message, so the FIRST mid-turn message made the
+    last message a user message and every message after it was told no turn was
+    running — two turns ended up streaming into one thread at once. Scanning
+    backwards fixed that symptom and left the flag itself orphanable by a
+    restart. There is no flag any more, and nothing to orphan."""
+    run_id = chat_store.active_run(thread_id)
+    return run_id if build_streaming.run_is_live(run_id) else None
 
-    A stale `streaming` flag must not wedge the thread either: a turn this
-    process no longer holds, or one already complete, is not live. Only the
-    stored flag AND a running turn object count."""
-    msgs = thread.get("messages") or []
-    for m in reversed(msgs):
-        meta = m.get("meta") or {}
-        if m.get("role") != "assistant" or not meta.get("streaming"):
-            continue
-        turn_id = meta.get("turn_id")
-        if not turn_id:
-            return None
-        live = build_streaming.get_turn(turn_id)
-        # No turn object = adopted-elsewhere or lost to a restart; the reconnect
-        # path owns that case. Complete = the flag is stale and self-heals on the
-        # next thread read. Either way, not somewhere to deliver a message.
-        if live is None or live.complete:
-            return None
-        return turn_id
+
+def _at_segment(run_id: str, thread_id: str) -> int:
+    """How much of the running reply had streamed when a message landed.
+
+    Ask the LIVE run, not the stored snapshot: the snapshot is written on a
+    throttle, so it lags what is on screen, and the error is one-directional. A
+    low `at_segment` renders the message EARLIER than it arrived, above output it
+    never saw, which is what makes a reply look like an answer to a message it
+    had not read. The snapshot remains the fallback for a run this process no
+    longer holds."""
+    live = build_streaming.get_turn(run_id)
+    if live is not None:
+        return len(live.segments)
+    run = chat_log.active_run(thread_id)
+    snap = (run or {}).get("live") or {}
+    return len(((snap.get("meta") or {}).get("segments")) or [])
+
+
+def _file_during_run(thread_id: str, run_id: str, content: str) -> int:
+    """Persist a message arriving mid-run, BEFORE anyone tries to deliver it.
+
+    Order matters and it used to be the other way round: the bytes went to the
+    turn's stdin FIFO first and the store write happened after, inside a
+    best-effort `except` that only logged. So a failed write meant the model had
+    read a message the transcript never recorded, and the next fresh session
+    re-assembled a history missing it.
+
+    Persist first and the transcript can only ever be AHEAD of what the model
+    saw, which is the recoverable direction. Returns `at_segment`, which the
+    caller also reports to the client."""
+    at_segment = _at_segment(run_id, thread_id)
+    chat_store.append_message_during_turn(
+        thread_id, "user", content,
+        meta={"injected": True, "during_run": run_id, "at_segment": at_segment},
+    )
+    return at_segment
+
+
+async def _deliver_or_take_over(thread_id: str, run_id: str, content: str) -> dict | None:
+    """Persist the message, hand it to the running run, and say what happened.
+
+    Returns the response for a successful delivery, or None meaning "the run
+    would not take it; start a fresh one for this message, which is ALREADY IN
+    THE LOG". The caller must not record it a second time."""
+    at_segment = _file_during_run(thread_id, run_id, content)
+    if build_streaming.inject(run_id, content):
+        return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
+    # It refused input: finishing, wedged, or its process is gone. Take the
+    # thread back so the message it is holding can get a run of its own.
+    log.info("thread %s: run %s refused a delivery; taking the thread over",
+             thread_id, run_id)
     return None
-
-
-def _file_during_turn(thread_id: str, turn_id: str, content: str) -> int:
-    """Record a message that arrived mid-turn, with the context "after" loses.
-
-    See chat_store.append_message_during_turn for why it is filed after rather
-    than above. `at_segment` is how much of the live reply had streamed when this
-    landed, so the transcript can still render it at that point without the
-    STORED order having to lie about what came first."""
-    try:
-        # Ask the LIVE turn how much it has produced, not the stored copy. The
-        # store is written on a throttle, so it lags what is on screen — and the
-        # error is one-directional: a low `at_segment` renders the message
-        # EARLIER than it arrived, i.e. above output it never saw. That is the
-        # direction that makes a reply look like an answer to a message it had
-        # not read. The persisted count remains the fallback for a turn this
-        # process no longer holds (adopted after a restart).
-        at_segment = 0
-        live = build_streaming.get_turn(turn_id)
-        if live is not None:
-            at_segment = len(live.segments)
-        else:
-            t = chat_store.get_thread(thread_id)
-            if t:
-                for m in reversed(t.get("messages") or []):
-                    if (m.get("meta") or {}).get("turn_id") == turn_id:
-                        at_segment = len((m.get("meta") or {}).get("segments") or [])
-                        break
-        chat_store.append_message_during_turn(
-            thread_id, "user", content,
-            meta={"injected": True, "during_turn": turn_id, "at_segment": at_segment},
-        )
-        return at_segment
-    except Exception as e:
-        log.warning("thread %s: could not persist injected message: %s", thread_id, e)
-        return 0
 
 
 @router.post("/threads/{thread_id}/inject")
 async def inject_into_thread(thread_id: str, body: InjectMessage):
-    """Hand a message to whatever turn is running on this thread.
+    """Hand a message to whatever run is going on this thread.
 
-    The client should not have to know a turn id to talk to its own chat. It
-    knows which conversation it is in; the server resolves the rest."""
+    The client should not have to know a run id to talk to its own chat. It knows
+    which conversation it is in; the server resolves the rest.
+
+    The message is PERSISTED before delivery is attempted, so `delivered: false`
+    means "it is in the transcript and no run has it", never "it is gone"."""
     content = (body.content or "").strip()
     if not content:
         raise HTTPException(400, "empty message")
-    t = chat_store.get_thread(thread_id)
-    if t is None:
+    if not chat_log.exists(thread_id):
         raise HTTPException(404, "thread not found")
-    turn_id = _live_turn_id(t)
-    if not turn_id:
-        return {"delivered": False, "reason": "no turn is running on this chat"}
-    delivered = build_streaming.inject(turn_id, content)
-    if delivered:
-        _file_during_turn(thread_id, turn_id, content)
+    if _live_run_id(thread_id) is None:
+        # Nothing is running and nothing has been written. The client sends it as
+        # an ordinary turn instead, which is the only case where re-sending is
+        # correct: this endpoint has not taken the message.
+        return {"delivered": False, "queued_for_turn": False, "turn_id": None,
+                "at_segment": None,
+                "reason": "no turn is running on this chat"}
+    out = await _send(thread_id, content)
+    delivered = bool(out["injected"])
+    run_id = out["turn_id"]
+    at_segment = out["at_segment"]
     return {
         # NOT "the agent read it". This means the bytes reached the running
         # process. Measured (docs/platform-redesign/chat-message-ordering-audit-
@@ -2076,41 +1999,44 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         # its current plan, skipping every intervening step boundary — 24.5s and
         # four boundaries in the probe. `queued_for_turn` is what is actually
         # known, and the composer says that instead of implying it landed.
-        "delivered": delivered,
+        # THE CHAT HAS THE MESSAGE either way, which is what the client needs to
+        # know: it is in the log before any delivery is attempted, so re-sending
+        # it would show it twice. `delivered` says whether the RUNNING turn took
+        # it; false here means a fresh run was started for it instead.
+        "delivered": True,
+        "injected": delivered,
         "queued_for_turn": delivered,
-        "turn_id": turn_id,
-        "reason": "" if delivered else "the running turn is not accepting input",
+        "turn_id": run_id,
+        "at_segment": at_segment,
+        "reason": "" if delivered else "the running turn refused input; started a new turn",
     }
 
 
 @router.post("/turns/{turn_id}/inject")
 async def inject_into_turn(turn_id: str, body: InjectMessage):
-    """Hand a message to a turn that is already running.
+    """Hand a message to a run that is already going, addressed by run id.
 
     A new message never interrupts the work in flight — only Stop does that. It
     is handed to the running turn, and the agent picks it up when it reaches the
     end of its current plan (measured; see the audit doc §2 — NOT "within a step
     or two", which is what this docstring used to claim).
 
-    `delivered: false` is not an error. It means the turn finished between the
+    `delivered: false` is not an error. It means the run finished between the
     operator hitting enter and this request landing, and the client should queue
-    the message as the next turn instead. The message is never dropped."""
+    the message as the next turn instead. The message is never dropped: it is
+    written to the log before delivery is tried."""
     content = (body.content or "").strip()
     if not content:
         raise HTTPException(400, "empty message")
     turn = build_streaming.get_turn(turn_id)
     if turn is None or turn.complete:
         return {"delivered": False, "reason": "turn is no longer running"}
+    at_segment = _file_during_run(turn.thread_id, turn_id, content)
     delivered = build_streaming.inject(turn_id, content)
-    if delivered:
-        # The transcript is the record. A message sent mid-turn is part of the
-        # conversation whether or not the turn that received it succeeds, and it
-        # has to be stored or a later fresh session would re-assemble history
-        # without it.
-        _file_during_turn(turn.thread_id, turn_id, content)
     return {
         "delivered": delivered,
         "queued_for_turn": delivered,
+        "at_segment": at_segment,
         "reason": "" if delivered else "turn is no longer accepting input",
     }
 

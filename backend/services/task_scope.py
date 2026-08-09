@@ -206,6 +206,10 @@ def apply_task_patch(context_key: str | None, reply: str,
                 acceptance=op.get("acceptance") if isinstance(op.get("acceptance"), dict) else None,
                 touches=[str(t) for t in (op.get("touches") or [])],
                 source={"kind": "chat", "ref": thread_id},
+                # A task-patch block is written by the assistant, so the spec is
+                # its work even though the request was the operator's. `source`
+                # keeps the request, `scoped_by` records the author.
+                scoped_by="agent:chat",
             )
             decision = res.get("decision")
             if decision in ("exact", "merge"):
