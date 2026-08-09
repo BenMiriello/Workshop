@@ -229,8 +229,11 @@ def _env_requirements_from_raw(raw: dict) -> list[EnvRequirement]:
             continue
         how = item.get("how_to_obtain")
         if isinstance(how, dict):
-            parts = [str(how.get("steps") or "").strip(), str(how.get("url") or "").strip()]
-            how = " — ".join(p for p in parts if p)
+            steps = str(how.get("steps") or "").strip()
+            url = str(how.get("url") or "").strip()
+            if steps and url and not steps.endswith((".", ":", "!", "?")):
+                steps += "."
+            how = " ".join(p for p in (steps, url) if p)
         out.append(EnvRequirement(
             key=str(item["key"]).strip(),
             description=str(item.get("description") or "").strip(),
@@ -760,7 +763,7 @@ def _bring_up(slug: str, manifest: AppManifest) -> None:
             if missing:
                 sstate["status"] = "failed"
                 sstate["error"] = ("Missing required env: " + ", ".join(missing)
-                                   + " — set in the project's Environment panel.")
+                                   + ". Set it in the project's Environment panel.")
                 _persist_state()
                 continue
 
@@ -812,9 +815,8 @@ def _reflect_primary_surface(slug: str, manifest: AppManifest) -> None:
     })
 
 
-_SELF_MSG = ("This project is the running Workshop itself — it is not a separate "
-             "deployable app. The frontend hot-reloads on save; backend changes need "
-             "`bash scripts/restart_backend.sh`.")
+_SELF_MSG = ("This project is Workshop itself, not a separate app you can start. "
+             "The frontend updates on save; backend changes need a backend restart.")
 
 
 # ---- container backend (docker compose) -------------------------------------
@@ -939,7 +941,7 @@ def _container_bring_up(slug: str, manifest: AppManifest) -> None:
             if missing:
                 sstate["status"] = "failed"
                 sstate["error"] = ("Missing required env: " + ", ".join(missing)
-                                   + " — set in the project's Environment panel.")
+                                   + ". Set it in the project's Environment panel.")
             else:
                 sstate["status"] = "starting"
                 sstate["error"] = None

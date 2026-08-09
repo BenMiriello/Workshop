@@ -2213,9 +2213,9 @@ def recordings_status() -> dict:
         or recent_skip)
     if is_error:
         state = "error"
-        message = ("Recording paused — storage is full. Raise the limit or remove some recordings."
+        message = ("Recording paused: storage is full. Raise the limit or remove some recordings."
                    if cfg["rec_when_full"] == "stop"
-                   else "Can't free space — saved recordings fill the budget. Unpin some or raise the limit.")
+                   else "Can't free space: saved recordings fill the budget. Unpin some or raise the limit.")
     elif warn and (any_record or used > 0):
         state = "warn"
         message = "Recording storage is almost full."

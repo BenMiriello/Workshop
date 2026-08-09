@@ -38,8 +38,7 @@ def test_only_the_first_line_of_a_ticket_body():
 def test_a_failed_run_says_nothing_is_verified():
     out = run_report._summarize(_job(), [_ticket("Something", status="blocked")], "failed")
     assert "failed" in out
-    assert "not complete cleanly" in out
-    assert "nothing here is verified" in out
+    assert "Nothing here is verified" in out
 
 
 def test_a_clean_run_makes_no_such_disclaimer():

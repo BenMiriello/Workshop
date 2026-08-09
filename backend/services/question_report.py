@@ -32,7 +32,7 @@ log = logging.getLogger("workshop.question_report")
 def _compose(task: dict, request: dict, scope: str | None) -> str:
     """The message body. Short, and it leads with the question."""
     ask = str(request.get("ask") or request.get("question") or "").strip()
-    lines = [f"**{task.get('title') or 'A ticket'}** stopped and needs an answer.",
+    lines = [f"**{task.get('title') or 'A ticket'}** needs an answer.",
              "", f"> {ask}"]
 
     why = str(request.get("why") or "").strip()
@@ -45,7 +45,7 @@ def _compose(task: dict, request: dict, scope: str | None) -> str:
 
     default = str(request.get("default") or "").strip()
     if default:
-        lines += ["", f"At a wider latitude it would have chosen: {default}"]
+        lines += ["", f"Its own pick, if you'd rather not decide: {default}"]
 
     unblocks = str(request.get("unblocks_if") or "").strip()
     if unblocks:

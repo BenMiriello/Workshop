@@ -83,12 +83,12 @@ def check(task: dict, *, known_ids: set[str] | None = None) -> dict:
             fail("entry_points", "the body names no file, command or symbol to start from")
 
     if not task.get("touches") and task.get("latitude") != "open":
-        fail("boundaries", "no `touches` lane, and latitude is not explicitly open")
+        fail("boundaries", "the ticket does not say which files it may change")
 
     if known_ids is not None:
         for dep in (task.get("depends_on") or []):
             if str(dep) not in known_ids:
-                fail("dependencies", f"depends_on names a ticket that does not exist: {dep}")
+                fail("dependencies", f"it depends on a ticket that does not exist: {dep}")
                 break
 
     return {

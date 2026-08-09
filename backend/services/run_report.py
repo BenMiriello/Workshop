@@ -81,7 +81,7 @@ def _summarize(job: dict, tickets: list[dict], status: str) -> str:
         if gate:
             lines.append(f"Reviewer gate: {gate}.")
     if status != "done":
-        lines.append("It did not complete cleanly, so nothing here is verified.")
+        lines.append("Nothing here is verified.")
     return "\n".join(lines)
 
 
