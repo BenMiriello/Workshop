@@ -107,6 +107,11 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
         delete meta.stopped;
         delete meta.ended_at;
         delete meta.status;
+        // `error` is the loudest of these and was the one left behind. It makes
+        // MessageList short-circuit past the segments entirely and paint a red
+        // bubble, so an errored reply the operator had interrupted rendered as N
+        // red bubbles instead of its work plus one failure at the end.
+        delete meta.error;
       }
       out.push({
         kind: "message",
