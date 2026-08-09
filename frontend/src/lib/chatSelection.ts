@@ -137,24 +137,37 @@ export function readQueue(threadKey: string): QueuedMessage[] {
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
+    let minted = false;
     // Migrates the older `string[]` format in place. A queue written by the
     // previous build is a message the operator has already hit enter on, so
     // dropping it would be message loss on upgrade; it just has no send time,
     // and "" reads as unknown rather than as some fabricated instant.
-    return parsed.flatMap((x): QueuedMessage[] => {
-      if (typeof x === "string") return [{ text: x, sentAt: "", clientId: newClientId() }];
+    const queue = parsed.flatMap((x): QueuedMessage[] => {
+      if (typeof x === "string") {
+        minted = true;
+        return [{ text: x, sentAt: "", clientId: newClientId() }];
+      }
       if (x && typeof x.text === "string") {
+        const has = typeof x.clientId === "string" && !!x.clientId;
+        if (!has) minted = true;
         return [{
           text: x.text,
           sentAt: typeof x.sentAt === "string" ? x.sentAt : "",
           // A queue written by an older build has no id. Minting one here is
           // right: it has not been sent, so no committed event can be carrying
           // an id it would need to match.
-          clientId: typeof x.clientId === "string" && x.clientId ? x.clientId : newClientId(),
+          clientId: has ? (x.clientId as string) : newClientId(),
         }];
       }
       return [];
     });
+    // AND THE MINTED ID IS WRITTEN BACK, so it is the entry's id rather than
+    // this read's id. Two tabs holding the same pre-upgrade queue each minted
+    // their own, sent the same message under different ids, and the server's
+    // client_id dedupe had nothing to collapse them by — the upgrade path turned
+    // into a duplicate-send path.
+    if (minted) writeQueue(threadKey, queue);
+    return queue;
   } catch {
     return [];
   }
