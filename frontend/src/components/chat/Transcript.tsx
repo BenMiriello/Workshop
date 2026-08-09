@@ -127,13 +127,35 @@ export function AnswerBody({
   );
 }
 
+// An interim text block inside the work section.
+//
+// THE THREE LEVELS OF DISCLOSURE, and which control owns which:
+//   1. the whole work block   — one toggle at the TOP of the bubble (WorkSteps)
+//   2. one item inside it     — each tool, subagent, and text block opens itself
+//   3. one message's length   — Show more/less at the BOTTOM of that message
+// Level 1 sits at the top rather than the bottom because the work is ABOVE the
+// answer: a bottom control that expanded it would insert content above itself,
+// pushing the button and the whole answer down and losing the reader's place.
+//
+// This component is level 3 applied where it was missing. Interim text rendered
+// in full however long it was — the one place in the transcript where "a message
+// shortens itself" was not true, which is what made levels 1 and 3 look like
+// overlapping versions of the same control instead of different scopes.
+function WorkText({ text, cfg, expanded }: { text: string; cfg: ModelDisplay; expanded?: boolean }) {
+  return (
+    <div className="chat-work__text">
+      <ElidedContent source={text} cfg={cfg} expanded={expanded} render={(s) => <Markdown>{s}</Markdown>} />
+    </div>
+  );
+}
+
 // ---- Subagent: one row for the whole delegation ---------------------------
 // A subagent exists to keep its working context OUT of this conversation, so it
 // renders as one row, not as a run of steps the turn appears to have taken
 // itself. The row says who was asked and what for; opening it shows what the
 // delegate actually did and what it reported back. Same collapse language as
 // ToolChip, one level in, so a nested step never reads as a top-level one.
-function AgentChip({ seg }: { seg: Extract<ChatSegment, { t: "agent" }> }) {
+function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cfg: ModelDisplay }) {
   const [open, setOpen] = useState(false);
   return (
     <div className={`chat-agent${open ? " is-open" : ""}${seg.done ? "" : " is-running"}`}>
@@ -158,7 +180,7 @@ function AgentChip({ seg }: { seg: Extract<ChatSegment, { t: "agent" }> }) {
                 s.t === "tool"
                   ? <ToolChip key={i} name={s.name} input={s.input} />
                   : s.t === "text" && s.text.trim()
-                    ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div>
+                    ? <WorkText key={i} text={s.text} cfg={cfg} />
                     : null,
               )}
             </div>
@@ -166,7 +188,9 @@ function AgentChip({ seg }: { seg: Extract<ChatSegment, { t: "agent" }> }) {
           {seg.result && (
             <div className="chat-agent__result">
               <span className="chat-agent__result-label">Reported back</span>
-              <Markdown>{seg.result}</Markdown>
+              {/* What a subagent reports back is a message like any other, and
+                  can be long — same length treatment as the rest. */}
+              <ElidedContent source={seg.result} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
             </div>
           )}
         </div>
@@ -186,12 +210,17 @@ function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boo
   const older = inlineCount > 0 ? work.slice(0, Math.max(0, work.length - inlineCount)) : work;
   const recent = inlineCount > 0 ? work.slice(Math.max(0, work.length - inlineCount)) : [];
   const olderTools = older.filter((s) => s.t === "tool" || s.t === "agent").length;
-  const renderSeg = (s: ChatSegment, i: number) =>
+  // `expanded` follows the rule the answer already uses: the most recent turn
+  // reads in full. The steps kept inline on a live turn are there precisely so
+  // progress is legible as it happens, so a long text checkpoint among them must
+  // not arrive pre-collapsed. Folded-away steps open collapsed — you went looking
+  // for them, and a wall of text is not what you were looking for.
+  const renderSeg = (s: ChatSegment, i: number, expanded: boolean) =>
     s.t === "tool"
       ? <ToolChip key={i} name={s.name} input={s.input} />
       : s.t === "agent"
-        ? <AgentChip key={i} seg={s} />
-        : (s.text.trim() ? <div key={i} className="chat-work__text"><Markdown>{s.text}</Markdown></div> : null);
+        ? <AgentChip key={i} seg={s} cfg={cfg} />
+        : (s.text.trim() ? <WorkText key={i} text={s.text} cfg={cfg} expanded={expanded} /> : null);
   return (
     <div className="chat-work">
       {older.length > 0 && (
@@ -203,13 +232,28 @@ function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boo
             aria-expanded={open}
           >
             <ChevronRight size={13} aria-hidden className="chat-work__chev" />
-            {open ? "Hide" : "Show"} {older.length} earlier step{older.length > 1 ? "s" : ""}
-            {olderTools > 0 ? ` · ${olderTools} tool${olderTools > 1 ? "s" : ""}` : ""}
+            {/* Same grammar as every other collapsed thing in the transcript:
+                say what is hidden, not what to do about it. The verb differs from
+                a message's "Show less" on purpose — this hides a LIST of steps,
+                a message shortens PROSE, and the chevron marks it as the
+                section-level control rather than a message-level one. */}
+            {open
+              ? "Hide steps"
+              : `${older.length} step${older.length > 1 ? "s" : ""} hidden` +
+                (olderTools > 0 ? ` · ${olderTools} tool${olderTools > 1 ? "s" : ""}` : "")}
           </button>
-          {open && <div className="chat-work__list">{older.map(renderSeg)}</div>}
+          {open && (
+            <div className="chat-work__list">
+              {older.map((s, i) => renderSeg(s, i, false))}
+            </div>
+          )}
         </>
       )}
-      {recent.length > 0 && <div className="chat-work__list">{recent.map(renderSeg)}</div>}
+      {recent.length > 0 && (
+        <div className="chat-work__list">
+          {recent.map((s, i) => renderSeg(s, i, isLatest))}
+        </div>
+      )}
     </div>
   );
 }
