@@ -194,20 +194,27 @@ export function useCompaction({
           }
         }
       } else {
-        // No live session after all — take the speculative entry back out rather
-        // than letting a literal "/compact" reach a model as text.
+        // No live session after all, so no turn is sent and nothing about this
+        // request will ever be committed. Take the speculative entry back out —
+        // wherever it went — rather than letting a literal "/compact" reach a
+        // model as text, or leaving a bubble that says "sending" for a send that
+        // is not going to happen.
+        //
+        // This is the one case whose DISPLAY changed with the store: the
+        // optimistic bubble used to be an ordinary entry in the message list, so
+        // it stayed on screen (until a reload silently dropped it) even though
+        // the server had no record of it. An unsendable pending bubble cannot
+        // linger now, and should not: the fold divider is the report, exactly as
+        // it already is for /clear.
         if (preQueued) {
           queue.drop(requestId);
           setQueuedStatus(null);
         } else {
           dropRequestBubble();
         }
-        if (r.will_fold === 0) {
-          // Nothing happened, so nothing should be left claiming it did.
-          dropRequestBubble();
-          setErr("Nothing to compact. The transcript is already short.");
-        }
-        // Otherwise the fold divider is the report, and it is already drawn.
+        // Nothing happened at all, so say so; otherwise the divider is the
+        // report and it is already drawn.
+        if (r.will_fold === 0) setErr("Nothing to compact. The transcript is already short.");
       }
     } catch (e) {
       if (preQueued) {
