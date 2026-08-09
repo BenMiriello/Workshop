@@ -333,7 +333,7 @@ function CreateAgent() {
   };
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div className="ws-measure">
       <PageHeader title="New agent" sub="Pick a role. Everything else is defaulted; you can tune later." />
       {err && (
         <div style={{ marginBottom: "var(--space-4)" }}>
@@ -696,7 +696,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   const RuntimeIcon = isBuilder ? Bot : Brain;
 
   return (
-    <div style={{ maxWidth: 820 }}>
+    <div>
       <PageHeader
         title={agent.name}
         sub={

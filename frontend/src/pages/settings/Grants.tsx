@@ -281,7 +281,7 @@ export default function Grants() {
   // ---- four async states ---------------------------------------------------
   if (err && !doc) {
     return (
-      <div style={{ maxWidth: 880 }}>
+      <div>
         <PageHeader title="Grants" />
         <StateBlock
           variant="error"
@@ -294,7 +294,7 @@ export default function Grants() {
   }
   if (!doc || !manifests) {
     return (
-      <div style={{ maxWidth: 880 }}>
+      <div>
         <PageHeader title="Grants" />
         <Card>
           <Skeleton width="40%" />
@@ -308,7 +308,7 @@ export default function Grants() {
   const overflow = doc.grants.length > MAX_ROWS;
 
   return (
-    <div style={{ maxWidth: 880 }}>
+    <div>
       <PageHeader
         title="Platform · Grants"
         sub={`${doc.grants.length} grant${doc.grants.length === 1 ? "" : "s"} · ${doc.guests.length} guest${doc.guests.length === 1 ? "" : "s"}`}

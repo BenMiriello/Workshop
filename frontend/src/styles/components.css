@@ -855,7 +855,7 @@ a.ws-btn { text-decoration: none; }
    be kept in sync with the app's padding. Content scrolls inside <main>, not the
    body, so the nav stays visible without sticking. */
 .ws-app {
-  max-width: 980px;
+  max-width: var(--page-max);
   margin: 0 auto;
   height: 100dvh;
   display: flex;
@@ -864,10 +864,14 @@ a.ws-btn { text-decoration: none; }
      Resolves to 0 in a normal browser, so it changes nothing there. */
   padding-top: env(safe-area-inset-top);
 }
-/* Workbench / IDE routes (e.g. the build page) need the full viewport width. */
-.ws-app--wide { max-width: 1680px; }
-/* Launcher / dashboard grids: roomier than reading width. */
-.ws-app--roomy { max-width: 1280px; }
+/* The ONE exception to --page-max: 3-pane workbench/IDE routes (the build page)
+   need the full viewport. Nothing else may widen or narrow the shell. */
+.ws-app--wide { max-width: var(--page-max-wide); }
+
+/* A reading/form column INSIDE a page, for prose-like content that shouldn't run
+   to the full page width. This is the only sanctioned narrowing, and it is one
+   width for the whole app — not a per-page number. */
+.ws-measure { max-width: var(--measure); width: 100%; }
 
 .ws-topnav {
   flex: 0 0 auto;
@@ -1325,7 +1329,7 @@ a.ws-btn { text-decoration: none; }
    internally and the composer pins to the bottom (same on mobile and desktop —
    no unbounded growth, no sidebar that dumps on top of the conversation). */
 .ws-chat-full {
-  max-width: 880px; width: 100%; margin: 0 auto;
+  max-width: var(--measure); width: 100%; margin: 0 auto;
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
 }

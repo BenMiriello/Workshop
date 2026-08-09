@@ -79,7 +79,7 @@ const fmtAge = (iso: string) => {
 
 export default function Settings() {
   return (
-    <div style={{ maxWidth: 760 }}>
+    <div>
       <PageHeader title="Settings" />
       <AccountSection />
       <DeviceSection />

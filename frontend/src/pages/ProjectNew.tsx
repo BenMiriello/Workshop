@@ -120,7 +120,7 @@ export default function ProjectNew() {
   const canSubmit = !!effectiveSlug && !!title.trim() && !busy;
 
   return (
-    <div style={{ maxWidth: 1040 }}>
+    <div className="ws-measure">
       <PageHeader title="New project" sub="Scaffold, git-init, and open it" />
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-5)", alignItems: "flex-start" }}>

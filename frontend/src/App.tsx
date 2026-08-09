@@ -80,35 +80,23 @@ function VoiceRedirect() {
 }
 
 export default function App() {
-  // Width by page type. Content/app pages keep the reading-width cap (980).
-  // The builder is a 3-pane IDE and needs the full viewport (wide). The
-  // launcher/dashboard grids (apps, projects, agents, marketplace) look sparse
-  // at 980 on wide screens, so they get a roomier cap. The Birds app needs the
-  // room too (sidebar + content), and Activity/Settings were inconsistently
-  // narrow — so they share the roomy cap. (finance/budget/location/commute stay
-  // at 980 by choice; an app may impose its own column.)
+  // Page width is NOT decided here. Every route gets the one standard width
+  // (`--page-max`, applied by .ws-app); the route-by-route list that used to
+  // live here is what made the app look like six different apps. Only two
+  // structural exceptions remain, and both are about layout, not taste:
+  //   wide     — the builder is a 3-pane IDE and needs the full viewport.
+  //   chatFull — the focused chat is a full-screen surface: the shell becomes a
+  //              viewport-tall flex column that never scrolls, so the chat log
+  //              is the only scroller and the composer pins to the bottom (above
+  //              the mobile keyboard). See .ws-app--chatfull.
+  // To narrow content, wrap it in `ws-measure` inside the page — never a new
+  // page-level max-width.
   const { pathname } = useLocation();
   const wide = /^\/agents\/[^/]+\/chat$/.test(pathname);
-  // The focused chat is a full-screen surface: the shell becomes a viewport-tall
-  // flex column that never scrolls, so the chat log is the only scroller and the
-  // composer pins to the bottom (above the mobile keyboard). See .ws-app--chatfull.
   const chatFull = pathname.startsWith("/chat/");
-  const roomy =
-    !wide && !chatFull &&
-    (pathname === "/" ||
-      pathname === "/apps" ||
-      pathname === "/projects" ||
-      pathname.startsWith("/projects/") ||
-      pathname === "/agents" ||
-      pathname.startsWith("/runs") ||
-      pathname === "/chats" ||
-      pathname === "/marketplace" ||
-      pathname.startsWith("/apps/birds") ||
-      pathname === "/apps/notes" ||
-      pathname === "/settings");
   const widthClass = chatFull
     ? " ws-app--chatfull"
-    : wide ? " ws-app--wide" : roomy ? " ws-app--roomy" : "";
+    : wide ? " ws-app--wide" : "";
   return (
     <RecorderProvider>
     <BreadcrumbProvider>
