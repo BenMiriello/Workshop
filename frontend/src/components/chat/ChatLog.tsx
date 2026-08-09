@@ -115,15 +115,20 @@ export default function ChatLog({
         />
       )}
 
-      {/* Sent during the turn above, so they render below it. NOTHING MARKS
-          THEM. A message you sent is a message: same bubble, same place in the
-          flow, no badge and no delivery state. There was a "Handed to the turn
-          / Read by the turn" line here and it was an invented pattern nobody
-          asked for — standard chat does not annotate your own messages, and
-          annotating them is what made a normal message look like a stuck one. */}
+      {/* Sent during the turn above, so they render below it. No badge, no
+          label, no delivery-state text — that was tried ("Handed to the turn
+          / Read by the turn"), and a pulsing line under a completely normal
+          message was what made it LOOK stuck, which is the opposite of what
+          it was for. What it stays is a plain, static, ordinary-chat cue:
+          --chat-bubble--inflight is the exact opacity `--queued` already
+          uses below for "hasn't landed in the thread yet" — no new state, no
+          text, nothing that can pulse or look broken. It clears itself: this
+          array is only ever non-empty while logBusy is true, so a message
+          sitting here goes full-color the moment the turn actually ends and
+          it folds into the persisted transcript. */}
       {sentDuringTurn.map((m, i) => (
         <div key={`d${i}`} className="chat-msg user">
-          <div className="chat-bubble">{m.text}</div>
+          <div className="chat-bubble chat-bubble--inflight">{m.text}</div>
         </div>
       ))}
 

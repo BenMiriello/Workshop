@@ -1097,6 +1097,12 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-slash-desc { color: var(--muted); font-size: 0.78rem; }
 /* Queued user messages (typed while a turn is streaming). */
 .chat-bubble--queued { opacity: 0.55; }
+/* Sent during the turn above and already handed to it, but not yet folded
+   into the persisted transcript — same treatment as --queued (same opacity,
+   same "hasn't landed yet" meaning), just for a message that was actually
+   dispatched rather than held back. See ChatLog.tsx for why this is a plain
+   opacity and nothing else. */
+.chat-bubble--inflight { opacity: 0.55; }
 
 /* ---- Per-agent task drawer (build chats only) ----
    Opened from the toolbar Tasks button; the list scrolls so it never crowds. */
