@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { chatApi } from "../../lib/chat";
 import {
   initialThreadState, threadReducer, type ThreadAction, type ThreadState,
@@ -36,6 +36,15 @@ export type ThreadLog = {
   sync: () => Promise<void>;
   /** Is a run in flight on this thread, per the server. */
   runActive: boolean;
+  /** Has THIS thread's first page landed? False from the render in which the
+   *  thread changes until `events?after=0` resolves (or fails).
+   *
+   *  The transcript has no other way to tell "nothing in this conversation"
+   *  from "the log has not arrived yet", and the caller's thread-list flag
+   *  cannot answer it: that one goes false as soon as the thread is selected,
+   *  which is BEFORE this fetch is even issued. Without this, every chat open
+   *  flashed the empty state for a round trip. */
+  hydrated: boolean;
 };
 
 export function useThreadLog({
@@ -54,6 +63,14 @@ export function useThreadLog({
   const threadIdRef = useRef<string | null>(threadId);
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+
+  // Which thread's first page has landed. DERIVED, not a flag flipped in an
+  // effect: comparing it to the current thread makes `hydrated` false from the
+  // very render in which the thread changes, with no frame in between where a
+  // new thread looks settled and empty. An effect-set flag would leave exactly
+  // that frame, which is the bug in miniature.
+  const [hydratedId, setHydratedId] = useState<string | null>(null);
+  const hydrated = !threadId || hydratedId === threadId;
 
   const sync = useCallback(async () => {
     const id = threadIdRef.current;
@@ -97,6 +114,10 @@ export function useThreadLog({
         });
       } catch (e) {
         if (!cancelled) onErrorRef.current(`Couldn't load this conversation: ${e}`);
+      } finally {
+        // Hydrated on failure too: a load that failed is settled, and the log
+        // must be free to show the error instead of spinning forever.
+        if (!cancelled && threadIdRef.current === threadId) setHydratedId(threadId);
       }
     })();
     return () => { cancelled = true; };
@@ -122,5 +143,5 @@ export function useThreadLog({
 
   const transcript = useMemo(() => selectTranscript(state), [state]);
 
-  return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun };
+  return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun, hydrated };
 }

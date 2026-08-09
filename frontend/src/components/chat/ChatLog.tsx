@@ -3,6 +3,7 @@ import type { MsgStatus } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
+import { logPlaceholder } from "./chatLogState";
 import MessageList from "./MessageList";
 import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
@@ -75,18 +76,23 @@ export default function ChatLog({
   settling: { user: string; assistant: string } | null;
   vsnap: VoiceSnapshot;
 }) {
-  const empty = blocks.length === 0;
   const voiceLive = voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking");
+  // `loading` covers the thread list AND this thread's first page, so the empty
+  // state cannot be reached before the log has actually arrived. The rule is in
+  // chatLogState.ts, where it is tested.
+  const placeholder = logPlaceholder({
+    empty: blocks.length === 0, loading, error: !!error, inFlight,
+  });
 
   return (
     <div className="chat-log" ref={scrollRef} onScroll={onScroll}>
-      {loading && empty ? (
+      {placeholder === "loading" ? (
         <div className="chat-empty">Loading...</div>
-      ) : error && empty ? (
+      ) : placeholder === "error" ? (
         <div className="chat-empty chat-empty--err">
           Couldn't load threads. {String(error).slice(0, 240)}
         </div>
-      ) : empty && !inFlight ? (
+      ) : placeholder === "empty" ? (
         <div className="chat-empty">
           {isBuild ? "Tell the agent what to build..." : "Ask anything, or tell me to change the plan."}
         </div>

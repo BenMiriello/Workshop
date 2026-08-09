@@ -155,7 +155,7 @@ export default function Chat({
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
-  const { state, stateRef, dispatch, transcript, sync, runActive } = log;
+  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated } = log;
   const runActiveRef = useRef(runActive);
   runActiveRef.current = runActive;
 
@@ -572,11 +572,15 @@ export default function Chat({
     </button>
   ) : null;
 
+  // `loading` is BOTH loads, not just the thread list. `loadingThreads` goes
+  // false the moment a thread is selected, which is before the transcript's own
+  // first page is even requested; on its own it let the empty state render over
+  // an open conversation for a full round trip. That is "my chat opens blank".
   const logView = (
     <ChatLog
       scrollRef={scrollRef}
       onScroll={onLogScroll}
-      loading={thread.loadingThreads}
+      loading={thread.loadingThreads || !hydrated}
       error={err}
       blocks={transcript}
       isBuild={build}
