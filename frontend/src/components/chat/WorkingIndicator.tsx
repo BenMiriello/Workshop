@@ -17,7 +17,10 @@ export default function WorkingIndicator({
   elapsed?: number;
 }) {
   return (
-    <div className="chat-working" role="status" aria-live="polite">
+    // chat-footrow: the working line, "Show more" and "Show less" are all the
+    // last row of a bubble, so they share one spacing rule instead of each
+    // carrying its own margin (which is why they didn't line up).
+    <div className="chat-working chat-footrow" role="status" aria-live="polite">
       <span className="chat-working__label">{label}</span>
       <span className="chat-working__dots" aria-hidden><i /><i /><i /></span>
       {elapsed > 0 && <span className="chat-working__time">{formatElapsed(elapsed)}</span>}

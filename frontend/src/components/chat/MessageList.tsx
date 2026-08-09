@@ -4,6 +4,7 @@ import { Button } from "../../ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
+import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
 import { modelDisplay } from "./models";
 import { contextCutMark } from "./contextCut";
@@ -51,12 +52,28 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
   );
 }
 
+// Why a turn produced no text, said in one plain sentence.
+//
+// A bubble with nothing in it is the worst of the three possible renderings: it
+// says something happened without saying what, and reads as a rendering bug
+// rather than as a turn that ended early. The `timeout`/`stopped` cases already
+// carry a tag above the body, so here they only need to answer the question that
+// tag leaves open — was anything written before it ended? The last case is the
+// genuinely unexplained one, and it says so rather than showing an empty box.
+function noReplyText(m: ChatMsg): string {
+  if (m.meta?.timeout) return "No reply was written before the time limit.";
+  if (m.meta?.stopped) return "No reply was written before the turn was interrupted.";
+  return "No response. The turn ended without sending a message.";
+}
+
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx) {
-  if (m.meta?.error) return m.content;
+  // An error with no text is still an error; don't fall through to a blank bubble.
+  if (m.meta?.error) return m.content.trim() || "The turn failed, but no error text was recorded.";
   const model = m.meta?.model ?? fallbackModel;
   if (m.meta?.segments && m.meta.segments.length) {
     return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx} />;
   }
+  if (!m.content.trim()) return <span className="chat-noreply">{noReplyText(m)}</span>;
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
@@ -89,7 +106,11 @@ export default function MessageList({
             <ContextCut count={compactedThrough} cleared={clearedContext} />
           )}
           <div className={`chat-msg ${m.role}`}>
-            <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${(m.meta?.timeout || m.meta?.stopped) ? " chat-bubble--timeout" : ""}`}>
+            {/* --copyable reserves the inline room the copy button occupies, so
+                the button never lands on top of the last line of text. It is only
+                set when there IS something to copy. */}
+            <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${(m.meta?.timeout || m.meta?.stopped) ? " chat-bubble--timeout" : ""}${m.content.trim() ? " chat-bubble--copyable" : ""}`}>
+              <div className="chat-bubble__body">
               {m.role === "assistant" ? (
                 <>
                   {m.meta?.agent && (
@@ -122,6 +143,8 @@ export default function MessageList({
                   )}
                 </>
               )}
+              </div>
+              {m.content.trim() && <CopyMessage value={m.content} />}
             </div>
             {m.meta?.notes?.map((n, j) => (
               <div key={j} className="chat-note">{n}</div>

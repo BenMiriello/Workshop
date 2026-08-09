@@ -691,7 +691,38 @@ input[type="range"].grad::-moz-range-thumb {
   max-width: 100%; min-width: 0;
   padding: 0.5rem 0.7rem; border-radius: 12px; font-size: 0.9rem; line-height: 1.4;
   white-space: pre-wrap; word-break: break-word;
+  /* Anchors the copy button to the bottom-right. */
+  position: relative;
+  /* Always at least one text row tall. A message with no body used to collapse to
+     a sliver of padding, which read as a rendering fault rather than as a message.
+     Nothing should ever render smaller than the smallest real message. */
+  min-height: calc(1.4em + 2 * 0.5rem);
 }
+.chat-bubble__body { min-width: 0; }
+/* Reserve the inline room the copy button sits in, so it never overlaps the end
+   of the last line. This is horizontal only — it adds no row and no height. */
+.chat-bubble--copyable .chat-bubble__body { padding-right: 1.25rem; }
+
+/* Copy the message. Absolutely placed so it costs no vertical space: with no
+   expand control it sits at the corner of the last text row, and when a Show
+   more/less row exists that row is the bottom row, so it lands at its far
+   right. Muted until hover — it is chrome, not part of the conversation. */
+.chat-copy {
+  position: absolute; right: 0.3rem; bottom: 0.25rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.15rem; height: 1.15rem; padding: 0;
+  background: none; border: none; border-radius: 5px;
+  /* A real muted token rather than an opacity knock-back: a 45%-alpha icon on the
+     accent-filled user bubble misses the 3:1 non-text contrast floor. Same
+     treatment the Show more/less control already uses on each background. */
+  color: var(--muted); cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.chat-copy:hover { color: var(--fg); }
+.chat-copy:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
+.chat-msg.user .chat-copy { color: color-mix(in srgb, var(--accent-fg) 85%, transparent); }
+.chat-msg.user .chat-copy:hover,
+.chat-msg.user .chat-copy:focus-visible { color: var(--accent-fg); }
 .chat-msg.user .chat-bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border-bottom-left-radius: 4px; }
 .chat-bubble.error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--fg); }
@@ -728,6 +759,10 @@ input[type="range"].grad::-moz-range-thumb {
   margin-bottom: 0.35rem; font-size: 0.72rem; font-weight: var(--fw-semi);
   color: var(--warn-solid); text-transform: uppercase; letter-spacing: 0.03em;
 }
+/* A turn that produced no text says so, in words. See noReplyText in
+   chat/MessageList: an empty bubble reads as a rendering fault, not as a turn
+   that ended early, and the operator can't tell which without being told. */
+.chat-noreply { color: var(--muted); }
 .chat-typing { display: inline-block; color: var(--muted); letter-spacing: 0.15em; animation: chat-typing-pulse 1.2s ease-in-out infinite; }
 @keyframes chat-typing-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .chat-typing { animation: none; } }
@@ -745,9 +780,23 @@ input[type="range"].grad::-moz-range-thumb {
      in a bubble should set its own vertical rhythm. */
   line-height: inherit;
 }
-/* Spacing above only when it FOLLOWS streamed work; when it's the sole content
-   of the bubble it stays vertically centered by the bubble's own padding. */
-.chat-working:not(:first-child) { margin-top: var(--space-2); }
+
+/* ---- The bottom row of a bubble -----------------------------------------
+   "Working", "Show more" and "Show less" are the same thing structurally: the
+   last row of a bubble, below the content. They each used to carry their own
+   margin (space-2 above only when not first, 0.15rem both sides, 0.35rem both
+   sides), so the gap above the bottom row changed depending on WHICH of them
+   was in it — the inconsistent spacing. One rule owns it now; none of them sets
+   its own vertical margin. */
+.chat-footrow {
+  display: flex; align-items: center; justify-content: flex-start; text-align: left;
+  margin: var(--space-2) 0 0;
+  min-height: 1.4em;   /* same as one text row, so the row never reads shorter */
+  line-height: inherit;
+}
+/* Sole content of the bubble (a turn that has only just started): no leading gap,
+   the bubble's own padding centres it. */
+.chat-footrow:first-child { margin-top: 0; }
 /* Three sequentially-pulsing dots — a "typing/working" motif, not a loader. */
 .chat-working__dots { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
 .chat-working__dots i {
@@ -762,17 +811,20 @@ input[type="range"].grad::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) { .chat-working__dots i { animation: none; opacity: 0.6; } }
 
 /* ---- Progressive disclosure: Show more/less + collapsed work history ---- */
+/* Vertical margin comes from .chat-footrow — see there. */
 .chat-more {
-  display: inline-block; margin: 0.15rem 0;
   background: none; border: none; padding: 0;
   color: var(--accent); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-more:hover { text-decoration: underline; }
 /* Truncation divider: a visible "•••" + label + dashed rule marking the cut.
-   The whole line is the expand control. */
+   It states what is missing ("N lines hidden"); the bottom row states the action.
+   Both expand, so the cut itself stays tappable where the eye lands on it.
+   Symmetric margins: it sits BETWEEN two halves of a message and must not look
+   attached to either one. */
 .chat-ellipsis {
   display: flex; align-items: center; gap: 0.5rem; width: 100%;
-  margin: 0.35rem 0; padding: 0;
+  margin: var(--space-2) 0; padding: 0;
   background: none; border: none; color: var(--muted);
   font: inherit; font-size: var(--fs-xs); cursor: pointer; text-align: left;
 }

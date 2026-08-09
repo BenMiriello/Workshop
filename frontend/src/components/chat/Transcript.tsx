@@ -6,6 +6,7 @@ import { agentSummary, recentWorkStepCount } from "./segments";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
+import { elidePlan } from "./elision";
 
 // How a turn renders. Purely presentational: given segments, produce the
 // transcript. No chat state, no fetching, no effects beyond local open/closed.
@@ -52,44 +53,40 @@ export function ElidedContent({
   cfg: ModelDisplay;
   expanded?: boolean;
 }) {
-  const lines = source.split("\n");
-  // Estimate *visual* lines: a long paragraph with no newlines still wraps to
-  // many lines, so count wrapped rows (~CPL chars each), not just "\n"s.
-  const CPL = 46; // ~chars per line on a phone; over-counts a little on desktop
-  const visualLines = lines.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / CPL)), 0);
-  const elide = visualLines > Math.max(cfg.elideOverLines, cfg.headLines + cfg.tailLines + 1);
+  const plan = elidePlan(source, cfg);
   const [open, setOpen] = useState(!!expanded);
   useEffect(() => { setOpen(!!expanded); }, [expanded]);
-  if (!elide) return <>{render(source)}</>;
+  if (!plan.elide) return <>{render(source)}</>;
+  // Expanded and collapsed both end in a control on the LAST row. The toggle used
+  // to be the mid-block divider when collapsed and a bottom button when expanded,
+  // so the one control moved position depending on the state it was in — you had
+  // to look for it in a different place each time. It is always at the bottom now,
+  // and the divider is a second way to reach the same action.
   if (open) {
     return (
       <>
         {render(source)}
-        <button type="button" className="chat-more" onClick={() => setOpen(false)}>Show less</button>
+        <button type="button" className="chat-more chat-footrow" onClick={() => setOpen(false)}>
+          Show less
+        </button>
       </>
     );
   }
-  // Prefer slicing on real line breaks (lists, paragraphs, code); fall back to
-  // characters when it's a few long wrapped lines so the preview still trims.
-  let headSrc: string, tailSrc: string, label: string;
-  if (lines.length >= cfg.headLines + cfg.tailLines + 2) {
-    headSrc = lines.slice(0, cfg.headLines).join("\n");
-    tailSrc = lines.slice(-cfg.tailLines).join("\n");
-    label = `Show ${lines.length - cfg.headLines - cfg.tailLines} more lines`;
-  } else {
-    headSrc = source.slice(0, cfg.headLines * CPL);
-    tailSrc = source.slice(-cfg.tailLines * CPL);
-    label = "Show more";
-  }
-  // A visible "···" divider marks the cut; the whole line expands on click.
+  // The divider states what is missing ("N lines hidden") rather than instructing
+  // ("Show N more lines") — the bottom control is the instruction. Both expand.
   return (
     <>
-      {render(headSrc)}
+      {render(plan.headSrc)}
       <button type="button" className="chat-ellipsis" onClick={() => setOpen(true)}>
         <span className="chat-ellipsis__dots" aria-hidden>•••</span>
-        <span className="chat-ellipsis__label">{label}</span>
+        <span className="chat-ellipsis__label">
+          {plan.hidden} line{plan.hidden === 1 ? "" : "s"} hidden
+        </span>
       </button>
-      {render(tailSrc)}
+      {render(plan.tailSrc)}
+      <button type="button" className="chat-more chat-footrow" onClick={() => setOpen(true)}>
+        Show more
+      </button>
     </>
   );
 }
