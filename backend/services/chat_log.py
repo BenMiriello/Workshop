@@ -32,12 +32,13 @@ anything, because there is no operation that writes the transcript as a whole.
     boundary    mode (compact/clear), summary?           context cut at this point
     title       title, source (auto/manual)              the thread was named
 
-A `message` event may carry `revises: <seq>`, naming an earlier message it
-supersedes. The fold applies it onto that message IN PLACE, so the revision
-never changes anyone's position in the transcript. This is how an edit is
-expressed in an append-only log, and it is what lets a streaming assistant reply
-be finalized without the finished text jumping below the messages the operator
-sent while it was still running. Nothing is rewritten; the later line wins.
+There is no revision, edit or delete event, deliberately. A `message` event says
+what was said and where in the order it was said; nothing later moves it. Pass A
+carried a `revises: <seq>` mechanism so a streaming reply could be finalized into
+a slot claimed at turn START — which is precisely the arrangement that filed the
+operator's mid-turn messages BELOW a reply that had not answered them. Pass B
+deleted the claimed slot, and `revises` went with it: a reply is appended when it
+is finished, so it lands after everything it saw and before nothing.
 
 ### The single writer
 
@@ -354,24 +355,45 @@ def read_thread(thread_id: str, tail: int | None = None) -> dict | None:
     m = read_meta(thread_id)
     if m is None:
         return None
-    events = read_events(thread_id)
+    all_events = read_events(thread_id)
+    events = all_events
     if tail is not None and tail >= 0 and len(events) > tail:
         events = events[len(events) - tail:]
-    active_run_id = m.get("active_run_id")
-    active_run = None
-    if active_run_id:
-        started = next(
-            (e["seq"] for e in reversed(read_events(thread_id))
-             if e.get("kind") == "run" and e.get("run_id") == active_run_id
-             and e.get("state") == "started"),
-            None,
-        )
-        active_run = {"run_id": active_run_id, "started_seq": started}
     return {
         "meta": m,
         "events": events,
         "last_seq": int(m.get("last_seq") or 0),
-        "active_run": active_run,
+        "active_run": active_run(thread_id, events=all_events, meta=m),
+    }
+
+
+def active_run(thread_id: str, events: list[dict] | None = None,
+               meta: dict | None = None) -> dict | None:
+    """The run in flight on this thread, or None.
+
+    `{run_id, started_seq, live}` where `live` is the throttled snapshot of what
+    the run has produced so far. The snapshot lives in meta, NOT in the log: a
+    turn writes it a few hundred times and the record should carry the reply, not
+    every draft of it. A client renders `live` under the last log event and needs
+    nothing else to show a turn in progress."""
+    m = meta if meta is not None else read_meta(thread_id)
+    if m is None:
+        return None
+    run_id = m.get("active_run_id")
+    if not run_id:
+        return None
+    evs = events if events is not None else read_events(thread_id)
+    started = next(
+        (e["seq"] for e in reversed(evs)
+         if e.get("kind") == "run" and e.get("run_id") == run_id
+         and e.get("state") == "started"),
+        None,
+    )
+    live = m.get("live_message")
+    return {
+        "run_id": run_id,
+        "started_seq": started,
+        "live": dict(live) if isinstance(live, dict) else None,
     }
 
 
@@ -464,7 +486,7 @@ async def append(thread_id: str, event: dict) -> dict:
 
 def append_message_sync(thread_id: str, role: str, content: str,
                         client_id: str | None = None, meta: dict | None = None,
-                        ts: str | None = None, revises: int | None = None) -> dict:
+                        ts: str | None = None) -> dict:
     """Append a `message` event. Idempotent on `client_id`.
 
     A resend of a client_id already in the log appends NOTHING and returns the
@@ -484,17 +506,15 @@ def append_message_sync(thread_id: str, role: str, content: str,
         ev["client_id"] = client_id
     if meta:
         ev["meta"] = meta
-    if revises is not None:
-        ev["revises"] = int(revises)
     return append_sync(thread_id, ev)
 
 
 async def append_message(thread_id: str, role: str, content: str,
                          client_id: str | None = None, meta: dict | None = None,
-                         ts: str | None = None, revises: int | None = None) -> dict:
+                         ts: str | None = None) -> dict:
     async with lock_for(thread_id):
         return append_message_sync(thread_id, role, content, client_id=client_id,
-                                   meta=meta, ts=ts, revises=revises)
+                                   meta=meta, ts=ts)
 
 
 def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:

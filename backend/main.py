@@ -62,6 +62,10 @@ async def lifespan(app: FastAPI):
     try:
         from services import build_streaming
         build_streaming.reattach_running_turns()
+        # Second pass, after the live journals are re-registered: any thread
+        # still pointing at a run nobody is driving is closed out as lost, so a
+        # chat is never left waiting on something that will never answer.
+        build_streaming.reconcile_threads()
     except Exception:
         pass
     yield

@@ -1388,24 +1388,14 @@ a.ws-btn { text-decoration: none; }
   display: flex; flex-direction: column;
   padding: 0; overflow: hidden;
 }
-/* Focused chat keeps the SAME top nav as every other page — breadcrumb + section
-   nav (inline links on desktop, hamburger on mobile) — so it never reads as a
-   different, chromeless surface. We only slim the vertical band + force one row
-   so it doesn't eat the chat's viewport; the nav itself (incl. the hamburger)
-   stays put. */
-.ws-app.ws-app--chatfull > .ws-topnav {
-  /* Horizontally aligned with every other page (--page-pad-x) so the breadcrumb
-     starts on the same line as page content everywhere. Only the vertical band
-     is slimmer, which is about the chat's viewport, not about its width. */
-  padding: var(--space-2) var(--page-pad-x);
-  flex-wrap: nowrap;
-  /* The chat toolbar sits directly beneath this and draws its own bottom rule,
-     so keeping this one put TWO horizontal lines a few pixels apart at the top
-     of every chat — a doubled border costing a band of vertical space to
-     separate two control rows that read as one. The toolbar's rule is the one
-     that means something (chrome above, transcript below), so it wins. */
-  border-bottom: none;
-}
+/* Focused chat uses the IDENTICAL top nav as every other page — same vertical
+   band (--space-3) and same bottom border. It used to slim this (--space-2,
+   borderless) to save a few pixels and avoid a perceived doubled border with
+   the chat toolbar below, but that made the one piece of chrome that is meant
+   to be constant vary by route — the toolbar looked different in the chat than
+   everywhere else. Consistency wins: the top nav never changes, and the chat's
+   own toolbar sits beneath it exactly like any other page's header does. So
+   there is deliberately no `.ws-app--chatfull > .ws-topnav` override here. */
 
 /* ---- MARKDOWN (.ws-md) --------------------------------------------------- */
 /* Rendered markdown (Brief, Notes, assistant chat). Tight + calm: tokens only,

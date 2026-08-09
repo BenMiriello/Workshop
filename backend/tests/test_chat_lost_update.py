@@ -198,21 +198,34 @@ class TestSaveThreadDiffsInsteadOfOverwriting:
         msgs = chat_store.get_thread(tid)["messages"]
         assert [m["content"] for m in msgs] == ["one", "two", "three"]
 
-    def test_editing_a_message_keeps_its_place(self, thread):
-        """A revision supersedes a message where it already is. If it appended
-        instead, a finished reply would jump below the messages sent while it
-        was still running."""
+    def test_a_stored_message_is_never_edited(self, thread):
+        """There is no edit event, deliberately. `revises` existed only to
+        finalize a reply into a slot claimed at turn start, and that slot is what
+        filed the operator's mid-turn messages below a reply that had not read
+        them. A caller handing back a changed message writes nothing."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "one")
-        chat_store.append_message(tid, "assistant", "draft", meta={"streaming": True})
-        chat_store.append_message(tid, "user", "three")
+        chat_store.append_message(tid, "assistant", "the reply")
         t = chat_store.get_thread(tid)
-        t["messages"][1]["content"] = "the finished reply"
-        t["messages"][1]["meta"] = {"streaming": False}
+        t["messages"][1]["content"] = "something else"
         chat_store.save_thread(t)
         msgs = chat_store.get_thread(tid)["messages"]
-        assert [m["content"] for m in msgs] == ["one", "the finished reply", "three"]
-        assert msgs[1]["meta"] == {"streaming": False}
+        assert [m["content"] for m in msgs] == ["one", "the reply"]
+
+    def test_a_live_run_view_is_not_committed_by_a_write_back(self, thread):
+        """A caller that read the thread mid-run is holding the run's live view
+        as a trailing assistant message. Appending it would commit a half-written
+        reply that the run is about to commit properly."""
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.begin_run(tid, "run-1")
+        chat_store.update_run(tid, "run-1", [{"t": "text", "text": "half"}], "half")
+        t = chat_store.get_thread(tid)
+        assert t["messages"][-1]["meta"]["streaming"] is True
+        chat_store.save_thread(t)
+        chat_store.commit_run(tid, "run-1", [], "the whole answer")
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["content"] for m in msgs] == ["go", "the whole answer"]
 
     def test_a_field_the_caller_dropped_is_removed(self, thread):
         tid = thread["id"]

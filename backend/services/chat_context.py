@@ -278,6 +278,22 @@ USE_SKILL_PROTOCOL = (
     "just reply normally. Emit at most one use_skill block per reply."
 )
 
+# The block, for stripping it back out. A turn runs as a live agent process now:
+# a data-mode assistant that wants a skill reads it with its own tools rather
+# than asking the backend for a second model call, so an emitted block is raw
+# protocol that nobody is going to expand. Take it off the reply before the
+# operator sees it.
+_USE_SKILL_RE = re.compile(
+    r"```use_skill\s*\n\s*([a-z0-9][a-z0-9-]{0,63})\s*\n```", re.IGNORECASE)
+
+
+def strip_use_skill(text: str) -> str:
+    """Remove any `use_skill` block from a reply. Returns the text unchanged when
+    there is none, which is every ordinary turn."""
+    if not text or "use_skill" not in text:
+        return text
+    return _USE_SKILL_RE.sub("", text).strip() or text
+
 # When to delegate to a subagent, and when a Ticket is the right shape instead.
 #
 # The two mechanisms were being confused because nothing ever said what
@@ -728,8 +744,8 @@ REALTIME_CHANNEL = (
 )
 
 
-def arrival_notice(messages: list[dict]) -> str:
-    """States which of the messages now being read arrived DURING an earlier turn.
+def arrival_notice(messages: list[dict], run_id: str | None = None) -> str:
+    """States which of the messages now being read arrived DURING an earlier run.
 
     The operator's report, and the reason this exists: "this and the last two
     were sent in sequence before you ever read any of them and you won't even
@@ -742,28 +758,54 @@ def arrival_notice(messages: list[dict]) -> str:
     Two ways a message can have waited, and they mean the same thing to whoever
     reads it now:
 
-      during_turn — injected into a turn that was already running
-                    (routes/chat._file_during_turn)
-      queued      — typed while a turn ran, delivered as this one
-                    (routes/chat._record_user_turn)
+      during_run — delivered into a run that was already going
+                   (routes/chat._file_during_run)
+      queued     — typed while a run went, delivered as this one
+                   (routes/chat._record_user_turn)
 
-    Empty string when nothing waited, which is the common case.
+    FOUND BY THE MARK, NOT BY POSITION. This used to read the trailing run of
+    user messages, which worked only while the assistant reply sat ABOVE the
+    messages it had not answered — the arrangement that made the operator's five
+    messages render as if he had been ignored. Now the reply is appended when it
+    finishes, so a delivered message sits above it and would never be in the
+    tail. `run_id` names the run that just ended, and its arrivals are a lookup
+    on `meta.during_run` wherever they are in the transcript.
 
-    Scoped to the TRAILING run of user messages — the ones this turn is about to
-    read. Scanning the whole transcript would re-announce every message the
-    thread has ever queued, on every turn, forever; a notice that fires always
-    says nothing.
+    Queued messages have no run to name (they were never delivered to one), so
+    they are still found in the trailing run of user messages, which is exactly
+    the turn being sent now.
+
+    Empty string when nothing waited, which is the common case. Scoped so it
+    cannot re-announce: a notice that fires always says nothing.
     """
+    picked: list[dict] = []
+    seen: set[int] = set()
+
+    def _take(m: dict) -> None:
+        if id(m) not in seen and m.get("role") == "user":
+            seen.add(id(m))
+            picked.append(m)
+
+    if run_id:
+        for m in messages:
+            meta = m.get("meta") or {}
+            if meta.get("during_run") == run_id or meta.get("during_turn") == run_id:
+                _take(m)
     tail: list[dict] = []
     for m in reversed(messages):
         if m.get("role") != "user":
             break
         tail.append(m)
     tail.reverse()
-    during = [m for m in tail
-              if (m.get("meta") or {}).get("during_turn") or (m.get("meta") or {}).get("queued")]
-    if not during:
+    for m in tail:
+        meta = m.get("meta") or {}
+        if meta.get("queued") or (not run_id and (meta.get("during_run") or meta.get("during_turn"))):
+            _take(m)
+    if not picked:
         return ""
+    # Transcript order, whichever pass found them.
+    order = {id(m): i for i, m in enumerate(messages)}
+    during = sorted(picked, key=lambda m: order.get(id(m), 0))
     times = []
     for m in during:
         ts = str(m.get("ts") or "")

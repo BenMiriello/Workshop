@@ -216,7 +216,7 @@ class TestReadEventsCursor:
         chat_log.patch_meta_sync(tid, active_run_id="r1")
         got = chat_log.read_thread(tid)
         assert got["last_seq"] == 2
-        assert got["active_run"] == {"run_id": "r1", "started_seq": 2}
+        assert got["active_run"] == {"run_id": "r1", "started_seq": 2, "live": None}
 
     def test_read_thread_bounds_the_tail(self, tid):
         for i in range(10):

@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import build_agents, chat_store, llm_router, ownership
+from services import build_agents, chat_log, chat_store, llm_router, ownership
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -135,6 +135,19 @@ class Turn:
     # work. Rebuilt from the journal on re-attach (the drive loop re-reads from
     # offset 0), so it never has to survive a restart.
     agent_segs: dict[str, dict] = field(default_factory=dict)
+    # Set once this run's message has been committed to the thread, with the
+    # committed message in `committed`. This is what the blocking POST /messages
+    # path awaits, so there is ONE finalize pipeline instead of a streaming one
+    # and a blocking one that drift apart.
+    finished: asyncio.Event = field(default_factory=asyncio.Event)
+    committed: dict | None = None
+    notes: list[str] | None = None
+    # True once the subprocess exists and its input channel is open. A run is
+    # CLAIMED before its prompt is assembled, so there is a window where it owns
+    # the thread but cannot be delivered to yet; that is not the same thing as a
+    # run whose channel has been cleaned up because it is finishing, and the
+    # injection path has to tell them apart.
+    spawned: bool = False
 
 
 # In-memory turn registry. Build sessions are short-lived enough that this is
@@ -142,10 +155,95 @@ class Turn:
 TURNS: dict[str, Turn] = {}
 
 
-def _make_turn(thread_id: str, agent_slug: str) -> Turn:
-    t = Turn(id=str(uuid.uuid4()), thread_id=thread_id, agent_slug=agent_slug)
-    TURNS[t.id] = t
+class RunInFlight(RuntimeError):
+    """A run is already open on this thread; join it instead of starting a rival.
+
+    Carries the id of the run that owns the thread. Raised by `start_turn` when
+    it claims for itself and loses the race, which is the backstop for two POSTs
+    landing in the same event-loop tick."""
+
+    def __init__(self, run_id: str):
+        super().__init__(f"a run is already in flight on this thread: {run_id}")
+        self.run_id = run_id
+
+
+def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None) -> Turn:
+    # A claimed run is already registered (see claim_run); adopt it rather than
+    # replacing it, so nothing that looked it up between the claim and the spawn
+    # is holding an object this one has orphaned.
+    t = TURNS.get(turn_id or "")
+    if t is None:
+        t = Turn(id=turn_id or new_run_id(), thread_id=thread_id, agent_slug=agent_slug)
+        TURNS[t.id] = t
+    else:
+        t.agent_slug = agent_slug
+        t.started = time.time()
     return t
+
+
+def new_run_id() -> str:
+    return str(uuid.uuid4())
+
+
+def run_is_live(run_id: str | None) -> bool:
+    """Is this process driving this run right now?
+
+    A run this process does not hold is not live however the thread's meta reads:
+    it belongs to a previous boot, and the startup reconcile owns it. A complete
+    one is not live either. Both are cases where `active_run_id` outlives the
+    thing it names, and the point of one predicate is that every caller agrees
+    about them."""
+    if not run_id:
+        return False
+    t = TURNS.get(run_id)
+    return t is not None and not t.complete
+
+
+def run_is_ending(run_id: str | None) -> bool:
+    """Has this run spawned and lost its input channel?
+
+    That is the one state where a message cannot be delivered and never will be:
+    the drive loop has ended and the finalize is running. A run that has been
+    claimed but not yet spawned looks the same to `write_to_turn` (no FIFO) and
+    is the opposite situation — it is about to start — so the two must not be
+    treated alike, or a message sent in the startup window would kill the run it
+    was meant for."""
+    t = TURNS.get(run_id or "")
+    return t is not None and t.spawned and not _stdin_fifo(run_id or "").exists()
+
+
+async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
+                    agent: str | None = None, force: bool = False) -> str | None:
+    """Take this thread for `run_id`. Returns the run that already owns it (join
+    that one), or None when the claim succeeded.
+
+    Held under the thread's WRITE LOCK across the whole check-and-act, so two
+    POSTs in the same event-loop tick cannot both open a run: the second takes
+    the lock, sees `active_run_id`, and is told to join. That is structural, not
+    a timing accident — there is no await between the read and the write for the
+    other coroutine to slip into.
+
+    `force` takes over a thread whose active run has just refused a delivery.
+    Only the injection path uses it, and only after a write to that run's input
+    channel has actually failed.
+
+    A run this process is not driving gets a `lost` message on the way out:
+    nothing else is ever going to answer for it, and leaving the chat waiting on
+    it is the "chats keep stalling" report."""
+    async with chat_log.lock_for(thread_id):
+        active = chat_store.active_run(thread_id)
+        if active and active != run_id:
+            if run_is_live(active) and not force:
+                return active
+            if active not in TURNS:
+                chat_store.lose_run(thread_id, active)
+        chat_store.begin_run(thread_id, run_id, model=model, agent=agent)
+        # Register the run BEFORE returning. Prompt assembly awaits, and until
+        # the run is in TURNS a message arriving during that window would see an
+        # `active_run_id` naming a run nothing is driving and take the thread
+        # over — starting the rival turn the claim exists to prevent.
+        _make_turn(thread_id, "", turn_id=run_id)
+        return None
 
 
 def _push(turn: Turn, kind: str, payload: dict) -> None:
@@ -576,7 +674,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      disallowed_tools: list[str] | None = None,
                      mcp_servers: list[str] | None = None,
                      tools_disabled: bool = False,
-                     speaker: str | None = None) -> Turn:
+                     speaker: str | None = None,
+                     run_id: str | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -593,8 +692,18 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     `speaker` names the AGENT answering, when the turn was addressed to one by
     @mention. It rides through to the stored message as `meta.agent` so the
     transcript can attribute the reply. Absent (the normal case) the reply is
-    the assistant's and needs no attribution."""
-    turn = _make_turn(thread_id, agent_slug)
+    the assistant's and needs no attribution.
+
+    `run_id` is a run the caller already claimed (`claim_run`). Passing one is
+    how the route holds the thread from before it starts assembling a prompt —
+    which takes awaits, and therefore ticks — through to the spawn. Omit it and
+    this claims one itself, raising RunInFlight if the thread is busy."""
+    turn = _make_turn(thread_id, agent_slug, turn_id=run_id)
+    if run_id is None:
+        joined = await claim_run(thread_id, turn.id, model=model, agent=speaker)
+        if joined is not None:
+            TURNS.pop(turn.id, None)
+            raise RunInFlight(joined)
     try:
         owner_id = ownership.current_owner()
     except Exception:
@@ -653,14 +762,11 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         cmd.extend(["--session-id", meta["session_id"]])
 
     _push(turn, "started", {"cwd": meta["cwd"], "model": meta["model"], "resume": meta["resume"]})
-    # Persist an empty assistant placeholder bound to this turn. As the turn
-    # streams we update its segments; a reload sees partial content + reconnects.
-    try:
-        chat_store.append_streaming_assistant(
-            turn.thread_id, turn.id, model=meta["model"], agent=meta.get("speaker"))
-    except Exception as e:  # pragma: no cover — defensive
-        log.warning("turn %s: could not seed streaming message: %s", turn.id, e)
-
+    # NO PLACEHOLDER. The run is already claimed on the thread (`claim_run`) and
+    # its output goes to the journal below plus `meta.live_message`; the reply
+    # enters the log once, at finalize. Seeding an empty assistant message here
+    # is what used to file the operator's mid-turn messages below a reply that
+    # had not read them.
     jd = _journal_dir(turn.id)
     jd.mkdir(parents=True, exist_ok=True)
     env = llm_router._claude_env()
@@ -677,9 +783,8 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         err_f = open(jd / "stream.err", "ab")
     except OSError as e:
         turn.error = f"journal open failed: {e}"
-        turn.complete = True
         _push(turn, "error", {"detail": turn.error})
-        _mark_meta(meta, "done")
+        await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
     # The realtime input channel. Opened O_RDWR rather than O_RDONLY on purpose:
     # an fd that is its own writer never reports EOF, so the child keeps reading
@@ -694,9 +799,8 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     except OSError as e:
         out_f.close(); err_f.close()
         turn.error = f"input channel open failed: {e}"
-        turn.complete = True
         _push(turn, "error", {"detail": turn.error})
-        _mark_meta(meta, "done")
+        await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -707,14 +811,14 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     except FileNotFoundError as e:
         out_f.close(); err_f.close(); os.close(in_fd)
         turn.error = f"claude CLI not found: {e}"
-        turn.complete = True
         _push(turn, "error", {"detail": turn.error})
-        _mark_meta(meta, "done")
+        await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
         return
     out_f.close(); err_f.close()
     # The child holds its own dup of the fifo fd, so drop ours; the child's copy
     # is what keeps the channel from hitting EOF.
     os.close(in_fd)
+    turn.spawned = True
     # Deliver the prompt as the run's first message.
     if not write_to_turn(turn.id, meta["prompt"]):
         log.warning("turn %s: could not write the opening prompt to its input channel", turn.id)
@@ -748,8 +852,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     last_persist = 0.0
 
     def _persist() -> None:
+        # The live snapshot, not the log. The journal on disk is the buffer and
+        # this is the copy a reload reads; the record gets one write, at commit.
         try:
-            chat_store.update_streaming_assistant(
+            chat_store.update_run(
                 turn.thread_id, turn.id, turn.segments, _turn_content(turn))
         except Exception as e:  # pragma: no cover — defensive
             log.debug("turn %s: incremental persist failed: %s", turn.id, e)
@@ -880,9 +986,23 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                          subtype=str(state.get("result_subtype") or ""), lost=lost)
 
 
-async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
-                         context_tokens: int = 0, spend_tokens: int = 0,
-                         subtype: str = "", lost: bool = False) -> None:
+async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
+    """Commit the run and wake whoever is waiting on it.
+
+    Always wakes, even if the commit raised. The blocking POST /messages path
+    awaits `turn.finished`, and a finalize that fails silently would leave that
+    request hanging for as long as the client will hold the socket open."""
+    try:
+        await _commit_turn(turn, meta, **kw)
+    finally:
+        turn.complete = True
+        turn.new_event.set()
+        turn.finished.set()
+
+
+async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
+                       context_tokens: int = 0, spend_tokens: int = 0,
+                       subtype: str = "", lost: bool = False) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 0) or 0)
@@ -991,6 +1111,10 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
             if _permitted("notes"):
                 new_text, nnotes = await task_scope.apply_note_block(ctx_key, new_text)
                 applied_notes += nnotes
+            # A data-mode assistant is told it may ask for a skill by emitting a
+            # fenced block. It has tools and reads the skill itself, so nothing
+            # expands one; take the raw protocol off the reply.
+            new_text = chat_context.strip_use_skill(new_text)
             if new_text != text or applied_notes:
                 text = new_text or "(done)"
                 notes = applied_notes or None
@@ -1002,14 +1126,18 @@ async def _finalize_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, co
                 turn.segments = turn.segments[:cut] + ([{"t": "text", "text": text}] if text else [])
         except Exception as e:
             log.warning("turn %s: provider apply_actions failed: %s", turn.id, e)
+    # THE COMMIT. One message, appended at the tail, whether or not a client is
+    # watching — so it lands below every message this run was handed and above
+    # nothing. `lost` is recorded as such rather than as a normal finish.
+    turn.notes = notes
     try:
-        chat_store.finalize_streaming_assistant(
+        turn.committed = chat_store.commit_run(
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes,
-            agent=meta.get("speaker"),
+            agent=meta.get("speaker"), state=("lost" if lost else "finished"),
         )
     except Exception as e:
-        log.warning("turn %s: chat_store finalize failed: %s", turn.id, e)
+        log.warning("turn %s: chat_store commit failed: %s", turn.id, e)
     # Self-heal a bad resume. If a turn that was RESUMING this thread's session
     # failed outright, the session is the prime suspect (pruned, corrupted, or
     # written under a different cwd). Detach it so the next turn mints a fresh one
@@ -1122,8 +1250,9 @@ def reattach_running_turns() -> None:
                 continue
             owner_id = meta.get("owner_id")
             if owner_id is None:
-                # Can't safely persist without an owner — drop the orphan; the
-                # thread self-heals its stuck streaming flag on next fetch.
+                # Can't safely persist without an owner — drop the orphan. The
+                # thread still points at this run; reconcile_threads() closes it
+                # out with a `lost` message right after this pass.
                 shutil.rmtree(d, ignore_errors=True)
                 continue
             try:
@@ -1141,6 +1270,43 @@ def reattach_running_turns() -> None:
             asyncio.create_task(_drive_turn(turn, meta, proc=None))
     except Exception as e:  # pragma: no cover — never block startup
         log.warning("reattach_running_turns failed: %s", e)
+
+
+def reconcile_threads() -> None:
+    """Startup hook, second pass: close out any thread still pointing at a run.
+
+    `meta.active_run_id` is the whole reattachment story now — one field, not a
+    backward scan for a streaming flag. So a thread is stuck if and only if that
+    field names a run this process is not driving, and the fix is to say so in
+    the transcript: a `run: lost` marker and a message in the same plain wording
+    the re-attach path uses.
+
+    Runs AFTER reattach_running_turns(), which registers every journal that is
+    still alive. Anything left over has no process behind it and never will."""
+    try:
+        root = ownership._RUNTIME / "users"
+        if not root.exists():
+            return
+        prior = ownership.owner_or_none()
+        try:
+            for user_dir in sorted(root.iterdir()):
+                if not user_dir.is_dir() or not user_dir.name.isdigit():
+                    continue
+                ownership.set_current_owner(int(user_dir.name))
+                for thread_id in chat_log.list_thread_ids():
+                    run_id = chat_store.active_run(thread_id)
+                    if not run_id or run_is_live(run_id):
+                        continue
+                    log.info("thread %s: run %s did not survive; recording it as lost",
+                             thread_id, run_id)
+                    chat_store.lose_run(thread_id, run_id)
+        finally:
+            if prior is None:
+                ownership.clear_current_owner()
+            else:
+                ownership.set_current_owner(prior)
+    except Exception as e:  # pragma: no cover — never block startup
+        log.warning("reconcile_threads failed: %s", e)
 
 
 def _first_user_text(thread_id: str) -> str:

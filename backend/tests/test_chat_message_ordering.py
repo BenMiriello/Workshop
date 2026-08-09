@@ -97,21 +97,86 @@ class TestRealtimeChannelIsDeclared:
         assert "indistinguishable from not having read it" in c
 
 
-class TestStoreOrdering:
-    def test_mid_turn_message_is_filed_after_the_live_turn(self, thread):
-        """It used to be inserted ABOVE the streaming placeholder, which made the
-        transcript say the operator spoke first and the assistant answered — when
-        the assistant was already mid-reply to something else."""
+class TestTheOperatorsMessagesRenderAboveTheReplyThatReadThem:
+    """THE BUG THIS PASS EXISTS TO FIX.
+
+    The operator sent five messages during one long turn. When the turn ended,
+    all five rendered BELOW the assistant reply that had answered them, so the
+    chat read as if he had been ignored.
+
+    The cause was structural: the reply CLAIMED ITS SLOT when the turn started,
+    so anything sent afterwards was filed below an empty placeholder, and the
+    finished text was written back into that placeholder — above them all. The
+    run is no longer in the log at all until it commits, so this cannot recur
+    without someone putting the placeholder back.
+    """
+
+    def test_a_message_delivered_mid_run_lands_ABOVE_the_finalized_reply(self, thread):
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go build it")
+        chat_store.begin_run(tid, "run-1")
+        for text in ("also the header", "and the footer", "wait, dark mode too"):
+            chat_store.append_message_during_turn(
+                tid, "user", text,
+                meta={"injected": True, "during_run": "run-1", "at_segment": 4})
+        chat_store.commit_run(tid, "run-1", [], "Done, all of it.")
+
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["role"] for m in msgs] == ["user", "user", "user", "user", "assistant"]
+        assert msgs[-1]["content"] == "Done, all of it."
+        # Every message the run was handed is above the reply that read it.
+        reply_at = len(msgs) - 1
+        for i, m in enumerate(msgs):
+            if (m.get("meta") or {}).get("during_run") == "run-1":
+                assert i < reply_at
+
+    def test_a_message_that_never_reached_the_run_lands_BELOW_the_reply(self, thread):
+        """The other half, and it has to fall out of the same rule. A message the
+        run did not see must not sit above a reply that could not have answered
+        it — that is the same lie in the other direction."""
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go build it")
+        chat_store.begin_run(tid, "run-1")
+        chat_store.commit_run(tid, "run-1", [], "Done.")
+        chat_store.append_message(tid, "user", "one more thing")
+
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["content"] for m in msgs] == ["go build it", "Done.", "one more thing"]
+
+    def test_the_running_reply_is_rendered_last_while_it_runs(self, thread):
+        """During the run the live snapshot is the trailing message, so nothing
+        the operator sends jumps above output already on screen. When the run
+        commits, the reply is still last — the bubble never moves."""
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.append_streaming_assistant(tid, "turn-1")
+        chat_store.begin_run(tid, "run-1")
+        chat_store.update_run(tid, "run-1", [{"t": "text", "text": "working"}], "working")
+        assert [m["role"] for m in chat_store.get_thread(tid)["messages"]] == \
+            ["user", "assistant"]
+        chat_store.append_message_during_turn(
+            tid, "user", "wait", meta={"during_run": "run-1"})
+        during = chat_store.get_thread(tid)["messages"]
+        assert [m["role"] for m in during] == ["user", "user", "assistant"]
+        assert during[-1]["meta"]["streaming"] is True
+        chat_store.commit_run(tid, "run-1", [], "final")
+        after = chat_store.get_thread(tid)["messages"]
+        assert [m["role"] for m in after] == ["user", "user", "assistant"]
+        assert after[-1]["content"] == "final"
+
+
+class TestStoreOrdering:
+    def test_mid_run_message_is_filed_with_the_run_it_arrived_in(self, thread):
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.begin_run(tid, "run-1")
         chat_store.append_message_during_turn(
             tid, "user", "actually wait",
-            meta={"injected": True, "during_turn": "turn-1", "at_segment": 3})
+            meta={"injected": True, "during_run": "run-1", "at_segment": 3})
+        # [-1] is the run's live view; the committed tail is the message.
         msgs = chat_store.get_thread(tid)["messages"]
-        assert [m["role"] for m in msgs] == ["user", "assistant", "user"]
-        assert msgs[-1]["meta"]["during_turn"] == "turn-1"
-        assert msgs[-1]["meta"]["at_segment"] == 3
+        assert msgs[-2]["role"] == "user"
+        assert msgs[-2]["meta"]["during_run"] == "run-1"
+        assert msgs[-2]["meta"]["at_segment"] == 3
 
     def test_with_no_live_turn_it_is_an_ordinary_append(self, thread):
         tid = thread["id"]
@@ -119,17 +184,25 @@ class TestStoreOrdering:
         chat_store.append_message_during_turn(tid, "user", "two", meta={"injected": True})
         assert [m["content"] for m in chat_store.get_thread(tid)["messages"]] == ["one", "two"]
 
-    def test_finalizing_records_when_the_turn_ended(self, thread):
-        """`ts` is when the reply BEGAN. Without an end, a twenty-minute turn
-        claimed it happened at the instant it opened, and anything sorting by
-        timestamp put a later message above it."""
+    def test_committing_records_when_the_run_started_and_ended(self, thread):
+        """A TURN IS AN INTERVAL. `ts` is now when the reply LANDED, which is the
+        honest answer to "when did this enter the conversation"; the start is
+        recorded alongside it so the interval is still answerable."""
         tid = thread["id"]
-        chat_store.append_streaming_assistant(tid, "turn-2")
-        chat_store.finalize_streaming_assistant(tid, "turn-2", segments=[], content="done")
+        chat_store.begin_run(tid, "run-2")
+        chat_store.commit_run(tid, "run-2", [], "done")
         m = chat_store.get_thread(tid)["messages"][-1]
         assert m["meta"]["ended_at"]
-        assert m["meta"]["ended_at"] >= m["ts"]
+        assert m["meta"]["started_at"] <= m["meta"]["ended_at"]
         assert m["meta"]["streaming"] is False
+
+    def test_committing_clears_the_active_run(self, thread):
+        tid = thread["id"]
+        chat_store.begin_run(tid, "run-3")
+        assert chat_store.active_run(tid) == "run-3"
+        chat_store.commit_run(tid, "run-3", [], "done")
+        assert chat_store.active_run(tid) is None
+        assert chat_store.previous_run_id(tid) == "run-3"
 
 
 class TestQueuedPartsKeepTheirSendTimes:
@@ -212,13 +285,13 @@ class TestRecordUserTurn:
 
 
 class TestAtSegmentIsMeasuredLive:
-    """`at_segment` decides where the transcript shows a mid-turn message.
+    """`at_segment` decides where the transcript shows a mid-run message.
 
     It used to be read from the STORED reply, whose segments are written on a
     throttle — so it lagged what was on screen. The error is one-directional: a
     low `at_segment` renders the message EARLIER than it arrived, above output it
     never saw, which is what makes a reply look like an answer to a message it
-    had not read. Ask the live turn instead.
+    had not read. Ask the live run instead.
     """
 
     def test_it_reads_the_running_turn_not_the_throttled_copy(self, thread):
@@ -227,104 +300,100 @@ class TestAtSegmentIsMeasuredLive:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.append_streaming_assistant(tid, "turn-live")
+        chat_store.begin_run(tid, "run-live")
         # On disk: 2 segments (the last throttled write). In flight: 7.
-        chat_store.update_streaming_assistant(
-            tid, "turn-live", [{"t": "text", "text": "x"}] * 2, "x")
-        turn = build_streaming.Turn(id="turn-live", thread_id=tid, agent_slug="a")
+        chat_store.update_run(tid, "run-live", [{"t": "text", "text": "x"}] * 2, "x")
+        turn = build_streaming.Turn(id="run-live", thread_id=tid, agent_slug="a")
         turn.segments = [{"t": "text", "text": "x"}] * 7
-        build_streaming.TURNS["turn-live"] = turn
+        build_streaming.TURNS["run-live"] = turn
         try:
-            rc._file_during_turn(tid, "turn-live", "wait")
+            rc._file_during_run(tid, "run-live", "wait")
         finally:
-            build_streaming.TURNS.pop("turn-live", None)
+            build_streaming.TURNS.pop("run-live", None)
 
-        msg = chat_store.get_thread(tid)["messages"][-1]
+        msg = chat_store.get_thread(tid)["messages"][-2]
         assert msg["content"] == "wait"
         assert msg["meta"]["at_segment"] == 7
 
-    def test_it_falls_back_to_the_stored_count_for_an_adopted_turn(self, thread):
-        """A turn adopted after a restart is not in this process's registry, so
-        the persisted count is the only number available — and is still better
+    def test_it_falls_back_to_the_live_snapshot_for_an_adopted_run(self, thread):
+        """A run adopted after a restart is not in this process's registry, so
+        the persisted snapshot is the only number available — and is still better
         than nothing."""
         import routes.chat as rc
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.append_streaming_assistant(tid, "turn-gone")
-        chat_store.update_streaming_assistant(
-            tid, "turn-gone", [{"t": "text", "text": "x"}] * 3, "x")
-        rc._file_during_turn(tid, "turn-gone", "wait")
-        assert chat_store.get_thread(tid)["messages"][-1]["meta"]["at_segment"] == 3
+        chat_store.begin_run(tid, "run-gone")
+        chat_store.update_run(tid, "run-gone", [{"t": "text", "text": "x"}] * 3, "x")
+        rc._file_during_run(tid, "run-gone", "wait")
+        assert chat_store.get_thread(tid)["messages"][-2]["meta"]["at_segment"] == 3
 
 
-class TestOneTurnPerThread:
-    """A message sent while a turn runs JOINS that turn. It must never start a
-    second one, and the server must be the one deciding — a browser only knows
+class TestOneRunPerThread:
+    """A message sent while a run is going JOINS it. It must never start a
+    second run, and the server must be the one deciding — a browser only knows
     whether its own stream is open.
 
     Observed live on 2026-08-07: thread 919bc949 had turns 2c7dc100 and 470bd00c
     both streaming at once, and the operator's message reached neither.
     """
 
-    def _live(self, turn_id, thread_id):
+    def _live(self, run_id, thread_id, spawned=True):
         from services import build_streaming
-        t = build_streaming.Turn(id=turn_id, thread_id=thread_id, agent_slug="a")
-        build_streaming.TURNS[turn_id] = t
+        t = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
+        t.spawned = spawned
+        build_streaming.TURNS[run_id] = t
         return t
 
-    def test_the_second_mid_turn_message_still_finds_the_turn(self, thread):
-        """THE REGRESSION. `_live_turn_id` looked only at the last message, which
-        stopped being the streaming placeholder the moment a mid-turn message was
-        filed after it — so message one injected and message two was told nothing
-        was running."""
+    def test_the_second_mid_run_message_still_finds_the_run(self, thread):
+        """THE OLD REGRESSION, kept pinned. Finding the live run used to mean
+        scanning the transcript for a streaming flag, and the first mid-turn
+        message filed after it broke the scan. It is one field now."""
         import routes.chat as rc
         from services import build_streaming
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.append_streaming_assistant(tid, "turn-1")
-        self._live("turn-1", tid)
+        chat_store.begin_run(tid, "run-1")
+        self._live("run-1", tid)
         try:
-            assert rc._live_turn_id(chat_store.get_thread(tid)) == "turn-1"
-            # First mid-turn message lands AFTER the placeholder…
+            assert rc._live_run_id(tid) == "run-1"
             chat_store.append_message_during_turn(
-                tid, "user", "first", meta={"injected": True, "during_turn": "turn-1"})
-            # …and the turn must still be findable for the second.
-            assert rc._live_turn_id(chat_store.get_thread(tid)) == "turn-1"
+                tid, "user", "first", meta={"during_run": "run-1"})
+            assert rc._live_run_id(tid) == "run-1"
             chat_store.append_message_during_turn(
-                tid, "user", "second", meta={"injected": True, "during_turn": "turn-1"})
-            assert rc._live_turn_id(chat_store.get_thread(tid)) == "turn-1"
+                tid, "user", "second", meta={"during_run": "run-1"})
+            assert rc._live_run_id(tid) == "run-1"
         finally:
-            build_streaming.TURNS.pop("turn-1", None)
+            build_streaming.TURNS.pop("run-1", None)
 
-    def test_a_finished_turn_is_not_live(self, thread):
+    def test_a_finished_run_is_not_live(self, thread):
         import routes.chat as rc
         from services import build_streaming
 
         tid = thread["id"]
-        chat_store.append_streaming_assistant(tid, "turn-done")
-        t = self._live("turn-done", tid)
+        chat_store.begin_run(tid, "run-done")
+        t = self._live("run-done", tid)
         t.complete = True
         try:
-            assert rc._live_turn_id(chat_store.get_thread(tid)) is None
+            assert rc._live_run_id(tid) is None
         finally:
-            build_streaming.TURNS.pop("turn-done", None)
+            build_streaming.TURNS.pop("run-done", None)
 
-    def test_a_stale_streaming_flag_does_not_wedge_the_thread(self, thread):
-        """A turn lost to a restart leaves `streaming: True` behind. If that
-        counted as live, every later message would be injected into a process
-        that no longer exists — the thread would take no new turns at all."""
+    def test_a_run_this_process_never_had_is_not_live(self, thread):
+        """A run lost to a restart leaves `active_run_id` behind. If that counted
+        as live, every later message would be delivered to a process that no
+        longer exists and the thread would take no new turns at all."""
         import routes.chat as rc
         tid = thread["id"]
-        chat_store.append_streaming_assistant(tid, "turn-vanished")
-        assert rc._live_turn_id(chat_store.get_thread(tid)) is None
+        chat_store.begin_run(tid, "run-vanished")
+        assert rc._live_run_id(tid) is None
 
-    def test_an_idle_thread_has_no_live_turn(self, thread):
+    def test_an_idle_thread_has_no_live_run(self, thread):
         import routes.chat as rc
         tid = thread["id"]
         chat_store.append_message(tid, "user", "hi")
-        assert rc._live_turn_id(chat_store.get_thread(tid)) is None
+        assert rc._live_run_id(tid) is None
 
     def test_the_turn_route_joins_instead_of_starting_a_rival(self, thread, monkeypatch):
         import asyncio
@@ -333,8 +402,8 @@ class TestOneTurnPerThread:
 
         tid = thread["id"]
         chat_store.append_message(tid, "user", "go")
-        chat_store.append_streaming_assistant(tid, "turn-1")
-        live = self._live("turn-1", tid)
+        chat_store.begin_run(tid, "run-1")
+        live = self._live("run-1", tid)
         live.segments = [{"t": "text", "text": "x"}] * 5
 
         started = []
@@ -342,59 +411,16 @@ class TestOneTurnPerThread:
 
         async def never(*a, **kw):
             started.append(a)
-            raise AssertionError("a second turn must not be started")
+            raise AssertionError("a second run must not be started")
         monkeypatch.setattr(build_streaming, "start_turn", never)
 
         try:
             r = asyncio.run(rc.start_streaming_turn(tid, rc.StartTurnIn(content="joining")))
         finally:
-            build_streaming.TURNS.pop("turn-1", None)
+            build_streaming.TURNS.pop("run-1", None)
 
-        assert r == {"turn_id": "turn-1", "injected": True, "at_segment": 5}
+        assert r == {"turn_id": "run-1", "injected": True, "at_segment": 5}
         assert not started
-        last = chat_store.get_thread(tid)["messages"][-1]
+        last = chat_store.get_thread(tid)["messages"][-2]
         assert last["content"] == "joining"
-        assert last["meta"]["during_turn"] == "turn-1"
-
-
-class TestOrphanedTurnSelfHeal:
-    """A message left `streaming: True` by a backend restart is not just
-    finished, it's GONE — nothing will ever finalize it. GET /threads/{id}
-    clears the flag either way, but only a truly vanished turn (not one that
-    completed normally) gets `meta.stopped = "interrupted"`, which the client
-    renders instead of a bubble that looks either answered or broken. See
-    "chats keep stalling" / "empty message bubble" — the report that reopened
-    this whole file's reattachment logic on 2026-08-07."""
-
-    def test_a_vanished_turn_is_marked_interrupted(self, thread):
-        import routes.chat as rc
-        tid = thread["id"]
-        chat_store.append_streaming_assistant(tid, "turn-vanished")
-        t = asyncio.run(rc.thread(tid))
-        msg = t["messages"][-1]
-        assert msg["meta"]["streaming"] is False
-        assert msg["meta"]["stopped"] == "interrupted"
-
-    def test_a_normally_finished_turn_is_not_marked_interrupted(self, thread):
-        import routes.chat as rc
-        from services import build_streaming
-
-        tid = thread["id"]
-        chat_store.append_streaming_assistant(tid, "turn-done")
-        live = build_streaming.Turn(id="turn-done", thread_id=tid, agent_slug="a")
-        live.complete = True
-        build_streaming.TURNS["turn-done"] = live
-        try:
-            t = asyncio.run(rc.thread(tid))
-        finally:
-            build_streaming.TURNS.pop("turn-done", None)
-        msg = t["messages"][-1]
-        assert msg["meta"]["streaming"] is False
-        assert "stopped" not in msg["meta"]
-
-    def test_an_already_finished_message_is_untouched(self, thread):
-        import routes.chat as rc
-        tid = thread["id"]
-        chat_store.append_message(tid, "assistant", "done", meta={"streaming": False})
-        t = asyncio.run(rc.thread(tid))
-        assert "stopped" not in (t["messages"][-1].get("meta") or {})
+        assert last["meta"]["during_run"] == "run-1"

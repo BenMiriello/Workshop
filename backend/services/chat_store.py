@@ -27,11 +27,14 @@ from __future__ import annotations
 
 import bisect
 import json
+import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from . import chat_log, ownership  # noqa: F401  (ownership re-exported for tests)
+
+log = logging.getLogger("workshop.chat_store")
 
 # Threads are partitioned per owner: `.runtime/users/<owner_id>/chat/<id>/`.
 
@@ -165,35 +168,22 @@ def _promotion_patch(meta: dict) -> dict:
 def _fold(thread_id: str) -> tuple[dict, list[dict], list[int]] | None:
     """(meta, messages, seq-of-each-message) or None if the thread is gone.
 
-    A `message` event carrying `revises` replaces the content and meta of the
-    message at that seq IN PLACE — the revision never moves anything, which is
-    what lets a streaming reply be finalized without jumping below the messages
-    that arrived while it ran.
+    A straight replay: every `message` event in seq order, nothing rewritten and
+    nothing moved. The log has no revision event, so this cannot do anything
+    else, which is the property the whole rebuild is for.
 
-    `meta.live_message` is the in-flight overlay for the one message a running
-    turn is writing. It is applied last and lives in meta rather than the log so
-    a turn's throttled progress writes never touch the record; only the
-    finalized text does.
+    Committed messages only. A run in flight has nothing here — see `_live_view`,
+    which `_document` appends as a trailing view. Keeping it out of the fold is
+    what keeps `seqs` a list of real seqs, so the context boundary still lands on
+    a message that actually exists.
     """
     meta = chat_log.read_meta(thread_id)
     if meta is None:
         return None
     messages: list[dict] = []
     seqs: list[int] = []
-    index_of: dict[int, int] = {}
     for ev in chat_log.read_events(thread_id):
         if ev.get("kind") != "message":
-            continue
-        revises = ev.get("revises")
-        if revises is not None:
-            i = index_of.get(int(revises))
-            if i is None:
-                continue  # revises a message that isn't there; nothing to apply
-            messages[i]["content"] = ev.get("content") or ""
-            if ev.get("meta"):
-                messages[i]["meta"] = dict(ev["meta"])
-            else:
-                messages[i].pop("meta", None)
             continue
         msg = {
             "role": ev.get("role") or "user",
@@ -202,16 +192,45 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int]] | None:
         }
         if ev.get("meta"):
             msg["meta"] = dict(ev["meta"])
-        index_of[ev["seq"]] = len(messages)
         messages.append(msg)
         seqs.append(ev["seq"])
-    live = meta.get("live_message")
-    if isinstance(live, dict) and int(live.get("seq") or 0) in index_of:
-        i = index_of[int(live["seq"])]
-        messages[i]["content"] = live.get("content") or ""
-        if live.get("meta"):
-            messages[i]["meta"] = dict(live["meta"])
     return meta, messages, seqs
+
+
+def _live_view(meta: dict) -> dict | None:
+    """The in-flight run rendered as a trailing assistant message, or None.
+
+    THE RUN IS NOT IN THE LOG. While a turn is in flight the thread holds no
+    assistant message for it; `meta.live_message` carries the throttled snapshot
+    of what it has produced so far, and this is that snapshot shaped as a
+    message so a reload still renders the turn in progress. Built fresh on every
+    read, never written back.
+
+    That is the ordering fix. The reply used to claim its slot when the turn
+    STARTED, so a message sent at minute twelve of a twenty-minute turn was filed
+    below the slot and the finished reply landed ABOVE it — reading as if the
+    operator had been ignored. Now the snapshot is always last while the turn
+    runs, and the committed reply is appended at the tail when it finishes: a
+    message the run was handed sits above the reply that answered it, and one
+    that arrived too late to be delivered sits below.
+
+    `meta.streaming` and `meta.turn_id` are on it because that is how a client
+    knows to attach to the SSE stream for this run."""
+    if not meta.get("active_run_id"):
+        return None
+    live = meta.get("live_message")
+    if not isinstance(live, dict):
+        return None
+    m = dict(live.get("meta") or {})
+    m["streaming"] = True
+    m["turn_id"] = meta["active_run_id"]
+    m.setdefault("segments", [])
+    return {
+        "role": "assistant",
+        "content": live.get("content") or "",
+        "ts": live.get("ts"),
+        "meta": m,
+    }
 
 
 def _compacted_through(seqs: list[int], boundary_seq: int) -> int:
@@ -245,7 +264,8 @@ def _document(meta: dict, messages: list[dict], seqs: list[int]) -> dict:
     ct = _compacted_through(seqs, int(meta.get("boundary_seq") or 0))
     if ct:
         t["compacted_through"] = ct
-    t["messages"] = messages
+    live = _live_view(meta)
+    t["messages"] = ([*messages, live] if live is not None else messages)
     return t
 
 
@@ -565,32 +585,24 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
 
     A turn is an INTERVAL; a message is a POINT. A message sent at minute twelve
     of a twenty-minute reply is neither before that reply nor after it, and the
-    transcript has to pick one. This used to pick *before* — it inserted above
-    the streaming placeholder, reasoning that a plain append would file the
-    operator's message after a reply that had not been written yet.
+    transcript has to pick one. The log picks by simply appending, and that is
+    now the right answer: the reply does not exist in the log yet, so this
+    message lands above it, and the reply lands above nothing when it commits.
+    Delivered means "the run read it", and the transcript says so by position.
 
-    That is backwards for whoever READS the thread later. It produces a
-    transcript saying the operator spoke and then the assistant answered, when
-    the assistant was already twelve minutes into answering something else; a
-    fresh session re-assembling history reads the reply as a response to a
-    message it never saw. Worse, the placeholder is stamped at turn START, so
-    the operator's message also sorted ABOVE a timestamp 91 seconds EARLIER than
-    its own. That is the "my message got inserted above compact" report, on disk.
+    What position does not carry is recorded on the message:
 
-    So: file it AFTER, which is causally true — the reply did not see it — and
-    record what "after" leaves out:
+      during_run — the run that was in flight when this arrived
+      at_segment — how much of that reply had streamed by then
 
-      during_turn — the turn that was running when this arrived
-      sent_at     — when the operator actually hit enter
-      at_segment  — how much of that reply had streamed by then
+    `during_run` is what `chat_context.arrival_notice` queries, so "which
+    messages arrived while that run was going" is a lookup rather than an
+    inference from where things sit. `at_segment` is what lets the transcript
+    show it inline at the point it landed.
 
-    `at_segment` is what lets the transcript still SHOW it inline at the point it
-    landed while the stored order stays causal. One truth, two views, instead of
-    one view baked into storage as though it were the truth.
-
-    An append is now the only way to write a message, so "after" is what the log
-    does on its own; this stays a separate entry point because the CALLER means
-    something different by it.
+    This stays a separate entry point from `append_message` because the CALLER
+    means something different by it: not "the operator spoke", but "the operator
+    spoke into a turn that was already running".
     """
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
@@ -620,21 +632,31 @@ def save_thread(thread: dict) -> dict:
     """Persist a thread dict the caller already mutated.
 
     COMPATIBILITY SHIM. It diffs the dict against the log and appends only what
-    changed: new messages become `message` events, an edited message becomes a
-    revision of the one it edits, changed top-level fields become a meta patch.
+    changed: new messages become `message` events, changed top-level fields
+    become a meta patch.
 
     A stale snapshot can no longer delete anything. Messages that arrived after
     the caller's read are simply not in its dict, and "not in the dict" is not an
     instruction the log can express. That is why `LostUpdate` is gone: it existed
     to refuse a whole-document write, and there is no longer such a thing.
+
+    EDITING A STORED MESSAGE IS NOT EXPRESSIBLE and is not attempted. Message
+    edit is out of scope for the rebuild, no caller does it, and the one thing
+    that used to (finalizing a streaming reply into a slot claimed at turn start)
+    is exactly what pass B removed. A differing message is logged and skipped
+    rather than silently reordering the transcript to accommodate it.
     """
     tid = thread["id"]
     folded = _fold(tid)
     if folded is None:
         raise KeyError(tid)
-    meta, stored_msgs, seqs = folded
+    meta, stored_msgs, _seqs = folded
 
-    incoming = thread.get("messages") or []
+    # The live view is a rendering of the run in flight, not a record. A caller
+    # that read the thread mid-turn is holding one; appending it would commit a
+    # half-written reply that the run is about to commit properly.
+    incoming = [m for m in (thread.get("messages") or [])
+                if not (m.get("meta") or {}).get("streaming")]
     i = 0
     while i < min(len(incoming), len(stored_msgs)):
         mine, theirs = incoming[i], stored_msgs[i]
@@ -642,7 +664,8 @@ def save_thread(thread: dict) -> dict:
             break
         if mine.get("content") != theirs.get("content") \
                 or (mine.get("meta") or {}) != (theirs.get("meta") or {}):
-            _revise_message(tid, seqs[i], mine, meta)
+            log.warning("thread %s: message %d differs from the log and was not "
+                        "written; the log has no edit event", tid, i)
         i += 1
     for m in incoming[i:]:
         chat_log.append_message_sync(tid, m.get("role") or "user", m.get("content") or "",
@@ -667,20 +690,6 @@ def save_thread(thread: dict) -> dict:
             seqs, int(meta.get("boundary_seq") or 0)):
         _set_boundary(tid, int(want_ct), "compact", thread.get("summary"))
     return get_thread(tid)
-
-
-def _revise_message(thread_id: str, seq: int, msg: dict, meta: dict) -> None:
-    """Append a revision of the message at `seq`.
-
-    A revision that targets the message a running turn is writing supersedes the
-    live overlay, so the overlay and the run marker are cleared in the same
-    breath — otherwise the overlay would keep painting over the revision."""
-    chat_log.append_message_sync(thread_id, msg.get("role") or "assistant",
-                                 msg.get("content") or "", meta=msg.get("meta"),
-                                 ts=msg.get("ts"), revises=seq)
-    live = meta.get("live_message")
-    if isinstance(live, dict) and int(live.get("seq") or 0) == seq:
-        chat_log.patch_meta_sync(thread_id, live_message=None, active_run_id=None)
 
 
 def update_thread(thread_id: str, **fields: object) -> dict | None:
@@ -727,70 +736,74 @@ def _set_boundary(thread_id: str, compacted_through: int, mode: str,
     chat_log.patch_meta_sync(thread_id, boundary_seq=boundary_seq)
 
 
-# ---- Streaming assistant turns --------------------------------------------
-# A Build turn streams over SSE. The reply's slot in the transcript is claimed
-# when the turn starts, so a message the operator sends mid-turn files after it
-# and the finished reply does not jump below its own follow-ups. What streams
-# into that slot lives in `meta.live_message` until the turn finishes: a turn
-# writes ~150 times, and none of those belong in the record.
+# ---- Runs ------------------------------------------------------------------
+#
+# A RUN IS NOT A MESSAGE. While a turn is in flight the log holds one
+# `run: started` marker and `meta.active_run_id` points at it; the reply itself
+# does not exist yet. What the turn has produced so far lives in
+# `meta.live_message`, rewritten on a throttle (a turn writes it a few hundred
+# times) and rendered by `_live_view` as a trailing assistant message.
+#
+# On finalize the reply is APPENDED at the tail, so it lands after every message
+# the run was handed and before nothing. That is the whole ordering fix: the old
+# arrangement claimed the reply's slot when the turn STARTED, so five messages
+# sent during a twenty-minute turn were filed below the slot and the finished
+# reply rendered above all five, reading as if the operator had been ignored.
 
 
-def _find_by_turn(messages: list[dict], seqs: list[int], turn_id: str) -> tuple[dict, int] | None:
-    for i in range(len(messages) - 1, -1, -1):
-        if (messages[i].get("meta") or {}).get("turn_id") == turn_id:
-            return messages[i], seqs[i]
-    return None
+def active_run(thread_id: str) -> str | None:
+    """The id of the run in flight on this thread, or None. One field read."""
+    meta = chat_log.read_meta(thread_id)
+    return (meta or {}).get("active_run_id") or None
 
 
-def append_streaming_assistant(thread_id: str, turn_id: str, model: str | None = None,
-                               agent: str | None = None) -> dict:
-    """Claim this turn's slot in the transcript with an empty assistant message.
+def begin_run(thread_id: str, run_id: str, model: str | None = None,
+              agent: str | None = None) -> None:
+    """Open a run on this thread: a `run: started` marker and `active_run_id`.
 
-    `agent` names the agent answering when the turn came from an @mention. It is
-    stamped on the PLACEHOLDER as well as the finalized message so the reply is
-    attributed while it streams, not only once it lands."""
+    Nothing is written to the transcript. The caller MUST hold this thread's
+    write lock (`chat_log.lock_for`) across its own check-and-act, which is what
+    makes two sends in the same event-loop tick unable to both open a run.
+
+    `agent` names the agent answering when the turn came from an @mention, and
+    rides on the live view so the reply is attributed while it streams, not only
+    once it lands."""
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
-    meta: dict = {"streaming": True, "turn_id": turn_id, "segments": []}
+    meta: dict = {"turn_id": run_id, "segments": []}
     if model:
         meta["model"] = model
     if agent:
         meta["agent"] = agent
-    chat_log.append_sync(thread_id, {"kind": "run", "run_id": turn_id, "state": "started"})
-    ev = chat_log.append_message_sync(thread_id, "assistant", "", meta=meta, ts=_now_iso())
+    chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
     chat_log.patch_meta_sync(
-        thread_id, active_run_id=turn_id,
-        live_message={"seq": ev["seq"], "content": "", "meta": meta},
+        thread_id, active_run_id=run_id,
+        live_message={"run_id": run_id, "content": "", "meta": meta, "ts": _now_iso()},
     )
-    return _msg_from_event(ev)
 
 
-def update_streaming_assistant(
-    thread_id: str, turn_id: str, segments: list[dict], content: str
-) -> None:
-    """Overwrite the live turn's segments + concatenated text (throttled by the
-    caller). No-op if the thread/message is gone.
+def update_run(thread_id: str, run_id: str, segments: list[dict], content: str) -> None:
+    """Overwrite the running turn's live snapshot. No-op if it is not the active
+    run any more (it finished, or something took the thread over).
 
-    Writes the overlay, not the log: this fires every ~0.4s for the length of a
-    turn, and the record should carry the reply, not every draft of it."""
-    folded = _fold(thread_id)
-    if folded is None:
+    Writes meta, never the log: this fires every ~0.4s for the length of a turn,
+    and the record should carry the reply, not every draft of it."""
+    stored = chat_log.read_meta(thread_id)
+    if stored is None or stored.get("active_run_id") != run_id:
         return
-    _meta, msgs, seqs = folded
-    hit = _find_by_turn(msgs, seqs, turn_id)
-    if hit is None:
-        return
-    msg, seq = hit
-    meta = dict(msg.get("meta") or {})
+    live = stored.get("live_message")
+    live = dict(live) if isinstance(live, dict) else {"run_id": run_id, "ts": _now_iso()}
+    meta = dict(live.get("meta") or {})
     meta["segments"] = segments
-    meta["streaming"] = True
-    chat_log.patch_meta_sync(
-        thread_id, live_message={"seq": seq, "content": content, "meta": meta})
+    meta["turn_id"] = run_id
+    live["meta"] = meta
+    live["content"] = content
+    chat_log.patch_meta_sync(thread_id, live_message=live)
 
 
-def finalize_streaming_assistant(
+def commit_run(
     thread_id: str,
-    turn_id: str,
+    run_id: str,
     segments: list[dict],
     content: str,
     error: bool = False,
@@ -798,70 +811,107 @@ def finalize_streaming_assistant(
     notes: list[str] | None = None,
     stopped: str | None = None,
     agent: str | None = None,
+    state: str = "finished",
 ) -> dict | None:
-    """Commit the live turn as its final message, in the slot it claimed.
+    """Commit a run: one assistant message at the TAIL, one `run` marker, done.
+
+    Appending at the tail is the point. A message the operator sent during this
+    run is already in the log ABOVE this reply, because it was persisted when it
+    arrived and this reply did not exist yet. A message that arrived too late to
+    be delivered lands BELOW, because it will be appended after. The transcript
+    therefore says which messages the reply accounted for, without anyone having
+    to annotate it.
+
+    Committed whether or not a client is watching, and idempotent on the thread's
+    view of the world: it clears `active_run_id` only when it still names this
+    run, so a run that was taken over cannot un-claim its successor.
 
     `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
     the UI can render a calm "stopped, continue" note instead of a red error.
-    `stopped` names any OTHER non-completion ending, so a turn that was cut off
-    mid-task is never rendered as a turn that finished. `notes` mirrors the
-    blocking path's meta.notes (e.g. "Updated the plan" from an action provider)
-    so a streamed action turn renders the same follow-ups."""
-    folded = _fold(thread_id)
-    if folded is None:
+    `stopped` names any OTHER non-completion ending. `notes` carries the action
+    pipeline's human-readable results (e.g. "Updated the plan")."""
+    stored = chat_log.read_meta(thread_id)
+    if stored is None:
         return None
-    stored, msgs, seqs = folded
-    hit = _find_by_turn(msgs, seqs, turn_id)
-
-    def _finish_meta(base: dict) -> dict:
-        # A TURN IS AN INTERVAL. `ts` is when this reply began — the slot is
-        # claimed at turn start and `ts` is never touched again — so on a twenty
-        # minute turn every assistant message claimed it was produced at the
-        # instant the turn opened, and a message the operator sent at minute
-        # twelve sorted ABOVE a timestamp eleven minutes older than its own.
-        # Recording the end is what makes "when did this happen" answerable.
-        m = dict(base)
-        m["ended_at"] = _now_iso()
-        if segments:
-            m["segments"] = segments
-        if error:
-            m["error"] = True
-        if timed_out:
-            m["timeout"] = True
-        if stopped:
-            m["stopped"] = stopped
-        if notes:
-            m["notes"] = notes
-        if agent:
-            m["agent"] = agent
-        return m
-
-    if hit is None:
-        # No slot to fill, so this message is born finished and `ts` is already
-        # the end. Set `ended_at` anyway: a consumer that has to ask "does this
-        # one have an end?" before reading it is a consumer that will eventually
-        # forget to, and the whole point of recording the interval is that every
-        # finalized assistant message answers when it finished.
-        meta = _finish_meta({})
-        return append_message(thread_id, "assistant", content, meta=meta or None)
-
-    msg, seq = hit
-    meta = _finish_meta(msg.get("meta") or {})
-    meta["segments"] = segments
-    meta["streaming"] = False
-    chat_log.append_message_sync(thread_id, "assistant", content, meta=meta,
-                                 ts=msg.get("ts"), revises=seq)
-    chat_log.append_sync(thread_id, {"kind": "run", "run_id": turn_id, "state": "finished"})
+    meta: dict = {"turn_id": run_id, "streaming": False, "ended_at": _now_iso()}
+    if segments:
+        meta["segments"] = segments
     live = stored.get("live_message")
+    if isinstance(live, dict):
+        base = live.get("meta") or {}
+        for k in ("model", "agent"):
+            if base.get(k):
+                meta.setdefault(k, base[k])
+        # When the turn began, so a reader can see how long it ran. `ts` on the
+        # message is when it was COMMITTED, which is the honest answer to "when
+        # did this land in the conversation".
+        if live.get("ts"):
+            meta["started_at"] = live["ts"]
+    if error:
+        meta["error"] = True
+    if timed_out:
+        meta["timeout"] = True
+    if stopped:
+        meta["stopped"] = stopped
+    if notes:
+        meta["notes"] = notes
+    if agent:
+        meta["agent"] = agent
+    ev = chat_log.append_message_sync(thread_id, "assistant", content, meta=meta,
+                                      ts=_now_iso())
+    chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": state})
     clear: dict = {}
-    if isinstance(live, dict) and int(live.get("seq") or 0) == seq:
-        clear["live_message"] = None
-    if stored.get("active_run_id") == turn_id:
+    if stored.get("active_run_id") == run_id:
         clear["active_run_id"] = None
+        clear["live_message"] = None
     if clear:
         chat_log.patch_meta_sync(thread_id, **clear)
-    out = {"role": "assistant", "content": content, "ts": msg.get("ts"), "meta": meta}
-    return out
+    return _msg_from_event(ev)
+
+
+# The one wording for a run this backend can no longer account for. Used by the
+# startup reconcile and by the re-attach path, so the operator reads the same
+# sentence however the run was lost.
+LOST_RUN_TEXT = (
+    "Lost when the backend restarted mid-run. Anything already written to "
+    "disk is intact. Send \"continue\" to pick it back up."
+)
+
+
+def lose_run(thread_id: str, run_id: str) -> dict | None:
+    """Close out a run whose process is dead or gone: a `run: lost` marker and a
+    message saying so, so the chat is never left waiting on something that will
+    never answer."""
+    return commit_run(thread_id, run_id, [], LOST_RUN_TEXT, state="lost")
+
+
+def release_run(thread_id: str, run_id: str) -> None:
+    """Close a run that never got off the ground, writing no message.
+
+    A claim is taken before the prompt is assembled, because assembly awaits and
+    an await is where a rival turn used to slip in. If assembly then fails, the
+    caller has an error to return and the thread has a claim to give back; there
+    is nothing to say in the transcript that the failed request does not already
+    say to the person who made it."""
+    stored = chat_log.read_meta(thread_id)
+    if stored is None or stored.get("active_run_id") != run_id:
+        return
+    chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": "finished"})
+    chat_log.patch_meta_sync(thread_id, active_run_id=None, live_message=None)
+
+
+def previous_run_id(thread_id: str) -> str | None:
+    """The last run this thread finished (or lost). Not the active one.
+
+    This is what `chat_context.arrival_notice` asks for: "which messages arrived
+    while the last run was going" is then a lookup on `meta.during_run`, not an
+    inference from where a message sits relative to the last assistant reply.
+    That inference is what broke the moment the reply started being appended at
+    the tail."""
+    for ev in reversed(chat_log.read_events(thread_id)):
+        if ev.get("kind") == "run" and ev.get("state") in ("finished", "lost"):
+            return ev.get("run_id")
+    return None
 
 
 # ---- context accounting ----------------------------------------------------
