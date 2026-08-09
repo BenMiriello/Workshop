@@ -533,9 +533,9 @@ input[type="range"].grad::-moz-range-thumb {
 
 /* Panel fills its host; the log scrolls, toolbar + composer pin. */
 .chat-panel { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; height: 100%; }
-/* Full-variant wrapper (builder / focused chat). Bound its width to the parent so
-   a wide message can never push the whole chat sideways. */
-.ws-chat-full { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; max-width: 100%; overflow-x: hidden; }
+/* .ws-chat-full lives in components.css (it is a shell rule, and this sheet loads
+   AFTER it — a copy here silently overrode the real one). Its overflow guards
+   moved there with it. */
 
 /* ---- Toolbar: a single row of compact controls ---- */
 .chat-toolbar {

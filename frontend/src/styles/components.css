@@ -1347,6 +1347,10 @@ a.ws-btn { text-decoration: none; }
   max-width: none; width: 100%; margin: 0 auto;
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
+  /* Bound to the parent so one wide message can never push the chat sideways.
+     (Merged from a duplicate rule in the legacy styles.css, which loads after
+     this sheet and was quietly winning.) */
+  min-width: 0; overflow-x: hidden;
 }
 
 /* Focused-chat shell: the whole app becomes a viewport-tall flex column that
