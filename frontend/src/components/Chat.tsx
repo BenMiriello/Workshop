@@ -183,16 +183,45 @@ export default function Chat({
     sendTurn: (t, clientId) => sendBatchRef.current(t, [{ text: t, sentAt: new Date().toISOString(), clientId }]),
   });
 
+  // ---- Voice mode ----------------------------------------------------------
+  // A mode of THIS chat, not a separate screen — see useVoiceMode.
+  const {
+    voiceOn, toggleVoice, settingsOpen: voiceSettings, setSettingsOpen: setVoiceSettings,
+    orbRef, vsession, vsnap, vprefs, vupdatePrefs,
+  } = useVoiceMode({
+    contextKey,
+    model: selectedModel,
+    activeId,
+    onAdoptThread: (id) => {
+      if (!activeIdRef.current) thread.adoptThreadId(id);
+      void thread.refreshThreads();
+    },
+    onFatal: setErr,
+  });
+
+  // A finished spoken exchange stays on screen until its persisted messages
+  // land — see useVoiceSettle.
+  const { settling } = useVoiceSettle({
+    voiceOn, activeId, vsnap,
+    committedCount: () => committedMessages(stateRef.current).length,
+    sync,
+    refreshThreads: () => { void thread.refreshThreads(); },
+  });
+
   // Following the conversation, composer sizing, and jump-to-latest are one
   // behaviour — see useLogScroll for the rules and the bugs each prevents.
   const [input, setInput, clearInput] = useDraft(contextKey);
   const [inputFocused, setInputFocused] = useState(false);
+  // The voice snapshot is in `followDeps` because ChatLog renders the spoken
+  // turn from it directly, not from the transcript — without it the log stops
+  // following mid-utterance, which is the one time the operator is not touching
+  // the screen to scroll it themselves.
   const {
     scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest,
   } = useLogScroll({
     input,
     inputFocused,
-    followDeps: [transcript, queue.items],
+    followDeps: [transcript, queue.items, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
   });
 
@@ -240,30 +269,9 @@ export default function Chat({
   // Leaving a thread closes its socket. The store is reset by useThreadLog.
   useEffect(() => () => closeStream(), [activeId, closeStream]);
 
-  // ---- Voice mode ----------------------------------------------------------
-  // A mode of THIS chat, not a separate screen — see useVoiceMode.
-  const {
-    voiceOn, toggleVoice, settingsOpen: voiceSettings, setSettingsOpen: setVoiceSettings,
-    orbRef, vsession, vsnap, vprefs, vupdatePrefs,
-  } = useVoiceMode({
-    contextKey,
-    model: selectedModel,
-    activeId,
-    onAdoptThread: (id) => {
-      if (!activeIdRef.current) thread.adoptThreadId(id);
-      void thread.refreshThreads();
-    },
-    onFatal: setErr,
-  });
-
-  // A finished spoken exchange stays on screen until its persisted messages
-  // land — see useVoiceSettle.
-  const { settling } = useVoiceSettle({
-    voiceOn, activeId, vsnap,
-    committedCount: () => committedMessages(stateRef.current).length,
-    sync,
-    refreshThreads: () => { void thread.refreshThreads(); },
-  });
+  // The committed messages, flat. Read by the context meter's local estimate and
+  // by the egress banner; nothing renders from it (the transcript is `blocks`).
+  const messages = useMemo(() => committedMessages(state), [state]);
 
   // ---- Drawers, pickers, mentions ------------------------------------------
   const [drawer, setDrawer] = useState<ChatDrawer>(null);
@@ -433,10 +441,6 @@ export default function Chat({
     compacting: pipeline.turnIsCompact,
   });
 
-  // The committed messages, flat. Read by the context meter's local estimate and
-  // by the egress banner; nothing renders from it (the transcript is `blocks`).
-  const messages = useMemo(() => committedMessages(state), [state]);
-
   // ---- Egress banner (build only) -----------------------------------------
   const lastErrorMessage = useMemo(() => {
     const msgs = messages;
@@ -577,7 +581,7 @@ export default function Chat({
       blocks={transcript}
       isBuild={build}
       inFlight={runActive || pipeline.starting}
-      overflowed={state.order.length >= 500}
+      overflowed={messages.length >= 500}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={pipeline.retry}
