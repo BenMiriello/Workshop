@@ -197,8 +197,8 @@ function StatusTab({ brief, onPollNow, polling }: {
       {!rtAvail && (
         <p style={{ fontSize: "0.82rem", color: "var(--warn)", marginBottom: "0.75rem" }}>
           {rtReason === "needs_511_key"
-            ? "No realtime data. Set WORKSHOP_511_API_KEY (free at 511.org/open-data/token). Times below are static schedule."
-            : `Realtime unavailable (${rtReason ?? "unknown"}). Times below are static schedule.`}
+            ? "No realtime data. Add a 511 key in Commute settings. Times below are the static schedule."
+            : `Realtime unavailable (${rtReason ?? "unknown"}). Times below are the static schedule.`}
         </p>
       )}
 

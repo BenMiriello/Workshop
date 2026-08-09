@@ -193,7 +193,7 @@ function EditLocation({ summary, onDone }: { summary: Summary; onDone: () => voi
               <button className="btn" onClick={merge} disabled={!target || busy}>Merge into it</button>
             </div>
             <p className="muted" style={{ fontSize: ".72rem", margin: ".3rem 0 0" }}>
-              Moves all detections and devices here into the chosen location (provenance kept), then removes this one.
+              Moves all detections and devices here into the chosen location, then removes this one.
             </p>
           </div>
         )}

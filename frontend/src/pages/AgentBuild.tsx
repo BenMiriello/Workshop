@@ -779,9 +779,6 @@ export default function AgentBuild() {
                       rows={22}
                       style={{ fontFamily: "ui-monospace, monospace", fontSize: "var(--fs-sm)" }}
                     />
-                    <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "0.5rem" }}>
-                      Phase B will replace this with CodeMirror 6 (syntax highlight + multi-cursor).
-                    </p>
                   </>
                 )}
               </Card>
@@ -953,7 +950,7 @@ export default function AgentBuild() {
             {paneTab === "prompt" && (
               <Card style={{ padding: "var(--space-3)" }}>
                 <Row between style={{ marginBottom: "0.5rem" }}>
-                  <span className="ws-card__meta">System prompt - the agent reads this first every turn.</span>
+                  <span className="ws-card__meta">System prompt, read first every turn.</span>
                   <Button size="sm" variant="primary" onClick={saveSystemPrompt} disabled={!systemPromptDirty}>
                     <Save aria-hidden /> Save
                   </Button>
@@ -1010,7 +1007,7 @@ export default function AgentBuild() {
         onCancel={() => setConfirmReset(false)}
         onConfirm={resetSession}
         title="Reset session?"
-        body="Detaches this agent from its current Claude Code session. The next message starts a fresh session - the agent won't remember prior turns. Useful when the conversation gets confused. (Chat history in the UI is unaffected.)"
+        body="The next message starts a fresh session, and the agent won't remember prior turns. Chat history here is unaffected."
         confirmLabel="Reset session"
         busy={resetting}
       />

@@ -177,7 +177,7 @@ export function Map({
       <div ref={containerRef} style={{ height, width: "100%", borderRadius: "var(--radius-md)", overflow: "hidden" }} />
       {hasBasemap === false && (
         <p className="ws-meta" style={{ marginTop: "var(--space-2)", color: "var(--muted)", fontSize: "var(--fs-xs)" }}>
-          Showing points only. Street basemap not installed yet (drop a Protomaps <code>.pmtiles</code> at <code>public/basemap/bayarea.pmtiles</code>).
+          Showing points only. No street basemap is installed.
         </p>
       )}
     </div>

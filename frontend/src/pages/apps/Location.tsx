@@ -297,7 +297,7 @@ export default function Location() {
           </div>
         ) : (
           <p className="muted" style={{ marginTop: "0.5rem" }}>
-            No position recorded yet. Configure Owntracks iOS: see <code>docs/owntracks-ios.md</code>.
+            No position recorded yet. Set up the Owntracks app on your phone to start reporting.
           </p>
         )}
       </div>

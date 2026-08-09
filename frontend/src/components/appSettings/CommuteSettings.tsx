@@ -46,11 +46,11 @@ export default function CommuteSettings() {
       </Row>
       <Row label="511 API key">
         {realtime?.status === "ok" ? (
-          <StatusDot status="ok">configured · transit realtime active</StatusDot>
+          <StatusDot status="ok">configured · transit realtime is on</StatusDot>
         ) : (
           <span style={{ color: "var(--danger)" }}>
-            missing · register at <a href="https://511.org/open-data/token" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>511.org</a>,
-            paste to <code style={{ fontSize: "0.8rem" }}>~/.config/clawdbot/auth.env</code> as <code>WORKSHOP_511_API_KEY</code>
+            missing · get a free key at <a href="https://511.org/open-data/token" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>511.org</a>{" "}
+            to turn on transit realtime
           </span>
         )}
       </Row>

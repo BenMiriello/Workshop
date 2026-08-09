@@ -219,7 +219,7 @@ export default function NoteView({
         ) : backlinks === null ? (
           <Skeleton width="60%" />
         ) : backlinks.length === 0 ? (
-          <span className="ws-note-meta">No backlinks yet — link here from another note with [[…]].</span>
+          <span className="ws-note-meta">No backlinks yet. Link here from another note with [[…]].</span>
         ) : (
           <Stack gap="sm">
             {backlinks.map((b, i) => (

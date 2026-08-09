@@ -73,11 +73,11 @@ export default function ForecastWeek() {
       <BirdsHeader title="7-day forecast" />
       {err ? (
         <StateBlock variant="error" title="Couldn't load the forecast"
-          hint={`Fetch failed: GET ${API}/forecast/week. The weather spine may not have run yet.`} />
+          hint={`GET ${API}/forecast/week failed.`} />
       ) : !week ? (
         <Skeleton style={{ height: 320 }} />
       ) : week.days.length === 0 ? (
-        <StateBlock title="No forecast yet" hint="The weather spine has no forecast data for this place yet. It refreshes automatically." />
+        <StateBlock title="No forecast yet" hint="Nothing for this place yet. It refreshes on its own." />
       ) : (
         <>
           <WeekActivity days={week.days} onPick={setSel} historyDays={week.history_days} />
