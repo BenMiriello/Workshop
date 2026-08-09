@@ -581,7 +581,8 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
 
 def append_message_during_turn(thread_id: str, role: str, content: str,
                                meta: dict | None = None,
-                               ts: str | None = None) -> dict:
+                               ts: str | None = None,
+                               client_id: str | None = None) -> dict:
     """File a message that arrived WHILE a turn was running.
 
     A turn is an INTERVAL; a message is a POINT. A message sent at minute twelve
@@ -606,6 +607,11 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
     reads times off, and "sent at 05:41, 05:42 and 05:43" is the evidence that
     they were one thought said three times rather than three requests.
 
+    `client_id` is the browser's own id for this send, and it is what makes a
+    retry safe: the log already holds the message, so a resend appends nothing
+    and the client reconciles its optimistic bubble against the committed event
+    by id rather than by matching text.
+
     This stays a separate entry point from `append_message` because the CALLER
     means something different by it: not "the operator spoke", but "the operator
     spoke into a turn that was already running".
@@ -613,7 +619,7 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
     ev = chat_log.append_message_sync(thread_id, role, content, meta=meta,
-                                      ts=ts or _now_iso())
+                                      client_id=client_id, ts=ts or _now_iso())
     return _msg_from_event(ev)
 
 

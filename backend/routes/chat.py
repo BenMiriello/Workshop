@@ -112,6 +112,10 @@ class PostMessage(BaseModel):
     # OR a full model id). Normalized + validated in the handler; persisted on
     # the thread so it sticks for subsequent turns.
     model: str | None = None
+    # See StartTurnIn.client_id. Optional here: the callers of this blocking path
+    # are the voice worker and scripts, which retry at a level where a duplicate
+    # would be visible too.
+    client_id: str | None = None
 
 
 class RenameThread(BaseModel):
@@ -1443,7 +1447,7 @@ async def send_message(thread_id: str, body: PostMessage):
     if not content:
         raise HTTPException(400, "empty message")
 
-    out = await _send(thread_id, content, body.model)
+    out = await _send(thread_id, content, body.model, client_id=body.client_id)
     turn = build_streaming.get_turn(out["turn_id"])
     if turn is None:
         # The run finished and was reaped between starting it and looking it up.
@@ -1475,6 +1479,10 @@ class TurnPart(BaseModel):
     actually typed."""
     text: str
     sent_at: str | None = None
+    # The browser's own id for this send. Carried per part because the queue
+    # holds separate messages and each becomes its own log event; without one id
+    # each, a retry of the batch could only be reconciled by matching text.
+    client_id: str | None = None
 
 
 class StartTurnIn(BaseModel):
@@ -1490,16 +1498,23 @@ class StartTurnIn(BaseModel):
     # them as separate bubbles all along, disagreed with the server after a
     # reload.
     parts: list[TurnPart] | None = None
+    # The browser's id for this send, stamped before the request leaves and
+    # reused verbatim on a retry. The log dedupes on it, so a resend after a
+    # dropped response cannot show the message twice, and the client reconciles
+    # its optimistic bubble against the committed event by id instead of by
+    # matching the tail of the transcript against the text it just sent.
+    client_id: str | None = None
 
 
-def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None) -> None:
+def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None,
+                      client_id: str | None = None) -> None:
     """Persist what the operator actually sent for this turn.
 
     One message normally. When a queue drained into this turn, the separate
     messages it held, each at its own send time and marked `queued` so the next
     prompt can say they were written before any had been answered."""
     if not parts or len(parts) < 2:
-        chat_store.append_message(thread_id, "user", content)
+        chat_store.append_message(thread_id, "user", content, client_id=client_id)
         return
     # Each part at the time it was actually typed, not the instant the queue
     # drained. Without that the model cannot tell a burst typed in one minute
@@ -1513,10 +1528,11 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
         if not text:
             continue
         chat_store.append_message_during_turn(
-            thread_id, "user", text, meta={"queued": True}, ts=p.sent_at)
+            thread_id, "user", text, meta={"queued": True}, ts=p.sent_at,
+            client_id=p.client_id)
         added += 1
     if not added:
-        chat_store.append_message(thread_id, "user", content)
+        chat_store.append_message(thread_id, "user", content, client_id=client_id)
 
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
@@ -1685,7 +1701,8 @@ async def list_mentionable(thread_id: str):
 async def _run_for_message(thread_id: str, t: dict, content: str,
                            model: str | None, parts: list[TurnPart] | None,
                            *, take_over: str | None = None,
-                           already_recorded: bool = False) -> "build_streaming.Turn":
+                           already_recorded: bool = False,
+                           client_id: str | None = None) -> "build_streaming.Turn":
     """Claim a run for this message and start it. THE send path.
 
     The claim is taken FIRST, before a single await, and held until the
@@ -1716,7 +1733,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 
     try:
         if not already_recorded:
-            _record_user_turn(thread_id, content, parts)
+            _record_user_turn(thread_id, content, parts, client_id=client_id)
         # ---- @mention: this message is addressed to an AGENT, not the assistant.
         # The agent answers in the chat, attributed to it, and the ordinary
         # assistant stays out of it. Resolution is scope-bounded and opt-in
@@ -1817,7 +1834,8 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
 
 
 async def _send(thread_id: str, content: str, model_in: str | None = None,
-                parts: list[TurnPart] | None = None) -> dict:
+                parts: list[TurnPart] | None = None,
+                client_id: str | None = None) -> dict:
     """Send one message into a chat: deliver it to the run in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
@@ -1849,7 +1867,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     already_recorded = False
     run_id = _live_run_id(thread_id)
     if run_id:
-        at_segment = _file_during_run(thread_id, run_id, content)
+        at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id)
         if build_streaming.inject(run_id, content):
             return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
         if not build_streaming.run_is_ending(run_id):
@@ -1867,11 +1885,12 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     try:
         turn = await _run_for_message(thread_id, t, content, model, parts,
                                       take_over=take_over,
-                                      already_recorded=already_recorded)
+                                      already_recorded=already_recorded,
+                                      client_id=client_id)
     except build_streaming.RunInFlight as e:
         # Another POST won the same event-loop tick. Join its run rather than
         # starting a rival, which is the whole reason the claim is atomic.
-        at_segment = (_file_during_run(thread_id, e.run_id, content)
+        at_segment = (_file_during_run(thread_id, e.run_id, content, client_id=client_id)
                       if not already_recorded else _at_segment(e.run_id, thread_id))
         build_streaming.inject(e.run_id, content)
         return {"turn_id": e.run_id, "injected": True, "at_segment": at_segment}
@@ -1883,7 +1902,8 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     content = (body.content or "").strip()
     if not content:
         raise HTTPException(400, "empty message")
-    out = await _send(thread_id, content, body.model, body.parts)
+    out = await _send(thread_id, content, body.model, body.parts,
+                      client_id=body.client_id)
     if out["injected"]:
         return {"turn_id": out["turn_id"], "injected": True,
                 "at_segment": out["at_segment"]}
@@ -1892,6 +1912,11 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
 
 class InjectMessage(BaseModel):
     content: str
+    # See StartTurnIn.client_id. A mid-turn message is persisted before it is
+    # delivered, so the browser's id is the only thing that lets a retry of a
+    # request whose response was lost land as the same message rather than a
+    # second one.
+    client_id: str | None = None
 
 
 def _live_run_id(thread_id: str) -> str | None:
@@ -1928,7 +1953,8 @@ def _at_segment(run_id: str, thread_id: str) -> int:
     return len(((snap.get("meta") or {}).get("segments")) or [])
 
 
-def _file_during_run(thread_id: str, run_id: str, content: str) -> int:
+def _file_during_run(thread_id: str, run_id: str, content: str,
+                     client_id: str | None = None) -> int:
     """Persist a message arriving mid-run, BEFORE anyone tries to deliver it.
 
     Order matters and it used to be the other way round: the bytes went to the
@@ -1944,17 +1970,19 @@ def _file_during_run(thread_id: str, run_id: str, content: str) -> int:
     chat_store.append_message_during_turn(
         thread_id, "user", content,
         meta={"injected": True, "during_run": run_id, "at_segment": at_segment},
+        client_id=client_id,
     )
     return at_segment
 
 
-async def _deliver_or_take_over(thread_id: str, run_id: str, content: str) -> dict | None:
+async def _deliver_or_take_over(thread_id: str, run_id: str, content: str,
+                                client_id: str | None = None) -> dict | None:
     """Persist the message, hand it to the running run, and say what happened.
 
     Returns the response for a successful delivery, or None meaning "the run
     would not take it; start a fresh one for this message, which is ALREADY IN
     THE LOG". The caller must not record it a second time."""
-    at_segment = _file_during_run(thread_id, run_id, content)
+    at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id)
     if build_streaming.inject(run_id, content):
         return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
     # It refused input: finishing, wedged, or its process is gone. Take the
@@ -1985,7 +2013,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         return {"delivered": False, "queued_for_turn": False, "turn_id": None,
                 "at_segment": None,
                 "reason": "no turn is running on this chat"}
-    out = await _send(thread_id, content)
+    out = await _send(thread_id, content, client_id=body.client_id)
     delivered = bool(out["injected"])
     run_id = out["turn_id"]
     at_segment = out["at_segment"]

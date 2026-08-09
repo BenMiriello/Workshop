@@ -424,3 +424,61 @@ class TestOneRunPerThread:
         last = chat_store.get_thread(tid)["messages"][-2]
         assert last["content"] == "joining"
         assert last["meta"]["during_run"] == "run-1"
+
+
+class TestClientIdSurvivesTheApi:
+    """The browser's send id has to reach the log, or the client is back to
+    reconciling by matching text against the tail of the transcript.
+
+    That matching is what pass C deletes: it fired on the wrong bubble whenever
+    the operator sent the same words twice, and it could not tell an optimistic
+    bubble apart from a committed one at all. The log already dedupes on
+    `client_id` (chat_log.append_message_sync); until this landed, the HTTP layer
+    accepted it nowhere, so nothing ever reached the log to dedupe on.
+    """
+
+    def test_a_turn_records_the_browsers_id(self, thread):
+        import routes.chat as rc
+
+        tid = thread["id"]
+        rc._record_user_turn(tid, "hello", None, client_id="c-1")
+        from services import chat_log
+        ev = chat_log.find_message_by_client_id(tid, "c-1")
+        assert ev is not None and ev["content"] == "hello"
+
+    def test_the_same_id_twice_appends_once(self, thread):
+        """A retry after a dropped response must not show the message twice."""
+        import routes.chat as rc
+
+        tid = thread["id"]
+        rc._record_user_turn(tid, "hello", None, client_id="c-1")
+        rc._record_user_turn(tid, "hello", None, client_id="c-1")
+        assert [m["content"] for m in chat_store.get_thread(tid)["messages"]] == ["hello"]
+
+    def test_each_queued_part_carries_its_own_id(self, thread):
+        """A drained queue is several messages, so one id for the batch could
+        only ever identify one of them."""
+        import routes.chat as rc
+
+        tid = thread["id"]
+        parts = [rc.TurnPart(text="a", client_id="c-a"),
+                 rc.TurnPart(text="b", client_id="c-b")]
+        rc._record_user_turn(tid, "a\n\nb", parts, client_id="c-batch")
+        from services import chat_log
+        assert chat_log.find_message_by_client_id(tid, "c-a")["content"] == "a"
+        assert chat_log.find_message_by_client_id(tid, "c-b")["content"] == "b"
+
+    def test_a_mid_run_message_records_it_too(self, thread):
+        """The path where it matters most: the message is persisted BEFORE
+        delivery is attempted, so a client that never sees the response has no
+        way besides this id to tell whether its message landed."""
+        import routes.chat as rc
+
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "go")
+        chat_store.begin_run(tid, "run-1")
+        rc._file_during_run(tid, "run-1", "wait", client_id="c-mid")
+        from services import chat_log
+        ev = chat_log.find_message_by_client_id(tid, "c-mid")
+        assert ev is not None
+        assert ev["meta"]["during_run"] == "run-1"
