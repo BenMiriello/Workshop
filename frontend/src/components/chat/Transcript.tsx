@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { Markdown } from "../../ui";
 import type { ChatSegment } from "../../lib/chat";
@@ -6,7 +6,6 @@ import { agentSummary, recentWorkStepCount } from "./segments";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
-import { elidePlan } from "./elision";
 
 // How a turn renders. Purely presentational: given segments, produce the
 // transcript. No chat state, no fetching, no effects beyond local open/closed.
@@ -42,9 +41,24 @@ function ToolChip({ name, input }: { name: string; input: string }) {
   );
 }
 
-// First-several + last-few line elision with Show more/less. `render` turns a
-// source slice into nodes (markdown for assistant text, plain for user text).
+// Length elision: clamp a long block to its first N AS-RENDERED lines and END
+// it there, with a Show more/less control on the bottom row. `render` turns the
+// source into nodes (markdown for assistant text, plain for user text);
 // `expanded` seeds the open state (the most recent turn opens fully).
+//
+// AS-RENDERED, not by character count. The cut is CSS `max-height` in `lh`
+// units (`.chat-clamp.is-clamped`), so it lands on the Nth line the reader
+// actually sees at the current width — a wrapped paragraph and a list of short
+// lines both cut at N visual rows, and the cut re-flows for free when the
+// column width changes. A character estimate could not do either; it was the
+// reason a two-sentence message sometimes truncated and a wall of short lines
+// did not. The only thing JS still decides is WHETHER the block overflowed the
+// clamp (so the control appears only when there is more to show), measured
+// against the same line count and kept current by a ResizeObserver.
+//
+// END truncation, not the middle. There is no mid-block ellipsis or "N lines
+// hidden" divider any more: the block simply stops at the clamp and one control
+// on the last row opens it. Simpler, and it reads like every other "show more".
 export function ElidedContent({
   source, render, cfg, expanded,
 }: {
@@ -53,40 +67,48 @@ export function ElidedContent({
   cfg: ModelDisplay;
   expanded?: boolean;
 }) {
-  const plan = elidePlan(source, cfg);
   const [open, setOpen] = useState(!!expanded);
+  const [overflowing, setOverflowing] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { setOpen(!!expanded); }, [expanded]);
-  if (!plan.elide) return <>{render(source)}</>;
-  // Expanded and collapsed both end in a control on the LAST row. The toggle used
-  // to be the mid-block divider when collapsed and a bottom button when expanded,
-  // so the one control moved position depending on the state it was in — you had
-  // to look for it in a different place each time. It is always at the bottom now,
-  // and the divider is a second way to reach the same action.
-  if (open) {
-    return (
-      <>
-        {render(source)}
-        <button type="button" className="chat-more chat-footrow" onClick={() => setOpen(false)}>
-          Show less
-        </button>
-      </>
-    );
-  }
-  // The divider states what is missing ("N lines hidden") rather than instructing
-  // ("Show N more lines") — the bottom control is the instruction. Both expand.
+
+  // Does the content exceed the clamp? Measured against the full content height
+  // (`scrollHeight`, which reports the whole block even while it is clamped), so
+  // this is correct whether the block is currently open or collapsed — the most
+  // recent turn opens expanded and still needs its Show less. Re-runs on content
+  // change and, via the observer, on any width change that re-wraps the text.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => {
+      const lh = parseFloat(getComputedStyle(el).lineHeight) || 20;
+      setOverflowing(el.scrollHeight > lh * cfg.previewLines + 2);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [source, cfg.previewLines]);
+
+  const clamped = overflowing && !open;
   return (
     <>
-      {render(plan.headSrc)}
-      <button type="button" className="chat-ellipsis" onClick={() => setOpen(true)}>
-        <span className="chat-ellipsis__dots" aria-hidden>•••</span>
-        <span className="chat-ellipsis__label">
-          {plan.hidden} line{plan.hidden === 1 ? "" : "s"} hidden
-        </span>
-      </button>
-      {render(plan.tailSrc)}
-      <button type="button" className="chat-more chat-footrow" onClick={() => setOpen(true)}>
-        Show more
-      </button>
+      <div
+        ref={ref}
+        className={`chat-clamp${clamped ? " is-clamped" : ""}`}
+        style={{ "--clamp-lines": cfg.previewLines } as CSSProperties}
+      >
+        {render(source)}
+      </div>
+      {overflowing && (
+        <button
+          type="button"
+          className="chat-more chat-footrow"
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
     </>
   );
 }

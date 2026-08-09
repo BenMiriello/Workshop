@@ -3,6 +3,7 @@ import type { ChatMsg, ChatSegment, MsgStatus } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 import type { UiCardCtx } from "./uiCardActions";
 import MessageList from "./MessageList";
+import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
 import LiveTurn from "./LiveTurn";
 import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
@@ -128,14 +129,24 @@ export default function ChatLog({
           it folds into the persisted transcript. */}
       {sentDuringTurn.map((m, i) => (
         <div key={`d${i}`} className="chat-msg user">
-          <div className="chat-bubble chat-bubble--inflight">{m.text}</div>
+          {/* A pending message is a message: copyable like everything else,
+              same bubble structure MessageList uses so the copy button reserves
+              its inline room and lands on the last row. */}
+          <div className={`chat-bubble chat-bubble--inflight${m.text.trim() ? " chat-bubble--copyable" : ""}`}>
+            <div className="chat-bubble__body">{m.text}</div>
+            {m.text.trim() && <CopyMessage value={m.text} />}
+          </div>
         </div>
       ))}
 
       {queued.map((q, i) => (
         <div key={`q${i}`} className="chat-msg user">
-          <div className="chat-bubble chat-bubble--queued" title="Queued, sends when the current turn finishes">
-            {q.text}
+          <div
+            className={`chat-bubble chat-bubble--queued${q.text.trim() ? " chat-bubble--copyable" : ""}`}
+            title="Queued, sends when the current turn finishes"
+          >
+            <div className="chat-bubble__body">{q.text}</div>
+            {q.text.trim() && <CopyMessage value={q.text} />}
           </div>
           {queuedStatus?.for === q.text && <StatusNote status={queuedStatus.status} />}
         </div>

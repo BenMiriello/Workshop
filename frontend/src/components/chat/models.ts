@@ -44,28 +44,19 @@ export function modelLabel(id: string): string {
 // with a `default` fallback, so a newly-added model can be tuned (or render
 // differently) without touching the components.
 export type ModelDisplay = {
-  // TOTAL lines kept when a block is collapsed, split evenly above and below the
-  // cut. Deliberately one number rather than separate head/tail counts: those
-  // were 6 and 3, so a collapsed block showed twice as much before the break as
-  // after it and the preview read as top-heavy. An even split can't drift.
+  // How many AS-RENDERED lines a long block shows before it is clamped and
+  // ended with a Show more (see ElidedContent). A block at or under this is
+  // never clamped, so it doubles as the "long enough to elide" threshold.
   previewLines: number;
-  elideOverLines: number;  // elide only when a block exceeds this many lines
   recentSteps: number;     // work steps shown inline on the most recent turn
 };
 
 const MODEL_DISPLAY: Record<string, ModelDisplay> = {
-  default: { previewLines: 10, elideOverLines: 12, recentSteps: 2 },
+  default: { previewLines: 10, recentSteps: 2 },
 };
 
 export function modelDisplay(model?: string | null): ModelDisplay {
   return (model && MODEL_DISPLAY[model]) || MODEL_DISPLAY.default;
-}
-
-// The even split. Odd totals give the extra line to the head, because the first
-// line of a block identifies it and the last is usually a fragment.
-export function previewSplit(previewLines: number): { head: number; tail: number } {
-  const head = Math.ceil(previewLines / 2);
-  return { head, tail: previewLines - head };
 }
 
 // ---- Context window --------------------------------------------------------
