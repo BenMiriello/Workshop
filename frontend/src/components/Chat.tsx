@@ -62,6 +62,11 @@ import { type UiCardCtx } from "./chat/uiCardActions";
 // here. Their definitions now live with the other contextKey derivations.
 export type { ChatMode, ChatVariant };
 
+// How often to re-ask "the server says a run is live and I am not watching it".
+// Short enough that a dropped stream is picked back up before the operator
+// notices the work stopped moving; it only runs while a run is in flight.
+const LIVENESS_MS = 5_000;
+
 export type ChatProps = {
   contextKey: string;
   mode?: ChatMode;
@@ -265,6 +270,29 @@ export default function Chat({
     if (hasOpenStream() || isDetached(runId)) return;
     attach(runId);
   }, [runId, activeId, attach, hasOpenStream, isDetached]);
+
+  // ...AND THE SAME RULE ON A TIMER, because losing a socket changes none of
+  // the deps above. `attach`/`hasOpenStream`/`isDetached` are stable callbacks
+  // and the run's id does not change when its stream dies, so that effect
+  // cannot re-run for the rest of the run: a turn that exhausted its reconnect
+  // budget stayed unwatched forever, its `finish()` never ran, and with it went
+  // refreshThreads, the auto-name refetch, the task refetch and the action
+  // notes. A first-exchange chat kept its placeholder title until a reload.
+  //
+  // This is the deleted `useTurnLiveness`, restored: the question "is a run in
+  // flight" is answered by the SERVER (`active_run`, kept current by the log
+  // poll), and whenever the answer is yes and this tab holds no socket, this
+  // re-attaches. Reading the store through the ref means the interval does not
+  // re-render the chat while a turn streams.
+  useEffect(() => {
+    if (!runId || !activeId) return;
+    const t = window.setInterval(() => {
+      const live = stateRef.current.activeRun?.runId;
+      if (!live || hasOpenStream() || isDetached(live)) return;
+      attach(live);
+    }, LIVENESS_MS);
+    return () => window.clearInterval(t);
+  }, [runId, activeId, attach, hasOpenStream, isDetached, stateRef]);
 
   // Leaving a thread closes its socket. The store is reset by useThreadLog.
   useEffect(() => () => closeStream(), [activeId, closeStream]);

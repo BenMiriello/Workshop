@@ -212,10 +212,17 @@ export function useTurnStream({
       if (finishingRef.current) return;
       if (stateRef.current.activeRun?.runId !== turnId) { void finish(); return; }
       if (reconnectsRef.current >= MAX_RECONNECTS) {
-        // OUT OF BUDGET IS NOT THE END OF THE TURN. Stop retrying and stop
-        // claiming a socket, but leave the run in the store: it is still in
+        // OUT OF BUDGET IS NOT THE END OF THE TURN. Stop the fast retry loop and
+        // stop claiming a socket, but leave the run in the store: it is still in
         // flight, the poll keeps its snapshot current, and the indicator reads
         // "Still running" rather than the transcript going quiet.
+        //
+        // The slow path takes over from here: the liveness poll in Chat sees the
+        // server still reports this run active with no socket held, and attaches
+        // again — which resets `finishingRef` and, on the first frame that
+        // arrives, the reconnect budget too. The budget is deliberately NOT
+        // reset here; leaving it spent is what keeps a genuinely dead stream on
+        // the poll's pace instead of back in a tight retry loop.
         finishingRef.current = true;
         setAttached(false);
         setReconnecting(false);
