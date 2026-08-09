@@ -116,8 +116,28 @@ class TestSegments:
         assert [s["t"] for s in t.segments] == ["agent"]
         seg = t.segments[0]
         assert seg["name"] == "work-reviewer"
-        assert seg["input"] == "Read the thing and report back."
+        # The chip says what the subagent was ASKED TO DO, not what it was told.
+        # This assertion used to read "Read the thing and report back." (the
+        # prompt), which is how a page of raw briefing ended up rendered as a
+        # delegation's title.
+        assert seg["input"] == "Probe the tree"
         assert seg["done"] is False
+
+    def test_a_launch_with_no_description_falls_back_to_the_prompt(self):
+        t = _turn()
+        line = _assistant([{"type": "tool_use", "id": AGENT_ID, "name": "Agent",
+                            "input": {"prompt": "Read the thing and report back."}}])
+        _feed(t, [line])
+        assert t.segments[0]["input"] == "Read the thing and report back."
+
+    def test_an_ordinary_tool_still_shows_what_it_ran_not_its_gloss(self):
+        # Bash carries a `description` too, and there the command is the useful
+        # thing; only a subagent launch prefers the description.
+        t = _turn()
+        _feed(t, [_assistant([{"type": "tool_use", "id": "tu_x", "name": "Bash",
+                               "input": {"command": "ls -la",
+                                         "description": "List files"}}])])
+        assert t.segments[0]["input"] == "ls -la"
 
     def test_the_subagents_steps_nest_under_it(self):
         t = _turn()

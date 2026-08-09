@@ -222,7 +222,7 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
                 elif block.get("type") == "tool_use":
                     out.append(("tool", {
                         "name": block.get("name"),
-                        "input": _summarize_tool_input(block.get("input", {})),
+                        "input": _summarize_tool_input(block.get("input", {}), block.get("name")),
                         # The id is what a later sidechain event points back at,
                         # and what the closing tool_result names.
                         "id": block.get("id"),
@@ -429,13 +429,22 @@ def _spend_tokens_from_usage(u: object) -> int:
     )
 
 
-def _summarize_tool_input(inp: dict) -> str:
+def _summarize_tool_input(inp: dict, tool_name: str | None = None) -> str:
     """One-line preview for the UI. Long tool inputs (full file contents in
     a Write) shouldn't bloat the SSE stream — show file path + size only."""
     # Cap at 300 chars: enough that expanding a tool chip shows a useful detail
     # (a full command / path), without streaming whole file bodies into history.
     if not isinstance(inp, dict):
         return str(inp)[:300]
+    # A subagent is named by the job it was given, not by the instructions it
+    # was given. `prompt` is a page of them, and falling through to it printed
+    # 300 characters of raw brief onto the chip where a task name belongs.
+    # `description` is the one-line task, which is the whole point of the field.
+    # Only for the Agent tool: elsewhere (Bash) `description` is a gloss and the
+    # command itself is the useful thing.
+    if tool_name in SUBAGENT_TOOLS:
+        v = str(inp.get("description") or inp.get("prompt") or "")
+        return v if len(v) <= 300 else v[:297] + "…"
     for key in ("file_path", "path", "pattern", "command", "url", "query", "prompt"):
         if key in inp:
             v = str(inp[key])

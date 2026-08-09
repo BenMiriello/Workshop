@@ -30,14 +30,22 @@ export default function ContextMeter({
 }) {
   const [server, setServer] = useState<{ used: number; window: number } | null>(null);
 
+  // A live turn must NOT block the reading. It used to: the fetch returned
+  // early whenever `streaming` was true, so a meter that first mounted during a
+  // turn never got a number at all, and rendered a confident "0%" for the whole
+  // turn. The count the server holds mid-turn is the previous turn's, which is
+  // stale by one turn and correct to the character; nothing is worth showing
+  // zero over. During a turn the message-count trigger is parked (the transcript
+  // grows every few seconds and the answer cannot change until the turn lands);
+  // the flip back to idle is itself a dependency, so a finished turn refetches.
   useEffect(() => {
-    if (!activeId || streaming) return;
+    if (!activeId) return;
     let cancelled = false;
     chatApi.threadContext(activeId)
       .then((r) => { if (!cancelled) setServer({ used: r.used_tokens, window: r.window_tokens }); })
       .catch(() => { /* keep the client estimate */ });
     return () => { cancelled = true; };
-  }, [activeId, messages.length, streaming, nonce]);
+  }, [activeId, nonce, streaming, streaming ? -1 : messages.length]);
 
   // Drop a stale count on thread switch rather than showing one chat's usage
   // against another's transcript.
@@ -53,6 +61,12 @@ export default function ContextMeter({
     const win = contextWindowFor(model);
     return { used, win, pct: Math.min(100, Math.round((used / win) * 100)) };
   }, [server, messages, draft, model]);
+
+  // No reading yet: the server has not answered and there is nothing local to
+  // estimate from. Show nothing. "0%" is not the absence of a number, it is a
+  // claim that this chat is empty, and it kept being made about chats that were
+  // not.
+  if (ctx.used <= 0) return null;
 
   // A single accent tone, no threshold colors: this is a reading, not a status.
   // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.
