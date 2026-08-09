@@ -17,6 +17,14 @@
 // command by that name: a Workshop chat's context lives in two places, and the
 // stored transcript half is folded server-side. Treating it as a passthrough
 // would compact the live session and leave the transcript untouched.
+//
+// /clear is LOCAL for the same reason, and is its OWN action — not an alias of
+// /new. It used to be: both pointed at the same "abandon this thread, open a
+// blank one" function, which is not what /clear means anywhere else — it
+// means "drop the context, keep looking at it." A native CLI /clear would
+// only reach the live session anyway: it empties the window but leaves the
+// stored transcript's fold boundary alone, so the next fresh session would
+// re-resume from disk and quietly undo the clear.
 
 export type SlashCommand = {
   name: string;
@@ -35,6 +43,7 @@ export type SlashActions = {
   showHelp: () => void;
   openDeploys: () => void;
   compact: () => void;
+  clear: () => void;
 };
 
 export function buildSlashCommands({
@@ -48,8 +57,8 @@ export function buildSlashCommands({
   actions: SlashActions;
 }): SlashCommand[] {
   return [
-    { name: "new", desc: "Start a new chat", available: true, kind: "local", run: actions.newChat },
-    { name: "clear", desc: "Start a fresh chat (alias of new)", available: true, kind: "local", run: actions.newChat },
+    { name: "new", desc: "Start a new chat, leaving this one", available: true, kind: "local", run: actions.newChat },
+    { name: "clear", desc: "Drop this chat's context, keeping the transcript", available: hasThread, kind: "local", run: actions.clear },
     { name: "delete", desc: "Delete the current chat", available: hasThread, kind: "local", run: actions.deleteChat },
     { name: "tasks", desc: "Toggle the task list", available: hasTaskScope, kind: "local", run: actions.toggleTasks },
     // The inbox is the task list's sibling drawer, so it gets the sibling

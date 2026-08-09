@@ -32,7 +32,7 @@ import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 export default function ChatLog({
   scrollRef, onScroll,
   loading, error, messages, isBuild, inFlight, overflowed,
-  compactedThrough, selectedModel, cardCtx, onRetryUnsent,
+  compactedThrough, clearedContext, selectedModel, cardCtx, onRetryUnsent,
   streaming, logBusy, pendingSegments, sentDuringTurn, workingLabel, elapsed,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
@@ -46,6 +46,9 @@ export default function ChatLog({
   inFlight: boolean;
   overflowed: boolean;
   compactedThrough: number;
+  // Whether the boundary at compactedThrough was made by /clear (no summary)
+  // rather than a fold (one survives). MessageList's divider is the only reader.
+  clearedContext: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
   onRetryUnsent: (index: number, text: string) => void;
@@ -94,6 +97,7 @@ export default function ChatLog({
       <MessageList
         messages={messages}
         compactedThrough={compactedThrough}
+        clearedContext={clearedContext}
         selectedModel={selectedModel}
         cardCtx={cardCtx}
         expandLatest={!streaming && pendingSegments.length === 0}

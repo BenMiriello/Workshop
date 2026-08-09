@@ -107,11 +107,16 @@ export type ThreadSummary = {
   message_count: number;
   last_message: string;
   model?: string | null;
-  // How many leading messages the backend has folded into its running summary.
-  // Raw messages are never dropped, so this is the only way a client can tell a
-  // compacted thread from an uncompacted one — and the only way the fold marker
-  // survives a reload.
+  // How many leading messages are out of the prompt — either folded into the
+  // running summary, or dropped outright by /clear. Raw messages are never
+  // deleted, so this is the only way a client can tell a cut thread from an
+  // uncut one, and the only way the divider survives a reload.
   compacted_through?: number;
+  // HOW the boundary above was made: absent (or any value other than
+  // "cleared") means a fold — a summary of the cut messages survives.
+  // "cleared" means /clear made it — nothing survives, so the divider must
+  // never claim a summary exists.
+  context_cut?: "cleared";
   // Which in-chat cards have already been acted on, keyed by a digest of the
   // card block. Without this a card that was filed and run came back on the next
   // load looking exactly like one that had never been touched.
@@ -260,6 +265,17 @@ export const chatApi = {
       j<{
         will_fold: number; kept: number; before: number;
         compacted_through: number; live_session: boolean;
+      }>,
+    ),
+
+  // Drop this thread's context outright — the other half of /clear vs /compact.
+  // No summary, no live-session turn to send, no wait: this is a field write
+  // and returns as soon as it lands.
+  clearThreadContext: (id: string) =>
+    fetch(`/api/chat/threads/${id}/clear`, { method: "POST" }).then(
+      j<{
+        cleared: number; compacted_through: number;
+        dropped_summary: boolean; session_reset: boolean;
       }>,
     ),
 

@@ -76,6 +76,26 @@ const BUSY_QUEUED: MsgStatus = {
   busy: true,
 };
 
+// /clear — drop context, keep the transcript. See the file-level comment
+// above for the full case for /compact's machinery; /clear needs almost none
+// of it, and the reasoning is worth stating plainly so nobody "restores the
+// symmetry" between the two commands later:
+//
+//   NO LIVE HALF. /compact's queue/ordering machinery exists to sequence a
+//   TURN — the CLI's own /compact, which has to run in order relative to
+//   whatever else the operator typed. /clear runs no turn: it resets the live
+//   session by detaching it server-side (a fresh session mints on the NEXT
+//   turn), it does not converse with the CLI about it. Nothing to queue.
+//
+//   NO MODEL CALL. The endpoint is a handful of field writes and returns in
+//   milliseconds — there is no ~30s gap for a status line to cover.
+//
+//   NO REQUEST BUBBLE. A compact bubble earns its place because the fold it
+//   describes is a real event with a real duration. A /clear that rendered a
+//   "/clear" bubble would be announcing itself in the log AND in the divider
+//   MessageList already draws from `compactedThrough` — exactly the kind of
+//   double announcement the rest of this file exists to avoid. The divider is
+//   the report, and unlike a bubble it survives reload.
 export type Compaction = {
   compactedThrough: number;
   setCompactedThrough: (n: number) => void;
@@ -85,6 +105,13 @@ export type Compaction = {
   compact: () => Promise<void>;
   // Set only while the request is sitting in the queue rather than in the log.
   queuedStatus: { for: string; status: MsgStatus } | null;
+  clear: () => Promise<void>;
+  // Whether the CURRENT boundary at `compactedThrough` was made by /clear (no
+  // summary survives it) rather than a fold (one does). Server truth, read
+  // from `context_cut` on hydrate/resync, so it survives reload same as the
+  // count itself. The divider is the only reader.
+  clearedContext: boolean;
+  setClearedContext: (v: boolean) => void;
 };
 
 export function useCompaction({
@@ -104,6 +131,7 @@ export function useCompaction({
   const [compactedThrough, setCompactedThrough] = useState(0);
   const [ctxNonce, setCtxNonce] = useState(0);
   const [queuedStatus, setQueuedStatus] = useState<{ for: string; status: MsgStatus } | null>(null);
+  const [clearedContext, setClearedContext] = useState(false);
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
@@ -189,5 +217,35 @@ export function useCompaction({
     }
   }, [activeIdRef, logBusyRef, queue, setCompacting, setMessages, setErr, sendTurn]);
 
-  return { compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus };
+  const clear = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) { setErr("Nothing to clear — this chat has no messages yet."); return; }
+    setErr(null);
+    // Reuses the compact hold: it closes the same window either command needs
+    // closed — a message typed right after this call must not become a turn
+    // before the boundary actually moves, or it would land above the cut and
+    // read as having vanished.
+    setCompacting(true);
+    try {
+      const r = await chatApi.clearThreadContext(id);
+      if (!r.cleared) {
+        setErr("Nothing to clear — this chat has no messages yet.");
+        return;
+      }
+      // No setMessages: the transcript is the entire point of /clear. No
+      // request bubble either — see the file-level /clear comment above.
+      setCompactedThrough(r.compacted_through);
+      setClearedContext(true);
+      setCtxNonce((n) => n + 1);
+    } catch (e) {
+      setErr(`Couldn't clear: ${String(e)}`);
+    } finally {
+      setCompacting(false);
+    }
+  }, [activeIdRef, setCompacting, setErr]);
+
+  return {
+    compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
+    clear, clearedContext, setClearedContext,
+  };
 }

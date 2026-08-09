@@ -189,11 +189,12 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // render as pending user bubbles below the live response. The durability and
   // self-draining rules live in the hook — see useMessageQueue.
   const sendBuildRef = useRef<(t: string, parts?: QueuedMessage[]) => void>(() => {});
-  // A /compact is in flight. Declared HERE rather than inside useCompaction
-  // because the two things that must hold for it — this queue and submitText —
-  // are both declared before it. While it is set, a typed message joins the
-  // queue instead of becoming a turn, so it cannot overtake the command that
-  // was asked for first. See useCompaction's header.
+  // A /compact fold OR a /clear round trip is in flight — both hold this the
+  // same way, for the same reason. Declared HERE rather than inside
+  // useCompaction because the two things that must hold for it — this queue
+  // and submitText — are both declared before it. While it is set, a typed
+  // message joins the queue instead of becoming a turn, so it cannot overtake
+  // the command that was asked for first. See useCompaction's header.
   const [compacting, setCompacting] = useState(false);
   const queue = useMessageQueue({
     scope: effectiveMode === "build" ? contextKey : activeProvider,
@@ -213,6 +214,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
   // /compact reaches BOTH homes of a chat's context — see useCompaction.
   const {
     compactedThrough, setCompactedThrough, ctxNonce, compact, queuedStatus,
+    clear, clearedContext, setClearedContext,
   } = useCompaction({
     activeIdRef, logBusyRef, queue,
     setCompacting, setMessages, setErr,
@@ -515,6 +517,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       // /compact: without reading it back here the divider vanished on every
       // reload and a compacted thread looked exactly like an uncompacted one.
       setCompactedThrough(Number(t.compacted_through) || 0);
+      setClearedContext(t.context_cut === "cleared");
       setCardStates(t.card_states ?? {});
       // Server state: the mode belongs to the thread, not to this tab.
       setChatMode(t.mode || "direct");
@@ -673,6 +676,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         if (cancelled || streaming || hasOpenStream()) return;
         if (messagesRef.current.some((m) => m.meta?.unsent)) return;
         setCompactedThrough(Number(t.compacted_through) || 0);
+        setClearedContext(t.context_cut === "cleared");
         setCardStates(t.card_states ?? {});
         setMessages(t.messages || []);
       } catch { /* leave what's on screen */ }
@@ -716,6 +720,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     setErr(null);
     setSelectedModel("");
     setCompactedThrough(0);
+    setClearedContext(false);
     setCardStates({});
     // Persist the intent so a reload / navigation lands on a blank new chat
     // rather than silently re-adopting the most-recent thread.
@@ -871,6 +876,13 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     // compact() refuses politely while a turn is live, which is the honest
     // answer rather than a silent no-op.
     if (text === "/compact") { void compact(); return; }
+    // Same interception, same reason: /clear is a Workshop action too, and has
+    // to be caught here as well as in the autocomplete so a stale/partial
+    // picker match (or hitting enter before the picker opens) never lets the
+    // literal string "/clear" reach the model. No live turn to refuse into —
+    // /clear has nothing to queue behind, so this check does not need the
+    // `compacting` guard the paragraph below exists for.
+    if (text === "/clear") { void clear(); return; }
     // A /compact asked for a moment ago is still folding the transcript
     // server-side and has not yet been able to send its live half. Sending this
     // now would put a message the operator typed SECOND into the session first,
@@ -941,7 +953,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
     const userMsg: ChatMsg = { role: "user", content: text, ts: new Date().toISOString() };
     setMessages((m) => [...m, userMsg]);
     sendBuild(text);
-  }, [streaming, logBusy, compacting, sendBuild, queue, compact, followLatest]);
+  }, [streaming, logBusy, compacting, sendBuild, queue, compact, clear, followLatest]);
 
   // Composer text change. In voice mode, keep the engine's typing-hold aware of
   // whether the composer currently holds text (so it defers taking its turn).
@@ -1032,6 +1044,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
         navigate(p ? `/projects/${encodeURIComponent(p)}#deploys` : "/deploys");
       },
       compact: () => void compact(),
+      clear: () => void clear(),
     },
   });
   const { typed: slashTyped, matches: slashMatches, show: showSlash } =
@@ -1211,6 +1224,7 @@ export default function Chat({ contextKey, mode, variant = "panel", placeholder,
       inFlight={inFlight}
       overflowed={overflowed}
       compactedThrough={compactedThrough}
+      clearedContext={clearedContext}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetryUnsent={retryUnsent}

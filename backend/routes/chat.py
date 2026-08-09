@@ -930,6 +930,16 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
     # `compacted_through` survives the switch because it counts from the FRONT of
     # the transcript and appends land at the BACK: the messages this fold covers
     # are at the same indices no matter how many arrived meanwhile.
+    # A /clear can land while this call was in flight. It advances
+    # `compacted_through` to the end of the transcript and drops `summary`
+    # outright; writing this fold's `ct + fold_n` afterward would move the
+    # boundary BACKWARD and resurrect a summary of content the operator just
+    # asked to forget. Check against the current record, not the snapshot this
+    # function started from.
+    current = chat_store.get_thread(tid) or {}
+    if int(current.get("compacted_through", 0) or 0) >= ct + fold_n:
+        return summary, tail, 0
+
     fields: dict[str, object] = {"summary": new_summary, "compacted_through": ct + fold_n}
     if force:
         # The stored measured value is the pre-fold context size; leaving it
@@ -1030,6 +1040,56 @@ def _has_live_session(t: dict, provider) -> bool:
             log.debug("compact: agent session lookup failed for %s: %s", provider.slug, e)
             return False
     return bool(t.get("claude_session"))
+
+
+def _reset_live_session(t: dict, provider) -> bool:
+    """Detach the live claude session so the next turn mints a fresh one instead
+    of --resuming. Same two homes as `_has_live_session`. This is what /clear
+    uses instead of a native CLI /clear: a native /clear empties the live
+    window but leaves the *stored* transcript's `compacted_through` alone, so
+    the next stale-session prune or restart would re-resume from disk and
+    silently undo the clear. A brand-new session id has nothing to resume from.
+
+    Returns whether a session was actually there to drop (informational only —
+    the thread's own `claude_session` is dropped by `chat_store.clear_thread_context`,
+    this only has to reach the agent-keyed home)."""
+    if isinstance(provider, chat_context.BuildAgentContextProvider):
+        try:
+            from services import build_agents as _ba
+            rec = _ba.get_agent(provider.slug) or {}
+            had = bool(rec.get("claude_session"))
+            if had:
+                _ba.reset_session(provider.slug)
+            return had
+        except Exception as e:
+            log.debug("clear: agent session reset failed for %s: %s", provider.slug, e)
+            return False
+    return bool(t.get("claude_session"))
+
+
+@router.post("/threads/{thread_id}/clear")
+async def clear_thread_context(thread_id: str):
+    """Drop this thread's context, keeping the transcript — the other half of
+    the /clear vs /compact split (see `slashCommands.ts`). No summarization
+    call, no detached task: this is a handful of field writes and returns as
+    soon as they land. Do NOT "make it consistent with /compact" by adding a
+    summarization step here — that is precisely what /clear exists to skip."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    had_summary = bool(t.get("summary"))
+    session_reset = _reset_live_session(t, provider)
+    result = chat_store.clear_thread_context(thread_id)
+    if result is None:
+        raise HTTPException(404, "thread not found")
+    thread, cleared = result
+    return {
+        "cleared": cleared,
+        "compacted_through": int(thread.get("compacted_through", 0) or 0),
+        "dropped_summary": had_summary,
+        "session_reset": session_reset,
+    }
 
 
 # Context window per model. This is the DENOMINATOR of the composer meter, and

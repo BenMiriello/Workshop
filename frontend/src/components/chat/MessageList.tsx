@@ -1,11 +1,12 @@
 import { Fragment } from "react";
-import { AlertTriangle, Bot, Clock, FoldVertical, Unplug } from "lucide-react";
+import { AlertTriangle, Bot, Clock, Eraser, FoldVertical, Unplug } from "lucide-react";
 import { Button } from "../../ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import StatusNote from "./StatusNote";
 import { modelDisplay } from "./models";
+import { contextCutMark } from "./contextCut";
 
 // The persisted transcript.
 //
@@ -13,7 +14,10 @@ import { modelDisplay } from "./models";
 //
 //  - THE FOLD MARKER. Compaction never drops raw messages, so without a divider
 //    a compacted thread looks identical to an uncompacted one and the operator
-//    cannot tell whether /compact did anything.
+//    cannot tell whether /compact did anything. /clear draws the same divider
+//    with different wording and icon (Eraser, not FoldVertical) — folding
+//    preserves a summary, clearing does not, and the wording must never claim
+//    otherwise.
 //  - THE AGENT BYLINE. A reply from a mentioned agent is not the assistant's,
 //    and without a byline there is no way to tell who answered — which is the
 //    whole point of addressing one. Only agent replies carry it; the assistant
@@ -29,6 +33,24 @@ import { modelDisplay } from "./models";
 //    happens to be blank (or truncated wherever the last flush landed), which
 //    reads as either "answered with nothing" or "broken", not "interrupted".
 
+// One divider, two meanings. `cleared` is the ONLY thing that decides which:
+// a fold's summary is real content the operator can still draw on; a clear's
+// is not, so the wording never uses the word "summary".
+function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
+  return (
+    <div className="chat-fold" role="separator">
+      {cleared
+        ? <Eraser size={14} strokeWidth={1.8} aria-hidden />
+        : <FoldVertical size={14} strokeWidth={1.8} aria-hidden />}
+      <span>
+        {cleared
+          ? `Context cleared — ${count} earlier ${count === 1 ? "message" : "messages"} no longer sent to the model`
+          : `${count} earlier ${count === 1 ? "message" : "messages"} folded into the running summary`}
+      </span>
+    </div>
+  );
+}
+
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx) {
   if (m.meta?.error) return m.content;
   const model = m.meta?.model ?? fallbackModel;
@@ -39,10 +61,11 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
 }
 
 export default function MessageList({
-  messages, compactedThrough, selectedModel, cardCtx, expandLatest, onRetryUnsent,
+  messages, compactedThrough, clearedContext, selectedModel, cardCtx, expandLatest, onRetryUnsent,
 }: {
   messages: ChatMsg[];
   compactedThrough: number;
+  clearedContext: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
   // Recency nuance: the most recent assistant answer is expanded and older ones
@@ -56,19 +79,14 @@ export default function MessageList({
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "assistant") { lastAssistantIdx = i; break; }
   }
+  const cutMark = contextCutMark(compactedThrough, messages.length);
 
   return (
     <>
       {messages.map((m, i) => (
         <Fragment key={i}>
-          {compactedThrough > 0 && i === compactedThrough && (
-            <div className="chat-fold" role="separator">
-              <FoldVertical size={14} strokeWidth={1.8} aria-hidden />
-              <span>
-                {compactedThrough} earlier {compactedThrough === 1 ? "message" : "messages"} folded
-                into the running summary
-              </span>
-            </div>
+          {cutMark && "atIndex" in cutMark && i === cutMark.atIndex && (
+            <ContextCut count={compactedThrough} cleared={clearedContext} />
           )}
           <div className={`chat-msg ${m.role}`}>
             <div className={`chat-bubble ${m.meta?.error ? "error" : ""}${(m.meta?.timeout || m.meta?.stopped) ? " chat-bubble--timeout" : ""}`}>
@@ -112,6 +130,12 @@ export default function MessageList({
           </div>
         </Fragment>
       ))}
+      {/* The map above only draws the divider AT a message index. /clear always
+          cuts at the tail — nothing there to attach to — so contextCutMark
+          reports that case as "trailing" instead, and it renders here. */}
+      {cutMark && "trailing" in cutMark && (
+        <ContextCut count={compactedThrough} cleared={clearedContext} />
+      )}
     </>
   );
 }

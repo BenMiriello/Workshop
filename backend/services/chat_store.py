@@ -855,6 +855,34 @@ def clear_thread_session(thread_id: str) -> dict | None:
     return _write(thread)
 
 
+def clear_thread_context(thread_id: str) -> tuple[dict, int] | None:
+    """Drop everything this thread would send to a model, keeping the transcript.
+
+    The counterpart to compaction's fold, and deliberately the same boundary
+    field: `compacted_through` means "no longer in the prompt" either way. A
+    clear is a fold with nothing preserved — no `summary` survives it, and
+    `context_cut` records that explicitly so the client never has to infer it
+    from a summary that a fold would only write ~30s later.
+
+    Also drops the live claude session, the per-@mentioned-agent sessions, and
+    `turn_marks`: all three are "what this thread has already been told", and a
+    clear means none of it has. Raw messages are untouched — reversible, same
+    as a fold."""
+    thread = get_thread(thread_id)
+    if thread is None:
+        return None
+    msgs = thread.get("messages", [])
+    ct = int(thread.get("compacted_through", 0) or 0)
+    cleared = max(0, len(msgs) - max(ct, 0))
+    if cleared == 0:
+        return thread, 0
+    thread["compacted_through"] = len(msgs)
+    thread["context_cut"] = "cleared"
+    for field in ("summary", "context_tokens", "claude_session", "agent_sessions", "turn_marks"):
+        thread.pop(field, None)
+    return _write(thread), cleared
+
+
 def rename_thread(thread_id: str, title: str) -> dict | None:
     thread = get_thread(thread_id)
     if thread is None:

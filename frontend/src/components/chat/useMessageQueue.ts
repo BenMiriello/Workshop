@@ -83,10 +83,11 @@ export function useMessageQueue({
   scope: string;
   streaming: boolean;
   loadingThreads: boolean;
-  // Something outside a turn owns the conversation right now — currently only a
-  // /compact whose server-side fold is still in flight. Draining under it would
-  // send a later message as a turn BEFORE the command that was asked for first,
-  // which is the reordering this whole hook exists to prevent.
+  // Something outside a turn owns the conversation right now — a /compact
+  // whose server-side fold is still in flight, or a /clear round trip.
+  // Draining under it would send a later message as a turn BEFORE the command
+  // that was asked for first, which is the reordering this whole hook exists
+  // to prevent.
   held: boolean;
   logBusyRef: React.MutableRefObject<boolean>;
   send: (text: string, parts?: QueuedMessage[]) => void;
