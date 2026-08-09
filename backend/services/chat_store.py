@@ -580,7 +580,8 @@ def append_message(thread_id: str, role: str, content: str, meta: dict | None = 
 
 
 def append_message_during_turn(thread_id: str, role: str, content: str,
-                               meta: dict | None = None) -> dict:
+                               meta: dict | None = None,
+                               ts: str | None = None) -> dict:
     """File a message that arrived WHILE a turn was running.
 
     A turn is an INTERVAL; a message is a POINT. A message sent at minute twelve
@@ -600,13 +601,19 @@ def append_message_during_turn(thread_id: str, role: str, content: str,
     inference from where things sit. `at_segment` is what lets the transcript
     show it inline at the point it landed.
 
+    `ts` is when the operator actually hit enter, when the caller knows it. It
+    matters here more than anywhere: these are the messages the arrival notice
+    reads times off, and "sent at 05:41, 05:42 and 05:43" is the evidence that
+    they were one thought said three times rather than three requests.
+
     This stays a separate entry point from `append_message` because the CALLER
     means something different by it: not "the operator spoke", but "the operator
     spoke into a turn that was already running".
     """
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
-    ev = chat_log.append_message_sync(thread_id, role, content, meta=meta, ts=_now_iso())
+    ev = chat_log.append_message_sync(thread_id, role, content, meta=meta,
+                                      ts=ts or _now_iso())
     return _msg_from_event(ev)
 
 
