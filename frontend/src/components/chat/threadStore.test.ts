@@ -107,6 +107,47 @@ describe("the active run", () => {
     expect(s.activeRun?.segments).toEqual([{ t: "text", text: "from the server" }]);
   });
 
+  it("takes a snapshot that grew the SAME segment, not just a longer list", () => {
+    // A turn producing one long answer never adds a second segment: the text is
+    // appended to the trailing one. Counting segments made a tab that is not
+    // holding the socket freeze on the first partial sentence for the whole
+    // turn, elapsed clock still ticking.
+    const snapshot = (text: string) => ({
+      type: "eventsReceived" as const, events: [], lastSeq: 0,
+      activeRun: { run_id: "r1", started_seq: 4, live: { meta: { segments: [{ t: "text" as const, text }] } } },
+    });
+    const s = apply(initialThreadState("t"), started,
+      snapshot("The first part"), snapshot("The first part, and the rest of it"));
+    expect(s.activeRun?.segments).toEqual([{ t: "text", text: "The first part, and the rest of it" }]);
+  });
+
+  it("still refuses a snapshot whose tail is shorter than what is rendered", () => {
+    const s = apply(initialThreadState("t"), started,
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: "a long streamed answer" } },
+      {
+        type: "eventsReceived", events: [], lastSeq: 0,
+        activeRun: { run_id: "r1", started_seq: 4, live: { meta: { segments: [{ t: "text", text: "a long" }] } } },
+      });
+    expect(s.activeRun?.segments).toEqual([{ t: "text", text: "a long streamed answer" }]);
+  });
+
+  it("sees a subagent that grew in place under an unchanged segment count", () => {
+    const withSteps = (steps: { t: "text"; text: string }[]) => ({
+      type: "eventsReceived" as const, events: [], lastSeq: 0,
+      activeRun: {
+        run_id: "r1", started_seq: 4,
+        live: { meta: { segments: [{
+          t: "agent" as const, name: "explore", input: "look", id: "a1",
+          steps, done: false, result: "",
+        }] } },
+      },
+    });
+    const s = apply(initialThreadState("t"), started,
+      withSteps([{ t: "text", text: "reading" }]),
+      withSteps([{ t: "text", text: "reading" }, { t: "text", text: "found it" }]));
+    expect((s.activeRun?.segments[0] as { steps: unknown[] }).steps).toHaveLength(2);
+  });
+
   it("clears when the server says no run is active", () => {
     const s = apply(initialThreadState("t"), started,
       { type: "eventsReceived", events: [], lastSeq: 0, activeRun: null });

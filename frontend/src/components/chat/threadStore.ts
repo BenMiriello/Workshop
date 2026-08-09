@@ -95,6 +95,32 @@ export function initialThreadState(threadId: string | null = null): ThreadState 
   };
 }
 
+/** A cheap monotonic size for one segment. Only the ORDER of two of these
+ *  matters, never the unit: a segment that grew must weigh more than it did. */
+function segWeight(s: ChatSegment | undefined): number {
+  if (!s) return 0;
+  if (s.t === "text") return s.text.length;
+  if (s.t === "tool") return s.name.length + s.input.length;
+  // A subagent grows in place three ways — another step, a step of its own that
+  // got longer, and finally its result — so this recurses rather than counting.
+  let w = 1 + s.result.length + (s.done ? 1 : 0);
+  for (const step of s.steps) w += segWeight(step);
+  return w;
+}
+
+/** Is the server's snapshot ahead of what this tab already renders?
+ *
+ *  SEGMENT COUNT ALONE CANNOT ANSWER THIS. The streaming text segment is
+ *  appended to, not replaced (the backend's `_seg_text` merges into the trailing
+ *  text segment, and this client's `pushText` mirrors it), so a turn producing
+ *  one long answer never increases the count. A tab not holding the socket then
+ *  showed the first partial sentence for the whole turn while the elapsed clock
+ *  kept ticking. Compare the tail's size when the counts tie. */
+function snapshotAhead(next: ChatSegment[], prev: ChatSegment[]): boolean {
+  if (next.length !== prev.length) return next.length > prev.length;
+  return segWeight(next[next.length - 1]) > segWeight(prev[prev.length - 1]);
+}
+
 function adoptRun(payload: ActiveRunPayload, prev: ActiveRun | null): ActiveRun | null {
   if (!payload || !payload.run_id) return null;
   const live = payload.live || {};
@@ -109,7 +135,7 @@ function adoptRun(payload: ActiveRunPayload, prev: ActiveRun | null): ActiveRun 
     return {
       ...prev,
       startedSeq: payload.started_seq ?? prev.startedSeq,
-      segments: serverSegs.length > prev.segments.length ? serverSegs : prev.segments,
+      segments: snapshotAhead(serverSegs, prev.segments) ? serverSegs : prev.segments,
       startedMs: Number.isFinite(startedMs) ? startedMs : prev.startedMs,
       model: live.meta?.model ?? prev.model,
       agent: live.meta?.agent ?? prev.agent,
