@@ -976,16 +976,19 @@ input[type="range"].grad::-moz-range-thumb {
      (then it scrolls internally). Keep --chat-input-max in sync with the JS cap. */
   min-height: 2.6rem;
   max-height: 6rem;
-  padding: 0.55rem 0.75rem;   /* actions live in a row below now, not over the text */
+  /* Matches the standard field scale (--field-pad-x / --space-2), same as every
+     .ws-input/.ws-textarea, rather than a bespoke looser inset. */
+  padding: var(--space-2) var(--field-pad-x);
   /* 16px minimum: stops iOS auto-zoom on focus */
   font-size: 1rem; line-height: 1.45; font-family: inherit;
   /* Field surface comes from the SAME token every .ws-input/.ws-textarea uses,
      so this stays in step with the design system instead of drifting from it.
      Borderless by construction — that is already the primitive's treatment, and
      hand-rolling a bordered variant here is what made the chat input the only
-     field in the app with a box around it. */
+     field in the app with a box around it. Radius matches the standard field
+     radius too — --radius-lg read softer/rounder than every other input. */
   background: var(--field-bg); color: var(--fg);
-  border: none; border-radius: var(--radius-lg);
+  border: none; border-radius: var(--radius-md);
 }
 .chat-input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
 /* On a phone, once the input is focused the on-screen keyboard sits directly

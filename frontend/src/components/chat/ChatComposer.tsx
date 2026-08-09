@@ -197,17 +197,10 @@ export default function ChatComposer({
           </button>
         )}
 
-        {/* While a turn streams, Send queues the next message and sits left of Stop. */}
-        <button
-          className="chat-send"
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={onSend}
-          disabled={!canSend}
-          aria-label="Send (Enter)"
-          title={streaming ? "Send (queues behind the current turn)" : "Send (Enter)"}
-        >
-          <CornerDownLeft size={16} aria-hidden />
-        </button>
+        {/* Stop sits left of Send: Send is the primary, most-reached-for control
+            (every turn ends at it), so it stays rightmost and closest to Enter's
+            physical position; Stop is the occasional one and sits beside it
+            rather than past it. */}
         {streaming && (
           <button
             className="chat-stop"
@@ -219,6 +212,16 @@ export default function ChatComposer({
             <Square size={16} aria-hidden />
           </button>
         )}
+        <button
+          className="chat-send"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onSend}
+          disabled={!canSend}
+          aria-label="Send (Enter)"
+          title={streaming ? "Send (queues behind the current turn)" : "Send (Enter)"}
+        >
+          <CornerDownLeft size={16} aria-hidden />
+        </button>
       </div>
     </div>
   );
