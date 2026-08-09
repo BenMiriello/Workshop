@@ -118,3 +118,33 @@ describe("the active run", () => {
     expect(s.activeRun).toBeNull();
   });
 });
+
+describe("reset", () => {
+  it("drops everything when switching to another conversation", () => {
+    const s = apply(initialThreadState("a"),
+      { type: "eventsReceived", events: [ev(1)], lastSeq: 1, activeRun: null },
+      { type: "sendStarted", clientId: "c1", text: "mine", ts: "t" },
+      { type: "reset", threadId: "b" });
+    expect(committedEvents(s)).toEqual([]);
+    expect(pendingSends(s)).toEqual([]);
+    expect(s.threadId).toBe("b");
+  });
+
+  it("keeps the pending send when a blank chat becomes a thread", () => {
+    // Not a switch: the first message of this conversation is what CREATED the
+    // conversation, and the bubble must not blink out between the POST and the
+    // first sync.
+    const s = apply(initialThreadState(null),
+      { type: "sendStarted", clientId: "c1", text: "the first thing I said", ts: "t" },
+      { type: "reset", threadId: "new-thread" });
+    expect(pendingSends(s).map((p) => p.text)).toEqual(["the first thing I said"]);
+    expect(s.threadId).toBe("new-thread");
+  });
+
+  it("still clears when a thread is closed back to blank", () => {
+    const s = apply(initialThreadState("a"),
+      { type: "sendStarted", clientId: "c1", text: "mine", ts: "t" },
+      { type: "reset", threadId: null });
+    expect(pendingSends(s)).toEqual([]);
+  });
+});

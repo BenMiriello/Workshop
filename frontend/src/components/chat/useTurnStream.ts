@@ -35,6 +35,10 @@ import type { ThreadAction, ThreadState } from "./threadStore";
 
 const MAX_RECONNECTS = 8;
 const RECONNECT_DELAY_MS = 1200;
+// The gap between the `done` frame and the committed reply is a single append,
+// so this settles on the first or second try in practice.
+const COMMIT_SETTLE_TRIES = 10;
+const COMMIT_SETTLE_MS = 300;
 
 export type TurnStream = {
   /** A socket for the current run is open (or being retried) here. Chooses the
@@ -175,7 +179,21 @@ export function useTurnStream({
       // The sync brings the committed reply AND clears `active_run` in a single
       // dispatch, so the live block becomes its persisted message in one React
       // commit with no gap to fall into.
-      await cb.current.sync();
+      //
+      // AND `done` DOES NOT MEAN COMMITTED. The server pushes the `done` frame
+      // at the top of _commit_turn and appends the reply after it, so a sync
+      // fired the instant this frame arrives can legitimately find the run still
+      // active and no message yet. Retiring on that answer would blank the tail
+      // of the transcript until the next poll. Wait for the server to say the
+      // run is over instead, and keep the live block (and its indicator) up
+      // meanwhile — it is still true.
+      for (let i = 0; i < COMMIT_SETTLE_TRIES; i++) {
+        await cb.current.sync();
+        if (stateRef.current.activeRun?.runId !== turnId) break;
+        await new Promise((r) => window.setTimeout(r, COMMIT_SETTLE_MS));
+      }
+      // A floor, not the expected path: if the commit never showed up, stop
+      // claiming a run is in flight and let the poll correct the transcript.
       cb.current.dispatch({ type: "runCommitted", runId: turnId });
       setAttached(false);
       setReconnecting(false);

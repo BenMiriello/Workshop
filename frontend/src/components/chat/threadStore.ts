@@ -147,8 +147,19 @@ function reconcilePending(
 
 export function threadReducer(state: ThreadState, action: ThreadAction): ThreadState {
   switch (action.type) {
-    case "reset":
-      return initialThreadState(action.threadId);
+    case "reset": {
+      const fresh = initialThreadState(action.threadId);
+      // A BLANK CHAT BECOMING A THREAD KEEPS ITS PENDING SEND. That reset is not
+      // a thread switch; it is the first message of this conversation creating
+      // the conversation, and the bubble the operator just typed must not blink
+      // out between the POST and the first sync. Any other reset drops them: a
+      // pending send belongs to the thread it was typed into, and leaking one
+      // across a switch would show it under someone else's transcript.
+      if (state.threadId === null && action.threadId !== null) {
+        return { ...fresh, pending: state.pending, clock: state.clock };
+      }
+      return fresh;
+    }
 
     case "eventsReceived": {
       const byId = { ...state.byId };
