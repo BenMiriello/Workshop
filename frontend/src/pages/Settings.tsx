@@ -619,7 +619,7 @@ function HealthCredentials() {
         </button>
         {revealed && (
           <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--muted)" }}>
-            from <code>~/.config/clawdbot/health-auth.env</code>
+            from Workshop's saved credentials
           </span>
         )}
       </Row>

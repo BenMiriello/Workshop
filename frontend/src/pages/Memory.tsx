@@ -233,7 +233,7 @@ export default function Notes() {
           filtered ? (
             <>Nothing matches. Reset <strong>Scope</strong> to <strong>All</strong> or clear the search to see every note.</>
           ) : (
-            <>Notes are scoped markdown the operator and agents both read and write (the workshop root, each project, each agent). Create one with <strong>New note</strong>, or an agent will leave one as it works.</>
+            <>Notes are shared with your agents. Create one with <strong>New note</strong>, or an agent will leave one as it works.</>
           )
         }
         action={<Button size="sm" variant="primary" onClick={() => setOpen({ mode: "create" })}><Plus aria-hidden /> New note</Button>}
@@ -651,7 +651,7 @@ function VaultNotes() {
           applied ? (
             <>Clear the search to list every note in <code>~/notes</code>.</>
           ) : (
-            <>The vault is a plain folder of Markdown at <code>~/notes</code> that Obsidian opens untouched. Add a <code>.md</code> file there and it shows up here.</>
+            <>The vault is a plain folder of Markdown that Obsidian opens untouched. Add a note there and it shows up here.</>
           )
         }
         action={applied ? <Button size="sm" onClick={() => { setQuery(""); setApplied(""); }}>Clear search</Button> : undefined}
@@ -709,9 +709,8 @@ function VaultNotes() {
         <ShieldCheck size={14} aria-hidden /> workshop://store/notes/vault
       </SectionLabel>
       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginTop: "calc(-1 * var(--space-2))" }}>
-        Read through the Store door. You are served verbatim and ungated; an agent
-        reaching this same URI is adjudicated against the policy record and handed a
-        narrow, expiring grant.
+        You see every note in full. An agent asking for the same thing gets only what it
+        has been granted, and only for as long as the grant lasts.
       </p>
       {body}
     </Stack>
@@ -785,7 +784,7 @@ function Documents() {
     body = (
       <StateBlock
         title="No documents yet"
-        hint={<>Long-form plans and decision records live as committed markdown under <code>docs/</code>. Add one to the repo and it shows up here.</>}
+        hint="Long-form plans and decision records show up here once they are written."
       />
     );
   } else {

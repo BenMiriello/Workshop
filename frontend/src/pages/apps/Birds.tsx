@@ -79,7 +79,7 @@ function AviaryCard() {
       </div>
       <Aviary />
       {rec.err && <p className="error" style={{ marginBottom: 0, marginTop: ".5rem" }}>{rec.err}</p>}
-      {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>Analyzer service is not running on the box.</p>}
+      {rec.analyzerUp === false && <p className="error" style={{ marginBottom: 0 }}>The analyzer is not running.</p>}
       {fullscreen && <AviaryCast location={rec.location} onExit={() => setFullscreen(false)} />}
     </section>
   );

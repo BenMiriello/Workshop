@@ -292,10 +292,9 @@ export default function Deploys() {
         <Modal open onClose={() => setEngageOpen(false)} title="Freeze all deploys?">
           <Stack gap="lg">
             <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-              While engaged, every deploy and rollback request is refused with a 409.
-              Autonomous (event-driven) deploys are also refused. Clear to resume.
+              Every deploy and rollback is refused while this is on, including automatic ones.
             </p>
-            <Field label="Reason" help="Optional; helps future-you understand what was going on.">
+            <Field label="Reason" help="Optional. What you were doing when you froze it.">
               <Input
                 value={engageReason}
                 onChange={(e) => setEngageReason(e.target.value)}

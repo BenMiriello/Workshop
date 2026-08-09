@@ -89,8 +89,7 @@ function ImportFromGitModal({
       }
     >
       <p className="ws-muted" style={{ marginBottom: "var(--space-3)" }}>
-        Clones the repo under <code className="ws-mono">~/workshop/projects/&lt;slug&gt;</code>
-        {" "}and registers it. Accepts https, ssh, or a path on disk.
+        Clones the repo and adds it to Workshop. Accepts https, ssh, or a path on disk.
       </p>
       <Field label="URL" required>
         <Input
@@ -101,7 +100,7 @@ function ImportFromGitModal({
           spellCheck={false}
         />
       </Field>
-      <Field label="Slug" help="kebab-case · directory name. Auto-derived from the URL basename.">
+      <Field label="Slug" help="lowercase with dashes · taken from the URL, change it if you like">
         <Input
           value={effectiveSlug}
           onChange={(e) => { setSlug(slugify(e.target.value)); setSlugTouched(true); }}

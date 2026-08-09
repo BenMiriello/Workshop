@@ -173,7 +173,7 @@ export default function Chats() {
           }
         />
       ) : filtered.length === 0 ? (
-        <StateBlock title="No matches" hint="No chat matches that filter. Clear the search or pick All to see everything." />
+        <StateBlock title="No matches" hint="Clear the search or pick All to see every chat." />
       ) : (
         <>
           <div style={{ display: "grid", gap: "var(--space-2)" }}>

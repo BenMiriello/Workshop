@@ -135,7 +135,7 @@ export default function ProjectNew() {
           </Field>
           <Field
             label="Slug"
-            help="kebab-case · used as the directory name + route segment"
+            help="lowercase with dashes · this is what appears in the URL"
           >
             <Input
               value={effectiveSlug}
@@ -144,7 +144,7 @@ export default function ProjectNew() {
               spellCheck={false}
             />
           </Field>
-          <Field label="Purpose" help="Becomes the manifest purpose + first line of PROJECT.md.">
+          <Field label="Purpose" help="The first line of the project brief.">
             <Input
               value={purpose}
               onChange={(e) => setPurpose(e.target.value)}

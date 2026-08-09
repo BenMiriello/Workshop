@@ -39,7 +39,7 @@ export default function Login() {
       setError(
         err instanceof AuthError
           ? err.message
-          : "Something went wrong. Please try again.",
+          : "Something went wrong.",
       );
       setBusy(false);
     }

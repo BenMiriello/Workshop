@@ -217,7 +217,7 @@ function TicketsTab() {
         title={status === "all" && scope === "all" ? "No tickets yet" : "No tickets match these filters"}
         hint={
           status === "all" && scope === "all" ? (
-            <>Tickets are the unit of work across every scope (the workshop root, projects, and agents). Create one with <strong>New ticket</strong>, or file one from a chat.</>
+            <>Create one with <strong>New ticket</strong>, or file one from a chat.</>
           ) : (
             <>Nothing matches. Reset <strong>Status</strong> and <strong>Scope</strong> to <strong>All</strong> to see every ticket.</>
           )
@@ -482,7 +482,7 @@ function EditTicket({
       const r = await fetch(`/api/tasks/${idPath}/run`, { method: "POST" });
       if (r.status === 409) {
         const e = await r.json().catch(() => ({}));
-        setRunNote(e.detail || "A sweep is already running against this scope. Try again when it finishes.");
+        setRunNote(e.detail || "A sweep is already running against this scope.");
         return;
       }
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -561,7 +561,7 @@ function EditTicket({
                   <option value="l">l</option>
                 </Select>
               </Field>
-              <Field label="Assignee" htmlFor="edit-ticket-assignee" help="operator or agent:<slug>">
+              <Field label="Assignee" htmlFor="edit-ticket-assignee" help="operator, or an agent's name">
                 <Input id="edit-ticket-assignee" value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)} placeholder="operator" style={{ maxWidth: "12rem" }} />
               </Field>
             </Row>
@@ -798,7 +798,7 @@ function ReviewTab() {
     body = (
       <StateBlock
         title="Nothing is waiting on you"
-        hint={<>A ticket lands here when a run stops and asks: for a permission it doesn't hold, a resource it can't reach, or a call the ticket didn't make. Nothing is stuck behind this tab, so an empty list means work is running.</>}
+        hint="A ticket lands here when a run stops to ask you something."
       />
     );
   } else {
@@ -1024,7 +1024,7 @@ function GrantDialog({
           </Field>
         </Row>
         <Checkbox checked={subtree} onChange={setSubtree}
-                  label="Cover everything under this URI, not just the URI itself" />
+                  label="Cover everything underneath this, not just this one thing" />
       </Stack>
     </Modal>
   );
@@ -1064,7 +1064,7 @@ function RuleDialog({
     >
       <Stack gap="lg">
         <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>Asked: {ask}</p>
-        <Field label="The standing answer" htmlFor="rule-text" help="Prose a future run reads before it works this scope. It is guidance, not a wall: a rule that proves itself across three blocks is offered for promotion to an enforced grant.">
+        <Field label="The standing answer" htmlFor="rule-text" help="Every future run in this scope reads this before it starts. It is guidance, not a hard limit.">
           <Textarea id="rule-text" rows={4} value={rule} onChange={(e) => setRule(e.target.value)}
                     placeholder="Prefer the existing UI primitive over a new one." data-autofocus />
         </Field>
@@ -1111,7 +1111,7 @@ function PromotionCandidates({ rows, onDone }: { rows: Candidate[] | null; onDon
         <Skeleton width="45%" />
       ) : rows.length === 0 ? (
         <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-          None yet. A rule minted from a block shows up here once three independent blocks have produced it, as an offer to make it enforced instead of advisory.
+          None yet. A rule that has come up three separate times is offered here as a hard limit.
         </p>
       ) : (
         <Stack gap="sm">
@@ -1154,7 +1154,7 @@ export default function Work() {
 
   return (
     <div>
-      <PageHeader title="Work" sub="Tickets across every scope, the runs they produce, what stopped and needs an answer, and how each scope processes work." />
+      <PageHeader title="Work" sub="Tickets, the runs they produce, and anything waiting on an answer." />
       {/* The worker loop's real state + its start/stop control, above the tabs:
           whether tickets are being drained is the first thing to know on this
           page, and it is true of every tab, not just one. */}

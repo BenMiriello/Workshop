@@ -320,9 +320,8 @@ export default function Grants() {
         <Row style={{ alignItems: "flex-start", gap: "var(--space-3)" }}>
           <ShieldCheck size={16} strokeWidth={1.8} aria-hidden style={{ marginTop: 2, color: "var(--accent)", flexShrink: 0 }} />
           <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-            You are always fully permitted across every app. These grants only govern
-            cross-app and guest access (default-deny): a shared surface reaches another
-            app's data only when a row below allows it.
+            You always have full access to every app. These grants only control what one app
+            can reach in another, and nothing is allowed until a row below allows it.
           </span>
         </Row>
       </Card>
@@ -332,7 +331,7 @@ export default function Grants() {
         <SectionLabel icon={<Network size={14} strokeWidth={1.8} aria-hidden />}>Capability map</SectionLabel>
         <Card>
           {apps.length === 0 ? (
-            <StateBlock title="No apps declared" hint={<>No manifests found. Apps declare provides/needs in <code>apps.json</code>.</>} />
+            <StateBlock title="No apps declared" hint="Nothing here until an app declares what it offers and what it needs." />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
               {apps.map((a) => (
@@ -553,7 +552,7 @@ export default function Grants() {
           {resourceGrants.length === 0 ? (
             <StateBlock
               title="No store grants"
-              hint="Store grants are scoped capability tokens minted through the broker (GrantPicker) when an app or agent binds to a Store. They appear here once minted; there is nothing to add by hand."
+              hint="Grants appear here when an app or agent is given access to a store. There is nothing to add by hand."
             />
           ) : resourceGrants.length > MAX_ROWS ? (
             <StateBlock
@@ -633,7 +632,7 @@ export default function Grants() {
           ) : stores.length === 0 ? (
             <StateBlock
               title="No stores declared"
-              hint="Apps declare stores from their manifest provides plus the built-in data registry. Install an app that owns one to see it here."
+              hint="Install an app that owns a store to see it here."
             />
           ) : stores.length > MAX_ROWS ? (
             <StateBlock

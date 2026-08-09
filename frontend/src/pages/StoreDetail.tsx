@@ -231,7 +231,7 @@ export default function StoreDetail() {
             <Card>
               {grants.length === 0 ? (
                 <StateBlock title="No active grants"
-                  hint="Grants get minted by the block loop (`grant-and-continue` in a review) or by Settings › Grants." />
+                  hint="Nothing has access to this store yet. Grant it from Settings › Grants." />
               ) : (
                 <Stack gap="sm">
                   {grants.map((g, i) => (

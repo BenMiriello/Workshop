@@ -223,7 +223,7 @@ function ProjectStoresSection({ slug }: { slug: string }) {
       ) : stores.length === 0 ? (
         <StateBlock
           title="No project-hosted stores"
-          hint="This project has no registered Stores of its own. Agents linked to this project reach the workshop-scope substrate (knowledge, learnings, jobs) through their scope key, not through per-project stores."
+          hint="This project owns no stores. Its agents read the shared workshop knowledge instead."
         />
       ) : (
         <Card compact style={{ padding: "var(--space-3)" }}>
@@ -1045,7 +1045,7 @@ export default function ProjectDetail() {
         ) : defAgents.length === 0 ? (
           <StateBlock
             title="No agent definitions for this project"
-            hint={<>Add a definition file at <code className="ws-mono">projects/{slug}/agents/&lt;slug&gt;.md</code> to give this project a scoped agent.</>}
+            hint="Nothing yet. Define an agent to give this project one of its own."
           />
         ) : defAgents.length > 100 ? (
           <StateBlock title="Too many agents to render" hint="Retire unused agent definitions." />
@@ -1164,7 +1164,7 @@ export default function ProjectDetail() {
           ) : brief.trim() === "" ? (
             <StateBlock
               title="Describe what this project is for"
-              hint="The brief (PROJECT.md) is the goal + constraints your build agents read every turn."
+              hint="The brief is the goal and the constraints your build agents read every turn."
               action={
                 <Button variant="primary" size="sm" onClick={briefEdit.begin}>
                   <Pencil aria-hidden /> Write the brief

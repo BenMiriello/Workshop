@@ -369,7 +369,7 @@ function ManageDetails({
       {bridge}
 
       <p className="ws-card__meta" style={{ margin: 0 }}>
-        Storage, grants, scheduled jobs, and attached agents arrive with the app manifest.
+        Storage, grants, scheduled jobs and attached agents come with the app.
       </p>
     </div>
   );
@@ -638,8 +638,7 @@ export default function Apps() {
           title="No apps installed"
           hint={
             <>
-              Install an app to see it here: add its id to this instance's installed-apps registry
-              (<code>.runtime/installed-apps.json</code>), or build one from{" "}
+              Install an app to see it here, or build one from{" "}
               <Link to="/projects/new">Projects</Link>.
             </>
           }

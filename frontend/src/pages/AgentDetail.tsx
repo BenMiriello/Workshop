@@ -1017,7 +1017,7 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           ) : grants.length === 0 ? (
             <StateBlock
               title="No grants"
-              hint="Grant this agent scoped access to a Store (read / write / append) through the broker. Minted grants appear here and can be revoked from the Grants settings page."
+              hint="Give this agent read, write or append access to a store. Grants show up here once made."
             />
           ) : grants.length > MAX_GRANTS ? (
             <StateBlock

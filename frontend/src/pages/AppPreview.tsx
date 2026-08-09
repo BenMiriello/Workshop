@@ -117,7 +117,7 @@ export default function AppPreview() {
         <Skeleton width="100%" />
       ) : !service ? (
         <StateBlock title="No running service to preview"
-          hint="Start the app from the project page, then a running service can be previewed here."
+          hint="Start the app from the project page to preview it here."
           action={<Link to={`/projects/${slug}`} style={{ textDecoration: "none" }}><Button size="sm" variant="primary">Go to project</Button></Link>} />
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
@@ -133,7 +133,7 @@ export default function AppPreview() {
             <Row style={{ gap: "var(--space-2)" }}>
               <StatusDot status="ok">running</StatusDot>
               <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                Framed through the app-runner proxy. If the app calls its own API it needs that service running too.
+                Shown inside Workshop. If the app calls its own API, that has to be running too.
               </span>
             </Row>
           )}

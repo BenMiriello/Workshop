@@ -1047,9 +1047,8 @@ export default function AgentBuild() {
       <Modal open={renameOpen} onClose={() => setRenameOpen(false)} title="Rename agent">
         <Stack>
           <p className="ws-muted">
-            The name and purpose are what you see across Workshop. The slug{" "}
-            (<code className="ws-mono">{agent.slug}</code>) stays fixed so the working
-            tree and session don't move.
+            The name and purpose are what you see across Workshop. Its id{" "}
+            (<code className="ws-mono">{agent.slug}</code>) does not change.
           </p>
           <Field label="Name" required>
             <Input value={renameName} onChange={(e) => setRenameName(e.target.value)} autoFocus />

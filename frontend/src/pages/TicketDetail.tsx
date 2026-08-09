@@ -435,7 +435,7 @@ export default function TicketDetail() {
                       <code>{task.awaiting.proposal.uri}</code>
                     </div>
                   )}
-                  <Field label="Your note (recorded as evidence for the next attempt)">
+                  <Field label="Your note" help="The next attempt reads this.">
                     <Textarea rows={3} value={reviewNote} onChange={(e) => setReviewNote(e.target.value)}
                               placeholder="What did you decide, and why." />
                   </Field>

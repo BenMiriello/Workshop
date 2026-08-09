@@ -316,7 +316,7 @@ export default function DeployDetail() {
                   <Field label="Name">
                     <Input value={draft.name || ""} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
                   </Field>
-                  <Field label="Autonomy" help="reactive = manual only. supervised = queued for release. autonomous = auto-deploy on push (watcher polls the remote).">
+                  <Field label="Autonomy" help="reactive = you deploy by hand. supervised = queued for you to release. autonomous = deploys on every push.">
                     <Select value={draft.autonomy || "reactive"}
                             onChange={(e) => setDraft((d) => ({ ...d, autonomy: e.target.value }))}>
                       <option value="reactive">reactive</option>
