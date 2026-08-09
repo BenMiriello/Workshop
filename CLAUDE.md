@@ -10,6 +10,29 @@ Personal-ops monorepo: `backend/` (FastAPI + Letta), `frontend/` (Vite + React +
 - Ephemeral files (smoke tests, throwaway probes, scraped output, ad-hoc working notes) go in a `scratch/` or `tmp/` folder (anywhere in the tree — both are gitignored). Do NOT drop stray `test_*` / `tmp_*` files into source dirs. Per-project working trees (`projects/*`, `build-agents/`, `branches/`) are gitignored too — only the registries (`projects.json`, `build_agents.json`) and `projects/_templates/` are tracked. Durable docs belong in `docs/`.
 - Commit your own work as you go; never leave it uncommitted. When a background agent's unrelated WIP is in the tree, stage only your files so commits stay isolated.
 
+### A UI change is not delivered until the operator's origin serves it
+
+Two origins serve this UI and they update differently. **Ask which one the
+operator is on before saying a frontend change is done, and rebuild the built
+one regardless:**
+
+| origin | serves | updates by |
+|---|---|---|
+| `https://debian.tail38e62e.ts.net:8443` → `:5173` | Vite, from SOURCE | instantly, no build |
+| `https://workshop.benmiriello.com` → `:8002` | the built `frontend/dist` | **`bash scripts/build_workshop_public.sh`** |
+
+Default to running the build after any change under `frontend/`. It takes
+seconds, the edge serves `dist` from disk so nothing restarts, and skipping it
+is invisible to you and total to the operator.
+
+**`check_design.sh` printing "the public bundle is STALE" means the operator may
+be looking at old code. It is not noise. Never report a UI task complete over
+it.** On 2026-08-09 a whole session of width fixes was correct in source, never
+built, and the operator said three times that it wasn't done — while the stale
+warning fired after every commit and went unread. Builds now hold a lock
+(`build_workshop_public.sh`), so the warning is trustworthy: concurrent builds
+used to race the stamp and make it fire unconditionally.
+
 ## Platform design (current: 2026-07-18)
 
 The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-18.md`](docs/platform-redesign/entity-model-2026-07-18.md) (start there) with the phase docs riding on top of it: `autonomy-model-*`, `latitude-model-*`, `primitive-roles-*`, `chat-scope-design-*`, `chat-work-linkage-*`, `resource-access-interface-spec-*`, and the sequenced `final-plan-agent-generalize-and-masini-fold-2026-07-16.md` + `coherence-migration-plan-2026-07-18.md`. Agents are keyed by `role` (closed enum: maker/reviewer/triager/keeper/broker), NOT by `runtime`. Apps and Projects are distinct linkable concepts. Read these before touching the agents/projects/chat/apps systems.
