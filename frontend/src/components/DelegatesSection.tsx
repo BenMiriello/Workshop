@@ -68,7 +68,7 @@ export default function DelegatesSection() {
       ) : items.length === 0 ? (
         <StateBlock
           title="No delegates"
-          hint={<span>Add a subagent definition to <code>~/.claude/agents/</code> to make one callable.</span>}
+          hint="Nothing here yet. A delegate becomes callable once one is defined."
         />
       ) : (
         <CardGrid>

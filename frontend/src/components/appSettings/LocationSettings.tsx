@@ -86,8 +86,7 @@ export default function LocationSettings() {
       <Row label="iOS app">
         <a href="https://owntracks.org/booklet/features/ios/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
           Owntracks
-        </a>{" · "}
-        config walkthrough: <code style={{ fontSize: "var(--fs-xs)" }}>docs/owntracks-ios.md</code>
+        </a>
       </Row>
       <OwntracksCredentials />
       <Row label="history">
@@ -102,7 +101,7 @@ export default function LocationSettings() {
         onCancel={() => setConfirmClear(false)}
         onConfirm={onClearHistory}
         title="Clear all location history?"
-        body="This deletes the stored history file on the backend. This can't be undone."
+        body="Every recorded position is deleted. This can't be undone."
         confirmLabel="Clear history"
         busy={clearing}
       />
@@ -140,7 +139,7 @@ function OwntracksCredentials() {
         </button>
         {revealed && (
           <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--muted)" }}>
-            from <code>~/.config/clawdbot/owntracks-auth.env</code>
+            from Workshop's saved credentials
           </span>
         )}
       </Row>

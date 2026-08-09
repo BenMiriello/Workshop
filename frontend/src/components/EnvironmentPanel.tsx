@@ -212,7 +212,7 @@ export default function EnvironmentPanel({ slug }: { slug: string }) {
             ))}
             {(data?.undeclared_set?.length ?? 0) > 0 && (
               <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Also set (not declared in the manifest): {data!.undeclared_set.join(", ")}.
+                Also set, though this app did not ask for them: {data!.undeclared_set.join(", ")}.
               </p>
             )}
           </Stack>

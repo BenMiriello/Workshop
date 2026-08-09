@@ -38,20 +38,20 @@ function describe(s: RunnerState): { kind: StatusKind; label: string; hint: stri
     return {
       kind: "running",
       label: "Running",
-      hint: "A worker is resident and draining the queue. Tickets move queued to running to done on their own.",
+      hint: "Tickets move from queued to running to done on their own.",
     };
   }
   if (s.running && !s.enabled) {
     return {
       kind: "warn",
       label: "Paused",
-      hint: "A worker is resident but autonomy is switched off, so it is idling and no ticket will be picked up. Start to resume.",
+      hint: "Autonomy is switched off, so no ticket will be picked up.",
     };
   }
   return {
     kind: "stopped",
     label: "Stopped",
-    hint: "No worker is running, so filed tickets will sit in the queue untouched. Start the queue to drain it.",
+    hint: "Nothing is running, so filed tickets sit in the queue.",
   };
 }
 

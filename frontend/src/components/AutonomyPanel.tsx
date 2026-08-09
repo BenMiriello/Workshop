@@ -641,7 +641,7 @@ export default function AutonomyPanel({
                     ))}
                   </Row>
                 ) : (
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Queue clear. No ready, in-progress, in-review, or blocked tasks.</span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Queue clear.</span>
                 )
               ) : (
                 <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>No queue data for this scope.</span>
@@ -688,14 +688,13 @@ export default function AutonomyPanel({
               {showAdvanced && (
                 <Stack gap="sm" style={{ marginTop: "var(--space-3)" }}>
                   <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                    The raw trigger list the preset expands to. Editing here writes the trigger list
-                    directly, and the preset above is re-derived from it.
+                    The triggers behind the preset. Editing them here sets the preset above to match.
                   </p>
 
                   {advTriggers.length === 0 && !aedit.editing ? (
                     <StateBlock
                       title="No triggers"
-                      hint={<span>This preset expands to no automatic trigger. Use <strong>Edit triggers</strong> to compose them by hand, or set a preset above.</span>}
+                      hint={<span>This preset runs nothing automatically. Use <strong>Edit triggers</strong> to add one.</span>}
                     />
                   ) : (
                     <Stack gap="sm">

@@ -234,7 +234,7 @@ export default function AutonomyControls() {
 
       <Row label="gpu memory">
         {oll == null || !oll.gpu.available ? (
-          oll?.gpu.error ? <span className="ws-muted">no nvidia-smi</span> : "loading…"
+          oll?.gpu.error ? <span className="ws-muted">no GPU detected</span> : "loading…"
         ) : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>
@@ -255,7 +255,7 @@ export default function AutonomyControls() {
 
       <Row label="broker">
         {bro == null ? "–" : !bro.available ? (
-          <span className="ws-muted">gpubrokerd offline · Workshop running standalone</span>
+          <span className="ws-muted">offline · Workshop has the GPU to itself</span>
         ) : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
             <StatusDot status="ok">up</StatusDot>
@@ -272,7 +272,7 @@ export default function AutonomyControls() {
         onCancel={() => setConfirmStopAll(false)}
         onConfirm={onStopAll}
         title="Stop all autonomy and free GPU?"
-        body="Disables the cron autonomy loop and unloads all resident Ollama models. Ollama keeps running; the next manual start re-enables the loop and models reload on demand (~20s warm-up)."
+        body="Stops scheduled work and frees the GPU. Starting it again reloads the models, which takes about 20 seconds."
         confirmLabel="Stop all"
         busy={busy === "stop-all"}
       />
@@ -281,7 +281,7 @@ export default function AutonomyControls() {
         onCancel={() => setConfirmUnload(false)}
         onConfirm={onUnload}
         title="Free GPU memory?"
-        body="Unloads all resident Ollama models. The next agent tick reloads qwen2.5:32b (~20s warm-up)."
+        body="Frees the GPU by unloading the local models. The next run reloads them, which takes about 20 seconds."
         confirmLabel="Free GPU"
         busy={busy === "unload"}
       />

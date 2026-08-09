@@ -111,7 +111,7 @@ function ScopeCard({ row, onSaved }: { row: ScopeRow; onSaved: () => void }) {
       const r = await fetch(`/api/projects/${encodeURIComponent(slug)}/autonomy/run`, { method: "POST" });
       if (r.status === 409) {
         const e = await r.json().catch(() => ({}));
-        setNote(e.detail || "A sweep is already running for this scope. Try again when it finishes.");
+        setNote(e.detail || "A sweep is already running for this scope.");
         return;
       }
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -189,7 +189,7 @@ function ScopeCard({ row, onSaved }: { row: ScopeRow; onSaved: () => void }) {
         </Row>
         {dirty && draft === "scheduled" && (
           <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-            Scheduled needs a cron cadence. Set it on the {href ? "detail page" : "scope's detail page"}.
+            Scheduled needs a cadence. Set it on the {href ? "detail page" : "scope's detail page"}.
           </span>
         )}
 
@@ -283,7 +283,7 @@ export default function AutonomyScopes() {
       ) : rows.length === 0 ? (
         <StateBlock
           title="No manageable scopes yet"
-          hint={<>Autonomy scopes are your projects and agents. Create a project or an agent, then set how each one processes its own work queue. This list is served by <code>{ENDPOINT}</code>.</>}
+          hint="Autonomy scopes are your projects and agents. Create one, then set how it works its own queue."
         />
       ) : (
         <Stack gap="sm">

@@ -213,7 +213,7 @@ export default function VoiceSettings({
                   onChange={(e) => updatePrefs({ barge_sensitivity: Number(e.target.value) })}
                 />
                 <span className="ws-voice-hintline">
-                  Floor for the onset threshold. The measured noise floor raises it when the room is loud.
+                  How loud you have to be to cut in. A noisy room raises the bar on its own.
                 </span>
               </label>
               <label className="ws-voice-setting ws-voice-setting--row">
@@ -290,7 +290,7 @@ export default function VoiceSettings({
                       ? testResult.ok
                         ? testResult.text
                           ? `Heard: "${testResult.text}" (${testResult.bytes} bytes, ${testResult.ms} ms)`
-                          : `Recorded ${testResult.bytes} bytes, but nothing was transcribed. Check the mic level and the language.`
+                          : `Recorded audio, but nothing was transcribed. Check the mic level and the language.`
                         : testResult.reason
                       : "Records 3 seconds and transcribes it."}
                 </span>

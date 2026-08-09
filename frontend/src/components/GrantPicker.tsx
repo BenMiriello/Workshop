@@ -151,9 +151,8 @@ export default function GrantPicker({
       }
     >
       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-4)" }}>
-        Grants <span className="ws-mono">{to || "the requester"}</span> a scoped
-        capability token over the store you choose. This is set up once, not asked
-        again per action.
+        Gives <span className="ws-mono">{to || "the requester"}</span> access to the store you
+        choose. Set once, not asked again per action.
       </p>
 
       {/* four states over the store list */}
@@ -172,7 +171,7 @@ export default function GrantPicker({
       ) : stores.length === 0 ? (
         <StateBlock
           title={type ? `No stores of type ${type}` : "No stores declared"}
-          hint="Apps declare stores from their manifest provides + the built-in data registry. Install an app that owns one, or declare a type on its provided capability."
+          hint="Nothing to grant over yet. Install an app that owns a store."
         />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>

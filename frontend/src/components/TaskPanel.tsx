@@ -446,7 +446,7 @@ export default function TaskPanel({
               ))}
             </Select>
           </Field>
-          <Field label="Assignee" htmlFor={`tp-assignee-${t.id}`} help="operator or agent:<slug>">
+          <Field label="Assignee" htmlFor={`tp-assignee-${t.id}`} help="operator, or an agent's name">
             <Input id={`tp-assignee-${t.id}`} value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)} placeholder="operator" style={{ maxWidth: "12rem" }} />
           </Field>
         </Row>
@@ -635,7 +635,7 @@ export default function TaskPanel({
         title={openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status)) ? "No open tasks" : "No tasks yet"}
         hint={
           openCount === 0 && !showDone && scoped.some((t) => !isOpenStatus(t.status))
-            ? "Every task here is done or cancelled. Turn on Show done to see them, or add a new one below."
+            ? "Every task here is done or cancelled. Turn on Show done to see them."
             : "Add a task below, or the worker files tasks here as it plans and works."
         }
       />
@@ -645,7 +645,7 @@ export default function TaskPanel({
       <>
         {overflow && (
           <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Showing the first {OVERFLOW_AT} of {visibleAll.length} tasks. Narrow by status from the Work page to see the rest.
+            Showing the first {OVERFLOW_AT} of {visibleAll.length} tasks.
           </p>
         )}
         <ul className="chat-tasks__list">

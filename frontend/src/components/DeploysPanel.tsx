@@ -232,7 +232,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
         ) : (deploys?.length ?? 0) === 0 ? (
           <StateBlock
             title="No deploy targets"
-            hint="Add a target to publish this project to a hosted provider (Cloudflare Pages, or others as they land)."
+            hint="Add a target to publish this project to a host."
             action={<Button size="sm" variant="primary" onClick={() => setAddOpen(true)}><Plus aria-hidden /> Add target</Button>} />
         ) : (
           <Stack gap="lg">
@@ -273,7 +273,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
               This will build and publish{" "}
               <strong>{confirmDeploy.source.branch || "HEAD"}</strong> to{" "}
               <strong>{confirmDeploy.domain || confirmDeploy.target.project_name || confirmDeploy.target.kind}</strong>.
-              The previous version becomes rollback-eligible.
+              You can roll back to the current version afterwards.
             </>
           }
           confirmLabel="Deploy"
@@ -308,7 +308,7 @@ export default function DeploysPanel({ slug }: { slug: string }) {
           open={true}
           onCancel={() => setConfirmDelete(null)}
           title={`Remove deploy target ${confirmDelete.name}?`}
-          body={<>The live site is not affected; only the workshop record and its history filter are removed.</>}
+          body={<>The live site is not affected. Only this target and its history here are removed.</>}
           confirmLabel="Remove"
           onConfirm={async () => {
             const d = confirmDelete;
@@ -532,8 +532,8 @@ function AddTargetModal({
         </Field>
         {provider && (
           <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-            Requires env: {provider.env_requirements.filter((r) => r.required).map((r) => r.key).join(", ") || "none"}.
-            Set them in the Environment panel below or in the workspace shared secrets.
+            Needs: {provider.env_requirements.filter((r) => r.required).map((r) => r.key).join(", ") || "nothing"}.
+            Set these in the Environment panel below.
           </p>
         )}
         {err && <StateBlock variant="error" title="Couldn't create target" hint={<code>{err}</code>} />}

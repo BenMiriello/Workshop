@@ -222,7 +222,7 @@ function FromTemplateModal({
                       <p className="ws-card__meta ws-muted">
                         {i.members.length
                           ? i.members.map((m) => m.template).join(" · ")
-                          : "no resident agents"}
+                          : "no agents yet"}
                       </p>
                     )}
                   </Card>

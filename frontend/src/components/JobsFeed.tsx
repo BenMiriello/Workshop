@@ -180,7 +180,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
           filter === "all" ? (
             "Every run is recorded here. Start one from an agent, a project sweep, or a ticket."
           ) : (
-            <>Nothing matches this filter. Switch to <strong>All</strong> to see every job.</>
+            <>Nothing matches this filter. Switch to <strong>All</strong> to see every run.</>
           )
         }
       />

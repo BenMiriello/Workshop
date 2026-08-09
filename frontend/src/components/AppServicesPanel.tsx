@@ -187,7 +187,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         <Card>
           <StateBlock
             title="This is a built-in Workshop app"
-            hint={<>It runs as part of Workshop, not as a separate deployment. Its live code is in the monorepo (<code className="ws-mono">frontend/src/pages/apps</code> and <code className="ws-mono">backend/services</code>). Open it from the Apps launcher; edit it through the Workshop project's chat.</>} />
+            hint="It runs as part of Workshop, so there is nothing to start here. Open it from the Apps launcher." />
         </Card>
       </section>
     );
@@ -258,15 +258,15 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
         ) : !manifest || manifest.services.length === 0 ? (
           <StateBlock
             title="No runnable services"
-            hint="Add a workshop.app.json with a services[] list, or a package.json / deploy.config.yaml the runner can auto-detect."
+            hint="Nothing in this project can be started yet. An agent can add the services it should run."
           />
         ) : (
           <Stack>
             <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
               {manifest.detected
-                ? "Auto-detected. Add a workshop.app.json to declare services explicitly."
-                : "Declared in workshop.app.json."}
-              {" "}Each service runs on its own port; the monitor restarts a crashed one while the app is up. Running the app is the deployment. The exposed service's URL is its standalone origin.
+                ? "Services were detected automatically."
+                : "Services are declared by this project."}
+              {" "}Each runs on its own port, and a crashed one is restarted while the app is up.
             </p>
 
             <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
@@ -327,7 +327,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                       <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-1) 0 0" }}>
                         {ms.disabled_reason
                           ? <>Disabled: {ms.disabled_reason}</>
-                          : <>Disabled in the manifest. Enable it (and supply any env/deps it needs) to run it.</>}
+                          : <>Disabled. Enable it to run it.</>}
                       </p>
                     )}
                   </li>
@@ -348,7 +348,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                         {!d.ok && (
                           <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-1) 0 0 var(--space-4)" }}>
                             {isDockerAccessError(d.error)
-                              ? "Docker isn't reachable for this user, so the container-backed deps can't start. These come up once the rootless container runtime is set up; until then, any service that needs them stays down."
+                              ? "Docker isn't reachable, so these can't start. Any service that needs them stays down."
                               : (d.error || "not running").slice(0, 200)}
                           </p>
                         )}
@@ -366,7 +366,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
 
             {isUp && (
               <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: 0 }}>
-                Up. Use Preview to view a running service inside Workshop, or the open-in-tab icon for its own origin.
+                Up. Preview shows a service inside Workshop; the open-in-tab icon opens it on its own.
               </p>
             )}
 
