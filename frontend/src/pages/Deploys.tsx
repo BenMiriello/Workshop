@@ -144,7 +144,7 @@ export default function Deploys() {
   ];
 
   return (
-    <div className="ws-page">
+    <div>
       <PageHeader
         title={<><Rocket aria-hidden style={{ verticalAlign: "-3px", marginRight: 6 }} /> Deploys</>}
         sub="What's live where. One row per hosted target across every project."

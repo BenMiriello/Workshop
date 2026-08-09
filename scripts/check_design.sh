@@ -14,6 +14,7 @@
 #   • raw hex colors        (#abc / #aabbcc) — use tokens or a primitive
 #   • emoji                 — lucide icons only
 #   • cursor:"not-allowed"  — disabled controls dim, never not-allowed
+#   • maxWidth >= 600       — page width is the shell's job (--page-max), not a page's
 #
 # Exempt paths (concrete colors legitimately live here):
 #   src/styles/**                       (tokens.css / components.css / tokens.js)
@@ -98,6 +99,12 @@ NOT_ALLOWED = re.compile(r"not-allowed")
 # Deliberately NOT typographic marks (→ ✓ ≈ · —) which are legitimate in labels
 # and the design system itself uses ("Saved ✓", "View → Edit → Save").
 EMOJI = re.compile("[" "\U0001F000-\U0001FAFF" "\U0001F1E6-\U0001F1FF" "]")
+# Page width belongs to the shell (--page-max / --page-max-wide / --measure), not
+# to a page. Small element caps are fine (a 150px number input, a 420px filter
+# column), so this only fires at >=600px, which is container territory: nothing
+# INSIDE a page legitimately wants a cap that wide. This is the rule that stopped
+# the app having 720/760/820/880/980/1040/1280 all at once.
+PAGE_WIDTH = re.compile(r"maxWidth:\s*[\"']?(\d{3,})(?:px)?[\"']?")
 
 def exempt(path):
     return any(path.startswith(p) or path == p for p in EXEMPT)
@@ -111,6 +118,9 @@ def scan_line(path, lineno, text, out):
         out.append((path, lineno, "emoji", text.strip()[:80]))
     if NOT_ALLOWED.search(text):
         out.append((path, lineno, "not-allowed", text.strip()[:80]))
+    m = PAGE_WIDTH.search(text)
+    if m and int(m.group(1)) >= 600:
+        out.append((path, lineno, "page-width", text.strip()[:80]))
 
 violations = []
 

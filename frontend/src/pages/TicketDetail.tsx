@@ -225,7 +225,7 @@ export default function TicketDetail() {
   const workHref = "/work?tab=tickets" + (scope ? `&scope=${encodeURIComponent(scope)}` : "");
 
   return (
-    <div className="ws-page">
+    <div>
       <PageHeader
         title={
           <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>

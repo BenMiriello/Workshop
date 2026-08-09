@@ -219,7 +219,7 @@ export default function DeployDetail() {
     : deploy?.current ? "ok" : "stopped";
 
   return (
-    <div className="ws-page">
+    <div>
       <PageHeader
         title={
           <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>

@@ -68,7 +68,7 @@ export default function Stores() {
   };
 
   return (
-    <div className="ws-page">
+    <div>
       <PageHeader
         title={<><Database aria-hidden style={{ verticalAlign: "-3px", marginRight: 6 }} /> Stores</>}
         sub="The declared Store catalog across every app and project."
