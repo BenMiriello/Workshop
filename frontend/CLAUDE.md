@@ -32,19 +32,17 @@ Both CSS files are imported in `src/main.tsx` **before** `styles.css`. `styles.c
 
 ## Page width — the shell owns it, a page never sets it
 
-**A page does not choose its own width.** Width is three tokens in `tokens.css`, and nothing else may set a page-level cap:
+**Every page is the same width. There are no exceptions, and adding one is not a judgement call you get to make.**
 
-| token | value | who applies it |
-|---|---|---|
-| `--page-max` | 1280px | `.ws-app` — **every route**, no exceptions to opt into |
-| `--page-max-wide` | 1680px | `.ws-app--wide` — 3-pane workbench/IDE routes only (the builder). A layout constraint, not a preference. |
-| `--measure` | 880px | `.ws-measure` — a reading/form column *inside* a page (the create forms) |
+There is exactly one token, `--page-max: 1680px` in `tokens.css`, applied by `.ws-app` to every route. No wide variant, no narrow variant, no per-page cap.
 
-To narrow content, wrap it in `ws-measure`. **Never add a `maxWidth` to a page wrapper**, and never add a fourth width. `check_design.sh` fails on `maxWidth: >= 600` in `.tsx` for exactly this reason. Small element caps (a 150px number input, a 420px filter column) are fine and below the threshold.
+- **Never add a `maxWidth` to a page wrapper.** `check_design.sh` fails on `maxWidth: >= 600` in `.tsx`, which is container territory. Small element caps (a 150px number input, a 420px filter column) are fine and sit below the threshold.
+- **Never add a width modifier class** (`--wide`, `--narrow`, `--measure`). A modifier is a per-page width wearing a class name.
+- To change the app's width, change the one number. Every page moves together.
 
-This exists because the app previously decided width in three places at once — a three-tier shell picked by a hand-maintained route list in `App.tsx`, plus per-page inline caps of 720/760/820/880/1040 fighting it. Same app, seven widths. The route list is gone: a new page is the right width by default, with no list to forget to update.
+If a screen looks like it wants to be narrower, it doesn't. That instinct is what produced 720/760/820/880/980/1040/1280/1680 in one app, each with a sensible-sounding local reason: this form's inputs are too wide, this page is mostly prose, this one is a dashboard. The variance was worse than any of the individual problems it solved.
 
-The focused chat is a page like any other and takes `--page-max`. Only its *scroll* behaviour is special (`.ws-app--chatfull`: fixed + viewport-tall so the composer rides above the mobile keyboard) — that is not a licence to run full-bleed.
+The focused chat is a page like any other. `.ws-app--chatfull` is **not** a width modifier — it keeps `--page-max` and changes only scrolling (fixed + viewport-tall so the composer rides above the mobile keyboard).
 
 ## Theming — two axes, one generated color layer
 

@@ -80,23 +80,16 @@ function VoiceRedirect() {
 }
 
 export default function App() {
-  // Page width is NOT decided here. Every route gets the one standard width
-  // (`--page-max`, applied by .ws-app); the route-by-route list that used to
-  // live here is what made the app look like six different apps. Only two
-  // structural exceptions remain, and both are about layout, not taste:
-  //   wide     — the builder is a 3-pane IDE and needs the full viewport.
-  //   chatFull — the focused chat is a full-screen surface: the shell becomes a
-  //              viewport-tall flex column that never scrolls, so the chat log
-  //              is the only scroller and the composer pins to the bottom (above
-  //              the mobile keyboard). See .ws-app--chatfull.
-  // To narrow content, wrap it in `ws-measure` inside the page — never a new
-  // page-level max-width.
+  // Page width is NOT decided here, for any route. Every page is .ws-app at
+  // --page-max; the route-by-route width list that used to live here is what
+  // made the app look like six different apps.
+  // The one class below is not a width — .ws-app--chatfull keeps --page-max and
+  // changes only SCROLLING: the focused chat becomes a viewport-tall column that
+  // never scrolls, so the log is the only scroller and the composer stays above
+  // the mobile keyboard. Do not add a width modifier next to it.
   const { pathname } = useLocation();
-  const wide = /^\/agents\/[^/]+\/chat$/.test(pathname);
   const chatFull = pathname.startsWith("/chat/");
-  const widthClass = chatFull
-    ? " ws-app--chatfull"
-    : wide ? " ws-app--wide" : "";
+  const widthClass = chatFull ? " ws-app--chatfull" : "";
   return (
     <RecorderProvider>
     <BreadcrumbProvider>

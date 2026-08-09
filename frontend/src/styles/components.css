@@ -875,14 +875,9 @@ a.ws-btn { text-decoration: none; }
      Resolves to 0 in a normal browser, so it changes nothing there. */
   padding-top: env(safe-area-inset-top);
 }
-/* The ONE exception to --page-max: 3-pane workbench/IDE routes (the build page)
-   need the full viewport. Nothing else may widen or narrow the shell. */
-.ws-app--wide { max-width: var(--page-max-wide); }
-
-/* A reading/form column INSIDE a page, for prose-like content that shouldn't run
-   to the full page width. This is the only sanctioned narrowing, and it is one
-   width for the whole app — not a per-page number. */
-.ws-measure { max-width: var(--measure); width: 100%; }
+/* There is deliberately no --wide and no --measure modifier here. Every route is
+   .ws-app at --page-max. A modifier is just a per-page width wearing a class
+   name, and the whole point is that pages don't vary. */
 
 .ws-topnav {
   flex: 0 0 auto;

@@ -95,16 +95,14 @@
   --pad-x-lg:      1.125rem;  /* 18px                                 */
   --field-pad-x:   0.75rem;   /* 12px — inputs sit slightly tighter   */
 
-  /* ---- Page width — ONE standard, set here and nowhere else ---------------
-     Every route is `--page-max`. There is no per-page cap: a page does not get
-     to pick its own width, because that is how the app ended up with 720 / 760
-     / 820 / 880 / 980 / 1040 / 1280 all at once.
-       --page-max       every page, via .ws-app
-       --page-max-wide  the one exception: 3-pane workbench/IDE routes (.ws-app--wide)
-       --measure        a reading column INSIDE a page (.ws-measure, focused chat) */
-  --page-max:      1280px;
-  --page-max-wide: 1680px;
-  --measure:        880px;
+  /* ---- Page width — ONE number, for every page, with NO exceptions ---------
+     This is the whole width system. There is no second tier, no narrow variant,
+     and no per-page cap; a page does not get to pick its own width. That is how
+     the app ended up with 720 / 760 / 820 / 880 / 980 / 1040 / 1280 / 1680 at
+     once, and every one of them had a reason at the time.
+     If a screen seems to want a different width, it doesn't — change this one
+     number and every page moves together. */
+  --page-max: 1680px;
 
   /* Z-index layers */
   --z-base:     0;

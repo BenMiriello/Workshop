@@ -333,7 +333,7 @@ function CreateAgent() {
   };
 
   return (
-    <div className="ws-measure">
+    <div>
       <PageHeader title="New agent" sub="Pick a role. Everything else is defaulted; you can tune later." />
       {err && (
         <div style={{ marginBottom: "var(--space-4)" }}>
