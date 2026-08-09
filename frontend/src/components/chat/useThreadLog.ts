@@ -76,6 +76,10 @@ export function useThreadLog({
     const id = threadIdRef.current;
     if (!id) return;
     const after = stateRef.current.threadId === id ? stateRef.current.cursor : 0;
+    // Stamped BEFORE the request, so the store can tell an answer about an older
+    // state of the world from a current one. Several of these are legitimately
+    // in flight at once and they do not resolve in order.
+    const requestedAt = Date.now();
     try {
       const page = await chatApi.threadEvents(id, after);
       if (threadIdRef.current !== id) return;
@@ -84,6 +88,7 @@ export function useThreadLog({
         events: page.events || [],
         lastSeq: page.last_seq || 0,
         activeRun: page.active_run ?? null,
+        requestedAt,
       });
     } catch (e) {
       // Transient by nature (this runs on a timer). Only the initial load has an
@@ -102,6 +107,7 @@ export function useThreadLog({
     dispatch({ type: "reset", threadId });
     if (!threadId) return;
     let cancelled = false;
+    const requestedAt = Date.now();
     (async () => {
       try {
         const page = await chatApi.threadEvents(threadId, 0);
@@ -111,6 +117,7 @@ export function useThreadLog({
           events: page.events || [],
           lastSeq: page.last_seq || 0,
           activeRun: page.active_run ?? null,
+          requestedAt,
         });
       } catch (e) {
         if (!cancelled) onErrorRef.current(`Couldn't load this conversation: ${e}`);

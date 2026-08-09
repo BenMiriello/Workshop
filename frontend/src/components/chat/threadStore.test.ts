@@ -154,6 +154,35 @@ describe("the active run", () => {
     expect(s.activeRun).toBeNull();
   });
 
+  it("ignores a sync answer computed before this tab started the run", () => {
+    // useCompaction fires an un-awaited sync() immediately before sending
+    // /compact, so a response that predates the run routinely lands after it.
+    // Clearing on that answer blanked the live block, made the reducer drop the
+    // run's own streamed deltas, and left canDrainQueue true long enough for a
+    // queued message to open a rival turn.
+    const before = Date.now() - 5_000;
+    const s = apply(initialThreadState("t"), started,
+      { type: "eventsReceived", events: [], lastSeq: 0, activeRun: null, requestedAt: before });
+    expect(s.activeRun?.runId).toBe("r1");
+  });
+
+  it("ignores a stale answer that names some OTHER run", () => {
+    const before = Date.now() - 5_000;
+    const s = apply(initialThreadState("t"), started, {
+      type: "eventsReceived", events: [], lastSeq: 0, requestedAt: before,
+      activeRun: { run_id: "r0", started_seq: 1, live: { meta: { segments: [] } } },
+    });
+    expect(s.activeRun?.runId).toBe("r1");
+  });
+
+  it("still clears on an answer asked for after the run started", () => {
+    const s = apply(initialThreadState("t"), started, {
+      type: "eventsReceived", events: [], lastSeq: 0,
+      activeRun: null, requestedAt: Date.now() + 5_000,
+    });
+    expect(s.activeRun).toBeNull();
+  });
+
   it("clears on commit, because the reply is in the log now", () => {
     const s = apply(initialThreadState("t"), started, { type: "runCommitted", runId: "r1" });
     expect(s.activeRun).toBeNull();

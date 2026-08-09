@@ -33,6 +33,11 @@ export type ActiveRun = {
   startedMs: number;
   model?: string;
   agent?: string;
+  // Epoch ms at which THIS TAB dispatched `runStarted`, if it did. Not a display
+  // value: it is what lets a sync response be dated against the run, so an
+  // answer computed before the run existed cannot erase it. Absent on a run
+  // this tab learned about from the server.
+  localStartedAt?: number;
 };
 
 export type PendingStatus = "sending" | "sent" | "failed";
@@ -69,6 +74,12 @@ export type ThreadAction =
       events: LogEvent[];
       lastSeq: number;
       activeRun: ActiveRunPayload;
+      /** Epoch ms at which the REQUEST behind this response was issued. Several
+       *  syncs are legitimately in flight at once (the 10s poll, focus and
+       *  visibilitychange, finish()'s settle loop, useCompaction's un-awaited
+       *  one), and they can resolve out of order. Without this, a response
+       *  computed before a run started could land after it and blank the run. */
+      requestedAt?: number;
     }
   | { type: "sendStarted"; clientId: string; text: string; ts: string }
   | { type: "sendAcked"; clientId: string }
@@ -121,8 +132,22 @@ function snapshotAhead(next: ChatSegment[], prev: ChatSegment[]): boolean {
   return segWeight(next[next.length - 1]) > segWeight(prev[prev.length - 1]);
 }
 
-function adoptRun(payload: ActiveRunPayload, prev: ActiveRun | null): ActiveRun | null {
-  if (!payload || !payload.run_id) return null;
+function adoptRun(
+  payload: ActiveRunPayload, prev: ActiveRun | null, requestedAt: number,
+): ActiveRun | null {
+  // A RESPONSE CANNOT SPEAK ABOUT A RUN THAT DID NOT EXIST WHEN IT WAS ASKED
+  // FOR. Syncs overlap by design and resolve out of order, so an older snapshot
+  // arriving after a locally-dispatched `runStarted` used to clear the live
+  // block outright — after which the reducer's own guard dropped that run's
+  // streamed deltas as "not ours", the turn went invisible until the next 10s
+  // poll re-adopted it, and in that window canDrainQueue was true, so a queued
+  // message could open a rival turn. The trigger is real and routine:
+  // useCompaction fires an un-awaited sync() immediately before sending
+  // /compact.
+  const stale = !!prev?.localStartedAt && requestedAt < prev.localStartedAt;
+  if (!payload || !payload.run_id) return stale ? prev : null;
+  // Same reasoning for a snapshot that names a DIFFERENT, older run.
+  if (stale && prev && payload.run_id !== prev.runId) return prev;
   const live = payload.live || {};
   const serverSegs = live.meta?.segments || [];
   const startedMs = live.ts ? Date.parse(live.ts) : NaN;
@@ -208,7 +233,10 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         order,
         cursor: Math.max(state.cursor, action.lastSeq || 0),
         pending: reconcilePending(state.pending, action.events),
-        activeRun: adoptRun(action.activeRun, state.activeRun),
+        // No `requestedAt` means the caller cannot date its response, so it is
+        // treated as current — the guard only ever suppresses a demonstrably
+        // older answer.
+        activeRun: adoptRun(action.activeRun, state.activeRun, action.requestedAt ?? Date.now()),
       };
     }
 
@@ -258,6 +286,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
           startedSeq: null,
           segments: [],
           startedMs: action.startedMs ?? Date.now(),
+          localStartedAt: Date.now(),
           model: action.model,
         },
       };
