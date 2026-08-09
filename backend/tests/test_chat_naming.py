@@ -156,3 +156,90 @@ class TestSeedTitle:
         assert chat_store.list_threads()[0]["title"] == "How do subagents work here?"
         chat_naming.generate_title(tid)
         assert chat_store.list_threads()[0]["title"] == "Subagent Delegation In Chat"
+
+
+class TestTheNamerDoesNotRaceTheConversation:
+    """Naming used to run WHOLE inside `asyncio.to_thread`: it read the thread,
+    made a ~2s model call, and wrote the thread back — from off the event loop,
+    with the read and the write straddling the call. Anything the operator sent
+    in that window was in the gap. The model call still runs in a worker thread,
+    because it blocks; the write comes back to the loop.
+    """
+
+    def test_the_model_call_runs_off_the_loop_and_the_write_runs_on_it(
+            self, store, monkeypatch):
+        import asyncio
+        import threading
+
+        loop_thread = threading.current_thread()
+        where = {}
+
+        def fake_call(prompt, **kw):
+            where["model_call"] = threading.current_thread()
+            return {"text": "Subagent Delegation In Chat"}
+
+        real_rename = chat_store.rename_thread
+
+        def watched_rename(*a, **kw):
+            where["write"] = threading.current_thread()
+            return real_rename(*a, **kw)
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", fake_call)
+        monkeypatch.setattr(chat_naming.chat_store, "rename_thread", watched_rename)
+
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+        asyncio.run(chat_naming.name_thread(tid))
+
+        assert where["model_call"] is not loop_thread
+        assert where["write"] is loop_thread
+        assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
+
+    def test_a_message_sent_during_the_naming_call_survives(self, store, monkeypatch):
+        """The race, run for real: the operator types while the namer is in its
+        model call. Both the name and the message have to be there afterwards."""
+        import asyncio
+
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+
+        def slow_call(prompt, **kw):
+            import time
+            time.sleep(0.05)          # the window the message lands in
+            return {"text": "Subagent Delegation In Chat"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", slow_call)
+
+        async def main():
+            async def types():
+                await asyncio.sleep(0.01)
+                chat_store.append_message(tid, "user", "WAIT one more thing")
+            await asyncio.gather(chat_naming.name_thread(tid), types())
+
+        asyncio.run(main())
+        t = chat_store.get_thread(tid)
+        assert t["title"] == "Subagent Delegation In Chat"
+        assert [m["content"] for m in t["messages"]][-1] == "WAIT one more thing"
+        assert len(t["messages"]) == 3
+
+    def test_a_name_typed_during_the_call_is_not_overwritten(self, store, monkeypatch):
+        import asyncio
+
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid)
+
+        def slow_call(prompt, **kw):
+            import time
+            time.sleep(0.05)
+            return {"text": "Subagent Delegation In Chat"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", slow_call)
+
+        async def main():
+            async def renames():
+                await asyncio.sleep(0.01)
+                chat_store.rename_thread(tid, "What I Called It")
+            await asyncio.gather(chat_naming.name_thread(tid), renames())
+
+        asyncio.run(main())
+        assert chat_store.get_thread(tid)["title"] == "What I Called It"

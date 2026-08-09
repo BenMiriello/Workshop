@@ -179,3 +179,45 @@ class TestOneFoldAtATime:
         results = asyncio.run(main())
         assert len(calls) == 1
         assert sorted(r[2] for r in results) == [0, 6]
+
+
+class TestSaveThreadDiffsInsteadOfOverwriting:
+    """`save_thread` is the shim for callers that still mutate a thread dict in
+    place. It appends what the caller added and revises what it edited; it never
+    writes the transcript as a whole, so nothing it does not mention is at risk."""
+
+    def test_a_message_added_to_a_stale_snapshot_lands_after_the_one_it_missed(
+            self, thread):
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "one")
+        stale = chat_store.get_thread(tid)
+        chat_store.append_message(tid, "user", "two")      # …meanwhile
+        stale["messages"].append({"role": "user", "content": "three",
+                                  "ts": "2026-08-09T12:00:00+00:00"})
+        chat_store.save_thread(stale)
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["content"] for m in msgs] == ["one", "two", "three"]
+
+    def test_editing_a_message_keeps_its_place(self, thread):
+        """A revision supersedes a message where it already is. If it appended
+        instead, a finished reply would jump below the messages sent while it
+        was still running."""
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "one")
+        chat_store.append_message(tid, "assistant", "draft", meta={"streaming": True})
+        chat_store.append_message(tid, "user", "three")
+        t = chat_store.get_thread(tid)
+        t["messages"][1]["content"] = "the finished reply"
+        t["messages"][1]["meta"] = {"streaming": False}
+        chat_store.save_thread(t)
+        msgs = chat_store.get_thread(tid)["messages"]
+        assert [m["content"] for m in msgs] == ["one", "the finished reply", "three"]
+        assert msgs[1]["meta"] == {"streaming": False}
+
+    def test_a_field_the_caller_dropped_is_removed(self, thread):
+        tid = thread["id"]
+        chat_store.set_thread_context_tokens(tid, 999)
+        t = chat_store.get_thread(tid)
+        t.pop("context_tokens")
+        chat_store.save_thread(t)
+        assert "context_tokens" not in chat_store.get_thread(tid)
