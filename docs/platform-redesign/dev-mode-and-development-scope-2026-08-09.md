@@ -103,9 +103,56 @@ removed. This is the part that makes the gate checkable rather than
 whack-a-mole: today "am I about to edit the platform?" has five different
 answers depending on which subsystem is asking.
 
-`workshop` then means only what the entity model already says — the root scope
-that inherits downward. That matches the operator's "global scope just means
-universal scope including subscopes."
+## 4.1 What `workshop` scope becomes — the definition
+
+Three scopes, three different questions:
+
+| scope | the question it answers | working tree for a run |
+| --- | --- | --- |
+| `development` | work **on** the Workshop — its source, and this installation's host | the platform repo (dev mode only) |
+| `workshop` | work **with** the Workshop — the root organising layer | **none** |
+| `project:<slug>` / `app:<name>` / `agent:<slug>` | work on one specific thing | that thing's tree |
+
+**`workshop` is the root organising scope: where you think, plan, note and
+triage. It is not where anything is built.**
+
+It KEEPS everything it does today except one thing:
+
+- the **global notes layer** (`shared/knowledge/`) — the widest read layer,
+  inherited by every scope beneath it (`entity-model-2026-07-18.md:67-69`);
+- the **root ticket queue**, now in its true role: the inbox and orchestration
+  surface where work is filed, triaged, decomposed and routed to the scope that
+  owns it;
+- **chats** — the general/assistant chat lives here. This is already how it
+  behaves: the workshop chat is a *data* provider with `cwd` = `~` and no
+  filesystem tools (`chat.py:1946-1948`), not a build provider;
+- **being the universal parent** — an entity here is visible to every scope
+  below. This is "universal scope including subscopes", unchanged.
+
+It LOSES exactly one thing:
+
+- **resolving to the platform repo as a working tree.** `WORKSHOP_ROOT` stops
+  being what `workshop` means for execution.
+
+### The distinction that made the earlier framing confusing
+
+A scope's **store location** and a run's **working tree** are different things,
+and only the second is gated. Workshop-scope data still physically lives inside
+the platform repo on disk (`.tasks.json`, `shared/knowledge/`). That is storage.
+It does not make the repo a work target, and nothing about this change moves
+those files.
+
+### So what does "not runnable" mean here
+
+Only that **no builder sweep is dispatched against `workshop`** — there is no
+code tree for one to run in. Workshop tickets are still worked: by the assistant,
+in chat, and by assistant-style runs that have no repo and no code tools. A
+ticket that turns out to need code is re-scoped to whatever owns that code
+(`development` for the platform, `project:x` for a project). That routing is the
+triage step, and it is the root scope's actual job.
+
+`workshop` therefore means only what the entity model always said it meant — the
+root scope that inherits downward.
 
 ## 5. Where developer mode must NOT live
 
@@ -160,24 +207,53 @@ What it does buy:
 Write that framing at the flag and at each chokepoint, so it does not become the
 next thing an audit has to unwind.
 
-## 8. Open questions — operator input needed
+## 8. Decisions (operator, 2026-08-09)
 
-1. **Does `workshop` stay runnable at all?** Recommendation: no. It becomes a
-   pure organising/notes/tickets scope, and anything that runs does so in
-   `development`, a project, or an agent scope.
-2. **What do the always-on loops do in a normal install?** `queue_runner.sh`
-   currently defaults to the platform tree and is kept alive by cron. Under this
-   model it should target `development` only in dev mode. In a non-dev install,
-   is there an always-on loop at all, or only per-project runs?
-3. **The four `workshop-builder*` build agents and the `project:workshop`
-   registry row** — delete, or redirect to `development`? Recommendation:
-   redirect the self row, delete the retired builders, so exactly one name
-   resolves to the platform repo.
-4. **Migration of the existing root queue.** `.tasks.json` (287 KB) mixes
-   platform work (the `SEC-*` and UI tickets) with personal ops. Recommendation:
-   produce a listing for the operator to sort by hand rather than guessing.
-5. **Is `development` one scope or several?** Recommendation: one. Per-ticket
-   `touches` gives granularity; sub-scopes would multiply the §9 parser cost.
+1. **`workshop` is not a build target.** Defined in §4.1. No builder sweep is
+   dispatched against it; it has no code tree. It keeps its notes, its queue, its
+   chats and its universal-parent role.
+2. **The always-on loops stay always on — scoped.** Nothing is switched off. The
+   only change is that the platform repo stops being the *default* target:
+   `ralph.sh:60` and `queue_runner.sh:41` currently read `DIR="$WORKSHOP"`, so a
+   loop started with no argument works the platform tree. A target must be named.
+   The dispatcher keeps iterating scopes that have work — projects always,
+   `development` only when dev mode is on.
+3. **Redirect, don't multiply.** The `project:workshop` registry row becomes
+   `development`; the four retired `workshop-builder*` records are deleted. Exactly
+   one name resolves to the platform repo.
+4. **Migrate wholesale — the combing is done, and the result is decisive.** See
+   §8.1.
+5. **One scope**, not several. Per-ticket `touches` provides granularity.
+
+### 8.1 Result of combing the root queue
+
+93 tickets: 16 open, 61 done, 16 cancelled. **Every one of them is platform or
+installation work.** Not a single personal-ops ticket exists in the root queue.
+
+The 16 open ones fall into two groups, both of which belong to `development`:
+
+- **platform source** — "Add a by-chat usage view to the Usage page", "Audit the
+  toolbar and chat-adjacent pages", "Execute P5 (Run → Session rename) and P6",
+  `[SEC-A2]`, `[SEC-A5]`, `[SEC-A6]`, `[SEC-G1]`;
+- **this installation's host** — `[SEC-C3]` IPv6 firewall, `[SEC-H3]` NOPASSWD
+  sudo, `[SEC-H4]` ComfyUI bind, `[SEC-H7]` Ollama bind, `[SEC-M1]` Letta
+  password, `[SEC-M2]` open-wearables secrets, `[SEC-M3]` sshd, `[SEC-L2]` Vite
+  dev server, `[SEC-L5]` Samba.
+
+The closed history is the same in character: the ralph worker loop, the reviewer
+gate, task leases, the entity model, the orchestration surface, the autonomy
+model.
+
+Two things follow. First, the migration is a **move, not a sort** — no judgement
+call per ticket. Second, and more usefully: **`workshop` scope has never once been
+used for the purpose this redesign gives it.** In practice "workshop scope" has
+only ever meant "edit the Workshop", which is exactly why the two meanings fused.
+The redesign is therefore closer to a rename plus a gate than to a split.
+
+This also settles a question §4.1 raises implicitly: host/infra work belongs to
+`development`, because `development` means *work on this installation* — its
+source and the box it runs on. A normal user of a hosted Workshop has no box to
+configure and no source to edit; that is the whole boundary.
 
 ## 9. Known cost: there is no canonical scope enum
 
@@ -219,7 +295,7 @@ must not be cited as one.
 | 2 | `development` added through the four parsers + UI (icon, label, ordering) | the scope exists but nothing routes to it yet |
 | 3 | Collapse the aliases (§4): self registry row, retired builders, `general`→root | one name for the platform repo |
 | 4 | The four chokepoints (§3) call `is_self_dir` and refuse when dev mode is off | the load-bearing change |
-| 5 | Migrate the root queue; point the loops at `development` | data follows behaviour |
+| 5 | Move the root queue wholesale to `development` (§8.1 — no per-ticket sort needed); name the loops' targets so the platform repo stops being their default | data follows behaviour |
 | 6 | Verification: assert dev surfaces absent from a non-dev bundle, and that a non-dev backend refuses every door in §2 | proves the claim instead of asserting it |
 
 Phases 3–5 must not ship separately from 4. Between them the system would claim
