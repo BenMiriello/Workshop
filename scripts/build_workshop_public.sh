@@ -23,6 +23,22 @@ for arg in "$@"; do
   esac
 done
 
+# ONE build at a time. The post-commit hook fires a background rebuild on every
+# commit, so a manual build can easily overlap one. Two `vite build` runs writing
+# the same dist/ can leave a half-written bundle on the LIVE site, and they also
+# race on the single stamp capture file (scripts/stamp_build.sh --capture): the
+# first --write consumes it, so the second stamps `unknown-no-capture` and the
+# freshness check then reports STALE forever. A permanently-crying staleness
+# warning is worse than none, because it trains everyone to ignore the one signal
+# that says the operator is looking at old code. That is exactly what happened.
+LOCK="$REPO_ROOT/tmp/ui-build.lock"
+mkdir -p "$REPO_ROOT/tmp"
+exec 9>"$LOCK"
+if ! flock -w 300 9; then
+  echo "build_workshop_public: timed out waiting for another build to finish" >&2
+  exit 1
+fi
+
 echo "Building frontend -> frontend/dist ..."
 (cd "$REPO_ROOT/frontend" && npm run build)
 
