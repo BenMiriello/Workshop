@@ -20,6 +20,7 @@ depth for the network-trusted internal endpoints only.
 """
 from __future__ import annotations
 
+import logging
 import os
 import posixpath
 from pathlib import Path
@@ -28,6 +29,8 @@ import httpx
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+
+log = logging.getLogger("workshop.public_edge")
 
 BACKEND = os.environ.get("WORKSHOP_BACKEND", "http://127.0.0.1:8000")
 DIST = Path(os.environ.get("WORKSHOP_DIST", str(Path(__file__).resolve().parents[1] / "frontend" / "dist")))
@@ -51,17 +54,30 @@ _BLOCKED_PREFIXES = (
     # blocking is segment-exact after normalize, so /api/auto-pr was proxied through
     # and inherited loopback trust. Fixed 2026-07-18 (security-audit-2026-07-18 H1).
     "/tools", "/relay", "/services", "/events", "/auto-pr",
-    # unauthenticated / Basic ingest webhooks
-    "/plaid/webhook",
-    "/location/owntracks",
-    "/health/ingest",
-    "/birds/webhook", "/birds/live/publish",
 )
 
-# Paths blocked EXACTLY (not as a prefix), so authed sibling routes still work.
-# `/birds/analyze` is the loopback ingest POST; `/birds/analyze/settings`,
-# `/birds/analyze/recompute`, etc. are require_user reads the SPA legitimately uses.
-_BLOCKED_EXACT = frozenset({"/birds/analyze"})
+# An app's own unauthenticated ingest paths are declared on its AppSpec
+# (edge_blocked_prefixes / edge_blocked_exact) and blocked only while the app is
+# installed. Listing them here made the edge's threat surface a property of the
+# platform rather than of what is actually running, and every new app meant
+# editing this file to stay safe — which is how one gets forgotten.
+#
+# Fails CLOSED. If the installed set cannot be read, every backend path is
+# refused and the edge serves the static SPA alone: an edge that cannot tell
+# what to block must not guess that the answer is "nothing".
+_BLOCK_ALL = "\x00block-all"
+
+
+def _app_edge_blocks() -> tuple[frozenset[str], frozenset[str]]:
+    try:
+        from services import app_registry
+
+        prefixes, exact = app_registry.installed_edge_blocks()
+        return frozenset(prefixes), frozenset(exact)
+    except Exception:
+        log.exception("edge: cannot read installed apps; blocking all backend paths")
+        return frozenset({_BLOCK_ALL}), frozenset()
+
 
 # Hop-by-hop headers we must not forward verbatim.
 _DROP_REQ = {"host", "content-length", "connection", "keep-alive", "transfer-encoding"}
@@ -117,9 +133,15 @@ def _normalize(stripped_path: str) -> str:
 
 def _is_blocked(stripped_path: str) -> bool:
     p = _normalize(stripped_path)
-    if p in _BLOCKED_EXACT:
+    app_prefixes, app_exact = _app_edge_blocks()
+    if _BLOCK_ALL in app_prefixes:
         return True
-    return any(p == b or p.startswith(b + "/") for b in _BLOCKED_PREFIXES)
+    if p in app_exact:
+        return True
+    for b in (*_BLOCKED_PREFIXES, *app_prefixes):
+        if p == b or p.startswith(b + "/"):
+            return True
+    return False
 
 
 async def _proxy(request: Request, backend_path: str) -> Response:

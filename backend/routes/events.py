@@ -25,10 +25,20 @@ log = logging.getLogger("workshop.events")
 EVENTS_LOG = paths.env_path("WORKSHOP_EVENTS_LOG", "events.jsonl")
 SUBSCRIPTIONS = paths.env_path("WORKSHOP_SUBSCRIPTIONS", "agent-subscriptions.json")
 
-# Sources we will actively accept. Unknown sources are still logged but
-# get an explicit "unknown_source" flag so we can audit untrusted callers.
-KNOWN_SOURCES = {"plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles",
-                 "birdnet", "discord", "custom"}
+# Sources we will actively accept. Unknown sources are still logged but get an
+# explicit "unknown_source" flag so we can audit untrusted callers.
+#
+# The platform's own are the surfaces it speaks natively; everything else is an
+# app's, declared on its AppSpec.event_sources and present only while that app
+# is installed. A webhook for an uninstalled app is an unknown source, which is
+# the honest answer.
+PLATFORM_SOURCES = {"gmail", "calendar", "github", "discord", "custom"}
+
+
+def known_sources() -> set[str]:
+    from services import app_registry
+
+    return PLATFORM_SOURCES | app_registry.installed_event_sources()
 
 
 def _load_subscriptions() -> dict[str, list[str]]:
@@ -104,7 +114,7 @@ async def receive_event(source: str, request: Request):
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "source": source,
-        "known_source": source in KNOWN_SOURCES,
+        "known_source": source in known_sources(),
         "signature": {"ok": sig_ok, "reason": sig_reason},
         "headers": {k: v for k, v in request.headers.items() if k.lower() not in {"authorization", "cookie"}},
         "body": payload,
@@ -124,7 +134,7 @@ async def receive_event(source: str, request: Request):
     subscribers = _load_subscriptions().get(source, [])
     log.info(
         "event source=%s known=%s subscribers=%d enqueued=%d payload_keys=%s",
-        source, source in KNOWN_SOURCES, len(subscribers), dispatch["enqueued"],
+        source, source in known_sources(), len(subscribers), dispatch["enqueued"],
         list(payload.keys())[:8] if isinstance(payload, dict) else "non-dict",
     )
 

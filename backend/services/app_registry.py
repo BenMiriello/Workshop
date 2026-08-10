@@ -89,6 +89,28 @@ class AppSpec:
     #                   cross-app snapshot. None => this app contributes none.
     chat_provider: Callable[[], Any] | None = None
     chat_snapshot: Callable[[], str] | None = None
+    # Model tier for this app's in-app assistant. None => the platform default.
+    # Here rather than in routes/chat.py so opting an app up to a bigger model
+    # is a property of the app, not a line the platform keeps about it.
+    chat_model_tier: str | None = None
+    # Event-bus sources this app accepts webhooks from (routes/events.py unions
+    # these with the platform's own over the installed set).
+    event_sources: tuple[str, ...] = ()
+    # Tool handles this app offers to agents (routes/agents.py KNOWN_TOOLS).
+    tools: tuple[str, ...] = ()
+    # Stores this app owns: (name, path_factory, type). The factory is called
+    # lazily so a store whose directory does not exist yet costs nothing at
+    # import time. `per_owner` stores resolve under the owner's runtime dir.
+    stores: tuple[tuple[str, Callable[[], Any], str, bool], ...] = ()
+    # Paths the PUBLIC edge must NEVER forward to this app: unauthenticated or
+    # loopback-trusted ingest that would otherwise inherit the proxy's trust.
+    # `_exact` is for an ingest POST whose siblings under the same prefix are
+    # ordinary authed reads the SPA uses (workshop_public_app.py).
+    edge_blocked_prefixes: tuple[str, ...] = ()
+    edge_blocked_exact: tuple[str, ...] = ()
+    # Env vars to strip from a spawned agent turn because they are this app's
+    # secrets and nothing downstream should inherit them (llm_router).
+    secret_env: tuple[str, ...] = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -266,6 +288,14 @@ def _finance_spec() -> AppSpec:
         mcp_provider=_PLAID_MCP_PROVIDER,
         on_startup=(_finance_on_startup,),
         background=(_prewarm_loop, _categorize_loop),
+        event_sources=("plaid",),
+        tools=("plaid",),
+        edge_blocked_prefixes=("/plaid/webhook",),
+        secret_env=("PLAID_CLIENT_ID", "PLAID_SECRET", "PLAID_ENV"),
+        stores=(
+            ("plaid-items", lambda: _owner_file("plaid-items.json"), "Finance", True),
+            ("transactions", lambda: _owner_file("finance-cache.json"), "Finance", True),
+        ),
     )
 
 
@@ -274,6 +304,7 @@ def _budget_spec() -> AppSpec:
     from services import app_personas as ap
     return AppSpec(
         id="budget",
+        chat_model_tier="sonnet",  # plan-patch needs careful path generation
         chat_provider=ap.BudgetContextProvider,
         card={
             "title": "Budget",
@@ -293,6 +324,7 @@ def _budget_spec() -> AppSpec:
         # Budget chat shares the plaid MCP for transaction lookup.
         mcp=_PLAID_MCP,
         mcp_provider=_PLAID_MCP_PROVIDER,
+        stores=(("plan", lambda: _owner_file("budget.json"), "Budget", True),),
     )
 
 
@@ -318,6 +350,7 @@ def _commute_spec() -> AppSpec:
         mounts=(
             RouterMount(commute.router, deps=(Depends(require_domain_owner("commute")),)),
         ),
+        stores=(("data", lambda: _runtime_dir("commute"), "Commute", False),),
     )
 
 
@@ -345,6 +378,7 @@ def _location_spec() -> AppSpec:
             # OwnTracks ingest — HTTP Basic bound to an owner inside the handler.
             RouterMount(owntracks.router),
         ),
+        edge_blocked_prefixes=("/location/owntracks",),
     )
 
 
@@ -371,6 +405,8 @@ def _birds_spec() -> AppSpec:
             RouterMount(environment.router, deps=(Depends(require_user),)),
         ),
         background=(_env_refresh_loop, _atlas_rebuild_loop),
+        edge_blocked_prefixes=("/birds/webhook", "/birds/live/publish"),
+        edge_blocked_exact=("/birds/analyze",),
     )
 
 
@@ -389,6 +425,7 @@ def _health_spec() -> AppSpec:
             # /ingest: HTTP Basic bound to owner; reads: require_user per-endpoint.
             RouterMount(health.router),
         ),
+        edge_blocked_prefixes=("/health/ingest",),
     )
 
 
@@ -515,6 +552,74 @@ def _platform_mcp_servers() -> dict[str, dict]:
             },
         }
     }
+
+
+def _runtime_dir(name: str):
+    """An app-shared (not per-owner) directory under the runtime root."""
+    from services import stores as _stores
+
+    return _stores._runtime_root() / name
+
+
+def _owner_file(name: str):
+    """A per-owner data file under the current owner's runtime dir."""
+    from services import stores as _stores
+
+    base = _stores._operator_runtime_dir()
+    return None if base is None else base / name
+
+
+def installed_app_ids() -> list[str]:
+    """Ids of the apps this instance actually has, in catalog order."""
+    return [s.id for s in installed_specs()]
+
+
+def installed_event_sources() -> set[str]:
+    out: set[str] = set()
+    for spec in installed_specs():
+        out.update(spec.event_sources)
+    return out
+
+
+def installed_tools() -> list[str]:
+    out: list[str] = []
+    for spec in installed_specs():
+        for tool in spec.tools:
+            if tool not in out:
+                out.append(tool)
+    return out
+
+
+def installed_chat_model_tiers() -> dict[str, str]:
+    return {s.id: s.chat_model_tier for s in installed_specs() if s.chat_model_tier}
+
+
+def installed_edge_blocks() -> tuple[set[str], set[str]]:
+    """(prefixes, exact) the public edge must refuse, across installed apps."""
+    prefixes: set[str] = set()
+    exact: set[str] = set()
+    for spec in installed_specs():
+        prefixes.update(spec.edge_blocked_prefixes)
+        exact.update(spec.edge_blocked_exact)
+    return prefixes, exact
+
+
+def installed_secret_env() -> tuple[str, ...]:
+    out: list[str] = []
+    for spec in installed_specs():
+        for var in spec.secret_env:
+            if var not in out:
+                out.append(var)
+    return tuple(out)
+
+
+def installed_stores() -> list[tuple[str, str, object, str, bool]]:
+    """(app_id, name, path_factory, type, per_owner) for every installed app."""
+    return [
+        (spec.id, name, factory, type_, per_owner)
+        for spec in installed_specs()
+        for (name, factory, type_, per_owner) in spec.stores
+    ]
 
 
 def installed_mcp_servers() -> dict[str, dict]:

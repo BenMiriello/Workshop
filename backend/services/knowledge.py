@@ -29,8 +29,16 @@ from services import paths
 
 log = logging.getLogger("workshop.knowledge")
 
-# App-provider context keys that map onto an `app:<key>` scope.
-APP_CONTEXT_KEYS = {"budget", "finance", "commute", "location"}
+def app_context_keys() -> set[str]:
+    """Context keys that map onto an `app:<key>` scope.
+
+    Read from the installed apps rather than listed here: a key naming an app
+    the instance does not have is a scope nothing can reach, and an app added
+    tomorrow would otherwise need an edit to this file.
+    """
+    from services import app_registry
+
+    return set(app_registry.installed_app_ids())
 
 # note_id: kebab/hex slug, lowercase, no path separators or dots -> no traversal.
 _NOTE_ID_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
@@ -75,7 +83,7 @@ def scope_for_context(context_key: str) -> str:
         return "development"
     if ck in ("general", "new-project"):
         return "workshop"
-    if ck in APP_CONTEXT_KEYS:
+    if ck in app_context_keys():
         return f"app:{ck}"
     if ":" in ck:
         prefix, _, slug = ck.partition(":")

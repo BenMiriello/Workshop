@@ -42,11 +42,14 @@ from __future__ import annotations
 
 import builtins
 import json
+import logging
 import re
 import shutil
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger("workshop.stores")
 from typing import Any
 
 # workshop://store/<app>/<name>[/<path>] — app and name are slug-ish; the optional
@@ -273,10 +276,10 @@ def register_builtin_stores() -> None:
     """Declare the concrete data stores the built-in apps own, each pointing at
     its real existing path. Per-owner files resolve to the operator's runtime
     dir. Best-effort: a missing owner dir simply skips the per-owner stores."""
+    # The platform's own stores. Everything app-specific is declared on that
+    # app's AppSpec and registered below, so a store exists exactly while the
+    # app that owns it is installed.
     runtime = _runtime_root()
-
-    # App-shared (not per-owner) stores.
-    declare("commute", "data", runtime / "commute", type="Commute")
     declare("secrets", "env", runtime / "secrets", type="Secret")
 
     # The notes vault (~/notes). Declared in place: the vault stays a plain folder
@@ -288,17 +291,26 @@ def register_builtin_stores() -> None:
     from services import permissions
     declare("notes", "vault", permissions.NOTES_VAULT_ROOT, type="Note")
 
-    # Per-owner stores (single-user: the operator's runtime dir).
-    user_dir = _operator_runtime_dir()
-    if user_dir is not None:
-        declare("budget", "plan", user_dir / "budget.json", type="Budget")
-        # plaid-items.json is 0600 — declared in place, never moved or chmodded.
-        declare("finance", "plaid-items", user_dir / "plaid-items.json", type="Finance")
-        # The transaction cache. Registered so the access protocol has a SECOND
-        # resource type to prove itself on: if mediated access only ever means
-        # "which markdown file may I read", it is a notes feature in a protocol
-        # costume. Declared in place, like everything else here.
-        declare("finance", "transactions", user_dir / "finance-cache.json", type="Finance")
+    register_app_stores()
+
+
+def register_app_stores() -> None:
+    """Declare each installed app's own stores, from its AppSpec.
+
+    Best-effort per store: a per-owner store resolves to None when there is no
+    owner runtime dir yet, and is simply skipped, exactly as before.
+    """
+    from services import app_registry
+
+    for app_id, name, factory, type_, per_owner in app_registry.installed_stores():
+        try:
+            path = factory()
+        except Exception:
+            log.exception("stores: %s/%s failed to resolve its path", app_id, name)
+            continue
+        if path is None:
+            continue
+        declare(app_id, name, path, type=type_)
 
 
 def register_from_manifests() -> None:

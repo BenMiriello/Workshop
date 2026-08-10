@@ -48,14 +48,20 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 # Default chat model — haiku is plenty fast and good enough for the chat surface.
-# Budget chat opts up to sonnet via PROVIDER_MODELS when a per-app override is
-# wanted (richer numeric reasoning); commute/location/finance stay on haiku to
-# keep latency tight (operator's prior complaint: 180s timeouts on budget were
-# really bad UX).
+# An app that wants a bigger model for its own assistant says so on its AppSpec
+# (chat_model_tier); everything else stays on haiku to keep latency tight. The
+# platform does not keep a list of which apps are special.
 DEFAULT_CHAT_MODEL = llm_router.TIER_HAIKU
-PROVIDER_MODELS: dict[str, str] = {
-    "budget": llm_router.TIER_SONNET,  # plan-patch needs careful path generation
-}
+
+
+def provider_models() -> dict[str, str]:
+    """app_id -> model id, for installed apps that declared a tier."""
+    from services import app_registry
+
+    return {
+        app_id: llm_router.TIERS.get(tier, DEFAULT_CHAT_MODEL)
+        for app_id, tier in app_registry.installed_chat_model_tiers().items()
+    }
 # Per-provider tool policy: providers define allowed_tools + mcp_servers
 # (see chat_context.ContextProvider). The narrow-tool path in
 # call_cloud honors these — built-in tools (Bash/Read/Edit) stay off

@@ -13,7 +13,17 @@ router = APIRouter()
 
 HEARTBEATS_DIR = paths.env_path("WORKSHOP_HEARTBEATS_DIR", "heartbeats")
 
-KNOWN_TOOLS = ["filesystem", "plaid", "google-docs", "playwright", "ollama", "web"]
+# Tool handles the platform itself provides. An app's tools come from its
+# AppSpec.tools and appear only while it is installed.
+PLATFORM_TOOLS = ["filesystem", "google-docs", "playwright", "ollama", "web"]
+
+
+def known_tools() -> list[str]:
+    from services import app_registry
+
+    return PLATFORM_TOOLS + [
+        t for t in app_registry.installed_tools() if t not in PLATFORM_TOOLS
+    ]
 
 
 class AgentCreate(BaseModel):
@@ -204,7 +214,7 @@ async def list_delegates():
 
 @router.get("/tools")
 async def list_tools():
-    return {"tools": KNOWN_TOOLS}
+    return {"tools": known_tools()}
 
 
 # ---- Build agents (Claude Code coding sessions) ----------------------------

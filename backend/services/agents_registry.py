@@ -356,11 +356,16 @@ def _validate_autonomy(v: object) -> str:
         raise ValueError(f"unknown autonomy {v!r}; must be one of {AUTONOMY}")
     return a
 
-# Kept in sync with routes/agents.py KNOWN_SOURCES — the event-source vocabulary
-# the subscriptions file is partitioned by. `discord` is the source a `discord`
-# trigger subscribes to (final-plan PM.2); it is fed by scripts/chat_event_bridge.py.
-KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles",
-                 triggers.DISCORD_SOURCE, "custom"]
+def known_sources() -> list[str]:
+    """The event-source vocabulary the subscriptions file is partitioned by.
+
+    One definition, in routes/events.py, unioned with whatever the installed
+    apps declare. This used to be a second copy with a comment asking the reader
+    to keep it in sync, which is the failure mode it then had.
+    """
+    from routes import events
+
+    return sorted(events.known_sources())
 
 DEFAULT_LIMITS = {
     "max_iterations": triggers.DEFAULT_LOOP_MAX_ITERATIONS,
@@ -1172,7 +1177,7 @@ def regenerate_subscriptions() -> dict:
     agents = list_agents()
     registry_ids = {a["id"] for a in agents if a.get("id")}
 
-    fresh: dict[str, list[str]] = {s: [] for s in KNOWN_SOURCES}
+    fresh: dict[str, list[str]] = {s: [] for s in known_sources()}
     for a in agents:
         aid = a.get("id")
         if not aid:
@@ -1202,9 +1207,9 @@ def regenerate_subscriptions() -> dict:
         if isinstance(k, str) and k.startswith("_"):
             out[k] = v
     out.setdefault("_schema", "source (string) -> list of letta agent_ids subscribed")
-    out.setdefault("_known_sources", list(KNOWN_SOURCES))
+    out.setdefault("_known_sources", list(known_sources()))
 
-    for src in KNOWN_SOURCES:
+    for src in known_sources():
         prior = existing.get(src) or []
         preserved = [aid for aid in prior if aid not in registry_ids]
         out[src] = list(dict.fromkeys(preserved + fresh.get(src, [])))
