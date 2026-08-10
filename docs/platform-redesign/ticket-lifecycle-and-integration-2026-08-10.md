@@ -210,49 +210,64 @@ with a human confirming.
 
 ---
 
-## 7. In scope now
+## 7. What shipped, and what did not
 
-Building: **tickets, integration, and user-triggered chat scanning → ticket
-making → ticket execution.** Questions surface in the inbox.
+In scope was: **tickets, integration, and user-triggered chat scanning to ticket
+making to ticket execution**, with questions surfacing in the inbox. All of it is
+built.
 
 | # | Work | State |
 |---|---|---|
 | 1 | Ticket shape: title/body, draft, labels, scoped_by | shipped `010a9a4` |
 | 2 | Questions reach the next attempt and the originating chat | shipped `a8e576f` |
 | 3 | Readiness check; broken tickets refused | shipped `ca515bc`, `2e04482` |
-| 4 | Approval gate: draft → approve → run | shipped `9c33b1c` |
+| 4 | Approval gate: draft, approve, run | shipped `9c33b1c` |
 | 5 | Questions in the inbox as one list | already existed (`run_inbox`) |
 | 6 | User-triggered chat scan to proposals | already existed (`ticket_drafts`) |
 | 7 | Ticket body format + one checker reading it | shipped `e8d00b2`, `d3c1257` |
 | 8 | A proposal IS a draft ticket (one concept) | shipped `3524275` |
 | 9 | Scope review: split / blockers / stages | shipped `a580272` |
-| 10 | Tracker connection, adapter, triage inbox | shipped `bff266e`, `c72c7a1` |
+| 10 | Tracker connection, adapter, triage inbox, settings | shipped `bff266e`, `c72c7a1` |
 | 11 | Two-way sync: publish, push, pull, conflicts | shipped `9f3f228` |
 
-Two of these turned out to exist already, which is worth recording so they are
-not rebuilt:
+Two of them existed already and are recorded so they are not rebuilt:
 
 - **Questions in the inbox** (`services/run_inbox`). A blocked ticket becomes an
   inbox item of kind `question`, deduped `task:<scope>:<id>`, and resolving it
   answers the TICKET through the review endpoint rather than just closing the
-  row — so the answer lands in the body where the next attempt reads it. It
+  row, so the answer lands in the body where the next attempt reads it. It
   reconciles on read rather than raising at the transition, deliberately: the
   producers are shell sweeps in other processes, and a raise-once design gets
   permanently out of step the first time anything writes a store behind its back.
-  Verified end to end: a blocked ticket raises one item, and answering it closes
-  the item on the next sync.
-- **Chat scan → proposals** (`services/ticket_drafts` + `TicketDraftsDialog`).
-  Reads the last 24 messages and proposes 0..N self-contained drafts; zero is a
-  normal answer. Drafts persist on the thread with edits, so reopening the dialog
-  never silently re-runs a 30-second model call or loses corrections.
+  Verified end to end.
+- **Chat scan to proposals** (`services/ticket_drafts`). Reads the last 24
+  messages and proposes 0..N self-contained drafts; zero is a normal answer.
 
-What is genuinely missing from #6 is that these thread-local proposals are a
-SECOND draft concept alongside `draft` tickets. They should converge on one:
-a proposal is a `draft` ticket. Doing that also gets deduping (`task_dedup`) and
-the readiness checklist for free, both of which the thread-local drafts lack.
-| 9 | Tracker binding: settings, GitHub App + device flow, one connection | then |
-| 10 | Triage inbox; connect/disconnect/reconnect per §6 | then |
-| 11 | Two-way sync: write-through, shadow merge, conflicts, ADF handling | then |
+Item 8 closed the gap those two left: the thread-local proposals were a SECOND
+draft concept beside `draft` tickets. Converging them bought dedup on re-scan,
+the readiness checklist, and visibility in Work, none of which the thread-local
+version had.
+
+### Not built, named so it is not assumed
+
+- **Decay of an unanswered question.** A blocked ticket reaches the inbox and the
+  originating chat, but nothing escalates one that has sat unanswered for a day.
+- **The invariant checker** (`scripts/ticket_audit.py`, §8 of the earlier doc).
+- **Bulk publish-existing at connect.** Connecting imports; publishing tickets you
+  already had happens per-ticket through approval. The "publish all N" question in
+  §6 is designed and not wired.
+- **Linear and Jira adapters.** Designed, including the ADF handling in §3.
+  Neither is written, and both are blocked on egress for `api.linear.app` and
+  `*.atlassian.net` regardless.
+- **Device flow.** Wired to the credential seam and stops at the one value only the
+  operator can create: a GitHub App client id, registered on github.com. `gh` is
+  the working source today and the seam is why replacing it is not a rewrite.
+- **A conflict surface.** `sync.conflict` is populated and the resolve endpoint
+  works; nothing renders it, so a conflict is visible only through the API.
+- **Live-tested writes.** The GitHub adapter's reads are verified against real
+  GitHub (whoami, labels, pagination). Create, update, transition and comment are
+  covered by tests against a fake remote but have not been fired at a real repo,
+  because that writes to the operator's GitHub.
 
 ## 8. Explicitly later, recorded so it is not re-litigated
 
