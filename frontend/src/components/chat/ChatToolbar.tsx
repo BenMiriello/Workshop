@@ -121,7 +121,6 @@ export default function ChatToolbar({
       {showProviderPicker && providers.length > 1 && mode === "data" ? (
         <Menu
           label="Scope"
-          align="start"
           trigger={
             <button className="chat-tb__picker" title="Which scope this chat is in">
               <ScopeIcon kind={scopeKind(activeProvider)} />
@@ -199,7 +198,6 @@ export default function ChatToolbar({
       {onChooseChatMode && (
         <Menu
           label="Tickets"
-          align="end"
           trigger={
             <button
               className={`chat-tb__btn${chatModeDef(chatMode).id === "orchestrated" ? " is-active" : ""}`}
@@ -247,7 +245,6 @@ export default function ChatToolbar({
 
       <Menu
         label="Chat actions"
-        align="end"
         trigger={
           <button className="chat-tb__btn" title="More" aria-label="More chat actions">
             <MoreVertical size={16} aria-hidden />

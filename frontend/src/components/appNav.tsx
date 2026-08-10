@@ -391,7 +391,6 @@ export function SectionNav() {
       <Menu
         className="ws-sectionnav-menu"
         label="Sections"
-        align="end"
         trigger={
           <button type="button" className="ws-iconbtn" aria-label="Sections menu">
             <MenuIcon size={20} aria-hidden />

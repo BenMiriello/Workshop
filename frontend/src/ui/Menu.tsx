@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactElement,
@@ -28,7 +29,6 @@ import { cx } from "./cx";
 export function Menu({
   trigger,
   label,
-  align = "start",
   side = "bottom",
   className,
   children,
@@ -37,13 +37,20 @@ export function Menu({
   // merged in, so callers style their own trigger without re-wiring behaviour.
   trigger: ReactElement<Record<string, unknown>>;
   label: string;
-  // Which edge of the trigger the popover lines up with, and which way it opens.
-  align?: "start" | "end";
   side?: "bottom" | "top";
   className?: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  // Horizontal alignment is NOT a caller choice — it used to be (`align`
+  // start|end per instance), and every caller had to reason about where in its
+  // row it sat and guess whether that made left or right the safe direction.
+  // Two guesses were wrong on a narrow phone (Effort and Mode, both hardcoded
+  // "end", ran off the LEFT edge). Left-anchored ("start") is the one default;
+  // this measures itself after opening and flips to right-anchored ("end")
+  // only if that default would run past the RIGHT edge of the viewport. One
+  // rule, no per-caller guessing, correct at any position in any row.
+  const [align, setAlign] = useState<"start" | "end">("start");
   const wrapRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -60,6 +67,23 @@ export function Menu({
     }
     viaKeyboard.current = false;
   }, []);
+
+  // Measure against the viewport BEFORE paint, so a flip is never visible as a
+  // jump. Re-measures on resize/orientation change too, while open — the
+  // trigger's position relative to the edge can change without a close/reopen.
+  useLayoutEffect(() => {
+    if (!open) { setAlign("start"); return; }
+    const measure = () => {
+      const list = listRef.current;
+      if (!list) return;
+      const EDGE_PAD = 8;
+      const overflowsRight = list.getBoundingClientRect().right > window.innerWidth - EDGE_PAD;
+      setAlign(overflowsRight ? "end" : "start");
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;

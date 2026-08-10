@@ -155,10 +155,6 @@ export default function ChatComposer({
         {modeOptions.length > 1 && (
           <Menu
             label="Mode"
-            // Same reasoning as EffortMeter, just beside it: this sits early/left
-            // in the row, so the popover opens rightward, not leftward off the
-            // edge of a narrow phone screen.
-            align="start"
             side="top"
             trigger={
               <button
@@ -200,7 +196,6 @@ export default function ChatComposer({
         {modelOptions.length > 1 ? (
           <Menu
             label="Model"
-            align="end"
             side="top"
             trigger={
               <button className="chat-model" onMouseDown={(e) => e.preventDefault()} title="Model for this conversation">
