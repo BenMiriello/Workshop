@@ -1109,6 +1109,14 @@ async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = No
                    else f"approved by the operator ({ticket_readiness.summary(readiness)})",
         })
         updated = tasks.update(root, task_id, status="todo") or task
+        # Approval is also the PUBLISH gate: a ticket becomes real work and
+        # reaches the external tracker at the same moment, for the same reason.
+        # This is why there is no "should this go to the tracker?" setting. Never
+        # raises — a tracker that is down must not block an approval.
+        from services import tracker_sync
+        published = tracker_sync.publish(scope, root, task_id)
+        if published is not None:
+            updated = published
 
     out: dict = {"task": _with_latitude(dict(updated, scope=scope), scope),
                  "readiness": readiness}

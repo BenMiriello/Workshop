@@ -11,8 +11,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from services import (tasks, tracker_bindings, tracker_credentials, trackers,
-                      triage_inbox)
+from services import (tasks, tracker_bindings, tracker_credentials, tracker_sync,
+                      trackers, triage_inbox)
 from routes.tasks_all import _root_for_scope, scope_roots
 
 router = APIRouter(prefix="/trackers", tags=["trackers"])
@@ -197,3 +197,37 @@ async def unignore(candidate_id: str) -> dict:
         return {"candidate": triage_inbox.unignore(candidate_id)}
     except KeyError:
         raise HTTPException(404, f"candidate not found: {candidate_id}")
+
+
+# ---- two-way sync ----------------------------------------------------------
+
+
+@router.post("/pull")
+async def pull(scope: str = "workshop") -> dict:
+    """Bring remote changes back for every linked ticket in this scope.
+
+    Three-way against the shadow, so "changed here" and "changed there" are told
+    apart and only a genuine clash needs the operator. A clash does not throw the
+    loser away: the tracker owns the words so it wins the write, and the
+    operator's version is kept on the ticket to choose from."""
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    return tracker_sync.pull(scope, root)
+
+
+class ResolveIn(BaseModel):
+    keep: str = Field(pattern="^(mine|theirs)$")
+
+
+@router.post("/conflicts/{scope}/{task_id}/resolve")
+async def resolve(scope: str, task_id: str, body: ResolveIn) -> dict:
+    """Settle a conflict. "mine" re-asserts the operator's value and pushes it,
+    which is the only way the local side wins a field the tracker owns."""
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    out = tracker_sync.resolve_conflict(scope, root, task_id, keep=body.keep)
+    if out is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    return {"task": dict(out, scope=scope)}
