@@ -1,22 +1,15 @@
 import { describe, expect, it } from "vitest";
-import {
-  STOPPED_BY_OPERATOR,
-  STOPPED_INTERRUPTED,
-  stoppedNoReplyText,
-  stoppedTag,
-} from "./stopReason";
+import { STOPPED_BY_OPERATOR, STOPPED_INTERRUPTED, stoppedTag } from "./stopReason";
 
 describe("stoppedTag", () => {
-  it("says the operator stopped it when they did", () => {
-    expect(stoppedTag(STOPPED_BY_OPERATOR)).toBe(
-      "You stopped this turn. Send a message to continue.",
-    );
+  it("says only that the user interrupted it", () => {
+    expect(stoppedTag(STOPPED_BY_OPERATOR)).toBe("user interrupted");
   });
 
   it("does not blame the operator for a restart", () => {
     const tag = stoppedTag(STOPPED_INTERRUPTED);
-    expect(tag).toBe("Turn interrupted. Send a message to continue.");
-    expect(tag).not.toContain("You stopped");
+    expect(tag).toBe("interrupted by a restart");
+    expect(tag).not.toContain("user interrupted");
   });
 
   it("treats an unknown reason as an interruption, not as a Stop", () => {
@@ -30,27 +23,19 @@ describe("stoppedTag", () => {
     expect(stoppedTag(STOPPED_BY_OPERATOR)).not.toBe(stoppedTag(STOPPED_INTERRUPTED));
   });
 
-  it("says what to do next in both cases", () => {
+  it("tells the operator nothing they already know", () => {
+    // The line used to end "Send a message to continue.", said to someone who
+    // had just pressed Stop. It is the app narrating itself.
     for (const r of [STOPPED_BY_OPERATOR, STOPPED_INTERRUPTED]) {
-      expect(stoppedTag(r)).toContain("Send a message to continue.");
+      expect(stoppedTag(r)).not.toContain("Send a message");
+      expect(stoppedTag(r)).not.toContain("You stopped");
     }
   });
-});
 
-describe("stoppedNoReplyText", () => {
-  it("answers the question the tag leaves open", () => {
-    expect(stoppedNoReplyText(STOPPED_BY_OPERATOR)).toBe(
-      "No reply was written before you stopped it.",
-    );
-    expect(stoppedNoReplyText(STOPPED_INTERRUPTED)).toBe(
-      "No reply was written before the turn was interrupted.",
-    );
-  });
-
-  it("never renders an em-dash", () => {
+  it("stays short enough to be one quiet line", () => {
     for (const r of [STOPPED_BY_OPERATOR, STOPPED_INTERRUPTED, "other"]) {
+      expect(stoppedTag(r).length).toBeLessThanOrEqual(30);
       expect(stoppedTag(r)).not.toContain("—");
-      expect(stoppedNoReplyText(r)).not.toContain("—");
     }
   });
 });

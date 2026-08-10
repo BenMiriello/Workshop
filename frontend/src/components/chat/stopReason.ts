@@ -18,19 +18,13 @@ export const STOPPED_BY_OPERATOR = "operator";
 /** A restart orphaned the run. Mirrors chat_store.STOPPED_INTERRUPTED. */
 export const STOPPED_INTERRUPTED = "interrupted";
 
-/** The tag above a reply that did not run to completion. One line, said once:
- *  who ended it, and what to do next. */
+/** The one quiet line UNDER a reply that did not run to completion.
+ *
+ *  Three words, no instruction. The operator who pressed Stop knows they can
+ *  send another message; telling them so is the app narrating itself. Longer
+ *  wording was tried ("You stopped this turn. Send a message to continue.")
+ *  alongside a border and a tag above the body, and the whole treatment was
+ *  three statements of one small fact. */
 export function stoppedTag(stopped: string): string {
-  return stopped === STOPPED_BY_OPERATOR
-    ? "You stopped this turn. Send a message to continue."
-    : "Turn interrupted. Send a message to continue.";
-}
-
-/** The body of a stopped reply that has nothing in it. Answers the one question
- *  the tag leaves open: was anything written before it ended? An empty bubble
- *  reads as a rendering bug rather than as a turn that ended early. */
-export function stoppedNoReplyText(stopped: string): string {
-  return stopped === STOPPED_BY_OPERATOR
-    ? "No reply was written before you stopped it."
-    : "No reply was written before the turn was interrupted.";
+  return stopped === STOPPED_BY_OPERATOR ? "user interrupted" : "interrupted by a restart";
 }

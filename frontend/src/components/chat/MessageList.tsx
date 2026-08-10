@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Bot, Clock, Eraser, FoldVertical, Square, Unplug } from "lucide-react";
+import { Bot, Clock, Eraser, FoldVertical } from "lucide-react";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
@@ -8,7 +8,7 @@ import LiveTurn from "./LiveTurn";
 import StatusNote from "./StatusNote";
 import UnsentNote from "./UnsentNote";
 import { modelDisplay } from "./models";
-import { STOPPED_BY_OPERATOR, stoppedNoReplyText, stoppedTag } from "./stopReason";
+import { stoppedTag } from "./stopReason";
 import type { TranscriptBlock } from "./transcriptBlocks";
 
 // The transcript body: one rendered block per entry the selector produced.
@@ -36,11 +36,12 @@ import type { TranscriptBlock } from "./transcriptBlocks";
 //    is marked, and it offers the retry.
 //  - THE STATUS LINE. Progress on work a message set off belongs under that
 //    message, not in a bar above the log — see StatusNote.
-//  - THE STOPPED TAG. A run that ended early is closed out with `meta.stopped`.
-//    Without a tag it rendered as a normal reply that just happens to be blank,
-//    which reads as either "answered with nothing" or "broken". The tag also
-//    says WHICH ending: the operator pressed Stop, or a restart took the run.
-//    One value each, one sentence each — see stopReason.ts.
+//  - THE STOPPED LINE. A run that ended early is closed out with `meta.stopped`,
+//    and it gets ONE quiet line under the reply saying which ending it was. It
+//    briefly got the full treatment instead: a yellow border around the bubble,
+//    a tagged warning above the body, and a sentence inside it, which is three
+//    statements of one small fact and reads as an error the operator caused.
+//    The line, and nothing else — see stopReason.ts.
 
 // One divider, two meanings. `cleared` is the ONLY thing that decides which:
 // a fold's summary is real content the operator can still draw on; a clear's
@@ -70,7 +71,10 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
 // genuinely unexplained one, and it says so rather than showing an empty box.
 function noReplyText(m: ChatMsg): string {
   if (m.meta?.timeout) return "No reply was written before the time limit.";
-  if (m.meta?.stopped) return stoppedNoReplyText(m.meta.stopped);
+  // A stopped turn says so ONCE, on the line under the reply. It used to say it
+  // three times: a yellow border around the whole bubble, a tag above the body,
+  // and this sentence. The operator asked for the line and nothing else.
+  if (m.meta?.stopped) return "";
   return "No response. The turn ended without sending a message.";
 }
 
@@ -93,7 +97,8 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
       />
     );
   }
-  if (!m.content.trim()) return <span className="chat-noreply">{noReplyText(m)}</span>;
+  const noReply = noReplyText(m);
+  if (!m.content.trim()) return noReply ? <span className="chat-noreply">{noReply}</span> : null;
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
@@ -112,7 +117,7 @@ function MessageBubble({
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
-      <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${(msg.meta?.timeout || msg.meta?.stopped) ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
+      <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
           {msg.role === "assistant" ? (
             <>
@@ -127,14 +132,6 @@ function MessageBubble({
                   <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
                 </div>
               )}
-              {msg.meta?.stopped && (
-                <div className="chat-timeout-tag">
-                  {msg.meta.stopped === STOPPED_BY_OPERATOR
-                    ? <Square size={13} strokeWidth={1.8} aria-hidden />
-                    : <Unplug size={13} strokeWidth={1.8} aria-hidden />}
-                  {" "}{stoppedTag(msg.meta.stopped)}
-                </div>
-              )}
               {renderAssistantBody(msg, isLatest, selectedModel, cardCtx, answerPermission)}
             </>
           ) : (
@@ -143,6 +140,11 @@ function MessageBubble({
         </div>
         {msg.content.trim() && <CopyMessage value={msg.content} />}
       </div>
+      {/* One quiet line under the reply, and that is the whole treatment for a
+          turn that ended early. No border, no tag above the body, no icon. */}
+      {msg.meta?.stopped && (
+        <div className="chat-note">{stoppedTag(msg.meta.stopped)}</div>
+      )}
       {msg.meta?.notes?.map((n, j) => (
         <div key={j} className="chat-note">{n}</div>
       ))}
