@@ -33,7 +33,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services import chat_context, chat_store, llm_router
-from services.build_streaming import session_alive, _summarize_tool_input
+from services.build_streaming import (
+    session_alive, usage_scope_for_thread, _spend_tokens_from_usage,
+    _summarize_tool_input,
+)
 
 log = logging.getLogger("workshop.voice_worker")
 
@@ -274,6 +277,7 @@ async def _pump(worker: VoiceWorker) -> None:
                     if blk.get("type") == "tool_use":
                         turn.push("tool", {"name": blk.get("name", "tool"), "input": ""})
             elif t == "result":
+                _record_spend(turn, ev.get("usage"))
                 _finish_turn(turn, error=None)
             elif t == "assistant":
                 # The completed assistant message carries the authoritative,
@@ -304,6 +308,34 @@ async def _pump(worker: VoiceWorker) -> None:
     worker.dead = True
     if worker.current and not worker.current.complete:
         _finish_turn(worker.current, error="worker exited")
+
+
+def _record_spend(turn: VoiceTurn, usage: object) -> None:
+    """Meter a spoken turn's SPEND, exactly as the text path does.
+
+    A voice turn is a chat turn: same account, same model, same money. It was the
+    one turn kind that spent nothing on the record — build_streaming has written
+    every typed turn to the ledger for months and this module had no reference to
+    it at all, so talking instead of typing made the cost disappear from /usage.
+
+    Same shape as the text path deliberately: role="chat" (chat spend stays
+    separable from autonomous worker spend downstream), scope from the thread,
+    and best-effort — a ledger hiccup must never cost the operator a reply they
+    have already heard."""
+    tokens = _spend_tokens_from_usage(usage)
+    if tokens <= 0:
+        return
+    try:
+        from services import usage_ledger
+        usage_ledger.record(
+            usage_scope_for_thread(turn.thread_id),
+            tokens,
+            role="chat",
+            run=turn.id,
+            chat=turn.thread_id,
+        )
+    except Exception as e:  # pragma: no cover — best-effort
+        log.debug("voice turn %s: usage record failed: %s", turn.id, e)
 
 
 def _finish_turn(turn: VoiceTurn, *, error: str | None) -> None:

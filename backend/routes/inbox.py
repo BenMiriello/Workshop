@@ -95,6 +95,59 @@ async def raise_inbox(body: RaiseIn):
         raise HTTPException(400, str(e))
 
 
+async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -> dict | None:
+    """A task-derived item answers the TASK, not just the row on screen.
+
+    Closing the inbox item was the whole of "resolve" until now, and the inbox
+    item is a projection: the block lives on the task, and only
+    `POST /tasks/{scope}/{id}/review` clears it, mints what the block proposed,
+    and writes the answer into the ticket body the next attempt reads. So
+    answering here reached nothing — the task stayed `awaiting`, run_inbox raised
+    the same question on its next pass twenty seconds later, and "Approve" on a
+    permission proposal granted nothing at all.
+
+    The verbs map straight across:
+      Approve (on a block that proposed a grant) -> grant-and-continue
+      any other answer                           -> approve, with the answer as
+                                                    the note, which is what
+                                                    lands in the ticket body
+      dismiss (the X)                            -> dismiss: the block stays,
+                                                    it just stops asking
+
+    Returns the review result, or None when this is not a task item.
+    """
+    key = item.get("dedupe_key") or ""
+    if not key.startswith("task:"):
+        return None
+    scope = str(item.get("scope") or "").strip()
+    task_id = str(item.get("ticket_id") or "").strip()
+    if not scope or not task_id:
+        return None
+
+    from routes.tasks_all import TaskReviewIn, review_task
+
+    ans = str(answer or "").strip()
+    if dismissed:
+        action, note = "dismiss", ""
+    elif ans.lower() == "approve" and any(
+        str(o).strip().lower() == "approve" for o in (item.get("options") or [])
+    ):
+        # run_inbox offers Approve/Decline ONLY when the block carried a
+        # structured proposal, so an Approve here is an approval of that
+        # proposal and has to mint it. Defaults come from the block itself.
+        action, note = "grant-and-continue", ""
+    else:
+        action, note = "approve", ans
+    try:
+        return await review_task(scope, task_id, TaskReviewIn(action=action, note=note or None))
+    except HTTPException:
+        if dismissed:
+            # The block is already gone (answered elsewhere, or the task moved
+            # on). Dismissing a stale row must still clear it from the inbox.
+            return None
+        raise
+
+
 @router.post("/{item_id}/resolve")
 async def resolve_inbox(item_id: str, body: ResolveIn):
     """Answer or dismiss. Both close the item; which one is recorded, because
@@ -103,6 +156,12 @@ async def resolve_inbox(item_id: str, body: ResolveIn):
     # Read the item BEFORE resolving: resolving is what makes an approval
     # actionable, and afterwards its dedupe key is no longer open to match on.
     before = inbox.get_item(item_id)
+    # THE TASK FIRST. If the review is refused, the item stays open: an inbox row
+    # that closed on a write that did not happen is the failure this is fixing.
+    reviewed = None
+    if before:
+        reviewed = await _answer_the_task(
+            before, answer=body.answer, dismissed=body.dismissed)
     it = inbox.resolve_item(item_id, answer=body.answer, dismissed=body.dismissed)
     if it is None:
         raise HTTPException(404, "item not found")
@@ -117,4 +176,8 @@ async def resolve_inbox(item_id: str, body: ResolveIn):
         except Exception as e:
             log.warning("inbox: promotion apply failed for %s: %s", key, e)
             it = {**it, "promoted": False}
+    if reviewed is not None:
+        # What actually happened to the work, so the caller can say so rather
+        # than inferring it from a closed row.
+        it = {**it, "review": reviewed}
     return it

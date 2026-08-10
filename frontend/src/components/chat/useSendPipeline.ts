@@ -36,8 +36,12 @@ export type SendPipeline = {
   submitText: (raw: string) => void;
   /** Re-send a message that never reached the server, under its own id. */
   retry: (clientId: string) => void;
-  /** What the queue calls when it drains. */
-  sendBatch: (text: string, parts: QueuedMessage[]) => void;
+  /** What the queue calls when it drains. Resolves true once the server has the
+   *  batch; `fromQueue` says the caller will take it back on a refusal, so the
+   *  bubbles are retracted rather than left on screen as N failed sends. */
+  sendBatch: (
+    text: string, parts: QueuedMessage[], opts?: { fromQueue?: boolean },
+  ) => Promise<boolean>;
 };
 
 export function useSendPipeline({
@@ -77,7 +81,8 @@ export function useSendPipeline({
   // optimistic copy is reconciled away by the sync rather than popped by hand.
   const sendTurn = useCallback(async (
     text: string, clientId: string, parts?: QueuedMessage[],
-  ) => {
+    opts?: { fromQueue?: boolean },
+  ): Promise<boolean> => {
     setStartingBoth(true);
     setTurnIsCompact(text.trim() === "/compact");
     try {
@@ -116,13 +121,23 @@ export function useSendPipeline({
       // The re-attach effect opens the socket; nothing here needs to know how.
       if (res.turn_id) dispatch({ type: "runStarted", runId: res.turn_id });
       void sync();
+      return true;
     } catch (e) {
       setErr(String(e));
+      const ids = parts?.length ? parts.map((p) => p.clientId) : [clientId];
       // The turn never started, so the server has no copy. Mark the bubble
       // rather than leaving it looking delivered: a bubble that silently is not
       // real is exactly what "my messages keep disappearing" felt like.
-      dispatch({ type: "sendFailed", clientId });
-      for (const p of parts || []) dispatch({ type: "sendFailed", clientId: p.clientId });
+      //
+      // ...unless this came from the QUEUE, which still holds these messages and
+      // is about to put them back. Marking them failed there drew them twice —
+      // once queued, once as a dead bubble — and each dead bubble retried as its
+      // own turn, so a refused batch of four came back as four turns instead of
+      // the one turn it was sent as (invariant 4).
+      for (const id of ids) {
+        dispatch({ type: opts?.fromQueue ? "sendRetracted" : "sendFailed", clientId: id });
+      }
+      return false;
     } finally {
       setStartingBoth(false);
     }
@@ -151,14 +166,22 @@ export function useSendPipeline({
     }
   }, [dispatch, sync, sendTurn, queue]);
 
-  const sendBatch = useCallback((text: string, parts: QueuedMessage[]) => {
+  const sendBatch = useCallback((
+    text: string, parts: QueuedMessage[], opts?: { fromQueue?: boolean },
+  ) => {
     // Everything in a drained batch is already the operator's; each part shows
     // as its own pending bubble under the id it will be committed with.
     const ts = new Date().toISOString();
     for (const p of parts) {
       dispatch({ type: "sendStarted", clientId: p.clientId, text: p.text, ts: p.sentAt || ts });
     }
-    void sendTurn(text, parts[0]?.clientId || newClientId(), parts.length > 1 ? parts : undefined);
+    // `parts` rides in the POST only when there are several: the server needs it
+    // to record them as the separate messages they were. A batch of one is
+    // already fully described by its client id.
+    return sendTurn(
+      text, parts[0]?.clientId || newClientId(),
+      parts.length > 1 ? parts : undefined, opts,
+    );
   }, [dispatch, sendTurn]);
 
   const dispatchSend = useCallback((text: string, clientId: string) => {

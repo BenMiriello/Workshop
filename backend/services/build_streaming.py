@@ -511,15 +511,19 @@ def _ctx_tokens_from_usage(u: object) -> int:
     )
 
 
-def _usage_scope_for_turn(turn: "Turn") -> str:
+def usage_scope_for_thread(thread_id: str) -> str:
     """The ledger scope a chat turn bills to: a bare project slug, matching the
     values autonomous sweeps already write ("workshop", "demo-x"). The knowledge
     scope is the right source (it is what the chat's own learnings key on) but it
     uses a "project:<slug>" form, so strip the prefix. Falls back to "workshop"
-    rather than raising — a scope lookup must never cost the operator a turn."""
+    rather than raising — a scope lookup must never cost the operator a turn.
+
+    Public, and keyed by thread rather than by Turn, because the VOICE worker
+    bills the same way: a spoken turn is the same chat spending the same money,
+    and it went unmetered entirely until it shared this rule."""
     try:
         from services import chat_store, knowledge
-        t = chat_store.get_thread(turn.thread_id) or {}
+        t = chat_store.get_thread(thread_id) or {}
         scope = knowledge.scope_for_context(t.get("context_key") or "workshop")
         if scope.startswith("project:"):
             return scope.split(":", 1)[1]
@@ -1258,7 +1262,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         try:
             from services import usage_ledger
             usage_ledger.record(
-                _usage_scope_for_turn(turn),
+                usage_scope_for_thread(turn.thread_id),
                 spend_tokens,
                 role="chat",
                 run=turn.id,

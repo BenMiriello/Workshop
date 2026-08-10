@@ -124,11 +124,19 @@ export default function InboxStrip({
     setItems((v) => (v || []).filter((i) => i.id !== id));
     setExpanded((e) => (e === id ? null : e));
     try {
-      await fetch(`/api/inbox/${encodeURIComponent(id)}/resolve`, {
+      const r = await fetch(`/api/inbox/${encodeURIComponent(id)}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answer, dismissed }),
       });
+      // An answer to a task-derived item unblocks the TASK, and that write can
+      // be refused (a proposal already granted, a task that moved on). Say so:
+      // the re-fetch below puts the row back, and a row reappearing with no
+      // explanation is the thing that made this surface untrustworthy.
+      if (!r.ok) setErr(`Couldn't send that answer: ${r.status} ${await r.text().catch(() => "")}`.trim());
+      else setErr(null);
+    } catch (e) {
+      setErr(`Couldn't send that answer: ${String(e)}`);
     } finally {
       setBusy(null);
       void load();
@@ -164,6 +172,7 @@ export default function InboxStrip({
         </div>
       ) : (
         <ul className="chat-inbox__list">
+          {err && <li className="chat-err">{err.slice(0, 240)}</li>}
           {shown.map((it) => {
             const Icon = KIND_ICON[it.kind] ?? Info;
             const isOpen = expanded === it.id;

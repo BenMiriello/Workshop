@@ -181,3 +181,54 @@ export function writeQueue(threadKey: string, queue: QueuedMessage[]): void {
     /* see writeSelection */
   }
 }
+
+// THE HOLD, stored beside the queue and keyed the same way.
+//
+// Stop hands the wheel back: the queue stops draining itself until the operator
+// sends again. That promise is only as durable as the thing that records it, and
+// it used to be plain component state while the queue it governs was in
+// localStorage. So the hold died on a reload or a thread switch and the queue
+// did not — press Stop, switch away and back, and everything typed ahead fired
+// as a new turn with nobody watching. Money spent without a click.
+//
+// Same key as the queue (a thread id, or the blank-chat slot for a scope),
+// because it is a property OF that queue and has to travel with it.
+const HOLD_PREFIX = "ws-chat-hold:";
+
+export function readHold(threadKey: string): boolean {
+  try {
+    return localStorage.getItem(HOLD_PREFIX + threadKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeHold(threadKey: string, held: boolean): void {
+  try {
+    if (held) localStorage.setItem(HOLD_PREFIX + threadKey, "1");
+    else localStorage.removeItem(HOLD_PREFIX + threadKey);
+  } catch {
+    /* see writeSelection */
+  }
+}
+
+// What durable storage must hold: everything the server has not accepted yet, in
+// the order the operator sent it. A batch being POSTed right now is still owed,
+// so it stays in front of whatever was typed after it (invariant 5).
+export function durableQueue(inFlight: QueuedMessage[], items: QueuedMessage[]): QueuedMessage[] {
+  return [...inFlight, ...items];
+}
+
+// A batch the server refused goes back where it was: ahead of anything typed
+// while it was in flight, and still ONE batch, so the retry is one turn.
+export function restoreBatch(batch: QueuedMessage[], items: QueuedMessage[]): QueuedMessage[] {
+  const ids = new Set(batch.map((m) => m.clientId));
+  return [...batch, ...items.filter((m) => !ids.has(m.clientId))];
+}
+
+// Drop entries by send id. Used when a batch is accepted after the queue has
+// already moved to another thread: the entries are still sitting in the old
+// thread's storage and nothing else will take them out.
+export function withoutIds(queue: QueuedMessage[], ids: Set<string>): QueuedMessage[] {
+  return queue.filter((m) => !ids.has(m.clientId));
+}

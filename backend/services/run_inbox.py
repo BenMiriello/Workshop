@@ -77,9 +77,15 @@ def sync(scope_roots: list[tuple[str, Path]]) -> dict:
             ask = _question_of(t)
             if not ask:
                 continue
+            aw = t.get("awaiting") or {}
+            # A block the operator DISMISSED in review stays a block — it just
+            # stops asking. Re-raising it on the next pass is what "I dealt with
+            # that and it came straight back" felt like, and it is the same
+            # failure dedupe exists to prevent, twenty seconds later.
+            if aw.get("dismissed"):
+                continue
             key = f"task:{skey}:{t.get('id')}"
             live_keys.add(key)
-            aw = t.get("awaiting") or {}
             try:
                 item = inbox.raise_item(
                     kind="question",

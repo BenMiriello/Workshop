@@ -127,7 +127,13 @@ export default function Chat({
   // The queue must know how to send, and the sender must know the queue. One of
   // the two has to be reached through a ref; the send side is the one that
   // changes identity, so it is the ref.
-  const sendBatchRef = useRef<(text: string, parts: { text: string; sentAt: string; clientId: string }[]) => void>(() => {});
+  const sendBatchRef = useRef<
+    (
+      text: string,
+      parts: { text: string; sentAt: string; clientId: string }[],
+      opts?: { fromQueue?: boolean },
+    ) => Promise<boolean>
+  >(async () => false);
   const [compacting, setCompacting] = useState(false);
   // "May the queue send now" is computed near the bottom of this component, from
   // state that is only available once the store and the send pipeline exist. The
@@ -141,12 +147,18 @@ export default function Chat({
   // moment nothing is running, and a stop makes that moment) would send
   // everything they had typed ahead the instant they stopped the turn. Nothing
   // is dropped: the messages stay queued and on screen. See canDrainQueue.
-  const [heldByStop, setHeldByStop] = useState(false);
+  //
+  // The hold belongs to the QUEUE, stored beside it and keyed by thread, so it
+  // is exactly as durable as the messages it is holding. It was component state
+  // for an hour and in that hour a reload or a thread switch dropped the hold,
+  // kept the queue, and fired the lot as an unattended turn.
   const queue = useMessageQueue({
     scope,
     canDrain,
     canDrainNow: () => canDrainRef.current,
-    send: (t, parts) => sendBatchRef.current(t, parts),
+    // `fromQueue`: these messages are still in the queue's durable storage, and
+    // the queue takes them back if the server refuses them.
+    send: (t, parts) => sendBatchRef.current(t, parts, { fromQueue: true }),
   });
 
   const thread = useChatThread({
@@ -203,7 +215,7 @@ export default function Chat({
     // Claim the ending before the request goes out: the `done` frame arrives
     // mid-flight and its handler would retire the turn and drain the queue.
     beginStop();
-    setHeldByStop(true);
+    queue.hold();
     try {
       if (runId) await chatApi.stopTurn(runId);
     } catch (e) {
@@ -211,7 +223,7 @@ export default function Chat({
     } finally {
       stopWatching();
     }
-  }, [beginStop, stateRef, stopWatching]);
+  }, [beginStop, stateRef, stopWatching, queue]);
 
   // /compact reaches BOTH homes of a chat's context — see useCompaction.
   const { ctxNonce, compact, queuedStatus, clear } = useCompaction({
@@ -273,7 +285,7 @@ export default function Chat({
       setNotice(null);
       followLatest();
       // They are driving again, so the queue may resume draining itself.
-      setHeldByStop(false);
+      queue.release();
     },
   });
   sendBatchRef.current = pipeline.sendBatch;
@@ -282,7 +294,7 @@ export default function Chat({
   // path so they cannot disagree about whether the chat is busy.
   const drainable = canDrainQueue({
     compacting, starting: pipeline.starting, runActive, loadingThread: thread.loadingThreads,
-    heldByStop,
+    heldByStop: queue.held,
   });
   canDrainRef.current = drainable;
   useEffect(() => { setCanDrain(drainable); }, [drainable]);
@@ -331,11 +343,6 @@ export default function Chat({
 
   // Leaving a thread closes its socket. The store is reset by useThreadLog.
   useEffect(() => () => closeStream(), [activeId, closeStream]);
-
-  // A stop hold belongs to the chat it was taken in. Carrying it to the next
-  // chat would leave that one's queue sitting there for no reason the operator
-  // could see.
-  useEffect(() => { setHeldByStop(false); }, [activeId]);
 
   // The committed messages, flat. Read by the context meter's local estimate and
   // by the egress banner; nothing renders from it (the transcript is `blocks`).
@@ -398,15 +405,17 @@ export default function Chat({
     // every synced surface immediately and then defended, or a stale copy from
     // another tab/device can restore the text you just sent.
     clearInput();
-    // In voice mode a typed message runs through the voice engine too (so the
-    // reply is spoken and uses the warm worker); slash commands still go the
-    // normal chat route.
-    if (voiceOn && !text.startsWith("/")) {
-      vsession.submitText(text);
-      vsession.setTyping(false);
-    } else {
-      pipeline.submitText(text);
-    }
+    // TYPED TEXT IS A CHAT MESSAGE, in voice mode as much as out of it.
+    //
+    // It used to be handed to the voice engine whenever voice was on, and that
+    // engine is not this chat: a separate resident process with its own system
+    // prompt, NO tools, its own cwd, and a session that is never given this
+    // thread's transcript. So typing while the mic was on quietly answered from
+    // a different place, could not do anything, and spent tokens that never
+    // reached the usage ledger. Voice INPUT still goes the voice path — that is
+    // what the mode is for.
+    if (voiceOn) vsession.setTyping(false);
+    pipeline.submitText(text);
   }, [input, clearInput, voiceOn, vsession, pipeline]);
 
   // ---- Slash commands ------------------------------------------------------

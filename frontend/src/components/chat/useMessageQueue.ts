@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newClientId } from "../../lib/chat";
-import { readQueue, writeQueue, type QueuedMessage } from "../../lib/chatSelection";
+import {
+  durableQueue, readHold, readQueue, restoreBatch, withoutIds, writeHold, writeQueue,
+  type QueuedMessage,
+} from "../../lib/chatSelection";
 import { splitFirstTurn } from "./turnBatching";
 
 // Type-ahead: messages sent while a turn is running.
@@ -47,6 +50,22 @@ import { splitFirstTurn } from "./turnBatching";
 //     to the committed event by that id. Entries used to be identified by their
 //     text, which is not an identity — two identical messages were one entry as
 //     far as `drop` was concerned.
+//  7. The HOLD is as durable as the queue it holds. Stop stops the self-drain
+//     until the operator sends again; that fact used to live in component state
+//     while the queue lived in localStorage, so a reload or a thread switch
+//     dropped the hold and kept the queue — and the whole thing fired as an
+//     unattended turn. It is stored beside the queue, under the same key, and
+//     is read back when the queue is.
+//  8. A DRAINED BATCH IS STILL QUEUED UNTIL THE SERVER TAKES IT. Dispatch used
+//     to write the shortened queue to localStorage and only then send, so for
+//     the length of the POST — thread creation, prompt assembly, the request
+//     itself — those messages existed nowhere but in memory. Closing the tab in
+//     that window lost them outright, which is invariant 1 broken by the code
+//     that drains the queue. They now move to an in-flight list that storage
+//     still holds, in front of anything typed after them, and leave it only when
+//     the server has accepted them. A refusal puts them back as ONE batch
+//     (invariant 4) and holds the queue, so the retry is one turn the operator
+//     asks for rather than a loop this hook runs on its own.
 
 export type MessageQueue = {
   items: QueuedMessage[];
@@ -66,6 +85,13 @@ export type MessageQueue = {
   // the right answer: it was sent, so there is nothing to retract.
   drop: (clientId: string) => void;
   dispatch: () => void;
+  // Is this thread's queue holding? Read by the chat into canDrainQueue, so the
+  // queue and the send path share one answer to "may anything send now".
+  held: boolean;
+  // Stop the self-drain until the operator sends again (Stop).
+  hold: () => void;
+  // They are driving again.
+  release: () => void;
   // Point the queue at a thread and load that thread's stored queue.
   bindThread: (threadId: string) => void;
   // Point at the blank-chat slot for this scope and load anything waiting there.
@@ -98,12 +124,25 @@ export function useMessageQueue({
   // see the previous render's `true` and fire a second turn alongside the first.
   canDrain: boolean;
   canDrainNow: () => boolean;
-  send: (text: string, parts: QueuedMessage[]) => void;
+  // Hand the batch to the send path. Resolves TRUE only once the server has
+  // accepted it; until then the batch stays in durable storage (invariant 8).
+  send: (text: string, parts: QueuedMessage[]) => Promise<boolean>;
 }): MessageQueue {
   const [items, setItems] = useState<QueuedMessage[]>([]);
   const itemsRef = useRef<QueuedMessage[]>([]);
   const blankKey = `scope:${scope}`;
   const keyRef = useRef<string>(blankKey);
+  // Invariant 7. Held in a ref as well as in state because `dispatch` is called
+  // directly by the stream's finish handler, which does not go through the
+  // chat's `canDrain` and would otherwise fire a held queue the moment a run
+  // ended — including a run this tab picked up after a reload.
+  const [held, setHeld] = useState(false);
+  const heldRef = useRef(false);
+  const setHeldBoth = useCallback((v: boolean, persist = true) => {
+    heldRef.current = v;
+    setHeld(v);
+    if (persist) writeHold(keyRef.current, v);
+  }, []);
 
   // The caller passes these as inline lambdas. Held in refs so every callback
   // below stays referentially stable: the returned object lands in the dep
@@ -115,10 +154,16 @@ export function useMessageQueue({
   const canDrainNowRef = useRef(canDrainNow);
   canDrainNowRef.current = canDrainNow;
 
+  // The batch that has been handed to the send path and not yet accepted
+  // (invariant 8). It is out of `items` — the send pipeline renders it as
+  // pending bubbles, so leaving it in the queue would draw it twice — but it is
+  // still in durable storage, ahead of everything typed after it.
+  const inFlightRef = useRef<QueuedMessage[]>([]);
+
   const set = useCallback((next: QueuedMessage[]) => {
     itemsRef.current = next;
     setItems(next);
-    writeQueue(keyRef.current, next);
+    writeQueue(keyRef.current, durableQueue(inFlightRef.current, next));
   }, []);
 
   const push = useCallback((text: string, clientId?: string) => {
@@ -144,50 +189,93 @@ export function useMessageQueue({
     if (i >= 0) set([...q.slice(0, i), ...q.slice(i + 1)]);
   }, [set]);
 
-  const bindThread = useCallback((threadId: string) => {
+  // Point the queue at a key and load what is waiting there — the queue AND its
+  // hold, which is a property of that queue and stored beside it.
+  const bindKey = useCallback((key: string) => {
     // Point at the thread BEFORE reading it, so the read-then-write round trip
     // can't land on the thread we're leaving (invariant 2).
-    keyRef.current = threadId;
-    const q = readQueue(threadId);
+    keyRef.current = key;
+    // A batch in flight belongs to the thread it was drained from, and its
+    // entries are still in THAT thread's storage. Forget it here; the send's
+    // completion handler sees the key has moved and settles it there.
+    inFlightRef.current = [];
+    const q = readQueue(key);
     itemsRef.current = q;
     setItems(q);
-  }, []);
+    setHeldBoth(readHold(key), false);
+  }, [setHeldBoth]);
 
-  const bindBlank = useCallback(() => {
-    keyRef.current = blankKey;
-    const q = readQueue(blankKey);
-    itemsRef.current = q;
-    setItems(q);
-  }, [blankKey]);
+  const bindThread = useCallback((threadId: string) => { bindKey(threadId); }, [bindKey]);
+
+  const bindBlank = useCallback(() => { bindKey(blankKey); }, [bindKey, blankKey]);
 
   const resetToBlank = useCallback(() => {
     // Move the key to the blank slot FIRST. Clearing before moving would wipe
     // the queue still owed to the thread being left behind.
     keyRef.current = blankKey;
     set([]);
-  }, [blankKey, set]);
+    setHeldBoth(false);
+  }, [blankKey, set, setHeldBoth]);
 
   const carryToThread = useCallback((threadId: string) => {
-    const carried = itemsRef.current;
+    // A batch drained from the blank chat is the reason this thread exists, so
+    // it moves with the key rather than being left in a slot nobody reads again.
+    const carried = durableQueue(inFlightRef.current, itemsRef.current);
+    const carriedHold = heldRef.current;
     keyRef.current = threadId;
     writeQueue(blankKey, []);
+    writeHold(blankKey, false);
     if (carried.length) writeQueue(threadId, carried);
+    if (carriedHold) writeHold(threadId, true);
   }, [blankKey]);
+
+  // The end of a drain (invariant 8): the server took the batch, or it did not.
+  const settleDrain = useCallback((key: string, batch: QueuedMessage[], ok: boolean) => {
+    const ids = new Set(batch.map((m) => m.clientId));
+    if (!inFlightRef.current.some((m) => ids.has(m.clientId))) {
+      // The queue has moved to another thread and left this batch behind in
+      // that thread's storage. Settle it THERE, without touching what is on
+      // screen now: accepted means take it out, refused means it stays queued
+      // where the operator will find it when they come back.
+      if (ok) writeQueue(key, withoutIds(readQueue(key), ids));
+      return;
+    }
+    inFlightRef.current = withoutIds(inFlightRef.current, ids);
+    if (ok) { set(itemsRef.current); return; }
+    // Refused. Back in front of whatever was typed while it was in flight, as
+    // ONE batch, and the queue holds: re-draining on the spot would spin the
+    // failing request as fast as the effect can re-run. The operator's next
+    // send releases it and it goes out as the single turn it always was.
+    set(restoreBatch(batch, itemsRef.current));
+    setHeldBoth(true);
+  }, [set, setHeldBoth]);
 
   const dispatch = useCallback(() => {
     const q = itemsRef.current;
     if (!q.length) return;
+    // Invariant 7. The gate lives HERE, not only in the chat's canDrain, because
+    // the stream's finish handler calls this directly.
+    if (heldRef.current) return;
+    // One batch at a time. A second would race the first's settlement over the
+    // same storage key.
+    if (inFlightRef.current.length) return;
     // Invariant 4: consecutive messages go as ONE turn, not N — but a command
     // breaks the batch, because a command joined to anything else is no longer
     // a command. Whatever is left stays queued in order and the self-drain
     // (invariant 3) sends it when this turn ends.
     const [now, rest] = splitFirstTurn(q);
+    // Out of the queue, into the in-flight list — which `set` keeps writing to
+    // storage, so a tab closed mid-POST still has them (invariant 8).
+    const key = keyRef.current;
+    inFlightRef.current = now;
     set(rest);
     // The joined text is what the model reads; `now` carries the send times and
     // ids alongside it so the server can record each message at the moment it
     // was actually typed, instead of collapsing a burst into one timestamp.
-    sendRef.current(now.map((m) => m.text).join("\n\n"), now);
-  }, [set]);
+    void Promise.resolve(sendRef.current(now.map((m) => m.text).join("\n\n"), now))
+      .then((ok) => settleDrain(key, now, ok !== false))
+      .catch(() => settleDrain(key, now, false));
+  }, [set, settleDrain]);
 
   // Invariant 3: whenever there is something queued and nothing is running, send
   // it. Queued means the operator already hit enter; delivery is owed.
@@ -204,12 +292,17 @@ export function useMessageQueue({
 
   // Memoized: see the sendRef/appendRef note above — the identity of this object
   // is load-bearing for the caller's dep arrays.
+  const hold = useCallback(() => setHeldBoth(true), [setHeldBoth]);
+  const release = useCallback(() => setHeldBoth(false), [setHeldBoth]);
+
   return useMemo(
     () => ({
       items, length: items.length,
       set, push, insertAt, drop, dispatch,
+      held, hold, release,
       bindThread, bindBlank, resetToBlank, carryToThread,
     }),
-    [items, set, push, insertAt, drop, dispatch, bindThread, bindBlank, resetToBlank, carryToThread],
+    [items, set, push, insertAt, drop, dispatch, held, hold, release,
+     bindThread, bindBlank, resetToBlank, carryToThread],
   );
 }
