@@ -119,3 +119,7 @@ shared/relay-corpus.jsonl
 # starts with no projects and no installed apps.
 /.tasks.json
 /TODO.md
+
+# Tenant operational records: bring-up playbook and security audits of one
+# operator's own box. Kept on disk, not shipped as platform documentation.
+docs/masini/

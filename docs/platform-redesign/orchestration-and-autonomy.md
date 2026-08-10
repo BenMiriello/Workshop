@@ -66,7 +66,7 @@ Verified against the working tree, not commit messages.
   ~2,500 records. This is the orchestration ledger; it needs `task_id`/`parent_id` and nothing else
   structural.
 - **One Agent registry over markdown definitions is live.** `agents_registry.py` reads user-scope and
-  project-scope `*.md`, merges builder runtime state, excludes masini per-channel agents, and
+  project-scope `*.md`, merges builder runtime state, excludes the bridge agent per-channel agents, and
   regenerates `agent-subscriptions.json` on write. Definition frontmatter already carries `triggers`,
   `limits`, `capabilities`, `memory`, `project_slug`. This is where per-agent autonomy/depth knobs
   belong, and the slot exists.
@@ -164,7 +164,7 @@ fixes. Beyond those, four gaps block the *orchestration + learning* half of the 
    from corrections by rewriting standing instructions, and promotes repeated procedures into skills.
    Selective and strategic by construction: it decides what to write and what to retire; it never
    rewrites monolithically (context-collapse guard); it runs between sessions so it never invalidates a
-   live prompt cache. Letta stays the recall engine; masini's Letta path is untouched.
+   live prompt cache. Letta stays the recall engine; the bridge agent's Letta path is untouched.
 
 4. **Depth / autonomy / distribution are one preset cascade with three levels of granularity.** A single
    `autonomy` preset (`off | on-demand | scheduled | continuous`) plus a `depth` effort tier
@@ -289,7 +289,7 @@ writeback reconcile; the operator's edits go through structured channels; the wo
 Design consequence: name the three stores over existing files; add a consolidation Job that does
 mem0-style itemized deltas into capped scope memos, rewrites standing-instruction files from
 corrections, and promotes repeated procedures into skills; run it on a slow trigger, never in a turn;
-leave Letta as the recall index and never touch masini's path.
+leave Letta as the recall index and never touch the bridge agent's path.
 
 ---
 
@@ -546,7 +546,7 @@ rewrite the standing instruction, do not accumulate episodes:
   block host, exactly as `agent-chat-redesign/plan.md` decision 2 and `proposal.md` locked decision 3
   require. The keeper *writes files*; the existing file->Letta sync (Phase 2 of the agent-chat redesign)
   carries them into archival for recall. Nothing here reads or writes Letta directly on the hot path.
-- **Masini's Letta path is frozen.** The keeper is a user-scope registry agent; per-channel Discord
+- **The bridge agent's Letta path is frozen.** The keeper is a user-scope registry agent; per-channel Discord
   agents are excluded from the registry (`agents_registry.list_agents` exclusion). The keeper never
   touches `per_channel_agents.py`, `supervisor.py` Letta calls, `global_memory.py` internals beyond the
   existing `sync_value()` endpoint, or `knowledge.py` search internals. It is additive.
@@ -663,7 +663,7 @@ Nothing may be left out of date. The pieces this design changes:
    change to the gate.
 7. **Knowledge / skills:** unchanged in mechanism; the keeper becomes a new *writer* into scope
    `knowledge/` and `skills/`, and the `MEMORY.md` index gains a hard line cap enforced by the keeper.
-   `knowledge.py` search internals are frozen (masini rule).
+   `knowledge.py` search internals are frozen (the bridge agent rule).
 8. **Chat transport:** the emission lanes ride the streamed turn path and `agent:` binding from
    `review-addendum.md` P1-P3 (already built). `task-patch` is a new provider-action alongside
    `plan-patch` in the same finalize seam. No transport change; a new action kind.
@@ -671,7 +671,7 @@ Nothing may be left out of date. The pieces this design changes:
    (sweep -> child Jobs -> tasks) becomes the aggregation view. Job detail renders task binding,
    evidence, and the `awaiting` payload. The orphaned Jobs page (P5/P6) becomes the work-queue surface
    (Section 10).
-10. **Masini's Letta path:** untouched. The keeper is a registry agent excluded from per-channel; it
+10. **The bridge agent's Letta path:** untouched. The keeper is a registry agent excluded from per-channel; it
     writes files, not Letta. Restated as a hard constraint in every phase that adds it.
 11. **`agent-chat-redesign/plan.md` L4-swarm:** stays deferred; this doc supplies the justification
     (Section 3.1) so it is a decided deferral, not an open question.
@@ -735,7 +735,7 @@ Every new list/page ships the four states; the work-queue and JobDetail need rea
 ## 11. Phased, file-scoped build plan
 
 Global rules: `implementation-plan.md`'s (branch discipline; `tsc` + `check_design.sh` on frontend
-steps; no committed stubs; masini smoke check after any backend restart or touch to
+steps; no committed stubs; the bridge agent smoke check after any backend restart or touch to
 `agents.py`/`supervisor.py`; `AUTONOMY_DISABLED` bracket around any edit to `cron_agent.sh`,
 `ralph.sh`, or `project_ralph.sh`; no em-dash/emoji). The crontab fires every 20 minutes against the
 live tree. Phases O1, O2, O3, O4, O7 are `autonomy-task-management.md`'s T1-T5 with the additions this
@@ -762,7 +762,7 @@ doc names; O5 and O6 are new.
 **Verify:** v1 store normalizes to v2 losslessly; hand-edit TODO.md (flip a box, add a line) heals into
 the store on read with nothing lost; `next_ready` respects `depends_on`; `claim` is atomic under
 concurrent CLI+API writes; a build chat adds a task via CLI and the panel shows it. Backend restart +
-masini smoke check.
+the bridge agent smoke check.
 
 ### Phase O2: conversation emits tasks (= T2; agent binding already built)
 
@@ -803,7 +803,7 @@ general chat's card requires a scope pick; `agent:bogus` 404s. tsc + check_desig
 
 **Verify:** a project with two disjoint-`touches` ready tasks and a loop trigger produces one coordinator
 Job + two child Jobs with correct `task_id`/`parent_id`; two tasks touching the same path run serially;
-an empty queue starts no sweep; an agent cron trigger claims only its assignee's tasks. Masini smoke
+an empty queue starts no sweep; an agent cron trigger claims only its assignee's tasks. The bridge agent smoke
 check (jobs.py restart).
 
 ### Phase O4: gates, awaiting_input elicitation, discovered-from (= T4 + payload)
@@ -823,7 +823,7 @@ changes.
 
 ### Phase O5: the memory-consolidation organ (NEW)
 
-No script edits to the live loops; this is a new agent + a new consolidation path. No masini touch.
+No script edits to the live loops; this is a new agent + a new consolidation path. No the bridge agent touch.
 
 **ADD**
 - `agents/memory-keeper.md`: user-scope assistant definition, `scheduled` trigger (slow cron),
@@ -845,7 +845,7 @@ No script edits to the live loops; this is a new agent + a new consolidation pat
 **Verify:** run the keeper by hand over a scope with recent closed Jobs and a reviewer rejection: a
 semantic fact lands as an itemized bullet in the scope note (a contradicting one is annotated superseded,
 not overwritten); a repeated procedural pattern produces a skill-proposal the operator must confirm; the
-index stays under the cap (demotion happened); recall returns the new fact. Masini smoke check (a
+index stays under the cap (demotion happened); recall returns the new fact. The bridge agent smoke check (a
 registry agent was added; confirm per-channel agents remain excluded and the Discord round-trip works).
 
 ### Phase O6: config presets + the surfaces (NEW UI)
@@ -898,9 +898,9 @@ the store; then one live tick with autonomy re-enabled.
    unmatched imports as NEW, never mutates; reconcile never deletes.
 5. **Store lock contention** between sweeps, the keeper, and the API. Guard: one flock in
    `services.tasks`; the keeper reads append-only Jobs and holds the flock only for its file writes.
-6. **Masini Letta regression.** Guard: keeper is a registry agent excluded from per-channel; writes
+6. **The bridge agent Letta regression.** Guard: keeper is a registry agent excluded from per-channel; writes
    files not Letta; `knowledge.py` search internals and `supervisor.py`/`per_channel_agents.py`/
-   `global_memory.py` internals frozen; masini smoke check after O5 and any backend restart.
+   `global_memory.py` internals frozen; the bridge agent smoke check after O5 and any backend restart.
 7. **Live cron racing a half-edited script** (O3, O7). Guard: `AUTONOMY_DISABLED` bracket, whole-commit
    edits, the platform Phase-1 cutover discipline.
 

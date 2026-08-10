@@ -34,7 +34,7 @@ Chat / Task / Run.
 
 ## What is DONE and shipped (verified live)
 
-All committed on `main` in `/home/clawd-a/workshop`. The pipeline was tested
+All committed on `main` in `$WORKSHOP`. The pipeline was tested
 end-to-end with real sweeps.
 
 - **Stage 3 - migration core.** Root `self` scope un-protected; structured

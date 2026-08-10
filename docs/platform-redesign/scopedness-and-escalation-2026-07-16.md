@@ -724,7 +724,7 @@ resource, context) with no LLM in the loop?
 - **Yes, and the action is irreversible, external, or secret-adjacent**: **enforce**.
   This set is small and enumerable, which is exactly why enforcing it is not cruft:
   - writes outside the task's `touches`
-  - network egress (already a hook shared with masini,
+  - network egress (already a hook shared with the bridge agent,
     `project_workshop_v1_platform_2026_06_14`; unverified from this thread's reads)
   - `git push`, branch deletion, force operations
   - dependency and lockfile mutation

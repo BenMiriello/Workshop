@@ -55,7 +55,7 @@ This is a **design spec ported onto the real codebase**, not a re-skin. Keep the
 
 1. **Nav chrome = nested levels.** Build the *new* Birds nav system (web left-sidebar + mobile top-bar/bottom-tabs) by evolving `BirdsHeader`/`BIRDS_NAV` into the responsive chrome — single source of truth, no per-page nav.
    - **Embedded in Workshop:** the Workshop platform nav sits at the *outer* level (top); the new Birds nav nests *below* it.
-   - **Standalone** (springer / birds.benmiriello.com): the new Birds nav is the complete, self-sufficient chrome on its own (no Workshop nav present).
+   - **Standalone** (springer / birds.<your-domain>): the new Birds nav is the complete, self-sufficient chrome on its own (no Workshop nav present).
    - So the Birds shell must render correctly both with and without an enclosing Workshop chrome.
 2. **Scope state location.** Birds-scoped React context (`BirdsScopeContext`) backed by URL params, consumed by every Birds page (incl. bird detail). Keeps the change inside the Birds app. Default = home location + always-on device (Yard · Yard Mic).
 

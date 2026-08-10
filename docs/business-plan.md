@@ -1,6 +1,6 @@
 # Workshop as a Product & Business
 
-Status: strategy draft, 2026-06-14. Author: clawd-a. For operator review.
+Status: strategy draft, 2026-06-14. Author: the service user. For operator review.
 
 This builds on the v1 design docs (`docs/workshop-v1/`) and `docs/app-platform-plan.md`. Those describe *what Workshop is*. This describes *what Workshop could be as a company*, who it serves, how it wins, what we keep vs what customers keep, and how it makes money regardless of whether any single customer succeeds.
 
@@ -116,7 +116,7 @@ The operator's framing is exactly right and the research confirms it is the prov
 
 But there is a critical fairness fix the research demands. Replit and Cursor both had public revolts in 2025: surprise $1,000+ bills, and the "iteration tax" of being charged for failed and looping builds the same as successful ones. **Workshop's billing differentiator: bill for value delivered, not motion.** Transparent hard spend caps by default, no charge (or steeply reduced charge) for builds the reviewer gate marks as failed, visible cost-per-action before you run it. In a category where billing resentment is the loudest complaint, fair metering is itself a wedge. The reviewer/completion gate Workshop already has is the mechanism: it can distinguish a build that delivered from one that thrashed.
 
-**Tollbooth 2: run-time (hosting / deployment).** When you run or share an app, especially a public deployment, you pay to host it. The standalone/public mount (birds.benmiriello.com pattern) is the product surface. Predictable, recurring, scales with usage of the apps people actually keep.
+**Tollbooth 2: run-time (hosting / deployment).** When you run or share an app, especially a public deployment, you pay to host it. The standalone/public mount (birds.<your-domain> pattern) is the product surface. Predictable, recurring, scales with usage of the apps people actually keep.
 
 **Tollbooth 3: distribution-time (marketplace cut).** When an app, kit, connector, or template is installed, forked, or monetized through the marketplace, we take a percentage. App-store economics. This is the long-term high-margin layer and the one with the strongest network effects.
 

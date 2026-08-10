@@ -7,7 +7,7 @@
 
 Every commit to `main` in the canonical worktree that touches UI inputs triggers
 a background rebuild of `frontend/dist` (`.githooks/post-commit`, wired via
-`core.hooksPath`). `workshop.benmiriello.com` → cloudflared → `:8002` serves that
+`core.hooksPath`). `workshop.<your-domain>` → cloudflared → `:8002` serves that
 same `frontend/dist` from disk per request, so the rebuild is live with no
 restart and no deliberate release step.
 
@@ -19,7 +19,7 @@ guards (canonical worktree, default branch, UI files touched) prevent publishing
 
 This is currently correct, and it is worth being explicit about why:
 
-- There is one user, who is also the developer. `workshop.benmiriello.com` is not
+- There is one user, who is also the developer. `workshop.<your-domain>` is not
   a product surface with an audience; it is the operator's own daily UI, reached
   from devices where the tailnet dev origin is inconvenient.
 - The alternative (a manual publish step) was tried implicitly and failed. The
@@ -44,7 +44,7 @@ The exit condition is hosting the app somewhere with a real deployment pipeline
 (Cloudflare or equivalent). At that point `main` must stop publishing on commit,
 and shipping becomes a deliberate, versioned act.
 
-What happens to `workshop.benmiriello.com` at that point is deliberately left
+What happens to `workshop.<your-domain>` at that point is deliberately left
 open. Two candidates, not chosen here:
 
 - it becomes proper production, fed by a release pipeline instead of a git hook; or

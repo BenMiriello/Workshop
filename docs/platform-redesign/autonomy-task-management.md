@@ -188,7 +188,7 @@ any -(operator)-> cancelled
 
 ## 3. Build plan
 
-Global rules: same as `implementation-plan.md` (branch discipline, tsc + check_design.sh on frontend steps, no committed stubs, masini smoke check on backend restarts, no em-dashes/emoji). Any phase touching `cron_agent.sh`, `ralph.sh`, or `project_ralph.sh` is bracketed by the `AUTONOMY_DISABLED` pause. The crontab fires every 20 minutes against the live tree.
+Global rules: same as `implementation-plan.md` (branch discipline, tsc + check_design.sh on frontend steps, no committed stubs, the bridge agent smoke check on backend restarts, no em-dashes/emoji). Any phase touching `cron_agent.sh`, `ralph.sh`, or `project_ralph.sh` is bracketed by the `AUTONOMY_DISABLED` pause. The crontab fires every 20 minutes against the live tree.
 
 ### Phase T1: canonical model, one write path, reconcile
 
@@ -200,7 +200,7 @@ Global rules: same as `implementation-plan.md` (branch discipline, tsc + check_d
 - `backend/services/chat_context.py`: BOTH build personas (`:653`, `:715`) drop "update TODO.md" and gain the task-CLI instruction; `live_context` unchanged (still injects the export).
 - `scripts/ralph.sh` prompt text: BLOCKED/sub-task instructions point at the CLI instead of TODO.md prose.
 
-**Verify:** unit-level: v1 store loads, normalizes, round-trips as v2; hand-edit TODO.md (flip a box, add a bare `[ ]` line), call `list_tasks`, confirm the flip applied and the line imported, export regenerated, nothing lost. Drive a build chat turn that adds a task via the CLI and confirm the panel shows it without any TODO.md hand-edit surviving incorrectly. `tsc` n/a; backend restart + masini smoke check.
+**Verify:** unit-level: v1 store loads, normalizes, round-trips as v2; hand-edit TODO.md (flip a box, add a bare `[ ]` line), call `list_tasks`, confirm the flip applied and the line imported, export regenerated, nothing lost. Drive a build chat turn that adds a task via the CLI and confirm the panel shows it without any TODO.md hand-edit surviving incorrectly. `tsc` n/a; backend restart + the bridge agent smoke check.
 
 ### Phase T2: conversation emits tasks (task-patch, task-proposal card, generalized panel)
 
@@ -231,7 +231,7 @@ AUTONOMY_DISABLED bracket around the script edits.
 - `scripts/project_ralph.sh`: `--dir/--assignee` generalization; child Job per claimed task; `set-status ... --job-id` wiring; `next-ready` claim.
 - `backend/routes/projects.py` `/autonomy/log` and `frontend/src/pages/Jobs.tsx`/`JobDetail` (post-P5): render task binding when present.
 
-**Verify:** set a loop trigger on a test project with two ready tasks, disable nothing, wait one tick (or run `cron_agent.sh` by hand): a parent loop Job plus per-task child Jobs appear with correct `task_id`/`parent_id`; tasks transit todo -> doing -> done; a second tick with an empty queue starts no sweep. Set a cron trigger on a builder agent with a task in its own scope; confirm the due-fire claims only its assignee's task. Masini smoke check (backend restarted for jobs.py).
+**Verify:** set a loop trigger on a test project with two ready tasks, disable nothing, wait one tick (or run `cron_agent.sh` by hand): a parent loop Job plus per-task child Jobs appear with correct `task_id`/`parent_id`; tasks transit todo -> doing -> done; a second tick with an empty queue starts no sweep. Set a cron trigger on a builder agent with a task in its own scope; confirm the due-fire claims only its assignee's task. The bridge agent smoke check (backend restarted for jobs.py).
 
 ### Phase T4: gates, awaiting_input, follow-ups
 

@@ -1,7 +1,7 @@
 # Proposal (WIP): App versioning + rollback
 
 Status: **PROPOSAL / work-in-progress. Not implemented. No code changes implied by this doc.**
-Date: 2026-06-17 · Author: clawd-a · For: operator review
+Date: 2026-06-17 · Author: the service user · For: operator review
 
 This captures a design for letting you work on an app through the builder, then
 roll back or browse versions if something goes weird, without it turning into a

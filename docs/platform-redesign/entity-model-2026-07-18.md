@@ -76,7 +76,7 @@ Three kinds of identity can hold a Grant (per ADR 0004):
 
 | Kind | Authority model | Examples |
 | --- | --- | --- |
-| **Operator** | Always-allow; no Grant required | benmiriello (the installation owner) |
+| **Operator** | Always-allow; no Grant required | the operator (the installation owner) |
 | **Guest** | Gated; must present a valid Grant | External integrations, webhook callers |
 | **Agent** | Zero ambient authority; must present a Grant for every Store access | Every named Agent in the registry |
 
@@ -322,7 +322,7 @@ its specification. It is a property of the Ticket or Agent, not of the Run.
 Cascade order: Ticket latitude overrides Agent latitude; Agent latitude overrides
 Project latitude. If none is set, `standard` is the default.
 
-Note: `final-plan-agent-generalize-and-masini-fold-2026-07-16.md` used "low/medium/
+Note: `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md` used "low/medium/
 high" for these values. The canonical names are `strict/standard/open` as defined
 in `scopedness-and-escalation-2026-07-16.md` (the more fully-reasoned source). The
 final-plan doc's latitude naming is superseded here.
@@ -412,7 +412,7 @@ This section is the authoritative record of how the eight `docs/platform-redesig
 | `_brief-agent-protocols-2026-07-16.md` | SUPERSEDED | Historical record only. Entity model replaces all vocabulary and schema claims. |
 | `agent-roles-research-2026-07-16.md` | FOLDED IN | Supporting research. Five roles, D1-D4 defect catalog, and zero-agent default are all now in this doc (sections 6.1, 8.5). |
 | `concept-schema-2026-07-16.md` | SUPERSEDED | This entity model is its direct successor. Six-axis table, role table, grant model, Task/Job fields are all superseded by sections 3-8 above. |
-| `final-plan-agent-generalize-and-masini-fold-2026-07-16.md` | PRESERVED | Still the execution plan (phases P0-P4 and PM). Its latitude naming ("low/medium/high") is superseded by section 8.2. |
+| `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md` | PRESERVED | Still the execution plan (phases P0-P4 and PM). Its latitude naming ("low/medium/high") is superseded by section 8.2. |
 | `operator-asks-2026-07-16.md` | PRESERVED | Verbatim ask record. Never superseded. When a design choice in the entity model traces to an operator ask, the ask ID (A1, B3, etc.) is the citation. |
 | `resource-access-protocol-2026-07-16.md` | FOLDED IN | Store tiers, broker invariants, and access modes are now in sections 8.1 and 8.3. |
 | `scopedness-and-escalation-2026-07-16.md` | FOLDED IN | Latitude definitions, awaiting field shape, operator response verbs, and block loop are in sections 4.3, 7.2, 8.2. |
@@ -476,7 +476,7 @@ These questions were open in the 2026-07-16 docs and are now closed:
 
 ## 10. Build order
 
-The execution plan in `final-plan-agent-generalize-and-masini-fold-2026-07-16.md`
+The execution plan in `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md`
 is preserved. The phases reference this entity model for vocabulary and schema:
 
 - P0 (repair): Fix D1-D4. No entity changes; just wiring.
@@ -485,4 +485,4 @@ is preserved. The phases reference this entity model for vocabulary and schema:
   operator response verbs.
 - P3 (mediated broker): Wire broker role; wire attenuate() call sites (D4 repair).
 - P4 (templates): Agent template library; zero-agent-default for new projects.
-- PM (masini fold-in): Separate, larger scope; does not block P0-P4.
+- PM (bridge fold-in): Separate, larger scope; does not block P0-P4.

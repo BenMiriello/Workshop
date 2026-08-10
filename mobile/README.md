@@ -51,8 +51,8 @@ npm install                 # or: npx expo install   (reconciles SDK 51 versions
 
 Point the app at your backend in `app.json` `extra`:
 - Dev on LAN:  `webUrl` = `http://<mac-lan-ip>:5173`, `apiBase` = `http://<mac-lan-ip>:8000`
-- Prod (tailnet): `webUrl` = `https://debian.tail38e62e.ts.net:8446`,
-  `apiBase` = `https://debian.tail38e62e.ts.net:8446/api`
+- Prod (tailnet): `webUrl` = `https://<host>.<tailnet>:8446`,
+  `apiBase` = `https://<host>.<tailnet>:8446/api`
 
 Because this app uses native modules (location, notifications, Live Activities),
 it needs a **dev build**, not Expo Go:

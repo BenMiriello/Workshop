@@ -53,7 +53,7 @@ tsc, `scripts/check_design.sh`) and is committed on `mobile-app-rebuild`. Read
 ## Phase 5 — Public deployment (last)
 - `npm run build` -> `frontend/dist`; add `backend/workshop_public_app.py` (static + cookie-
   forwarding proxy to :8000 on :8002); add `workshop-public.service` + `cloudflared.service`
-  systemd units; add the `workshop.benmiriello.com` ingress rule; `WORKSHOP_REGISTRATION_OPEN=0`.
+  systemd units; add the `workshop.<your-domain>` ingress rule; `WORKSHOP_REGISTRATION_OPEN=0`.
 - Operator runs the `cloudflared tunnel route dns` command (egress guard blocks it from the
   agent's shell); agent does everything else.
 - Acceptance: see Phase 5 acceptance in `02-cloudflare-deployment.md`, plus the red-team below.

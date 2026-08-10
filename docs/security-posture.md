@@ -25,7 +25,7 @@ Sensitive data, roughly in priority order:
 - **The host itself** — the backend can run containers (docker socket = root), so host compromise is
   a financial-data compromise.
 
-Threat actors we design against: the public internet (via `workshop.benmiriello.com`), other devices
+Threat actors we design against: the public internet (via `workshop.<your-domain>`), other devices
 on the home LAN, other devices on the tailnet (incl. a compromised/guest device), other *users* on
 the shared host, and prompt-injection into the autonomous agents (which hold the OAuth token and can
 act). We are **not** trying to defend against the operator's own root account.
@@ -46,16 +46,16 @@ the Docker bridge — see §5.
 
 ### 2.2 Host users / clusters
 Two intended clusters on the shared host:
-- **clawd-a ↔ benmiriello** — the operator's personal cluster; mutual file access is intended.
-- **simonsays ↔ clawd-b** — a separate pair, meant to be isolated from the clawd-a/benmiriello side.
+- **the service user ↔ the operator** — the operator's personal cluster; mutual file access is intended.
+- **simonsays ↔ another tenant** — a separate pair, meant to be isolated from the the service user/the operator side.
 
 **File-layer requirement (holds today):** each home is `0700` except where sharing is intended
-(`clawd-a` `0750` group `clawd-a` with `benmiriello` a member; `benmiriello` `0710` + ACL granting
-`clawd-a` traverse). `clawd-b` must stay fully contained (no `docker`, no `sudo`, `0700`).
+(`the service user` `0750` group `the service user` with `the operator` a member; `the operator` `0710` + ACL granting
+`the service user` traverse). `another tenant` must stay fully contained (no `docker`, no `sudo`, `0700`).
 
 **Known boundary breaker:** the shared **Docker daemon**. `docker` group membership is
-root-equivalent, and clawd-a/benmiriello/simonsays all share one daemon, so the cluster boundary
-cannot be absolute at the docker layer. clawd-a's membership is *load-bearing* (the app runner needs
+root-equivalent, and the service user/the operator/simonsays all share one daemon, so the cluster boundary
+cannot be absolute at the docker layer. the service user's membership is *load-bearing* (the app runner needs
 it — §5), so the real fix is architectural: rootless/per-user Docker, a socket-proxy, or a dedicated
 runner user. Until then, "loopback/host-local" is not a trust boundary between host users, and this
 is a documented, accepted-for-now exposure.
@@ -87,13 +87,13 @@ Requirements the code must keep satisfying (all verified present 2026-07-18):
 
 ---
 
-## 4. Public edge (`workshop.benmiriello.com`)
+## 4. Public edge (`workshop.<your-domain>`)
 
 The only public path in is the Cloudflare tunnel → `workshop-public.service` on `127.0.0.1:8002`
 (`workshop_public_app.py`) → backend on `:8000`. Requirements:
 
-- **Ingress is minimal.** The tunnel routes only `workshop.benmiriello.com → :8002` and
-  `birds.benmiriello.com → :8001`, with a `404` catch-all. Nothing else is internet-exposed.
+- **Ingress is minimal.** The tunnel routes only `workshop.<your-domain> → :8002` and
+  `birds.<your-domain> → :8001`, with a `404` catch-all. Nothing else is internet-exposed.
 - **Static file serving is containment-checked.** SPA paths `resolve()` + `is_relative_to(DIST)` —
   no path traversal to secrets on disk.
 - **The edge proxies ONLY the personal + `/auth` surface.** Internal/loopback-trusted and
@@ -130,7 +130,7 @@ requires docker-socket access — hence `workshop-backend.service` runs uvicorn 
 ## 5a. Agent-execution boundary (what confines an autonomous turn)
 
 Autonomous turns (`ralph`/`project_ralph`/`queue_runner`/`cron_agent` + the `/tools` recursive-claude
-tools) run the **same `claude -p`** as interactive sessions, as `clawd-a`, in the `docker` group, with
+tools) run the **same `claude -p`** as interactive sessions, as `the service user`, in the `docker` group, with
 **no sandbox**, holding the OAuth token and full tree read/write. The only enforcement is two
 PreToolUse **Bash-only** hooks (`egress-guard.py`, `git-guard.py`) plus the Anthropic auto-mode
 classifier. These turns ingest untrusted content (Discord/web/task text), so prompt injection is in
@@ -146,7 +146,7 @@ project, the personal-data stores, or the host.
 **Real confinement can only come from an OS boundary:** a dedicated lower-privilege execution
 identity for the autonomy loop (a sub-user *without* the docker group), plus rootless/socket-proxied
 Docker for the app runner (§5). Until that exists, the honest posture is: an agent turn can do
-anything clawd-a can do, up to and including host root via the docker socket. The completion gate
+anything the service user can do, up to and including host root via the docker socket. The completion gate
 (`reviewer.sh`) is a **quality** control (it checks the committed diff), not a safety control (it
 never inspects the turn's Bash actions). See `security-audit-2026-07-18-agents.md`.
 
@@ -165,7 +165,7 @@ never inspects the turn's Bash actions). See `security-audit-2026-07-18-agents.m
 - **IPv6:** the host has globally-routable IPv6. Requirement: the inbound firewall must default-deny
   IPv6 for every service that binds `[::]` (Redis/Ollama/ComfyUI/SMB/ssh), or those services are
   internet-exposed regardless of the `0.0.0.0` intent. Verify with `ip6tables`/`ufw` as root.
-- Firewall changes need root (`benmiriello`); clawd-a has no `ufw`/`sudo`.
+- Firewall changes need root (`the operator`); the service user has no `ufw`/`sudo`.
 
 ---
 
@@ -215,7 +215,7 @@ never inspects the turn's Bash actions). See `security-audit-2026-07-18-agents.m
 6. The backend's code-execution routes (`/tools`) never trust more than loopback + Docker bridge.
 7. No app container is privileged / host-networked / mounts the docker socket.
 8. The mobile bridge exposes no Keychain *read* to page JS; WebView is origin-locked.
-9. `clawd-b` stays out of `docker`/`sudo`; docker-daemon sharing is tracked as a known cluster-
+9. `another tenant` stays out of `docker`/`sudo`; docker-daemon sharing is tracked as a known cluster-
    boundary exception with an architectural fix pending.
 10. Registration fail-closed; OAuth via subscription token only (never `ANTHROPIC_API_KEY`).
 

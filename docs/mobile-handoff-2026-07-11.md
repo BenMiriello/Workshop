@@ -72,18 +72,18 @@ straight from Xcode. Possible iOS-26.5-vs-Xcode-version gap to resolve.
 
 - **Single backend origin, no host committed.** `mobile/native/config.ts` resolves:
   `EXPO_PUBLIC_WORKSHOP_URL` (env; put in `mobile/.env.local`, gitignored) >
-  `app.json` `extra.serverUrl` > default `https://workshop.benmiriello.com`.
+  `app.json` `extra.serverUrl` > default `https://workshop.<your-domain>`.
   `/api` is proxied to the backend at every origin (public edge in prod, vite in
   dev), so one URL serves both the WebView and the native producers (which POST
   under `/api/...`). Default = public deployment, so the phone doesn't even need
-  Tailscale; set `EXPO_PUBLIC_WORKSHOP_URL=https://debian.tail38e62e.ts.net:8443`
+  Tailscale; set `EXPO_PUBLIC_WORKSHOP_URL=https://<host>.<tailnet>:8443`
   in `.env.local` to use the tailnet instead.
 - **Auth**: the WebView logs in via the session cookie (same-origin), the frontend
   provisions a revocable device token, and the native producers (location/audio)
   send it as a Bearer. `mobile/native/auth.ts` key = `workshop.ws-device-token`.
   **This on-device handshake has never run on a real phone** — if background
   location posts return 401 on device, look here first.
-- Operator account: **benmiriello@gmail.com** — register/login at the login wall on
+- Operator account: **<operator-email>** — register/login at the login wall on
   first launch.
 - `tier: "free"` ($99 Apple Developer Program / remote push is a deferred seam).
 - Live Activity: an optional one-time Xcode target step (`plugins/withLiveActivity.js`

@@ -39,6 +39,8 @@ done
 EXCLUDES=(
   ":!scripts/check_no_hardcoding.sh"
   ":!scratch/**" ":!tmp/**"
+  # .gitignore names the instance paths it excludes; that is its job.
+  ":!.gitignore"
   # Vendored/third-party text: a dependency's own metadata is not our source.
   ":!**/package-lock.json" ":!**/*.lock" ":!**/yarn.lock"
 )

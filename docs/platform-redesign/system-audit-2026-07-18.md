@@ -87,7 +87,7 @@ filing sessions and low-priority asks are unreachable in practice.
 |---|---|
 | **keeper** | **The only role that works end to end.** Live cron trigger, fresh artifacts. |
 | **maker** | Built, reachable, never fires — all 20 builder agents carry `triggers: []`. |
-| **triager** | 530 lines implemented, **never run once** — `.runtime/triager/` does not exist. Its only agent (`masini`) has trigger kind `discord`; the dispatcher fires `cron`/`loop` only. |
+| **triager** | 530 lines implemented, **never run once** — `.runtime/triager/` does not exist. Its only agent (`the bridge agent`) has trigger kind `discord`; the dispatcher fires `cron`/`loop` only. |
 | **reviewer** | Deliberate stub (`skip-no-runner`). `agents/work-reviewer.md` has **zero call sites** — the gate is the deterministic shell script, not the documented LLM subagent. |
 | **broker** | Demand-only, never dispatched. Coherent. |
 
@@ -98,7 +98,7 @@ at all.
 
 **Fixed:** the dispatcher now emits `skip-no-triggers` and `skip-unroutable`.
 Running it names 20 no-trigger builders plus `email-triager` (event),
-`masini-commute` (manual), and `masini` (discord). An unroutable trigger kind is
+`the bridge agent-commute` (manual), and `the bridge agent` (discord). An unroutable trigger kind is
 a wiring bug, not a schedule, and should not look like quiet.
 
 ## 3. Scheduling — serial by four independent layers

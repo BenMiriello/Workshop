@@ -46,7 +46,7 @@ Built and working (software side):
 ## Operator must do once, before/at first run
 
 1. **Register the operator account.** The login wall is live; the user DB is empty. On
-   first load, "Create account" with **benmiriello@gmail.com** (that email is wired as the
+   first load, "Create account" with **<operator-email>** (that email is wired as the
    operator via `WORKSHOP_OPERATOR_EMAIL` in `~/.config/workshop/secrets.env` on the Linux
    box; only the operator account reaches finance/location etc.). Any other email registers
    as a no-access member.
@@ -61,8 +61,8 @@ Tailscale Serve). The Mac only builds/runs the iOS client.
 1. `git checkout mobile-app-rebuild && git pull`.
 2. Point the app at the tailnet (edit `mobile/app.json` → `expo.extra`), replacing the LAN
    IPs currently there:
-   - `webUrl`: `https://debian.tail38e62e.ts.net:8443`  (the SPA, via Tailscale Serve → vite)
-   - `apiBase`: `https://debian.tail38e62e.ts.net:8446`  (the backend, for native posts; no `/api` suffix — the backend strips `/api` itself)
+   - `webUrl`: `https://<host>.<tailnet>:8443`  (the SPA, via Tailscale Serve → vite)
+   - `apiBase`: `https://<host>.<tailnet>:8446`  (the backend, for native posts; no `/api` suffix — the backend strips `/api` itself)
    - `tier`: leave `"free"`.
 3. `cd mobile && npm install` (done once on Linux; redo on the Mac).
 4. `npx expo run:ios` to the plugged-in iPhone (free provisioning; accept the 7-day re-sign

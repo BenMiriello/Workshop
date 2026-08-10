@@ -371,7 +371,7 @@ In the app's startup or in `stores.py:register_builtin_stores`:
 stores.declare(
     app="knowledge",
     name="project-acme",
-    root=Path("/home/clawd-a/workshop/knowledge/project-acme"),
+    root=Path("$WORKSHOP/knowledge/project-acme"),
     type="Note",
 )
 # For vault subfolders, use the path argument once URI grammar is extended:

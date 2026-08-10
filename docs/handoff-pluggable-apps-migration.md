@@ -3,7 +3,7 @@
 **Status: DONE on `main` (2026-07-12).** Implemented as a built-in app *catalog*
 (`backend/services/app_registry.py`) driven by a per-instance *install list*
 (`.runtime/installed-apps.json`, `services/installed_apps.py`), keeping all seven
-apps working on clawd-a while making a fresh clone boot blank. Design +
+apps working on the service user while making a fresh clone boot blank. Design +
 per-instance data map: [`apps-are-pluggable.md`](apps-are-pluggable.md). The
 original handoff follows for reference.
 
@@ -17,9 +17,9 @@ What was done:
   `build_agents.json`, `backend/apps.json`, and `commute/{schedule,legs,targets,
   sources}` → `.runtime/commute-config/`, notes → `.runtime/commute-notes/`.
   `commute/README.md` scrubbed of the real name/addresses/channel id. Paths
-  de-hardcoded off `/home/clawd-a`.
+  de-hardcoded off `$HOME`.
 - Verified: fresh install list → zero app routes/cards/MCP, shell intact;
-  clawd-a's roster → all seven apps mount and serve (401-gated) as before.
+  the service user's roster → all seven apps mount and serve (401-gated) as before.
 
 Remaining (intentionally deferred, see the doc's "one deferred seam"):
 integrated in-shell frontend route injection; and git-history scrubbing of the
@@ -41,7 +41,7 @@ The shell is not app-agnostic and there is no supported "fresh/blank instance"
 path. Consequences, confirmed by the 2026-07-12 incident
 (`simonsays-local:docs/simonsays-local-instance.md`, Incident §2):
 
-- A second operator who clones the repo inherits clawd-a's apps AND clawd-a's
+- A second operator who clones the repo inherits the service user's apps AND the service user's
   real data, including **home/work street addresses in plaintext**
   (`commute/schedule.json`), the actual commute route (`commute/legs.json`), and
   the real projects/build-agent registries.
@@ -67,7 +67,7 @@ Backend:
 - `backend/apps.json` — app registry (partly hardcoded).
 
 Git-tracked personal data / instance state (should not ship in a cloneable platform):
-- `projects.json`, `build_agents.json` — clawd-a's real projects + agent sessions.
+- `projects.json`, `build_agents.json` — the service user's real projects + agent sessions.
 - `commute/schedule.json` (home/work addresses), `commute/legs.json`,
   `commute/targets.json` — real personal commute data.
 
@@ -82,7 +82,7 @@ into the platform. See the design doc `simonsays-local:docs/apps-are-pluggable.m
 
 ## The critical constraint (why this is NOT a cherry-pick)
 
-On `simonsays-local`, app-agnosticism was achieved by **deleting clawd-a's apps**
+On `simonsays-local`, app-agnosticism was achieved by **deleting the service user's apps**
 (`97e5e56` removed birds/budget/commute/finance/health/owntracks and their
 services). That is correct for *that* instance but wrong for `main`: main must
 **keep these apps working** while moving them into the installed-app model.
@@ -94,7 +94,7 @@ wiring. Instead:
    an app-registration contract: routes, launcher card, MCP servers, auth).
 2. **Migrate each existing app** (finance, budget, commute, location, birds,
    owntracks, health) into that model as an installed app, verifying each still
-   works on clawd-a after conversion.
+   works on the service user after conversion.
 3. Move the plaid MCP spec from `llm_router._MCP_SERVER_SPECS` to the finance/
    budget app's registration.
 4. **Untrack the personal data / instance state**: `projects.json`,
@@ -105,12 +105,12 @@ wiring. Instead:
 ## Verification (definition of done)
 
 - A fresh clone (no `.runtime/`, no secrets) boots with an **empty** app roster
-  and **no** clawd-a data anywhere (no addresses, no projects).
-- clawd-a's own instance still shows and runs all its apps exactly as before
+  and **no** the service user data anywhere (no addresses, no projects).
+- the service user's own instance still shows and runs all its apps exactly as before
   (finance/budget/commute/location/birds/owntracks/health), data intact.
 - Installing/removing an app is a manifest/registration operation, no platform
   code edit.
-- `grep` for clawd-a-specific hosts/paths/data in tracked platform code comes
+- `grep` for the service user-specific hosts/paths/data in tracked platform code comes
   back clean (they live in env/`.runtime/` only).
 
 ## References

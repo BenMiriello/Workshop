@@ -378,7 +378,7 @@ Verified by reading, not assumed. Three of them block the operator's asks outrig
 
 | # | Defect | Blocks |
 | --- | --- | --- |
-| D1 | `dispatch_triggers.sh:329` hardcodes `role == "memory"`; all other assistant agents hit `skip-assistant` at `:344`. Five agents have triggers and never run (`workshop-overseer`, `email-triager`, `plaid-watcher`, and `masini`/`masini-commute` which may use their own bridge). | the `triager` entirely (ask D5) |
+| D1 | `dispatch_triggers.sh:329` hardcodes `role == "memory"`; all other assistant agents hit `skip-assistant` at `:344`. Five agents have triggers and never run (`workshop-overseer`, `email-triager`, `plaid-watcher`, and `the bridge agent`/`the bridge agent-commute` which may use their own bridge). | the `triager` entirely (ask D5) |
 | D2 | No `_coerce_role` beside `_coerce_depth`/`_coerce_fanout` (`agents_registry.py:75-79`). `role: memoy` silently disables the memory-keeper. | schema integrity |
 | D3 | `touches` enforced nowhere. | the enforced floor (ask C2) |
 | D4 | `attenuate()` has zero call sites. | every grant narrowing |

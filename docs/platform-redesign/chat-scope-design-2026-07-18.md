@@ -457,4 +457,4 @@ S6 is cosmetic and can trail S4.
 - Merging or migrating previously filed tickets when a chat re-scopes (tickets
   stay in their original scope; re-scope is not a bulk move)
 - Voice-mode surface (unrelated)
-- Any veritusagent org content
+- Any <blocked-org> org content

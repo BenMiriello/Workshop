@@ -136,7 +136,7 @@ def plugin_specs() -> dict[str, dict]:
     if not isinstance(installed, dict):
         return out
     for key, entries in installed.items():
-        # "discord@clawd-a-plugins" -> "discord". The CLI's server prefix uses
+        # "discord@<org>-plugins" -> "discord". The CLI's server prefix uses
         # the plugin name alone, not the marketplace it came from.
         plugin = str(key).split("@", 1)[0]
         if not isinstance(entries, list):

@@ -8,7 +8,7 @@
 Project code persisted only locally: the registry record had no remote field, project
 creation did `git init -b main` plus one commit with no origin, and workers ran in
 the project main dir with no push or PR. `gh` is installed and authenticated as
-`BenMiriello` (scopes `read:org, repo`), and `git worktree` works, so the box can
+`<owner>` (scopes `read:org, repo`), and `git worktree` works, so the box can
 talk to GitHub today, but nothing in the project or worktree flow does.
 `services/worktrees.py` already does the full local worktree lifecycle but touches no
 remote. The operator wants code to persist in the remote and agents to create repos,
@@ -24,11 +24,11 @@ push, and open PRs through `gh`. Concurrent work runs in disjoint git worktrees 
 the existing `branches/<slug>/<branch>` scheme, reconciled with a
 rebase-before-merge model (short-lived `agent/<task-id>` branches, `git rerere`, a
 merged-branch cleanup sweep). Repos go to the operator's personal GitHub
-(`BenMiriello`) only.
+(`<owner>`) only.
 
 ## Consequences
 
-Hard boundaries are honored: the `veritusagent` org is strictly excluded, with no
+Hard boundaries are honored: the `<blocked-org>` org is strictly excluded, with no
 cross-org PAT scopes and no PRs against it. Project repos stay separate git repos and
 are never committed into the workshop tree; the existing `/projects/*`, `/branches/`,
 and `/build-agents/` gitignores are extended so no project `.git` or worktree leaks

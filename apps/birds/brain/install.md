@@ -51,7 +51,7 @@ notes) to POST `brain/webhook-template.json` to `http://127.0.0.1:8000/birds/web
 Confirm with:
 
 ```bash
-journalctl -u masini-bot -f   # or wherever the OpenClaw event consumer logs
+journalctl -u the bridge service -f   # or wherever the OpenClaw event consumer logs
 # and check the Workshop events feed picked up a "birdnet" source event
 curl -s localhost:8000/events/recent?source=birdnet | head
 ```

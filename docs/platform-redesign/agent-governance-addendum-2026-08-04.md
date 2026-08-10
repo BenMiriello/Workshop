@@ -37,7 +37,7 @@ as if they confined an agent, and the standing remediation ticket (SEC-A2) is to
 stop doing that. Verified 2026-08-04:
 
 **Real, OS-enforced:**
-- `clawd-a` is **not** in the docker group (`id -nG clawd-a` → `users`). This
+- `the service user` is **not** in the docker group (`id -nG the service user` → `users`). This
   closed the critical escalation: one `docker run -v /:/host` used to be host root.
 - Egress guard hook on Bash and WebFetch.
 - Container network isolation for generated apps; `0600` env files and secrets,
@@ -51,8 +51,8 @@ stop doing that. Verified 2026-08-04:
   explicitly advisory. `grants` bind only code that voluntarily calls
   `services.stores`; a Bash `cat` walks past them.
 - The per-owner data partition (a contextvar).
-- **The autonomy loop still runs as `clawd-a`** — the same uid as the interactive
-  session. Verified: `queue_runner.sh` runs as `clawd-a`. So an autonomous turn
+- **The autonomy loop still runs as `the service user`** — the same uid as the interactive
+  session. Verified: `queue_runner.sh` runs as `the service user`. So an autonomous turn
   can rewrite the very files that describe its own permissions, and read every
   owner's personal data. SEC-A1 is marked done because the docker half shipped;
   the dedicated lower-privilege identity did not.

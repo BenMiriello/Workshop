@@ -30,7 +30,7 @@ two things that needed no change. The real count was five, and is now four:
 | 2 | `.runtime/build_agents.json` synthesis (`_record_from_build_state`) | **REMOVED** (P1a) |
 | 3 | `~/.claude/agents/*.md` — Claude Code native subagents, different field names | **UNIFIED** (P1c) |
 | 4 | App personas — `ContextProvider` subclasses in Python | **MIGRATED** (P1b) |
-| 5 | `per_channel_agents.py` (masini Discord) | excluded by rule |
+| 5 | `per_channel_agents.py` (the bridge agent Discord) | excluded by rule |
 
 Mechanism 2 was how five of the twelve builders existed without anyone declaring
 them: a process ran, wrote runtime state, and the roster promoted that state to
@@ -88,7 +88,7 @@ reader got a parse error and every field read as absent. Nobody could see this
 while exactly one lenient consumer existed. A second consumer found it in one
 afternoon.
 
-`discord-handler` is deliberately untouched: it is the masini Discord bridge's
+`discord-handler` is deliberately untouched: it is the the bridge agent Discord bridge's
 per-message dispatcher, excluded by the same rule as mechanism 5. It is *named*
 rather than silently filtered (`NATIVE_FOREIGN`) — an agent that exists and is
 not ours is worth seeing exactly once, with whose it is stated.

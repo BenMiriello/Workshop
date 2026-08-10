@@ -19,7 +19,7 @@ gate; the data bypass is what gets deleted (see R2, R5).
 
 Today `auth_store.create_user` reads `WORKSHOP_OPERATOR_EMAIL` at registration time and flags
 the matching account (or the first account) as operator. That is exactly the "anyone who
-registers benmiriello@gmail.com gets my setup" hole. Fix:
+registers <operator-email> gets my setup" hole. Fix:
 - `create_user` always creates a plain member (`is_operator=0`). It never reads the env.
 - The one-time `migrate_to_owned.py` is the ONLY place that sets `is_operator=1` (for the
   operator account, by email). After bootstrap, `WORKSHOP_OPERATOR_EMAIL` is referenced at no

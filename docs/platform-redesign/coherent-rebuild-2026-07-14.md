@@ -7,10 +7,10 @@ and the staged migration order. Everything built from here follows this doc so
 we stop bolting new layers onto old ones.
 
 Author: assistant, from four parallel audits (jobs / agents-liveness /
-autonomy-substrate / external research) run 2026-07-14. Operator: benmiriello.
+autonomy-substrate / external research) run 2026-07-14. Operator: the operator.
 
 Hard rules still apply: single-operator (no defensive cruft), no em-dashes, no
-emoji in UI, lucide icons, src/ui primitives, veritus separation.
+emoji in UI, lucide icons, src/ui primitives, the excluded work org separation.
 
 ---
 
@@ -241,7 +241,7 @@ and, once Stage 3 lands, is worked through the system itself.
 - **Stage 0 — Stop the noise (safe, reversible).** Durably pause the Letta/Ollama
   heartbeat supervisor so it stops writing junk jobs (persisted flag the supervisor
   reads on start, so a restart does not un-pause it). Verified independent of
-  masini. This alone cleans the Jobs feed. Keep code for now; deletion is Stage 9.
+  the bridge agent. This alone cleans the Jobs feed. Keep code for now; deletion is Stage 9.
 - **Stage 1 — Agents page tells the truth (safe).** Fix liveness (2b): reset state
   on finalize + compute liveness from real turn-in-flight; split the status triad;
   drop the Letta fallback roster + second creation flow.
@@ -270,7 +270,7 @@ and, once Stage 3 lands, is worked through the system itself.
 - **Stage 9 — Retire Letta/Ollama fully (needs operator confirm).** After the
   structured store is canonical and the heartbeat has been paused a while with no
   regressions, delete the supervisor + Ollama tier + related routes/UI. Confirm
-  masini independence once more (the only link is the write-only notify file).
+  the bridge agent independence once more (the only link is the write-only notify file).
 
 ---
 
@@ -284,7 +284,7 @@ and, once Stage 3 lands, is worked through the system itself.
 - Backend restart interrupts in-flight chat turns (they reattach on boot). After a
   restart, check for orphaned streaming turns and nudge only ones we interrupted.
 - Restart: `bash scripts/restart_backend.sh --deferred`.
-- Backend Python: `PYTHONPATH=/home/clawd-a/workshop/backend .venv/bin/python`;
+- Backend Python: `PYTHONPATH=$WORKSHOP/backend .venv/bin/python`;
   source `~/.config/clawdbot/auth.env` for a token in scratch tests.
 
 Key files by subsystem are listed in the four audit sections above and in

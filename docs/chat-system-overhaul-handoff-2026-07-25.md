@@ -98,7 +98,7 @@ Two runtime steps were required and were performed:
    `--reload`, so it kept serving the pre-edit model list. Restarted via
    `scripts/restart_backend.sh`; new pid 1497447 on port 8000. Verified opus-5 is now first in
    every provider's list.
-2. **Frontend rebuild.** The public site (workshop.benmiriello.com) serves the static
+2. **Frontend rebuild.** The public site (workshop.<your-domain>) serves the static
    `frontend/dist`, **not** live Vite. Rebuilt with `scripts/build_workshop_public.sh`.
 
 Operator confirmed in statement 5: "Yeah I can select opus 5". **This item is closed.**
@@ -456,11 +456,11 @@ ordering is explicit in statement 8.
 - **Restart + rebuild are mandatory.** Backend changes need `scripts/restart_backend.sh` (the
   running uvicorn has no `--reload`). Frontend changes need
   `scripts/build_workshop_public.sh` (the public site serves static `frontend/dist`).
-- **Reproduce as app user 6** (`benmiriello@gmail.com`), not Linux UID 1003. Thread files are
+- **Reproduce as app user 6** (`<operator-email>`), not Linux UID 1003. Thread files are
   per-owner.
 - **`GET /chat/providers`** is the live source of the model dropdown, and it requires auth.
   `/providers` (no prefix) 404s.
-- **Another clawd-a Claude is running** (the Discord bridge, on opus-4-7) and can write to this
+- **Another the service user Claude is running** (the Discord bridge, on opus-4-7) and can write to this
   tree. "File modified since read" errors mean a racing writer — re-read before editing. See
   the `duplicate-agent-file-race` memory.
 - **Design system is binding** for anything under `frontend/`: `src/ui` primitives, tokens not

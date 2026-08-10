@@ -1,21 +1,21 @@
 # Applying the 2026-07-18 security fixes to a sister Workshop instance
 
 There is more than one Workshop instance on the shared host (e.g. the `simonsays` sister instance).
-The 2026-07-18 audit was performed against the `clawd-a` instance, but most findings are properties
+The 2026-07-18 audit was performed against the `the service user` instance, but most findings are properties
 of the **codebase** and the **per-instance host config**, so a sister instance needs its own pass.
 This doc says exactly what travels automatically vs. what each instance must apply by hand.
 
 ## How the fixes reach another instance
 
-- **Code + these docs travel via git.** The repo remote is `github.com/BenMiriello/Workshop.git`. If
-  the sister instance is a clone of the same repo, a normal `git pull` (after the clawd-a commits are
+- **Code + these docs travel via git.** The repo remote is `github.com/<owner>/Workshop.git`. If
+  the sister instance is a clone of the same repo, a normal `git pull` (after the the service user commits are
   pushed to the remote) brings every code fix AND every report/runbook/posture doc listed below.
-  NOTE: as of writing, the clawd-a fixes are committed locally but **not yet pushed** — the operator
+  NOTE: as of writing, the the service user fixes are committed locally but **not yet pushed** — the operator
   pushes when ready.
 - **Per-user config does NOT travel via git** — it lives outside the repo (`~/.claude/…`,
   `~/.config/systemd/user/…`, file permissions). Each instance's operator must apply Part B itself.
-- **No shared drop location:** on this host, `clawd-a` cannot write into another user's home (`0700`)
-  or a shared dir (`/opt/shared`, `/opt/clawd-house` are not clawd-a-writable); only `/tmp` is world-
+- **No shared drop location:** on this host, `the service user` cannot write into another user's home (`0700`)
+  or a shared dir (`/opt/shared`, `/opt/clawd-house` are not the service user-writable); only `/tmp` is world-
   writable and that is not a durable channel. So the intended handoff is **git** (or the operator
   copying files manually).
 
@@ -47,7 +47,7 @@ These are NOT in the repo; the sister instance has its own copies:
    `WebFetch` matcher to its `~/.claude/settings.json` PreToolUse hooks.
 3. **File permissions.** `chmod 600` its own `.runtime/auth.db` and any `.env`; `chmod -R go=` its
    `~/.claude/file-history`.
-4. **The agent boundary (docker).** Same root-cause as clawd-a: if that user is in the `docker` group
+4. **The agent boundary (docker).** Same root-cause as the service user: if that user is in the `docker` group
    and runs autonomous agents, the same host-root exposure applies — follow Part 1 of
    `security-remediation-runbook.md` (rootless docker + drop the group) for that user.
 5. **Its own network exposures.** Run the runbook's Part 2 checks against that instance's services

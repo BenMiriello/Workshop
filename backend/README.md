@@ -25,4 +25,4 @@ journalctl --user -u workshop-backend -f
 |---|---|---|
 | `LETTA_URL` | `http://127.0.0.1:8283` | Letta server |
 | `LETTA_SERVER_PASS` | `workshop-local` | Bearer for Letta |
-| `WORKSHOP_PROJECTS_ROOT` | `/home/clawd-a` | Where /projects scans for `.git` dirs |
+| `WORKSHOP_PROJECTS_ROOT` | `$HOME` | Where /projects scans for `.git` dirs |

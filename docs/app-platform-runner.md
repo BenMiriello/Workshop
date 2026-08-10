@@ -1,6 +1,6 @@
 # App Platform — multi-service runner, port registry, autonomous monitor
 
-Status: **built & live-verified** · Date: 2026-06-15 · Author: clawd-a
+Status: **built & live-verified** · Date: 2026-06-15 · Author: the service user
 
 This is the runtime layer that runs a *project* as an *app*: several cooperating
 servers, on conflict-free ports, kept alive autonomously, viewable over the tailnet,
@@ -172,12 +172,12 @@ project whose real code is in the monorepo) and says so, instead of the agent co
 - **core** (Bun API): modeled but **disabled by default**. It needs operator-supplied
   secrets (`GEMINI_API_KEY` + a complete `GOOGLE_*` OAuth set — its env validator
   rejects a partial set) and its dep containers (Postgres/Redis/FalkorDB). The dep
-  containers need `clawd-a` to be in the `docker` group (the socket is currently
+  containers need `the service user` to be in the `docker` group (the socket is currently
   permission-denied). Fill the env in `workshop.app.json`, set `enabled: true`, ensure
   docker access, and the runner brings it up with its deps in order.
 - **inference-worker** (torch/diffusers/RunPod GPU): disabled — not a local surface.
 
-To enable core: `usermod -aG docker clawd-a` (operator), add `GEMINI_API_KEY` +
+To enable core: `usermod -aG docker the service user` (operator), add `GEMINI_API_KEY` +
 `GOOGLE_*` to the core service `env`, flip `enabled: true`, then Start app.
 
 ## Remote-later

@@ -4,7 +4,7 @@ Phases 0–4 are built, tested, and running live on the tailnet backend. Phase 5
 (public deployment) is deployed on this box — the public edge is enabled and
 running on :8002, registration is closed, the cloudflared ingress is configured —
 and the only remaining action is the operator running one egress-blocked DNS
-command to publish `workshop.benmiriello.com` (see "The one step left" below).
+command to publish `workshop.<your-domain>` (see "The one step left" below).
 See `04-critique-and-refinements.md` for the design deltas this implements.
 
 ## What is live now (tailnet backend :8000, restarted onto the new code)
@@ -91,26 +91,26 @@ command (operator-only).
 - **Registration closed** (`WORKSHOP_REGISTRATION_OPEN=0` in `secrets.env`,
   backend restarted) — `POST /api/auth/register` → 403 "registration is closed";
   login unaffected. Matches the plan's public-origin posture.
-- `cloudflared.service` unit installed and `workshop.benmiriello.com → :8002`
+- `cloudflared.service` unit installed and `workshop.<your-domain> → :8002`
   ingress added to `~/.cloudflared/config.yml` (backup at `config.yml.bak`), above
-  the 404 catch-all, leaving the existing `birds.benmiriello.com → :8001` rule
+  the 404 catch-all, leaving the existing `birds.<your-domain> → :8001` rule
   intact. The tunnel is **not started** — see below.
 
 ## The one step left (operator-only — egress guard blocks it from the agent shell)
 
 ```
-cloudflared tunnel route dns eca1421d-9e82-4bbd-a131-3960065cf953 workshop.benmiriello.com
+cloudflared tunnel route dns <tunnel-id> workshop.<your-domain>
 systemctl --user enable --now cloudflared.service
 ```
 
 The first command creates the public DNS CNAME (Cloudflare API call — blocked by
 the egress guard, and not worked around). The second starts the tunnel; the
-moment it connects, `https://workshop.benmiriello.com` is live against the
+moment it connects, `https://workshop.<your-domain>` is live against the
 already-running :8002 edge.
 
-Heads-up: that same tunnel config also serves `birds.benmiriello.com → :8001`,
+Heads-up: that same tunnel config also serves `birds.<your-domain> → :8001`,
 and the birds app on :8001 is currently **down**, so starting the tunnel will make
-`birds.benmiriello.com` return 502 until that app is started again (separate from
+`birds.<your-domain>` return 502 until that app is started again (separate from
 Workshop). That is why the tunnel was left for the operator rather than started
 automatically.
 

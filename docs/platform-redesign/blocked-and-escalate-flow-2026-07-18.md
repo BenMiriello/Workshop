@@ -208,7 +208,7 @@ healthy, not as an empty inbox.
 
 ### 3.6 Discord notification
 
-The Discord bridge (masini) posts a notification when Blocks accumulate: "N blocks
+The Discord bridge (the bridge agent) posts a notification when Blocks accumulate: "N blocks
 waiting, oldest Xm" with a deep link to the review tab. One notification per scope per
 hour, not one per Block. Mass-blocking is one problem; it pings once.
 

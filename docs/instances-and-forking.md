@@ -1,11 +1,11 @@
 # Instances & forking — where a change goes, and how it travels
 
 Workshop is one codebase run as **multiple independent instances**, each a
-long-lived branch of `BenMiriello/Workshop`:
+long-lived branch of `<owner>/Workshop`:
 
 | Branch | Instance | Owner / box |
 |---|---|---|
-| `main` | the primary deployment (`workshop.benmiriello.com`) | clawd-a's Debian |
+| `main` | the primary deployment (`workshop.<your-domain>`) | the service user's Debian |
 | `simonsays-local` | this box's independent instance (tailnet-only) | simonsays' Debian |
 | _(future)_ | any other operator's instance | its own box |
 
@@ -86,7 +86,7 @@ Apps live in their own repos (`swipe-save`, `intergen`, `lovelace`, …) and are
 **shared** — every instance runs the same app `main`. A fix there benefits all
 instances directly: commit to the app repo's `main`, and each instance just pulls.
 (Example: the swipe-save proxy-navigation + media-modal fixes went to
-`swipe-save@main`; clawd-a's instance gets them by pulling, no cherry-pick.)
+`swipe-save@main`; the service user's instance gets them by pulling, no cherry-pick.)
 
 Only the **Workshop platform repo** is forked per instance, because that's what
 carries per-deployment identity and customization.

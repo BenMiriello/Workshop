@@ -206,7 +206,7 @@ This is where it gets nice — the mobile app mostly *replaces fragile glue we a
 | Want | Today | With the app |
 |---|---|---|
 | Background location | OwnTracks app posts to `/api/location/owntracks`, "Significant mode", needs the right tailnet + exact hostname (two outages already) | Native background-geolocation plugin posts to the **same endpoint**. We can **retire OwnTracks** entirely. |
-| Notifications | commute writes `.runtime/commute/notify-commute.txt`, masini tails it -> Discord | Direct APNs push to your phone. Discord fallback stays as backup. |
+| Notifications | commute writes `.runtime/commute/notify-commute.txt`, the bridge agent tails it -> Discord | Direct APNs push to your phone. Discord fallback stays as backup. |
 | Live commute status | commute "Now" feed inside the app | **Live Activity**: lock-screen + Dynamic Island showing next train / arrival countdown (your exact Uber example). |
 | Bird audio | Pi Zero in the yard streaming to the Brain | Phone mic as an ad-hoc capture device for the birds pipeline. |
 

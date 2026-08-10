@@ -6,9 +6,9 @@ land — twice now that step was skipped and the wrong thing was "fixed".
 
 | URL | Proxies to | Serves | Build step needed? |
 |---|---|---|---|
-| `https://debian.tail38e62e.ts.net:8443` | `127.0.0.1:5173` | Vite dev server, **from source** | **No** — edits are live on reload |
-| `workshop.benmiriello.com` | cloudflared → `127.0.0.1:8002` | `frontend/dist`, the built bundle | **Yes**, but automatic — rebuilt on every commit that touches `frontend/` (below); by hand: `scripts/build_workshop_public.sh` |
-| `https://debian.tail38e62e.ts.net:8447` | `127.0.0.1:8012` | **a different user's tree** (`/home/simonsays/…`) | not ours |
+| `https://<host>.<tailnet>:8443` | `127.0.0.1:5173` | Vite dev server, **from source** | **No** — edits are live on reload |
+| `workshop.<your-domain>` | cloudflared → `127.0.0.1:8002` | `frontend/dist`, the built bundle | **Yes**, but automatic — rebuilt on every commit that touches `frontend/` (below); by hand: `scripts/build_workshop_public.sh` |
+| `https://<host>.<tailnet>:8447` | `127.0.0.1:8012` | **a different user's tree** (`$HOME/<other-tenant>/…`) | not ours |
 
 **`:8443` is the operator's usual UI.** `:8000/` (tailnet `:8446`) is the
 backend and redirects there, so it is not a third UI, just a bounce.

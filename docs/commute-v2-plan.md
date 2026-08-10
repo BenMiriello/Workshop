@@ -5,7 +5,7 @@ This doc is the durable spec — if context is lost mid-build, resume from here.
 
 ## Prime directive: ZERO hardcoding of the user's commute
 
-Nothing about *how benmiriello commutes* is written into config or code. The system
+Nothing about *how the operator commutes* is written into config or code. The system
 LEARNS, from observed phone location + the live transit feeds:
 - his significant **places** (home, work, anywhere he dwells) — by dwell clustering
 - the **modes** he uses each leg (walk / drive / rail / bus / mixed) — by speed/heading + corridor/vehicle matching
@@ -119,7 +119,7 @@ becomes a subset; migrate dispatch to write the canonical object.
 
 ### Discord (keep current cadence + delivery)
 `commute_tick.sh` unchanged in spirit: poll → reason → render the message object → send /queue
-to `notify-masini.txt`. Reports keep coming through Discord as they do now.
+to `the notify queue`. Reports keep coming through Discord as they do now.
 
 ### App "Now / Suggestions" feed — `frontend/src/pages/apps/commute/*`
 New primary surface (the current Alerts tab is just a dispatch table). Reuse design-system
@@ -155,4 +155,4 @@ Outside windows, back off hard. GTFS static fetched at most daily.
 - Live smoke: one poll cycle; render a message in the app; one Discord dispatch via queue.
 
 ## Single-user note
-No multi-tenant guardrails. This is benmiriello's private commute. (See user-scope CLAUDE.md.)
+No multi-tenant guardrails. This is the operator's private commute. (See user-scope CLAUDE.md.)

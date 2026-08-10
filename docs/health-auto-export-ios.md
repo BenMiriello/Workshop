@@ -19,7 +19,7 @@ gated by HTTP Basic Auth.
    - **Aggregate Data:** "Daily Average" (or "Show All Samples" for raw)
    - **Data to Include:** all the metric categories you granted access to
    - **Export Type:** **REST API**
-   - **URL:** `https://debian.tail38e62e.ts.net:8446/api/health/ingest`
+   - **URL:** `https://<host>.<tailnet>:8446/api/health/ingest`
    - **Authentication:** Basic Auth
      - User: `workshop`
      - Password: (from `~/.config/clawdbot/health-auth.env` on the box —
@@ -34,7 +34,7 @@ gated by HTTP Basic Auth.
 
 On the box:
 ```bash
-curl -sS https://debian.tail38e62e.ts.net:8446/api/health/latest | python3 -m json.tool
+curl -sS https://<host>.<tailnet>:8446/api/health/latest | python3 -m json.tool
 ```
 Should return `{"metrics": {"heart_rate": {...}, "step_count": {...}, ...}}`.
 

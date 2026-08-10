@@ -41,7 +41,7 @@ def _now_iso() -> str:
 
 
 # Seed grounded in the data we actually observed (2026-06):
-#   - Regular Veritus paycheck $5,036.84 x2/mo  -> $10,073.68/mo (bonus check excluded)
+#   - Regular the excluded work org paycheck $5,036.84 x2/mo  -> $10,073.68/mo (bonus check excluded)
 #   - Citi Simplicity 0% card ··6821 at $8,722, promo ~12mo out -> clear by 2027-05
 #   - Chase savings ··9172 ~$2,000 seeds the emergency fund
 # Everything with amount 0 / balance 0 is a placeholder the operator fills in
@@ -56,7 +56,7 @@ def default_plan() -> dict:
             "paychecks_per_month": 2,
             "per_paycheck": 5036.84,
             "pay_days": [15, 30],
-            "source": "Veritus payroll — regular (bonus check excluded)",
+            "source": "the excluded work org payroll — regular (bonus check excluded)",
         },
         # Fixed, unavoidable monthly costs — "locked down" first in the waterfall.
         "necessities": [

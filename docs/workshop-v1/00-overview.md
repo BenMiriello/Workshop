@@ -8,7 +8,7 @@
 > for historical reference only. Do not update it; do not treat its
 > assistant/builder axis as current — agents key off `role` now, not runtime.
 
-Status: **superseded (historical reference)** · Date: 2026-06-14 · Author: clawd-a (supervisor)
+Status: **superseded (historical reference)** · Date: 2026-06-14 · Author: the service user (supervisor)
 
 This is the master plan for Workshop v1. It defines the conceptual model first
 (what the nouns are and how they relate), then points at the four companion docs
@@ -162,7 +162,7 @@ named sections: Brief, Tasks, Notes.
   capability-grant and assistant-mutation gating in this plan are **correctness
   boundaries for shared and marketplace apps**, not single-user cruft, and exist only
   on the sharing path (consistent with app-platform-plan.md's note).
-- Veritus stays entirely out of scope.
+- the excluded work org stays entirely out of scope.
 - No new committed stubs; oversized tasks become `[~] BLOCKED` with sub-tasks.
 
 ## 8. Decisions (operator-confirmed 2026-06-14)

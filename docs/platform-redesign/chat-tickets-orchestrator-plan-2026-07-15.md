@@ -18,7 +18,7 @@ Two follow-on plans extend this one and are sequenced to slot in AFTER this plan
 7. The orchestrator is a persona upgrade to the existing `general` provider plus the already-shipped learnings store. No new runtime loop, no new name (naming is operator-gated and deferred). D6 confirmed with one correction: `general` must gain the workshop-root task scope, which the orchestration doc already assigns it.
 8. Clean the ground first: the curriculum/work-generator/verifier swarm and compact_todo.py actively fight the canonical store today (curriculum_tick greps `^\[ \]` which the new export never emits, so it always thinks the queue is empty and appends lines the store then destroys). Remove them before building on top.
 9. Phases 0 (cleanup), 1 (receipt), 2 (tickets UI) can run as parallel subagents with disjoint file ownership; 3 (chat seam) and 4 (orchestrator) are sequential after them.
-10. Explicitly not now: GitHub Issues sync, masini folding, clawd rename, board UI, any heavy learning conductor, and any multi-tenant guardrails.
+10. Explicitly not now: GitHub Issues sync, bridge folding, clawd rename, board UI, any heavy learning conductor, and any multi-tenant guardrails.
 
 ---
 
@@ -89,7 +89,7 @@ Right because: the docs explicitly rejected a heavy learning conductor ("ants, n
 
 Correction 1: a persona alone does not satisfy ask 5 unless the general chat can actually FILE and RUN work. Today `task_scope.root_for_context("general")` returns None, so a general chat cannot hold a task-patch or a proposal scope-default. The orchestration doc (decision 5) already assigns the general chat `scope = workshop`. Implement that: `general` resolves to the workshop root store. That is the difference between "a chat that talks about work" and "a chat that owns a queue".
 
-Correction 2: do not name it. The masini-folding / clawd-rename decision is deferred and operator-gated, and christening a new named agent now would preempt it. The upgrade goes into the existing `general` provider (`chat_context.py:_general`), whose display identity the operator already knows; the operator picks a name later if he wants one. If he asks for "a NAMED orchestrator with its own identity" after using it, that becomes a registry assistant creation (one operator action in the existing agents UI), not new engineering.
+Correction 2: do not name it. The bridge-folding / clawd-rename decision is deferred and operator-gated, and christening a new named agent now would preempt it. The upgrade goes into the existing `general` provider (`chat_context.py:_general`), whose display identity the operator already knows; the operator picks a name later if he wants one. If he asks for "a NAMED orchestrator with its own identity" after using it, that becomes a registry assistant creation (one operator action in the existing agents UI), not new engineering.
 
 Does this satisfy the operator's ask, or does he need more? The ask decomposes as: learns preferences (learnings store, shipped, needs a chat-side capture affordance), broad scope (workshop-root task scope + cross-scope query via `mcp__workshop__query`, shipped), scopes/prioritizes (persona + task-proposal cards + priority field), surfaces questions (the `awaiting` payload + attention surfaces, shipped). The one thing a persona cannot do is act between conversations, and that is deliberately the dispatcher's job. If, after living with it, he wants proactive between-session behavior (e.g. a morning brief), that is the doc's memory-keeper/scheduled-assistant slot (O5/O6), a follow-on, not a blocker.
 
@@ -134,7 +134,7 @@ Ordering: stabilize the ground (0), then the backend receipt (1), then the ticke
 Kill everything that writes the retired TODO.md format or races the canonical store's export.
 
 Files:
-- crontab (clawd-a): remove the `15 * * * * .../curriculum_tick.sh` line. (Verified present; `grep -c '^\[ \]'` in curriculum_tick.sh:60 can never match the store's `- [ ]` export, so it fires the planner every hour into a queue nothing reads.)
+- crontab (the service user): remove the `15 * * * * .../curriculum_tick.sh` line. (Verified present; `grep -c '^\[ \]'` in curriculum_tick.sh:60 can never match the store's `- [ ]` export, so it fires the planner every hour into a queue nothing reads.)
 - Delete `scripts/curriculum_tick.sh`, `scripts/work_generator.sh`, `scripts/work_verifier.sh` (retired-queue writers; the demote/generate jobs they did are superseded by the store's statuses and the dispatcher). Note in the commit message that a store-backed work generator (autogen source kind + dedup_add) is a later, separate build.
 - `scripts/heartbeat.sh`: remove the compact_todo.py invocation block (lines ~66-72); delete `scripts/compact_todo.py`. The store's `_persist` regenerates TODO.md wholesale; the compactor is now a concurrent writer that mangles the export between persist and reconcile.
 - `backend/routes/backlog.py`: rewire the write to `task_dedup.dedup_add(WORKSHOP_ROOT, text=..., source={"kind": "operator", "ref": f"backlog:{source}"})` and return the task record. Keeps the mounted `/backlog` seam (future `!todo` path) while killing the unparseable `## Inbox` format. Route shape and response field names may change; there are no callers (verified).
@@ -142,7 +142,7 @@ Files:
 - Leave `services/todos.py` alone: `todos.parse` is a live dependency of `tasks.py:296`. Do not trim its dead CRUD in this plan (pure churn risk, zero operator value).
 - Leave `scripts/daily_todo_digest.sh` / `todo_stats.sh` cron entries alone (read-only consumers of the export; they keep working).
 
-Verification: `crontab -l` shows no curriculum line; `bash scripts/heartbeat.sh <agent> mode=test` succeeds and TODO.md is untouched afterwards; `curl -X POST .../backlog` files a task visible in `/home/clawd-a/workshop/.tasks.json` AND in the regenerated TODO.md export, then `python3 -c "...tasks.reconcile(root)"` is a no-op; `grep -rn "compact_todo\|work_generator\|curriculum_tick\|letta_register\|graduate_proposals" --include="*.py" --include="*.sh"` over scripts/ backend/ cron_agent.sh comes back clean; `scripts/restart_backend.sh` and a `/backlog` smoke.
+Verification: `crontab -l` shows no curriculum line; `bash scripts/heartbeat.sh <agent> mode=test` succeeds and TODO.md is untouched afterwards; `curl -X POST .../backlog` files a task visible in `$WORKSHOP/.tasks.json` AND in the regenerated TODO.md export, then `python3 -c "...tasks.reconcile(root)"` is a no-op; `grep -rn "compact_todo\|work_generator\|curriculum_tick\|letta_register\|graduate_proposals" --include="*.py" --include="*.sh"` over scripts/ backend/ cron_agent.sh comes back clean; `scripts/restart_backend.sh` and a `/backlog` smoke.
 
 ### Phase 1: the receipt (work product on Job and Task) [PARALLEL-OK with 0 and 2]
 
@@ -208,7 +208,7 @@ Verification: a general-chat conversation files, prioritizes, and runs a root-sc
 ## Part 4: explicitly not now
 
 - GitHub Issues sync: operator-deferred by name. Nothing in the ticket surface may assume or scaffold it (no `external_ref` field speculation).
-- masini folding / clawd rename / naming the orchestrator: deferred, operator-gated (unified-agent-model doc). The orchestrator ships as the existing general identity.
+- bridge folding / clawd rename / naming the orchestrator: deferred, operator-gated (unified-agent-model doc). The orchestrator ships as the existing general identity.
 - Board/kanban UI: docs say list + drawer, board deferred. The Work page is a list.
 - Heavy learning conductor / any persistent orchestrator runtime: explicitly rejected in the orchestration doc; the dispatcher stays thin and mechanical.
 - Memory-keeper scheduled consolidation agent (O5): designed, valuable, and NOT in this plan's critical path; build after the operator has lived with Phases 0-4.

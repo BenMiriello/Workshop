@@ -78,7 +78,7 @@ That comment is now false. Three verified facts contradict it:
 - **Only one of fifteen agent definitions sets a role.** A grep over `agents/`
   returns exactly one hit: `agents/memory-keeper.md:4` (`role: memory`). Every
   other definition (`workshop-overseer`, `email-triager`, `plaid-watcher`,
-  `masini`, the builders, the probes) leaves it unset.
+  `the bridge agent`, the builders, the probes) leaves it unset.
 - **The dispatcher pattern-matches that one value.**
   `scripts/dispatch_triggers.sh:323-345`: if an agent's runtime is not `builder`,
   the only path to execution is `if a.get("role") == "memory"` (`:329`), which
@@ -1097,7 +1097,7 @@ Global rules per the brief and `implementation-plan.md`: `AUTONOMY_DISABLED` bra
 around any edit to `cron_agent.sh` / `ralph.sh` / `project_ralph.sh` /
 `dispatch_triggers.sh` (the crontab fires every 20 minutes against the live tree);
 no committed stubs; `tsc --noEmit` plus `scripts/check_design.sh` on frontend steps;
-masini smoke check after any backend restart; backend restart only via
+the bridge agent smoke check after any backend restart; backend restart only via
 `scripts/restart_backend.sh`; no em-dash, no emoji.
 
 Legend: ADD (new), MOD (modify), DEL (delete plus call sites).
@@ -1117,7 +1117,7 @@ Legend: ADD (new), MOD (modify), DEL (delete plus call sites).
 dispatches identically; `role: memoy` is rejected at write with a useful message;
 `role: null` (fourteen of fifteen current defs) is unaffected; existing frontmatter
 round-trips byte-identically where the role is unchanged. Backend restart plus
-masini smoke check.
+the bridge agent smoke check.
 
 **Why first:** it is the only step with zero behavior change, and it makes every
 later step's failure mode loud instead of silent.

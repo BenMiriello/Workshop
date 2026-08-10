@@ -9,7 +9,7 @@ This doc is not a new redesign. It is the concrete migration between the
 2026-06-22 model that is still shipped on the frontend and the 2026-07-18 model
 that is authoritative in `entity-model-2026-07-18.md`, `autonomy-model-2026-07-18.md`,
 `latitude-model-2026-07-18.md`, and `primitive-roles-2026-07-18.md`. Every unit
-below is folded into an existing plan (`final-plan-agent-generalize-and-masini-fold-2026-07-16.md`
+below is folded into an existing plan (`final-plan-agent-generalize-and-bridge-fold-2026-07-16.md`
 phases P0-P4 / PM, or one of the 2026-07-18 model docs). Nothing here is orphan.
 
 ---
@@ -18,7 +18,7 @@ phases P0-P4 / PM, or one of the 2026-07-18 model docs). Nothing here is orphan.
 
 - The backend has largely landed the design. Role dispatch table, closed role
   enum, latitude, widened `awaiting`, Review tab data path, mediated broker,
-  triager runner, templates + fork, `touches` enforcement, and PM masini
+  triager runner, templates + fork, `touches` enforcement, and PM the bridge agent
   build-only fold are all shipped (commits `58e8631` through `63a7e65`).
 - The frontend has NOT been migrated. The `/agents` page, agent create flow,
   agent detail page, and Chat toolbar still model an agent as
@@ -42,10 +42,10 @@ phases P0-P4 / PM, or one of the 2026-07-18 model docs). Nothing here is orphan.
   `email-triager.md` still route to `_dispatch_assistant_loop` which prints
   `skip-assistant` (dispatch_triggers.sh:493-495): they subscribe to events but
   no runner exists, so they cannot execute.
-- Masini fold is intentionally half-done: build ported, live surface not
-  flipped. `masini-bot.service` is still `active (running)` (systemctl --user)
+- The bridge agent fold is intentionally half-done: build ported, live surface not
+  flipped. `the-bridge.service` is still `active (running)` (systemctl --user)
   out of `~/clawdbot/` (dir present with `run.sh`, `plaid-mcp/`, `CLAUDE.md`).
-  `agents/masini.md` is INERT by design (self-declared, line 27-32 of the def).
+  `agents/the bridge agent.md` is INERT by design (self-declared, line 27-32 of the def).
   This is correct per memory `project_agent_protocols_2026_07_16`. Not a bug;
   called out so it does not read as one.
 - `docs/workshop-v1/00-overview.md` still describes the shipped-but-legacy
@@ -77,7 +77,7 @@ Read, not assumed.
 | Triager runner + templates | `agents/_templates/{note-triager,inbox-watcher,memory-keeper}.md`; `dispatch_triggers.sh:461-475` `_dispatch_triager` | SHIPPED (P4/R2/R3) |
 | Fork-not-link templates | `agents_registry.py:739-779` `fork_from_template`; template stamp `template: <slug>@<version>` | SHIPPED (P4) |
 | Singleton roles | `agents_registry.py:85` `SINGLETON_ROLES = ("triager","keeper")`; `:510` `_assert_role_unique` | SHIPPED |
-| PM.1/PM.2/PM.3/PM.4 masini fold (build only) | commits `63a7e65`, `ed9c203`, `ad47ca0`; `agents/masini.md` present INERT; `backend/mcp/plaid/` in-tree | SHIPPED |
+| PM.1/PM.2/PM.3/PM.4 bridge fold (build only) | commits `63a7e65`, `ed9c203`, `ad47ca0`; `agents/the bridge agent.md` present INERT; `backend/mcp/plaid/` in-tree | SHIPPED |
 
 ### 2.2 Frontend has NOT migrated
 
@@ -106,8 +106,8 @@ Read, not assumed.
 - `workshop-builder.md`, `workshop-builder-2.md` — `runtime: builder`, `triggers: []`, purpose empty, body carries a STALE 2026-06-22 project plan ("Agents & Chat overhaul") with a no-longer-accurate decision list. Never dispatched (`skip-no-triggers`). RETIRE (rename purpose or delete; a live legacy overhaul plan misleads readers).
 - `plaid-watcher.md` — `runtime: assistant`, `triggers: [loop]`, no `role`. `_handler_for` (dispatch_triggers.sh:508-516) returns `_dispatch_assistant_loop` which prints `skip-assistant`. Ghost. Either add `role: triager` (matching the `inbox-watcher` template shape) or retire.
 - `email-triager.md` — `runtime: assistant`, `triggers: [event, gmail]`, no `role`. Event fires but there is no assistant loop runner, so the wakeup is a no-op. Same choice: promote to `role: triager` or retire.
-- `masini.md` — `role: triager`, `trigger: discord`, empty channels. Self-declared INERT (lines 24-31). Live surface is `masini-bot.service` (verified: `Active: active (running)` since 2026-07-14). NO ACTION. This is the intended intermediate state per PM plan.
-- `masini-commute.md` — trigger `manual`, self-declared INERT. NO ACTION.
+- `the bridge agent.md` — `role: triager`, `trigger: discord`, empty channels. Self-declared INERT (lines 24-31). Live surface is `the-bridge.service` (verified: `Active: active (running)` since 2026-07-14). NO ACTION. This is the intended intermediate state per PM plan.
+- `the bridge agent-commute.md` — trigger `manual`, self-declared INERT. NO ACTION.
 - `memory-keeper.md` — `role: memory` (alias `keeper`), cron `0 */6 * * *`. Works.
 - `work-reviewer.md` — subagent-format def (Claude Code subagent, has `description` + `tools: ['*']`). Not a registry agent. Zero call sites per system-audit-2026-07-18 headline. Move to `~/.claude/agents/` (subagent spec) OR delete; keeping it in `agents/` reads as a registry member it is not.
 - `agents/_templates/{note-triager,inbox-watcher,memory-keeper}.md` + `groups/{minimal,tended}.json` — correct location, correct shape. NO ACTION.
@@ -149,8 +149,8 @@ The system-audit doc identifies four serialization points making concurrent exec
 | JobDetail.tsx | Dual status (`job.status` + `job.task_status`); "Evidence" raw JSON dump | Single canonical status; kill Evidence; add "edit in chat" + "new chat from run" actions; live activity band while running | MISSING |
 | Chats.tsx | Segmented filter with "Builders / Assistants" as first-class kinds | Filter by scope kind (workshop / project / app / agent); role, not runtime | CONFLICTING |
 | `agents/` on disk | 8 legacy/probe/blank defs; 2 ghosts (plaid-watcher, email-triager); workshop-builder-{1,2} carry stale plan bodies | Prune legacy; either template-adopt or delete ghosts; retire workshop-builder-{1,2} | STALE |
-| letta_tools bindings | Ten tools bound to nonexistent `workshop-overseer` | Rebind to `masini` (triager) or delete | STALE |
-| Masini live surface | `masini-bot.service` runs out of `~/clawdbot/`; `agents/masini.md` INERT | Deliberate intermediate state; flip is Phase PM.5 (out of scope here) | PRESERVE |
+| letta_tools bindings | Ten tools bound to nonexistent `workshop-overseer` | Rebind to `the bridge agent` (triager) or delete | STALE |
+| The bridge agent live surface | `the-bridge.service` runs out of `~/clawdbot/`; `agents/the bridge agent.md` INERT | Deliberate intermediate state; flip is Phase PM.5 (out of scope here) | PRESERVE |
 | `docs/workshop-v1/` | Master plan header, describes builder/assistant | Supersession banner pointing at entity-model | STALE |
 | CLAUDE.md (root) | Points at `docs/workshop-v1/` as master | Point at `docs/platform-redesign/entity-model-2026-07-18.md`; keep workshop-v1 as historical | STALE |
 | Concurrency | Single-threaded queue (system-audit) | Per-agent autonomy implies concurrent scopes | BLOCKS full per-agent value; note; not this plan's fix |
@@ -165,7 +165,7 @@ this belongs to.
 
 ### C1. Retire legacy agent defs and ghost bindings
 
-- **Files**: `agents/blank-project-1.md`, `agents/blank-project-2.md`, `agents/probe-free.md`, `agents/probe-git.md`, `agents/smoke-fix.md`, `agents/test1234.md`, `agents/test2.md` (delete). `agents/workshop-builder.md`, `agents/workshop-builder-2.md` (delete OR replace body with a placeholder that names the current plan; body currently reads as the master 2026-06-22 overhaul plan). `agents/work-reviewer.md` (move to `~/.claude/agents/` if the subagent is still in use; otherwise delete). `backend/services/letta_tools/__init__.py:38-49` (drop `workshop-overseer` bindings; if masini gets the tools instead, rebind to `masini`).
+- **Files**: `agents/blank-project-1.md`, `agents/blank-project-2.md`, `agents/probe-free.md`, `agents/probe-git.md`, `agents/smoke-fix.md`, `agents/test1234.md`, `agents/test2.md` (delete). `agents/workshop-builder.md`, `agents/workshop-builder-2.md` (delete OR replace body with a placeholder that names the current plan; body currently reads as the master 2026-06-22 overhaul plan). `agents/work-reviewer.md` (move to `~/.claude/agents/` if the subagent is still in use; otherwise delete). `backend/services/letta_tools/__init__.py:38-49` (drop `workshop-overseer` bindings; if the bridge agent gets the tools instead, rebind to `the bridge agent`).
 - **Change**: pure deletion / demotion. Zero behavior change (all targets have `triggers: []` or reference a nonexistent agent).
 - **Risk**: none. Verify by grep that no code references the retired slugs.
 - **Depends on**: none.
@@ -199,7 +199,7 @@ this belongs to.
 
 - **Files**: `scripts/dispatch_triggers.sh` (around the `for a in agents:` loop at line 517-539): before firing, call `effective_autonomy(slug)`; if `reactive`, skip. Log `skip-reactive` for observability.
 - **Change**: enforce autonomy at dispatch. Existing agents (default `reactive`) will not run in the background until the operator promotes them, matching the doc's opt-in default.
-- **Risk**: medium — flips a default. Ship together with a migration note: the operator explicitly promotes agents they want running (which today are `masini`, `memory-keeper`, and the two triager templates once forked). Alternative safer path: default `supervised` for agents already carrying triggers, `reactive` for those with `triggers: []`.
+- **Risk**: medium — flips a default. Ship together with a migration note: the operator explicitly promotes agents they want running (which today are `the bridge agent`, `memory-keeper`, and the two triager templates once forked). Alternative safer path: default `supervised` for agents already carrying triggers, `reactive` for those with `triggers: []`.
 - **Depends on**: C4.
 - **Folds into**: `autonomy-model-2026-07-18.md` §4, §7.
 
@@ -309,7 +309,7 @@ this belongs to.
 
 ### C19. Cleanup dead letta_tools bindings
 
-- **Files**: `backend/services/letta_tools/__init__.py:37-51` (drop the `workshop-overseer` list from every entry; if `masini` should inherit `wkshp_*` tools, add it as the sole target for those; if not, delete the tools too since their only home was overseer).
+- **Files**: `backend/services/letta_tools/__init__.py:37-51` (drop the `workshop-overseer` list from every entry; if `the bridge agent` should inherit `wkshp_*` tools, add it as the sole target for those; if not, delete the tools too since their only home was overseer).
 - **Change**: removes bindings to a nonexistent agent.
 - **Risk**: none (dead code today).
 - **Depends on**: none.
@@ -372,7 +372,7 @@ they want.
 
 **Concurrency (C21)** is out of scope; slot as its own phase after B.
 
-**Masini live flip (PM.5)** is out of scope; deliberate intermediate state.
+**The bridge agent live flip (PM.5)** is out of scope; deliberate intermediate state.
 
 ---
 
@@ -695,7 +695,7 @@ remaining work is cleanup, one missing ADR, and a lint-level guard so a flat
 | 12 | Job evidence | Per-run receipts, verdicts, effort, tokens | Single append-only `.runtime/jobs.jsonl`, filtered by scope on read | jobs.py writers | memory-keeper (`_scope_jobs`), Work surface | memory_keeper.py:210-235; `.runtime/jobs.jsonl` |
 | 13 | Chat transcripts | Message history per thread | Per-owner under `.runtime/users/<owner_id>/chat/<thread_id>.json` (NOT per-scope) | chat_store on turn commit | Chat UI + chat compaction | chat_store.py:20-24 |
 | 14 | Scratch/tmp | Ephemeral thinking, probes, throwaway output | `scratch/` and `tmp/` at any level (all gitignored per `.gitignore`) | Anyone | Anyone; nothing durable reads it | CLAUDE.md; on-disk scratch/, tmp/, backend/scratch/ |
-| 15 | Agent def files | Static definition (role, triggers, memory pointer) | `agents/<slug>.md` (fork-not-link templates land in `agents/`) | Operator via UI or `_templates/` fork | Registry loader | agents/masini.md, agents/memory-keeper.md; agents_registry.py |
+| 15 | Agent def files | Static definition (role, triggers, memory pointer) | `agents/<slug>.md` (fork-not-link templates land in `agents/`) | Operator via UI or `_templates/` fork | Registry loader | agents/the bridge agent.md, agents/memory-keeper.md; agents_registry.py |
 | 16 | Legacy `shared/global-memory.md` | Old Letta operator-context block | Global (single file) | Nothing writes it now (Letta retired) | Nothing reads it now | on-disk; Stage 9 handoff notes Letta was removed |
 | 17 | Legacy `shared/memory-tree.yaml` | Old persona memory-inheritance tree | Global | Nothing writes it now | `memory_tree.py` still parses if present | shared/memory-tree.yaml (mtime 2026-05-21) |
 | 18 | Meta-reject markers | Task-filter substrings, NOT a notes surface | Repo-root helper | Operator | Letta workshop tool, `work_generator.sh`, `graduate_proposals.sh` | shared/meta_reject.py:3-16 |
@@ -751,7 +751,7 @@ Each per-scope knowledge dir is declared as a Store of type `Note` at startup (`
 
 Ordered by risk. All small, all reversible.
 
-**N1. Add the vault-read-only ADR.** Create `docs/decisions/0010-notes-vault-is-read-only-to-agents.md` recording: the three-layer enforcement (identity default-permissive, empty grants file, policy `verbs_max`, adapter refusal), the mediated-broker path for agent recall, and the failure mode (an operator-minted grant, blocked by store-policies.json prose rule). Cites permissions.py:100-108, stores.py:261, store-policies.json (vault entry), stores.py:687-700. Risk: none. Depends on: none. Folds into: `final-plan-agent-generalize-and-masini-fold-2026-07-16.md` P4 operator-review folder OR freestanding.
+**N1. Add the vault-read-only ADR.** Create `docs/decisions/0010-notes-vault-is-read-only-to-agents.md` recording: the three-layer enforcement (identity default-permissive, empty grants file, policy `verbs_max`, adapter refusal), the mediated-broker path for agent recall, and the failure mode (an operator-minted grant, blocked by store-policies.json prose rule). Cites permissions.py:100-108, stores.py:261, store-policies.json (vault entry), stores.py:687-700. Risk: none. Depends on: none. Folds into: `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md` P4 operator-review folder OR freestanding.
 
 **N2. Retire `shared/global-memory.md`.** Move any still-relevant lines into a workshop-scope knowledge note or a new ADR documenting the retired Letta wiring; delete the file. Cites Stage 9 Letta teardown. Risk: low (nothing reads it). Depends on: N1 optional.
 
@@ -807,9 +807,9 @@ DO NOT REMOVE:
 - `AgentBuild.tsx` — the builder workbench is legitimate as the maker-runtime UI for a project-scoped `role: maker` agent. It is not the concept, it is A concept UI. Keep it, stop making it the front door.
 - The `builder` runtime field on Agent — deriving `builder` from `role: maker + project_slug` in the create form is fine, and the field remains valid metadata for dispatch (dispatch_triggers.sh:508-516 uses it).
 - The `.runtime/AUTONOMY_DISABLED` flag file — keep it readable during transition; the scripts fall back to it if the JSON overlay is absent. Removable after one release.
-- `masini-bot.service` and `~/clawdbot/` — deliberate intermediate state per PM plan.
-- `agents/masini.md` — inspection surface for the flip.
-- `agents/masini-commute.md` — persona for on-demand commute chats.
+- `the-bridge.service` and `~/clawdbot/` — deliberate intermediate state per PM plan.
+- `agents/the bridge agent.md` — inspection surface for the flip.
+- `agents/the bridge agent-commute.md` — persona for on-demand commute chats.
 - `agents/memory-keeper.md` — works.
 - `agents/_templates/` — correct location.
 
@@ -826,7 +826,7 @@ Called out so silence is not oversight.
 - The Review tab in Work.tsx (Work.tsx:756-909) — the operator-facing block loop.
 - The latitude cascade (services/latitude.py + agents_registry.py:106-142 + tasks.py) — matches latitude-model.
 - `touches` enforcement + `lane_gaps` widening (tasks.py:481, 536-580) — the recent queue-repair work.
-- The masini fold-in build (PM.1-PM.4 commits) — do NOT accidentally revert while cleaning up.
+- The bridge fold-in build (PM.1-PM.4 commits) — do NOT accidentally revert while cleaning up.
 - The Plaid MCP in-tree at `backend/mcp/plaid/` (PM.4).
 - `agents/memory-keeper.md`, `_templates/*`, all `groups/*.json`.
 - All existing backend `/api/agents/from-template`, `/adopt-group`, `/templates` endpoints.
@@ -877,7 +877,7 @@ build unit that has not landed. File it, do not paper over.
 ### 11.2 Final step: engage the override
 
 ```bash
-cat > /home/clawd-a/workshop/.runtime/autonomy-override.json <<EOF
+cat > $WORKSHOP/.runtime/autonomy-override.json <<EOF
 {"engaged":true,"reason":"post-migration; operator will re-enable when ready","engaged_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","engaged_by":"operator"}
 EOF
 ```
@@ -890,7 +890,7 @@ EOF
 - **Removing the `builder` runtime concept.** Considered. Rejected because the workbench (files/editor/preview/diff) is coherent as the `role: maker + project_slug` UI. The migration is to demote the runtime as the display axis, not to eliminate the record.
 - **Renaming `task` and `job` code identifiers to `ticket` and `run`.** Entity-model §9.5 explicitly preserves ADR 0001. Do not litigate.
 - **A separate assistant-loop runner** (dispatch_triggers.sh:493 `_dispatch_assistant_loop`). Deferred; the "still-unbuilt data-tier turn runner" note is accurate. When plaid-watcher / email-triager get promoted (C2), they become triagers using the existing triager runner; that closes the gap without an assistant runtime.
-- **Flipping masini live.** PM.5. Operator has explicitly framed the current inert state as intended.
+- **Flipping the bridge agent live.** PM.5. Operator has explicitly framed the current inert state as intended.
 - **Concurrency unblock.** System-audit's own phase; C21 above is the placeholder.
 - **A rules-engine DSL (Rego / Cedar).** entity-model §9.6 settles: `mint_grant + check` is the policy engine. Do not add.
 
@@ -904,6 +904,6 @@ remaining set is what still needs a call.
 1. **C2**: promote plaid-watcher and email-triager to `role: triager` using the `inbox-watcher` template shape, or delete both? Default recommendation: promote (they carry the operator's stated intent). Delete is safe if the intent is stale.
 2. **C5** (default flip): when per-agent autonomy gates dispatch, existing agents with declared triggers should default to `supervised` (they were running before, don't surprise the operator by making them silent) or `reactive` (safer; operator promotes explicitly)? Default recommendation: `supervised` for agents shipping today with non-empty `triggers`, `reactive` for anything with `triggers: []`.
 3. **CLAUDE.md rewrite in C18**: name entity-model as the current authority and demote workshop-v1 to historical? Default recommendation: yes.
-4. **C19**: do the `wkshp_*` and `local_*` and `cloud_*` letta_tools stay in the codebase (rebound to masini), or come out with workshop-overseer? Default recommendation: keep, rebind to masini as the sole target (masini already has plaid + google-docs + discord capabilities per its def).
+4. **C19**: do the `wkshp_*` and `local_*` and `cloud_*` letta_tools stay in the codebase (rebound to the bridge agent), or come out with workshop-overseer? Default recommendation: keep, rebind to the bridge agent as the sole target (the bridge agent already has plaid + google-docs + discord capabilities per its def).
 5. **Store host_app / host_project field on entity-model**: given the operator observation that a Store is ~1:1 with an App or Project (§10 What to preserve, B11), should `entity-model-2026-07-18.md` §8.3 gain a formal `Store.host_app | Store.host_project` field so B11 has a real key to fetch by, rather than a URI-prefix convention? Default recommendation: add the field, small mutation, one migration in `backend/services/stores.py`. This is a decision surface, not a mandate; nothing in this plan enacts it.
 6. **N-series ADR minting (OQ-N2)**: should coherence-plan units that land decisions (e.g. the vault-read-only posture in N1) mint additional ADRs at `docs/decisions/`? Default recommendation: yes, one per load-bearing invariant that survives the current sweep.

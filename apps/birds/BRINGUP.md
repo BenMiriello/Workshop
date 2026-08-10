@@ -106,7 +106,7 @@ On your laptop, SD card inserted:
    the Brain straight into `~/birdnet-pi/` on the Pi:
    ```bash
    ssh <service-user>@<brain-host> \
-     "tar -C ~/workshop/birdnet -czf - pi/" \
+     "tar -C $WORKSHOP/apps/birds -czf - pi/" \
      | ssh pi@birdpi.local "mkdir -p ~/birdnet-pi && tar -C ~/birdnet-pi -xzf -"
    ```
    If you're reusing the existing `raspberrypi` node that's already on

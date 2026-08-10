@@ -102,7 +102,7 @@ backend `backend/routes/base_apps.py`, `projects.py`, a new app-manifest read.
 ## Phase 4 — Deployment, isolation, safety (doc 05; the safety floor)
 
 Backend git service (`backend/services/worktrees.py` + new deployment/runner svc),
-the masini egress hook (`~/.claude/hooks/egress-guard.py`), per-project manifest.
+the the bridge agent egress hook (`~/.claude/hooks/egress-guard.py`), per-project manifest.
 Land the **05a safety substrate** early (it is cheap and protects all later work).
 
 23. **Checkpoint substrate (05a).** Builders auto-commit checkpoints per turn;

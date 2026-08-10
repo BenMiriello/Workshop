@@ -2,7 +2,7 @@
 
 Date: 2026-07-18
 Status: Proposed
-Deciders: benmiriello
+Deciders: the operator
 Context doc: `docs/platform-redesign/chat-work-linkage-2026-07-18.md` §3
 
 ---

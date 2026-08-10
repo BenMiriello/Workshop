@@ -174,7 +174,7 @@ Phase 2 — chat features:
 [x] Investigate and resolve blockers for the top 4 blocked tasks. — proposed by overseer (normal)
 [x] Resolve the highest-priority open todo item. — proposed by overseer (normal)
 [x] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal)
-[x] Investigate and resolve blockers for the current set of blocked tasks. — proposed by overseer (normal) — DONE: investigated every blocked/pending item in the current set. Two blocker classes remain, both non-autonomous: (1) Plaid new-bank onboarding (CANONICAL line 34) — operator-gated; exchange_public_token (finance_plaid.py:119) needs a Link `public_token` that only the interactive Plaid Link hosted UI produces; verified via mcp__plaid__list_connections that 4 banks are already linked (Chase, Fidelity, Venmo, Citi) and no new public_token is pending; (2) Veritus-separation items — permanently blocked by hard rule. 0 items are autonomously unblockable. Duplicate re-filed investigate/unblock spam (lines 130, 153-156) collapses to these same two conclusions.
+[x] Investigate and resolve blockers for the current set of blocked tasks. — proposed by overseer (normal) — DONE: investigated every blocked/pending item in the current set. Two blocker classes remain, both non-autonomous: (1) Plaid new-bank onboarding (CANONICAL line 34) — operator-gated; exchange_public_token (finance_plaid.py:119) needs a Link `public_token` that only the interactive Plaid Link hosted UI produces; verified via mcp__plaid__list_connections that 4 banks are already linked (Chase, Fidelity, Venmo, Citi) and no new public_token is pending; (2) the excluded work org-separation items — permanently blocked by hard rule. 0 items are autonomously unblockable. Duplicate re-filed investigate/unblock spam (lines 130, 153-156) collapses to these same two conclusions.
 [x] Investigate and unblock the first of the pending tasks in the todo list. — proposed by overseer (normal)
 [x] Review and resolve blocked todos to clear the backlog. — proposed by overseer (normal)
 [x] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal) — BLOCKED: operator-gated duplicate of CANONICAL line 34. Re-verified 2026-07-14 via mcp__plaid__list_connections: 4 banks already linked (Chase, Fidelity, Venmo, Citi), no new bank pending and no `public_token` to exchange. New-bank onboarding only happens through the interactive Plaid Link hosted UI (which returns the `public_token` exchange_public_token needs, finance_plaid.py:119) — no autonomous path exists. Stays blocked until the operator runs Plaid Link.
@@ -184,7 +184,7 @@ Phase 2 — chat features:
 [x] Review and finalize the feedback for tenant full separation. — proposed by overseer (normal)
 [x] Onboard new bank for Plaid MCP setup. — proposed by overseer (normal)
 [x] Review and unblock the 14 currently blocked tasks in the todo list. — proposed by overseer (normal)
-[x] Resolve the most urgent blocked task. — proposed by overseer (normal) — BLOCKED: operator-gated. The most urgent (and only genuine) blocked task is Plaid new-bank onboarding (CANONICAL line 49). Re-verified 2026-07-14 via mcp__plaid__list_connections: 4 banks already linked (Chase, Fidelity, Venmo, Citi), no new bank pending and no `public_token` to exchange. exchange_public_token (backend/services/finance_plaid.py:119) needs a Link `public_token` that only the interactive Plaid Link hosted UI produces — no autonomous path. Stays blocked until the operator runs Plaid Link. (Veritus-separation items are permanently blocked by hard rule.)
+[x] Resolve the most urgent blocked task. — proposed by overseer (normal) — BLOCKED: operator-gated. The most urgent (and only genuine) blocked task is Plaid new-bank onboarding (CANONICAL line 49). Re-verified 2026-07-14 via mcp__plaid__list_connections: 4 banks already linked (Chase, Fidelity, Venmo, Citi), no new bank pending and no `public_token` to exchange. exchange_public_token (backend/services/finance_plaid.py:119) needs a Link `public_token` that only the interactive Plaid Link hosted UI produces — no autonomous path. Stays blocked until the operator runs Plaid Link. (the excluded work org-separation items are permanently blocked by hard rule.)
 [x] Onboard new banks for Plaid MCP as per project_plaid_mcp.md — proposed by overseer (normal)
 [x] Fix dead /api/autonomy toggle to hit the real cron flag — proposed by overseer (normal)
 [x] Chat timeout handling: clear stopped-at-limit message — proposed by overseer (normal)
@@ -282,29 +282,29 @@ Phase 2 — chat features:
 [2026-07-13T22:22Z] [plaid-watcher] [2026-07-13T22:21:13.660242+00:00] tick: No new Plaid events; 14 tasks are blocked.
 [2026-07-13T20:50Z] [plaid-watcher] [2026-07-13T20:48:16.251007+00:00] tick: No new Plaid events; 14 tasks are blocked.
 [2026-07-10T18:50Z] [overseer] Proposed unblocking finance integration task due to external dependency.
-[2026-07-09T12:24Z] [overseer] Marked tasks related to Veritus as blocked due to operator's hard rules.
-[2026-07-08T17:09Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-07-08T15:34Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-07-08T04:24Z] [overseer] Marked tasks involving Veritus as blocked due to operator's hard rules.
-[2026-07-07T22:20Z] [overseer] Marked tasks mentioning Veritus as blocked due to hard rule.
-[2026-07-05T16:49Z] [overseer] Marked tasks related to Veritus as blocked due to hard rule violations.
-[2026-07-05T08:52Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-07-03T22:42Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
+[2026-07-09T12:24Z] [overseer] Marked tasks related to the excluded work org as blocked due to operator's hard rules.
+[2026-07-08T17:09Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-07-08T15:34Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-07-08T04:24Z] [overseer] Marked tasks involving the excluded work org as blocked due to operator's hard rules.
+[2026-07-07T22:20Z] [overseer] Marked tasks mentioning the excluded work org as blocked due to hard rule.
+[2026-07-05T16:49Z] [overseer] Marked tasks related to the excluded work org as blocked due to hard rule violations.
+[2026-07-05T08:52Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-07-03T22:42Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
 [2026-07-02T05:31Z] [overseer] Proposed unblocking of tasks related to project_plaid_mcp. Investigating further for other potential unblocks.
 [2026-07-02T00:45Z] [overseer] Marked task blocked due to dependency issues.
-[2026-07-01T18:40Z] [overseer] Marked tasks involving Veritus as blocked due to hard rule violations.
+[2026-07-01T18:40Z] [overseer] Marked tasks involving the excluded work org as blocked due to hard rule violations.
 [2026-07-01T13:45Z] [overseer] Marked task blocked due to dependency issues.
-[2026-07-01T12:57Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-07-01T08:40Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-07-01T05:14Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-07-01T04:57Z] [overseer] Marked tasks related to veritusagent as blocked due to Veritus separation rule.
+[2026-07-01T12:57Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-07-01T08:40Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-07-01T05:14Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-07-01T04:57Z] [overseer] Marked tasks related to <blocked-org> as blocked due to work-org separation rule.
 [2026-06-30T08:49Z] [overseer] Marked task blocked due to dependency issues.
-[2026-06-29T09:07Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-06-28T11:32Z] [overseer] Marked tasks related to Veritus as blocked due to operator's hard rules.
-[2026-06-27T22:32Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-06-27T16:51Z] [overseer] Marked task related to Veritus separation as blocked due to hard rule.
-[2026-06-27T10:31Z] [overseer] Marked tasks related to Veritus separation as blocked due to hard rule.
-[2026-06-27T07:46Z] [overseer] Marked task related to Veritus separation as blocked due to hard rule.
+[2026-06-29T09:07Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-06-28T11:32Z] [overseer] Marked tasks related to the excluded work org as blocked due to operator's hard rules.
+[2026-06-27T22:32Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-06-27T16:51Z] [overseer] Marked task related to work-org separation as blocked due to hard rule.
+[2026-06-27T10:31Z] [overseer] Marked tasks related to work-org separation as blocked due to hard rule.
+[2026-06-27T07:46Z] [overseer] Marked task related to work-org separation as blocked due to hard rule.
 [2026-06-23T15:30Z] [overseer] Proposed task to review recent notify lines for anomalies.
 [2026-06-23T11:52Z] [overseer] Proposed task to review and prioritize the top 3 open tasks.
 [2026-06-23T07:46Z] [overseer] Proposed task to review recent notify lines for anomalies.
@@ -728,7 +728,7 @@ Phase 2 — chat features:
 [2026-07-14T10:41Z] [ralph] [ ] Resolve the first item in the open todo list. — proposed by overseer (normal) — completed (ralph passed reviewer)
 [2026-07-14T10:44Z] [ralph] [ ] Investigate and resolve blockers for the top 3 most urgent tasks in the todo list. — proposed by overseer (high) — completed (ralph passed reviewer)
 [2026-07-14T10:45Z] [ralph] [ ] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this end — completed (ralph passed reviewer)
-[x] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high) — CLOSED: vacuous meta-task; resolves to the same two conclusions — Plaid operator-gated (line 49) + Veritus permanently blocked by hard rule. Nothing autonomously unblockable.
+[x] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high) — CLOSED: vacuous meta-task; resolves to the same two conclusions — Plaid operator-gated (line 49) + the excluded work org permanently blocked by hard rule. Nothing autonomously unblockable.
 [x] verify / finish caveat on prior [x]: [x] Resolve the highest-priority open todo item. — proposed by overseer (normal) — DONE: the highest-priority actionable work is the ROOT CAUSE of this endlessly re-filed task. All real engineering (Phases 1–2, the 2026-07-12 deferred — provenance: todo-caveat — gen:52b876e9a604
 [2026-07-14T11:01Z] [ralph] [ ] Investigate and resolve blockers for the top 3 most urgent tasks. — proposed by overseer (high) — completed (ralph passed reviewer)
 [2026-07-14T11:02Z] [ralph] [ ] Investigate and resolve blockers for the current set of blocked tasks. — proposed by overseer (normal) — completed (ralph passed reviewer)

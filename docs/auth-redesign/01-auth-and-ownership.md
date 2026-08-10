@@ -85,7 +85,7 @@ multi-tenant story for the platform is future work; until then, admin-only and f
 
 ## 3. What gets deleted / changed in `deps_auth.py`
 
-- Remove the loopback + CGNAT (`100.64.0.0/10`) trust entirely from the personal/admin path.
+- Remove the loopback + CGNAT (`<tailnet-ip>/10`) trust entirely from the personal/admin path.
 - Remove the fail-open branch (missing token must DENY, not allow).
 - `require_token` as it exists is retired; routers move to `require_user` / `require_admin`.
 - Keep ONE narrow, explicit machine path: the service token (section 4), which is an
@@ -118,7 +118,7 @@ and two ingest paths use their own HTTP Basic (`owntracks`, `health/ingest`). Re
 
 A single idempotent script (`backend/scripts/migrate_to_owned.py`, run once):
 1. Ensure the operator account exists (email = `WORKSHOP_OPERATOR_EMAIL`, today
-   benmiriello@gmail.com), `is_admin = 1`.
+   <operator-email>), `is_admin = 1`.
 2. Add `owner_id` columns/fields to every personal store (migrations) and backfill all
    existing rows to `operator.id`.
 3. Mint the operator's service + ingest tokens, write them to `~/.config/workshop/secrets.env`

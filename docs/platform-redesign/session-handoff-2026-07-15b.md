@@ -67,7 +67,7 @@ preferences. Plan of record: `chat-tickets-orchestrator-plan-2026-07-15.md`
   section, 3-tier scratch/notes/ADR policy. See `notes-system-plan-2026-07-15.md`.
 - GitHub + worktree orchestration (G0-G3): project repo binding, gh bind/push/PR,
   worktree-per-task concurrency with rebase-before-merge. See
-  `github-worktree-orchestration-plan-2026-07-15.md`. Hard veritusagent rejection.
+  `github-worktree-orchestration-plan-2026-07-15.md`. Hard <blocked-org> rejection.
 - Both flag file overlaps with the ticket phases (ProjectDetail, appNav, App,
   chat_context, project_ralph); sequence per each doc.
 

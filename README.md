@@ -28,7 +28,7 @@ workshop/
 cd ~/workshop/infra/letta && docker compose up -d
 docker ps --format '{{.Names}}\t{{.Status}}' | grep letta
 
-# 2. Seed masini agent
+# 2. Seed the bridge agent agent
 cd ~/workshop/backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt

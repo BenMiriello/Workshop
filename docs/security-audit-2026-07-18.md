@@ -1,9 +1,9 @@
 # Security Audit — host `bgmdebian` / Workshop system — 2026-07-18
 
 Read-only audit covering: host OS + filesystem/user separation, local access & privilege
-escalation, the Workshop web app auth/authz code, the public edge (`workshop.benmiriello.com`)
+escalation, the Workshop web app auth/authz code, the public edge (`workshop.<your-domain>`)
 + Cloudflare tunnel, tailnet/LAN network exposure, the mobile app, and the other apps/containers
-sharing the host. Conducted as user `clawd-a` (UID 1003). Nothing was modified, restarted, or
+sharing the host. Conducted as user `the service user` (UID 1003). Nothing was modified, restarted, or
 reconfigured.
 
 Supersedes the financial-only pass in `~/clawdbot/docs/security-audit-2026-06-02.md`.
@@ -20,9 +20,9 @@ Plaid tokens are Fernet-encrypted. No SQL injection, no `eval`/`exec`/pickle, no
 fall into three buckets:
 
 1. **User separation is correct at the file layer but nullified by group membership.** The
-   `docker` group (root-equivalent) is shared by `clawd-a`, `benmiriello`, and `simonsays`,
-   which collapses the intended isolation between the clawd-a/benmiriello cluster and the
-   simonsays/clawd-b cluster. Confirmed live.
+   `docker` group (root-equivalent) is shared by `the service user`, `the operator`, and `simonsays`,
+   which collapses the intended isolation between the the service user/the operator cluster and the
+   simonsays/another tenant cluster. Confirmed live.
 2. **Several unauthenticated services are bound to `0.0.0.0` (and IPv6 `[::]`)** — most
    critically a passwordless Redis with a known RCE path. Whether these are LAN/tailnet-only or
    internet-reachable hinges on one unknown I could not check without root: the inbound IPv6
@@ -31,7 +31,7 @@ fall into three buckets:
    removed: an edge blocklist typo exposes `/auto-pr` to the internet, and `0.0.0.0:8000` +
    RFC1918 trust lets any LAN device reach a code-execution tool.
 
-## Fixes applied in this pass (2026-07-18, by clawd-a — no root, no usage change)
+## Fixes applied in this pass (2026-07-18, by the service user — no root, no usage change)
 
 Verified live after a backend + edge restart:
 - **H1** — `/auto-pr` edge blocklist corrected; `/api/auto-pr[/list|/mode]` now return 404 through
@@ -58,34 +58,34 @@ architectural/usage decision).
 
 ## Intended vs. actual user separation
 
-You described the intended boundary as: **clawd-a ↔ benmiriello = same operator cluster (mutual
-access OK); simonsays ↔ clawd-b = a separate pair that should stay isolated from the
-clawd-a/benmiriello side.**
+You described the intended boundary as: **the service user ↔ the operator = same operator cluster (mutual
+access OK); simonsays ↔ another tenant = a separate pair that should stay isolated from the
+the service user/the operator side.**
 
 **At the filesystem (DAC) layer this is set up correctly:**
 
 | Home | Mode | Effect |
 |---|---|---|
-| `/home/clawd-a` | `0750`, group `clawd-a` (only member besides self: `benmiriello`) | benmiriello can read clawd-a's files ✓ |
-| `/home/benmiriello` | `0710` + ACL `user:clawd-a:--x` | clawd-a can *traverse* to specific paths but not enumerate ✓ |
-| `/home/simonsays` | `0700` | private ✓ |
-| `/home/clawd-b` | `0700` | private ✓ |
+| `$HOME` | `0750`, group `the service user` (only member besides self: `the operator`) | the operator can read the service user's files ✓ |
+| `/home/the operator` | `0710` + ACL `user:the service user:--x` | the service user can *traverse* to specific paths but not enumerate ✓ |
+| `$HOME/<other-tenant>` | `0700` | private ✓ |
+| `$HOME/<other-tenant>` | `0700` | private ✓ |
 | `/home/clawd-house` | `0700` | private ✓ |
 
-Direct cross-cluster reads (clawd-a → simonsays/clawd-b) are **denied** at the FS layer.
-`clawd-b` is the only fully-contained account: `0700` home, in no escalation group.
+Direct cross-cluster reads (the service user → simonsays/another tenant) are **denied** at the FS layer.
+`another tenant` is the only fully-contained account: `0700` home, in no escalation group.
 
 **But group membership defeats it:**
-- `docker` group = `{clawd-a, benmiriello, simonsays}`. Docker group is root-equivalent. Confirmed
-  live: as `clawd-a` I mounted `/home` into a container and read every user's home as root,
-  straight through the `0700` walls. **So clawd-a can in fact read simonsays and clawd-b.**
+- `docker` group = `{the service user, the operator, simonsays}`. Docker group is root-equivalent. Confirmed
+  live: as `the service user` I mounted `/home` into a container and read every user's home as root,
+  straight through the `0700` walls. **So the service user can in fact read simonsays and another tenant.**
 - `simonsays` additionally holds `sudo` → full root regardless.
 - The two clusters also share the **loopback plane** (every host user can reach `127.0.0.1:*`),
   so "bound to loopback" is not a trust boundary between host users — see Letta (M1).
 
 Net: the separation you want exists on paper (file modes) but is not real while docker/sudo group
 membership and unauthenticated loopback services stand. The docker layer is the dominant hole — but
-note (see C1) that clawd-a's docker membership is **load-bearing for the Workshop app runner**, so
+note (see C1) that the service user's docker membership is **load-bearing for the Workshop app runner**, so
 restoring the cluster boundary means moving to rootless/per-user Docker or a socket-proxy, not just
 dropping the group. `simonsays`'s `sudo` (full root) is a separate reason the boundary can't be
 absolute from that side.
@@ -100,24 +100,24 @@ discuss before doing.
 ### CRITICAL
 
 **C1 — Docker-socket access = root-equivalent, and it is LOAD-BEARING (do not simply remove it)**
-Confirmed: `clawd-a` is in `docker` (994) with `simonsays`, `benmiriello`. Docker-socket access is
+Confirmed: `the service user` is in `docker` (994) with `simonsays`, `the operator`. Docker-socket access is
 root-equivalent — `docker run -v /:/host` mounts host root writable as root (I confirmed the escape
 live: mounted `/home` in a container and read every user's home through the `0700` walls).
 
 **Correction to the first-pass "just remove the group" recommendation:** the Workshop backend runs
 user *apps* as containers via `docker compose` (`services/container_runtime.py`), and
 `workshop-backend.service` therefore launches uvicorn through `sg docker` (drop-in
-`docker-group.conf`). **clawd-a needs the docker group** for the app runner; `gpasswd -d clawd-a
+`docker-group.conf`). **the service user needs the docker group** for the app runner; `gpasswd -d the service user
 docker` would break backend startup and the app platform. The earlier "safe to remove" note missed
 the systemd unit (it only grepped scripts).
 
 So this is not a one-liner — it's an architectural exposure with three real consequences:
 1. **Any RCE in the backend escalates to host root** via the docker socket (the backend process is
    effectively root-capable by design).
-2. **clawd-a, benmiriello, and simonsays share one docker daemon**, so the clawd-a↔simonsays cluster
+2. **the service user, the operator, and simonsays share one docker daemon**, so the the service user↔simonsays cluster
    separation *cannot hold at the docker layer* — any of them can read/modify any other's files and
    containers. This is the mechanism that defeats the file-level isolation below.
-3. clawd-a can't be pulled from docker without moving the app runner off the shared root daemon.
+3. the service user can't be pulled from docker without moving the app runner off the shared root daemon.
 
 **Fix (architectural — a product decision, discuss direction):** pick one —
 (a) **rootless / per-user Docker** (each cluster gets its own daemon; isolates clusters *and* drops
@@ -125,8 +125,8 @@ root-equivalence — the strongest fix, most work);
 (b) a **docker-socket-proxy** (e.g. tecnativa/docker-socket-proxy) that exposes only the compose
 API calls the runner makes, so a backend RCE can't `run -v /:/host`;
 (c) run the **app-runner as a dedicated unprivileged user**, isolating the docker capability from
-the rest of clawd-a.
-**Fix by:** benmiriello/root + backend architecture change. **Usage flag:** ⚠ any of these changes
+the rest of the service user.
+**Fix by:** the operator/root + backend architecture change. **Usage flag:** ⚠ any of these changes
 how apps are launched — do not act before choosing a direction.
 
 **C2 — Unauthenticated Redis (`lovelace-redis`) on `0.0.0.0` + IPv6, with a known RCE path**
@@ -147,7 +147,7 @@ The host has **globally-routable IPv6** on both LAN interfaces, and Redis/Ollama
 bind `[::]`. ufw was configured for IPv4 LAN/tailnet allow, but I could not read the ufw/ip6tables
 ruleset without root. This single fact decides whether C2/H4/H6/M2 are "LAN+tailnet only" or
 "internet-exposed." **Verify first — it may upgrade C2 to actively internet-critical.**
-**Fix by:** benmiriello/root — `sudo ufw status verbose` + `sudo ip6tables -L -n`; ensure default
+**Fix by:** the operator/root — `sudo ufw status verbose` + `sudo ip6tables -L -n`; ensure default
 deny inbound on IPv6 for 6379/8188/11434/11435/445/139/22/111.
 
 ### HIGH
@@ -155,14 +155,14 @@ deny inbound on IPv6 for 6379/8188/11434/11435/445/139/22/111.
 **H1 — Edge blocklist typo exposes `/auto-pr` to the internet**
 Confirmed: `workshop_public_app.py` blocklist has `"/auto"`, but the router prefix is `"/auto-pr"`
 (`routes/auto_pr.py:9`); `_is_blocked("/auto-pr")` → `False` (segment-exact match, not prefix). So
-`https://workshop.benmiriello.com/api/auto-pr[/list|/mode]` is proxied to the backend, where it
+`https://workshop.<your-domain>/api/auto-pr[/list|/mode]` is proxied to the backend, where it
 inherits loopback trust and runs. Today (`MASINI_AUTO_PR` empty → dry-run): unauthenticated
 markdown file writes into `.runtime/auto-prs/` + info disclosure of dry-run PR contents and the
 secrets-file path. **Latent:** if `MASINI_AUTO_PR=1` is ever set → unauthenticated `gh pr create`
 against your repos with attacker content.
 **Fix:** change blocklist `"/auto"` → `"/auto-pr"`. Better: convert the denylist to an allowlist of
 the personal + `/auth` surface so new internal routers are closed by default.
-**Fix by:** clawd-a (one-line code). Internet-facing — do this first.
+**Fix by:** the service user (one-line code). Internet-facing — do this first.
 
 **H2 — Backend on `0.0.0.0:8000` + RFC1918 trust → LAN-reachable host code execution**
 Confirmed: backend binds `0.0.0.0:8000` (no host firewall on that port), and
@@ -175,18 +175,18 @@ blocks `/tools`).
 **Fix:** bind backend to `127.0.0.1:8000` (Tailscale Serve already fronts it at `:8446`; the edge
 reaches it on loopback — nothing needs `0.0.0.0`). And/or narrow `require_internal_caller` to only
 the actual Docker bridge subnet, not all RFC1918.
-**Fix by:** clawd-a (systemd unit + `deps_auth.py`). **Usage flag:** ⚠ you lose direct
+**Fix by:** the service user (systemd unit + `deps_auth.py`). **Usage flag:** ⚠ you lose direct
 `http://<lan-ip>:8000` access; use the tailnet Serve URL instead.
 
 **H3 — `NOPASSWD` sudo to `git` as `clawd-house` = code execution as that user**
 `sudo -n -l` → `(clawd-house) NOPASSWD: /usr/bin/git`. `git` is not a safe sudo verb: `-c
 core.pager=<cmd>`, `-c core.editor`, `-c alias.x='!<cmd>'`, `core.fsmonitor`, `core.sshCommand`,
-`GIT_EXTERNAL_DIFF`, hooks — all give arbitrary exec, no writable repo required. clawd-a → full
+`GIT_EXTERNAL_DIFF`, hooks — all give arbitrary exec, no writable repo required. the service user → full
 code execution as `clawd-house`.
 **Fix:** drop the rule, or replace with a wrapper script (fixed repo path, no user-supplied `-c`/
-args, owned by clawd-house, not writable by clawd-a) that runs only the exact git command clawd-a
+args, owned by clawd-house, not writable by the service user) that runs only the exact git command the service user
 needs (likely committing to `/opt/clawd-house/docs`).
-**Fix by:** benmiriello/root. **Usage flag:** ⚠ if clawd-a relies on this to commit clawd-house
+**Fix by:** the operator/root. **Usage flag:** ⚠ if the service user relies on this to commit clawd-house
 docs, it needs the wrapper replacement — discuss the exact command to allow.
 
 **H4 — ComfyUI (`:8188`) unauthenticated on `0.0.0.0`**
@@ -203,7 +203,7 @@ start/stop). Exposed tailnet-wide via Serve `8449 → 127.0.0.1:9000`. Two risks
 `debug=True`, the Werkzeug console is remote RCE; (b) an anonymously-mutable control plane on the
 tailnet. Any tailnet device can reach it.
 **Fix:** put an auth wall in front, confirm `debug=False`, or drop the `8449` Serve mapping.
-**Fix by:** owner of the :9000 app / benmiriello (owns the tailscale serve config).
+**Fix by:** owner of the :9000 app / the operator (owns the tailscale serve config).
 
 **H6 — Mobile WebView bridge leaks the device token to any page it renders**
 The RN bridge exposes `secureStore.get/set/remove` to web JS (`shared/native-bridge.ts:35`,
@@ -215,7 +215,7 @@ HttpOnly cookie design closed. Exploitable via any SPA XSS, iframe, or redirect 
 **Fix:** don't expose general `secureStore.get`; scope the bridge to a write-only
 `provisionDeviceToken(token)` with a fixed key; set `originWhitelist` to the real origin; reject
 `data:`/`about:`/non-origin sub-frames.
-**Fix by:** clawd-a (mobile code). App is committed-but-unbuilt — fix before building/shipping.
+**Fix by:** the service user (mobile code). App is committed-but-unbuilt — fix before building/shipping.
 
 **H7 — `ollama-bgm` (`:11435`) + `ollama` (`:11434`) open inference API on `0.0.0.0`/IPv6**
 Confirmed: `/api/tags` = 200, no auth. Open Ollama = compute/GPU abuse, arbitrary `model pull`
@@ -227,32 +227,32 @@ Confirmed: `/api/tags` = 200, no auth. Open Ollama = compute/GPU abuse, arbitrar
 ### MEDIUM
 
 **M1 — Letta `/v1` answers unauthenticated despite `LETTA_SERVER_PASS`; cross-cluster over loopback**
-Confirmed: `127.0.0.1:8283/v1/agents/` (clawd-a's `letta`) and `127.0.0.1:8284/v1/agents/`
+Confirmed: `127.0.0.1:8283/v1/agents/` (the service user's `letta`) and `127.0.0.1:8284/v1/agents/`
 (**simonsays's `letta-simonsays`**) both return 200 with no auth, though both have
-`LETTA_SERVER_PASS` set. Loopback-only, but loopback is shared → **clawd-a can read/write
-simonsays's agent-memory API** (currently `[]`). This is the one place the clawd-a↔simonsays
+`LETTA_SERVER_PASS` set. Loopback-only, but loopback is shared → **the service user can read/write
+simonsays's agent-memory API** (currently `[]`). This is the one place the the service user↔simonsays
 boundary is crossable at the app layer.
 **Fix:** start Letta with the flag that actually enforces the server password so `/v1` requires it.
-**Fix by:** clawd-a for its own `:8283`; simonsays for `:8284` (flag to them).
+**Fix by:** the service user for its own `:8283`; simonsays for `:8284` (flag to them).
 
 **M2 — open-wearables: dev frontend on `0.0.0.0:3100`; backend env holds many third-party secrets**
 `frontend__open-wearables` runs `pnpm dev --host 0.0.0.0` published on `:3100` (also Serve `8445`);
 `backend__open-wearables`/`svix-server` are net-internal but **crash-looping**. Backend env holds
 (names only): `WHOOP/OURA/FITBIT/GARMIN/STRAVA/SUUNTO/POLAR/ULTRAHUMAN_CLIENT_SECRET`,
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `DB_PASSWORD`, `SECRET_KEY`, `ADMIN_PASSWORD`,
-`RESEND_API_KEY`, `OPEN_WEARABLES_API_KEY`. Compose is clawd-a-owned
+`RESEND_API_KEY`, `OPEN_WEARABLES_API_KEY`. Compose is the service user-owned
 (`workshop/infra/open-wearables/repo`). Backend isn't network-exposed today, but the secret set is
 recoverable by anyone with docker access on the host (see C1), and a dev frontend is openly served.
 **Fix:** move secrets to a non-committed secret store; don't run a `--host 0.0.0.0` dev frontend on
 a shared interface; fix or stop the crash-looping backend/svix (churn also masks real health).
-**Fix by:** clawd-a.
+**Fix by:** the service user.
 
 **M3 — sshd: password authentication effectively enabled on `0.0.0.0:22` (+IPv6)**
 All relevant `sshd_config` lines are commented → upstream defaults apply: `PasswordAuthentication
 yes`, `PermitRootLogin prohibit-password` (root is key-only, good). So password logins are accepted
 on all interfaces, for every account with a unix/samba password.
 **Fix:** drop-in with `PasswordAuthentication no` + `KbdInteractiveAuthentication no`.
-**Fix by:** benmiriello/root. **Usage flag:** ⚠ key-only login — confirm every account you log in
+**Fix by:** the operator/root. **Usage flag:** ⚠ key-only login — confirm every account you log in
 from has its key installed before flipping.
 
 **M4 — Registration is fail-OPEN by default in code (closed in this deployment)**
@@ -260,33 +260,33 @@ from has its key installed before flipping.
 is explicitly falsey. This deploy sets `=0` (verified), so signups are closed — but any future
 deploy that forgets the var exposes internet-facing registration.
 **Fix:** invert the default to closed (require explicit `=1`).
-**Fix by:** clawd-a (code).
+**Fix by:** the service user (code).
 
 ### LOW / hygiene
 
 **L1 — World-readable auth material (`0644`)** — `~/workshop/.runtime/auth.db` (session/device/
 service tokens + scrypt password hash), `infra/letta/.env`, and `~/.claude/file-history/*` snapshots.
-Reachable only by `benmiriello` (via group) and root-capable accounts — not simonsays/clawd-b — so
+Reachable only by `the operator` (via group) and root-capable accounts — not simonsays/another tenant — so
 this is defense-in-depth, not a live cross-user leak. `chmod 600` them (and `chmod -R go= ~/.claude/
-file-history`). **Fix by:** clawd-a.
+file-history`). **Fix by:** the service user.
 
 **L2 — Vite dev server (`:5173`) served to the tailnet via Serve `8443`** — dev servers expose
 source, source maps, HMR, and (per `server.fs`) files outside the project root. Production already
 serves the built bundle. Drop the Serve mapping or point it at the built bundle; if kept, set
-`server.fs.strict: true`. **Fix by:** clawd-a.
+`server.fs.strict: true`. **Fix by:** the service user.
 
 **L3 — FastAPI `/docs` + `/openapi.json` open** on the workshop instances (API endpoints
-themselves are 401-gated). Disable in production or gate. **Fix by:** clawd-a / the sister-instance
+themselves are 401-gated). Disable in production or gate. **Fix by:** the service user / the sister-instance
 owner.
 
 **L4 — Mobile debug screen ships in release** (`app/debug.tsx` accepts a pasted API token, no
 `__DEV__` guard) and **dead cleartext `http://127.0.0.1:8000` default** in `lib/api.ts` (unused).
-Gate `/debug` behind `__DEV__`; delete the unused cleartext helper. **Fix by:** clawd-a.
+Gate `/debug` behind `__DEV__`; delete the unused cleartext helper. **Fix by:** the service user.
 
-**L5 — Samba anonymous share enumeration** (`smbclient -L -N` lists `benmiriello`/`simonsays`/
+**L5 — Samba anonymous share enumeration** (`smbclient -L -N` lists `the operator`/`simonsays`/
 `nobody`/`print$` — usernames leak; anonymous *access* is denied) and **rpcbind `:111` on
 `0.0.0.0`** if NFS is unused. Set `restrict anonymous`, bind smbd to the intended interface,
-disable rpcbind if unneeded. **Fix by:** benmiriello/root.
+disable rpcbind if unneeded. **Fix by:** the operator/root.
 
 ---
 
@@ -295,7 +295,7 @@ disable rpcbind if unneeded. **Fix by:** benmiriello/root.
 - **Public edge:** path traversal blocked (`resolve()` + `is_relative_to(_DIST_ROOT)`); blocklist
   normalizes `..`/`//`/case before matching (no bypass found beyond the H1 typo); platform +
   personal routers are **identity-gated, not origin-gated** — the old CGNAT/loopback trust is gone
-  (`deps_user.py` has no network trust). Only `birds`/`workshop.benmiriello.com` reach the internet,
+  (`deps_user.py` has no network trust). Only `birds`/`workshop.<your-domain>` reach the internet,
   both API-401 unauth.
 - **Auth crypto:** scrypt (n=2^15) passwords with `compare_digest`; session/device/service tokens =
   `secrets.token_urlsafe(32)` stored SHA-256 only; server-side expiry + revoke; Plaid tokens
@@ -319,18 +319,18 @@ disable rpcbind if unneeded. **Fix by:** benmiriello/root.
 
 1. **C3** — verify inbound IPv6 firewall (decides the blast radius of everything on `[::]`). *root*
 2. **C2** — password + loopback-bind `lovelace-redis`. *stack owner + root*
-3. **C1** — remove `clawd-a` from `docker` group. *root* ⚠
-4. **H1** — fix `/auto-pr` edge blocklist (internet-facing). *clawd-a*
-5. **H2** — bind backend to `127.0.0.1` + narrow RFC1918 trust. *clawd-a* ⚠
+3. **C1** — remove `the service user` from `docker` group. *root* ⚠
+4. **H1** — fix `/auto-pr` edge blocklist (internet-facing). *the service user*
+5. **H2** — bind backend to `127.0.0.1` + narrow RFC1918 trust. *the service user* ⚠
 6. **H4/H7** — loopback-bind ComfyUI + Ollama. *stack owners + root*
 7. **H5** — auth-wall / drop Serve for the `:9000` control panel. *owner*
 8. **H3** — replace/drop the `git` NOPASSWD sudo. *root* ⚠
-9. **H6** — scope the mobile WebView bridge (before building). *clawd-a*
+9. **H6** — scope the mobile WebView bridge (before building). *the service user*
 10. **M1–M4, L1–L5** — Letta password, open-wearables secrets, sshd key-only ⚠, registration
     default, and hygiene items.
 
 ⚠ items change how the system is used — confirm before applying:
-C1 (clawd-a loses docker CLI), H2 (no direct LAN `:8000`), H3 (clawd-house git commit path),
+C1 (the service user loses docker CLI), H2 (no direct LAN `:8000`), H3 (clawd-house git commit path),
 M3 (ssh key-only), and the redis/comfyui/ollama rebinds (LAN clients of those apps).
 
 ## Process note

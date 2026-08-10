@@ -64,7 +64,7 @@ configures the run, so it can never drift from reality.
 
 Builders run in a box with a network-egress filter: external `git clone` /
 `npm install` to hosts like github.com and registry.npmjs.org are blocked at the
-box level (the masini egress-guard hook plus box network policy), while loopback and
+box level (the the bridge agent egress-guard hook plus box network policy), while loopback and
 the tailnet are allowed. A builder that does not know this promises a clone and then
 fails opaquely (what happened to `gengui-builder-1`).
 

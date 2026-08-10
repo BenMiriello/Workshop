@@ -9,14 +9,14 @@ not drift; and make code persist in the remote, not only locally. Companion to
 
 ## Executive summary
 
-1. The capability gap is entirely in platform code, not the environment. `gh` is installed and authenticated as `BenMiriello` (scopes `read:org, repo`, https), `git worktree` works. The box can talk to GitHub today; nothing in the project/worktree flow does.
+1. The capability gap is entirely in platform code, not the environment. `gh` is installed and authenticated as `<owner>` (scopes `read:org, repo`, https), `git worktree` works. The box can talk to GitHub today; nothing in the project/worktree flow does.
 2. We already have half of it, locally. `services/worktrees.py` does the full local worktree lifecycle (create/list/diff/merge-and-reap/discard) with a stable naming scheme (`branches/<slug>/<branch>`, ref `wt/<slug>/<branch>`). It touches no remote, opens no PR, and re-guesses the canonical branch every call instead of tracking it.
 3. Projects have no notion of a remote. The registry record has no repo/remote/default-branch field; `git init -b main` + one commit is all `create_project` does; exactly one project (gengui) incidentally carries an `origin` because it was cloned in via `/import`.
-4. There is a real but narrow PR path: `scripts/auto_pr.sh` calls `gh pr create` in a non-default "real" mode, but only against a repo you hand it that already has an `origin`, and it never pushes the branch first. It is masini's self-fix tool, not wired into the worktree flow.
+4. There is a real but narrow PR path: `scripts/auto_pr.sh` calls `gh pr create` in a non-default "real" mode, but only against a repo you hand it that already has an `origin`, and it never pushes the branch first. It is the bridge agent's self-fix tool, not wired into the worktree flow.
 5. Workers do not use worktrees. `project_ralph.sh` sweeps run in the project MAIN dir on whatever branch is checked out; the only branch-to-agent binding is a static pin at build-agent creation (`build_agents.py:113-122`). There is no dynamic worktree-per-task allocation.
 6. Minimal buildable first slice (early value): a `repo` binding on the project record + "Connect GitHub" (create-or-bind via `gh`) + canonical-branch tracking (store `default_branch`, stop guessing) + fetch-before-work + push-and-open-PR (close the auto_pr no-push gap). That alone makes code persist in the remote and lets an agent open a PR.
 7. Fuller orchestration (later): dynamic worktree-per-agent for concurrent work, a rebase-before-merge reconcile model with `git rerere` and a merged-branch cleanup sweep, and a canonical-state view (a `Repo` panel + a machine-readable state block + a branch-philosophy skill) so agents and the operator both always see which branch is main, when to branch, and when to merge.
-8. Hard boundaries honored: project repos are separate git repos, never committed into workshop (extend the existing `/projects/*`, `/branches/`, `/build-agents/` ignores). Repos go to the operator's personal GitHub (`BenMiriello`) only; never the `veritusagent` org, never cross-org PAT scopes. GitHub Issues sync stays out; this is code/repo/PR only.
+8. Hard boundaries honored: project repos are separate git repos, never committed into workshop (extend the existing `/projects/*`, `/branches/`, `/build-agents/` ignores). Repos go to the operator's personal GitHub (`<owner>`) only; never the `<blocked-org>` org, never cross-org PAT scopes. GitHub Issues sync stays out; this is code/repo/PR only.
 9. Phases G0-G3 slot after ticket Phases 0-4. G touches `project_ralph.sh` and the receipt path that ticket Phases 1 and 3 also own; overlaps are flagged so the builder sequences correctly.
 
 ---
@@ -25,7 +25,7 @@ not drift; and make code persist in the remote, not only locally. Companion to
 
 ### Environment (ready)
 
-`git version 2.39.5`, `git worktree` present. `gh` at `/usr/bin/gh` v2.23.0, authenticated as `BenMiriello`, token scopes `read:org, repo`, git ops over https. GitHub auth is fully available on the box.
+`git version 2.39.5`, `git worktree` present. `gh` at `/usr/bin/gh` v2.23.0, authenticated as `<owner>`, token scopes `read:org, repo`, git ops over https. GitHub auth is fully available on the box.
 
 ### Local worktree lifecycle (exists, local-only)
 
@@ -43,7 +43,7 @@ Missing here: no `git fetch/push/pull`, no `origin`, no `gh`, no PR, no stored c
 
 ### The existing PR path (exists, narrow, no push)
 
-`backend/routes/auto_pr.py` + `scripts/auto_pr.sh`: gated by `MASINI_AUTO_PR` in a gitignored secrets file (`auto_pr.py:11,16-25`). Dry-run default writes a PR-body `.md` to `.runtime/auto-prs/`. Real mode (`MASINI_AUTO_PR=1`) runs `auto_pr.sh`, which refuses on the default branch or detached HEAD (`:105-111`) then calls `gh pr create --repo $(git remote get-url origin) --title ... --body ...` (`:113-115`). Two gaps for our purpose: it never runs `git push` first (relies on an already-pushed branch), and it is a masini self-fix tool, not wired into the worktree/merge flow.
+`backend/routes/auto_pr.py` + `scripts/auto_pr.sh`: gated by `MASINI_AUTO_PR` in a gitignored secrets file (`auto_pr.py:11,16-25`). Dry-run default writes a PR-body `.md` to `.runtime/auto-prs/`. Real mode (`MASINI_AUTO_PR=1`) runs `auto_pr.sh`, which refuses on the default branch or detached HEAD (`:105-111`) then calls `gh pr create --repo $(git remote get-url origin) --title ... --body ...` (`:113-115`). Two gaps for our purpose: it never runs `git push` first (relies on an already-pushed branch), and it is a the bridge agent self-fix tool, not wired into the worktree/merge flow.
 
 ### Workers and branches (no worktree use)
 
@@ -51,7 +51,7 @@ Missing here: no `git fetch/push/pull`, no `origin`, no `gh`, no PR, no stored c
 
 ### Registries and remotes (facts to reconcile)
 
-`.runtime/projects.json` lists 9 projects; none has a repo/remote field. Actual on-disk remotes: `projects/gengui` -> `origin https://github.com/BenMiriello/gengui.git`; the workshop root repo -> `origin https://github.com/BenMiriello/Workshop.git`. The instances model uses the Workshop repo's own `origin` for the fork/upstream flow (`docs/instances-and-forking.md`), which is repo-level platform maintenance, entirely separate from project git. Marketplace "update from upstream" uses local git BUNDLES, not GitHub (`services/registry.py:348-352,515-530`).
+`.runtime/projects.json` lists 9 projects; none has a repo/remote field. Actual on-disk remotes: `projects/gengui` -> `origin https://github.com/<owner>/gengui.git`; the workshop root repo -> `origin https://github.com/<owner>/Workshop.git`. The instances model uses the Workshop repo's own `origin` for the fork/upstream flow (`docs/instances-and-forking.md`), which is repo-level platform maintenance, entirely separate from project git. Marketplace "update from upstream" uses local git BUNDLES, not GitHub (`services/registry.py:348-352,515-530`).
 
 Discrepancy to fix first: `worktrees.py` resolves projects via `~/workshop/projects.json` (`PROJECTS_ROOT.parent / "projects.json"`, `:39`) while `routes/projects.py` and `project_ralph.sh` use `.runtime/projects.json`. These must point at the same registry before worktree ops can be trusted across all projects.
 
@@ -90,9 +90,9 @@ Add to the project registry record (`.runtime/projects.json`, and FIRST reconcil
 ```
 "repo": {
   "provider": "github",
-  "owner": "BenMiriello",          // personal only, never veritusagent
+  "owner": "<owner>",          // personal only, never <blocked-org>
   "name": "<repo-name>",
-  "remote_url": "https://github.com/BenMiriello/<repo-name>.git",
+  "remote_url": "https://github.com/<owner>/<repo-name>.git",
   "default_branch": "main",         // canonical, TRACKED not guessed
   "connected_at": "<iso>"
 }
@@ -106,7 +106,7 @@ Absent field = a purely local project (today's behavior, still valid). This is a
 
 ### Minimal first slice (Phase G1): bind, push, PR
 
-- Connect GitHub: a project action (button + `POST /api/projects/{slug}/connect-github`) that either creates a new private repo from the project dir (`gh repo create BenMiriello/<slug> --private --source=<dir> --remote=origin --push`) or binds an existing one (`git remote add origin <url>` + `git fetch`), then writes the `repo` field. Default visibility private; owner always `BenMiriello`. Guardrail in the connect path: reject any owner/remote containing `veritusagent` (Veritus is out of scope, never a host).
+- Connect GitHub: a project action (button + `POST /api/projects/{slug}/connect-github`) that either creates a new private repo from the project dir (`gh repo create <owner>/<slug> --private --source=<dir> --remote=origin --push`) or binds an existing one (`git remote add origin <url>` + `git fetch`), then writes the `repo` field. Default visibility private; owner always `<owner>`. Guardrail in the connect path: reject any owner/remote containing `<blocked-org>` (the excluded work org is out of scope, never a host).
 - Provision on create (opt-in, default on for real projects): `create_project` gains a `create_repo: bool` (default true for non-scratch templates, false for blank/scratch) that runs the same connect flow after `_git_init`. So "create a project -> it provisions the repo" is one flag, and scratch experiments stay local.
 - Fetch-before-work: `project_ralph.sh` (and worktree create) run `git fetch origin <default_branch>` when the project is bound, and branch worktrees are created off `origin/<default_branch>` so agents never start from a stale base.
 - Push + open PR: a worktree op `POST /api/worktrees/{slug}/{branch}/publish` that runs `git push -u origin wt/<slug>/<branch>` then `gh pr create --repo <remote> --base <default_branch> --head wt/<slug>/<branch> --title ... --body ...`. This closes the auto_pr no-push gap (auto_pr never pushed). Reuse `auto_pr.sh`'s `gh pr create` invocation shape; the new op adds the missing push.
@@ -120,12 +120,12 @@ This slice alone: code persists in the GitHub remote, agents open and merge PRs,
 - Reconcile model: rebase-before-merge (`git fetch` + `git rebase origin/<default_branch>` in the worktree before publish), `git config rerere.enabled true` at connect time so recurring conflict resolutions replay, and for multi-task waves an optional integration branch (`wt/<slug>/integration`) that features merge into first, verify, then fast-forward to main. Conflicts surface as ordinary git conflicts at merge; a conflicting merge parks the task (dead-letter status, per the self-healing model) rather than looping.
 - Cleanup sweep: a periodic op removing worktrees whose branch is an ancestor of `origin/<default_branch>` (merged) and pruning orphaned branches, so `branches/<slug>/` does not accumulate stale trees.
 - Canonical-state visibility (both operator and agents see it): a `Repo` panel on ProjectDetail showing default branch, remote URL, active worktrees with their assigned task and PR link, ahead/behind vs `origin/<default_branch>`, and open PRs (`gh pr list --json`). For agents, a machine-readable state block (a scoped note or an injected digest line) plus the branch-philosophy skill below, so a worker always knows which branch is canonical, whether another worktree is in flight, and when to rebase/merge, without guessing.
-- The branch philosophy as a consumed artifact: a `shared/skills/git-worktree-workflow/SKILL.md` (trunk-based, short-lived `wt/<slug>/<task-id>` branches off `origin/<default_branch>`, rebase before publish, small self-contained changes, open a PR, merge on green, never touch the workshop repo's own remote, never push to veritusagent). Builders auto-discover it; a persona line in `chat_context.py` points at it. This is how agents "always know which worktree is canonical and when to merge" without a heavy conductor.
+- The branch philosophy as a consumed artifact: a `shared/skills/git-worktree-workflow/SKILL.md` (trunk-based, short-lived `wt/<slug>/<task-id>` branches off `origin/<default_branch>`, rebase before publish, small self-contained changes, open a PR, merge on green, never touch the workshop repo's own remote, never push to <blocked-org>). Builders auto-discover it; a persona line in `chat_context.py` points at it. This is how agents "always know which worktree is canonical and when to merge" without a heavy conductor.
 
 ### Boundaries (hard)
 
 - Project repos are separate git repos with their own remotes; never committed into workshop. The `/projects/*`, `/branches/`, `/build-agents/` ignores already enforce this; the connect flow must operate inside the project dir only and never stage a project `.git` into workshop. Verify the boundary holds after connect (`git -C <workshop> check-ignore projects/<slug>`).
-- Personal GitHub only. Owner is always `BenMiriello`. The connect and create paths reject any `veritusagent` owner/remote. Do not expand `gh` PAT scopes for org access; personal repo create/push needs only `repo`, which is already present. Veritus is never proposed as a host and never mixed in.
+- Personal GitHub only. Owner is always `<owner>`. The connect and create paths reject any `<blocked-org>` owner/remote. Do not expand `gh` PAT scopes for org access; personal repo create/push needs only `repo`, which is already present. the excluded work org is never proposed as a host and never mixed in.
 - GitHub Issues sync stays out. This design touches repos, branches, worktrees, and PRs only. No `external_ref` on tasks, no issue mirroring.
 
 ---
@@ -143,13 +143,13 @@ Global constraints as in the ticket plan (no em-dashes, no emoji, `frontend/CLAU
 
 ### Phase G1: bind + push + PR (the minimal slice) [SEQUENTIAL after G0]
 
-- `POST /api/projects/{slug}/connect-github` (create-or-bind via `gh`, writes `repo`, rejects veritusagent). `create_project` gains `create_repo` (default on for non-scratch).
+- `POST /api/projects/{slug}/connect-github` (create-or-bind via `gh`, writes `repo`, rejects <blocked-org>). `create_project` gains `create_repo` (default on for non-scratch).
 - Canonical tracking: `worktrees._main_branch` and diff/merge read `repo.default_branch` when present.
 - `POST /api/worktrees/{slug}/{branch}/publish`: `git push -u origin` + `gh pr create`. Reuse `auto_pr.sh`'s `gh pr create` shape; add the push.
 - `merge_branch`: bound projects merge via `gh pr merge --squash --delete-branch` after the reviewer gate; unbound keep local merge.
 - Frontend: a `Repo` / Connect control on ProjectDetail (button + status) and a Publish/PR action per branch in the Branches section (`ProjectDetail.tsx:1029-1093`). OVERLAPS ticket Phase 2 (ProjectDetail.tsx task section) and Notes Phase N2 (Notes section); sequence after both or coordinate the file owner.
 - Seam files: `backend/routes/projects.py`, `backend/services/worktrees.py`, `backend/routes/worktrees.py`, `scripts/auto_pr.sh` (reuse), `frontend/src/pages/ProjectDetail.tsx`.
-- Verification (uses the authenticated `gh`): connect a scratch project, confirm the private repo exists (`gh repo view`), the initial commit is pushed, a `wt/<slug>/x` branch publishes and opens a PR (`gh pr list`), merge closes the PR and updates `origin/main`; the workshop tree never stages the project `.git` (`check-ignore`); a connect attempt with a veritusagent owner is rejected.
+- Verification (uses the authenticated `gh`): connect a scratch project, confirm the private repo exists (`gh repo view`), the initial commit is pushed, a `wt/<slug>/x` branch publishes and opens a PR (`gh pr list`), merge closes the PR and updates `origin/main`; the workshop tree never stages the project `.git` (`check-ignore`); a connect attempt with a <blocked-org> owner is rejected.
 
 ### Phase G2: fetch-before-work + remote-aware sweeps [SEQUENTIAL after G1]
 
@@ -178,7 +178,7 @@ Global constraints as in the ticket plan (no em-dashes, no emoji, `frontend/CLAU
 - GitHub Issues sync: out of scope by operator direction. No task-to-issue mirroring, no `external_ref`.
 - The workshop repo's own instance/upstream flow (`instances-and-forking.md`): untouched. This plan is project repos only; do not entangle project remotes with the Workshop-repo cherry-pick flow.
 - Operator decision (recommended default taken, proceed): repo visibility default private; provision-on-create default on for non-scratch templates and off for blank/scratch; merge policy = agents merge on a green reviewer gate (single operator, trunk-based), with a per-project "require manual merge" flag available if the operator wants to review PRs himself before merge. Flip any of these if the operator prefers.
-- Do not expand `gh` PAT scopes. Personal `repo` scope already present suffices; no org scopes, never veritusagent.
+- Do not expand `gh` PAT scopes. Personal `repo` scope already present suffices; no org scopes, never <blocked-org>.
 - Heavier reconcile machinery (FIFO merge queues, multi-tier conflict resolvers, Coordinator/Verifier fleets): rejected as multi-tenant cruft. Rebase-before-merge + rerere + park-on-conflict is the single-operator ceiling.
 - GitHub Actions / `gh aw` server-side agentic workflows: not now; agents run locally via `claude -p`.
 - Migrating existing local projects (birds, budget, commute, ...) to remotes: a per-project operator choice via Connect GitHub, not a bulk migration in this plan.

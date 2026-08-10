@@ -116,7 +116,7 @@ no shell edit.
 ## Per-instance data (never tracked)
 
 Instance state lives under `.runtime/` (gitignored) so a clone inherits none of
-it. De-hardcoded from `/home/clawd-a/...` to home-relative defaults, overridable:
+it. De-hardcoded from `$HOME/...` to home-relative defaults, overridable:
 
 | Data | Location | Override |
 |---|---|---|

@@ -1,13 +1,13 @@
-# workshop.benmiriello.com deployment
+# workshop.<your-domain> deployment
 
 Ships AFTER the auth + ownership redesign (`01-auth-and-ownership.md`). Exposing the current
 backend would publish the operator's financial data; do not reorder.
 
 ## What exists
 
-- A cloudflared tunnel `eca1421d-9e82-4bbd-a131-3960065cf953` with cert at
-  `~/.cloudflared/cert.pem` (authorized for the benmiriello.com zone) and ingress in
-  `~/.cloudflared/config.yml` currently routing `birds.benmiriello.com -> 127.0.0.1:8001`.
+- A cloudflared tunnel `<tunnel-id>` with cert at
+  `~/.cloudflared/cert.pem` (authorized for the <your-domain> zone) and ingress in
+  `~/.cloudflared/config.yml` currently routing `birds.<your-domain> -> 127.0.0.1:8001`.
   The tunnel and the springer app are NOT running right now (start them as part of this).
 - The model to copy is `backend/springer_app.py`: a small process that serves a built SPA
   bundle and gates the API.
@@ -18,7 +18,7 @@ backend would publish the operator's financial data; do not reorder.
 
 ```
 phone/browser --https--> Cloudflare edge --tunnel--> cloudflared (localhost)
-  workshop.benmiriello.com -> 127.0.0.1:8002  (workshop_public_app)
+  workshop.<your-domain> -> 127.0.0.1:8002  (workshop_public_app)
       "/" + assets        -> serve frontend/dist (the built Workshop SPA)
       /api/* , /auth/*     -> reverse-proxy to 127.0.0.1:8000 (the main backend)
                               preserving Cookie / Set-Cookie / X-Workshop-Client
@@ -47,14 +47,14 @@ the birds `dist-springer` rebuild step.
 1. Add a second ingress rule to `~/.cloudflared/config.yml` (same tunnel), ABOVE the catch-all:
    ```yaml
    ingress:
-     - hostname: workshop.benmiriello.com
+     - hostname: workshop.<your-domain>
        service: http://127.0.0.1:8002
-     - hostname: birds.benmiriello.com
+     - hostname: birds.<your-domain>
        service: http://127.0.0.1:8001
      - service: http_status:404
    ```
 2. Create the DNS record (proxied CNAME to the tunnel):
-   `cloudflared tunnel route dns eca1421d-9e82-4bbd-a131-3960065cf953 workshop.benmiriello.com`
+   `cloudflared tunnel route dns <tunnel-id> workshop.<your-domain>`
 3. Run the tunnel durably: a `cloudflared.service` systemd --user unit
    (`cloudflared tunnel run`), enabled, mirroring `workshop-backend.service`.
 
@@ -85,7 +85,7 @@ Both `--user`, enabled, restart-on-failure. Install via a `scripts/install_servi
 
 ## Acceptance
 
-- `https://workshop.benmiriello.com` serves the login wall; operator signs in and sees the
+- `https://workshop.<your-domain>` serves the login wall; operator signs in and sees the
   full Workshop; data matches the tailnet view.
 - An unauthenticated request to `…/api/finance/*` (or location/budget/health) returns 401.
 - A second account sees an empty workspace, never the operator's data (verified in

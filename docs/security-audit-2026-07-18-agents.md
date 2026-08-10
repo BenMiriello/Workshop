@@ -11,13 +11,13 @@ data, and the host. Per the operator's request, findings are split into **clear 
 Every autonomous turn — `ralph.sh`, `project_ralph.sh`, `queue_runner.sh`, `cron_agent.sh`, and the
 `/tools` recursive-claude tools — invokes the **same `claude -p`** the operator's interactive
 sessions use, inheriting `~/.claude/settings.json` (`defaultMode: auto`, `skipAutoPermissionPrompt:
-true`, no `--allowedTools` restriction). It runs **as `clawd-a`, in the `docker` group, with no
+true`, no `--allowedTools` restriction). It runs **as `the service user`, in the `docker` group, with no
 sandbox** (no container, bwrap, seccomp, restricted PATH, or working-dir jail; the backend service
 has no `User=`), holding the OAuth token and full read/write of the tree.
 
 The entire enforcement perimeter is: two PreToolUse **Bash-only** hooks (`egress-guard.py`,
 `git-guard.py`) plus the Anthropic-side auto-mode classifier. **An agent turn can reach everything
-clawd-a can reach.** So the in-app "boundaries" below are only as strong as that perimeter — and
+the service user can reach.** So the in-app "boundaries" below are only as strong as that perimeter — and
 against a same-uid, docker-group process, most are not OS-enforced at all.
 
 This matters because the autonomy loop ingests **untrusted content** (Discord messages, web pages,
@@ -73,7 +73,7 @@ The egress guard claims to close the "external communication" leg of the lethal 
 - **Fails open on any parse error** (`:180`).
 - **Recommendation (completes an existing control, not new cruft):** add a PreToolUse matcher for
   **WebFetch** applying the same host policy and rejecting data-bearing query strings to
-  non-allowlisted hosts. NOTE: `egress-guard.py` is user-scope and shared with the masini bridge —
+  non-allowlisted hosts. NOTE: `egress-guard.py` is user-scope and shared with the chat bridge —
   change it carefully and test both surfaces; do not narrow legitimate research fetches.
 
 ### A4 — MEDIUM — Recursive `claude` spawn with no recursion / token budget

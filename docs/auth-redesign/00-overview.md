@@ -1,6 +1,6 @@
 # Workshop auth + data-ownership redesign — overview & threat model
 
-Status: design (2026-06-25). Drives the `workshop.benmiriello.com` public deployment, which
+Status: design (2026-06-25). Drives the `workshop.<your-domain>` public deployment, which
 MUST NOT ship until this is implemented. Companion docs: `01-auth-and-ownership.md` (the
 design), `02-cloudflare-deployment.md` (the public surface), `03-execution-plan.md` (ordered
 steps + acceptance). Supersedes the IP-trust model in
@@ -44,7 +44,7 @@ operator's requirement, verbatim, is the spec:
 
 ## Current-state vulnerabilities being removed (grounded in the code)
 
-- `deps_auth.require_token` trusts `ip.is_loopback` OR `100.64.0.0/10` and returns before any
+- `deps_auth.require_token` trusts `ip.is_loopback` OR `<tailnet-ip>/10` and returns before any
   user check (`backend/deps_auth.py`). A Cloudflare tunnel terminates on loopback, so naively
   exposing the backend would trust **every public visitor**.
 - `location`, `commute`, `health` routers are included with **no gate** (`main.py`); only the
@@ -80,7 +80,7 @@ consulted. No ongoing behavior may branch on "is this the operator" to grant dat
 
 ## Sequencing rule (do not violate)
 
-Public exposure (`workshop.benmiriello.com`) ships **last**. Implement auth + ownership +
+Public exposure (`workshop.<your-domain>`) ships **last**. Implement auth + ownership +
 internal-caller credentials + removal of IP trust FIRST, verify the guarantees above, and only
 then open the tunnel. Exposing the current backend publicly before this work is complete would
 publish the operator's financial data.

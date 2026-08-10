@@ -57,6 +57,6 @@ force through it). Recurring resolutions replay automatically via `git rerere`.
   Workshop platform repo's own remote from project work. Publishing/deploying the
   Workshop itself goes through the platform, not your shell.
 - Personal GitHub only. Repos live under the operator's personal account
-  (`BenMiriello`). NEVER push to, fork, mirror, or open a PR against the
-  `veritusagent` organization or any repo under it. Veritus is out of scope and is
+  (`<owner>`). NEVER push to, fork, mirror, or open a PR against the
+  `<blocked-org>` organization or any repo under it. the excluded work org is out of scope and is
   never a host for anything here. If a task seems to want it, stop and surface it.

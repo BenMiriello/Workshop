@@ -62,9 +62,9 @@ with triggers and have no path to execution.
 | `workshop-overseer` | assistant | none | loop | never runs |
 | `email-triager` | assistant | none | event | never runs |
 | `plaid-watcher` | assistant | none | loop | never runs |
-| `masini`, `masini-commute` | assistant | none | loop | never runs via this dispatcher |
+| `the bridge agent`, `the bridge agent-commute` | assistant | none | loop | never runs via this dispatcher |
 
-Caveat, not overclaimed: `masini` and `masini-commute` have their own tmux bridge
+Caveat, not overclaimed: `the bridge agent` and `the bridge agent-commute` have their own tmux bridge
 (`~/clawdbot/`) and may be driven entirely outside this dispatcher. `workshop-overseer`,
 `email-triager`, and `plaid-watcher` are ghosts: the roster shows them as configured,
 and they are skipped every tick.

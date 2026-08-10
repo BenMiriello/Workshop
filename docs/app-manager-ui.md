@@ -1,6 +1,6 @@
 # Workshop App Manager — in-place app editor + governance surface
 
-Status: **WIP proposal / for operator review** · Date: 2026-06-13 · Author: clawd-a (supervisor)
+Status: **WIP proposal / for operator review** · Date: 2026-06-13 · Author: the service user (supervisor)
 
 A concept for editing and managing apps from two zoom levels: a platform-wide editor
 on the Apps page (compare apps side by side, see totals), and the same knobs scoped to
@@ -59,7 +59,7 @@ Manager's concern.
 ## 3. Agents as a first-class app facet
 
 Apps increasingly have **agents** attached: a chat context provider (ChatDock), background
-workers, schedulers, the masini bridge acting on the app's data. The Manager should surface
+workers, schedulers, the chat bridge acting on the app's data. The Manager should surface
 these per app:
 
 - **List** the agents bound to each app: kind (chat / worker / scheduler / bridge), status

@@ -1,6 +1,6 @@
-# The unified Agent primitive (masini as an instance) — 2026-07-15
+# The unified Agent primitive (the bridge agent as an instance) — 2026-07-15
 
-Operator direction (2026-07-15): named, scoped agents like masini should NOT be a
+Operator direction (2026-07-15): named, scoped agents like the bridge agent should NOT be a
 special subsystem. They should **emerge** from the basic agentic pipeline +
 orchestration primitives with minimal extra config. A named agent is just a name
 for a set of rules and memories that get triggered to run, can take autonomous
@@ -33,25 +33,25 @@ scope. Running it = when the trigger fires, dispatch the scope: claim ready
 tasks, run them through the shared loop, bill the scope's budget, accrue the
 scope's learnings. That is the entire delta over a bare project scope.
 
-## Masini in this model
+## The bridge agent in this model
 
-Masini is a SEPARATE process today (`~/clawdbot/`, its own systemd service, the
+The bridge agent is a SEPARATE process today (`~/clawdbot/`, its own systemd service, the
 Discord bridge). It does not import the workshop backend (verified during Stage
 9 scoping), so the workshop rebuild does not touch it and Stage 9 leaves it
-running. Conceptually, though, masini IS an instance of the Agent primitive:
+running. Conceptually, though, the bridge agent IS an instance of the Agent primitive:
 
-- slug: `masini`
+- slug: `the bridge agent`
 - rules: its Discord-handler persona (`~/.claude/agents/discord-handler.md`)
 - memory: its own learnings scope + the operator profile it re-loads
 - trigger: inbound Discord message events (event) + a supervisor cron (schedule)
 - autonomy: acts on its own schedule, takes actions for the operator
 - tools: Discord, Plaid MCP, google-docs MCP, etc.
 
-Masini stays useful but is not central. The goal is that if we ever fold masini
+The bridge agent stays useful but is not central. The goal is that if we ever fold the bridge agent
 onto the workshop rails, it needs only its slug + persona + Discord trigger; the
 queue, dispatch, budget, self-healing, and learning are all the shared pipeline.
-Not a rebuild of masini right now — a statement of the target shape so the Agent
-concept in the workshop is built general enough that masini-like assistants fall
+Not a rebuild of the bridge agent right now — a statement of the target shape so the Agent
+concept in the workshop is built general enough that the bridge agent-like assistants fall
 out of it with minimal config, rather than each being a bespoke Letta agent.
 
 ## Coordination model: ants, not a heavy conductor
@@ -90,12 +90,12 @@ Operator questions (2026-07-15): are we based on clawd? what is similar/differen
 do we use a framework to orchestrate agents?
 
 **Not based on clawd.** "Clawd" here is the `clawdbot` bridge (a Discord <-> Claude
-Code bridge with cron supervision, `~/clawdbot/`) running under the `clawd-a`
-Linux user; masini runs on it. Workshop is a SEPARATE, standalone product: its
+Code bridge with cron supervision, `~/clawdbot/`) running under the `the service user`
+Linux user; the bridge agent runs on it. Workshop is a SEPARATE, standalone product: its
 own FastAPI backend + React frontend + task/agent pipeline. What they share is
-the HOST (`clawd-a` user), some infra conventions, and historically Letta (being
+the HOST (`the service user` user), some infra conventions, and historically Letta (being
 removed in Stage 9). Workshop is hosted ALONGSIDE clawd, not built ON it. Keeping
-Workshop on the `clawd-a` user is fine and is separable from the naming question.
+Workshop on the `the service user` user is fine and is separable from the naming question.
 
 **No agent-orchestration framework, on purpose.** No LangGraph / CrewAI / AutoGen
 / Temporal / Celery / message broker. The stack is hand-rolled:
@@ -116,8 +116,8 @@ this, Temporal-style durable execution is the natural upgrade, not needed now.
 
 Not now; revisit once the rebuilt system is tested, proven, and more mature:
 - Reevaluate the legacy "clawd" name and the `clawd` service branding. Hosting
-  under the `clawd-a` user can probably stay; the NAME is what to reconsider.
-- Fold a masini-form agent INTO this system, defined by our own Agent primitive
+  under the `the service user` user can probably stay; the NAME is what to reconsider.
+- Fold a the bridge agent-form agent INTO this system, defined by our own Agent primitive
   (slug + persona + trigger, riding the shared pipeline), rather than as the
   separate clawdbot/Letta process it is today.
 This is a discussion item that needs the operator; captured as a backlog task so

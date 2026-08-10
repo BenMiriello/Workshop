@@ -12,7 +12,7 @@ this must not blur).
 ## 0. Problem statement
 
 This instance runs `simonsays-local`: a permanent fork of
-`github.com/BenMiriello/Workshop` carrying ~13 local-only commits that must
+`github.com/<owner>/Workshop` carrying ~13 local-only commits that must
 never go upstream and must survive every update — PIN auth, tailnet origin
 config, the app removals, the `.runtime` data relocations. "Update" therefore
 means: **integrate a new upstream version into a branch that has its own
@@ -104,7 +104,7 @@ about the platform itself. The engines share the bundle format, not state.
 ## 2. Version detection and the versioning scheme
 
 **Update unit = a tagged upstream release, never "whatever `origin/main` points
-at."** `main` is clawd-a's working branch on another machine; pulling arbitrary
+at."** `main` is the service user's working branch on another machine; pulling arbitrary
 tips into an unattended updater is how forks get stuck on someone's
 mid-refactor commit. This requires a small upstream discipline (an ask, listed
 in §9): tag releases and commit a manifest.
@@ -152,7 +152,7 @@ Semver semantics live entirely in the upstream tag; the local suffix is
 informational, never ordered against other instances.
 
 **Channels.** Default channel `release` (tags only). An explicit `edge` channel
-(track `origin/main` tip) exists for the clawd-a-adjacent developer case but is
+(track `origin/main` tip) exists for the the service user-adjacent developer case but is
 never the default and Settings labels it as unsupported-for-rollback-guarantees
 beyond the snapshot.
 
@@ -507,7 +507,7 @@ if the shell ever stops being a thin WebView.
 
 ## 9. Open decisions for the operator
 
-1. **Upstream asks** (needs clawd-a's buy-in): tag releases, commit
+1. **Upstream asks** (needs the service user's buy-in): tag releases, commit
    `workshop.release.json`, adopt the migrations directory, honor
    one-release API back-tolerance. Without tags, this instance runs `edge`
    with weaker guarantees — acceptable interim?

@@ -118,7 +118,7 @@ Maximize freedom, keep it reversible and contained:
   are **allowed inside the worktree** but auto-anchored first (so reversible), and
   **blocked when they would escape** it (touch another project, the platform root, or
   a remote). The worktree boundary is the firewall.
-- The existing masini egress-guard (curl/wget to external) stays as defence-in-depth
+- The existing the bridge agent egress-guard (curl/wget to external) stays as defence-in-depth
   on the shell channel; the per-project approved-host list (§3) is the policy on top.
 
 ## 7. Anti-bloat (copies must not accumulate forever)

@@ -1,6 +1,6 @@
 # Workshop App Platform — isolation, integration, location/map
 
-Status: **proposal / for operator review** · Date: 2026-06-06 · Author: clawd-a (supervisor)
+Status: **proposal / for operator review** · Date: 2026-06-06 · Author: the service user (supervisor)
 
 This is the plan for the architecture surfaced in the 2026-06-06 commute/location
 session. It covers: per-app data isolation, admin-configured directional sharing,
@@ -14,7 +14,7 @@ except where noted — it's the research + plan to review before we commit.
 
 1. Apps must **not** auto-share data or access. Cross-app access is **opt-in**,
    **configured**, and **admin-only** — never granted by an app's own
-   masini/bot/agent.
+   bridge/bot/agent.
 2. Sharing has **direction**: A→B, B→A, or both, decided per pair, per capability.
 3. Every app should be buildable from **reusable primitives/templates** so it can
    run **standalone** (own host/port) *or* **integrated** in Workshop — even if many
@@ -91,7 +91,7 @@ A separate `grants.json` (operator-edited only, in Settings → Platform):
 - **Directional**: this grants Commute→Location read; not the reverse. Bidirectional =
   two rows (or `"mode":"rw"` where it makes sense).
 - **Admin-only**: `grants.json` is writable solely through an operator-authenticated
-  Settings page. **No app, masini, or bot can mint a grant** — the write route requires
+  Settings page. **No app, the bridge agent, or bot can mint a grant** — the write route requires
   the operator token and is never exposed to app-scoped callers. App-embedded chats get
   a read-only view of grants at most.
 
@@ -101,7 +101,7 @@ A separate `grants.json` (operator-edited only, in Settings → Platform):
    from). A request scoped to `birds` hitting `/finance/*` is denied unless a grant says
    otherwise. Capability-typed routes (e.g. Commute reading location) check the grant
    table, not just the prefix. Loopback stays trusted for *operator* contexts (cron,
-   masini) but app-origin requests are scoped.
+   the bridge agent) but app-origin requests are scoped.
 2. **Origin isolation for shareable apps.** A `shareable` app exposed to guests must run
    on its **own origin** (own port / TS Serve mount), never the shared `:8443`. Same-origin
    is the leak; separate origin + scoped token is the fix. So Birds-for-friends = its own

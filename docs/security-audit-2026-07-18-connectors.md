@@ -32,8 +32,8 @@ project points at another's remote. Worktree publish pushes to *that project's* 
 linked worktree of the project's `.git` (not Workshop's). `task_scope.root_for_context` maps each
 scope to its own dir, and `apply_task_patch` refuses to write a scope other than the chat's binding.
 
-**The push/PR mechanism is well-formed.** `services/github.py` hardcodes `OWNER="BenMiriello"`,
-creates repos `--private`, and calls `reject_veritus` at every entry point (create, bind, open_pr,
+**The push/PR mechanism is well-formed.** `services/github.py` hardcodes `OWNER="<owner>"`,
+creates repos `--private`, and calls `reject_blocked` at every entry point (create, bind, open_pr,
 merge_pr, rebase). `auto_pr.sh` is dry-run by default (behind `MASINI_AUTO_PR=1`), refuses to PR from
 a default branch, and uses the repo's own `origin`.
 
@@ -43,20 +43,20 @@ deletes, pushes to `main`/`master`, `git remote remove/set-url/add origin` (can'
 auto-checkpointed then allowed. It correctly prevents repointing a project at the wrong remote or
 rewriting a shared branch.
 
-**No veritus mixing.** The only `veritus` references outside `github.py`'s guard are a prompt
-instruction reinforcing the boundary and a personal-finance label ("Veritus payroll") — neither
+**No the excluded work org mixing.** The only `the excluded work org` references outside `github.py`'s guard are a prompt
+instruction reinforcing the boundary and a personal-finance label ("the excluded work org payroll") — neither
 mixes the work org into the git/connector code.
 
 ## Design item for the operator
 
 **Over-scoped shared GitHub credential (medium, tracked as SEC-G1).** The global git credential
-helper uses a single **classic PAT** for `BenMiriello` with scopes **`repo, read:org`**, used for
-every push. The platform code prevents any veritus access, but that boundary is string-matching in
+helper uses a single **classic PAT** for `<owner>` with scopes **`repo, read:org`**, used for
+every push. The platform code prevents any the excluded work org access, but that boundary is string-matching in
 code, not a property of the token: a `repo`+`read:org` classic PAT is technically capable of reading
-the `veritusagent` org and pushing to its private repos if the account is a member — which brushes
-the operator hard-rule "no PAT scopes for `read:org veritusagent`." A **fine-grained PAT scoped to
+the `<blocked-org>` org and pushing to its private repos if the account is a member — which brushes
+the operator hard-rule "no PAT scopes for `read:org <blocked-org>`." A **fine-grained PAT scoped to
 personal repos only, dropping `read:org`**, would move the boundary into the credential itself.
-Tradeoff: the same personal account is used for real work. Operator's call. (veritusagent membership
+Tradeoff: the same personal account is used for real work. Operator's call. (<blocked-org> membership
 was deliberately NOT probed, per the separation rule.)
 
 ## Note

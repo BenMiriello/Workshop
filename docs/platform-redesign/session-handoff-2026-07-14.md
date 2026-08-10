@@ -5,7 +5,7 @@ parts: (1) the operator's north-star vision, in his own framing; (2) what this
 session actually did and the current state; (3) the remaining build queue.
 
 Hard operating rules still apply (single-operator system, no defensive cruft, no
-em-dashes, no emoji, veritus separation). The operator is benmiriello.
+em-dashes, no emoji, the excluded work org separation). The operator is the operator.
 
 ---
 
@@ -192,7 +192,7 @@ Consider a Fable review pass like the ones used earlier this session.
   before, `rm` after. The cron fires every ~20 min against the live tree.
 - **Restart** via `bash scripts/restart_backend.sh --deferred`; it is a systemd --user
   service with env overlays.
-- **Backend Python:** `PYTHONPATH=/home/clawd-a/workshop/backend .venv/bin/python`;
+- **Backend Python:** `PYTHONPATH=$WORKSHOP/backend .venv/bin/python`;
   source `~/.config/clawdbot/auth.env` for a token when a scratch test spawns claude.
 - Design gate + typecheck before "done": `bash scripts/check_design.sh` and
   `cd frontend && npx tsc --noEmit`.

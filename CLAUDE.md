@@ -18,8 +18,11 @@ one regardless:**
 
 | origin | serves | updates by |
 |---|---|---|
-| `https://debian.tail38e62e.ts.net:8443` → `:5173` | Vite, from SOURCE | instantly, no build |
-| `https://workshop.benmiriello.com` → `:8002` | the built `frontend/dist` | **`bash scripts/build_workshop_public.sh`** |
+| `$WORKSHOP_LOCAL_ORIGIN` → `:5173` | Vite, from SOURCE | instantly, no build |
+| `$WORKSHOP_PUBLIC_ORIGIN` → `:8002` | the built `frontend/dist` | **`bash scripts/build_workshop_public.sh`** |
+
+(Both are set in `~/.config/workshop/instance.env`; `scripts/lib/instance.sh`
+loads them. They are this deployment's, so they are not written down here.)
 
 Default to running the build after any change under `frontend/`. It takes
 seconds, the edge serves `dist` from disk so nothing restarts, and skipping it
@@ -35,7 +38,7 @@ used to race the stamp and make it fire unconditionally.
 
 ## Platform design (current: 2026-07-18)
 
-The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-18.md`](docs/platform-redesign/entity-model-2026-07-18.md) (start there) with the phase docs riding on top of it: `autonomy-model-*`, `latitude-model-*`, `primitive-roles-*`, `chat-scope-design-*`, `chat-work-linkage-*`, `resource-access-interface-spec-*`, and the sequenced `final-plan-agent-generalize-and-masini-fold-2026-07-16.md` + `coherence-migration-plan-2026-07-18.md`. Agents are keyed by `role` (closed enum: maker/reviewer/triager/keeper/broker), NOT by `runtime`. Apps and Projects are distinct linkable concepts. Read these before touching the agents/projects/chat/apps systems.
+The authoritative model lives in [`docs/platform-redesign/entity-model-2026-07-18.md`](docs/platform-redesign/entity-model-2026-07-18.md) (start there) with the phase docs riding on top of it: `autonomy-model-*`, `latitude-model-*`, `primitive-roles-*`, `chat-scope-design-*`, `chat-work-linkage-*`, `resource-access-interface-spec-*`, and the sequenced `final-plan-agent-generalize-and-bridge-fold-2026-07-16.md` + `coherence-migration-plan-2026-07-18.md`. Agents are keyed by `role` (closed enum: maker/reviewer/triager/keeper/broker), NOT by `runtime`. Apps and Projects are distinct linkable concepts. Read these before touching the agents/projects/chat/apps systems.
 
 The earlier v1 design set at [`docs/workshop-v1/`](docs/workshop-v1/) and the 2026-07-11 redesign at [`docs/agent-chat-redesign/`](docs/agent-chat-redesign/) are HISTORICAL. Both carry supersession banners; do not update them and do not treat their assistant/builder axis as current.
 

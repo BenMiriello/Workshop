@@ -24,7 +24,7 @@ source.** Not designed; an accident of naming. `backend/routes/tasks_all.py:840`
 ```python
 elif scope == "workshop":
     start_kwargs["project_slug"] = "workshop"
-    cmd_tail = ["--dir", str(root)]          # root == /home/clawd-a/workshop
+    cmd_tail = ["--dir", str(root)]          # root == $WORKSHOP
 ```
 
 A ticket in the root scope launches a sweep that rewrites `frontend/`,
@@ -42,8 +42,8 @@ anywhere that prevents a run from modifying the Workshop's own source.
 | --- | --- | --- |
 | 1 | `scope == "workshop"` ticket run | `backend/routes/tasks_all.py:840-842` |
 | 2 | `general` chat — same task root as `workshop` | `backend/services/task_scope.py:52-58` |
-| 3 | **`project:workshop`** — a normal registry entry with `dir: /home/clawd-a/workshop`, `self: true`; resolves through the identical code path as any other project | `.runtime/projects.json`; `build_agents._project_dir` at `build_agents.py:71-79` |
-| 4 | **`build:workshop-builder{,-2,-3,-4}`** — four build agents with `cwd: /home/clawd-a/workshop`. Marked `retired`, but `get_agent()` (`build_agents.py:90`) does not filter on state | `.runtime/build_agents.json` |
+| 3 | **`project:workshop`** — a normal registry entry with `dir: $WORKSHOP`, `self: true`; resolves through the identical code path as any other project | `.runtime/projects.json`; `build_agents._project_dir` at `build_agents.py:71-79` |
+| 4 | **`build:workshop-builder{,-2,-3,-4}`** — four build agents with `cwd: $WORKSHOP`. Marked `retired`, but `get_agent()` (`build_agents.py:90`) does not filter on state | `.runtime/build_agents.json` |
 | 5 | `agent:<slug>` for a `maker` whose build-agent record has the self cwd | `dispatch_triggers.sh:434-464` |
 | 6 | `POST /api/projects/workshop/autonomy/run` | `backend/routes/projects.py:794-819` |
 | 7 | `dispatch_triggers.sh` project loop — treats the `self: true` project as an ordinary loop candidate, gated only by its own `autonomy.mode` | `scripts/dispatch_triggers.sh:298-380` |

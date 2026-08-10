@@ -1,8 +1,8 @@
-# Final plan: generalize the Agent primitive and fold masini in (2026-07-16)
+# Final plan: generalize the Agent primitive and fold the bridge agent in (2026-07-16)
 
 Author: fable (design-review architect)
 Status: plan of record. Merges tasks 5c9223c0 (generalize agent) and da801d52
-(fold masini in, revisit clawd rename). Executes the operator's 2026-07-16
+(fold the bridge agent in, revisit clawd rename). Executes the operator's 2026-07-16
 mandate: FULLY implement, nothing half-done, nothing hardcoded for appearances,
 every overlapping subsystem PORTED or REMOVED, and testing left OFF at the end.
 
@@ -39,26 +39,26 @@ docs (`operator-asks`, `_brief`, `resource-access-protocol`,
   `dispatch_triggers.sh:329` hardcodes `role == "memory"`. P0 fixes that with a
   role-dispatch table. `workshop-overseer` is retired; `email-triager` and
   `plaid-watcher` stay registered and dispatch under the new table.
-- Masini folds IN as an Agent instance (`slug=masini`, event trigger from
+- The bridge agent folds IN as an Agent instance (`slug=the bridge agent`, event trigger from
   Discord, autonomy=continuous, grants for Discord + Plaid + google-docs
   tools). The Discord bridge stays as a THIN event source at `~/clawdbot/` (a
   three-line poster to the workshop event bus); the persistent `claude -p`
   loop, the tmux session, and the discord-handler subagent all move into the
-  workshop's shared pipeline. This shrinks the masini surface from ~9k LoC of
+  workshop's shared pipeline. This shrinks the the bridge agent surface from ~9k LoC of
   runtime + prose to a slug plus a persona plus one trigger.
 - The custom Plaid MCP at `~/clawdbot/plaid-mcp/` MOVES into the workshop tree
   (`backend/mcp/plaid/`), registered as a Store, gated by the resource-grant
   path already in `permissions.py:616-728`.
 - The `clawd` naming decision is DEFERRED again, but tightened: the plan
   identifies the exact surfaces that would change under any rename
-  (`clawdbot/`, `masini-bot.service`, `~/.config/clawdbot/`) and locks the
+  (`clawdbot/`, `the-bridge.service`, `~/.config/clawdbot/`) and locks the
   service names to the current values so nothing else names them.
 - The block-and-review loop lands in P2 as a Review tab on the Work surface;
   rule minting comes out of `learnings.py` provenance (three independent blocks
   proposes a promotion). The prerequisite F3 fix (bare-slug learnings scope
   falling back to `global`) is included in P0.
 - Testing at the end is light and leaves autonomy OFF: the
-  `.runtime/AUTONOMY_DISABLED` flag is present, `masini-bot.service` is
+  `.runtime/AUTONOMY_DISABLED` flag is present, `the-bridge.service` is
   disabled, `crontab -l` still fires cron_agent but every dispatched sweep
   short-circuits on the flag.
 
@@ -103,13 +103,13 @@ from memory.
   with `_coerce_depth` and `_coerce_fanout` coercers. `role` is read raw at
   :160 with no coercer. This is D2 in the synthesis: `role: "memoy"` silently
   disables the memory-keeper.
-- `agents_registry.py:118-127`. Explicit exclusion set: masini per-channel
+- `agents_registry.py:118-127`. Explicit exclusion set: the bridge agent per-channel
   Discord agents (Letta-backed) are declared NOT registry members. This is a
-  Letta-era carve-out; when masini folds in, the exclusion becomes moot and
+  Letta-era carve-out; when bridge folds in, the exclusion becomes moot and
   can be simplified (see PM below).
-- On-disk agents (verified `ls /home/clawd-a/workshop/agents/`): 15 markdown
+- On-disk agents (verified `ls $WORKSHOP/agents/`): 15 markdown
   files. Real ones: `memory-keeper`, `workshop-overseer`, `email-triager`,
-  `plaid-watcher`, `masini`, `masini-commute`, `workshop-builder`,
+  `plaid-watcher`, `the bridge agent`, `the bridge agent-commute`, `workshop-builder`,
   `workshop-builder-2`, `blank-project-1`, `blank-project-2`, `probe-free`,
   `probe-git`, `smoke-fix`, `test1234`, `test2`. Directory is gitignored.
 
@@ -142,8 +142,8 @@ from memory.
   - `email-triager.md`: no role, event trigger. NEVER RUNS via
     dispatch_triggers (event path is separate at `event_dispatch.py`, verify).
   - `plaid-watcher.md`: no role, loop trigger. NEVER RUNS.
-  - `masini.md`, `masini-commute.md`: no role, loop trigger. Not driven by
-    this dispatcher today; masini is driven by its own systemd tmux loop.
+  - `the bridge agent.md`, `the bridge agent-commute.md`: no role, loop trigger. Not driven by
+    this dispatcher today; the bridge agent is driven by its own systemd tmux loop.
 
 ### 2.5 Learnings (F3)
 
@@ -160,11 +160,11 @@ from memory.
   scope's chat plus the scope's own store. When per-project learnings leak to
   `global`, they leak into every agent everywhere.
 
-### 2.6 Masini source tree
+### 2.6 The bridge agent source tree
 
-Verified `find /home/clawd-a/clawdbot -type f -not -path '*/.git/*'`:
+Verified `find $HOME/<bridge> -type f -not -path '*/.git/*'`:
 
-- `~/clawdbot/CLAUDE.md` (17k). The masini persona + dispatch protocol +
+- `~/clawdbot/CLAUDE.md` (17k). The the bridge agent persona + dispatch protocol +
   Discord playbook + Plaid onboarding + security posture. Mostly duplicative
   of the discord-handler subagent + operator profile.
 - `~/clawdbot/run.sh` (2.8k). The persistent `claude -p --channels` wrapper
@@ -180,7 +180,7 @@ Verified `find /home/clawd-a/clawdbot -type f -not -path '*/.git/*'`:
 - `~/clawdbot/archive/`. Pre-migration artifacts.
 - `~/clawdbot/commute-diagnostic.png`. A stray screenshot; delete.
 
-Systemd unit: `~/.config/systemd/user/masini-bot.service` (verified). Loads
+Systemd unit: `~/.config/systemd/user/the-bridge.service` (verified). Loads
 `~/.config/clawdbot/auth.env` (long-lived `CLAUDE_CODE_OAUTH_TOKEN`), forks a
 tmux session named `clawd-claude` that runs `run.sh`.
 
@@ -363,7 +363,7 @@ P4 merge unit: one commit (templates + fork + UI).
 
 ---
 
-## PM. Masini fold-in (dedicated phase, largest scope item)
+## PM. The bridge agent fold-in (dedicated phase, largest scope item)
 
 Order: PM runs AFTER P0 and CAN run in parallel with P1-P4, but the operator
 never loses Discord access mid-migration. The migration is done in three
@@ -373,58 +373,58 @@ strict sub-steps.
 
 | path | classification | rationale |
 | --- | --- | --- |
-| `~/clawdbot/CLAUDE.md` | REMOVE after PM.3 | Most content duplicates the discord-handler subagent + operator profile. The unique bits (Plaid onboarding, Google Docs quirk notes, completion contract) migrate to the workshop `agents/masini.md` body during PM.2. |
-| `~/clawdbot/run.sh` | REMOVE after PM.3 | Once masini rides the workshop's `claude -p` dispatch, the persistent tmux loop is superfluous. |
+| `~/clawdbot/CLAUDE.md` | REMOVE after PM.3 | Most content duplicates the discord-handler subagent + operator profile. The unique bits (Plaid onboarding, Google Docs quirk notes, completion contract) migrate to the workshop `agents/the bridge agent.md` body during PM.2. |
+| `~/clawdbot/run.sh` | REMOVE after PM.3 | Once the bridge agent rides the workshop's `claude -p` dispatch, the persistent tmux loop is superfluous. |
 | `~/clawdbot/plaid-mcp/{server.js, onboard.js, balances.js, transactions.js, package.json}` | PORT to `backend/mcp/plaid/` | The MCP is genuinely useful. Moves into workshop as a first-class MCP server registered in `llm_router._MCP_SERVER_SPECS`. `plaid-tokens.json` stays in `~/.config/clawdbot/` (host-level secret; KEEP path). |
 | `~/clawdbot/plaid-mcp/node_modules/` | REMOVE from source (regen on install) | Vendored deps; `npm install` at the new location. |
 | `~/clawdbot/security/audit.sh` + `install-cron.txt` | PORT to `scripts/security_audit.sh` | Nightly security check; keep it running, from the workshop repo. |
-| `~/clawdbot/docs/` (bringup, security-invariants, audit history) | PORT to `docs/masini/` | Historical value; keep in-tree. |
+| `~/clawdbot/docs/` (bringup, security-invariants, audit history) | PORT to `docs/the bridge agent/` | Historical value; keep in-tree. |
 | `~/clawdbot/archive/` | KEEP in place | Pre-migration junk. Do not delete; do not import. |
 | `~/clawdbot/commute-diagnostic.png` | REMOVE | Stray file. |
 | `~/clawdbot/.git`, `.gitignore` | REMOVE with the tree | Once emptied. |
-| `~/.claude/agents/discord-handler.md` | PORT into `agents/masini.md` body | This IS masini's persona. It moves in verbatim, minus the outdated Letta-era bits. |
+| `~/.claude/agents/discord-handler.md` | PORT into `agents/the bridge agent.md` body | This IS the bridge agent's persona. It moves in verbatim, minus the outdated Letta-era bits. |
 | `~/.claude/agents/work-reviewer.md` | KEEP as `agents/work-reviewer.md` in workshop scope | Verified `ls ~/.claude/agents`. Genuine reviewer subagent; belongs in the workshop registry now. |
-| `~/.config/systemd/user/masini-bot.service` | REPLACE with `masini-event-bridge.service` (PM.3) | New service is thin: a tiny Node/Python process that reads Discord events and POSTs to workshop's event bus. No persistent `claude -p` loop, no tmux. |
+| `~/.config/systemd/user/the-bridge.service` | REPLACE with `the bridge agent-event-bridge.service` (PM.3) | New service is thin: a tiny Node/Python process that reads Discord events and POSTs to workshop's event bus. No persistent `claude -p` loop, no tmux. |
 | `~/.config/clawdbot/auth.env` | KEEP | Long-lived OAuth token. Still loaded via `EnvironmentFile=` by the new service AND by the workshop backend. |
 | `~/.config/clawdbot/plaid-auth.env` | KEEP path | Plaid client_id/secret. |
 | `~/.config/clawdbot/plaid-tokens.json` | KEEP path | Per-bank access tokens, mode 0600. Read by the ported MCP. |
 | `~/.config/clawdbot/google-auth.env`, `~/.config/google-docs-mcp/token.json` | KEEP | OAuth for the google-docs MCP. Already reachable from workshop. |
 | `~/.claude/channels/discord/{.env, access.json}` | KEEP | Discord channel state. Still owned by whatever process posts. |
 | `~/.claude/plugins/cache/claude-plugins-official/discord/0.0.4/server.ts` | KEEP (local patch documented in operator memory) | The plugin still runs, just under the new event-bridge service. |
-| `~/workshop/agents/masini.md` | REWRITE (PM.2) | Currently a 20-line stub with a Letta agent id. Becomes the real masini definition. |
-| `~/workshop/agents/masini-commute.md` | KEEP as a distinct Agent | Verified 166-line commute-specific persona. Refactor to reuse masini's base rules via `include:` (a new registry feature in PM.2) so we don't duplicate the persona. Trigger stays `cron`. |
+| `~/workshop/agents/the bridge agent.md` | REWRITE (PM.2) | Currently a 20-line stub with a Letta agent id. Becomes the real the bridge agent definition. |
+| `~/workshop/agents/the bridge agent-commute.md` | KEEP as a distinct Agent | Verified 166-line commute-specific persona. Refactor to reuse the bridge agent's base rules via `include:` (a new registry feature in PM.2) so we don't duplicate the persona. Trigger stays `cron`. |
 
 ### PM.2 Migration order (do NOT break Discord mid-migration)
 
 1. **Ship P0 and PM prerequisites first.** The role dispatch table (P0) is
-   required for masini to run under the new pipeline at all.
+   required for the bridge agent to run under the new pipeline at all.
 2. **Add the Discord event trigger** to `backend/services/triggers.py`. New
    trigger kind: `discord`, subscribes to inbound-message events on named
    channels. Delivery: the event lands in `.runtime/events.jsonl` and the
    subscriptions writer (`agents_registry.regenerate_subscriptions`) wires it
    to any agent that declares a matching trigger.
-3. **Register a `masini` Agent** with the ported persona,
+3. **Register a `the bridge agent` Agent** with the ported persona,
    `role: triager`, `trigger: discord`, `autonomy: continuous`, and a granted
    toolset (Discord + Plaid + google-docs MCP names). Test with autonomy OFF
    (the flag is present, dispatcher exits early).
-4. **Build the event bridge** (`scripts/masini_event_bridge.py`, ~50 lines):
+4. **Build the event bridge** (`scripts/chat_event_bridge.py`, ~50 lines):
    subscribes to Discord via the existing `discord-mcp` npm plugin or (if
    simpler) reuses the existing `--channels plugin:discord` transport, but the
    process's ONLY job is to post inbound envelopes to the workshop event bus
    (`POST http://127.0.0.1:8000/events` with a `discord` source). No `claude
    -p` loop, no LLM in this process. A crash of the bridge only pauses inbound
    Discord; the bridge auto-restarts under systemd.
-5. **Install `~/.config/systemd/user/masini-event-bridge.service`.** Verify
+5. **Install `~/.config/systemd/user/the bridge agent-event-bridge.service`.** Verify
    for one operator round trip (a manual Discord message with autonomy off
    yields an event on the bus, visible in the Events page but NOT dispatched).
 6. **Flip the switch.** Enable the new bridge; disable
-   `masini-bot.service`. Enable autonomy (or leave off for testing at the end
-   of the plan, per operator ask). The masini Agent is now driven by the
+   `the-bridge.service`. Enable autonomy (or leave off for testing at the end
+   of the plan, per operator ask). The the bridge agent Agent is now driven by the
    dispatcher.
 7. **Wait ONE FULL OPERATOR DAY** with both services present but only the new
    one enabled, before removing the old tree. This is the safety window.
 8. **Remove `~/clawdbot/`** except for `~/clawdbot/archive/`.
-   `masini-bot.service` is deleted (`systemctl --user disable --now`).
+   `the-bridge.service` is deleted (`systemctl --user disable --now`).
 
 ### PM.3 Discord bridge design decision
 
@@ -440,14 +440,14 @@ Two options for the new world:
   poster: it hosts the plugin's Node MCP server itself (already Node/hono) but
   captures each inbound message as an HTTP POST to workshop's event bus
   instead of feeding it into a resident LLM. The reply path also flows through
-  workshop: masini's dispatched turn writes its reply, and the same bridge
+  workshop: the bridge agent's dispatched turn writes its reply, and the same bridge
   process reads a `discord.reply` outbound event from the bus and issues the
   Discord API call. This decouples the LLM life-cycle from the network
   life-cycle; a dispatcher restart never drops a Discord connection.
 - **Option B.** Keep the persistent `claude -p --channels` loop, add a
   trigger kind that consumes its stdout. This preserves the existing
   auto-accept-trust ergonomics but keeps the tmux tie-in and does not
-  actually fold masini in; it just adds a workshop-side wrapper around it.
+  actually fold the bridge agent in; it just adds a workshop-side wrapper around it.
 
 **Recommendation: Option A.** It is the actual fold-in; Option B is a
 half-measure that keeps two loops running.
@@ -467,17 +467,17 @@ requiring mediated tier and mode=verbatim (Plaid data is not paraphrasable).
 Verified `crontab -l`: today runs `cron_agent.sh` every 20 minutes. The doc
 `~/workshop/CLAUDE.md` and `cron_agent.sh` header say Phase 0 is retired and
 Phase 0.5 (dispatch_triggers.sh) plus Phase 1 (event drain) are what tick.
-This IS the "masini supervisor cron" referenced in memory
-(`project_masini_supervision.md`). After PM: no change to `cron_agent.sh`
-mechanics; the new masini Agent gets dispatched by the same tick that
+This IS the "the bridge agent supervisor cron" referenced in memory
+(`project_bridge_supervision.md`). After PM: no change to `cron_agent.sh`
+mechanics; the new the bridge agent Agent gets dispatched by the same tick that
 dispatches every other Agent.
 
-### PM.6 `masini-commute` variant
+### PM.6 `the bridge agent-commute` variant
 
 Verified 166 lines of commute-specific persona and cron trigger. Refactor
-target: masini-commute becomes an Agent whose body `include: masini` pulls
-masini's base persona plus a delta. If the include feature is more work than
-inlining, INLINE the current 166 lines under a new `agents/masini-commute.md`
+target: the bridge agent-commute becomes an Agent whose body `include: the bridge agent` pulls
+the bridge agent's base persona plus a delta. If the include feature is more work than
+inlining, INLINE the current 166 lines under a new `agents/the bridge agent-commute.md`
 that duplicates the shared prelude. Better duplication than a broken include.
 
 ---
@@ -488,11 +488,11 @@ Recommendation: **defer the rename**, but lock down what a future rename
 would touch.
 
 Rationale:
-- The `clawd-a` Linux user is fine to keep. Renaming a Linux user is
+- The `the service user` Linux user is fine to keep. Renaming a Linux user is
   disruptive and does not add capability.
 - `clawdbot/` empties out under PM. Once empty (post PM.3 safety window),
   delete it. The name goes away by virtue of removal, not renaming.
-- `masini-bot.service` gets replaced by `masini-event-bridge.service` during
+- `the-bridge.service` gets replaced by `the bridge agent-event-bridge.service` during
   PM.3. That is a name change already; the "clawd" naming does not survive
   PM.
 - `~/.config/clawdbot/` is a config directory holding auth secrets. Renaming
@@ -501,7 +501,7 @@ Rationale:
 
 Surfaces that would need to change under a full rename (documented so a
 future decision is not blind):
-- `~/.config/clawdbot/` -> `~/.config/masini/` (or `~/.config/workshop/`)
+- `~/.config/clawdbot/` -> `~/.config/the bridge agent/` (or `~/.config/workshop/`)
 - `~/.config/systemd/user/*bot*` -> new names
 - `/tmp/workshop-cron-agent.lock` (already workshop-named, fine)
 - Documentation references in `~/.claude/CLAUDE.md`, workshop memory docs,
@@ -521,16 +521,16 @@ over or remove it so the whole thing works and makes sense."
 | subsystem | disposition | detail |
 | --- | --- | --- |
 | `agents/workshop-overseer.md` | REMOVE | Verified never runs (D1). Function is a workshop-scope triager, not a distinct role. Delete file in P0. |
-| `agents/masini.md` (workshop stub, 20 lines) | REWRITE in PM.2 | Currently a Letta-era stub with an inline `letta_agent_id`. Becomes the real masini definition (persona + triggers + grants). |
-| `agents/masini-commute.md` | REWRITE in PM.6 | Currently duplicates masini's persona and adds commute logic. Refactor to reuse via include or explicit inline. |
+| `agents/the bridge agent.md` (workshop stub, 20 lines) | REWRITE in PM.2 | Currently a Letta-era stub with an inline `letta_agent_id`. Becomes the real the bridge agent definition (persona + triggers + grants). |
+| `agents/the bridge agent-commute.md` | REWRITE in PM.6 | Currently duplicates the bridge agent's persona and adds commute logic. Refactor to reuse via include or explicit inline. |
 | `agents/plaid-watcher.md` + `email-triager.md` | KEEP, correct dispatch | After P0's role table, both dispatch cleanly. Both are event-triggered; verify their event source is wired in `regenerate_subscriptions` (`agents_registry.py:506-548`). Bodies are short (18-20 lines); leave as-is. |
 | `agents/blank-project-*`, `probe-*`, `smoke-fix`, `test1234`, `test2` | REMOVE | Verified: all are test/probe stubs left in the gitignored agents/ dir. `test1234` gives it away. Retire in P0. |
 | `agents/workshop-builder{,-2}.md` | KEEP | These are the two active builder agents. Not touched. |
 | `~/clawdbot/` | REMOVE post-PM safety window | See PM inventory. |
-| `masini-bot.service` | REMOVE post-PM safety window | Replaced by `masini-event-bridge.service`. |
-| `~/.claude/agents/discord-handler.md` | REMOVE post-PM.2 | Its content moves into `agents/masini.md`. The `~/.claude/agents/` file was a Letta-era subagent that the persistent claude session dispatched to; under the new model, masini IS an agent and the dispatch is the workshop dispatcher. |
+| `the-bridge.service` | REMOVE post-PM safety window | Replaced by `the bridge agent-event-bridge.service`. |
+| `~/.claude/agents/discord-handler.md` | REMOVE post-PM.2 | Its content moves into `agents/the bridge agent.md`. The `~/.claude/agents/` file was a Letta-era subagent that the persistent claude session dispatched to; under the new model, the bridge agent IS an agent and the dispatch is the workshop dispatcher. |
 | `~/.claude/agents/work-reviewer.md` | PORT to `agents/work-reviewer.md` | Genuine reviewer subagent; brings the reviewer path into the registry. |
-| Letta references in code | AUDIT + REMOVE | Verified `agents_registry.py` still speaks Letta (see `per_channel_ids`, `letta_agent_id` field, `memory: letta`). Stage 9 already removed Letta as a runtime dependency (per operator memory + `unified-agent-model-2026-07-15.md`), but the SCHEMA still carries Letta ids. Sweep: remove `letta_agent_id` from `_record_from_def` (:150-172), remove `per_channel_ids` and the exclusion path (:118-127, :294), stop honoring `memory: letta` as a valid value. This is a P4 tail cleanup (post-masini fold) because until masini is folded we cannot be sure no runtime path still names them. |
+| Letta references in code | AUDIT + REMOVE | Verified `agents_registry.py` still speaks Letta (see `per_channel_ids`, `letta_agent_id` field, `memory: letta`). Stage 9 already removed Letta as a runtime dependency (per operator memory + `unified-agent-model-2026-07-15.md`), but the SCHEMA still carries Letta ids. Sweep: remove `letta_agent_id` from `_record_from_def` (:150-172), remove `per_channel_ids` and the exclusion path (:118-127, :294), stop honoring `memory: letta` as a valid value. This is a P4 tail cleanup (post-bridge fold) because until the bridge agent is folded we cannot be sure no runtime path still names them. |
 | `_TURNS_DIR` liveness scan in `agents_registry.py:216-262` | KEEP | Real liveness detection for builders. Not Letta-specific. |
 | Old-style `authorize()` operator-only gates | KEEP | `permissions.py:354` operator branch stays default-permissive by the hard rule. The `agent` branch is additive. |
 | `.tasks.json` per-tree lock, TODO.md export, reconcile | KEEP | Section 2 of `tasks.py` confirms these are the canonical durable path. No changes. |
@@ -567,13 +567,13 @@ end." Design:
    canned reviewer stub. Verify the task hits the Review tab. POST
    `/api/tasks/{id}/review` with `approve`; verify the task returns to `todo`
    and the block is cleared. NO ACTUAL RALPH SWEEP.
-5. **Smoke: masini responds to a Discord message via the new path.** With
-   the event bridge live and autonomy ON for masini only (`autonomy: on-demand`
+5. **Smoke: the bridge agent responds to a Discord message via the new path.** With
+   the event bridge live and autonomy ON for the bridge agent only (`autonomy: on-demand`
    preset so it does not sweep, only fires on the trigger): send one Discord
    message to the bot. Verify the event lands in the bus, dispatch fires,
-   reply lands in Discord. Then flip masini back to `autonomy: off`.
-6. **End state:** `.runtime/AUTONOMY_DISABLED` present, `masini` preset =
-   `off`, `masini-event-bridge.service` disabled, `masini-bot.service`
+   reply lands in Discord. Then flip the bridge agent back to `autonomy: off`.
+6. **End state:** `.runtime/AUTONOMY_DISABLED` present, `the bridge agent` preset =
+   `off`, `the bridge agent-event-bridge.service` disabled, `the-bridge.service`
    disabled (or removed). `crontab -l` unchanged (cron_agent still fires and
    short-circuits on the flag).
 
@@ -598,9 +598,9 @@ depends on a later unit.
 | 7 | P2.b review-tab-ui | `Work.tsx` Review tab |
 | 8 | P2.c promote-when-stable | `learnings.py` helper + surfacing |
 | 9 | PM.1 ported-plaid-mcp | `backend/mcp/plaid/` + `llm_router` registration |
-| 10 | PM.2 masini-agent-def | rewrite `agents/masini.md`, new discord trigger kind, event bridge script |
-| 11 | PM.3 event-bridge-service | new systemd unit; masini-bot.service DISABLED |
-| 12 | PM.4 masini-commute-refactor | reuse or inline |
+| 10 | PM.2 the bridge agent-agent-def | rewrite `agents/the bridge agent.md`, new discord trigger kind, event bridge script |
+| 11 | PM.3 event-bridge-service | new systemd unit; the-bridge.service DISABLED |
+| 12 | PM.4 the bridge agent-commute-refactor | reuse or inline |
 | 13 | PM.5 remove-clawdbot | after 24h safety window |
 | 14 | P3.a broker + policy | `broker.py`, `policy.py`, tests |
 | 15 | P3.b stores + notes wiring | `stores.py`, `routes/stores.py`, `Notes.tsx` |
@@ -624,7 +624,7 @@ For each merge unit above, the executing agent must:
 - run `scripts/reviewer.sh` at the end of each unit
 
 Only after a unit passes those gates does it move to the next. When
-integration test 5 (masini Discord round-trip) runs, do it manually and
+integration test 5 (the bridge agent Discord round-trip) runs, do it manually and
 DELETE any test messages from Discord after verification (operator prefers
 clean channel history).
 
@@ -704,14 +704,14 @@ merge unit.
   (promotion candidates section).
 - PM.1: `backend/mcp/plaid/` (moved), `backend/services/llm_router.py`
   (`_MCP_SERVER_SPECS` entry).
-- PM.2: `agents/masini.md` (rewrite), `backend/services/triggers.py`
+- PM.2: `agents/the bridge agent.md` (rewrite), `backend/services/triggers.py`
   (discord trigger kind), `backend/services/agents_registry.py`
-  (regenerate_subscriptions honors it), `scripts/masini_event_bridge.py`
+  (regenerate_subscriptions honors it), `scripts/chat_event_bridge.py`
   (new).
-- PM.3: `~/.config/systemd/user/masini-event-bridge.service` (new).
-- PM.4: `agents/masini-commute.md`.
+- PM.3: `~/.config/systemd/user/the bridge agent-event-bridge.service` (new).
+- PM.4: `agents/the bridge agent-commute.md`.
 - PM.5: delete `~/clawdbot/` (except archive/), delete
-  `~/.config/systemd/user/masini-bot.service`.
+  `~/.config/systemd/user/the-bridge.service`.
 - P3: `backend/services/broker.py` (new), `backend/services/policy.py`
   (new), `backend/services/stores.py`, `backend/routes/stores.py` (new),
   `backend/store-policies.json` (new), `frontend/src/pages/Notes.tsx`.

@@ -1,6 +1,6 @@
 # 06 — Review and Gaps
 
-Status: **review pass + prioritized plan** · Date: 2026-06-14 (eve) · Author: clawd-a (supervisor)
+Status: **review pass + prioritized plan** · Date: 2026-06-14 (eve) · Author: the service user (supervisor)
 
 This is the self-review the operator asked for: everything built for v1, checked
 against the design docs (00-05) and the operator's original complaints, across UI,

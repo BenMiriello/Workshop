@@ -81,7 +81,7 @@ restarted):
 # analyzer — exposes /embed (the watchdog's analyzer-restart pkill is broken, so
 # start it by hand; ~14s model load)
 pkill -9 -f "[s]ervice.py"
-cd ~/workshop/birdnet/analyzer && setsid nohup .venv/bin/python service.py >/tmp/birdnet-analyzer.log 2>&1 & disown
+cd $WORKSHOP/apps/birds/analyzer && setsid nohup .venv/bin/python service.py >/tmp/birdnet-analyzer.log 2>&1 & disown
 
 # backend — exposes /birds/atlas* + activates embedding capture. Killing it lets
 # the running watchdog restart it with the preserved service env.
@@ -92,7 +92,7 @@ Then build the first Atlas (also reachable as the **Rebuild** button on the page
 or wire a nightly cron):
 
 ```
-cd ~/workshop/birdnet/analyzer && .venv/bin/python atlas_build.py
+cd $WORKSHOP/apps/birds/analyzer && .venv/bin/python atlas_build.py
 ```
 
 `atlas_build.py` needs `umap-learn` (installed in the analyzer venv); HDBSCAN
