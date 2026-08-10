@@ -1,4 +1,4 @@
-import { Hand, Map, PencilLine, ShieldOff, Zap } from "lucide-react";
+import { FastForward, Hand, Map, ShieldOff, Zap } from "lucide-react";
 
 // How much a chat asks before it acts, as the UI says it.
 //
@@ -42,9 +42,13 @@ const DEFS: Record<string, PermissionModeDef> = {
   },
   acceptEdits: {
     id: "acceptEdits",
+    // FastForward, not a pencil: a pencil says "this mode edits", which is true
+    // of every mode here. Fast-forward says the one thing that is actually
+    // different about it — it skips PAST the ask, for edits only — and reads
+    // apart from Auto's Zap at a glance instead of both looking like "writes".
     label: "Edit automatically",
     hint: "Edits files without asking. Still asks for anything riskier.",
-    Icon: PencilLine,
+    Icon: FastForward,
   },
   auto: {
     id: "auto",
