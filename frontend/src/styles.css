@@ -1039,7 +1039,14 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-effort {
   flex: 0 0 auto;
   display: inline-flex; align-items: flex-end; gap: 2px;
-  height: 2.1rem; padding: 0 0.5rem;
+  height: 2.1rem;
+  /* The bars align to each other at the BASELINE (flex-end), so the group has to
+     be centred in the row by padding, not by align-items: centre — which would
+     centre each bar individually and destroy the rising ladder. Bottom padding
+     is (row 2.1rem - tallest bar 1.1rem) / 2, which sits the ladder's optical
+     centre on the same line as the model picker's text. Without it the bars hung
+     off the bottom of the row and read as misaligned. */
+  padding: 0 0.5rem 0.5rem;
   background: transparent; border: none; border-radius: var(--radius-md);
   cursor: pointer;
 }

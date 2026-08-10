@@ -63,9 +63,13 @@ const DEFS: Record<string, PermissionModeDef> = {
 
 // An unknown id renders under its own name rather than vanishing, so a mode the
 // backend adds is usable before this table knows it.
+//
+// Bypass keeps its entry above even though the picker no longer OFFERS it: a
+// chat that chose it before it was withdrawn still has to render its own setting
+// under the right name rather than as a blank or as somebody else's mode.
 export function permissionModeDef(id: string | undefined): PermissionModeDef {
   if (id && DEFS[id]) return DEFS[id];
-  return { id: id || "bypassPermissions", label: id || "Bypass", hint: "", Icon: ShieldOff };
+  return { id: id || "auto", label: id || "Auto", hint: "", Icon: Zap };
 }
 
 /** Plan is a ONE-TURN posture: approving the plan leaves it, which is what the

@@ -51,7 +51,7 @@ class TestCapsPayload:
         # rather than being repeated inside each one.
         assert "modes" not in model_caps.caps_for("claude-opus-5")
         payload = model_caps.modes_payload()
-        assert payload["default"] == "bypassPermissions"
+        assert payload["default"] == "auto"
         assert payload["options"][0] == "default"
 
 
@@ -96,3 +96,30 @@ class TestResolveEffort:
         with pytest.raises(HTTPException) as e:
             _resolve_effort("ultra", {}, "claude-opus-5")
         assert e.value.status_code == 400
+
+
+class TestBypassIsNotOffered:
+    """`bypassPermissions` IS `--dangerously-skip-permissions`. The operator's
+    instruction on 2026-08-09 was that this system should not offer it."""
+
+    def test_the_picker_does_not_offer_it(self):
+        assert "bypassPermissions" not in model_caps.modes_payload()["options"]
+
+    def test_it_is_not_the_default_any_more(self):
+        assert model_caps.DEFAULT_PERMISSION_MODE == "auto"
+
+    def test_it_is_still_a_valid_value(self):
+        # The unattended paths (job runners, sweeps, the voice worker) pass it
+        # explicitly. They have no operator to ask, so a mode that can stop and
+        # ask would auto-deny everything and report success.
+        assert model_caps.normalize_permission_mode("bypassPermissions") == "bypassPermissions"
+
+    def test_a_thread_that_stored_it_still_loads(self):
+        # Rejecting it would 400 every turn on a chat that had chosen it before
+        # it was withdrawn.
+        assert "bypassPermissions" in model_caps.PERMISSION_MODES
+
+    def test_the_new_default_gets_an_approval_channel(self):
+        # auto can stop and ask; without the channel it silently auto-denies.
+        assert model_caps.needs_approval_channel(None) is True
+        assert model_caps.needs_approval_channel("auto") is True

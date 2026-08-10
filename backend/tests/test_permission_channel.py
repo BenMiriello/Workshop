@@ -30,9 +30,13 @@ def flag_value(cmd: list[str], flag: str) -> str | None:
 
 
 class TestPermissionModeArgv:
-    def test_the_default_is_what_chats_have_always_run(self):
+    def test_the_default_asks_and_therefore_gets_a_channel(self):
+        # The default was bypassPermissions until 2026-08-09. It is now `auto`,
+        # which CAN stop and ask — so the default spawn must carry the channel,
+        # or every chat silently auto-denies.
         cmd, _ = build_streaming._build_cmd(meta())
-        assert flag_value(cmd, "--permission-mode") == "bypassPermissions"
+        assert flag_value(cmd, "--permission-mode") == "auto"
+        assert flag_value(cmd, "--permission-prompt-tool") == "stdio"
 
     def test_bypass_gets_no_approval_channel(self):
         # Nothing can ask in bypass, so a channel would be dead weight.

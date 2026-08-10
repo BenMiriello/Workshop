@@ -52,6 +52,9 @@ VENDOR = "anthropic-claude-code"
 #
 # `dontAsk` is deliberately absent: it auto-denies anything not pre-approved,
 # which is a CI posture, not a chat posture.
+#
+# Every mode that EXISTS, used for validating a stored or incoming value.
+# `bypassPermissions` is here and NOT in OFFERED_MODES on purpose — see below.
 PERMISSION_MODES: tuple[str, ...] = (
     "default",            # Manual: reads freely, asks before anything else
     "plan",               # research and propose, no edits
@@ -60,9 +63,29 @@ PERMISSION_MODES: tuple[str, ...] = (
     "bypassPermissions",  # everything, no checks
 )
 
-# What a chat runs at when nobody has chosen. This is what every chat has always
-# done, so the picker starts by describing the status quo rather than changing it.
-DEFAULT_PERMISSION_MODE = "bypassPermissions"
+# What the CHAT PICKER offers. Bypass is excluded: it is exactly
+# `--dangerously-skip-permissions`, and the operator's instruction on
+# 2026-08-09 was that this system should not offer it.
+#
+# It stays valid above rather than being deleted, because the UNATTENDED paths
+# still pass it explicitly (job runners, sweeps, the voice worker). Those have no
+# operator to ask, so for them a mode that can stop and ask is not "safer" — it
+# is a turn that silently auto-denies everything and reports success. Deleting
+# the value outright would break them; removing it from the picker is what the
+# instruction actually asks for.
+OFFERED_MODES: tuple[str, ...] = tuple(m for m in PERMISSION_MODES if m != "bypassPermissions")
+
+# What a chat runs at when nobody has chosen.
+#
+# This USED to be bypassPermissions, which is what every chat had always run at.
+# It is now `auto`: everything, with background safety checks — the vendor's own
+# replacement for "no checks", and the mode designed to keep prompt fatigue down
+# on long tasks. Measured on 2026-08-09 with the approval channel live: `auto`
+# approved a read-only `ls` by classifier and asked once about a file write;
+# `acceptEdits` asked for nothing at all but gates riskier commands by rule.
+# Neither is silent, and that is the point — the approval channel exists so that
+# asking is possible.
+DEFAULT_PERMISSION_MODE = "auto"
 
 # Modes that need an approval channel wired up (--permission-prompt-tool stdio).
 # Everything except bypass can stop and ask; without the channel the CLI accepts
@@ -72,7 +95,9 @@ NEEDS_APPROVAL_CHANNEL = tuple(m for m in PERMISSION_MODES if m != "bypassPermis
 
 
 def modes_payload() -> dict:
-    return {"options": list(PERMISSION_MODES), "default": DEFAULT_PERMISSION_MODE}
+    """What the picker renders. Offers only what a chat may choose, so the UI
+    cannot show the operator a mode this system has decided not to offer."""
+    return {"options": list(OFFERED_MODES), "default": DEFAULT_PERMISSION_MODE}
 
 
 def normalize_permission_mode(value: str | None) -> str | None:
