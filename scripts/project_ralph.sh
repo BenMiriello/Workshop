@@ -694,11 +694,18 @@ release_or_block() {  # $1=task_id $2=attempts $3=cap $4=reason-verb
   fi
 }
 
+# Why the sweep stopped early, when it stopped for a reason that is NOT "there
+# was nothing to do". A sweep refused admission never ran, and closing that as
+# `done` with 0 tasks told the operator the opposite of what happened. Set here,
+# read at job_finish below.
+HALT_REASON=""
+
 n=0
 while (( n < MAX_TASKS )); do
   REMAIN=$(tick_remaining)
   if (( REMAIN < RALPH_MAX_WALL + 30 )); then
     log "budget remaining ${REMAIN}s < per-task ${RALPH_MAX_WALL}s — stopping"
+    HALT_REASON="out of wall-clock budget: ${REMAIN}s left, a task needs ${RALPH_MAX_WALL}s"
     break
   fi
 
@@ -738,9 +745,14 @@ while (( n < MAX_TASKS )); do
   # without excluding it the reserve counts the task about to start TWICE (once
   # as "the next task", once as an in-flight sweep) and deadlocks the queue in a
   # 150k-wide band below the ceiling.
-  if ! (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger \
-          admit --project "$BILL_SCOPE" --exclude-job "$JOB_ID" >/dev/null 2>&1); then
-    log "usage budget exhausted for scope=$BILL_SCOPE — stopping sweep (task=$TASK_ID left ready)"
+  # Capture the refusal text rather than discarding it: it is the only thing
+  # that can tell the operator why their run did nothing.
+  if ! ADMIT_OUT=$(cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.usage_ledger \
+          admit --project "$BILL_SCOPE" --exclude-job "$JOB_ID" 2>/dev/null); then
+    ADMIT_WHY=$(printf '%s' "$ADMIT_OUT" | jq -r '.reason // empty' 2>/dev/null)
+    [[ -z "$ADMIT_WHY" ]] && ADMIT_WHY="usage budget exhausted for scope=$BILL_SCOPE"
+    HALT_REASON="$ADMIT_WHY"
+    log "usage budget refused scope=$BILL_SCOPE: $ADMIT_WHY (task=$TASK_ID left ready)"
     break
   fi
   n=$((n+1))
@@ -1113,6 +1125,20 @@ else
   if [[ "$READY" == "False" && "${OPEN:-0}" -gt 0 && "${OPEN:-0}" == "${WAITING:-0}" ]]; then
     log "sweep waiting but scope is unbound (no slug/assignee); finishing done, not awaiting_input"
   fi
-  job_finish "$JOB_ID" done "$DONE" "$FAILED"
+  # A sweep that was refused before it worked anything is not done. Close it
+  # `cancelled` carrying the refusal, so the Job row, the run report, and the UI
+  # all say the run did not happen instead of claiming a clean zero-task success.
+  if [[ -n "$HALT_REASON" && "$DONE" -eq 0 && "$FAILED" -eq 0 ]]; then
+    HALT_EV=$(jq -nc --arg r "$HALT_REASON" '{halted:$r}' 2>/dev/null)
+    [[ -z "$HALT_EV" ]] && HALT_EV="{\"halted\":\"refused\"}"
+    job_finish "$JOB_ID" cancelled "$DONE" "$FAILED" "$HALT_EV"
+    log "sweep cancelled without working anything: $HALT_REASON"
+  elif [[ -n "$HALT_REASON" ]]; then
+    HALT_EV=$(jq -nc --arg r "$HALT_REASON" '{halted:$r}' 2>/dev/null)
+    [[ -z "$HALT_EV" ]] && HALT_EV="{\"halted\":\"stopped early\"}"
+    job_finish "$JOB_ID" done "$DONE" "$FAILED" "$HALT_EV"
+  else
+    job_finish "$JOB_ID" done "$DONE" "$FAILED"
+  fi
 fi
 exit 0

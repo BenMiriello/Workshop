@@ -84,6 +84,13 @@ def _summarize(job: dict, tickets: list[dict], status: str) -> str:
         gate = ev.get("reviewer") or ev.get("gate")
         if gate:
             lines.append(f"Reviewer gate: {gate}.")
+        # A run that stopped before doing any work carries WHY it stopped. Say
+        # it, or the report reads as an unexplained non-result.
+        halted = ev.get("halted")
+        if halted:
+            lines.append(f"Stopped before working: {halted}.")
+    elif isinstance(ev, str) and ev and status != "done":
+        lines.append(ev if ev.endswith(".") else f"{ev}.")
     if status != "done":
         lines.append("Nothing here is verified.")
     return "\n".join(lines)
@@ -108,7 +115,18 @@ def post_for_job(job_id: str, status: str = "done") -> int:
         root = task_scope.root_for_job(job) or task_scope.WORKSHOP_ROOT
         # `job_ids` (plural) is the stored field: a ticket can be worked by more
         # than one run across retries, so membership is the test, not equality.
-        worked = [t for t in tasks._load(root) if job_id in (t.get("job_ids") or [])]
+        all_tasks = tasks._load(root)
+        worked = [t for t in all_tasks if job_id in (t.get("job_ids") or [])]
+        if not worked:
+            # `job_ids` is written by the CLAIM, so a run that stalled before
+            # claiming (budget refused, tree busy, ticket not claimable) matches
+            # nothing here and used to post nothing at all, leaving the chat's
+            # last word "run started" forever. The Job's own `task_id` says which
+            # ticket it was launched for, which is exactly the case a pre-claim
+            # failure needs to report on.
+            own = job.get("task_id")
+            if own:
+                worked = [t for t in all_tasks if t.get("id") == own]
         if not worked:
             return 0
 

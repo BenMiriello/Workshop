@@ -74,3 +74,81 @@ def test_owner_lookup_returns_none_for_an_unknown_thread():
 
 def test_owner_lookup_tolerates_an_empty_id():
     assert run_report.owner_of_thread("") is None
+
+
+# --- Pre-claim failures must still reach the chat (W1 item 3) ---------------
+#
+# `job_ids` on a ticket is written by the CLAIM. A run that stalls BEFORE
+# claiming (budget refused, tree busy, ticket not claimable) therefore matched
+# no ticket at all, `post_for_job` returned 0, and the chat's last word stayed
+# "run started" forever. The parent Job the chat card holds carries the ticket in
+# its own `task_id`; that is the fallback.
+
+def _post_env(monkeypatch, tmp_path, job, tickets):
+    """Wire post_for_job to an in-memory job + ticket store and capture posts."""
+    from services import jobs, tasks, task_scope, chat_store, ownership
+
+    monkeypatch.setattr(jobs, "get", lambda jid: job if jid == job["id"] else None)
+    monkeypatch.setattr(tasks, "_load", lambda root: list(tickets))
+    monkeypatch.setattr(task_scope, "root_for_job", lambda j: tmp_path)
+    monkeypatch.setattr(run_report, "owner_of_thread", lambda tid: 6)
+    monkeypatch.setattr(ownership, "owner_or_none", lambda: 6)
+    monkeypatch.setattr(ownership, "set_current_owner", lambda o: None)
+    monkeypatch.setattr(ownership, "clear_current_owner", lambda: None)
+    posted: list[dict] = []
+    monkeypatch.setattr(
+        chat_store, "append_message",
+        lambda tid, role, text, meta=None: posted.append(
+            {"thread": tid, "text": text, "meta": meta}))
+    return posted
+
+
+def _chat_ticket(tid="t1", thread="thread-9", **over):
+    t = {"id": tid, "text": "Fix the thing", "status": "todo",
+         "source": {"kind": "chat", "ref": thread}}
+    t.update(over)
+    return t
+
+
+def test_a_run_that_never_claimed_still_reports_to_its_chat(monkeypatch, tmp_path):
+    job = {"id": "job_parent", "task_id": "t1",
+           "evidence": {"halted": "autonomous budget spent"}}
+    ticket = _chat_ticket()          # no job_ids: the claim never happened
+    posted = _post_env(monkeypatch, tmp_path, job, [ticket])
+
+    assert run_report.post_for_job("job_parent", "cancelled") == 1
+    assert posted[0]["thread"] == "thread-9"
+    assert "autonomous budget spent" in posted[0]["text"]
+    assert "Nothing here is verified" in posted[0]["text"]
+
+
+def test_the_fallback_only_takes_the_jobs_own_ticket(monkeypatch, tmp_path):
+    """The fallback must not sweep in unrelated tickets from the same tree."""
+    job = {"id": "job_parent", "task_id": "t1"}
+    posted = _post_env(monkeypatch, tmp_path, job,
+                       [_chat_ticket("t1"), _chat_ticket("t2", thread="other")])
+    assert run_report.post_for_job("job_parent", "cancelled") == 1
+    assert posted[0]["thread"] == "thread-9"
+
+
+def test_job_ids_still_wins_when_present(monkeypatch, tmp_path):
+    """The normal path is unchanged: a claimed ticket matches by job_ids and the
+    Job's own task_id is not consulted."""
+    job = {"id": "job_child", "task_id": "t1"}
+    worked = _chat_ticket("t2", thread="claimed-thread", job_ids=["job_child"])
+    posted = _post_env(monkeypatch, tmp_path, job, [_chat_ticket("t1"), worked])
+    assert run_report.post_for_job("job_child", "done") == 1
+    assert posted[0]["thread"] == "claimed-thread"
+
+
+def test_a_job_with_no_task_id_reports_nothing(monkeypatch, tmp_path):
+    job = {"id": "job_parent"}
+    _post_env(monkeypatch, tmp_path, job, [_chat_ticket()])
+    assert run_report.post_for_job("job_parent", "cancelled") == 0
+
+
+def test_a_halt_reason_is_stated_plainly():
+    out = run_report._summarize(
+        _job(evidence={"halted": "no queue runner is polling"}), [_ticket("x", "todo")],
+        "cancelled")
+    assert "Stopped before working: no queue runner is polling." in out
