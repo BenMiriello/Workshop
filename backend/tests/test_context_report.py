@@ -6,7 +6,11 @@ a hand-written approximation is the whole point: the format is a vendor's, and a
 test written against what we WISH it emitted would pass while the panel showed
 nothing.
 """
-from services.context_report import parse_context_report, parse_tokens
+import asyncio
+import time
+
+from services import context_report
+from services.context_report import TtlCache, parse_context_report, parse_tokens
 
 
 SAMPLE = """## Context Usage
@@ -148,3 +152,126 @@ class TestItDegradesRatherThanBreaks:
         # chat it hangs off.
         r = parse_context_report("## Context Usage\n\nsomething entirely new\n")
         assert r["categories"] == []
+
+
+class TestTtlCache:
+    def test_a_live_entry_comes_back(self):
+        c = TtlCache(60)
+        at = c.put("k", {"n": 1})
+        assert c.get("k") == ({"n": 1}, at)
+
+    def test_the_timestamp_is_when_it_was_STORED(self):
+        # The panel prints "Refreshed 2m ago" off this. Returning the moment of
+        # the cache HIT would be a lie about freshness, which is the one thing a
+        # freshness line may not be.
+        c = TtlCache(60)
+        at = c.put("k", 1)
+        time.sleep(0.05)
+        assert c.get("k")[1] == at
+
+    def test_it_expires(self):
+        c = TtlCache(0.05)
+        c.put("k", 1)
+        assert c.get("k") is not None
+        time.sleep(0.12)
+        assert c.get("k") is None
+
+    def test_a_changed_fingerprint_is_a_miss_however_fresh(self):
+        c = TtlCache(600)
+        c.put("k", 1, "tokens=10")
+        assert c.get("k", "tokens=10") is not None
+        assert c.get("k", "tokens=20") is None
+
+    def test_keys_do_not_collide(self):
+        c = TtlCache(60)
+        c.put("a", 1)
+        c.put("b", 2)
+        assert c.get("a")[0] == 1 and c.get("b")[0] == 2
+
+    def test_invalidate_and_clear(self):
+        c = TtlCache(60)
+        c.put("a", 1)
+        c.invalidate("a")
+        assert c.get("a") is None
+        c.put("b", 2)
+        c.clear()
+        assert c.get("b") is None
+
+    def test_invalidating_something_absent_is_fine(self):
+        TtlCache(60).invalidate("never-stored")
+
+
+class TestCachedContextReport:
+    """The panel used to re-spawn the CLI, ~2.8s, on every single open."""
+
+    def setup_method(self):
+        context_report._REPORT_CACHE.clear()
+
+    def _counting(self, monkeypatch, report=None):
+        calls = []
+
+        async def fake(session_id, cwd, model=None):
+            calls.append((session_id, cwd, model))
+            return {"categories": []} if report is None else report
+
+        monkeypatch.setattr(context_report, "run_context_report", fake)
+        return calls
+
+    def test_reopening_the_panel_does_not_respawn_the_cli(self, monkeypatch):
+        calls = self._counting(monkeypatch)
+        a = asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f1"))
+        b = asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f1"))
+        assert len(calls) == 1
+        assert a[2] is False and b[2] is True
+        assert b[1] == a[1], "a cached answer keeps the timestamp of the run that produced it"
+
+    def test_a_turn_invalidates_it_at_once(self, monkeypatch):
+        # This is what lets the TTL be two minutes: the fingerprint, not the
+        # clock, is what keeps the reading honest.
+        calls = self._counting(monkeypatch)
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="43004:12"))
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="51120:14"))
+        assert len(calls) == 2
+
+    def test_refresh_bypasses_the_cache(self, monkeypatch):
+        calls = self._counting(monkeypatch)
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f1"))
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f1", force=True))
+        assert len(calls) == 2
+
+    def test_two_sessions_do_not_share_a_reading(self, monkeypatch):
+        calls = self._counting(monkeypatch)
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f"))
+        asyncio.run(context_report.cached_context_report("s2", "/tmp", fingerprint="f"))
+        assert len(calls) == 2
+
+    def test_the_same_session_in_two_directories_is_two_readings(self, monkeypatch):
+        # Different project memory, different skills.
+        calls = self._counting(monkeypatch)
+        asyncio.run(context_report.cached_context_report("s1", "/tmp/a", fingerprint="f"))
+        asyncio.run(context_report.cached_context_report("s1", "/tmp/b", fingerprint="f"))
+        assert len(calls) == 2
+
+    def test_a_failed_read_is_not_cached(self, monkeypatch):
+        calls = []
+
+        async def fake(session_id, cwd, model=None):
+            calls.append(session_id)
+            return None
+
+        monkeypatch.setattr(context_report, "run_context_report", fake)
+        out = asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f"))
+        assert out[0] is None
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f"))
+        assert len(calls) == 2
+
+    def test_the_entry_expires(self, monkeypatch):
+        calls = self._counting(monkeypatch)
+        monkeypatch.setattr(context_report, "_REPORT_CACHE", TtlCache(0.05))
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f"))
+        time.sleep(0.12)
+        asyncio.run(context_report.cached_context_report("s1", "/tmp", fingerprint="f"))
+        assert len(calls) == 2
+
+    def test_the_ttl_is_long_enough_to_cover_reading_the_panel(self):
+        assert context_report.CONTEXT_TTL_S >= 60

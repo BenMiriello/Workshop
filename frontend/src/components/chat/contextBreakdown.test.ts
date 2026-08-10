@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   contextHeadline, contextSlices, formatPct, formatTokens, freeFraction, mcpTotal,
+  refreshedLabel,
   type ContextDetail,
 } from "./contextBreakdown";
 
@@ -102,5 +103,42 @@ describe("the header and the MCP total", () => {
 
   it("totals what the MCP servers cost every turn", () => {
     expect(mcpTotal(detail())).toBe(5_000);
+  });
+});
+
+describe("refreshedLabel", () => {
+  // The reading is cached server-side now, so a panel can open instantly with a
+  // report computed minutes ago. That is only acceptable if it says how old it
+  // is: an undated stale number is worse than a slow fresh one.
+  const now = 1_754_800_000_000;
+  const at = (secondsAgo: number) => now / 1000 - secondsAgo;
+
+  it("dates the reading from when the CLI RAN", () => {
+    expect(refreshedLabel(at(120), now)).toBe("Refreshed 2m ago");
+  });
+
+  it("does not fuss over the first few seconds", () => {
+    expect(refreshedLabel(at(0), now)).toBe("Refreshed just now");
+    expect(refreshedLabel(at(44), now)).toBe("Refreshed just now");
+  });
+
+  it("crosses into minutes, hours and days", () => {
+    expect(refreshedLabel(at(60), now)).toBe("Refreshed 1m ago");
+    expect(refreshedLabel(at(59 * 60), now)).toBe("Refreshed 59m ago");
+    expect(refreshedLabel(at(3 * 3600), now)).toBe("Refreshed 3h ago");
+    expect(refreshedLabel(at(50 * 3600), now)).toBe("Refreshed 2d ago");
+  });
+
+  it("says nothing at all when there is nothing to date", () => {
+    // A thread with no session was never read, and "Refreshed 56y ago" from a
+    // zero epoch would be a fabricated fact.
+    expect(refreshedLabel(null, now)).toBe("");
+    expect(refreshedLabel(undefined, now)).toBe("");
+    expect(refreshedLabel(0, now)).toBe("");
+    expect(refreshedLabel(NaN, now)).toBe("");
+  });
+
+  it("never counts backwards when the clocks disagree", () => {
+    expect(refreshedLabel(at(-30), now)).toBe("Refreshed just now");
   });
 });

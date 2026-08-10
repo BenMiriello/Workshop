@@ -31,7 +31,9 @@ import asyncio
 import logging
 import os
 import re
+import time
 from pathlib import Path
+from typing import Any
 
 from services import llm_router
 
@@ -48,6 +50,73 @@ REPORT_TIMEOUT_S = 45.0
 
 # Categories that describe what is LEFT, not what is used. See rule 2.
 NOT_IN_USE = ("free space", "autocompact buffer")
+
+# How long a parsed report stands in for a fresh one.
+#
+# TWO MINUTES, and the reason it can be that long is that TTL is not what keeps
+# this correct — the FINGERPRINT is. The route passes the thread's own token
+# count and message count, and any turn changes both, so a report is thrown out
+# the instant the conversation it describes moves. What the TTL bounds is only
+# the drift the fingerprint cannot see: a memory file edited on disk, a skill
+# added, an MCP server installed. Those change on a human timescale, not a
+# per-turn one.
+#
+# The cost being avoided is real and was measured: every open of the panel
+# re-spawned the CLI for ~2.8s. Opening the panel, closing it, and opening it
+# again while reading is now instant, and the footer prints the reading's age so
+# it is never anonymous. Anything the operator judges stale is one Refresh away,
+# and Refresh bypasses this entirely.
+CONTEXT_TTL_S = 120.0
+
+
+class TtlCache:
+    """A tiny time-and-fingerprint cache for expensive local CLI probes.
+
+    Two independent reasons to miss: the entry is older than `ttl_s`, or the
+    caller's `fingerprint` differs from the one stored with it. The fingerprint
+    is what makes a long TTL safe — it lets the caller say "this reading
+    describes a state that has since changed" without knowing anything about
+    clocks.
+
+    `at` is wall-clock epoch seconds, because it is shown to a person
+    ("Refreshed 2m ago"). Expiry uses the monotonic clock instead, so an NTP
+    step cannot make an entry immortal or instantly dead.
+    """
+
+    def __init__(self, ttl_s: float):
+        self.ttl_s = float(ttl_s)
+        self._entries: dict[str, tuple[Any, float, float, str]] = {}
+
+    def get(self, key: str, fingerprint: str = "") -> tuple[Any, float] | None:
+        """`(value, at)` for a live entry matching `fingerprint`, else None."""
+        hit = self._entries.get(key)
+        if hit is None:
+            return None
+        value, at, mono, fp = hit
+        if fp != fingerprint:
+            del self._entries[key]
+            return None
+        if time.monotonic() - mono >= self.ttl_s:
+            del self._entries[key]
+            return None
+        return value, at
+
+    def put(self, key: str, value: Any, fingerprint: str = "") -> float:
+        """Store `value` and return the wall-clock time it was recorded at."""
+        at = time.time()
+        self._entries[key] = (value, at, time.monotonic(), fingerprint)
+        return at
+
+    def invalidate(self, key: str) -> None:
+        self._entries.pop(key, None)
+
+    def clear(self) -> None:
+        self._entries.clear()
+
+
+# Keyed by session id + cwd: the same session inspected from a different working
+# directory is a different reading (different project memory, different skills).
+_REPORT_CACHE = TtlCache(CONTEXT_TTL_S)
 
 
 def parse_tokens(raw: str) -> int:
@@ -206,3 +275,31 @@ async def run_context_report(session_id: str | None, cwd: str,
         log.info("context report: /context not available in this environment")
         return None
     return parse_context_report(text)
+
+
+async def cached_context_report(
+    session_id: str, cwd: str, model: str | None = None,
+    *, fingerprint: str = "", force: bool = False,
+) -> tuple[dict | None, float, bool]:
+    """`run_context_report`, but not twice in two minutes for the same reading.
+
+    Returns `(report, checked_at, cached)`. `checked_at` is epoch seconds and is
+    what the panel's "Refreshed Nm ago" counts from — a cached answer keeps the
+    timestamp of the run that produced it, because that is when the reading was
+    true. Reporting the moment of the cache HIT would be a lie about freshness,
+    which is the one thing a freshness line must not be.
+
+    `force=True` is the explicit Refresh control: it skips the lookup entirely.
+    A failed run is not cached — an unreachable CLI should be retried on the
+    next open, not remembered for two minutes.
+    """
+    key = f"{session_id}\x00{cwd}"
+    if not force:
+        hit = _REPORT_CACHE.get(key, fingerprint)
+        if hit is not None:
+            return hit[0], hit[1], True
+    report = await run_context_report(session_id, cwd, model)
+    if report is None:
+        _REPORT_CACHE.invalidate(key)
+        return None, time.time(), False
+    return report, _REPORT_CACHE.put(key, report, fingerprint), False

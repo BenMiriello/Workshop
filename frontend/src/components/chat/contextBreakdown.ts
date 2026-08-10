@@ -24,6 +24,11 @@ export type ContextDetail = {
   model?: string;
   used_tokens: number;
   window_tokens: number;
+  /** Epoch SECONDS at which the CLI actually ran — not when this response was
+   *  served. A cached reading keeps the timestamp of the run that produced it,
+   *  because that is when it was true. */
+  checked_at?: number | null;
+  cached?: boolean;
   cli_used_tokens?: number;
   categories?: ContextCategory[];
   mcp?: McpServer[];
@@ -128,4 +133,28 @@ export function contextHeadline(d: ContextDetail): string {
  *  tax on every turn, paid whether or not they are ever called. */
 export function mcpTotal(d: ContextDetail): number {
   return (d.mcp ?? []).reduce((a, s) => a + s.tokens, 0);
+}
+
+/**
+ * "Refreshed 2m ago" for the panel's footer.
+ *
+ * The reading is now CACHED server-side, so a panel can open instantly with a
+ * report that was computed minutes earlier. That is only acceptable if the
+ * panel says how old it is — an unlabelled stale number is worse than a slow
+ * fresh one, and this month has been spent removing screens that showed a
+ * figure without saying which figure it was.
+ *
+ * `checkedAt` is epoch SECONDS (the server's unit); `now` is epoch millis
+ * (JS's). Empty string when there is nothing to date, so the caller can render
+ * it unconditionally.
+ */
+export function refreshedLabel(checkedAt: number | null | undefined, now: number): string {
+  if (!checkedAt || !Number.isFinite(checkedAt)) return "";
+  const seconds = Math.max(0, (now - checkedAt * 1000) / 1000);
+  if (seconds < 45) return "Refreshed just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `Refreshed ${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Refreshed ${hours}h ago`;
+  return `Refreshed ${Math.round(hours / 24)}d ago`;
 }

@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from services import chat_store, chat_context, chat_log
 from services import tasks
 from services import context_report
+from services import mcp_health
 from services import model_caps
 from services import task_scope
 from services import scope_version
@@ -184,17 +185,26 @@ def _resolve_model(
 
 
 def _resolve_effort(body_effort: str | None, thread: dict, model: str) -> str | None:
-    """Resolution order: explicit body.effort > thread.effort > None.
+    """Resolution order: explicit body.effort > thread.effort > operator pref >
+    the model's own default (None).
 
     None means "send no --effort at all", which is the model's own default and
     byte-identical to the argv a chat spawns today. That matters beyond tidiness:
     effort is part of the rendered prompt, so emitting it where it was never
     chosen would cost every untouched chat its prompt-cache prefix.
 
-    A level the resolved model doesn't support is dropped rather than inherited
-    from the thread — the operator's latest choice wins over stale stored state,
-    even when the win is "fall back to the default". Raises 400 only for a value
-    that isn't a level at all."""
+    Two rules about a level the resolved model doesn't support:
+
+      - from the BODY it is dropped to None, full stop. That is the operator's
+        live click and it wins over every stored tier, even when the win is
+        "fall back to the model default".
+      - from the THREAD or the PREF it is skipped, and the next tier down is
+        consulted. A thread carrying `xhigh` from when it was on Opus should not
+        blank out an operator default of `max` just because Sonnet 4.6 has no
+        `xhigh` rung.
+
+    Raises 400 only for a value that isn't a level at all — and only from the
+    body, since a stored tier the operator cannot see must never fail a turn."""
     try:
         explicit = model_caps.normalize_effort(body_effort, model)
     except ValueError as e:
@@ -203,18 +213,26 @@ def _resolve_effort(body_effort: str | None, thread: dict, model: str) -> str | 
         return explicit
     if (body_effort or "").strip():
         return None
-    try:
-        return model_caps.normalize_effort(thread.get("effort"), model)
-    except ValueError:
-        return None
+    for candidate in (thread.get("effort"), chat_store.get_default_effort()):
+        try:
+            level = model_caps.normalize_effort(candidate, model)
+        except ValueError:
+            continue
+        if level:
+            return level
+    return None
 
 
 def _resolve_permission_mode(body_mode: str | None, thread: dict) -> str:
-    """Resolution order: explicit body > thread > the platform default.
+    """Resolution order: explicit body > thread > operator pref > the platform
+    default.
 
     Always returns a mode (never None): unlike effort, there is no "let the
     vendor decide" here — the CLI has its own default and it is not the one this
-    chat has always run at, so the value is made explicit at every spawn."""
+    chat has always run at, so the value is made explicit at every spawn.
+
+    The operator pref sits BELOW the thread, so setting a default never reaches
+    into a chat that has chosen for itself; it moves the chats that never did."""
     try:
         explicit = model_caps.normalize_permission_mode(body_mode)
     except ValueError as e:
@@ -225,7 +243,8 @@ def _resolve_permission_mode(body_mode: str | None, thread: dict) -> str:
         stored = model_caps.normalize_permission_mode(thread.get("permission_mode"))
     except ValueError:
         stored = None
-    return stored or model_caps.DEFAULT_PERMISSION_MODE
+    return (stored or chat_store.get_default_permission_mode()
+            or model_caps.DEFAULT_PERMISSION_MODE)
 
 
 @router.get("/providers")
@@ -280,21 +299,62 @@ async def new_thread(body: CreateThread):
 
 
 class ChatPrefs(BaseModel):
-    default_mode: str
+    """Every field is optional and only what is SENT is written, so the settings
+    screen can save one control without having to echo the others back.
+
+    An empty string clears a default (`""` means "no preference", i.e. fall back
+    to the model's / platform's own). None means "not sent"; the two cannot be
+    the same value or clearing would be unexpressible."""
+    default_mode: str | None = None
+    default_effort: str | None = None
+    default_permission_mode: str | None = None
+
+
+def _prefs_payload() -> dict:
+    """What the settings screen renders from. The CHOICES are served, never
+    assumed by the client: which permission modes a chat may pick is this
+    system's decision (bypass is not among them) and the effort ladder is the
+    vendor's."""
+    return {
+        "default_mode": chat_store.get_default_mode(),
+        "modes": list(chat_context.CHAT_MODES),
+        # None = no preference: the model's own default effort, and the platform
+        # permission mode. Rendered as the "model default" / "system default"
+        # option rather than as a blank.
+        "default_effort": chat_store.get_default_effort(),
+        "efforts": list(model_caps.EFFORT_LEVELS),
+        "default_permission_mode": chat_store.get_default_permission_mode(),
+        "permission_modes": list(model_caps.OFFERED_MODES),
+        "platform_permission_mode": model_caps.DEFAULT_PERMISSION_MODE,
+    }
 
 
 @router.get("/prefs")
 async def get_chat_prefs():
-    """Operator-level chat settings. One field so far: the mode a NEW chat starts
-    in. Existing chats keep the mode they were created with."""
-    return {"default_mode": chat_store.get_default_mode(), "modes": list(chat_context.CHAT_MODES)}
+    """Operator-level chat settings: the mode a NEW chat starts in, plus the
+    effort and permission-mode defaults every chat that never chose for itself
+    resolves through. Existing chats keep the `mode` they were created with; the
+    other two are consulted per turn, so changing one moves those chats."""
+    return _prefs_payload()
 
 
 @router.post("/prefs")
 async def set_chat_prefs(body: ChatPrefs):
-    if body.default_mode not in chat_context.CHAT_MODES:
-        raise HTTPException(400, f"default_mode must be one of {list(chat_context.CHAT_MODES)}")
-    return {"default_mode": chat_store.set_default_mode(body.default_mode)}
+    if body.default_mode is not None:
+        if body.default_mode not in chat_context.CHAT_MODES:
+            raise HTTPException(400, f"default_mode must be one of {list(chat_context.CHAT_MODES)}")
+        chat_store.set_default_mode(body.default_mode)
+    if body.default_effort is not None:
+        try:
+            chat_store.set_default_effort(body.default_effort)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    if body.default_permission_mode is not None:
+        try:
+            chat_store.set_default_permission_mode(body.default_permission_mode)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    return _prefs_payload()
 
 
 @router.post("/threads/{thread_id}/participants")
@@ -1343,8 +1403,19 @@ async def thread_context(thread_id: str):
     }
 
 
+def _side_query_cwd(provider) -> str:
+    """The directory a side query should run the CLI in.
+
+    A build chat's session belongs to its project directory; everything else
+    lives at the workshop root. Shared by the two side queries below so a
+    `/context` reading and an MCP listing can never describe different places.
+    """
+    return (str(provider.dir) if chat_context.is_build_provider(provider)
+            else str(context_report.WORKSHOP_ROOT))
+
+
 @router.get("/threads/{thread_id}/context/detail")
-async def thread_context_detail(thread_id: str):
+async def thread_context_detail(thread_id: str, refresh: bool = False):
     """What is actually filling this chat's window, broken down.
 
     Powers the context modal. A SIDE QUERY, not a turn: it claims no run, writes
@@ -1354,6 +1425,11 @@ async def thread_context_detail(thread_id: str):
     Free to serve. The CLI computes `/context` locally — measured 2026-08-10 at
     `num_turns: 0`, `duration_api_ms: 0`, `total_cost_usd: 0` — so this can be
     refreshed as often as the operator likes.
+
+    Cached per session for `context_report.CONTEXT_TTL_S`, against a fingerprint
+    of the thread's own counters so any turn invalidates it at once. `?refresh=1`
+    is the panel's explicit Refresh and bypasses the cache. `checked_at` is when
+    the CLI actually ran, which is what the footer's age counts from.
 
     `available: false` is a normal answer, not an error: a thread that has not
     run a turn yet has no session to inspect, and some CLI builds do not offer
@@ -1375,16 +1451,49 @@ async def thread_context_detail(thread_id: str):
         "used_tokens": int(t.get("context_tokens") or 0),
     }
     if not session:
-        return {**base, "available": False,
+        return {**base, "available": False, "checked_at": None, "cached": False,
                 "reason": "This chat has not run a turn yet, so it has no session to inspect."}
-    cwd = (str(provider.dir) if chat_context.is_build_provider(provider)
-           else str(context_report.WORKSHOP_ROOT))
-    report = await context_report.run_context_report(session, cwd, model)
+    # What makes a cached reading stale: the conversation moved. Both counters
+    # change on every turn, so a report never outlives the state it describes.
+    fingerprint = f"{t.get('context_tokens') or 0}:{len(t.get('messages') or [])}:{model}"
+    report, checked_at, cached = await context_report.cached_context_report(
+        session, _side_query_cwd(provider), model,
+        fingerprint=fingerprint, force=bool(refresh),
+    )
     if report is None:
-        return {**base, "available": False,
+        return {**base, "available": False, "checked_at": checked_at, "cached": False,
                 "reason": "The breakdown could not be read for this chat."}
-    return {**base, "available": True, **{k: v for k, v in report.items()
-                                          if k not in ("model",)}}
+    return {**base, "available": True, "checked_at": checked_at, "cached": cached,
+            **{k: v for k, v in report.items() if k not in ("model",)}}
+
+
+@router.get("/threads/{thread_id}/mcp/health")
+async def thread_mcp_health(thread_id: str, refresh: bool = False):
+    """Which MCP servers are configured for this chat's directory, and whether
+    they connect.
+
+    The same SIDE QUERY contract as `/context/detail` and for the same reasons:
+    it claims no run, emits no run event, and appends no message. It runs
+    `claude mcp list`, which reads configuration and pings each server; it never
+    resumes a session and never reaches a model.
+
+    Why it exists: on 2026-08-10 three servers on this host were failing to
+    connect and two were unauthenticated, and no screen in the app said so. A
+    server that cannot connect is a cost with no return, paid silently.
+
+    Cached per directory for `mcp_health.MCP_HEALTH_TTL_S`; `?refresh=1`
+    bypasses it. `available: false` with a `reason` is what an unrunnable CLI
+    looks like — there is no fallback list, because a made-up server list would
+    report health for things that may not exist.
+    """
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    result, checked_at, cached = await mcp_health.cached_mcp_health(
+        _side_query_cwd(provider), force=bool(refresh),
+    )
+    return {**result, "checked_at": checked_at, "cached": cached}
 
 
 def _agent_role_for(provider) -> str | None:
@@ -1728,6 +1837,29 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
         chat_store.append_message(thread_id, "user", content, client_id=client_id)
 
 
+def _agent_effort(rec: dict, slug: str, model: str, chat_effort: str | None) -> str | None:
+    """The effort level a mentioned agent's turn runs at.
+
+    The agent's declared level wins, then the chat's, then the model's own
+    default (None) — and every candidate is checked against THE MODEL THAT WILL
+    ACTUALLY RUN, which may be the agent's rather than the composer's. A level
+    that model has no rung for is skipped rather than passed through: the CLI
+    accepts every level for every model and then ignores the ones the API does
+    not implement, so passing it would be a control that does nothing.
+
+    Tolerant, like the model override beside it: nothing here fails a turn the
+    operator started by addressing an agent."""
+    for candidate in (rec.get("effort"), chat_effort):
+        try:
+            level = model_caps.normalize_effort(candidate, model)
+        except ValueError:
+            log.warning("agent %s: effort %r is not a level; ignoring", slug, candidate)
+            continue
+        if level:
+            return level
+    return None
+
+
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
                                     content: str, model: str, run_id: str,
                                     effort: str | None = None,
@@ -1814,6 +1946,19 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         except ValueError as e:
             log.warning("agent %s declares a model this build cannot pick (%s); "
                         "using the chat's model instead", slug, e)
+
+    # The agent's own TURN POSTURE, on the same terms as its model: what the
+    # definition declares wins over the chat, because a reviewer should be able
+    # to be careful inside a conversation that is otherwise on Auto. An agent
+    # that declares nothing changes nothing.
+    #
+    # Effort is re-normalized against the model settled on JUST ABOVE, not the
+    # chat's. The two can differ (an agent pinning Sonnet 4.6 inside a chat on
+    # Opus 5), and `--effort xhigh` on a model without an xhigh rung is accepted
+    # by the CLI and then quietly ignored — the exact failure model_caps exists
+    # to prevent.
+    effort = _agent_effort(rec, slug, model, effort)
+    permission_mode = rec.get("permission_mode") or permission_mode
 
     # This agent's session IN THIS THREAD. Every mention used to spawn with no
     # session, so an agent rebuilt its preamble, definition and knowledge layers
@@ -2208,7 +2353,7 @@ async def answer_turn_permission(thread_id: str, turn_id: str, body: PermissionA
     allow = body.behavior == "allow"
     # Approving a plan always leaves plan mode; every other "stop asking" is
     # opt-in, because it loosens the chat and the operator has to mean it.
-    suggestion = _mode_suggestion(turn_id, body.request_id) if allow and (
+    suggestion = _mode_suggestion(turn_id, body.request_id, t) if allow and (
         body.apply_suggestion or _is_plan_exit(turn_id, body.request_id)
     ) else None
     ok, detail = build_streaming.resolve_permission(
@@ -2223,10 +2368,32 @@ async def answer_turn_permission(thread_id: str, turn_id: str, body: PermissionA
     return {"state": detail, "permission_mode": suggestion or t.get("permission_mode")}
 
 
-# Where a chat lands after its plan is approved. Plan mode is a ONE-TURN
-# posture: staying in it after the plan is agreed leaves a chat that has just
-# been told to go ahead and still cannot edit anything.
+# Where a chat lands after its plan is approved when there is NOTHING BETTER TO
+# GO ON. Plan mode is a ONE-TURN posture: staying in it after the plan is agreed
+# leaves a chat that has just been told to go ahead and still cannot edit
+# anything.
+#
+# This is the fallback, not the destination. `chat_store` records the mode a
+# chat was running at when it entered plan (`pre_plan_permission_mode`) and
+# `_post_plan_mode` below puts it back there, because a chat on Manual that
+# stepped into Plan for one question should come out on Manual — a fixed landing
+# mode silently loosens it instead.
 POST_PLAN_MODE = "acceptEdits"
+
+
+def _post_plan_mode(thread: dict) -> str:
+    """Where this chat goes when its plan is approved: back where it came from,
+    else POST_PLAN_MODE.
+
+    A recorded `plan` is ignored — that would be a chat that entered plan twice
+    without the note being spent, and honouring it would trap the chat in plan
+    exactly when it has been told to proceed."""
+    try:
+        prev = model_caps.normalize_permission_mode(
+            thread.get("pre_plan_permission_mode"))
+    except ValueError:
+        prev = None
+    return prev if (prev and prev != "plan") else POST_PLAN_MODE
 
 
 def _is_plan_exit(turn_id: str, request_id: str) -> bool:
@@ -2240,26 +2407,34 @@ def _is_plan_exit(turn_id: str, request_id: str) -> bool:
     )
 
 
-def _mode_suggestion(turn_id: str, request_id: str) -> str | None:
-    """The mode the CLI itself proposed for this request, if it proposed one.
+def _mode_suggestion(turn_id: str, request_id: str, thread: dict) -> str | None:
+    """The mode to move this chat to on approving this request, or None.
 
-    Only `setMode` suggestions are honoured; anything else the CLI may add later
-    is ignored rather than guessed at. Approving an ExitPlanMode falls back to
-    POST_PLAN_MODE when the CLI proposed nothing, because leaving plan mode is
-    what approving a plan MEANS — that one is not a guess."""
+    For an ExitPlanMode the answer is THIS CHAT'S OWN pre-plan mode, and the
+    CLI's `setMode` suggestion is not consulted: the CLI proposes a generic
+    landing spot (it has no idea the operator was on Manual before), while the
+    thread recorded where the chat actually came from. Leaving plan mode is what
+    approving a plan MEANS, so there is always an answer here — the fallback
+    applies only when nothing was recorded.
+
+    For every other request the CLI's own `setMode` suggestion IS the answer,
+    since that is what "allow and stop asking" means in the vendor's words.
+    Anything other than `setMode` is ignored rather than guessed at."""
     turn = build_streaming.TURNS.get(turn_id)
     if turn is None:
         return None
     for seg in turn.segments:
         if seg.get("t") != "approval" or seg.get("id") != request_id:
             continue
+        if seg.get("tool") == "ExitPlanMode":
+            return _post_plan_mode(thread)
         for s in seg.get("suggestions") or []:
             if isinstance(s, dict) and s.get("type") == "setMode" and s.get("mode"):
                 try:
                     return model_caps.normalize_permission_mode(str(s["mode"]))
                 except ValueError:
                     break
-        return POST_PLAN_MODE if seg.get("tool") == "ExitPlanMode" else None
+        return None
     return None
 
 

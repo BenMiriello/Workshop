@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import {
-  Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock, catFor,
+  Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock, StatusDot,
+  StatusPill, catFor,
 } from "../../ui";
 import {
-  contextHeadline, contextSlices, formatPct, formatTokens,
+  contextHeadline, contextSlices, formatPct, formatTokens, refreshedLabel,
   type ContextDetail,
 } from "./contextBreakdown";
+import {
+  healthSummaryLine, mergeMcpServers, worstKind,
+  type McpHealth, type McpRow,
+} from "./mcpHealth";
 
 // What is filling this conversation's context, and the two things you can do
 // about it.
@@ -18,28 +23,52 @@ import {
 //
 // FREE TO OPEN. The CLI computes `/context` locally — measured 2026-08-10 at
 // zero tokens, zero API calls, ~2.8s — so refreshing costs nothing but the wait.
+// It is now also CACHED per thread server-side, so the wait is usually gone
+// too; the footer prints the reading's age, and Refresh forces a new one.
 //
 // THE NUMBER AT THE TOP IS THE METER'S OWN. See contextBreakdown: the CLI
 // supplies the shape, our measurement supplies the size. A panel opened from a
 // meter reading 44% may not say 22% two pixels away.
+//
+// MCP IS THE SECOND QUERY. Cost comes from `/context`, health from
+// `claude mcp list`, and a broken server appears only in the latter — it loads
+// no tools, so it costs nothing and was therefore invisible. See mcpHealth.
+
+// How often the "Refreshed Nm ago" line re-renders. Half a minute: the label's
+// own resolution is a minute, so this can never be more than one tick behind.
+const AGE_TICK_MS = 30_000;
 
 function tokenColor(hue: string): string {
   return `var(--cat-${hue})`;
 }
 
 function Row({ label, tokens, window: win, hue, sub }: {
-  label: string; tokens: number; window: number; hue?: string; sub?: string;
+  label: string; tokens: number; window: number; hue?: string; sub?: ReactNode;
 }) {
   return (
     <div className="ctx-row">
       <span className="ctx-row__swatch" style={hue ? { background: tokenColor(hue) } : undefined} aria-hidden />
       <span className="ctx-row__label">
         {label}
-        {sub && <span className="ctx-row__sub">{sub}</span>}
+        {sub != null && <span className="ctx-row__sub">{sub}</span>}
       </span>
       <span className="ctx-row__tokens">{formatTokens(tokens)}</span>
       <span className="ctx-row__pct">{formatPct(win > 0 ? tokens / win : 0)}</span>
     </div>
+  );
+}
+
+/** A server's own line: how many tools it contributes, and whether it works.
+ *  The state is the CLI's own words, so the panel never paraphrases a vendor
+ *  into something more or less alarming than what it said. */
+function ServerSub({ row }: { row: McpRow }) {
+  const tools = `${row.tools.length} tool${row.tools.length === 1 ? "" : "s"}`;
+  if (!row.health) return <>{tools}</>;
+  return (
+    <>
+      <StatusDot status={row.health.kind}>{row.health.state}</StatusDot>
+      <span className="ctx-row__sub">{tools}</span>
+    </>
   );
 }
 
@@ -56,29 +85,73 @@ export default function ContextModal({
   const [data, setData] = useState<ContextDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [health, setHealth] = useState<McpHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthFailed, setHealthFailed] = useState(false);
   const [openServer, setOpenServer] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     if (!threadId) return;
+    const q = force ? "?refresh=1" : "";
+    const id = encodeURIComponent(threadId);
     setLoading(true);
+    setHealthLoading(true);
     setFailed(false);
-    try {
-      const r = await fetch(`/api/chat/threads/${encodeURIComponent(threadId)}/context/detail`);
-      if (!r.ok) throw new Error(String(r.status));
-      setData(await r.json());
-    } catch {
-      // A failed read is not an empty context. Say which it is.
-      setFailed(true);
-    } finally {
-      setLoading(false);
-    }
+    setHealthFailed(false);
+    // Two independent readings, run together. Neither may hold the other up:
+    // a failing MCP probe must not blank the breakdown, and vice versa.
+    const breakdown = (async () => {
+      try {
+        const r = await fetch(`/api/chat/threads/${id}/context/detail${q}`);
+        if (!r.ok) throw new Error(String(r.status));
+        setData(await r.json());
+      } catch {
+        // A failed read is not an empty context. Say which it is.
+        setFailed(true);
+      } finally {
+        setLoading(false);
+      }
+    })();
+    const mcp = (async () => {
+      try {
+        const r = await fetch(`/api/chat/threads/${id}/mcp/health${q}`);
+        if (!r.ok) throw new Error(String(r.status));
+        setHealth(await r.json());
+      } catch {
+        setHealthFailed(true);
+      } finally {
+        setHealthLoading(false);
+      }
+    })();
+    await Promise.all([breakdown, mcp]);
+    setNow(Date.now());
   }, [threadId]);
 
   useEffect(() => { if (open) void load(); }, [open, load]);
 
+  // The age line has to keep counting while the panel sits open, or "Refreshed
+  // just now" stays on screen for an hour.
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setInterval(() => setNow(Date.now()), AGE_TICK_MS);
+    return () => window.clearInterval(t);
+  }, [open]);
+
   const win = data?.window_tokens ?? 0;
   const slices = data ? contextSlices(data, catFor) : [];
-  const mcp = data?.mcp ?? [];
+  const servers = mergeMcpServers(data?.mcp, health?.available ? health.servers : undefined);
+  const worst = worstKind(servers);
+  const summary = healthSummaryLine(servers);
+  // The oldest of the two readings is the one the footer must date: saying the
+  // panel was refreshed a minute ago when half of it is five minutes old would
+  // be the same lie the freshness line exists to prevent.
+  const ages = [data?.checked_at, health?.checked_at].filter(
+    (v): v is number => typeof v === "number" && v > 0);
+  const age = ages.length ? refreshedLabel(Math.min(...ages), now) : "";
+  // Rule 9's overflow case: eight servers is where the list stops being a
+  // glance and starts being a scroll, and this host already has eight.
+  const mcpOverflow = servers.length > 8;
 
   return (
     <Modal
@@ -111,7 +184,7 @@ export default function ContextModal({
           variant="error"
           title="Couldn't read the breakdown"
           hint={`GET /api/chat/threads/${threadId ?? ""}/context/detail failed.`}
-          action={<Button variant="ghost" onClick={() => void load()}>Try again</Button>}
+          action={<Button variant="ghost" onClick={() => void load(true)}>Try again</Button>}
         />
       )}
 
@@ -157,45 +230,105 @@ export default function ContextModal({
                 ))}
                 <Row label="Free" tokens={Math.max(0, win - data.used_tokens)} window={win} />
               </div>
+            </>
+          )}
 
-              {mcp.length > 0 && (
-                <>
-                  {/* Just the name. The count and total used to ride in the
-                      label, which read as a summary of a list that is already
-                      right there with its own numbers — and said "1, 872
-                      every turn" over a single row. */}
-                  <SectionLabel>MCP servers</SectionLabel>
-                  <div className="ctx-list">
-                    {mcp.map((s) => (
-                      <div key={s.server}>
-                        <button
-                          type="button"
-                          className={`ctx-expand${openServer === s.server ? " is-open" : ""}`}
-                          aria-expanded={openServer === s.server}
-                          onClick={() => setOpenServer((v) => (v === s.server ? null : s.server))}
-                        >
-                          <ChevronRight size={14} strokeWidth={1.8} aria-hidden className="ctx-expand__chev" />
-                          <Row
-                            label={s.server}
-                            sub={`${s.tools.length} tool${s.tools.length === 1 ? "" : "s"}`}
-                            tokens={s.tokens}
-                            window={win}
-                            hue={catFor(s.server)}
-                          />
-                        </button>
-                        {openServer === s.server && (
-                          <div className="ctx-sublist">
-                            {s.tools.map((t) => (
-                              <Row key={t.name} label={t.name} tokens={t.tokens} window={win} />
-                            ))}
-                          </div>
-                        )}
+          {/* MCP stands OUTSIDE the `available` gate on purpose: which servers
+              are configured and whether they connect is a fact about the
+              machine, and it is still true — still worth showing — for a chat
+              whose own breakdown could not be read. */}
+          <div className="ctx-mcp-head">
+            <SectionLabel>MCP servers</SectionLabel>
+            {healthLoading && servers.length > 0 && (
+              <StatusPill status="running">Checking</StatusPill>
+            )}
+            {!healthLoading && worst && summary && (
+              <StatusPill status={worst}>{summary}</StatusPill>
+            )}
+          </div>
+
+          {healthLoading && servers.length === 0 && (
+            <div className="ctx-list">
+              <Skeleton /><Skeleton /><Skeleton />
+            </div>
+          )}
+
+          {healthFailed && (
+            <StateBlock
+              variant="error"
+              title="Couldn't check MCP servers"
+              hint={`GET /api/chat/threads/${threadId ?? ""}/mcp/health failed.`}
+              action={<Button variant="ghost" onClick={() => void load(true)}>Try again</Button>}
+            />
+          )}
+
+          {!healthFailed && health && !health.available && (
+            <StateBlock
+              title="MCP health is unavailable"
+              hint={health.reason || "`claude mcp list` could not be run on this host."}
+            />
+          )}
+
+          {!healthFailed && !healthLoading && servers.length === 0 && health?.available && (
+            <StateBlock
+              title="No MCP servers configured"
+              hint="Add one with `claude mcp add <name> <command>`, then refresh."
+            />
+          )}
+
+          {servers.length > 0 && (
+            <div className={`ctx-list${mcpOverflow ? " ctx-list--scroll" : ""}`}>
+              {servers.map((s) => {
+                const row = (
+                  <Row
+                    label={s.name}
+                    sub={<ServerSub row={s} />}
+                    tokens={s.tokens}
+                    window={win}
+                    hue={catFor(s.key)}
+                  />
+                );
+                return (
+                  <div key={s.key}>
+                    {s.tools.length > 0 ? (
+                      <button
+                        type="button"
+                        className={`ctx-expand${openServer === s.key ? " is-open" : ""}`}
+                        aria-expanded={openServer === s.key}
+                        onClick={() => setOpenServer((v) => (v === s.key ? null : s.key))}
+                      >
+                        <ChevronRight size={14} strokeWidth={1.8} aria-hidden className="ctx-expand__chev" />
+                        {row}
+                      </button>
+                    ) : (
+                      // A server whose tools never loaded — the failing ones —
+                      // has nothing to expand onto. A plain row, not a disabled
+                      // control: a control that opens onto nothing is worse
+                      // than no control, and rule 10 has no cursor for "inert".
+                      <div className="ctx-expand ctx-expand--leaf">
+                        <span className="ctx-expand__chev" aria-hidden />
+                        {row}
                       </div>
-                    ))}
+                    )}
+                    {/* Why it is broken, in the CLI's words. Always visible
+                        rather than behind a disclosure: this is the sentence
+                        the operator opened the panel to find. */}
+                    {s.health?.detail && <div className="ctx-detail">{s.health.detail}</div>}
+                    {openServer === s.key && s.tools.length > 0 && (
+                      <div className="ctx-sublist">
+                        {s.tools.map((t) => (
+                          <Row key={t.name} label={t.name} tokens={t.tokens} window={win} />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </>
-              )}
+                );
+              })}
+            </div>
+          )}
 
+          {data.available && (
+            <>
               {(data.memory?.length ?? 0) > 0 && (
                 <>
                   <SectionLabel>Memory files</SectionLabel>
@@ -232,10 +365,14 @@ export default function ContextModal({
           )}
 
           <div className="ctx-foot">
-            <button type="button" className="ctx-refresh" onClick={() => void load()} disabled={loading}>
+            <button type="button" className="ctx-refresh" onClick={() => void load(true)} disabled={loading || healthLoading}>
               <RefreshCw size={13} strokeWidth={1.8} aria-hidden />
-              {loading ? "Reading" : "Refresh"}
+              {loading || healthLoading ? "Reading" : "Refresh"}
             </button>
+            {/* Dated, because the reading may be a cached one. An undated
+                number that might be five minutes old is worse than a slow
+                fresh one. */}
+            {age && <span className="ctx-foot__age">{age}</span>}
             {data.model && <span className="ctx-foot__model">{data.model}</span>}
           </div>
         </div>
