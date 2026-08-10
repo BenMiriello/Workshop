@@ -223,7 +223,7 @@ This is the discoverability argument in reverse: the slash surface stops being a
 menu of features and becomes a **map to the controls**, which is exactly what
 someone typing a command they remember from the CLI needs.
 
-## 7. What needs your decision
+## 7. BUILT (was: what needs your decision)
 
 1. **The removals in §3** ("Remove, proposed"): `/delete`, `/expand`, `/tasks`,
    `/inbox`, `/deploy`, `/help`, `/cost`. All are duplicated by visible controls.
@@ -232,3 +232,74 @@ someone typing a command they remember from the CLI needs.
 3. **How far to take MCP** (§5): breakdown only, or breakdown plus a management
    screen.
 4. **The autonomy brake** — see below; separate question, one-line answer.
+
+
+---
+
+# What was actually built (2026-08-10, `b771cb0`)
+
+The operator approved the removals and went further: "remove the slash commands
+button and drop up like remove the code and ui and everything."
+
+## The command surface
+
+Deleted: the `/` button, the drop-up, its keyboard navigation, and the whole
+catalogue module. Mentions were lifted out into `mentions.ts` first — they are a
+different thing, naming an AGENT to answer, which no other control expresses.
+
+Kept, **typed only, never suggested**: `/compact`, `/clear`, `/new`. `/new` opens
+the same confirm dialog the toolbar button does, rather than abandoning a
+conversation on four keystrokes. Anything else beginning with `/` is an ordinary
+message — this chat is not a terminal. A retired command gets a free local line
+naming the control that took its job, so the slash surface is now a map to the
+UI instead of a menu of features.
+
+## The context modal
+
+Opened from the meter ring, closed with Esc or the X. A stacked bar of what is
+filling the window, then the categories, then MCP servers with their per-turn
+cost (expandable to their tools), then memory files, skills and subagents.
+Compact and Clear at the bottom.
+
+Backed by `GET /chat/threads/{id}/context/detail`, a SIDE QUERY that claims no
+run, writes no run event and appends no message. Verified end to end against a
+real thread: 43,004 tokens against a 1M window, 3 memory files, 16 skills, 2
+subagents, 1 MCP server.
+
+## MCP: what is now known, and what management would take
+
+`claude mcp list` enumerates every configured server with its transport and
+health. Run on this machine today:
+
+| server | state |
+|---|---|
+| claude.ai Google Drive | connected |
+| plaid | connected |
+| claude.ai Slack, Google Calendar, Gmail | needs authentication |
+| plugin:discord, google-docs, playwright | **failing to connect** |
+
+**Three servers are broken and two are unauthenticated, and nothing in the app
+says so.** That is a better first feature than on/off switches: a server that
+fails to connect costs a startup attempt on turns that try to use it and returns
+nothing, silently.
+
+Per-chat enable/disable IS feasible, and the mechanism is the CLI's own:
+`--mcp-config <json>` plus `--strict-mcp-config` ("only use MCP servers from
+--mcp-config, ignoring all other MCP configurations"). The catch is in that
+word *only*: strict mode means we must supply the FULL set we want, including the
+claude.ai servers we hold no specs for. `claude mcp list` gives the enumeration
+needed to rebuild that set, so it is real work rather than a blocker.
+
+Note also that the CLI reports MCP tools as **deferred** — they are not all
+loaded eagerly, which is why one connected server cost 824 tokens rather than
+thousands. The tax is smaller than feared, which is itself an argument for
+showing the number before building switches to reduce it.
+
+**Recommendation, in order:**
+
+1. *(built)* show the per-server cost in the context modal
+2. surface health — three broken servers are a live bug nobody can see
+3. only then per-chat toggles, via `--mcp-config` + `--strict-mcp-config`
+
+Step 3 changes what tools a turn can reach. It should not be built on a guess
+about whether the token cost bothers anyone, now that the cost is on screen.
