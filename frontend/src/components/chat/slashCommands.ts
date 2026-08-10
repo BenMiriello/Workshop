@@ -72,23 +72,58 @@ export function buildSlashCommands({
     { name: "deploy", desc: "Open deploys for this project (or the index)", available: true, kind: "local", run: actions.openDeploys },
     { name: "compact", desc: "Summarize + compact the conversation to free up context", available: !compacting, kind: "local", run: actions.compact },
 
-    // THESE THREE ARE ABOUT THE SESSION, and every chat has a session now. They
-    // were gated on `isBuild` back when only a build chat ran a CLI session at
-    // all; that stopped being true, and the gate stayed. So the operator could
-    // not ask an ordinary chat what was in its context window or what it had
-    // cost — the two questions most likely to be asked of exactly that chat.
-    // The build-only entries below are a different case and stay: they are about
-    // a project's working tree, not about this conversation.
+    // WHAT SURVIVED THE MEASUREMENT. Every passthrough was run against the real
+    // CLI on 2026-08-10 in the mode this chat actually uses
+    // (`claude -p --output-format stream-json`). Most of the catalogue did not
+    // work at all — see UNSUPPORTED_PASSTHROUGH below. These are the ones that
+    // returned something real.
+    //
+    // `/context` is the prize: it returns a full markdown breakdown (tokens by
+    // category, MCP tools per server, memory files, skills), which is why it is
+    // worth a UI of its own rather than a wall of table in the transcript.
     { name: "context", desc: "Show what's currently in the context window", available: hasThread, kind: "passthrough" },
-    { name: "cost", desc: "Show token usage and plan limits", available: hasThread, kind: "passthrough" },
-    { name: "model", desc: "Show or switch the model", available: hasThread, kind: "passthrough" },
-    { name: "memory", desc: "Show the agent's memory (CLAUDE.md)", available: isBuild, kind: "passthrough" },
+    // These two are not really commands, they are TASKS the CLI runs as a turn,
+    // which is why they work when the TUI-only ones do not. Build only, because
+    // both act on a project's working tree.
     { name: "init", desc: "Generate a CLAUDE.md for this project", available: isBuild, kind: "passthrough" },
     { name: "review", desc: "Review a pull request", available: isBuild, kind: "passthrough" },
-    { name: "status", desc: "Show session + account status", available: isBuild, kind: "passthrough" },
-    { name: "agents", desc: "List configured subagents", available: isBuild, kind: "passthrough" },
-    { name: "mcp", desc: "Show connected MCP servers", available: isBuild, kind: "passthrough" },
   ];
+}
+
+// Commands the CLI does NOT run outside its interactive TUI. Measured, not
+// assumed: each of these was sent to the real CLI in this chat's mode and
+// answered, verbatim, "/<name> isn't available in this environment."
+//
+// They were in the catalogue for months, offered in the autocomplete, and every
+// one cost a whole turn — a spawned process and a full prompt — to print that
+// sentence. `/cost` and `/usage` are a near miss in the same family: they run,
+// but answer "You are currently using your subscription to power your Claude
+// Code usage" with no numbers in it at all, which is worse than nothing because
+// it looks like an answer. The Usage page has the real figures.
+//
+// Anything here is answered LOCALLY and instantly instead of being sent.
+export const UNSUPPORTED_PASSTHROUGH: Record<string, string> = {
+  model: "Use the model picker in the toolbar.",
+  mcp: "Not available here.",
+  agents: "Not available here.",
+  memory: "Not available here.",
+  status: "Not available here.",
+  doctor: "Not available here.",
+  export: "Not available here.",
+  resume: "Open the conversation from the chat picker.",
+  cost: "See the Usage page for real numbers. The CLI's own answer has none.",
+  usage: "See the Usage page for real numbers. The CLI's own answer has none.",
+};
+
+/** The plain answer for a command this environment cannot run, or null if it can
+ *  run (or is not a bare command at all). Keeps a wasted turn from being spent
+ *  to print an error the client already knows. */
+export function unsupportedCommand(input: string): string | null {
+  const text = input.trim();
+  if (!text.startsWith("/") || text.includes("\n")) return null;
+  const name = text.slice(1).split(/\s/)[0].toLowerCase();
+  const why = UNSUPPORTED_PASSTHROUGH[name];
+  return why ? `/${name} doesn't work in Workshop chat. ${why}` : null;
 }
 
 // What the composer's current text means for the two type-ahead pickers.

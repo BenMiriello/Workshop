@@ -4,6 +4,7 @@ import type { QueuedMessage } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
 import { sendFailureText } from "./sendFailure";
 import { planSend } from "./sendPlan";
+import { unsupportedCommand } from "./slashCommands";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import { committedMessages } from "./transcriptBlocks";
 import type { MessageQueue } from "./useMessageQueue";
@@ -260,6 +261,12 @@ export function useSendPipeline({
     // waiting, so it would neither compact nor read as a message.
     if (text === "/compact") { void compact(); return; }
     if (text === "/clear") { void clear(); return; }
+    // A command this environment cannot run is answered HERE, for free. Sending
+    // it spawned a process and spent a full prompt to have the CLI reply
+    // "/mcp isn't available in this environment" — measured, on 2026-08-10, for
+    // most of the catalogue this app was advertising in its own autocomplete.
+    const unsupported = unsupportedCommand(text);
+    if (unsupported) { setErr(unsupported); return; }
     dispatchSend(text, newClientId());
   }, [setErr, onSend, compact, clear, dispatchSend]);
 
