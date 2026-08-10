@@ -22,7 +22,26 @@ export default function EffortMeter({
   onSelect: (level: string) => void;
 }) {
   const ordered = orderEfforts(levels);
-  if (!ordered.length) return null;
+  // The model has no effort control. This is NOT nothing: the default chat model
+  // (Haiku 4.5) is one of these, so returning null here hid the control on
+  // exactly the chat the operator opens first, and the feature read as missing.
+  //
+  // So it stays in the row, empty and muted, saying which model it is waiting
+  // on. No menu, because there is nothing to pick — a menu of one disabled row
+  // is a promise that picking is possible.
+  if (!ordered.length) {
+    return (
+      <span
+        className="chat-effort is-unavailable"
+        title="Effort isn't available on this model. Switch models to set it."
+        aria-label="Effort: not available on this model"
+      >
+        {[0, 1, 2, 3, 4].map((i) => (
+          <span key={i} aria-hidden className="chat-effort__bar" />
+        ))}
+      </span>
+    );
+  }
 
   const at = ordered.indexOf(value);
   // An unrecognised value fills nothing rather than guessing a position.

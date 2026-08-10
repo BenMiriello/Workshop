@@ -1057,6 +1057,11 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-effort__bar:nth-child(4) { height: 0.95rem; }
 .chat-effort__bar:nth-child(5) { height: 1.1rem; }
 .chat-effort__bar.is-on { background: var(--accent); }
+/* A model with no effort control. Present so the control is discoverable, dimmed
+   so it does not read as a level of zero, and `default`-cursor because there is
+   nothing to click (never `not-allowed` — see the design system's rule 10). */
+.chat-effort.is-unavailable { cursor: default; opacity: 0.45; }
+.chat-effort.is-unavailable:hover { background: transparent; }
 
 /* Permission mode: the same quiet trigger as the model picker, with an icon
    because the labels ("Manual", "Edit automatically") are longer than a model
