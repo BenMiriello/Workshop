@@ -1823,12 +1823,18 @@ a.ws-btn { text-decoration: none; }
 .ctx-row__tokens { text-align: right; font-variant-numeric: tabular-nums; }
 .ctx-row__pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 
-/* An MCP server opens onto its tools. The whole row is the control. */
+/* An MCP server opens onto its tools. The whole row is the control.
+   Flex, not block: the caret is part of the row it opens, on the same line as
+   the name. As a block the caret (inline) and the row (a grid, therefore a
+   block box) could not share a line, so the chevron sat stranded above. */
 .ctx-expand {
-  display: block; width: 100%; text-align: left;
+  display: flex; align-items: center; gap: var(--space-1);
+  width: 100%; text-align: left;
   background: none; border: 0; padding: 0; color: inherit; font: inherit;
   cursor: pointer; border-radius: var(--radius-sm);
 }
+.ctx-expand .ctx-row { flex: 1 1 auto; min-width: 0; }
+.ctx-expand__chev { flex: 0 0 auto; }
 .ctx-expand:hover { background: var(--bg-inset); }
 .ctx-expand__chev { transition: transform var(--motion-fast) ease; color: var(--muted); }
 .ctx-expand.is-open .ctx-expand__chev { transform: rotate(90deg); }

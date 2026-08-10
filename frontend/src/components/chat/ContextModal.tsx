@@ -4,7 +4,7 @@ import {
   Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock, catFor,
 } from "../../ui";
 import {
-  contextHeadline, contextSlices, formatPct, formatTokens, mcpTotal,
+  contextHeadline, contextSlices, formatPct, formatTokens,
   type ContextDetail,
 } from "./contextBreakdown";
 
@@ -148,7 +148,9 @@ export default function ContextModal({
 
           {data.available && (
             <>
-              <SectionLabel>What is using it</SectionLabel>
+              {/* No label over this list. It is the first thing under the bar
+                  that the bar is a picture of — naming it said nothing the
+                  reader did not already have. */}
               <div className="ctx-list">
                 {slices.map((s) => (
                   <Row key={s.key} label={s.key} tokens={s.tokens} window={win} hue={s.hue} />
@@ -158,13 +160,11 @@ export default function ContextModal({
 
               {mcp.length > 0 && (
                 <>
-                  {/* The one line here that is actionable. An MCP server's tools
-                      are a standing tax on every turn, paid whether or not they
-                      are ever called, and until this panel existed it was
-                      invisible. */}
-                  <SectionLabel>
-                    MCP servers ({mcp.length}, {formatTokens(mcpTotal(data))} every turn)
-                  </SectionLabel>
+                  {/* Just the name. The count and total used to ride in the
+                      label, which read as a summary of a list that is already
+                      right there with its own numbers — and said "1, 872
+                      every turn" over a single row. */}
+                  <SectionLabel>MCP servers</SectionLabel>
                   <div className="ctx-list">
                     {mcp.map((s) => (
                       <div key={s.server}>

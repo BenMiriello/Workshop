@@ -47,6 +47,16 @@ export function Modal({
   // OverlayHost; <body> is the fallback for entries with no shell.
   const host = useOverlayHost();
 
+  // FOCUS IS TAKEN ONCE, WHEN THE DIALOG OPENS — not again on every render.
+  // This effect used to depend on `onClose`, which callers pass as an inline
+  // arrow, so any parent re-render (a poll landing, a refresh finishing) tore
+  // the effect down and set it up again: focus jumped back to the dialog's
+  // first control and its focus ring reappeared on its own, seconds after the
+  // operator had clicked it away. The handler is read through a ref so the
+  // listener stays current without the effect re-running.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
   useEffect(() => {
     if (!open) return;
     lastFocus.current = document.activeElement as HTMLElement | null;
@@ -62,7 +72,7 @@ export function Modal({
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onClose();
+        closeRef.current();
         return;
       }
       if (e.key === "Tab") {
@@ -84,7 +94,7 @@ export function Modal({
       document.removeEventListener("keydown", onKey);
       lastFocus.current?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
