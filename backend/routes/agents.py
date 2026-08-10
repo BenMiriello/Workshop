@@ -89,7 +89,9 @@ async def adopt_agent_group(body: AdoptGroupIn):
 def _apply_group_to_project(project_slug: str | None, defaults: dict,
                             adopted: list[str]) -> bool:
     """Land a group's non-agent half on the project record: its `scope_defaults`
-    (autonomy preset + depth) and the adopted slugs on the scope's resident roster.
+    (the autonomy preset) and the adopted slugs on the scope's resident roster.
+    A group's `scope_defaults.depth`, if a template still carries one, is ignored:
+    project autonomy has no depth any more, because no sweep ever read it.
     A group carries settings, not just a member list (ask D4); this is where the
     settings half goes. No project named, nothing to apply (a user-scope adoption
     has no project record to write).
@@ -100,7 +102,6 @@ def _apply_group_to_project(project_slug: str | None, defaults: dict,
     if not project_slug or (not defaults and not adopted):
         return False
     preset = defaults.get("autonomy")
-    depth = defaults.get("depth")
     if preset is not None and preset not in triggers.PRESETS:
         raise HTTPException(400, f"unknown autonomy preset in group: {preset}")
     from routes import projects as projects_route
@@ -116,8 +117,6 @@ def _apply_group_to_project(project_slug: str | None, defaults: dict,
             "mode": triggers.project_mode_from_triggers(norm),
             "triggers": norm,
         })
-    if depth in ("quick", "standard", "deep"):
-        autonomy["depth"] = depth
     proj["autonomy"] = autonomy
     roster = [s for s in (proj.get("agents") or []) if isinstance(s, str)]
     proj["agents"] = roster + [s for s in adopted if s not in roster]

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Gauge, Compass, FileStack } from "lucide-react";
+import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Compass, FileStack } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Project } from "@shared/types";
 import {
@@ -29,7 +29,7 @@ import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTr
 import { latitudeDesc, type Latitude } from "../lib/tasks";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
-// GET /api/agents/ (autonomy preset + role + depth + latitude). Kept local so the shared
+// GET /api/agents/ (autonomy preset + role + latitude). Kept local so the shared
 // UnifiedAgent type is untouched; every existing UnifiedAgent field still applies.
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
 type AutonomyMode = "reactive" | "supervised" | "autonomous";
@@ -39,8 +39,6 @@ type RosterAgent = UnifiedAgent & {
   // the preset above is the trigger cadence, kept for backward-compat.
   autonomy_mode?: AutonomyMode;
   role?: string | null;
-  depth?: "quick" | "standard" | "deep";
-  fanout?: "off" | "read-only";
   // null = this agent scope sets no latitude, so its work inherits the default.
   // The chip is omitted in that case rather than rendering "standard": an agent
   // that never chose a latitude must not look like one that chose the default.
@@ -92,7 +90,7 @@ type TemplateGroup = {
   name: string;
   description: string;
   members: { template: string }[];
-  scope_defaults?: { autonomy?: string; depth?: string };
+  scope_defaults?: { autonomy?: string };
 };
 type TemplateCatalog = { templates: AgentTemplate[]; groups: TemplateGroup[] };
 
@@ -455,16 +453,13 @@ export default function Agents() {
                         : <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>no role</span>}
                     </Row>
                     <p className="ws-card__meta">{a.purpose || (isBuilder ? (a.project_slug ? `linked to ${a.project_slug}` : "freestanding") : "assistant")}</p>
-                    {(a.autonomy_mode || a.autonomy || a.depth || a.latitude) && (
+                    {(a.autonomy_mode || a.autonomy || a.latitude) && (
                       <Row wrap style={{ gap: "var(--space-1)", marginBottom: "var(--space-1)" }}>
                         {/* Autonomy mode is the primary axis; if unset, fall
                             back to the legacy preset badge for the transition. */}
                         {a.autonomy_mode
                           ? <Badge>{a.autonomy_mode}</Badge>
                           : a.autonomy && <Badge>{presetIcon(a.autonomy)}{a.autonomy}</Badge>}
-                        {a.depth && (
-                          <Badge><Gauge size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />{a.depth}</Badge>
-                        )}
                         {a.latitude && (
                           <span title={latitudeDesc(a.latitude)}>
                             <Badge>

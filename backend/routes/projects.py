@@ -620,12 +620,11 @@ class TriggersIn(BaseModel):
     # `fanout` was accepted here and stored, and nothing ever read it back — the
     # sweep does not fan out to helper agents and never consulted the field. It
     # is gone rather than kept as a setting that does nothing
-    # (docs/system-honesty-plan-2026-08-10.md, item 19). `depth` is equally
-    # unconsumed by any sweep, but /api/tasks/autonomy-scopes still reports it
-    # per scope, so it stays until that readout goes with it.
+    # (docs/system-honesty-plan-2026-08-10.md, item 19). `depth` went with it for
+    # the same reason: no sweep ever consulted it either, and the one readout
+    # that reported it (/api/tasks/autonomy-scopes) no longer does.
     preset: str | None = None
     cron: str | None = None
-    depth: str | None = None
     # Decision rights for work in this tree: strict | standard | open. Null (or
     # "standard", which is never stored) means inherit — see services/latitude.py.
     latitude: str | None = None
@@ -718,7 +717,6 @@ async def get_autonomy(slug: str) -> dict:
     snap = _queue_snapshot(_project_dir(slug))
     return {
         "autonomy": preset,
-        "depth": autonomy.get("depth") or "standard",
         # Stays null when unset: this scope is one level of the latitude cascade,
         # not the bottom of it, so a defaulted value here would read as a choice.
         "latitude": latitude_svc.coerce(autonomy.get("latitude")),
@@ -753,8 +751,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     if not proj:
         raise HTTPException(404, f"project not found: {slug}")
     mode = triggers.project_mode_from_triggers(norm)
-    depth = body.depth if body.depth in ("quick", "standard", "deep") else \
-        ((proj.get("autonomy") or {}).get("depth") or "standard")
     limits = body.limits if body.limits is not None else \
         ((proj.get("autonomy") or {}).get("limits") or {})
     # Emit-only-when-non-default (latitude.py): `standard` is stored as null so a
@@ -771,7 +767,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     proj["autonomy"] = {
         "mode": mode,
         "preset": preset,
-        "depth": depth,
         "latitude": lat,
         "limits": limits,
         "triggers": norm,
@@ -781,7 +776,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     running, _ = _run_state(slug)
     return {
         "autonomy": preset,
-        "depth": depth,
         "latitude": lat,
         "limits": limits,
         "triggers": norm,

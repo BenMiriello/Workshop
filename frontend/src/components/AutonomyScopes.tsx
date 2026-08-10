@@ -13,8 +13,8 @@ import { scopeLabel, scopeHref } from "../lib/tasks";
 // inline Segmented with an explicit Save (config write: never commit-on-change,
 // per the design system), the queue counts as status badges, an awaiting badge,
 // a running indicator, and a project-scope Run now. The full per-scope editor
-// (depth/fanout/limits/cron/triggers) lives on the scope's detail page, linked
-// from each row title.
+// (limits/cron/triggers) lives on the scope's detail page, linked from each row
+// title.
 
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
 
@@ -23,7 +23,6 @@ type ScopeRow = {
   kind: "project" | "agent";
   title: string;
   preset: Preset;
-  depth: string;
   running: boolean;
   queue: { ready: number; doing: number; in_review: number; blocked: number };
   awaiting_count: number;
@@ -152,7 +151,6 @@ function ScopeCard({ row, onSaved }: { row: ScopeRow; onSaved: () => void }) {
               <StatusDot status={row.running ? "running" : "stopped"}>
                 {row.running ? "running" : "idle"}
               </StatusDot>
-              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>depth: <strong>{row.depth}</strong></span>
               {row.last_run && (
                 <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                   last run {row.last_run.status}{row.last_run.ended_at ? ` · ${fmtTs(row.last_run.ended_at)}` : ""}

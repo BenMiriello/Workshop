@@ -215,9 +215,12 @@ def _agent_run_state(agent_id: str) -> tuple[bool, dict | None]:
 async def autonomy_scopes() -> dict:
     """Every manageable autonomy scope, summarized consistently with the
     per-scope autonomy endpoints. Each row:
-      {scope_key, kind, title, preset, depth, running,
+      {scope_key, kind, title, preset, running,
        queue:{ready,doing,in_review,blocked}, awaiting_count,
        last_run:{id,status,ended_at}|null}
+
+    No `depth`: it was reported here and rendered in two places, and read by
+    nothing that runs (docs/system-honesty-plan-2026-08-10.md item 19).
     Bounded: one pass over the projects registry + the agents roster."""
     # Lazy imports keep this route free of any module-load ordering concern with
     # the project/agent routers (neither imports tasks_all, so there is no cycle).
@@ -243,7 +246,6 @@ async def autonomy_scopes() -> dict:
             "kind": "project",
             "title": raw.get("title") or slug,
             "preset": preset,
-            "depth": autonomy.get("depth") or "standard",
             "running": running,
             "queue": {"ready": q["ready"], "doing": q["doing"],
                       "in_review": q["in_review"], "blocked": q["blocked"]},
@@ -265,7 +267,6 @@ async def autonomy_scopes() -> dict:
             "kind": "agent",
             "title": rec.get("name") or slug,
             "preset": preset,
-            "depth": rec.get("depth") or "standard",
             "running": running,
             "queue": {"ready": q["ready"], "doing": q["doing"],
                       "in_review": q["in_review"], "blocked": q["blocked"]},
