@@ -73,17 +73,24 @@ export function ElidedContent({
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { setOpen(!!expanded); }, [expanded]);
 
-  // Does the content exceed the clamp? Measured against the full content height
-  // (`scrollHeight`, which reports the whole block even while it is clamped), so
-  // this is correct whether the block is currently open or collapsed — the most
-  // recent turn opens expanded and still needs its Show less. Re-runs on content
-  // change and, via the observer, on any width change that re-wraps the text.
+  // Does the content run PAST the clamp by enough to be worth clamping?
+  // Measured against the full content height (`scrollHeight`, which reports the
+  // whole block even while it is clamped), so it is correct whether the block is
+  // open or collapsed — the most recent turn opens expanded and still needs its
+  // Show less. Re-runs on content change and, via the observer, on any width
+  // change that re-wraps the text.
+  //
+  // The threshold is previewLines + 1, not previewLines: clamping a block that
+  // is only ONE line over hides one line and adds a Show more row in its place —
+  // no shorter, just different. So it only clamps once there are 2+ lines to
+  // hide. (Line-clamp itself, in CSS, always ends on a whole line box, so a
+  // clamped block never cuts mid-line.)
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const measure = () => {
       const lh = parseFloat(getComputedStyle(el).lineHeight) || 20;
-      setOverflowing(el.scrollHeight > lh * cfg.previewLines + 2);
+      setOverflowing(el.scrollHeight > lh * (cfg.previewLines + 1) + 2);
     };
     measure();
     const ro = new ResizeObserver(measure);

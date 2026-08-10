@@ -825,14 +825,19 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--accent); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-more:hover { text-decoration: underline; }
-/* Length clamp: show the first N as-rendered lines and END there. The cut is a
-   max-height in `lh` units, so it lands on the Nth line the reader actually sees
-   at the current width and re-wraps for free when the column changes — no
-   character estimate, no mid-block ellipsis. The bottom-row .chat-more is the
-   only control; it appears only when the block overflowed this clamp. */
+/* Length clamp: show the first N WHOLE rendered lines and end there. Uses
+   line-clamp, not a max-height cut: max-height lands on an arbitrary pixel and
+   slices through a line (worse on markdown, where paragraph margins mean N line
+   heights is not N lines of text), whereas line-clamp always ends on a line
+   box — never mid-line — and re-wraps for free when the column changes. The
+   bottom-row .chat-more appears only when the block was clamped, and the JS
+   only clamps when there are 2+ lines to hide (a single hidden line would just
+   be replaced by the Show more row). */
 .chat-clamp.is-clamped {
-  max-height: calc(var(--clamp-lines, 10) * 1.5em);  /* fallback for no `lh` */
-  max-height: calc(var(--clamp-lines, 10) * 1lh);    /* exact: the used line box */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--clamp-lines, 10);
+  line-clamp: var(--clamp-lines, 10);
   overflow: hidden;
 }
 /* Legible on the accent-filled user bubble. */
