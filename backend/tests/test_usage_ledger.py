@@ -37,10 +37,55 @@ def test_window_usage_sums_only_in_window(ledger):
     assert u["by_project"] == {"alpha": 150, "beta": 30}
 
 
-def test_chats_are_exempt_by_never_recording(ledger):
-    # Nothing recorded -> zero usage. (Chat turns simply never call record().)
-    u = ledger.window_usage(now=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc))
-    assert u["app"] == 0 and u["by_project"] == {}
+def test_chat_rows_are_accounted_but_not_admitted(ledger):
+    """Chat spend is REPORTED and is excluded from ADMISSION.
+
+    This is the bug that stopped the automated loop: chat turns write role="chat"
+    rows to the same ledger, admission summed the window with no role filter, and
+    the operator's own conversation refused every autonomous sweep. Live at the
+    time: 19.7M chat tokens against a 3.25M autonomous ceiling, so `admit` said no
+    to everything. A ledger full of chat rows must never refuse a worker."""
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    ledger.update_config(app_total=1_000_000, autonomy_budget_fraction=1.0)
+    # One conversation, wildly over the whole app budget.
+    for _ in range(20):
+        ledger.record("workshop", 500_000, role="chat", chat="thread-1",
+                      ts=_iso(now - timedelta(minutes=10)))
+
+    # Reporting still sees every token.
+    assert ledger.window_usage(now=now)["app"] == 10_000_000
+    assert ledger.status(now=now)["app_used"] == 10_000_000
+    # Admission does not.
+    assert ledger.window_usage(
+        now=now, exclude_roles=ledger.ADMISSION_EXCLUDED_ROLES)["app"] == 0
+    ok, reason = ledger.can_admit("workshop", now=now)
+    assert ok, reason
+
+
+def test_worker_rows_still_gate_admission(ledger):
+    """Excluding chat must not make admission toothless: real autonomous spend
+    still refuses, or the exclusion would have traded one lie for another."""
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    ledger.update_config(app_total=1_000_000, autonomy_budget_fraction=1.0)
+    ledger.record("workshop", 900_000, role="worker", ts=_iso(now - timedelta(minutes=5)))
+    ledger.record("workshop", 5_000_000, role="chat", ts=_iso(now - timedelta(minutes=5)))
+    ok, reason = ledger.can_admit("workshop", now=now)
+    assert not ok
+    # The reason states the real numbers, not the reserved fraction. The old
+    # string said "autonomous budget 65% used", where 65 was the config fraction.
+    assert "900000" in reason and "1000000" in reason
+    assert "65%" not in reason and "%" not in reason
+    assert "—" not in reason
+
+
+def test_a_row_with_no_role_still_counts_toward_admission(ledger):
+    """Ledger rows predating the role field are autonomous spend; dropping them
+    from admission would silently uncap every historical sweep."""
+    now = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+    ledger.update_config(app_total=1_000_000, autonomy_budget_fraction=1.0)
+    ledger.record("workshop", 900_000, ts=_iso(now - timedelta(minutes=5)))
+    ok, _ = ledger.can_admit("workshop", now=now)
+    assert not ok
 
 
 def test_prune_drops_old_entries(ledger):
@@ -178,4 +223,8 @@ def test_can_admit_reserves_interactive_headroom(ledger):
     assert ok is True  # 500 < 650 ceiling
     ledger.record("solo", 200, ts=_iso(now - timedelta(minutes=30)))
     ok, reason = ul.can_admit("solo", now=now)
-    assert ok is False and "headroom" in reason  # 700 > 650 ceiling
+    # 700 > 650 ceiling. The refusal states the real numbers: it used to print
+    # the reserved FRACTION ("autonomous budget 65% used"), which is a config
+    # value, not usage, and told the operator nothing about why it stopped.
+    assert ok is False
+    assert "700" in reason and "650" in reason

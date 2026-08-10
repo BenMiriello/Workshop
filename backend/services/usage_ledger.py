@@ -18,8 +18,13 @@ Two separable concerns (kept separate on purpose):
    below nominal, weighted. Single resource (tokens), so this is plain weighted
    max-min, NOT DRF.
 
-CHATS ARE EXEMPT. Interactive chat turns are not Jobs and are never recorded
-here, so they are naturally unmetered. Only autonomous sweeps write to the ledger.
+CHATS ARE EXEMPT FROM ADMISSION, NOT FROM ACCOUNTING. Interactive chat turns
+DO write here (role="chat") so the operator can see what conversation cost, but
+they are excluded from the admission window (`ADMISSION_EXCLUDED_ROLES`). They
+have to be: chat is declared unmetered and is never gated, so counting its spend
+against the autonomous ceiling meant the operator's own conversation refused
+every sweep. Reporting (`window_usage`, `status`, `timeseries`) still counts
+every row; only `can_admit` filters.
 
 Pure stdlib so it is importable both inside the FastAPI app and from shell
 writers (`python -m services.usage_ledger record ...`).
@@ -35,6 +40,12 @@ from pathlib import Path
 from typing import Iterable
 
 WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
+
+# Roles whose spend does NOT count toward the autonomous admission ceiling.
+# Interactive chat is never gated by admission, so counting it there let the
+# operator's own conversation refuse every autonomous sweep. Reporting is
+# unaffected: only `can_admit` passes this to `window_usage`.
+ADMISSION_EXCLUDED_ROLES = ("chat",)
 
 LEDGER_PATH = Path(os.environ.get(
     "WORKSHOP_USAGE_LEDGER",
@@ -143,14 +154,22 @@ def _read_entries() -> list[dict]:
     return out
 
 
-def window_usage(now: datetime | None = None, window_s: int = WINDOW_S) -> dict:
-    """Token usage over the trailing window: app-wide total + per-project."""
+def window_usage(now: datetime | None = None, window_s: int = WINDOW_S,
+                 exclude_roles: Iterable[str] | None = None) -> dict:
+    """Token usage over the trailing window: app-wide total + per-project.
+
+    `exclude_roles` drops rows whose `role` is in the set. Default None counts
+    everything, so every reporting caller keeps its current numbers; only
+    `can_admit` passes ADMISSION_EXCLUDED_ROLES."""
     cutoff = (now or _now()).timestamp() - window_s
+    skip = set(exclude_roles or ())
     by_project: dict[str, int] = {}
     total = 0
     for e in _read_entries():
         t = _parse_ts(e.get("ts", ""))
         if t is None or t < cutoff:
+            continue
+        if skip and e.get("role") in skip:
             continue
         tok = int(e.get("tokens") or 0)
         by_project[e.get("project", "unbound")] = by_project.get(e.get("project", "unbound"), 0) + tok
@@ -436,10 +455,11 @@ def can_admit(scope: str | None, now: datetime | None = None,
     (when set) caps one scope's borrow. We refuse once less than one nominal
     task's worth of the autonomous ceiling remains, so a task never starts on a
     sliver of budget and overshoots (its true cost is unknown until it runs).
-    Chats are never recorded here, so this never gates interactive chat, and the
-    reserved headroom is theirs to use in full. (research rec 2)"""
+    Chat rows are excluded from the window (ADMISSION_EXCLUDED_ROLES), so this
+    never gates interactive chat and interactive spend never refuses a sweep. The
+    reserved headroom is the chats' to use in full. (research rec 2)"""
     cfg = load_config()
-    usage = window_usage(now)
+    usage = window_usage(now, exclude_roles=ADMISSION_EXCLUDED_ROLES)
     app_total = float(cfg.get("app_total") or 0)
     if app_total <= 0:
         return True, "uncapped (no app_total)"
@@ -460,9 +480,9 @@ def can_admit(scope: str | None, now: datetime | None = None,
     autonomous_ceiling = app_total * fraction
     if usage["app"] + reserve > autonomous_ceiling:
         return False, (
-            f"interactive headroom reserved: autonomous budget {int(round(fraction * 100))}% used "
-            f"({usage['app']}/{int(autonomous_ceiling)} tokens in {usage['window_s']//3600}h; "
-            f"app cap {int(app_total)}, reserve {int(reserve)})")
+            f"autonomous budget spent: {usage['app']} of {int(autonomous_ceiling)} tokens "
+            f"used in the last {usage['window_s']//3600}h, and the next task needs "
+            f"{int(reserve)} more")
     if scope:
         used_scope = usage["by_project"].get(scope, 0)
         ceil = _project_params(cfg, scope).get("ceil")
