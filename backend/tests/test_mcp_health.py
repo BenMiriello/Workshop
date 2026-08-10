@@ -32,16 +32,16 @@ claude.ai Slack: https://mcp.slack.com/mcp - ! Needs authentication
 claude.ai Google Calendar: https://calendarmcp.googleapis.com/mcp/v1 - ! Needs authentication
 claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1 - ✓ Connected
 claude.ai Gmail: https://gmailmcp.googleapis.com/mcp/v1 - ! Needs authentication
-plugin:discord:discord: bun run --cwd /home/clawd-a/.claude/plugins/cache/clawd-a-plugins/discord/0.0.4 --shell=bun --silent start - ✗ Failed to connect
-plaid: node /home/clawd-a/clawdbot/plaid-mcp/server.js - ✓ Connected
+plugin:discord:discord: bun run --cwd /opt/claude/plugins/cache/example-plugins/discord/0.0.4 --shell=bun --silent start - ✗ Failed to connect
+plaid: node /opt/mcp/plaid/server.js - ✓ Connected
 google-docs: npx -y @a-bonus/google-docs-mcp - ✗ Failed to connect
 playwright: npx @playwright/mcp@latest --headless --browser chromium - ✗ Failed to connect
 """
 
 SAMPLE_PIPED = """Checking MCP server health…
 
-plugin:discord:discord: bun run --cwd /home/clawd-a/.claude/plugins/cache/clawd-a-plugins/discord/0.0.4 --shell=bun --silent start - ✘ Failed to connect — ENOENT: Executable not found in $PATH: "bun"
-plaid: node /home/clawd-a/clawdbot/plaid-mcp/server.js - ✔ Connected
+plugin:discord:discord: bun run --cwd /opt/claude/plugins/cache/example-plugins/discord/0.0.4 --shell=bun --silent start - ✘ Failed to connect — ENOENT: Executable not found in $PATH: "bun"
+plaid: node /opt/mcp/plaid/server.js - ✔ Connected
 google-docs: npx -y @a-bonus/google-docs-mcp - ✘ Failed to connect — -32000: MCP error -32000: Connection closed
 playwright: npx @playwright/mcp@latest --headless --browser chromium - ✘ Failed to connect — -32000: MCP error -32000: Connection closed
 """
@@ -73,7 +73,7 @@ class TestParseTheRealOutput:
         # not the first ":", or the name becomes "plugin".
         s = _by_name()["plugin:discord:discord"]
         assert s["kind"] == "danger"
-        assert s["target"].startswith("bun run --cwd /home/clawd-a/.claude/plugins")
+        assert s["target"].startswith("bun run --cwd /opt/claude/plugins")
 
     def test_a_command_may_contain_dashes(self):
         # The state split is the LAST " - ". `npx -y @a-bonus/...` must not be

@@ -43,6 +43,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from services import paths
 
 # ---------------------------------------------------------------------------
 # Vocabulary
@@ -56,10 +57,7 @@ TRIGGERS = ("manual", "cron", "event", "loop")
 # preserved but the enum below is what the deploy/dispatch/UI code understands.
 KINDS = ("ralph", "sweep", "deploy", "deploy-rollback", "categorize", "reason")
 
-JOBS_LOG = Path(os.environ.get(
-    "WORKSHOP_JOBS_LOG",
-    "/home/clawd-a/workshop/.runtime/jobs.jsonl",
-))
+JOBS_LOG = paths.env_path("WORKSHOP_JOBS_LOG", "jobs.jsonl")
 
 
 def _now_iso() -> str:

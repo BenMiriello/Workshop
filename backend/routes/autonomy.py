@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from services import autonomy_override, gpubroker_client, jobs
+from services import autonomy_override, gpubroker_client, jobs, paths
 from pydantic import BaseModel
 
 
@@ -39,7 +39,7 @@ router = APIRouter(tags=["autonomy"])
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 
 
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
+WORKSHOP_ROOT = paths.workshop_root()
 QUEUE_RUNNER = WORKSHOP_ROOT / "scripts" / "queue_runner.sh"
 QUEUE_WATCHDOG = WORKSHOP_ROOT / "scripts" / "queue_runner_watchdog.sh"
 QUEUE_RUNNER_LOG = WORKSHOP_ROOT / ".runtime" / "queue-runner.log"

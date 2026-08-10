@@ -5,13 +5,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
+from services import paths
 
 router = APIRouter()
 log = logging.getLogger("workshop.plaid_webhook")
 
-WEBHOOK_LOG = Path(os.environ.get("WORKSHOP_PLAID_WEBHOOK_LOG", "/home/clawd-a/workshop/.runtime/plaid-webhooks.jsonl"))
+WEBHOOK_LOG = paths.env_path("WORKSHOP_PLAID_WEBHOOK_LOG", "plaid-webhooks.jsonl")
 # Mirror events to the generic feed so the Events page in the UI shows Plaid activity.
-EVENTS_LOG = Path(os.environ.get("WORKSHOP_EVENTS_LOG", "/home/clawd-a/workshop/.runtime/events.jsonl"))
+EVENTS_LOG = paths.env_path("WORKSHOP_EVENTS_LOG", "events.jsonl")
 
 
 @router.post("")

@@ -196,7 +196,7 @@ if DIST.is_dir():
         # SECURITY: `full_path` is attacker-controlled and may contain `..` or
         # percent-encoded `..` (uvicorn does not normalize dot-segments). Resolve
         # the candidate and serve it ONLY if it stays inside DIST — otherwise a
-        # request like `/../../../home/clawd-a/.config/workshop/secrets.env` would
+        # request like `/../../../.config/workshop/secrets.env` would
         # exfiltrate secrets off disk. Containment check, then serve.
         if full_path:
             candidate = (DIST / full_path).resolve()

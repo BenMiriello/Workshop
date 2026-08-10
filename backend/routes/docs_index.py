@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
+from services import paths
 
 # Prefix is /documents, not /docs: FastAPI's built-in Swagger UI already owns
 # /docs (served at /api/docs behind the edge), which would shadow the list route.
@@ -26,7 +27,7 @@ _HEADING_RE = re.compile(r"^\s*#\s+(.+?)\s*$")
 
 
 def _root() -> Path:
-    return Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
+    return paths.workshop_root()
 
 
 def _docs_dir() -> Path:

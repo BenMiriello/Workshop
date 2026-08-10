@@ -22,10 +22,11 @@ import stat
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from services import paths
 
 SECRETS = Path(os.path.expanduser("~/.config/workshop/secrets.env"))
-RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", "/home/clawd-a/workshop/.runtime"))
-LEGACY_PLAID_TOKENS = Path("/home/clawd-a/.config/clawdbot/plaid-tokens.json")
+RUNTIME = paths.runtime_dir()
+LEGACY_PLAID_TOKENS = paths.env_path("PLAID_TOKENS_FILE", "plaid-tokens.json", base="config")
 
 
 def ensure_enc_key() -> str:

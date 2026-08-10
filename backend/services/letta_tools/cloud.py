@@ -5,13 +5,25 @@ agent's Letta turn while running. The caller sets a generous /messages timeout.
 """
 from __future__ import annotations
 
+import os as _os
+import shutil as _shutil
+from pathlib import Path as _Path
+
 
 # Inlined model IDs (sandbox can't import from llm_router)
 _MODEL_HAIKU = "claude-haiku-4-5-20251001"
 _MODEL_SONNET = "claude-sonnet-4-6"
 _MODEL_OPUS = "claude-opus-4-7"
-_CLAUDE_CLI = "/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude"
-_AUTH_ENV = "/home/clawd-a/.config/clawdbot/auth.env"
+
+# Resolved from the environment, never from one machine's layout. WORKSHOP_CLAUDE_CLI
+# pins a specific binary when several are installed; otherwise take whatever `claude`
+# is on PATH.
+_WORKSHOP_ROOT = str(_os.environ.get("WORKSHOP_ROOT") or (_Path.home() / "workshop"))
+_CLAUDE_CLI = _os.environ.get("WORKSHOP_CLAUDE_CLI") or _shutil.which("claude") or "claude"
+_AUTH_ENV = str(
+    _os.environ.get("WORKSHOP_AUTH_ENV")
+    or (_Path.home() / ".config" / "workshop" / "auth.env")
+)
 
 # Recursion + cost caps (security-audit-2026-07-18 A4). These tools spawn full
 # agentic `claude -p` turns with Bash; caller-supplied max_turns/max_iter used to
@@ -168,7 +180,7 @@ def cloud_run_claude(task: str, model: str = "haiku", redact_pii: bool = True, m
         return "ERROR: cloud-run concurrency cap (%d) reached; try again shortly" % _MAX_CONCURRENT
     try:
         proc = subprocess.run(
-            cmd, env=_build_env(), cwd="/home/clawd-a/workshop",
+            cmd, env=_build_env(), cwd=_WORKSHOP_ROOT,
             capture_output=True, text=True, timeout=600,
         )
     except subprocess.TimeoutExpired:
@@ -190,6 +202,12 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
     Use this when: a TODO.md `[ ]` item needs to be DONE, not just discussed.
     Ralph fires claude -p iteratively until reviewer.sh approves the diff.
 
+    The TODO.md this reads is the platform repo's own — this is `development`
+    work (ADR 0014), so the target is named explicitly with `--dir` rather than
+    inherited from a default. `ralph.sh` no longer has one, and it refuses the
+    platform repo outright unless WORKSHOP_DEV_MODE=1, which is reported back
+    here as "blocked: developer mode is off" instead of a bare exit code.
+
     Args:
         task_substring: Distinctive substring of the TODO.md `[ ]` line to drive.
         max_iter: Maximum Ralph iterations. Default 6.
@@ -205,7 +223,7 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
         max_iter = max(1, min(int(max_iter), _MAX_ITER_CAP))
     except (TypeError, ValueError):
         max_iter = 6
-    todo_path = Path("/home/clawd-a/workshop/TODO.md")
+    todo_path = Path(_WORKSHOP_ROOT) / "TODO.md"
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
     lines = todo_path.read_text().splitlines()
@@ -219,9 +237,10 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
         return "blocked: cloud-run concurrency cap (%d) reached; try again shortly" % _MAX_CONCURRENT
     try:
         proc = subprocess.run(
-            ["/home/clawd-a/workshop/scripts/ralph.sh", task_text,
+            [f"{_WORKSHOP_ROOT}/scripts/ralph.sh", task_text,
+             "--dir", _WORKSHOP_ROOT,
              "--max-iter", str(max_iter), "--max-wall", "900"],
-            cwd="/home/clawd-a/workshop",
+            cwd=_WORKSHOP_ROOT,
             capture_output=True, text=True, timeout=1100,
         )
     except subprocess.TimeoutExpired:
@@ -237,4 +256,8 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
         return "incomplete: wall cap hit (will retry next tick)"
     if exit_code == 3:
         return "blocked: classifier"
+    if exit_code == 4:
+        # ralph.sh's startup refusal — here, always the developer-mode gate.
+        return ("blocked: developer mode is off, so the platform repo is not a "
+                "permitted run target (set WORKSHOP_DEV_MODE=1; ADR 0014)")
     return f"failed: ralph exit {exit_code}"

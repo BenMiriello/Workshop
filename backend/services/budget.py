@@ -17,11 +17,9 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from services import paths
 
-COMPLETED_PATH = Path(os.environ.get(
-    "WORKSHOP_COMPLETED_RUNS",
-    "/home/clawd-a/workshop/.runtime/agent-runs-completed.jsonl",
-))
+COMPLETED_PATH = paths.env_path("WORKSHOP_COMPLETED_RUNS", "agent-runs-completed.jsonl")
 DEFAULT_LIMIT = 60
 WINDOW_S = 3600
 

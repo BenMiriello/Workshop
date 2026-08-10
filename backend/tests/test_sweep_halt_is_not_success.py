@@ -17,8 +17,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from services import paths
 
-RALPH = Path("/home/clawd-a/workshop/scripts/project_ralph.sh")
+RALPH = paths.scripts("project_ralph.sh")
 
 pytestmark = pytest.mark.skipif(
     not RALPH.exists() or shutil.which("jq") is None,

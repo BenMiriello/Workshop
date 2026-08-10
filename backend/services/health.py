@@ -25,9 +25,10 @@ from pathlib import Path
 from typing import Any
 
 from . import ownership
+from services import paths
 
 AUTH_ENV_PATH = Path(
-    os.environ.get("HEALTH_AUTH_ENV", "/home/clawd-a/.config/clawdbot/health-auth.env")
+    paths.env_path("HEALTH_AUTH_ENV", "health-auth.env", base="config")
 )
 
 # Health history is partitioned per owner: `.runtime/users/<owner_id>/health.*`.

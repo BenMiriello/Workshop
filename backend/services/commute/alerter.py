@@ -24,6 +24,7 @@ from typing import Any
 import httpx
 
 from . import config, scoring, timefmt
+from services import paths
 
 
 COMMUTE_CHANNEL_ID = os.environ.get(
@@ -33,10 +34,7 @@ COMMUTE_CHANNEL_ID = os.environ.get(
 
 DISCORD_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 
-MASINI_NOTIFY = Path(os.environ.get(
-    "WORKSHOP_NOTIFY_MASINI",
-    "/home/clawd-a/workshop/.runtime/notify-masini.txt",
-))
+MASINI_NOTIFY = paths.env_path("WORKSHOP_NOTIFY_MASINI", "notify-masini.txt")
 
 # We may not always have a token loaded in this process; alerts will write
 # to the queue regardless and the masini bridge can deliver them (see

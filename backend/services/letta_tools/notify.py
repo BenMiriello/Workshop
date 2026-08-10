@@ -3,7 +3,7 @@ from __future__ import annotations
 
 
 def notify_operator(text: str, channel_hint: str = "default") -> str:
-    """Append a one-line notification to the notify-masini queue.
+    """Append a one-line notification to the operator notify queue.
 
     Use this when something genuinely needs the operator's attention:
     - An alert that crosses a threshold (overspend, late commute, security)
@@ -15,16 +15,21 @@ def notify_operator(text: str, channel_hint: str = "default") -> str:
     Args:
         text: The notification message. Should be one line, action-oriented,
             with concrete specifics (numbers, paths, agent names).
-        channel_hint: Hint for which Discord channel masini should surface
-            it on. Defaults to the operator's main channel. Use "commute",
-            "finance", etc. for category routing.
+        channel_hint: Hint for which channel the bridge should surface it on.
+            Defaults to the operator's main channel. Use "commute", "finance",
+            etc. for category routing.
 
     Returns:
         Confirmation with timestamp.
     """
+    import os
     from datetime import datetime, timezone
     from pathlib import Path
-    notify_file = Path("/home/clawd-a/workshop/.runtime/notify-masini.txt")
+
+    _root = Path(os.environ.get("WORKSHOP_ROOT") or (Path.home() / "workshop"))
+    notify_file = Path(
+        os.environ.get("WORKSHOP_NOTIFY_FILE") or (_root / ".runtime" / "notify.txt")
+    )
     if not text or len(text.strip()) < 5:
         return "ERROR: text too short"
     notify_file.parent.mkdir(parents=True, exist_ok=True)

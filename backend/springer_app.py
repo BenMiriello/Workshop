@@ -38,13 +38,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from routes import birds as birds_routes
-from services import birds_analyze, springer_auth
+from services import birds_analyze, paths, springer_auth
 
 COOKIE = "springer_session"
 SECURE_COOKIES = os.environ.get("SPRINGER_SECURE_COOKIES", "1") != "0"
 SESSION_MAX_AGE = springer_auth.SESSION_TTL_DAYS * 24 * 3600
 # The birds-only production bundle (built by vite.springer.config.ts).
-DIST = Path(os.environ.get("SPRINGER_DIST", "/home/clawd-a/workshop/frontend/dist-springer"))
+DIST = paths.env_path("SPRINGER_DIST", "frontend", "dist-springer", base="root")
 INDEX = DIST / "springer.html"
 
 app = FastAPI(title="Springer Birds", docs_url=None, redoc_url=None, openapi_url=None)

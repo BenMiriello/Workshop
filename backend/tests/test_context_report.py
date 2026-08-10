@@ -53,8 +53,8 @@ SAMPLE = """## Context Usage
 
 | Type | Path | Tokens |
 |------|------|--------|
-| User | /home/clawd-a/.claude/CLAUDE.md | 1.8k |
-| Project | /home/clawd-a/workshop/CLAUDE.md | 1.8k |
+| User | /home/agent/.claude/CLAUDE.md | 1.8k |
+| Project | /home/agent/workshop/CLAUDE.md | 1.8k |
 
 ### Skills
 

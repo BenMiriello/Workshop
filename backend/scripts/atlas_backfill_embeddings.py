@@ -13,8 +13,11 @@ import sys
 import urllib.request
 from pathlib import Path
 
-DB = os.environ.get("BIRDNET_BROWSER_DB", "/home/clawd-a/birdnet/data/browser-stations.db")
-CLIPS_DIR = Path(os.environ.get("BIRDNET_CLIPS_DIR", "/home/clawd-a/birdnet/data/clips"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from services import paths  # noqa: E402
+
+DB = str(paths.env_path("BIRDNET_BROWSER_DB", "apps", "birds", "browser-stations.db"))
+CLIPS_DIR = paths.env_path("BIRDNET_CLIPS_DIR", "apps", "birds", "clips")
 ANALYZER_URL = os.environ.get("BIRDNET_ANALYZER_URL", "http://127.0.0.1:8012")
 EMBED_MODEL = "birdnet-global-6k-v2.4"
 
@@ -37,7 +40,7 @@ def pack_vec(vec) -> bytes:
 
 
 def resolve(path: str) -> str | None:
-    for root in (CLIPS_DIR, CLIPS_DIR.parent, Path("/home/clawd-a/birdnet")):
+    for root in (CLIPS_DIR, CLIPS_DIR.parent, CLIPS_DIR.parent.parent):
         cand = root / path
         if cand.exists():
             return str(cand)

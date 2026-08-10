@@ -11,12 +11,10 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
+from services import paths
 
 
-TREE_PATH = Path(os.environ.get(
-    "WORKSHOP_MEMORY_TREE",
-    "/home/clawd-a/workshop/shared/memory-tree.yaml",
-))
+TREE_PATH = paths.env_path("WORKSHOP_MEMORY_TREE", "memory-tree.yaml", base="shared")
 
 
 @lru_cache(maxsize=1)

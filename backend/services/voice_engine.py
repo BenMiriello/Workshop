@@ -25,10 +25,11 @@ import re
 import threading
 import wave
 from pathlib import Path
+from services import paths
 
 log = logging.getLogger("workshop.voice_engine")
 
-_RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", "/home/clawd-a/workshop/.runtime"))
+_RUNTIME = paths.runtime_dir()
 _MODELS_DIR = Path(os.environ.get("VOICE_MODELS_DIR", str(_RUNTIME / "voice" / "models")))
 
 # --- config -----------------------------------------------------------------

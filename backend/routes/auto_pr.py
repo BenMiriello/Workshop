@@ -6,21 +6,25 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from services import paths
+
 router = APIRouter(prefix="/auto-pr", tags=["auto-pr"])
 
-SECRETS = Path("/home/clawd-a/.config/workshop/secrets.env")
-AUTO_PRS_DIR = Path("/home/clawd-a/workshop/.runtime/auto-prs")
-AUTO_PR_SCRIPT = Path("/home/clawd-a/workshop/scripts/auto_pr.sh")
+SECRETS = paths.config("secrets.env")
+AUTO_PRS_DIR = paths.runtime("auto-prs")
+AUTO_PR_SCRIPT = paths.scripts("auto_pr.sh")
+
+AUTO_PR_SWITCH = "WORKSHOP_AUTO_PR"
 
 
-def _load_masini_auto_pr_mode() -> str:
-    """Returns '1' if MASINI_AUTO_PR=1 is set in secrets.env, else '0'."""
-    if "MASINI_AUTO_PR" in os.environ:
-        return os.environ["MASINI_AUTO_PR"]
+def _load_auto_pr_mode() -> str:
+    """Returns '1' if WORKSHOP_AUTO_PR=1 is set in the env or secrets.env."""
+    if AUTO_PR_SWITCH in os.environ:
+        return os.environ[AUTO_PR_SWITCH]
     if SECRETS.exists():
         for line in SECRETS.read_text().splitlines():
             line = line.strip()
-            if line.startswith("MASINI_AUTO_PR="):
+            if line.startswith(f"{AUTO_PR_SWITCH}="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return "0"
 
@@ -45,7 +49,7 @@ async def create_auto_pr(req: AutoPRRequest):
     if not req.title or not req.body:
         raise HTTPException(status_code=400, detail="title and body are required")
 
-    mode = "real" if _load_masini_auto_pr_mode() == "1" else "dry-run"
+    mode = "real" if _load_auto_pr_mode() == "1" else "dry-run"
 
     cmd = [str(AUTO_PR_SCRIPT), "--title", req.title, "--body", req.body]
     if req.repo:
@@ -105,5 +109,5 @@ async def list_auto_prs():
 @router.get("/mode")
 async def get_mode():
     """Return current auto-PR mode (dry-run or real)."""
-    mode = "real" if _load_masini_auto_pr_mode() == "1" else "dry-run"
-    return {"mode": mode, "switch": "MASINI_AUTO_PR in /home/clawd-a/.config/workshop/secrets.env"}
+    mode = "real" if _load_auto_pr_mode() == "1" else "dry-run"
+    return {"mode": mode, "switch": f"{AUTO_PR_SWITCH} in {SECRETS}"}

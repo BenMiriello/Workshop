@@ -16,11 +16,11 @@ from pathlib import Path
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from services import task_dedup
+from services import paths, task_dedup
 
 router = APIRouter(prefix="/backlog", tags=["backlog"])
 
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
+WORKSHOP_ROOT = paths.workshop_root()
 
 
 class BacklogItem(BaseModel):

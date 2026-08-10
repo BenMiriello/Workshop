@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Any
 
 from . import location
+from services import paths
 
 AUTH_ENV_PATH = Path(
-    os.environ.get("OWNTRACKS_AUTH_ENV", "/home/clawd-a/.config/clawdbot/owntracks-auth.env")
+    paths.env_path("OWNTRACKS_AUTH_ENV", "owntracks-auth.env", base="config")
 )
 
 _loaded: dict[str, str] = {}

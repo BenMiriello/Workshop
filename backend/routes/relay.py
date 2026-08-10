@@ -11,6 +11,7 @@ from typing import Literal
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from services import paths
 
 
 router = APIRouter(prefix="/relay", tags=["relay"])
@@ -70,10 +71,7 @@ def _classify(task: str) -> RouteDecision:
     return RouteDecision(route="cloud", reason="default for non-trivial task with no clear local signal", local_model=LOCAL_MODEL)
 
 
-RELAY_CORPUS = os.environ.get(
-    "WORKSHOP_RELAY_CORPUS",
-    "/home/clawd-a/workshop/shared/relay-corpus.jsonl",
-)
+RELAY_CORPUS = str(paths.env_path("WORKSHOP_RELAY_CORPUS", "relay-corpus.jsonl"))
 
 
 def _log_decision(task: str, decision: RouteDecision) -> None:

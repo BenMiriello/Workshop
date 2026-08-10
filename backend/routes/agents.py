@@ -6,12 +6,12 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.memory_tree import effective_memory as resolve_memory_tree
-from services import build_agents, dev_servers, jobs, agents_registry, triggers
+from services import agents_registry, build_agents, dev_servers, jobs, paths, triggers
 from services import agent_authority
 
 router = APIRouter()
 
-HEARTBEATS_DIR = Path(os.environ.get("WORKSHOP_HEARTBEATS_DIR", "/home/clawd-a/workshop/.runtime/heartbeats"))
+HEARTBEATS_DIR = paths.env_path("WORKSHOP_HEARTBEATS_DIR", "heartbeats")
 
 KNOWN_TOOLS = ["filesystem", "plaid", "google-docs", "playwright", "ollama", "web"]
 

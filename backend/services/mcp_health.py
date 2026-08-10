@@ -16,7 +16,7 @@ On a terminal:
     claude.ai Slack: https://mcp.slack.com/mcp - ! Needs authentication
     claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1 - ✓ Connected
     plugin:discord:discord: bun run --cwd /home/... --shell=bun --silent start - ✗ Failed to connect
-    plaid: node /home/clawd-a/clawdbot/plaid-mcp/server.js - ✓ Connected
+    plaid: node /opt/mcp/plaid/server.js - ✓ Connected
     playwright: npx @playwright/mcp@latest --headless --browser chromium - ✗ Failed to connect
 
 Down a pipe, which is how THIS code runs it:
@@ -24,7 +24,7 @@ Down a pipe, which is how THIS code runs it:
     Checking MCP server health…
 
     plugin:discord:discord: bun run --cwd /home/... start - ✘ Failed to connect — ENOENT: Executable not found in $PATH: "bun"
-    plaid: node /home/clawd-a/clawdbot/plaid-mcp/server.js - ✔ Connected
+    plaid: node /opt/mcp/plaid/server.js - ✔ Connected
     google-docs: npx -y @a-bonus/google-docs-mcp - ✘ Failed to connect — -32000: MCP error -32000: Connection closed
     playwright: npx @playwright/mcp@latest --headless --browser chromium - ✘ Failed to connect — -32000: MCP error -32000: Connection closed
 

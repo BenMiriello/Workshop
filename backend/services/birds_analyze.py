@@ -22,6 +22,7 @@ import tempfile
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from services import paths
 
 
 def _now() -> str:
@@ -33,12 +34,12 @@ def _now_minus(seconds: float) -> str:
     stored `ts` values, which are also UTC ISO from _now()."""
     return (datetime.now(timezone.utc) - timedelta(seconds=seconds)).isoformat()
 
-BROWSER_DB = Path(os.environ.get("BIRDNET_BROWSER_DB", "/home/clawd-a/birdnet/data/browser-stations.db"))
+BROWSER_DB = paths.env_path("BIRDNET_BROWSER_DB", "apps", "birds", "browser-stations.db")
 ANALYZER_URL = os.environ.get("BIRDNET_ANALYZER_URL", "http://127.0.0.1:8012")
 
 # Saved-clip storage for the browser path (the always-on yard path keeps its own
 # clips under BirdNET-Go). App-managed, tailnet-private, NEVER published.
-CLIPS_DIR = Path(os.environ.get("BIRDNET_CLIPS_DIR", "/home/clawd-a/birdnet/data/clips"))
+CLIPS_DIR = paths.env_path("BIRDNET_CLIPS_DIR", "apps", "birds", "clips")
 _MB = 1024 * 1024
 
 # Soundscape Atlas: a 1024-d BirdNET feature embedding is captured for every
@@ -47,7 +48,7 @@ _MB = 1024 * 1024
 # pool keeps a few audio exemplars per cluster so each cluster can be hand-labelled
 # by ear - this runs on its own toggle, alongside or instead of the per-species
 # recordings above. See docs/birds-atlas.md.
-ATLAS_CLIPS_DIR = Path(os.environ.get("BIRDNET_ATLAS_CLIPS_DIR", "/home/clawd-a/birdnet/data/atlas-clips"))
+ATLAS_CLIPS_DIR = paths.env_path("BIRDNET_ATLAS_CLIPS_DIR", "apps", "birds", "atlas-clips")
 EMBED_MODEL = "birdnet-global-6k-v2.4"
 # The call-type vocabulary the operator can assign to a cluster. 'other' is the
 # catch-all for a real call type that's none of the named ones. There is no

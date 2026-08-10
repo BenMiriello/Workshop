@@ -16,19 +16,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Request
+from services import paths
 
 
 router = APIRouter(prefix="/events", tags=["events"])
 log = logging.getLogger("workshop.events")
 
-EVENTS_LOG = Path(os.environ.get(
-    "WORKSHOP_EVENTS_LOG",
-    "/home/clawd-a/workshop/.runtime/events.jsonl",
-))
-SUBSCRIPTIONS = Path(os.environ.get(
-    "WORKSHOP_SUBSCRIPTIONS",
-    "/home/clawd-a/workshop/.runtime/agent-subscriptions.json",
-))
+EVENTS_LOG = paths.env_path("WORKSHOP_EVENTS_LOG", "events.jsonl")
+SUBSCRIPTIONS = paths.env_path("WORKSHOP_SUBSCRIPTIONS", "agent-subscriptions.json")
 
 # Sources we will actively accept. Unknown sources are still logged but
 # get an explicit "unknown_source" flag so we can audit untrusted callers.

@@ -18,8 +18,11 @@ def wkshp_read_todo(section: str = "all", max_items: int = 20) -> str:
     Returns:
         A plain-text summary with counts and the most relevant items.
     """
+    import os
     from pathlib import Path
-    todo_path = Path("/home/clawd-a/workshop/TODO.md")
+
+    _root = Path(os.environ.get("WORKSHOP_ROOT") or (Path.home() / "workshop"))
+    todo_path = _root / "TODO.md"
     if not todo_path.exists():
         return "TODO.md does not exist."
     lines = todo_path.read_text().splitlines()
@@ -53,9 +56,12 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
     """
     import fcntl
     import re
+    import os
     from pathlib import Path
-    todo_path = Path("/home/clawd-a/workshop/TODO.md")
-    lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
+
+    _root = Path(os.environ.get("WORKSHOP_ROOT") or (Path.home() / "workshop"))
+    todo_path = _root / "TODO.md"
+    lock_path = _root / ".runtime" / "TODO.lock"
     if not task_text or len(task_text.strip()) < 5:
         return "ERROR: task_text too short"
     if not todo_path.exists():
@@ -97,7 +103,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         # all reject the same spam. Read it at runtime (the Letta sandbox can't
         # import shared/), with a minimal inline fallback covering the known spam
         # variants if the file is ever unreadable — so we never silently allow it.
-        _reject_path = Path("/home/clawd-a/workshop/shared/meta_reject.txt")
+        _reject_path = _root / "shared" / "meta_reject.txt"
         try:
             vacuous_markers = tuple(
                 s.strip().lower()
@@ -197,7 +203,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         todo_path.write_text("\n".join(lines).rstrip() + "\n")
         # Wake the queue runner so newly filed tasks start in seconds.
         try:
-            Path("/home/clawd-a/workshop/.runtime/queue-runner.wake").touch()
+            _root / ".runtime" / "queue-runner.wake".touch()
         except OSError:
             pass
     return f"added: {line}"
@@ -216,10 +222,13 @@ def wkshp_write_log(entry: str, agent_name: str = "agent") -> str:
     """
     import fcntl
     import re
+    import os
     from pathlib import Path
+
+    _root = Path(os.environ.get("WORKSHOP_ROOT") or (Path.home() / "workshop"))
     from datetime import datetime, timezone
-    todo_path = Path("/home/clawd-a/workshop/TODO.md")
-    lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
+    todo_path = _root / "TODO.md"
+    lock_path = _root / ".runtime" / "TODO.lock"
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
@@ -248,9 +257,12 @@ def wkshp_mark_blocked(task_substring: str, reason: str) -> str:
         Confirmation with the rewritten line, or an error if no/multiple matches.
     """
     import fcntl
+    import os
     from pathlib import Path
-    todo_path = Path("/home/clawd-a/workshop/TODO.md")
-    lock_path = Path("/home/clawd-a/workshop/.runtime/TODO.lock")
+
+    _root = Path(os.environ.get("WORKSHOP_ROOT") or (Path.home() / "workshop"))
+    todo_path = _root / "TODO.md"
+    lock_path = _root / ".runtime" / "TODO.lock"
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
     lock_path.parent.mkdir(parents=True, exist_ok=True)

@@ -25,9 +25,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/ on path
 
-from services import auth_store, ownership  # noqa: E402
+from services import auth_store, ownership  # noqa: E402, paths
 
-RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", "/home/clawd-a/workshop/.runtime"))
+RUNTIME = paths.runtime_dir()
 SECRETS = Path(
     os.environ.get("WORKSHOP_SECRETS_ENV", str(Path.home() / ".config/workshop/secrets.env"))
 )

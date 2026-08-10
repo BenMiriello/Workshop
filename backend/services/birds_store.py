@@ -25,9 +25,10 @@ from datetime import datetime
 from pathlib import Path
 
 from services.birds_analyze import nonbird_exclusion_sql
+from services import paths
 
-DB_PATH = Path(os.environ.get("BIRDNET_DB", "/home/clawd-a/birdnet/data/birdnet.db"))
-CLIPS_DIR = Path(os.environ.get("BIRDNET_CLIPS", "/home/clawd-a/birdnet/clips"))
+DB_PATH = paths.env_path("BIRDNET_DB", "apps", "birds", "birdnet.db")
+CLIPS_DIR = paths.env_path("BIRDNET_CLIPS", "apps", "birds", "clips")
 
 
 def _nb(bird_only: bool, has_where: bool) -> str:

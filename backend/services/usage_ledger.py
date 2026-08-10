@@ -38,6 +38,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from services import paths
 
 WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
 
@@ -47,14 +48,8 @@ WINDOW_S = 5 * 3600  # rolling 5-hour window, matching Claude's usage windows
 # unaffected: only `can_admit` passes this to `window_usage`.
 ADMISSION_EXCLUDED_ROLES = ("chat",)
 
-LEDGER_PATH = Path(os.environ.get(
-    "WORKSHOP_USAGE_LEDGER",
-    "/home/clawd-a/workshop/.runtime/usage.jsonl",
-))
-BUDGET_CONFIG_PATH = Path(os.environ.get(
-    "WORKSHOP_USAGE_BUDGET",
-    "/home/clawd-a/workshop/.runtime/usage-budget.json",
-))
+LEDGER_PATH = paths.env_path("WORKSHOP_USAGE_LEDGER", "usage.jsonl")
+BUDGET_CONFIG_PATH = paths.env_path("WORKSHOP_USAGE_BUDGET", "usage-budget.json")
 
 # Default budget if no config file exists yet. app_total is the app-wide token
 # ceiling per 5h window across ALL autonomous work. Per-project entries are

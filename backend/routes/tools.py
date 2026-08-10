@@ -2,7 +2,7 @@
 
 The Letta sandbox runs tool functions inside its own Docker container, which
 does NOT have access to:
-  - Host filesystem (/home/clawd-a/workshop/...)
+  - Host filesystem (the workshop repo root)
   - Host localhost services (127.0.0.1:11434 Ollama, etc.)
 
 The sandbox CAN reach the host backend at host.docker.internal:8000. So the

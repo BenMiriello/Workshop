@@ -7,12 +7,13 @@ pin is not the wording — it is that every claim tracks the record and the run
 config, and that a bound is stated only when it actually holds.
 """
 from services import chat_context as cc
+from services import paths
 
 
 def _preamble(**over):
     kw = dict(
         name="Reviewer", slug="reviewer", role="reviewer", scope="workshop",
-        cwd="/home/clawd-a/workshop", tools=None,
+        cwd=str(paths.workshop_root()), tools=None,
         triggers=None, mentionable=False, delegatable=False,
     )
     kw.update(over)

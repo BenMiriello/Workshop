@@ -24,25 +24,14 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from services import paths
 
 log = logging.getLogger("workshop.event_dispatch")
 
-SUBSCRIPTIONS = Path(os.environ.get(
-    "WORKSHOP_SUBSCRIPTIONS",
-    "/home/clawd-a/workshop/.runtime/agent-subscriptions.json",
-))
-PENDING_RUNS = Path(os.environ.get(
-    "WORKSHOP_PENDING_RUNS",
-    "/home/clawd-a/workshop/.runtime/agent-runs-pending.jsonl",
-))
-AGENT_META_CACHE = Path(os.environ.get(
-    "WORKSHOP_AGENT_META_CACHE",
-    "/home/clawd-a/workshop/.runtime/agent-meta-cache.json",
-))
-DEDUP_FILE = Path(os.environ.get(
-    "WORKSHOP_EVENT_DEDUP",
-    "/home/clawd-a/workshop/.runtime/event-dedup.json",
-))
+SUBSCRIPTIONS = paths.env_path("WORKSHOP_SUBSCRIPTIONS", "agent-subscriptions.json")
+PENDING_RUNS = paths.env_path("WORKSHOP_PENDING_RUNS", "agent-runs-pending.jsonl")
+AGENT_META_CACHE = paths.env_path("WORKSHOP_AGENT_META_CACHE", "agent-meta-cache.json")
+DEDUP_FILE = paths.env_path("WORKSHOP_EVENT_DEDUP", "event-dedup.json")
 DEDUP_WINDOW_S = int(os.environ.get("WORKSHOP_EVENT_DEDUP_WINDOW_S", "600"))  # 10 min
 
 
