@@ -355,3 +355,260 @@ def test_a_comment_is_the_only_write_import_mode_makes(synced):
     tracker_bindings.set_mode("import")
     assert tracker_sync.comment("workshop", root, t["id"], "run finished") is True
     assert fake.comments[0][1] == "run finished"
+
+
+# ---- the call sites ----------------------------------------------------------
+#
+# The engine above was fully tested and completely unwired: `push_status`,
+# `push_text` and `comment` had no caller but these tests, so a binding in `sync`
+# mode was publish-and-pull only. Everything below pins the WIRING — the edit
+# route and the job's terminal point — because that is the part that was missing,
+# and a passing engine test says nothing about whether anything calls it.
+
+
+@pytest.fixture
+def edit_api(synced, monkeypatch):
+    """The task PATCH route pointed at the synced scope's store."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from routes import tasks_all
+
+    root, fake = synced
+    monkeypatch.setattr(tasks_all, "_root_for_scope",
+                        lambda scope: root if scope == "workshop" else None)
+    app = FastAPI()
+    app.include_router(tasks_all.router, prefix="/api")
+    return TestClient(app), root, fake
+
+
+def test_editing_a_linked_ticket_writes_through_to_the_remote(edit_api):
+    """§4: the edit reaches the tracker, and the shadow is refreshed from the
+    response so the next poll does not read our own words as a remote change."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope", body="Objective: do it.")
+    tracker_sync.publish("workshop", root, t["id"])
+
+    r = client.patch(f"/api/tasks/workshop/{t['id']}",
+                     json={"title": "Bind a scope to a tracker"})
+    assert r.status_code == 200
+    assert fake.issues["1"].title == "Bind a scope to a tracker"
+    got = tasks.get_task(root, t["id"])
+    assert got["title"] == "Bind a scope to a tracker"
+    assert got["sync"]["shadow"]["title"] == "Bind a scope to a tracker"
+
+
+def test_a_refused_remote_write_rejects_the_local_edit(edit_api, monkeypatch):
+    """§4: "If the remote write fails, the edit is rejected with the error."
+    Saving it anyway is exactly the local-state-the-remote-never-saw the whole
+    write-through rule exists to prevent."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope", body="Objective: do it.")
+    tracker_sync.publish("workshop", root, t["id"])
+
+    def boom(_id, _patch):
+        raise RuntimeError("github said no")
+
+    monkeypatch.setattr(fake, "update", boom)
+    r = client.patch(f"/api/tasks/workshop/{t['id']}", json={"title": "A new title"})
+    assert r.status_code == 502
+    assert "github said no" in r.json()["detail"]
+    # The local ticket did not move, and the operator can see why.
+    got = tasks.get_task(root, t["id"])
+    assert got["title"] == "Bind a scope"
+    assert "sync-error" in [e["kind"] for e in got["evidence"]]
+
+
+def test_a_local_ticket_edits_without_touching_any_remote(edit_api):
+    """Not every ticket is in the tracker, and an unlinked one must not pay for
+    the integration."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope")
+    r = client.patch(f"/api/tasks/workshop/{t['id']}", json={"title": "Renamed"})
+    assert r.status_code == 200
+    assert tasks.get_task(root, t["id"])["title"] == "Renamed"
+    assert fake.issues == {}
+
+
+def test_import_mode_keeps_an_edit_local(edit_api):
+    """`import` means the tracker belongs to someone else: we never write its
+    text, and the local edit is still saved."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+    tracker_bindings.set_mode("import")
+
+    r = client.patch(f"/api/tasks/workshop/{t['id']}", json={"title": "Renamed"})
+    assert r.status_code == 200
+    assert tasks.get_task(root, t["id"])["title"] == "Renamed"
+    assert fake.issues["1"].title == "Bind a scope"
+
+
+def test_editing_the_body_alone_keeps_the_title(edit_api):
+    """The pending edit is merged against the stored ticket before it is sent,
+    so a body-only patch does not blank the remote title."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope", body="Objective: do it.")
+    tracker_sync.publish("workshop", root, t["id"])
+
+    client.patch(f"/api/tasks/workshop/{t['id']}", json={"body": "Objective: do it well."})
+    assert fake.issues["1"].title == "Bind a scope"
+    assert fake.issues["1"].body == "Objective: do it well."
+
+
+def test_a_label_edit_keeps_the_selection_label_on(edit_api):
+    """Replacing the label set without ours would drop the issue out of our own
+    filter and make it read as a stranger's on the next poll."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+
+    client.patch(f"/api/tasks/workshop/{t['id']}", json={"labels": ["bug"]})
+    assert set(fake.issues["1"].labels) == {"bug", "workshop"}
+
+
+def test_an_operator_status_change_transitions_the_remote(edit_api):
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+
+    r = client.patch(f"/api/tasks/workshop/{t['id']}", json={"status": "done"})
+    assert r.status_code == 200
+    assert fake.issues["1"].state == "closed"
+    assert r.json()["sync"]["shadow"]["state"] == "closed"
+
+
+def test_a_failed_status_push_does_not_reject_the_local_transition(edit_api, monkeypatch):
+    """Workshop owns status, so the state machine does not wait on github. The
+    failure is not silent: it lands on the ticket the operator is looking at."""
+    client, root, fake = edit_api
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+
+    def boom(_id, _status):
+        raise RuntimeError("github said no")
+
+    monkeypatch.setattr(fake, "transition", boom)
+    r = client.patch(f"/api/tasks/workshop/{t['id']}", json={"status": "done"})
+    assert r.status_code == 200
+    assert r.json()["status"] == "done"
+    assert "sync-error" in [e["kind"] for e in r.json()["evidence"]]
+
+
+# ---- a run ending -------------------------------------------------------------
+
+
+@pytest.fixture
+def finishing(synced, monkeypatch, tmp_path):
+    """`jobs.finish` wired to the synced scope's store, as a sweep would hit it."""
+    from services import jobs, task_scope
+
+    root, fake = synced
+    root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(jobs, "JOBS_LOG", tmp_path / "jobs.jsonl")
+    # The workshop root queue IS this store for the test, which is what makes
+    # `key_for_root` answer "workshop" and find the binding.
+    monkeypatch.setattr(task_scope, "WORKSHOP_ROOT", root)
+    return jobs, root, fake
+
+
+def test_a_finished_run_closes_the_issue_and_comments_once(finishing):
+    """§9.2: one run-summary comment per run — not comment mirroring."""
+    jobs, root, fake = finishing
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+    tasks.update(root, t["id"], status="done")
+
+    job = jobs.start(task_id=t["id"], trigger="manual")
+    jobs.finish(job["id"], status="done")
+
+    assert fake.issues["1"].state == "closed"
+    assert len(fake.comments) == 1
+    body = fake.comments[0][1]
+    assert job["id"] in body
+    assert "done" in body
+
+
+def test_a_failed_run_says_so_on_the_issue_and_leaves_it_open(finishing):
+    jobs, root, fake = finishing
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+    tasks.update(root, t["id"], status="blocked")
+
+    job = jobs.start(task_id=t["id"], trigger="manual")
+    jobs.finish(job["id"], status="failed")
+
+    assert fake.issues["1"].state == "open"
+    assert "Nothing here is verified." in fake.comments[0][1]
+
+
+def test_import_mode_comments_but_never_transitions(finishing):
+    """The one write someone else's tracker gets, and no more."""
+    jobs, root, fake = finishing
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+    tracker_bindings.set_mode("import")
+    tasks.update(root, t["id"], status="done")
+
+    job = jobs.start(task_id=t["id"], trigger="manual")
+    jobs.finish(job["id"], status="done")
+
+    assert fake.transitions == []
+    assert len(fake.comments) == 1
+
+
+def test_a_disconnected_scope_hears_nothing(finishing):
+    jobs, root, fake = finishing
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+    tracker_bindings.set_mode("off")
+    tasks.update(root, t["id"], status="done")
+
+    job = jobs.start(task_id=t["id"], trigger="manual")
+    jobs.finish(job["id"], status="done")
+
+    assert fake.transitions == [] and fake.comments == []
+
+
+def test_an_unlinked_ticket_produces_no_run_comment(finishing):
+    jobs, root, fake = finishing
+    t = tasks.add(root, title="Bind a scope")
+    tasks.update(root, t["id"], status="done")
+
+    job = jobs.start(task_id=t["id"], trigger="manual")
+    jobs.finish(job["id"], status="done")
+
+    assert fake.comments == []
+
+
+def test_a_run_that_worked_two_tickets_comments_on_each_once(finishing):
+    jobs, root, fake = finishing
+    a = tasks.add(root, title="First")
+    b = tasks.add(root, title="Second")
+    tracker_sync.publish("workshop", root, a["id"])
+    tracker_sync.publish("workshop", root, b["id"])
+
+    job = jobs.start(trigger="manual")
+    for t in (a, b):
+        tasks.update(root, t["id"], job_id=job["id"], status="done")
+    jobs.finish(job["id"], status="done")
+
+    assert sorted(c[0] for c in fake.comments) == ["1", "2"]
+
+
+def test_a_broken_remote_does_not_fail_the_job(finishing, monkeypatch):
+    """A run that did its work is never marked failed because telling github
+    about it went wrong."""
+    jobs, root, fake = finishing
+    t = tasks.add(root, title="Bind a scope")
+    tracker_sync.publish("workshop", root, t["id"])
+    tasks.update(root, t["id"], status="done")
+
+    def boom(*a, **kw):
+        raise RuntimeError("network")
+
+    monkeypatch.setattr(fake, "transition", boom)
+    monkeypatch.setattr(fake, "comment", boom)
+    job = jobs.start(task_id=t["id"], trigger="manual")
+    line = jobs.finish(job["id"], status="done")
+    assert line["status"] == "done"

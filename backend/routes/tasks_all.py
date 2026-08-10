@@ -437,6 +437,38 @@ def _origin_for(task: dict) -> dict | None:
 _ACCEPTANCE_KINDS = {"reviewer", "command", "operator"}
 
 
+def _pending_tracker_fields(root: Path, task_id: str, body: TaskPatchIn) -> dict | None:
+    """The tracker-owned fields (title/body/labels) this patch would change.
+
+    Resolved BEFORE the local write, because write-through sends them to the
+    remote first. Returns None when the patch touches none of them. Raises the
+    same 400s `tasks.update` would, so an invalid edit is refused here instead of
+    being sent to a tracker and then rejected locally.
+    """
+    if body.title is None and body.body is None and body.text is None \
+            and body.labels is None:
+        return None
+    if body.text is not None and (body.title is not None or body.body is not None):
+        raise HTTPException(400, "pass text, or title/body, not both")
+    pending: dict = {}
+    if body.text is not None:
+        title, split_body = tasks.split_text(body.text)
+        if not title:
+            raise HTTPException(400, "text required")
+        pending["title"], pending["body"] = title, split_body
+    else:
+        if body.title is not None:
+            title = body.title.strip()
+            if not title:
+                raise HTTPException(400, "title required")
+            pending["title"] = title
+        if body.body is not None:
+            pending["body"] = body.body
+    if body.labels is not None:
+        pending["labels"] = list(body.labels)
+    return pending
+
+
 @router.patch("/{scope}/{task_id}")
 async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
     root = _root_for_scope(scope)
@@ -461,6 +493,21 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             acceptance_arg = {"kind": kind, "spec": body.acceptance.spec}
         else:
             raise HTTPException(400, f"acceptance kind must be one of {sorted(_ACCEPTANCE_KINDS)} or none")
+    # Write-through, per §4 of docs/platform-redesign/
+    # ticket-lifecycle-and-integration-2026-08-10.md: "A local edit to a
+    # tracker-owned field goes to the remote first and the local copy is updated
+    # from the response. If the remote write fails, the edit is rejected with the
+    # error." So the push happens BEFORE tasks.update and a refusal 502s instead
+    # of leaving a local state the remote has never seen. Silent no-op for a
+    # ticket with no link, a scope in `import` mode, and a box with no tracker.
+    from services import tracker_sync
+    pending = _pending_tracker_fields(root, task_id, body)
+    if pending:
+        try:
+            tracker_sync.push_text(scope, root, task_id, pending=pending, strict=True)
+        except tracker_sync.RemoteWriteError as e:
+            raise HTTPException(
+                502, f"the tracker refused this edit, so it was not saved: {e}")
     try:
         t = tasks.update(
             root, task_id,
@@ -482,6 +529,16 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
         raise HTTPException(400, str(e))
     if t is None:
         raise HTTPException(404, f"task not found: {task_id}")
+    if body.status is not None:
+        # Workshop OWNS status, so a local transition transitions the remote —
+        # the tracker only learns the result. Unlike the text edit above this is
+        # best-effort and never rejects the local write: the state machine is
+        # ours, and refusing a transition because github was down would stop work
+        # over a courtesy. A failure lands on the ticket as `sync-error`
+        # evidence, which is why the task is re-read here rather than returning
+        # the pre-push copy.
+        tracker_sync.push_status(scope, root, task_id)
+        t = tasks.get_task(root, task_id) or t
     rec = dict(t)
     rec["scope"] = scope
     return _with_latitude(rec, scope)

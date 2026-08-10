@@ -25,7 +25,10 @@ we update that system" — made precise.
 
 Nothing here raises into a caller that was doing something else: a failed sync
 must not fail an approval or a run. Errors land on the binding's `last_error` and
-on the ticket as evidence.
+on the ticket as evidence. The ONE exception is an explicit write-through
+(`push_text(..., strict=True)`), where the caller IS the edit: §4 of the lifecycle
+doc says a failed remote write rejects the edit, so that path raises
+`RemoteWriteError` and the caller declines to save. Everything else swallows.
 """
 from __future__ import annotations
 
@@ -36,6 +39,17 @@ from pathlib import Path
 from services import tasks, tracker_bindings, trackers
 
 log = logging.getLogger(__name__)
+
+
+class RemoteWriteError(RuntimeError):
+    """The remote refused a write-through, so the local edit must not be applied.
+
+    Only `push_text(strict=True)` raises it. Lifecycle doc §4: "A local edit to a
+    tracker-owned field goes to the remote first and the local copy is updated
+    from the response. If the remote write fails, the edit is rejected with the
+    error." Rejecting is what guarantees there is never a local state the remote
+    has not seen.
+    """
 
 
 def _now() -> str:
@@ -69,6 +83,20 @@ def _shadow_of(issue: trackers.RemoteIssue) -> dict:
             "labels": list(issue.labels), "state": issue.state}
 
 
+def _with_filter_label(labels: list[str]) -> list[str]:
+    """Our own selection label kept on whatever we send.
+
+    Without it, a write that replaces the label set drops the issue out of our own
+    filter and the next poll reads it as a stranger's — the same trap the create
+    path guards against, and a label edit is the other way to fall into it.
+    """
+    out = [str(x) for x in labels]
+    filt = tracker_bindings.filter_for()
+    if filt.kind == "label" and filt.label and filt.label not in out:
+        out.append(filt.label)
+    return out
+
+
 def _sync_record(issue: trackers.RemoteIssue, provider: str, *,
                  state: str = "linked", conflict: dict | None = None) -> dict:
     return {"provider": provider, "remote_id": issue.remote_id,
@@ -100,12 +128,9 @@ def publish(scope: str, root: Path, task_id: str) -> dict | None:
         return None
     try:
         adapter = trackers.for_binding(binding)
-        filt = tracker_bindings.filter_for()
         # The selection label goes on, so the issue we just created will be found
         # by our own filter on the next poll instead of looking like a stranger's.
-        labels = list(task.get("labels") or [])
-        if filt.kind == "label" and filt.label and filt.label not in labels:
-            labels.append(filt.label)
+        labels = _with_filter_label(list(task.get("labels") or []))
         issue = adapter.create(title=task["title"], body=task.get("body") or "",
                                labels=labels, idem=task["id"])
     except Exception as e:
@@ -151,13 +176,28 @@ def push_status(scope: str, root: Path, task_id: str) -> dict | None:
     return tasks.update(root, task_id, sync=_sync_record(issue, binding["provider"]))
 
 
-def push_text(scope: str, root: Path, task_id: str) -> dict | None:
-    """Write a local title/body edit through to the remote.
+def push_text(scope: str, root: Path, task_id: str, *,
+              pending: dict | None = None, strict: bool = False) -> dict | None:
+    """Write a local title/body/labels edit through to the remote.
 
     The tracker OWNS these fields, so this exists for the case where the operator
     edits a linked ticket here anyway. Write-through means the remote sees it
     immediately and the shadow is refreshed from the response, so the next poll
     does not read our own edit as a remote change.
+
+    `pending` is the edit BEFORE it has been saved locally, which is the order §4
+    requires: the remote goes first and the local copy follows. Any of "title",
+    "body", "labels" it omits falls back to what the ticket already says, so a
+    title-only edit does not have to resend the body. Called with no `pending`
+    (the conflict-resolution path) it pushes what is already stored.
+
+    `strict` says the caller IS the edit and will reject it if this fails, so the
+    error is raised as `RemoteWriteError` instead of being swallowed. It is still
+    recorded on the ticket either way.
+
+    Returns None — not an error — when the ticket is local, the scope is not in
+    `sync` mode, or there is no connection. Those are the ordinary cases where an
+    edit is nobody else's business.
     """
     if not _writes_allowed(scope):
         return None
@@ -170,15 +210,21 @@ def push_text(scope: str, root: Path, task_id: str) -> dict | None:
     binding = _binding(scope)
     if binding is None:
         return None
+    pending = pending or {}
+    patch = {"title": pending.get("title", task["title"]),
+             "body": pending.get("body", task.get("body") or ""),
+             "task_id": task["id"]}
+    if "labels" in pending:
+        patch["labels"] = _with_filter_label(list(pending["labels"] or []))
     try:
         adapter = trackers.for_binding(binding)
-        issue = adapter.update(sync["remote_id"],
-                               {"title": task["title"], "body": task.get("body") or "",
-                                "task_id": task["id"]})
+        issue = adapter.update(sync["remote_id"], patch)
     except Exception as e:
         log.warning("text push failed for %s: %s", task_id, e)
         tasks.update(root, task_id,
                      evidence={"kind": "sync-error", "ref": f"text push failed: {e}"[:400]})
+        if strict:
+            raise RemoteWriteError(str(e)) from e
         return None
     return tasks.update(root, task_id, sync=_sync_record(issue, binding["provider"]))
 

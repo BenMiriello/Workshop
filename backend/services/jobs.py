@@ -178,6 +178,15 @@ def finish(
         run_report.post_for_job(job_id, status)
     except Exception:
         pass
+    # And tell the external tracker the ticket came from: the new status, plus
+    # the one run-summary comment per run. Same terminal point, separate guard —
+    # a chat report that blew up must not cost the tracker its update, and
+    # neither may touch the Job's own outcome.
+    try:
+        from services import run_report
+        run_report.post_to_tracker(job_id, status)
+    except Exception:
+        pass
     return line
 
 
