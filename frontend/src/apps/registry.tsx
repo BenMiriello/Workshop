@@ -21,8 +21,13 @@
 import { Suspense, lazy } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Outlet, Route } from "react-router-dom";
+import { Banknote, Bird, MapPin, NotebookPen, PiggyBank, TrainFront } from "lucide-react";
+import type { LucideProps } from "lucide-react";
 
 export type CrumbNode = { label: string; parent?: string };
+
+/** One line of live state for the launcher card. */
+export type AppStatus = { text: string; tone: "muted" | "ok" | "err" };
 
 export type AppModule = {
   id: string;
@@ -34,6 +39,11 @@ export type AppModule = {
   link?: { label: string; to: string };
   /** A provider the shell mounts for the whole session while installed. */
   Provider?: ComponentType<{ children: ReactNode }>;
+  /** The glyph for this app's launcher card. */
+  Icon?: ComponentType<LucideProps>;
+  /** Live state for the launcher card. The launcher used to switch on app ids
+   *  and fetch each app's endpoint itself; an app knows its own summary. */
+  status?: () => Promise<AppStatus>;
   /** The <Route> elements this app contributes under /apps. */
   routes: () => ReactNode;
 };
@@ -69,9 +79,76 @@ function BirdsLayout() {
   );
 }
 
+
+// ---- launcher status ------------------------------------------------------
+// Each loader owns its own failure: a card that cannot reach its app says so
+// rather than the launcher inventing a status for it.
+
+function fmtAge(s: number): string {
+  if (s < 60) return `${Math.round(s)}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+async function financeStatus(): Promise<AppStatus> {
+  try {
+    const [statusR, balR] = await Promise.all([
+      fetch("/api/finance/cache"),
+      fetch("/api/finance/balances"),
+    ]);
+    const status = statusR.ok ? await statusR.json() : { entries: {} };
+    const bal = balR.ok ? await balR.json() : { items: [] };
+    const n = (bal.items || []).reduce(
+      (s: number, it: { accounts?: unknown[] }) => s + (it.accounts?.length || 0),
+      0,
+    );
+    const entry = status.entries?.["balances"];
+    const age = entry ? Math.max(0, entry.age_s) : null;
+    return {
+      text: `${n} account${n === 1 ? "" : "s"} · ${age != null ? `updated ${fmtAge(age)}` : "no data yet"}`,
+      tone: "muted",
+    };
+  } catch {
+    return { text: "unavailable", tone: "err" };
+  }
+}
+
+async function birdsStatus(): Promise<AppStatus> {
+  try {
+    const r = await fetch("/api/birds/summary");
+    const s = r.ok ? await r.json() : null;
+    if (!s || !s.available) return { text: "no detections yet", tone: "muted" };
+    return {
+      text: `${s.species_count || 0} species · ${s.today?.detections || 0} today`,
+      tone: "ok",
+    };
+  } catch {
+    return { text: "unavailable", tone: "err" };
+  }
+}
+
+async function locationStatus(): Promise<AppStatus> {
+  try {
+    const r = await fetch("/api/location/latest");
+    const j = r.ok ? await r.json() : { latest: null };
+    const ts = (j.latest as { ts?: string } | null)?.ts;
+    if (!ts) return { text: "no pings yet", tone: "muted" };
+    const age = Math.max(0, Math.round((Date.now() - Date.parse(ts)) / 1000));
+    // A ping age is information, not health — significant-change tracking only
+    // pings on movement, so hours-old while stationary is normal. Green only
+    // when genuinely recent; otherwise neutral.
+    return { text: `last ping ${fmtAge(age)}`, tone: age < 3600 ? "ok" : "muted" };
+  } catch {
+    return { text: "unavailable", tone: "err" };
+  }
+}
+
 export const APPS: AppModule[] = [
   {
     id: "finance",
+    Icon: Banknote,
+    status: financeStatus,
     group: "money",
     link: { label: "Finance", to: "/apps/finance" },
     crumbs: { "/apps/finance": { label: "Finance", parent: "/apps" } },
@@ -79,6 +156,8 @@ export const APPS: AppModule[] = [
   },
   {
     id: "budget",
+    Icon: PiggyBank,
+    status: async () => ({ text: "plan & simulate", tone: "muted" }),
     group: "money",
     link: { label: "Budget", to: "/apps/budget" },
     crumbs: { "/apps/budget": { label: "Budget", parent: "/apps" } },
@@ -86,6 +165,8 @@ export const APPS: AppModule[] = [
   },
   {
     id: "location",
+    Icon: MapPin,
+    status: locationStatus,
     group: "place",
     link: { label: "Location", to: "/apps/location" },
     crumbs: { "/apps/location": { label: "Location", parent: "/apps" } },
@@ -93,6 +174,8 @@ export const APPS: AppModule[] = [
   },
   {
     id: "commute",
+    Icon: TrainFront,
+    status: async () => ({ text: "schedule & live status", tone: "muted" }),
     group: "place",
     link: { label: "Commute", to: "/apps/commute" },
     crumbs: { "/apps/commute": { label: "Commute", parent: "/apps" } },
@@ -100,11 +183,14 @@ export const APPS: AppModule[] = [
   },
   {
     id: "notes-app",
+    Icon: NotebookPen,
     crumbs: { "/apps/notes": { label: "Notes", parent: "/apps" } },
     routes: () => <Route key="notes" path="/apps/notes" element={<Notes />} />,
   },
   {
     id: "birds",
+    Icon: Bird,
+    status: birdsStatus,
     Provider: RecorderProvider,
     crumbs: {
       "/apps/birds": { label: "Birds", parent: "/apps" },
@@ -166,4 +252,20 @@ export function AppProviders({ children }: { children: ReactNode }) {
 /** Wraps lazily-loaded app pages. The shell renders instantly either way. */
 export function AppSuspense({ children }: { children: ReactNode }) {
   return <Suspense fallback={null}>{children}</Suspense>;
+}
+
+/** The glyph an app declared, if it declared one. */
+export function appIcon(id: string): ComponentType<LucideProps> | undefined {
+  return APPS.find((a) => a.id === id)?.Icon;
+}
+
+/** Load every installed app's launcher status, keyed by app id. */
+export async function appStatuses(): Promise<Record<string, AppStatus>> {
+  const out: Record<string, AppStatus> = {};
+  await Promise.all(
+    APPS.filter((a) => a.status).map(async (a) => {
+      out[a.id] = await a.status!();
+    }),
+  );
+  return out;
 }

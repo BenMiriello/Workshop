@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState, type ComponentType } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { appIcon, appStatuses } from "../apps/registry";
+import type { AppStatus } from "../apps/registry";
 import {
   Banknote,
   PiggyBank,
@@ -36,14 +38,6 @@ import {
 // generic status (counts / freshness / health) but never specific values like
 // dollar amounts. Real data lives one tap deeper, on each app's full page.
 
-type CacheMeta = { cached: boolean; ts: number; age_s: number; ttl_s: number };
-
-type FinanceStatusEntry = { ts: number; age_s: number; ttl_s: number; size_bytes: number };
-type FinanceStatusResp = {
-  entries: Record<string, FinanceStatusEntry>;
-};
-
-type FinanceBalancesShape = { items: { accounts: unknown[] }[]; _cache?: CacheMeta };
 
 type ServiceProbe = {
   name: string;
@@ -53,14 +47,6 @@ type ServiceProbe = {
   notes?: string | null;
 };
 type ServicesResp = { services: ServiceProbe[] };
-
-const fmtAge = (sec: number) => {
-  if (sec <= 0) return "just now";
-  if (sec < 60) return `${Math.round(sec)}s ago`;
-  if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
-  return `${Math.round(sec / 86400)}d ago`;
-};
 
 // Card status tone maps to the design-system status kinds (or null for neutral
 // muted text). "warn" doubles for degraded; "err" for unreachable.
@@ -105,8 +91,9 @@ type LauncherApp = {
   probe?: string; // service-probe name for external apps (health dot)
 };
 
-// Icon-name -> lucide component. The backend sends a stable icon name; the shell
-// owns the actual glyph. Unknown names fall back to a generic app icon.
+// Icon-name -> lucide component, for apps that are not compiled in (an
+// external app declares an icon NAME in its manifest and has no registry
+// entry). A built-in app declares the component itself; see apps/registry.
 const ICONS: Record<string, ComponentType<LucideProps>> = {
   Banknote,
   PiggyBank,
@@ -115,7 +102,8 @@ const ICONS: Record<string, ComponentType<LucideProps>> = {
   Bird,
   MapPin,
 };
-const iconFor = (name: string): ComponentType<LucideProps> => ICONS[name] ?? LayoutGrid;
+const iconFor = (app: { id: string; icon: string }): ComponentType<LucideProps> =>
+  appIcon(app.id) ?? ICONS[app.icon] ?? LayoutGrid;
 
 type LauncherState =
   | { kind: "loading" }
@@ -377,10 +365,10 @@ function ManageDetails({
 
 export default function Apps() {
   const nav = useNavigate();
-  const [financeStatus, setFinanceStatus] = useState<{ accountCount: number | null; ageS: number | null } | null>(null);
   const [services, setServices] = useState<ServiceProbe[] | null>(null);
-  const [birdStatus, setBirdStatus] = useState<{ species: number; today: number; available: boolean } | null>(null);
-  const [locationStatus, setLocationStatus] = useState<{ ageS: number | null; available: boolean } | null>(null);
+  // Each installed app supplies its own card status (apps/registry). The
+  // launcher no longer knows which apps exist or what their endpoints are.
+  const [statuses, setStatuses] = useState<Record<string, AppStatus> | null>(null);
 
   const [launcher, setLauncher] = useState<LauncherState>({ kind: "loading" });
   const [mode, setMode] = useState<ViewMode>("view");
@@ -458,20 +446,6 @@ export default function Apps() {
     [nav, projects],
   );
 
-  const loadFinance = useCallback(async () => {
-    try {
-      const [statusR, balR] = await Promise.all([fetch("/api/finance/cache"), fetch("/api/finance/balances")]);
-      const status = statusR.ok ? ((await statusR.json()) as FinanceStatusResp) : { entries: {} };
-      const bal = balR.ok ? ((await balR.json()) as FinanceBalancesShape) : { items: [] };
-      const accountCount = (bal.items || []).reduce((s, it) => s + (it.accounts?.length || 0), 0);
-      const entry = status.entries?.["balances"];
-      const ageS = entry ? Math.max(0, entry.age_s) : null;
-      setFinanceStatus({ accountCount, ageS });
-    } catch {
-      setFinanceStatus({ accountCount: null, ageS: null });
-    }
-  }, []);
-
   const loadServices = useCallback(async () => {
     try {
       const r = await fetch("/api/services/");
@@ -482,81 +456,26 @@ export default function Apps() {
     }
   }, []);
 
-  const loadBirds = useCallback(async () => {
-    try {
-      const r = await fetch("/api/birds/summary");
-      const s = r.ok ? await r.json() : null;
-      if (s) setBirdStatus({ species: s.species_count || 0, today: s.today?.detections || 0, available: !!s.available });
-      else setBirdStatus({ species: 0, today: 0, available: false });
-    } catch {
-      setBirdStatus({ species: 0, today: 0, available: false });
-    }
-  }, []);
-
-  const loadLocation = useCallback(async () => {
-    try {
-      const r = await fetch("/api/location/latest");
-      const j = r.ok ? await r.json() : { latest: null };
-      const rec = j.latest as { ts?: string } | null;
-      if (rec?.ts) {
-        const ageS = Math.max(0, Math.round((Date.now() - Date.parse(rec.ts)) / 1000));
-        setLocationStatus({ ageS, available: true });
-      } else {
-        setLocationStatus({ ageS: null, available: false });
-      }
-    } catch {
-      setLocationStatus({ ageS: null, available: false });
-    }
+  const loadStatuses = useCallback(async () => {
+    setStatuses(await appStatuses());
   }, []);
 
   useEffect(() => {
     loadLauncher();
-    loadFinance();
     loadServices();
-    loadBirds();
-    loadLocation();
-  }, [loadLauncher, loadFinance, loadServices, loadBirds, loadLocation]);
+    loadStatuses();
+  }, [loadLauncher, loadServices, loadStatuses]);
 
   const findService = (needle: string) => services?.find((s) => s.name.includes(needle));
 
   // Live status for one launcher card, derived from the per-app probes above and
   // keyed by app id. Unknown ids get no status line (the card still launches).
   const statusFor = (app: LauncherApp): AppCard["status"] => {
-    switch (app.id) {
-      case "finance":
-        return financeStatus == null
-          ? { text: "loading…", tone: "muted" }
-          : financeStatus.accountCount == null
-            ? { text: "unavailable", tone: "err" }
-            : {
-                text: `${financeStatus.accountCount} account${financeStatus.accountCount === 1 ? "" : "s"} · ${financeStatus.ageS != null ? `updated ${fmtAge(financeStatus.ageS)}` : "no data yet"}`,
-                tone: "muted",
-              };
-      case "budget":
-        return { text: "plan & simulate", tone: "muted" };
-      case "birds":
-        return birdStatus == null
-          ? { text: "loading…", tone: "muted" }
-          : !birdStatus.available
-            ? { text: "no detections yet", tone: "muted" }
-            : { text: `${birdStatus.species} species · ${birdStatus.today} today`, tone: "ok" };
-      case "location":
-        return locationStatus == null
-          ? { text: "loading…", tone: "muted" }
-          : !locationStatus.available
-            ? { text: "no pings yet", tone: "muted" }
-            : {
-                // A ping age is just info, not health — OwnTracks "significant"
-                // mode only pings on movement, so hours-old while stationary is
-                // normal. Green only when genuinely recent; otherwise neutral.
-                text: `last ping ${fmtAge(locationStatus.ageS ?? 0)}`,
-                tone: (locationStatus.ageS ?? Infinity) < 3600 ? "ok" : "muted",
-              };
-      case "commute":
-        return { text: "schedule & live status", tone: "muted" };
-      default:
-        break;
-    }
+    // A built-in app reports its own state through the registry.
+    if (statuses === null) return { text: "loading…", tone: "muted" };
+    const declared = statuses[app.id];
+    if (declared) return declared;
+
     // External apps declare a service probe; render its health as the status.
     if (app.probe) {
       const probe = findService(app.probe);
@@ -573,7 +492,7 @@ export default function Apps() {
     launcher.kind === "loaded"
       ? launcher.apps.map((app) => ({
           key: app.id,
-          Icon: iconFor(app.icon),
+          Icon: iconFor(app),
           title: app.title,
           tagline: app.tagline,
           to: app.external ? undefined : app.route,
