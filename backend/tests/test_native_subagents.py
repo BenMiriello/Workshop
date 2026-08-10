@@ -72,12 +72,12 @@ class TestReading:
 
 class TestForeignSurfaces:
     def test_the_bridges_agent_is_named_not_dropped(self, native_dir):
-        """discord-handler belongs to the masini Discord bridge. It shares this
+        """discord-handler belongs to the chat bridge. It shares this
         directory only because Claude Code has one. Filtering it silently would
         make an agent that exists invisible; naming its surface does not."""
         write(native_dir, "discord-handler", ["name: discord-handler"])
         r = reg.native_subagents()[0]
-        assert r["foreign"] == "masini Discord bridge"
+        assert r["foreign"] == "chat bridge dispatcher"
 
     def test_our_own_agents_are_not_foreign(self, native_dir):
         write(native_dir, "checker", ["name: checker"])

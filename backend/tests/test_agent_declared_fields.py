@@ -95,7 +95,7 @@ class TestDeclaredModel:
 class TestCapabilitiesAreDeclarationOnly:
     """REMOVAL test. `capabilities` was rendered into the agent's own preamble
     under a header reading "this is the enforced truth", while the caller passed
-    `mcp_servers=[]` hardcoded. masini declares discord, plaid and google-docs;
+    `mcp_servers=[]` hardcoded. A bridge agent declares discord, plaid and google-docs;
     only `plaid` is an installed workshop MCP server at all. The agent was being
     told it had three things it had no tool for."""
 
@@ -113,7 +113,7 @@ class TestCapabilitiesAreDeclarationOnly:
 
     def test_nothing_turns_a_capability_into_an_mcp_grant(self):
         """If this ever becomes possible, the name has to match a real server.
-        Two of masini's three do not exist as servers, which is why the honest
+        Two of those three do not exist as servers, which is why the honest
         move was to stop asserting them rather than to wire them up."""
         from services import app_registry
 

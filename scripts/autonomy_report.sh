@@ -20,7 +20,7 @@ set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export WORKSHOP
-NOTIFY=$WORKSHOP/.runtime/notify-masini.txt
+NOTIFY="${WORKSHOP_NOTIFY_FILE:-$WORKSHOP/.runtime/notify.txt}"
 mkdir -p "$(dirname "$NOTIFY")"
 
 # Pause-until guard: skip silently if autonomy is paused until a future PT

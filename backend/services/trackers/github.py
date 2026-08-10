@@ -13,7 +13,8 @@ seam and works today with zero setup; `device_flow` is the other and slots in
 without touching this file. That is the whole reason the seam exists, and it is
 why building on `gh` now is not a dead end.
 
-VERITUS IS EXCLUDED. Every repo string passes `services.github.reject_veritus`
+Every repo string passes `services.github.reject_blocked`, so an account
+this installation has declared off limits cannot be reached through a tracker
 before any call, per the operator's standing separation rule.
 """
 from __future__ import annotations
@@ -38,7 +39,7 @@ class GitHubTracker:
         self.repo = str(binding.get("target") or "").strip()
         if not self.repo or "/" not in self.repo:
             raise ValueError(f"github target must be owner/repo, got {self.repo!r}")
-        gh_repo.reject_veritus(self.repo)
+        gh_repo.reject_blocked(self.repo)
         self._env = None
         source = binding.get("credential_source") or "gh"
         if source != "gh":

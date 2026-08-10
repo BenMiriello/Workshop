@@ -10,7 +10,7 @@ Policy (operator-stated, never relax without operator confirmation):
 State file: .runtime/commute/alert-log.jsonl (append-only).
 Cooldown file: .runtime/commute/alert-cooldown.json (legacy schedule-level cooldown).
 Per-leg state: .runtime/commute/state/alerts.json (last_alert_per_leg dict).
-Masini queue: .runtime/notify-masini.txt (plain-text, one line per alert).
+Notify queue: .runtime/notify.txt (plain-text, one line per alert).
 """
 from __future__ import annotations
 
@@ -27,17 +27,17 @@ from . import config, scoring, timefmt
 from services import paths
 
 
-COMMUTE_CHANNEL_ID = os.environ.get(
-    "WORKSHOP_COMMUTE_DISCORD_CHANNEL",
-    "1507029806909362237",  # operator's dedicated commute channel
-)
+# No default: a channel id is one deployment's, and posting to a stranger's
+# channel is worse than not posting. Unset means alerts queue to the notify file
+# only (see _queue_notify below).
+COMMUTE_CHANNEL_ID = os.environ.get("WORKSHOP_COMMUTE_DISCORD_CHANNEL", "")
 
 DISCORD_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
 
-MASINI_NOTIFY = paths.env_path("WORKSHOP_NOTIFY_MASINI", "notify-masini.txt")
+NOTIFY_FILE = paths.env_path("WORKSHOP_NOTIFY_FILE", "notify.txt")
 
 # We may not always have a token loaded in this process; alerts will write
-# to the queue regardless and the masini bridge can deliver them (see
+# to the queue regardless and the chat bridge can deliver them (see
 # `notify-commute.txt` watcher pattern). The direct-Discord path is a
 # convenience for environments where the token IS present (cron-time agent).
 
@@ -137,19 +137,19 @@ def _mark_leg_cooldown(schedule_id: str, day_key: str, leg_step: int | None) -> 
     _mark_cooldown(schedule_id, day_key)
 
 
-# --- masini notify queue ---
+# --- operator notify queue ---
 
-def _queue_masini_notify(text: str, channel_id: str) -> None:
-    """Append a one-line commute alert to notify-masini.txt.
+def _queue_notify(text: str, channel_id: str) -> None:
+    """Append a one-line commute alert to the notify queue.
 
-    masini reads this file on next inbound Discord message and surfaces the
+    The chat bridge reads this file on the next inbound message and surfaces the
     alert to the operator in the specified channel.
     """
     ts = _now().isoformat()
     summary = text.replace("\n", " | ")[:300]
     line = f"[{ts}] COMMUTE-LATE channel={channel_id} {summary}\n"
     try:
-        with MASINI_NOTIFY.open("a") as f:
+        with NOTIFY_FILE.open("a") as f:
             f.write(line)
     except OSError:
         pass  # best-effort; Discord path is the primary delivery
@@ -218,7 +218,7 @@ async def send_discord(text: str, channel_id: str | None = None) -> dict[str, An
         pass
 
     if not DISCORD_TOKEN:
-        # Fall back to disk queue: masini bridge tails this and forwards.
+        # Fall back to disk queue: the chat bridge tails this and forwards.
         p = config.runtime_path("notify-commute.txt")
         with p.open("a") as f:
             f.write(json.dumps({"ts": _now().isoformat(), "channel_id": ch, "text": text}) + "\n")
@@ -346,13 +346,13 @@ def gate_dispatch(policy: str, checkpoint: str, msg: dict[str, Any],
 
 
 async def dispatch_message(msg: dict[str, Any], channel_id: str | None = None) -> dict[str, Any]:
-    """Send a canonical message to Discord (or the masini queue) and log it.
+    """Send a canonical message to Discord (or the notify queue) and log it.
     Used by the reasoner-driven cron path; the message itself is already
     persisted to messages.jsonl by the reasoner."""
     text = render_message(msg)
     delivery = await send_discord(text, channel_id)
     if delivery.get("ok") or delivery.get("queued"):
-        _queue_masini_notify(text, channel_id or COMMUTE_CHANNEL_ID)
+        _queue_notify(text, channel_id or COMMUTE_CHANNEL_ID)
     _append_log({
         "ts": _now().isoformat(),
         "kind": f"message:{msg.get('kind')}",
@@ -415,7 +415,7 @@ async def maybe_alert(brief: dict[str, Any] | None = None, *, force: bool = Fals
     _append_log(record)
     if delivery.get("ok") or delivery.get("queued"):
         _mark_leg_cooldown(sid, day, leg_step)
-        _queue_masini_notify(text, COMMUTE_CHANNEL_ID)
+        _queue_notify(text, COMMUTE_CHANNEL_ID)
     return {"sent": True, **record}
 
 
@@ -756,7 +756,7 @@ async def send_brief(brief: dict[str, Any] | None = None, *, checkpoint: str = "
     _append_log(record)
     if delivery.get("ok") or delivery.get("queued"):
         _mark_brief_cooldown(sid, day, checkpoint)
-        _queue_masini_notify(text, COMMUTE_CHANNEL_ID)
+        _queue_notify(text, COMMUTE_CHANNEL_ID)
     return {"sent": True, **record}
 
 

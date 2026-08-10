@@ -55,7 +55,7 @@ def test_the_tools_line_names_the_grant_rather_than_describing_it():
 def test_capabilities_are_never_asserted_to_the_agent():
     """`capabilities` is free text an agent writes about itself, and it was
     rendered here under a header calling this block the enforced truth while the
-    caller passed mcp_servers=[]. masini declares discord/plaid/google-docs; only
+    caller passed mcp_servers=[]. A bridge agent declares discord/plaid/google-docs; only
     plaid is even an installed MCP server. The agent must not be told it has
     them."""
     import inspect

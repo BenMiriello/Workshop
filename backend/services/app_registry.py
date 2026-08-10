@@ -98,7 +98,7 @@ class AppSpec:
 # The source now lives IN-TREE at backend/mcp/plaid/ (final-plan PM.4): it used
 # to be sourced from ~/clawdbot/plaid-mcp/, outside the repo, which made it
 # undiffable and tied a first-class platform capability to the lifetime of the
-# masini bridge's home directory. Repo-relative, so a fresh clone gets it after
+# chat bridge's home directory. Repo-relative, so a fresh clone gets it after
 # one `npm install` in that dir; override with the env var.
 #
 # NOT moved: the secrets it reads. `~/.config/clawdbot/plaid-auth.env` (creds)

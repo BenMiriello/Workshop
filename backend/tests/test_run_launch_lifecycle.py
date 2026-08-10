@@ -199,7 +199,10 @@ def test_a_good_ticket_launches_and_records_the_pid(monkeypatch, tmp_path, job_l
     monkeypatch.setattr(tasks_all.subprocess, "Popen", lambda *a, **k: FakeProc())
     monkeypatch.setattr(tasks_all, "jobs", job_log)
 
-    out = tasks_all.launch_task_run("workshop", "t-ok")
+    # `development` since ADR 0014: `workshop` is the root inbox and has no
+    # working tree, so it is not a launch scope in any mode. The root is
+    # monkeypatched to a tmp tree, so the dev-mode gate is not in play here.
+    out = tasks_all.launch_task_run("development", "t-ok")
     assert out["ok"] is True
     rec = job_log.get(out["job_id"])
     assert rec["pid"] == 31337, "a launched run must carry its pid or it cannot be reaped"
@@ -256,6 +259,8 @@ def test_the_autonomy_brake_makes_everything_manual(monkeypatch):
 
     monkeypatch.setattr(autonomy_override, "is_engaged", lambda: True)
     monkeypatch.setattr(autonomy_override, "read", lambda: {"reason": "migration"})
-    p = tasks_all.scope_pickup("workshop")
+    # A scope that is runnable whatever the developer-mode flag says, so this
+    # tests the brake and not the ADR 0014 gate.
+    p = tasks_all.scope_pickup("project:demo")
     assert p["runnable"] is True and p["automatic"] is False
     assert "brake" in p["why"] and "migration" in p["why"]

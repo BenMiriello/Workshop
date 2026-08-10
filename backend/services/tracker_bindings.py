@@ -13,8 +13,8 @@ product and it is not coming.
       "credential_source": "gh" | "device_flow" | "pat",
       "mode": "off" | "import" | "sync",
       "filter": {"kind": "label", "label": "workshop"},
-      "targets": {"workshop": "BenMiriello/workshop-tickets",
-                  "project:birds": "BenMiriello/birds"},
+      "targets": {"workshop": "<owner>/workshop-tickets",
+                  "project:notes": "<owner>/notes"},
       "cursors": {"workshop": "2026-08-10T05:00:00Z"},
       "connected_at": iso, "last_poll": iso, "last_error": str|None
     }
@@ -118,7 +118,7 @@ def connect(*, provider: str, target: str, scope: str = "workshop",
             f"already connected to {rec['provider']}; disconnect it first "
             "(one integration at a time)")
     from services import github as gh_repo
-    gh_repo.reject_veritus(target)
+    gh_repo.reject_blocked(target)
 
     rec["provider"] = provider
     rec["credential_source"] = credential_source

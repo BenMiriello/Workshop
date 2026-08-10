@@ -156,7 +156,7 @@ def narrow_tools(role: str | None, requested: list[str] | None) -> list[str]:
 # sending, spending and deleting outside the worktree are not.
 #
 # Enforced with --disallowedTools rather than a hook, deliberately: the hooks
-# directory is user-scope and SHARED with the masini bridge, so a guard added
+# directory is user-scope and SHARED with the chat bridge, so a guard added
 # there changes another surface. This is per-run, in our own flag builder, and
 # affects exactly the process it is passed to.
 #

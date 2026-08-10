@@ -76,7 +76,7 @@ class FakeTracker:
         return []
 
     def whoami(self):
-        return trackers.Account(login="BenMiriello")
+        return trackers.Account(login="acme")
 
     # Test helper: somebody edits the issue in the tracker.
     def edit_remote(self, remote_id, **kw):
@@ -96,7 +96,7 @@ def synced(tmp_path, monkeypatch):
     from services import ownership
     monkeypatch.setattr(ownership, "_RUNTIME", tmp_path / "runtime")
     ownership.set_current_owner(6)
-    tracker_bindings.connect(provider="github", target="BenMiriello/a", mode="sync")
+    tracker_bindings.connect(provider="github", target="acme/a", mode="sync")
     fake = FakeTracker()
     monkeypatch.setattr(tracker_sync.trackers, "for_binding", lambda b: fake)
     yield tmp_path / "store", fake
@@ -506,9 +506,11 @@ def finishing(synced, monkeypatch, tmp_path):
     root, fake = synced
     root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(jobs, "JOBS_LOG", tmp_path / "jobs.jsonl")
-    # The workshop root queue IS this store for the test, which is what makes
-    # `key_for_root` answer "workshop" and find the binding.
-    monkeypatch.setattr(task_scope, "WORKSHOP_ROOT", root)
+    # The workshop inbox IS this store for the test, which is what makes
+    # `key_for_root` answer "workshop" and find the binding. Since ADR 0014 the
+    # workshop scope is `WORKSHOP_SCOPE_DIR`, not the platform repo — pointing
+    # WORKSHOP_ROOT here instead would make the store answer "development".
+    monkeypatch.setattr(task_scope, "WORKSHOP_SCOPE_DIR", root)
     return jobs, root, fake
 
 

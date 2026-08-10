@@ -497,11 +497,12 @@ def _conn() -> sqlite3.Connection:
 
     # Seed the operator account (id 1, admin) and backfill ownership of all
     # pre-account devices + detections to it - this history is the operator's.
-    # Idempotent: only runs while the users table is empty. The operator's email
-    # comes from the environment so it is not hardcoded in source.
-    if not c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-        op_email = os.environ.get("SPRINGER_ADMIN_EMAIL", "benmiriello@gmail.com")
-        op_name = os.environ.get("SPRINGER_ADMIN_NAME", "Ben")
+    # Idempotent: only runs while the users table is empty, and only when this
+    # install has said who the admin IS. No address is defaulted: a real one in
+    # source would seed a stranger's database with the author's account.
+    op_email = (os.environ.get("SPRINGER_ADMIN_EMAIL") or "").strip()
+    if op_email and not c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+        op_name = os.environ.get("SPRINGER_ADMIN_NAME") or op_email.split("@")[0]
         c.execute("INSERT INTO users(id,email,name,role,created_at) VALUES(1,?,?,'admin',?)",
                   (op_email, op_name, _now()))
         c.execute("UPDATE devices SET owner_user_id=1 WHERE owner_user_id IS NULL")

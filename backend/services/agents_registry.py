@@ -29,7 +29,7 @@ DECLARATIVE ONLY. Mutable runtime state (`state`, `claude_session`,
 `.runtime/build_agents.json` keyed by slug (the same file build_agents.py owns);
 `list_agents` merges it into builder records at read time.
 
-EXCLUSION RULE. masini per-channel Discord agents (created by
+EXCLUSION RULE. Per-channel Discord agents (created by
 `per_channel_agents.py`) are NOT registry members: they get no definition files,
 never appear in the roster, and are never created/updated/retired here. They are
 identified authoritatively by membership in the channel-agent map.
@@ -358,7 +358,7 @@ def _validate_autonomy(v: object) -> str:
 
 # Kept in sync with routes/agents.py KNOWN_SOURCES — the event-source vocabulary
 # the subscriptions file is partitioned by. `discord` is the source a `discord`
-# trigger subscribes to (final-plan PM.2); it is fed by scripts/masini_event_bridge.py.
+# trigger subscribes to (final-plan PM.2); it is fed by scripts/chat_event_bridge.py.
 KNOWN_SOURCES = ["plaid", "gmail", "calendar", "github", "open-wearables", "bluebubbles",
                  triggers.DISCORD_SOURCE, "custom"]
 
@@ -397,7 +397,7 @@ def _emit(fm: dict, body: str) -> str:
 # ---------------------------------------------------------------------------
 
 def per_channel_ids() -> set[str]:
-    """Letta agent ids that belong to masini per-channel agents. These are never
+    """Letta agent ids that belong to per-channel bridge agents. These are never
     registry members. Read authoritatively from the channel-agent map."""
     try:
         m = json.loads(CHANNEL_MAP.read_text())
@@ -532,17 +532,17 @@ def app_persona(key: str) -> dict:
 # no autonomy of its own to grant. Listing them here answers "who can call
 # whom", which is the question the roster cannot.
 #
-# Read-only, and deliberately so. This directory is SHARED with the masini
+# Read-only, and deliberately so. This directory is SHARED with the chat
 # Discord bridge; the Workshop reads it and never writes it.
 NATIVE_AGENTS_DIR = Path(os.environ.get(
     "CLAUDE_AGENTS_DIR", str(Path.home() / ".claude" / "agents")))
 
-# Surfaces whose agents belong to another tenant. `discord-handler` is the
-# masini bridge's per-message dispatcher: it lives in the same user-scope
-# directory because Claude Code has only one, but it is the messaging surface's
-# agent, not the Workshop's — the same rule that excludes per_channel_agents.py.
+# Surfaces whose agents belong to another tenant. `discord-handler` is the chat
+# bridge's per-message dispatcher: it lives in the same user-scope directory
+# because Claude Code has only one, but it is the messaging surface's agent, not
+# the Workshop's — the same rule that excludes per_channel_agents.py.
 # Named rather than silently filtered, so the exclusion is legible.
-NATIVE_FOREIGN = {"discord-handler": "masini Discord bridge"}
+NATIVE_FOREIGN = {"discord-handler": "chat bridge dispatcher"}
 
 
 def native_subagents() -> list[dict]:
@@ -1152,7 +1152,7 @@ def adopt_group(name: str, project_slug: str | None = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Event-subscriptions regeneration (masini-sensitive)
+# Event-subscriptions regeneration (bridge-sensitive)
 # ---------------------------------------------------------------------------
 
 def regenerate_subscriptions() -> dict:

@@ -98,7 +98,7 @@ class TestLocationFreshnessGate:
              patch.object(alerter, "_leg_on_cooldown", return_value=False), \
              patch.object(alerter, "_mark_leg_cooldown"), \
              patch.object(alerter, "_append_log"), \
-             patch.object(alerter, "_queue_masini_notify"):
+             patch.object(alerter, "_queue_notify"):
             result = _run(alerter.maybe_alert(brief))
         assert result["sent"] is False
         assert "location-stale gate" in result["reason"]
@@ -111,7 +111,7 @@ class TestLocationFreshnessGate:
              patch.object(alerter, "_leg_on_cooldown", return_value=False), \
              patch.object(alerter, "_mark_leg_cooldown"), \
              patch.object(alerter, "_append_log"), \
-             patch.object(alerter, "_queue_masini_notify"):
+             patch.object(alerter, "_queue_notify"):
             result = _run(alerter.maybe_alert(brief))
         assert result["sent"] is False
         assert "location-stale gate" in result["reason"]
@@ -123,7 +123,7 @@ class TestLocationFreshnessGate:
              patch.object(alerter, "_leg_on_cooldown", return_value=False), \
              patch.object(alerter, "_mark_leg_cooldown"), \
              patch.object(alerter, "_append_log"), \
-             patch.object(alerter, "_queue_masini_notify"):
+             patch.object(alerter, "_queue_notify"):
             result = _run(alerter.maybe_alert(brief))
         assert result["sent"] is True
         send.assert_awaited_once()
@@ -138,7 +138,7 @@ class TestLocationFreshnessGate:
              patch.object(alerter, "_leg_on_cooldown", return_value=False), \
              patch.object(alerter, "_mark_leg_cooldown"), \
              patch.object(alerter, "_append_log"), \
-             patch.object(alerter, "_queue_masini_notify"):
+             patch.object(alerter, "_queue_notify"):
             result = _run(alerter.maybe_alert(brief, force=True, reason="line_shutdown"))
         assert result["sent"] is True
         send.assert_awaited_once()

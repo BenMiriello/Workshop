@@ -9,7 +9,7 @@ set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 TODO=$WORKSHOP/TODO.md
-NOTIFY=$WORKSHOP/.runtime/notify-masini.txt
+NOTIFY="${WORKSHOP_NOTIFY_FILE:-$WORKSHOP/.runtime/notify.txt}"
 STATE=$WORKSHOP/.runtime/digest-state.json
 TS=$(date -Iseconds)
 

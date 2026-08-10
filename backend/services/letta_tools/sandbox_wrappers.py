@@ -247,7 +247,7 @@ def cloud_run_ralph(task_substring: str, max_iter: int = 6) -> str:
 
 
 def notify_operator(text: str, channel_hint: str = "default") -> str:
-    """Append a one-line notification to the notify-masini queue (Discord-bound).
+    """Append a one-line notification to the operator notify queue (chat-bound).
 
     Args:
         text: The notification message.

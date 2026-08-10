@@ -103,8 +103,11 @@ def test_an_elided_title_is_a_warning():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    # `development` since ADR 0014: the root queue's scope key. `workshop`
+    # is the inbox and is deliberately not a launch scope, so a run test
+    # pointed at it now asserts the wrong thing.
     monkeypatch.setattr(tasks_all, "_root_for_scope",
-                        lambda scope: tmp_path if scope == "workshop" else None)
+                        lambda scope: tmp_path if scope == "development" else None)
     # Stub the PROCESS LAUNCH, not `launch_task_run`. The readiness gate lives
     # inside `launch_task_run` (so the chat's "file and run" path cannot skip
     # it), and stubbing the whole function would stub the gate along with it and
@@ -127,7 +130,7 @@ def test_an_underspecified_ticket_still_runs(client):
     the queue, not improved it."""
     c, root = client
     t = tasks.add(root, title="Fix the thing")
-    r = c.post(f"/api/tasks/workshop/{t['id']}/run")
+    r = c.post(f"/api/tasks/development/{t['id']}/run")
     assert r.status_code == 200, r.text
     assert r.json()["ok"] is True
 
@@ -135,7 +138,7 @@ def test_an_underspecified_ticket_still_runs(client):
 def test_a_ticket_with_a_dangling_dependency_is_refused(client):
     c, root = client
     t = tasks.add(root, title="Bind a scope", depends_on=["no-such-ticket"])
-    r = c.post(f"/api/tasks/workshop/{t['id']}/run")
+    r = c.post(f"/api/tasks/development/{t['id']}/run")
     assert r.status_code == 400
     assert "does not exist" in r.text
 
@@ -143,6 +146,6 @@ def test_a_ticket_with_a_dangling_dependency_is_refused(client):
 def test_the_detail_response_reports_readiness(client):
     c, root = client
     t = tasks.add(root, title="Fix the thing")
-    got = c.get(f"/api/tasks/workshop/{t['id']}").json()
+    got = c.get(f"/api/tasks/development/{t['id']}").json()
     assert got["readiness"]["ok"] is False
     assert {m["check"] for m in got["readiness"]["missing"]} >= {"objective", "acceptance"}

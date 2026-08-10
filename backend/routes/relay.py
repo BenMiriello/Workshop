@@ -42,7 +42,7 @@ class RouteDecision(BaseModel):
     route: Literal["local", "cloud"]
     reason: str
     local_model: str
-    cloud_model: str = "claude (via masini)"
+    cloud_model: str = "claude (via the bridge)"
 
 
 class LocalRequest(BaseModel):
@@ -130,7 +130,7 @@ async def execute_local(req: LocalRequest) -> LocalResponse:
 @router.post("/auto", response_model=LocalResponse | RouteDecision)
 async def route_and_execute(req: RouteRequest):
     """Classify; if local, execute and return. If cloud, return the decision
-    (caller is responsible for forwarding to masini/Claude — relay does NOT
+    (caller is responsible for forwarding to the bridge/Claude — relay does NOT
     spend Claude tokens automatically)."""
     decision = _classify(req.task)
     if decision.route == "local":

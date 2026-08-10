@@ -143,7 +143,7 @@ def _drop_from_project_roster(rec: dict) -> None:
 async def list_agents():
     """One unified roster: every Agent across both scopes and both runtimes,
     sourced from the agents registry (definition files + builder runtime state).
-    Per-channel masini agents are excluded by the registry."""
+    Per-channel bridge agents are excluded by the registry."""
     reg = agents_registry.list_agents()
 
     out: list[dict] = []

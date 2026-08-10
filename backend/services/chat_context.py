@@ -251,7 +251,7 @@ NOTE_PROTOCOL = (
 # git-worktree-workflow skill and states the canonical-branch rule inline, so the
 # discipline holds even before the skill body is opened. Brief on purpose; the
 # full philosophy lives in shared/skills/git-worktree-workflow/SKILL.md.
-GIT_WORKTREE_RULE = (
+_GIT_WORKTREE_RULE_BASE = (
     "=== BRANCHES + WORKTREES ===\n"
     "In a project bound to a GitHub remote, follow the git-worktree-workflow skill. "
     "The canonical branch is the project's tracked repo.default_branch (usually "
@@ -259,8 +259,28 @@ GIT_WORKTREE_RULE = (
     "`wt/<slug>/<task-id>` branch, keep changes small and self-contained, rebase on "
     "the default branch before you publish, then open a PR and merge on a green "
     "reviewer gate. Never push to or reference the Workshop platform repo's own "
-    "remote, and never touch the veritusagent org (personal BenMiriello repos only)."
+    "remote, and only ever work under this installation's own GitHub account."
 )
+
+
+def git_worktree_rule() -> str:
+    """The branching rule, plus whatever this install has declared off limits.
+
+    An operator with a work org that must never be touched from here names it in
+    WORKSHOP_BLOCKED_REPO_OWNERS; the agent is told, and services.github refuses
+    it regardless of whether the agent read this. The platform itself knows no
+    org names.
+    """
+    from services import github as gh_repo
+
+    blocked = gh_repo.blocked_owners()
+    if not blocked:
+        return _GIT_WORKTREE_RULE_BASE
+    names = ", ".join(sorted(blocked))
+    return _GIT_WORKTREE_RULE_BASE + (
+        f" Never touch these accounts, which are out of scope for this "
+        f"installation: {names}."
+    )
 
 # Skill loader protocol (Phase 5). Data-mode assistants see the available skill
 # names + descriptions ambiently (in the cache-stable prefix); to pull a skill's
@@ -489,7 +509,7 @@ def agent_self_preamble(
     being handed a list of things it had no tool for and told the list was
     authoritative, so it would confidently agree to do them and then silently
     could not. `capabilities` is free text an agent definition writes about
-    itself; two of masini's three are not even workshop MCP servers (only `plaid`
+    itself; a bridge agent's servers are often not workshop MCP servers at all
     and `workshop` are installed). It stays on the agent's page as a declared
     description, and it is not shown to the model as something it HAS. If an
     agent should genuinely reach a server, grant it: pass `mcp_servers` at
@@ -1129,7 +1149,7 @@ class ContextProvider:
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PATCH_PROTOCOL
             + "\n\n" + LEARNING_NOTE_PROTOCOL
             + "\n\n" + NOTE_PROTOCOL
-            + "\n\n" + GIT_WORKTREE_RULE
+            + "\n\n" + git_worktree_rule()
         )
 
     def live_context(self) -> str:
@@ -1301,7 +1321,7 @@ class ProjectContextProvider(ContextProvider):
             "direction, append a one-line decision note to PROJECT.md.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
-            + GIT_WORKTREE_RULE + "\n\n"
+            + git_worktree_rule() + "\n\n"
             + f"Project-local agent rules:\n\n{rules or '(none)'}"
         )
 
@@ -1367,7 +1387,7 @@ class BuildAgentContextProvider(ContextProvider):
             "direction, append a one-line decision note to PROJECT.md.\n\n"
             + TASK_PROPOSAL_CARD + "\n\n" + TASK_PROPOSAL_BUILD_RULE + "\n\n"
             + LEARNING_NOTE_PROTOCOL + "\n\n" + NOTE_PROTOCOL + "\n\n"
-            + GIT_WORKTREE_RULE + "\n\n"
+            + git_worktree_rule() + "\n\n"
             + f"Build-agent rules:\n\n{rules or '(none)'}"
         )
 

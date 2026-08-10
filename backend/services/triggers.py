@@ -26,7 +26,7 @@ Normalized trigger shape (a plain dict, JSON-friendly):
 
 Why `discord` is its own kind rather than `event` + `event_sources: [discord]`
 (final-plan PM.2): an `event` trigger fans an agent out over a WHOLE source, but
-a Discord agent is per-CHANNEL — masini answers the operator's channels and must
+a Discord agent is per-CHANNEL — a bridge agent answers its own channels and must
 not wake on every guild message. The `channels` list is the part `event_sources`
 cannot express. It reduces to the same delivery path: the bridge POSTs the
 inbound envelope to `/events/discord`, it lands in `.runtime/events.jsonl`, and

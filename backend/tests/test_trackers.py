@@ -2,8 +2,8 @@
 
 The properties worth pinning are the ones that make an integration trustworthy
 rather than the ones that make it work: a poll never creates runnable work, a
-rejection is permanent, a disconnect never destroys anything, and Veritus is
-refused everywhere.
+rejection is permanent, a disconnect never destroys anything, and an account the
+installation has declared off limits is refused everywhere.
 """
 from __future__ import annotations
 
@@ -84,9 +84,9 @@ def test_a_body_with_no_marker_claims_nothing():
 
 def test_connecting_stores_one_provider_and_a_target(env):
     rec = tracker_bindings.connect(provider="github",
-                                   target="BenMiriello/workshop-tickets")
+                                   target="acme/workshop-tickets")
     assert rec["provider"] == "github"
-    assert rec["targets"]["workshop"] == "BenMiriello/workshop-tickets"
+    assert rec["targets"]["workshop"] == "acme/workshop-tickets"
     assert rec["mode"] == "import"
 
 
@@ -99,7 +99,7 @@ def test_a_second_provider_is_refused_not_swapped(env, monkeypatch):
     correctly fires first for a provider that genuinely does not exist yet."""
     monkeypatch.setattr(trackers, "PROVIDERS", ("github", "linear"))
     monkeypatch.setattr(tracker_bindings.trackers, "PROVIDERS", ("github", "linear"))
-    tracker_bindings.connect(provider="github", target="BenMiriello/a")
+    tracker_bindings.connect(provider="github", target="acme/a")
     with pytest.raises(ValueError, match="disconnect it first"):
         tracker_bindings.connect(provider="linear", target="team")
 
@@ -109,35 +109,48 @@ def test_an_unbuilt_provider_is_refused(env):
         tracker_bindings.connect(provider="jira", target="PROJ")
 
 
-def test_veritus_is_refused_as_a_target(env):
-    with pytest.raises(ValueError, match="veritus"):
-        tracker_bindings.connect(provider="github", target="veritusagent/thing")
+def test_a_blocked_account_is_refused_as_a_target(env, monkeypatch):
+    """The list is the installation's, so the test declares one and expects it
+    honoured. Nothing in the platform knows any particular org name."""
+    from services import github as gh_repo
+
+    monkeypatch.setenv(gh_repo.BLOCKED_OWNERS_ENV, "offlimits-org")
+    with pytest.raises(ValueError, match="offlimits-org"):
+        tracker_bindings.connect(provider="github", target="offlimits-org/thing")
+
+
+def test_nothing_is_blocked_when_the_install_names_nothing(env, monkeypatch):
+    from services import github as gh_repo
+
+    monkeypatch.delenv(gh_repo.BLOCKED_OWNERS_ENV, raising=False)
+    rec = tracker_bindings.connect(provider="github", target="someone/thing")
+    assert rec["targets"]["workshop"] == "someone/thing"
 
 
 def test_scopes_point_at_their_own_targets(env):
-    tracker_bindings.connect(provider="github", target="BenMiriello/a", scope="workshop")
-    tracker_bindings.connect(provider="github", target="BenMiriello/b",
+    tracker_bindings.connect(provider="github", target="acme/a", scope="workshop")
+    tracker_bindings.connect(provider="github", target="acme/b",
                              scope="project:birds")
-    assert tracker_bindings.target_for("workshop") == "BenMiriello/a"
-    assert tracker_bindings.target_for("project:birds") == "BenMiriello/b"
+    assert tracker_bindings.target_for("workshop") == "acme/a"
+    assert tracker_bindings.target_for("project:birds") == "acme/b"
 
 
 def test_a_scope_with_no_target_does_not_inherit_one(env):
     """Filing into a repo nobody chose is how tickets reach a stranger's tracker."""
-    tracker_bindings.connect(provider="github", target="BenMiriello/a", scope="workshop")
+    tracker_bindings.connect(provider="github", target="acme/a", scope="workshop")
     assert tracker_bindings.target_for("project:birds") is None
     assert tracker_bindings.binding_for("project:birds") is None
 
 
 def test_import_mode_forbids_writes_and_sync_allows_them(env):
-    tracker_bindings.connect(provider="github", target="BenMiriello/a", mode="import")
+    tracker_bindings.connect(provider="github", target="acme/a", mode="import")
     assert tracker_bindings.writes_allowed("workshop") is False
     tracker_bindings.set_mode("sync")
     assert tracker_bindings.writes_allowed("workshop") is True
 
 
 def test_mode_off_means_not_integrated(env):
-    tracker_bindings.connect(provider="github", target="BenMiriello/a")
+    tracker_bindings.connect(provider="github", target="acme/a")
     tracker_bindings.set_mode("off")
     assert tracker_bindings.binding_for("workshop") is None
 
@@ -168,7 +181,7 @@ def _issue(n: int, *, workshop_id=None, title=None) -> RemoteIssue:
 
 @pytest.fixture
 def integrated(env, monkeypatch):
-    tracker_bindings.connect(provider="github", target="BenMiriello/a")
+    tracker_bindings.connect(provider="github", target="acme/a")
     return env
 
 
@@ -293,7 +306,7 @@ def test_unlinking_freezes_the_link_rather_than_erasing_it(integrated, monkeypat
 
 
 def test_disconnecting_clears_the_connection_and_keeps_the_source(env):
-    tracker_bindings.connect(provider="github", target="BenMiriello/a")
+    tracker_bindings.connect(provider="github", target="acme/a")
     out = tracker_bindings.disconnect()
     assert out["provider"] is None
     assert out["disconnected"]["provider"] == "github"

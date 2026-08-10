@@ -1,18 +1,26 @@
 """GitHub helpers for project repos (Phase G1 of the worktree-orchestration plan).
 
 Thin, testable wrappers over `gh` and `git` for the connect/publish/merge flow.
-No FastAPI here so the pure logic (naming, uniqueness, veritus rejection) can be
+No FastAPI here so the pure logic (naming, uniqueness, owner policy) can be
 unit-tested without a server.
 
 Hard policy baked into the code, not left as a flippable default:
-  - Owner is ALWAYS the operator's personal account, `BenMiriello`.
   - Platform-created repos are ALWAYS `--private`. There is no public path.
-  - Anything whose owner/name/remote contains `veritus` (case-insensitive) is
-    rejected. Veritus is the operator's work org and is strictly out of scope
-    here: never a host, never mixed in.
+  - Every repo belongs to ONE configured account. A remote owned by anyone else
+    is refused rather than silently accepted.
+
+WHICH account, and which accounts are off limits, are properties of the
+INSTALLATION rather than of the platform. An operator whose work org must never
+be touched by this system names it once, in ~/.config/workshop/instance.env,
+and every path here refuses it:
+
+    WORKSHOP_GITHUB_OWNER          the account this install pushes to
+    WORKSHOP_BLOCKED_REPO_OWNERS   comma-separated; refused anywhere in an
+                                   owner, name or remote URL
 
 Public surface:
-  reject_veritus(*strings)
+  owner() -> str
+  reject_blocked(*strings)
   repo_base_name(slug, scratch) -> str
   unique_repo_name(base) -> str
   create_repo(dir, name) -> dict
@@ -28,21 +36,51 @@ Public surface:
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 
-OWNER = "BenMiriello"
+OWNER_ENV = "WORKSHOP_GITHUB_OWNER"
+BLOCKED_OWNERS_ENV = "WORKSHOP_BLOCKED_REPO_OWNERS"
 
 
-def reject_veritus(*strings: str | None) -> None:
-    """Raise ValueError if any argument contains `veritus` (case-insensitive).
+def owner() -> str:
+    """The GitHub account this installation owns its repos under.
 
-    Veritus is out of scope for the personal clawd-house system: no owner, name,
-    or remote URL may reference it.
+    Unset is an error rather than a guess: a repo created under the wrong
+    account is not something to notice after the fact.
     """
+    value = (os.environ.get(OWNER_ENV) or "").strip()
+    if not value:
+        raise ValueError(
+            f"no GitHub owner configured: set {OWNER_ENV} in "
+            "~/.config/workshop/instance.env to the account this install uses")
+    return value
+
+
+def blocked_owners() -> tuple[str, ...]:
+    raw = os.environ.get(BLOCKED_OWNERS_ENV) or ""
+    return tuple(s.strip().lower() for s in raw.split(",") if s.strip())
+
+
+def reject_blocked(*strings: str | None) -> None:
+    """Raise ValueError if any argument names an account this install must not touch.
+
+    Substring match, case-insensitive, so naming an org also catches its repos
+    and their remote URLs. An empty configuration blocks nothing.
+    """
+    blocked = blocked_owners()
+    if not blocked:
+        return
     for s in strings:
-        if s and "veritus" in s.lower():
-            raise ValueError("veritus is out of scope: refusing owner/name/remote containing 'veritus'")
+        if not s:
+            continue
+        low = s.lower()
+        for name in blocked:
+            if name in low:
+                raise ValueError(
+                    f"{name!r} is out of scope for this installation "
+                    f"({BLOCKED_OWNERS_ENV}): refusing owner/name/remote containing it")
 
 
 def repo_base_name(slug: str, scratch: bool) -> str:
@@ -91,13 +129,13 @@ def unique_repo_name(base: str) -> str:
     Read-only: it only runs `gh repo view`. The happy path (base does not exist)
     returns `base` unchanged with a single read.
     """
-    reject_veritus(base)
-    if not _repo_exists(OWNER, base):
+    reject_blocked(base)
+    if not _repo_exists(owner(), base):
         return base
     n = 2
     while True:
         candidate = f"{base}-{n}"
-        if not _repo_exists(OWNER, candidate):
+        if not _repo_exists(owner(), candidate):
             return candidate
         n += 1
 
@@ -116,13 +154,14 @@ def create_repo(dir: str, name: str) -> dict:
     """Create a NEW private GitHub repo from an existing local repo and push it.
 
     OUTWARD-FACING: this mutates GitHub. Runs, in one call:
-      gh repo create BenMiriello/<name> --private --source=<dir> --remote=origin --push
+      gh repo create <owner>/<name> --private --source=<dir> --remote=origin --push
 
     The `--private` flag is mandatory and unconditional; there is no code path
     that creates a public repo. Returns {owner, name, remote_url, default_branch}.
     """
-    reject_veritus(name, dir)
-    full = f"{OWNER}/{name}"
+    reject_blocked(name, dir)
+    _owner = owner()
+    full = f"{_owner}/{name}"
     try:
         _run(
             ["gh", "repo", "create", full, "--private",
@@ -133,10 +172,10 @@ def create_repo(dir: str, name: str) -> dict:
         err = ((e.stderr or "") + (e.stdout or "")).strip()[:300]
         raise ValueError(f"gh repo create failed for {full}: {err}")
     return {
-        "owner": OWNER,
+        "owner": _owner,
         "name": name,
-        "remote_url": f"https://github.com/{OWNER}/{name}.git",
-        "default_branch": _default_branch(OWNER, name),
+        "remote_url": f"https://github.com/{_owner}/{name}.git",
+        "default_branch": _default_branch(_owner, name),
     }
 
 
@@ -153,15 +192,17 @@ def _parse_remote(remote_url: str) -> tuple[str, str]:
 def bind_repo(dir: str, remote_url: str) -> dict:
     """Bind an existing local repo to an existing GitHub remote (no create).
 
-    OUTWARD-FACING (git fetch touches the network). Validates the owner is the
-    operator's personal account, rejects veritus, wires `origin`, fetches, and
-    resolves the default branch. Returns {owner, name, remote_url, default_branch}.
+    OUTWARD-FACING (git fetch touches the network). Validates the owner is this
+    install's configured account, refuses any blocked account, wires `origin`,
+    fetches, and resolves the default branch.
+    Returns {owner, name, remote_url, default_branch}.
     """
-    reject_veritus(remote_url)
-    owner, name = _parse_remote(remote_url)
-    reject_veritus(owner, name)
-    if owner != OWNER:
-        raise ValueError(f"owner must be {OWNER}; got {owner}")
+    reject_blocked(remote_url)
+    remote_owner, name = _parse_remote(remote_url)
+    reject_blocked(remote_owner, name)
+    configured = owner()
+    if remote_owner != configured:
+        raise ValueError(f"owner must be {configured}; got {remote_owner}")
 
     # Point origin at the remote (add, or reset if one already exists).
     existing = subprocess.run(
@@ -201,7 +242,7 @@ def open_pr(dir: str, remote: str, base: str, head: str, title: str, body: str) 
                         --title <title> --body <body>
     Returns {url, number}.
     """
-    reject_veritus(remote, head, base)
+    reject_blocked(remote, head, base)
     try:
         r = _run(
             ["gh", "pr", "create", "--repo", remote,
@@ -228,7 +269,7 @@ def merge_pr(dir: str, head: str, base: str) -> dict:
     then:  git fetch origin && git checkout <base> && git merge --ff-only origin/<base>
     Returns {ok, base, head}.
     """
-    reject_veritus(head, base)
+    reject_blocked(head, base)
     try:
         _run(["gh", "pr", "merge", head, "--squash", "--delete-branch"],
              cwd=dir, timeout=120)
@@ -273,7 +314,7 @@ def rebase_onto(dir: str, base: str) -> dict:
     then:  git -C <dir> rebase origin/<base>
     Returns {ok, conflict, detail}.
     """
-    reject_veritus(base)
+    reject_blocked(base)
     fetch = subprocess.run(
         ["git", "-C", dir, "fetch", "origin", base],
         capture_output=True, text=True, timeout=180,

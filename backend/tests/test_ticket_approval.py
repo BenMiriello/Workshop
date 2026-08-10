@@ -26,8 +26,11 @@ from services import tasks  # noqa: E402
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
+    # `development` since ADR 0014: the root queue's scope key. `workshop`
+    # is the inbox and is deliberately not a launch scope, so a run test
+    # pointed at it now asserts the wrong thing.
     monkeypatch.setattr(tasks_all, "_root_for_scope",
-                        lambda scope: tmp_path if scope == "workshop" else None)
+                        lambda scope: tmp_path if scope == "development" else None)
     from services import jobs as jobs_svc
     monkeypatch.setattr(jobs_svc, "JOBS_LOG", tmp_path / "jobs.jsonl")
 
@@ -57,7 +60,7 @@ def test_the_sweep_never_picks_a_draft(client):
 def test_run_now_refuses_a_draft(client):
     c, root = client
     t = _draft(root)
-    r = c.post(f"/api/tasks/workshop/{t['id']}/run")
+    r = c.post(f"/api/tasks/development/{t['id']}/run")
     assert r.status_code == 409
     assert "approve it" in r.text
 
@@ -65,8 +68,8 @@ def test_run_now_refuses_a_draft(client):
 def test_an_approved_ticket_runs(client):
     c, root = client
     t = _draft(root)
-    assert c.post(f"/api/tasks/workshop/{t['id']}/approve").status_code == 200
-    r = c.post(f"/api/tasks/workshop/{t['id']}/run")
+    assert c.post(f"/api/tasks/development/{t['id']}/approve").status_code == 200
+    r = c.post(f"/api/tasks/development/{t['id']}/run")
     assert r.status_code == 200, r.text
 
 
@@ -76,7 +79,7 @@ def test_an_approved_ticket_runs(client):
 def test_approving_moves_a_draft_into_the_queue(client):
     c, root = client
     t = _draft(root)
-    out = c.post(f"/api/tasks/workshop/{t['id']}/approve").json()
+    out = c.post(f"/api/tasks/development/{t['id']}/approve").json()
     assert out["task"]["status"] == "todo"
     assert tasks.next_ready(root)["id"] == t["id"]
 
@@ -84,7 +87,7 @@ def test_approving_moves_a_draft_into_the_queue(client):
 def test_approval_is_recorded_on_the_ticket(client):
     c, root = client
     t = _draft(root)
-    c.post(f"/api/tasks/workshop/{t['id']}/approve")
+    c.post(f"/api/tasks/development/{t['id']}/approve")
     kinds = [e.get("kind") for e in tasks.get_task(root, t["id"])["evidence"]]
     assert "approval" in kinds
 
@@ -94,7 +97,7 @@ def test_an_underspecified_draft_can_still_be_approved(client):
     approval would make it an obstacle rather than advice."""
     c, root = client
     t = _draft(root)
-    out = c.post(f"/api/tasks/workshop/{t['id']}/approve").json()
+    out = c.post(f"/api/tasks/development/{t['id']}/approve").json()
     assert out["task"]["status"] == "todo"
     assert out["readiness"]["ok"] is False
     assert out["readiness"]["missing"]
@@ -103,7 +106,7 @@ def test_an_underspecified_draft_can_still_be_approved(client):
 def test_what_the_ticket_did_not_answer_is_recorded_with_the_approval(client):
     c, root = client
     t = _draft(root)
-    c.post(f"/api/tasks/workshop/{t['id']}/approve")
+    c.post(f"/api/tasks/development/{t['id']}/approve")
     ev = [e for e in tasks.get_task(root, t["id"])["evidence"]
           if e.get("kind") == "approval"]
     assert "not ready" in ev[0]["ref"]
@@ -112,7 +115,7 @@ def test_what_the_ticket_did_not_answer_is_recorded_with_the_approval(client):
 def test_approve_and_run_in_one_call(client):
     c, root = client
     t = _draft(root)
-    out = c.post(f"/api/tasks/workshop/{t['id']}/approve", json={"run": True}).json()
+    out = c.post(f"/api/tasks/development/{t['id']}/approve", json={"run": True}).json()
     assert out["task"]["status"] == "todo"
     assert out["run"]["ok"] is True
 
@@ -121,7 +124,7 @@ def test_approving_a_finished_ticket_is_refused(client):
     c, root = client
     t = _draft(root)
     tasks.update(root, t["id"], status="done")
-    r = c.post(f"/api/tasks/workshop/{t['id']}/approve")
+    r = c.post(f"/api/tasks/development/{t['id']}/approve")
     assert r.status_code == 409
 
 
@@ -129,7 +132,7 @@ def test_approving_an_already_queued_ticket_is_a_no_op(client):
     """Idempotent: a double click must not stack two approvals."""
     c, root = client
     t = tasks.add(root, title="Already mine", status="todo")
-    r = c.post(f"/api/tasks/workshop/{t['id']}/approve")
+    r = c.post(f"/api/tasks/development/{t['id']}/approve")
     assert r.status_code == 200
     assert r.json()["task"]["status"] == "todo"
     assert [e for e in tasks.get_task(root, t["id"])["evidence"]

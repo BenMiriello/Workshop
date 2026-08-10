@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""masini_event_bridge.py — the thin Discord<->event-bus poster (final-plan PM.3, Option A).
+"""chat_event_bridge.py — the thin Discord<->event-bus poster (final-plan PM.3, Option A).
 
 The ONLY job of this process is to move Discord messages on and off the workshop
 event bus. There is NO `claude -p` loop and NO LLM in this process; that decouples
@@ -8,12 +8,12 @@ drops the Discord connection.
 
   inbound   Discord gateway MESSAGE_CREATE  ->  POST /events/discord   (an envelope
             lands in .runtime/events.jsonl; the workshop pipeline decides + dispatches)
-  outbound  a `discord-reply` event on the bus  ->  Discord REST send  (masini's
+  outbound  a `discord-reply` event on the bus  ->  Discord REST send  (the chat bridge's
             dispatched turn writes the reply to the bus; this process delivers it)
 
-Run under `~/.config/systemd/user/masini-event-bridge.service`. NOT enabled during
-the migration safety window — the live surface is still masini-bot.service. See
-that unit and agents/masini.md "Flipping this live".
+Run under `~/.config/systemd/user/the chat bridge-event-bridge.service`. NOT enabled during
+the migration safety window — the live surface is still the chat bridge-bot.service. See
+that unit and agents/the chat bridge.md "Flipping this live".
 
 Auth: subscription OAuth is irrelevant here (no model). The Discord bot token is
 read from ~/.claude/channels/discord/.env (DISCORD_BOT_TOKEN). ANTHROPIC_API_KEY is
@@ -196,7 +196,7 @@ async def _gateway_loop(token: str, stop: asyncio.Event) -> None:
                 "d": {
                     "token": token,
                     "intents": INTENTS,
-                    "properties": {"os": "linux", "browser": "masini-bridge", "device": "masini-bridge"},
+                    "properties": {"os": "linux", "browser": "chat-bridge", "device": "chat-bridge"},
                 },
             }))
             try:

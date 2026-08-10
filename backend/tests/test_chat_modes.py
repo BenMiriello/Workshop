@@ -105,7 +105,7 @@ class TestSubagentsAreReal:
             assert r["slug"] in block
 
     def test_another_surfaces_agent_is_not_offered(self):
-        """discord-handler belongs to the masini bridge. Offering it as a
+        """discord-handler belongs to the chat bridge. Offering it as a
         delegate here would hand this chat's work to another tenant's agent."""
         block = chat_context.delegation_block(True)
         assert "discord-handler" not in block
@@ -137,8 +137,10 @@ class TestFilingGuard:
 
         Pointed at a temp store. The first version of this test filed into the
         REAL workshop queue every time it ran — a test with a production side
-        effect, which is its own defect."""
-        monkeypatch.setattr(task_scope, "WORKSHOP_ROOT", tmp_path)
+        effect, which is its own defect. The workshop scope is
+        `WORKSHOP_SCOPE_DIR` since ADR 0014; WORKSHOP_ROOT is the platform repo
+        and would resolve to `development` instead."""
+        monkeypatch.setattr(task_scope, "WORKSHOP_SCOPE_DIR", tmp_path)
         cleaned, notes = task_scope.apply_task_patch("general", self.PATCH, "t1", None)
         assert not any("Direct mode" in n for n in notes)
         from services import tasks
