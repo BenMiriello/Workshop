@@ -139,8 +139,10 @@ def test_approving_an_already_queued_ticket_is_a_no_op(client):
 # ---- where drafts come from -------------------------------------------------
 
 
-def test_a_suggested_ticket_starts_as_a_draft(tmp_path, monkeypatch):
-    """The assistant filing a ticket for itself proposes; it does not queue."""
+def test_an_unattended_filing_starts_as_a_draft(tmp_path, monkeypatch):
+    """A filing NOBODY looked at proposes; it does not queue. That is a
+    task-patch block the assistant emitted mid-reply, the triager turning a note
+    into a ticket, or an import — not a button the operator pressed."""
     from services import task_dedup
     monkeypatch.setattr(task_dedup, "decide",
                         lambda text, open_tasks: {"decision": "distinct",
@@ -152,8 +154,10 @@ def test_a_suggested_ticket_starts_as_a_draft(tmp_path, monkeypatch):
 
 
 def test_filing_defaults_to_the_queue_for_callers_that_do_not_ask(tmp_path, monkeypatch):
-    """`status` defaults to todo, so the operator's own filing paths (the Work UI,
-    the backlog endpoint) are unchanged by the approval model."""
+    """`status` defaults to todo, so every path where the operator CLICKED —
+    the Work UI, the backlog endpoint, and the chat's "File ticket" button — is
+    unchanged by the approval model. Requiring a second approval for a ticket
+    they just read and edited is the "say the magic word" step to avoid."""
     from services import task_dedup
     monkeypatch.setattr(task_dedup, "decide",
                         lambda text, open_tasks: {"decision": "distinct",

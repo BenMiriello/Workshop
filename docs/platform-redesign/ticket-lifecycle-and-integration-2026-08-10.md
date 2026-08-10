@@ -22,13 +22,22 @@ default: more autonomy is a later configuration, not a redesign (§8).
 
 `draft` is the mechanism. A draft is a suggestion; a `todo` is agreed work.
 
+**The line is whether a human looked at it, not who wrote it.**
+
 | Who files | Starts as | Why |
 |---|---|---|
-| Assistant, from a chat | `draft` | it wrote the spec; the operator has not agreed |
-| Assistant, via a task-patch block | `draft` | same |
-| Operator, "file and run" | `todo` | asking for the work outright IS the approval |
-| Operator, Work UI / backlog | `todo` | they typed it |
+| Assistant, via a task-patch block mid-reply | `draft` | emitted while replying; nobody clicked anything |
+| Triager, turning a note into a ticket | `draft` | ran on its own, by its own judgement |
 | Import from a tracker | `draft` | nobody here has looked at it yet |
+| Operator, "File ticket" in the drafts dialog | `todo` | they read it, usually edited it, and pressed the button |
+| Operator, "File and run" | `todo` | asking for the work outright |
+| Operator, Work UI / backlog | `todo` | they typed it |
+
+The first version of this got the drafts-dialog case wrong and filed it as a
+`draft`. That dialog exists so the operator can read and edit each proposal
+before filing, so the click already IS the approval; making them approve a second
+time is the "say the magic word" step the operator has rejected outright. A
+button press is an approval. Only unattended filings are drafts.
 
 Two doors had to be closed, not one. `next_ready` only ever picks `todo`, so the
 sweep already ignored drafts — but `launch_task_run` did not check status, so the
@@ -212,9 +221,31 @@ making → ticket execution.** Questions surface in the inbox.
 | 2 | Questions reach the next attempt and the originating chat | shipped `a8e576f` |
 | 3 | Readiness check; broken tickets refused | shipped `ca515bc`, `2e04482` |
 | 4 | Approval gate: draft → approve → run | shipped `9c33b1c` |
-| 5 | Questions in the inbox as one list | **next** |
-| 6 | User-triggered chat scan → suggested tickets, deduped, as drafts | **next** |
+| 5 | Questions in the inbox as one list | **already shipped** — see below |
+| 6 | User-triggered chat scan → proposed tickets | **already shipped** — see below |
 | 7 | Scope help: split suggestions, blockers, stages, on the draft | **next** |
+
+Two of these turned out to exist already, which is worth recording so they are
+not rebuilt:
+
+- **Questions in the inbox** (`services/run_inbox`). A blocked ticket becomes an
+  inbox item of kind `question`, deduped `task:<scope>:<id>`, and resolving it
+  answers the TICKET through the review endpoint rather than just closing the
+  row — so the answer lands in the body where the next attempt reads it. It
+  reconciles on read rather than raising at the transition, deliberately: the
+  producers are shell sweeps in other processes, and a raise-once design gets
+  permanently out of step the first time anything writes a store behind its back.
+  Verified end to end: a blocked ticket raises one item, and answering it closes
+  the item on the next sync.
+- **Chat scan → proposals** (`services/ticket_drafts` + `TicketDraftsDialog`).
+  Reads the last 24 messages and proposes 0..N self-contained drafts; zero is a
+  normal answer. Drafts persist on the thread with edits, so reopening the dialog
+  never silently re-runs a 30-second model call or loses corrections.
+
+What is genuinely missing from #6 is that these thread-local proposals are a
+SECOND draft concept alongside `draft` tickets. They should converge on one:
+a proposal is a `draft` ticket. Doing that also gets deduping (`task_dedup`) and
+the readiness checklist for free, both of which the thread-local drafts lack.
 | 8 | Tracker binding: settings, GitHub App + device flow, one connection | then |
 | 9 | Triage inbox; connect/disconnect/reconnect per §6 | then |
 | 10 | Two-way sync: write-through, shadow merge, conflicts, ADF handling | then |

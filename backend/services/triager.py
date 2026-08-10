@@ -414,8 +414,11 @@ def apply_decision(root: Path, scope_key: str, note_id: str, note_text: str,
     # The triager wrote this spec, not the operator: a note became a ticket by a
     # model's judgement about what the note meant. Recorded so a run that fails on
     # a bad spec points at the triager rather than at whoever wrote the note.
+    # `draft`: nobody has looked at this. The triager runs on its own and turns a
+    # note into a ticket by its own judgement, which is precisely the filing the
+    # approval gate exists for. It proposes; the operator approves.
     res = task_dedup.dedup_add(root, text=text, source=src, provenance=provenance,
-                               scoped_by="agent:triager")
+                               scoped_by="agent:triager", status="draft")
     task = res.get("task") or {}
     tid = task.get("id")
     out["task_ids"] = [tid] if tid else []

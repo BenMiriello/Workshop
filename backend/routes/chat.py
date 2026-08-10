@@ -566,12 +566,17 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         # paragraph a model actually wrote. Distilled-from-thread specs are the
         # main way tickets get filed, so this is the common case, not an edge.
         scoped_by="agent:chat",
-        # Approval is the line, and `run` already draws it. "File and run" is the
-        # operator asking for the work outright, so the ticket is approved by the
-        # act and starts as `todo`. Filing alone is the assistant SUGGESTING work,
-        # so it starts as `draft` — visible, editable, and never picked up by
-        # `next_ready` until the operator approves it.
-        status="todo" if body.run else "draft",
+        # `todo`, both for "File ticket" and "File and run". This endpoint is only
+        # ever reached by the operator clicking a button in the ticket-drafts
+        # dialog or on a task-proposal card, having read and often edited the
+        # draft first. That click IS the approval, and making it land as a `draft`
+        # for a second approval would be the "say the magic word" step the
+        # operator has explicitly rejected.
+        #
+        # `draft` is for filings NOBODY looked at: a task-patch block the
+        # assistant emitted mid-reply (services/task_scope), the triager turning
+        # a note into a ticket, and imports from an external tracker.
+        status="todo",
     )
     resp = {
         "task": result["task"],
