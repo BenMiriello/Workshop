@@ -15,6 +15,7 @@
 #   • emoji                 — lucide icons only
 #   • cursor:"not-allowed"  — disabled controls dim, never not-allowed
 #   • maxWidth >= 600       — page width is the shell's job (--page-max), not a page's
+#   • confirm() / alert()   — use <ConfirmDialog> / the app's own surfaces
 #
 # Exempt paths (concrete colors legitimately live here):
 #   src/styles/**                       (tokens.css / components.css / tokens.js)
@@ -105,6 +106,16 @@ EMOJI = re.compile("[" "\U0001F000-\U0001FAFF" "\U0001F1E6-\U0001F1FF" "]")
 # INSIDE a page legitimately wants a cap that wide. This is the rule that stopped
 # the app having 720/760/820/880/980/1040/1280 all at once.
 PAGE_WIDTH = re.compile(r"maxWidth:\s*[\"']?(\d{3,})(?:px)?[\"']?")
+# Native browser dialogs. CLAUDE.md rule 8: a destructive action gets
+# <ConfirmDialog> — danger treatment, a body naming the consequence, and that it
+# can't be undone. window.confirm() is a blocking OS chrome box that can carry
+# none of that, and alert() is the same hole for the reply. Five of these were
+# live in the app before this rule existed, three of them destructive.
+# The lookbehind is what keeps `confirmLabel`, `onConfirm`, `<ConfirmDialog`,
+# `setConfirmOpen(` and `foo.alert(` out; requiring the "(" to sit flush against
+# the name is what keeps prose like "a non-destructive confirm (e.g. publish)"
+# out of the tally.
+BROWSER_DIALOG = re.compile(r"(?<![\w.])(?:window\.)?(?:confirm|alert)\(")
 
 def exempt(path):
     return any(path.startswith(p) or path == p for p in EXEMPT)
@@ -118,6 +129,8 @@ def scan_line(path, lineno, text, out):
         out.append((path, lineno, "emoji", text.strip()[:80]))
     if NOT_ALLOWED.search(text):
         out.append((path, lineno, "not-allowed", text.strip()[:80]))
+    if BROWSER_DIALOG.search(text):
+        out.append((path, lineno, "browser-dialog", text.strip()[:80]))
     m = PAGE_WIDTH.search(text)
     if m and int(m.group(1)) >= 600:
         out.append((path, lineno, "page-width", text.strip()[:80]))
@@ -166,6 +179,12 @@ if violations:
     sys.exit(1)
 print("design: clean" + (f" (added lines vs {rev})" if mode == "added" else ""))
 PYEOF
+# The scan's verdict, held so the advisory warnings below can still print. Two
+# non-fatal warnings used to run AFTER the scanner and silently become the exit
+# code, so the script announced "DESIGN VIOLATIONS" and exited 0 — and
+# reviewer.sh gates on exactly this exit code (`if bash check_design.sh
+# --added ...`), so no design rule has ever actually blocked a review.
+design_status=$?
 
 # --- published-bundle freshness ---------------------------------------------
 # Not a design rule and never fatal: a WARNING when what an origin SERVES is not
@@ -182,3 +201,5 @@ if [ "$(git -C "$WORKSHOP" config core.hooksPath 2>/dev/null)" != ".githooks" ];
   echo "warn: tracked git hooks are not installed — the public bundle will NOT rebuild on commit."
   echo "      run: bash scripts/install_hooks.sh"
 fi
+
+exit "$design_status"
