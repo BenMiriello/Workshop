@@ -132,12 +132,44 @@ still counts every call, because a delegate's tokens are really spent.
 15. `POST /turns/{id}/inject` carries the `client_id` it was accepting and
     dropping.
 
+## The autonomy brake — RESOLVED 2026-08-10
+
+Operator: "Remove the autonomy block but leave it off sure."
+
+**I first told him releasing the brake would start nothing. That was wrong**, and
+it was wrong because the check was vacuous: it globbed `.runtime/agents/*.json`,
+which does not exist. Agents live in `agents/*.md`. The real state was:
+
+- `cron_agent.sh` scheduled every 20 minutes (a Ralph-style worker loop that
+  drives TODO items and commits)
+- `queue_runner_watchdog.sh` every 5 minutes, keeping a resident runner alive
+- `scripts/queue_runner.sh` **already running** (pid 20875), looping and skipping
+  on each pass ONLY because the override was engaged
+- `agents/memory-keeper.md` with a `0 */6 * * *` cron trigger (moot: nothing
+  schedules `dispatch_triggers.sh`)
+
+So the brake was the single thing holding autonomy off, and clearing it alone
+would have started work within seconds.
+
+**What was done**, in this order so there was never a window with the brake clear
+and the loops live:
+
+1. `cron_agent.sh` and `queue_runner_watchdog.sh` commented out in the crontab,
+   with a note pointing here. Backup: `.runtime/backups/crontab-2026-08-10-before-autonomy-off.txt`.
+2. The resident `queue_runner.sh` stopped.
+3. `.runtime/autonomy-override.json` cleared.
+
+Verified after: the gate reports `clear`, nothing autonomous is scheduled,
+nothing is running, and all 14 unrelated cron entries (commute, frontends
+watchdog, digests) are untouched.
+
+**Off is now expressed where it is true** — nothing autonomous is scheduled —
+rather than by an emergency overlay carrying a 23-day-old reason. To re-enable,
+uncomment the two crontab lines; the brake no longer has to be reasoned about.
+
 ## What is actually left
 
-Neither is work; both are decisions.
-
-- **The autonomy brake**, engaged since 2026-07-18 on a reason that no longer
-  holds. Releasing it is the operator's call.
+One decision, and it is not work.
 - **Whether `/status`, `/agents`, `/mcp`, `/memory`, `/init`, `/review` should
   follow `/context` out of the build-only gate.** They are about a project's
   working tree rather than about the conversation, so they were left gated. That
