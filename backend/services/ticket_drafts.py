@@ -171,88 +171,117 @@ def _parse(raw: str) -> list[dict]:
     return out
 
 
-async def propose(thread_id: str) -> dict:
-    """Draft tickets for a thread and store them on it.
+async def propose(thread_id: str, root, scope: str) -> dict:
+    """Scan the conversation and file each proposal as a DRAFT TICKET.
 
-    Stored, not returned-and-forgotten. Deriving costs a model call and tens of
-    seconds; an operator who opens the dialog, reads the drafts, closes it and
-    comes back must get their drafts (and any edits) rather than paying again.
+    A proposal used to be a thread-local record in its own little store, which
+    made "draft" two different things: a row on a chat, and a `draft` ticket. One
+    concept, one place — a proposal IS a draft ticket now, which means it gets
+    three things the thread-local version never had:
+
+      - dedup. `task_dedup` folds a re-scan into the existing ticket instead of
+        proposing the same work twice, and links near-matches as related.
+      - the readiness checklist, because it is a real ticket the checker can read.
+      - visibility. It shows up in Work with everything else waiting on the
+        operator, instead of only inside a dialog nobody has open.
+
+    The thread keeps SCAN state only (when it was last scanned, and how long the
+    transcript was then), so the dialog can still say "5 messages since these were
+    drafted". That is bookkeeping about the scan, not a second copy of the work.
     """
     import asyncio
+
+    from services import task_dedup
 
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise KeyError(thread_id)
     convo = _conversation_text(t)
     if not convo.strip():
-        return {"drafts": [], "generated_at": None, "message_count": 0}
+        return {"drafts": [], "generated_at": None, "message_count": 0,
+                "messages_since": 0, "scope": scope}
 
     prompt = PROMPT.replace("{convo}", convo)
     try:
         res = await asyncio.to_thread(
             llm_router.call_cloud, prompt, model=llm_router.TIER_HAIKU)
-        drafts = _parse(res.get("text") or "")
+        proposals = _parse(res.get("text") or "")
     except Exception as e:
         log.warning("ticket draft failed for %s: %s", thread_id, e)
         raise
 
+    filed: list[dict] = []
+    for prop in proposals:
+        text = f"{prop['title']}\n{prop['body']}".strip()
+        labels = ["proposed"]
+        # `confidence` is the model's read of the conversation, and it is the one
+        # thing the operator most wants to see before approving. It rides as a
+        # label rather than a new schema field: labels are first-class, already
+        # render, and already sync to a tracker.
+        if prop.get("confidence") and prop["confidence"] != "decided":
+            labels.append(f"confidence:{prop['confidence']}")
+        try:
+            out = task_dedup.dedup_add(
+                root, text=text, labels=labels, status="draft",
+                effort=prop.get("effort") or None,
+                source={"kind": "chat", "ref": thread_id},
+                scoped_by="agent:chat",
+            )
+        except Exception as e:  # one bad proposal must not lose the others
+            log.warning("filing proposal failed for %s: %s", thread_id, e)
+            continue
+        task = out.get("task")
+        if task:
+            filed.append({**task, "scope": scope, "dedup": out.get("decision")})
+
     payload = {
-        "drafts": drafts,
         "generated_at": _now(),
-        # The transcript length the drafts were derived from. The UI uses it to
+        # The transcript length the proposals were derived from. The UI uses it to
         # say "5 messages since these were drafted" rather than making the
         # operator guess whether they are stale.
         "message_count": len(t.get("messages") or []),
     }
     _store(thread_id, payload)
-    return payload
+    return {**payload, "drafts": filed, "messages_since": 0, "scope": scope}
 
 
-def get(thread_id: str) -> dict:
-    """Stored drafts for a thread, with staleness measured against the live
-    transcript. Never regenerates; that is always an explicit act."""
+def get(thread_id: str, root, scope: str) -> dict:
+    """This thread's open draft tickets, with staleness against the transcript.
+
+    Never scans; that is always an explicit act, because it costs a model call and
+    tens of seconds. Reads the TICKET store rather than a thread-local copy, so a
+    draft edited or approved anywhere else is reflected here with no syncing.
+    """
+    from services import tasks
+
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise KeyError(thread_id)
-    payload = dict(t.get("ticket_drafts") or {})
-    payload.setdefault("drafts", [])
-    payload.setdefault("generated_at", None)
-    payload.setdefault("message_count", 0)
-    payload["messages_since"] = max(
-        0, len(t.get("messages") or []) - int(payload.get("message_count") or 0))
-    return payload
-
-
-def update_draft(thread_id: str, draft_id: str, patch: dict) -> dict:
-    """Edit a stored draft in place (title / body / acceptance), or mark it
-    filed. Edits persist for the same reason the drafts do."""
-    t = chat_store.get_thread(thread_id)
-    if t is None:
-        raise KeyError(thread_id)
-    payload = dict(t.get("ticket_drafts") or {"drafts": []})
-    for d in payload.get("drafts", []):
-        if d.get("id") == draft_id:
-            for k in ("title", "body", "acceptance", "filed_task_id"):
-                if k in patch:
-                    d[k] = patch[k]
-            break
-    _store(thread_id, payload)
-    return payload
-
-
-def discard(thread_id: str, draft_id: str) -> dict:
-    t = chat_store.get_thread(thread_id)
-    if t is None:
-        raise KeyError(thread_id)
-    payload = dict(t.get("ticket_drafts") or {"drafts": []})
-    payload["drafts"] = [d for d in payload.get("drafts", []) if d.get("id") != draft_id]
-    _store(thread_id, payload)
-    return payload
+    scan = dict(t.get("ticket_drafts") or {})
+    drafts = [
+        {**task, "scope": scope}
+        for task in tasks.list_tasks(root, include_done=False)
+        if task.get("status") == "draft"
+        and (task.get("source") or {}).get("ref") == thread_id
+    ]
+    drafts.sort(key=lambda d: d.get("created") or "")
+    return {
+        "drafts": drafts,
+        "scope": scope,
+        "generated_at": scan.get("generated_at"),
+        "message_count": int(scan.get("message_count") or 0),
+        "messages_since": max(
+            0, len(t.get("messages") or []) - int(scan.get("message_count") or 0)),
+    }
 
 
 def _store(thread_id: str, payload: dict) -> None:
+    """Persist SCAN state on the thread. Deliberately not the drafts themselves:
+    the tickets are the drafts, and a second copy here is what this refactor
+    removed."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         return
-    t["ticket_drafts"] = payload
+    t["ticket_drafts"] = {"generated_at": payload.get("generated_at"),
+                          "message_count": payload.get("message_count")}
     chat_store.save_thread(t)

@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_store, chat_context, chat_log
+from services import tasks
 from services import context_report
 from services import model_caps
 from services import task_scope
@@ -455,54 +456,82 @@ async def _distill_task_from_thread(t: dict) -> str:
 
 
 class DraftPatch(BaseModel):
+    # Acceptance is no longer a separate field: it lives in the body as the
+    # `Output:` line (services/ticket_format), so editing the body edits it.
     title: str | None = None
     body: str | None = None
-    acceptance: str | None = None
+
+
+def _drafts_scope(thread_id: str) -> tuple[str, object]:
+    """The scope a chat's tickets live in, and its root. Same resolution the
+    file-a-ticket path uses, so a proposal and a filed ticket never land in two
+    different queues."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    scope_key = t.get("context_key")
+    root = task_scope.root_for_context(scope_key)
+    if root is None:
+        scope_key, root = "workshop", task_scope.root_for_context("workshop")
+    return scope_key, root
 
 
 @router.get("/threads/{thread_id}/ticket-drafts")
 async def get_ticket_drafts(thread_id: str):
-    """Drafts already proposed for this chat. Never regenerates.
+    """This chat's open DRAFT TICKETS, with staleness against the transcript.
 
-    Reopening the file-a-ticket dialog must show what was there, including any
-    edits: proposing costs a model call and tens of seconds, and silently
-    redoing it (or losing the operator's corrections) is the behaviour that
-    makes people stop using a feature."""
+    Never regenerates: scanning costs a model call and tens of seconds, and
+    silently redoing it (or losing the operator's corrections) is the behaviour
+    that makes people stop using a feature. Reads the ticket store, so a draft
+    edited or approved elsewhere shows up here with nothing to sync."""
+    scope_key, root = _drafts_scope(thread_id)
     try:
-        return ticket_drafts.get(thread_id)
+        return ticket_drafts.get(thread_id, root, scope_key)
     except KeyError:
         raise HTTPException(404, "thread not found")
 
 
 @router.post("/threads/{thread_id}/ticket-drafts")
 async def make_ticket_drafts(thread_id: str):
-    """Read the conversation and propose 0..N tickets, then store them.
+    """Scan the conversation and file 0..N proposals as draft tickets.
 
     Zero is a normal answer. A conversation is not one ticket, and most of what
-    is said in one is discussion, reversal, or work already done."""
+    is said in one is discussion, reversal, or work already done. Filing them as
+    drafts is safe: `next_ready` never picks a draft and the run endpoint refuses
+    one, so proposing can never start work."""
+    scope_key, root = _drafts_scope(thread_id)
     try:
-        return await ticket_drafts.propose(thread_id)
+        return await ticket_drafts.propose(thread_id, root, scope_key)
     except KeyError:
         raise HTTPException(404, "thread not found")
     except Exception as e:
         raise HTTPException(502, f"could not draft tickets: {e}")
 
 
-@router.patch("/threads/{thread_id}/ticket-drafts/{draft_id}")
-async def patch_ticket_draft(thread_id: str, draft_id: str, body: DraftPatch):
-    try:
-        return ticket_drafts.update_draft(
-            thread_id, draft_id, body.model_dump(exclude_none=True))
-    except KeyError:
-        raise HTTPException(404, "thread not found")
+@router.patch("/threads/{thread_id}/ticket-drafts/{task_id}")
+async def patch_ticket_draft(thread_id: str, task_id: str, body: DraftPatch):
+    """Edit a proposed ticket before approving it. Writes the real ticket."""
+    scope_key, root = _drafts_scope(thread_id)
+    patch = body.model_dump(exclude_none=True)
+    updated = tasks.update(
+        root, task_id,
+        title=patch.get("title"),
+        body=patch.get("body"),
+    )
+    if updated is None:
+        raise HTTPException(404, f"draft not found: {task_id}")
+    return ticket_drafts.get(thread_id, root, scope_key)
 
 
-@router.delete("/threads/{thread_id}/ticket-drafts/{draft_id}")
-async def delete_ticket_draft(thread_id: str, draft_id: str):
-    try:
-        return ticket_drafts.discard(thread_id, draft_id)
-    except KeyError:
-        raise HTTPException(404, "thread not found")
+@router.delete("/threads/{thread_id}/ticket-drafts/{task_id}")
+async def delete_ticket_draft(thread_id: str, task_id: str):
+    """Discard a proposal. `cancelled`, not deleted: no ticket is ever deleted by
+    any path, so a rejected proposal stays auditable and cannot be re-proposed
+    into the same slot by the next scan."""
+    scope_key, root = _drafts_scope(thread_id)
+    if tasks.update(root, task_id, status="cancelled") is None:
+        raise HTTPException(404, f"draft not found: {task_id}")
+    return ticket_drafts.get(thread_id, root, scope_key)
 
 
 @router.get("/threads/{thread_id}/ticket-scope")

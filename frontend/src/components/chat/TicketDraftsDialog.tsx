@@ -15,23 +15,36 @@ import { scopeLabel } from "../../lib/tasks";
 // answered. So this proposes 0..N, each self-contained, and the operator
 // decides which are real.
 //
-// Drafts are STORED on the thread. Proposing costs a model call and tens of
-// seconds; closing this dialog and reopening it must not silently redo the work
-// or discard edits.
+// A proposal IS a draft ticket. It used to be a thread-local row in its own
+// store, which made "draft" mean two different things; now scanning files real
+// tickets with status `draft`, so they dedup against existing work, carry the
+// readiness checklist, and show up in Work like anything else awaiting the
+// operator. Nothing runs a draft: the sweep skips it and the run endpoint
+// refuses it, so proposing is always safe.
+//
+// Scanning costs a model call and tens of seconds, so this never re-scans on its
+// own; the thread remembers when it last did, to report staleness.
 export type Draft = {
   id: string;
   title: string;
   body: string;
-  acceptance: string;
-  confidence: "decided" | "likely" | "speculative";
-  filed_task_id: string | null;
+  status: string;
+  labels?: string[];
+  dedup?: string;
 };
 
 type Payload = {
   drafts: Draft[];
+  scope?: string;
   generated_at: string | null;
   messages_since: number;
 };
+
+// `confidence:likely` etc. rides as a label rather than a schema field.
+function confidenceOf(d: Draft): string | null {
+  const tag = (d.labels ?? []).find((l) => l.startsWith("confidence:"));
+  return tag ? tag.slice("confidence:".length) : null;
+}
 
 export default function TicketDraftsDialog({
   open,
@@ -116,41 +129,33 @@ export default function TicketDraftsDialog({
       .catch(() => { /* removed locally either way */ });
   }, [chatId]);
 
-  const file = useCallback(async (d: Draft, run: boolean) => {
-    if (!chatId) return;
+  // Approving is the operator agreeing the work should happen. It is the only
+  // thing that makes a ticket eligible to run, and it writes the real ticket —
+  // there is nothing left to "file", because the draft already IS the ticket.
+  const approve = useCallback(async (d: Draft, run: boolean) => {
+    if (!chatId || !payload?.scope) return;
     setBusy(d.id);
-    // The ticket text a worker sees is the whole draft, not just the title: it
-    // has to stand alone. The body is already composed in the canonical shape
-    // (Objective / Output / Start from / Boundaries) by services/ticket_format,
-    // so acceptance is normally inside it and must not be appended twice. A draft
-    // stored before that change carries a separate `acceptance` and a body that
-    // states no output; that one still gets it, under the label the readiness
-    // check actually looks for rather than the "Done when:" it never matched.
-    const statesOutput = /^\s*(?:output|done|acceptance|verify|proof)\s*[:\-]/im.test(d.body || "");
-    const text = [
-      d.title,
-      d.body,
-      d.acceptance && !statesOutput ? `Output: ${d.acceptance}` : "",
-    ].filter(Boolean).join("\n");
     try {
-      const r = await fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/spawn-task`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, run }),
-      });
-      if (!r.ok) throw new Error(`${r.status}`);
+      const r = await fetch(
+        `/api/tasks/${encodeURIComponent(payload.scope)}/${encodeURIComponent(d.id)}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ run }),
+        },
+      );
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j = await r.json();
-      await patch(d.id, { filed_task_id: j.task?.id ?? "filed" });
-      onFiled({ text: d.title, scope: j.scope, ran: !!j.job_id, runError: j.run_error });
+      onFiled({ text: d.title, scope: payload.scope, ran: !!j.run?.job_id });
+      await loadStored();
     } catch (e) {
-      setErr(`Couldn't file "${d.title}": ${String(e)}`);
+      setErr(`Couldn't approve "${d.title}": ${String(e)}`);
     } finally {
       setBusy(null);
     }
-  }, [chatId, patch, onFiled]);
+  }, [chatId, payload, onFiled, loadStored]);
 
   const drafts = payload?.drafts ?? [];
-  const pending = drafts.filter((d) => !d.filed_task_id);
 
   return (
     <Modal
@@ -217,9 +222,8 @@ export default function TicketDraftsDialog({
           <ul className="tdraft__list">
             {drafts.map((d) => {
               const isOpen = expanded === d.id;
-              const filed = !!d.filed_task_id;
               return (
-                <li key={d.id} className={`tdraft${filed ? " is-filed" : ""}`}>
+                <li key={d.id} className="tdraft">
                   <div className="tdraft__row">
                     <button
                       type="button"
@@ -230,15 +234,15 @@ export default function TicketDraftsDialog({
                       <ChevronRight size={14} aria-hidden
                                     className={`tdraft__caret${isOpen ? " is-open" : ""}`} />
                       <span className="tdraft__title">{d.title}</span>
-                      {filed ? (
-                        <Badge><Check size={12} aria-hidden /> filed</Badge>
-                      ) : (
-                        <Badge>{d.confidence}</Badge>
-                      )}
+                      {d.dedup === "merge" || d.dedup === "exact" ? (
+                        <Badge><Check size={12} aria-hidden /> merged into existing</Badge>
+                      ) : confidenceOf(d) ? (
+                        <Badge>{confidenceOf(d)}</Badge>
+                      ) : null}
                     </button>
                   </div>
 
-                  {isOpen && !filed && (
+                  {isOpen && (
                     <div className="tdraft__detail">
                       <Field label="Title" htmlFor={`t-${d.id}`}>
                         <Input id={`t-${d.id}`} value={d.title}
@@ -252,19 +256,15 @@ export default function TicketDraftsDialog({
                         <Textarea id={`b-${d.id}`} rows={4} value={d.body}
                                   onChange={(e) => void patch(d.id, { body: e.target.value })} />
                       </Field>
-                      <Field label="Done when" htmlFor={`a-${d.id}`}>
-                        <Input id={`a-${d.id}`} value={d.acceptance}
-                               onChange={(e) => void patch(d.id, { acceptance: e.target.value })} />
-                      </Field>
                       <Row wrap style={{ gap: "var(--space-2)" }}>
                         <Button size="sm" variant="primary" disabled={busy === d.id || !d.title.trim()}
-                                onClick={() => void file(d, false)}>
-                          {busy === d.id ? "Filing…" : "File ticket"}
+                                onClick={() => void approve(d, false)}>
+                          {busy === d.id ? "Approving…" : "Approve"}
                         </Button>
                         {scope?.runnable && (
                           <Button size="sm" variant="ghost" disabled={busy === d.id || !d.title.trim()}
-                                  onClick={() => void file(d, true)}>
-                            File and run now
+                                  onClick={() => void approve(d, true)}>
+                            Approve and run now
                           </Button>
                         )}
                         <Button size="sm" variant="ghost" onClick={() => void discard(d.id)}>
@@ -274,22 +274,16 @@ export default function TicketDraftsDialog({
                     </div>
                   )}
 
-                  {isOpen && filed && (
-                    <div className="tdraft__detail">
-                      <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-                        Filed. It is tracked in Work now.
-                      </p>
-                    </div>
-                  )}
                 </li>
               );
             })}
           </ul>
         )}
 
-        {pending.length > 0 && (
+        {drafts.length > 0 && (
           <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-            {pending.length} not filed yet. They stay here until you file or discard them.
+            {drafts.length} waiting for approval. Nothing runs them until you approve;
+            they are visible in Work either way.
           </span>
         )}
       </Stack>
