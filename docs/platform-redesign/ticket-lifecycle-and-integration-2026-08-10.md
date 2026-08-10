@@ -221,10 +221,13 @@ making → ticket execution.** Questions surface in the inbox.
 | 2 | Questions reach the next attempt and the originating chat | shipped `a8e576f` |
 | 3 | Readiness check; broken tickets refused | shipped `ca515bc`, `2e04482` |
 | 4 | Approval gate: draft → approve → run | shipped `9c33b1c` |
-| 5 | Questions in the inbox as one list | **already shipped** — see below |
-| 6 | User-triggered chat scan → proposed tickets | **already shipped** — see below |
+| 5 | Questions in the inbox as one list | already existed (`run_inbox`) |
+| 6 | User-triggered chat scan to proposals | already existed (`ticket_drafts`) |
 | 7 | Ticket body format + one checker reading it | shipped `e8d00b2`, `d3c1257` |
-| 8 | Scope help: split suggestions, blockers, stages, on the draft | **next** |
+| 8 | A proposal IS a draft ticket (one concept) | shipped `3524275` |
+| 9 | Scope review: split / blockers / stages | shipped `a580272` |
+| 10 | Tracker connection, adapter, triage inbox | shipped `bff266e`, `c72c7a1` |
+| 11 | Two-way sync: publish, push, pull, conflicts | shipped `9f3f228` |
 
 Two of these turned out to exist already, which is worth recording so they are
 not rebuilt:
