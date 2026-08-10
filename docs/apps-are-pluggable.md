@@ -151,10 +151,18 @@ an empty `state/` dir — no real addresses.
 
 Running an app **integrated in-shell** — its React pages mounted inside the
 Workshop SPA at `/apps/<id>` rather than served from a proxied origin — still
-needs dynamic frontend route/bundle injection (`docs/workshop-v1/06-…`). The
-built-in apps keep their route components compiled into the SPA for now; what is
-manifest-driven is their **visibility and backend wiring** (launcher card, routes,
-MCP, loops, data), which is the security-critical part. A not-installed app has no
-card and no backend, so its compiled-in route is unreachable and leaks nothing.
-Fully dynamic route injection is intentionally left for later rather than
-special-cased per app.
+needs dynamic frontend bundle injection (`docs/workshop-v1/06-…`), so a built-in
+app's route components are still compiled into the SPA. What is manifest-driven
+is its **visibility and backend wiring** (launcher card, routes, MCP, loops,
+data), which is the security-critical part. A not-installed app has no card and
+no backend, so its compiled-in route is unreachable and leaks nothing.
+
+What is no longer deferred is the **shell knowing the app list**. `App.tsx`,
+`components/appNav.tsx` and `pages/Apps.tsx` used to hardcode every app's
+imports, routes, breadcrumbs, switcher groups and status probes, which meant the
+frontend half of "adding an app must not edit platform-core code" was simply not
+true. `frontend/src/apps/registry.tsx` is now the frontend counterpart to
+`services/app_registry.py`: the one file allowed to name an app. Pages load
+lazily from it, so an app the instance does not run stays off the critical path
+even while its code ships in the bundle. Closing the remaining gap means loading
+that registry's entries from separately built bundles, not editing the shell.

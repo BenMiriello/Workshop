@@ -11,14 +11,15 @@ import {
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Menu as MenuIcon, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, Brain, MessagesSquare, Gauge, Rocket, Settings as SettingsIcon } from "lucide-react";
 import { Menu, MenuItem } from "../ui";
+import { appCrumbs, appGroups } from "../apps/registry";
 
 // Single source of truth for in-app navigation chrome:
 //   • BreadcrumbBar — the toolbar breadcrumb trail "Workshop / Apps / … / Leaf".
 //     Route-driven and globally responsive: it collapses on narrow widths by
 //     first shortening "Workshop"→"W", then folding the highest-level crumbs
 //     into a "…" that links to the deepest collapsed level.
-//   • AppGroupNav — the switcher linking sibling apps (Finance ⇄ Budget,
-//     Location ⇄ Commute), rendered inline in the PageHeader actions slot.
+//   • AppGroupNav — the switcher linking sibling apps, grouped in the app
+//     registry, rendered inline in the PageHeader actions slot.
 //   • BreadcrumbProvider / useCrumbLabel / useCrumbTrail — let a page feed a
 //     dynamic leaf label (entity name) or a fully custom trail to the toolbar.
 
@@ -29,22 +30,11 @@ export type Crumb = { label: string; to?: string };
 // any route is built by walking parent links up to the root. The leaf's label
 // can be overridden at runtime (see useCrumbLabel) for entity pages.
 type RouteNode = { label: string; parent?: string };
+
 const NODES: Record<string, RouteNode> = {
   "/apps": { label: "Apps" },
   "/marketplace": { label: "Marketplace" },
-  "/apps/finance": { label: "Finance", parent: "/apps" },
-  "/apps/budget": { label: "Budget", parent: "/apps" },
-  "/apps/location": { label: "Location", parent: "/apps" },
-  "/apps/birds": { label: "Birds", parent: "/apps" },
-  "/apps/birds/locations": { label: "Locations", parent: "/apps/birds" },
-  "/apps/birds/devices": { label: "Devices", parent: "/apps/birds" },
-  "/apps/birds/settings": { label: "Settings", parent: "/apps/birds" },
-  "/apps/birds/recordings": { label: "Recordings", parent: "/apps/birds" },
-  "/apps/birds/atlas": { label: "Atlas", parent: "/apps/birds" },
-  "/apps/birds/location": { label: "Location", parent: "/apps/birds/locations" },
-  "/apps/birds/bird": { label: "Bird", parent: "/apps/birds" },
-  "/apps/commute": { label: "Commute", parent: "/apps" },
-  "/apps/notes": { label: "Notes", parent: "/apps" },
+  // Per-app nodes are merged in below from the app registry.
   "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
@@ -61,6 +51,8 @@ const NODES: Record<string, RouteNode> = {
   "/settings/trackers": { label: "Trackers", parent: "/settings" },
   "/settings/mcp": { label: "MCP servers", parent: "/settings" },
 };
+
+Object.assign(NODES, appCrumbs());
 
 // Longest-prefix lookup keys, most specific first.
 const NODE_KEYS = Object.keys(NODES).sort((a, b) => b.length - a.length);
@@ -315,16 +307,7 @@ export function BreadcrumbBar() {
 // Each app belongs to at most one group; the group's siblings render as the
 // switcher. Lives inline in the PageHeader `actions` slot (left of Refresh).
 type AppLink = { label: string; to: string };
-const APP_GROUPS: AppLink[][] = [
-  [
-    { label: "Finance", to: "/apps/finance" },
-    { label: "Budget", to: "/apps/budget" },
-  ],
-  [
-    { label: "Location", to: "/apps/location" },
-    { label: "Commute", to: "/apps/commute" },
-  ],
-];
+const APP_GROUPS: AppLink[][] = appGroups();
 
 function groupFor(pathname: string): AppLink[] | null {
   return (

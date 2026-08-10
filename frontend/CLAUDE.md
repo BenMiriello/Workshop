@@ -114,9 +114,17 @@ Rules:
    Every page of that app renders it as its top element. Do not hand-roll a per-page
    `<h2>` header or a bespoke toolbar.
 2. **One source of sections.** The navigable sections live in a single exported list
-   (Birds: `BIRDS_NAV` in `BirdsHeader.tsx`). To add a page: add a `<Route>` in `App.tsx`
-   AND one entry to that list. Never scatter one-off section links in page bodies as the
-   way to reach a section (a contextual CTA is fine, but it is not the nav).
+   (Birds: `BIRDS_NAV` in `BirdsHeader.tsx`). To add a page: add a `<Route>` to that app's
+   entry in `src/apps/registry.tsx` AND one entry to the section list. Never scatter
+   one-off section links in page bodies as the way to reach a section (a contextual CTA
+   is fine, but it is not the nav).
+
+   **Routes do not live in `App.tsx`.** The shell has no list of apps: `src/apps/registry.tsx`
+   is the one frontend file allowed to name one, and it supplies each app's routes, its
+   breadcrumb nodes, its switcher group and any provider the shell must mount. `App.tsx`
+   renders `appRoutes()` and knows nothing else. `src/apps/registry.test.tsx` renders the
+   assembled tree through the real router, so a route that would blank the screen fails
+   in CI rather than in the browser.
 3. **Active section is highlighted.** The header marks the current section (`is-active`
    + `aria-current="page"`) so "you are here" is always clear.
 4. **Home is always reachable** from the header (Birds: the bird icon → dashboard).

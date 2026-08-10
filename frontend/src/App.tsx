@@ -1,4 +1,4 @@
-import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { OverlayHost } from "./ui/OverlayHost";
 import Agents from "./pages/Agents";
 import AgentDetail from "./pages/AgentDetail";
@@ -14,22 +14,6 @@ import Trackers from "./pages/settings/Trackers";
 import McpServers from "./pages/settings/McpServers";
 import Apps from "./pages/Apps";
 import Marketplace from "./pages/Marketplace";
-import Finance from "./pages/apps/Finance";
-import Budget from "./pages/apps/Budget";
-import LocationApp from "./pages/apps/Location";
-import Birds from "./pages/apps/Birds";
-import Locations from "./pages/apps/birds/Locations";
-import LocationDetail from "./pages/apps/birds/LocationDetail";
-import Devices from "./pages/apps/birds/Devices";
-import BirdDetail from "./pages/apps/birds/BirdDetail";
-import BirdsReview from "./pages/apps/birds/BirdsReview";
-import BirdSettings from "./pages/apps/birds/BirdSettings";
-import Recordings from "./pages/apps/birds/RecordingsPage";
-import Atlas from "./pages/apps/birds/Atlas";
-import ForecastWeek from "./pages/apps/birds/ForecastWeek";
-import { BirdsScopeProvider } from "./pages/apps/birds/scope";
-import BirdsShell from "./pages/apps/birds/BirdsShell";
-import { RecorderProvider } from "./pages/apps/birds/recorder";
 import Home from "./pages/Home";
 import Work from "./pages/Work";
 import Deploys from "./pages/Deploys";
@@ -41,24 +25,13 @@ import MemoryPage from "./pages/Memory";
 import RunDetail from "./pages/RunDetail";
 import Usage from "./pages/Usage";
 import Settings from "./pages/Settings";
-import CommuteApp from "./pages/apps/Commute";
-import Notes from "./pages/apps/notes/Notes";
 import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
+import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
 
-// Workshop IS the homepage. Commute, Wearables, Finance, etc. are apps
-// INSIDE Workshop — the Apps tab lists them. No peer-app nav strip; the
-// Apps tab is the discovery surface.
-
-// Layout route for the Birds app: provides the persistent scope and the
-// responsive chrome around every birds page.
-function BirdsLayout() {
-  return (
-    <BirdsScopeProvider>
-      <BirdsShell><Outlet /></BirdsShell>
-    </BirdsScopeProvider>
-  );
-}
+// Workshop IS the homepage. Apps live INSIDE Workshop — the Apps tab lists
+// them. No peer-app nav strip; the Apps tab is the discovery surface. Which
+// apps exist is src/apps/registry.tsx's business, not this file's.
 
 // Deep-link / mobile-shell compatibility: the builder work pane moved from
 // /agents/build/:slug to /agents/:slug/chat. Keep old links working.
@@ -94,7 +67,7 @@ export default function App() {
   const chatFull = pathname.startsWith("/chat/");
   const widthClass = chatFull ? " ws-app--chatfull" : "";
   return (
-    <RecorderProvider>
+    <AppProviders>
     <BreadcrumbProvider>
     <div className={"ws-root ws-app" + widthClass}>
       <header className="ws-topnav">
@@ -107,6 +80,7 @@ export default function App() {
           dialog has to know about it. See ui/OverlayHost. */}
       <OverlayHost>
       <main>
+        <AppSuspense>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/agents" element={<Agents />} />
@@ -138,28 +112,9 @@ export default function App() {
           <Route path="/settings/mcp" element={<McpServers />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />
-          <Route path="/apps/finance" element={<Finance />} />
-          <Route path="/apps/budget" element={<Budget />} />
-          <Route path="/apps/location" element={<LocationApp />} />
-          <Route path="/apps/notes" element={<Notes />} />
-          {/* Birds runs inside the responsive Birds shell (sidebar / mobile tabs)
-              with the persistent Location·Device·Time scope. The Workshop topnav
-              above stays the outer nav level; this is the inner one. */}
-          <Route element={<BirdsLayout />}>
-            <Route path="/apps/birds" element={<Birds />} />
-            <Route path="/apps/birds/birds" element={<BirdsReview />} />
-            <Route path="/apps/birds/locations" element={<Locations />} />
-            <Route path="/apps/birds/location" element={<LocationDetail />} />
-            <Route path="/apps/birds/devices" element={<Devices />} />
-            <Route path="/apps/birds/bird" element={<BirdDetail />} />
-            {/* Old per-station route now resolves to the location page by name is gone;
-                StationDetail is superseded by LocationDetail (by id). */}
-            <Route path="/apps/birds/settings" element={<BirdSettings />} />
-            <Route path="/apps/birds/recordings" element={<Recordings />} />
-            <Route path="/apps/birds/atlas" element={<Atlas />} />
-            <Route path="/apps/birds/forecast" element={<ForecastWeek />} />
-          </Route>
-          <Route path="/apps/commute" element={<CommuteApp />} />
+          {/* Every app's routes come from src/apps/registry.tsx — the shell
+              does not know which apps exist. */}
+          {appRoutes()}
           <Route path="/chat/:contextKey" element={<FocusedChat />} />
           {/* Voice is a toggle inside the chat, not a separate screen. Old
               /voice deep-links redirect to the one focused chat (no second mount). */}
@@ -182,10 +137,11 @@ export default function App() {
               posts to /api/location/owntracks; viewer lives at /apps/location. */}
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />
         </Routes>
+        </AppSuspense>
       </main>
       </OverlayHost>
     </div>
     </BreadcrumbProvider>
-    </RecorderProvider>
+    </AppProviders>
   );
 }
