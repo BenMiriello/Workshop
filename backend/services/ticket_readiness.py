@@ -70,7 +70,8 @@ def check(task: dict, *, known_ids: set[str] | None = None) -> dict:
 
     # A one-edit ticket does not need to name its entry points; anything larger
     # is asking the worker to go looking.
-    if str(task.get("effort") or "").lower() not in ("quick", "s"):
+    # `effort` is canonicalized by the store, so one value to compare.
+    if task.get("effort") != "quick":
         if not (_ENTRY_POINT.search(body) or ticket_format.states(body, "entry_points")):
             fail("entry_points", "the body names no file, command or symbol to start from")
 

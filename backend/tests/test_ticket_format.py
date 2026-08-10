@@ -104,3 +104,52 @@ def test_a_model_that_ignored_the_fields_still_yields_a_draft():
     draft = ticket_drafts._parse(raw)[0]
     assert draft["title"] == "Fix the alerter"
     assert "It stopped on Fridays." in draft["body"]
+
+
+# ---- effort: one vocabulary ---------------------------------------------------
+# There were three. The store documented "s"|"m"|"l", the task-proposal card and
+# the drafting prompt say quick|standard|deep, and the live stores held both. That
+# was not cosmetic: scripts/project_ralph.sh maps effort to an inner-loop cap and
+# a model tier with a case-SENSITIVE bash `case` on `quick|q|s` / `deep|d|l`, so
+# 24 of the 38 tickets that set an effort stored it as uppercase "S" or "L", fell
+# through to the default branch, and had no effect at all.
+
+
+@pytest.mark.parametrize("stored,canonical", [
+    ("S", "quick"), ("s", "quick"), ("quick", "quick"), ("Q", "quick"),
+    ("M", "standard"), ("standard", "standard"), ("Medium", "standard"),
+    ("L", "deep"), ("deep", "deep"), ("XL", "deep"),
+])
+def test_every_effort_spelling_canonicalizes(stored, canonical):
+    from services import tasks
+    assert tasks._normalize_effort(stored) == canonical
+
+
+@pytest.mark.parametrize("junk", ["bogus", "", None, "  ", "urgent"])
+def test_an_unrecognized_effort_is_none_not_standard(junk):
+    """A typo must not read as a deliberate hint."""
+    from services import tasks
+    assert tasks._normalize_effort(junk) is None
+
+
+def test_the_canonical_words_are_what_the_sweep_matches():
+    """The sweep's case arms are `quick|q|s` and `deep|d|l`, lowercase. The store
+    must emit words those arms actually match."""
+    from services import tasks
+    assert set(tasks.EFFORTS) == {"quick", "standard", "deep"}
+    assert all(e == e.lower() for e in tasks.EFFORTS)
+
+
+def test_a_stored_uppercase_effort_heals_on_read(tmp_path):
+    from services import tasks
+    t = tasks.add(tmp_path, title="A ticket", effort="S")
+    assert tasks.get_task(tmp_path, t["id"])["effort"] == "quick"
+
+
+def test_a_quick_ticket_still_waives_entry_points_through_the_alias(tmp_path):
+    from services import tasks
+    t = tasks.add(tmp_path, title="Bump the interval",
+                  body="Objective: stop hammering.\nOutput: it is 60s.\nBoundaries: none.",
+                  effort="S")
+    got = tasks.get_task(tmp_path, t["id"])
+    assert "entry_points" not in {m["check"] for m in tr.check(got)["missing"]}

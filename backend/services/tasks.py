@@ -42,7 +42,8 @@ Canonical Task (version 2)::
                                        # blocks the task (see enforce_touches).
                                        # [] = unrestricted (the default).
       "discovered_from": str | None,   # task id that spawned this follow-up
-      "effort": str | None,            # "s"|"m"|"l" hint
+      "effort": str | None,            # quick|standard|deep hint (aliases s/m/l
+                                       # and any case accepted on read)
       "latitude": str | None,          # "strict"|"standard"|"open" — what the
                                        # worker may do where THIS ticket does not
                                        # say. None means INHERIT (not "standard"):
@@ -594,6 +595,38 @@ def _normalize_awaiting(payload) -> dict | None:
     return rec
 
 
+# One vocabulary for effort, canonicalized on read and write.
+#
+# There were three. The store's docstring said "s"|"m"|"l", the task-proposal card
+# and the drafting prompt say quick|standard|deep, and the live stores held both
+# (23 tickets "S", 14 "M", 3 "deep", 1 "standard", 1 "L"). That was not merely
+# untidy: `scripts/project_ralph.sh` maps effort to an inner-loop cap and a model
+# tier with a case-SENSITIVE bash `case` on `quick|q|s` / `deep|d|l`, so every
+# ticket stored as uppercase "S" or "L" fell through to the default branch and its
+# effort hint did nothing at all. 24 of the 38 tickets that set one.
+#
+# Canonicalizing here fixes the sweep without touching it, because it already
+# understands the canonical words.
+_EFFORT_ALIASES = {
+    "quick": "quick", "q": "quick", "s": "quick", "small": "quick", "xs": "quick",
+    "standard": "standard", "m": "standard", "med": "standard",
+    "medium": "standard", "normal": "standard",
+    "deep": "deep", "d": "deep", "l": "deep", "large": "deep", "xl": "deep",
+}
+
+
+def _normalize_effort(value) -> str | None:
+    """quick | standard | deep, or None when unset. An unrecognized value maps to
+    None rather than to "standard": a typo must not read as a deliberate hint."""
+    key = str(value or "").strip().lower()
+    if not key:
+        return None
+    return _EFFORT_ALIASES.get(key)
+
+
+EFFORTS = ("quick", "standard", "deep")
+
+
 def _norm_labels(raw) -> list[str]:
     """Labels as an ordered, deduped list of non-empty strings."""
     out: list[str] = []
@@ -685,7 +718,7 @@ def _normalize(task: dict) -> dict:
         "provenance": task.get("provenance") or None,
         "touches": [str(t) for t in (task.get("touches") or []) if t],
         "discovered_from": task.get("discovered_from") or None,
-        "effort": task.get("effort") or None,
+        "effort": _normalize_effort(task.get("effort")),
         # Round-trips as None (inherit) when unset OR when the stored value is
         # junk: coercing a typo to "standard" would look like a deliberate
         # per-task default and silently undo a strict scope (latitude.py).
