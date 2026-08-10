@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Play, Square, RefreshCw, CircleAlert } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton,
-  type StatusKind,
 } from "../ui";
+import { autonomyIsLive, describeAutonomy } from "../lib/autonomy";
 
 // QueueRunner: the visible, discoverable control for the worker loop that drains
 // the task queue (ticket B0).
@@ -32,28 +32,10 @@ export type RunnerState = {
 
 const ENDPOINT = "/api/queue/runner";
 
-// The three honest states, and the one thing each says to do next.
-function describe(s: RunnerState): { kind: StatusKind; label: string; hint: string } {
-  if (s.running && s.enabled) {
-    return {
-      kind: "running",
-      label: "Running",
-      hint: "Tickets move from queued to running to done on their own.",
-    };
-  }
-  if (s.running && !s.enabled) {
-    return {
-      kind: "warn",
-      label: "Paused",
-      hint: "Autonomy is switched off, so no ticket will be picked up.",
-    };
-  }
-  return {
-    kind: "stopped",
-    label: "Stopped",
-    hint: "Nothing is running, so filed tickets sit in the queue.",
-  };
-}
+// The honest states live in lib/autonomy so this component and the Autonomy &
+// GPU card cannot drift. They already did once: the summary row of that card
+// read "running" from the permission flag alone, directly above a row that
+// correctly said nothing was running.
 
 export default function QueueRunner({ onChange }: { onChange?: () => void }) {
   const [state, setState] = useState<RunnerState | null>(null);
@@ -119,8 +101,8 @@ export default function QueueRunner({ onChange }: { onChange?: () => void }) {
     );
   }
 
-  const d = describe(state);
-  const live = state.running && state.enabled;
+  const d = describeAutonomy(state);
+  const live = autonomyIsLive(state);
 
   return (
     <Card>

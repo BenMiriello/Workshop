@@ -15,6 +15,8 @@
 // so a second submit after reload is safe and idempotent.
 
 import type { TaskProposalSpec } from "@shared/types";
+import { pickupFor, pickupNote, scopeIsRunnable, type PickupMap } from "../../lib/scopePickup";
+import { ticketHref } from "../../lib/tasks";
 
 // ---- Wire shape (matches the A.1 contract) ---------------------------------
 export type UiCardFieldType =
@@ -265,6 +267,29 @@ async function fileTicket(
   return (await r.json()) as CreatedTask;
 }
 
+// GET /api/tasks/scopes carries a `pickup` map: per scope, whether a worker can
+// be launched by hand and whether ANYTHING picks tickets up unattended. Best
+// effort — a failed read falls back to the pure predicate in lib/scopePickup.
+async function fetchPickupMap(): Promise<PickupMap | null> {
+  try {
+    const r = await fetch("/api/tasks/scopes");
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j.pickup ?? null) as PickupMap | null;
+  } catch {
+    return null;
+  }
+}
+
+// The follow-up buttons a filed ticket offers. `openTicket` goes to the ticket
+// when the server told us its id, which is the only thing "Open ticket" can
+// honestly mean; without an id it is a filtered list and says so.
+function filedActions(taskId: string | null): UiCardAction[] {
+  return taskId
+    ? [{ id: "openTicket", label: "Open ticket", variant: "primary" }]
+    : [{ id: "openWork", label: "Open in Work", variant: "primary" }];
+}
+
 const addTasks: UiCardHandler = async (state, ctx) => {
   const asked = (state.values.scope || "workshop").trim();
   if (!composeTaskText(state.values).trim()) {
@@ -278,11 +303,15 @@ const addTasks: UiCardHandler = async (state, ctx) => {
     const decided = j.decision && j.decision !== "distinct" ? ` (${j.message ?? j.decision})` : "";
     // The scope the SERVER filed into — see addTasksAndRun.
     const scope = (j.scope || asked).trim();
+    const taskId = j.task?.id || "";
+    // A ticket filed to a project scope is picked up by nothing today. Saying
+    // "Filed" and stopping there lets it read as queued when it is not.
+    const warn = pickupNote(pickupFor(await fetchPickupMap(), scope));
     return {
       status: "success",
-      note: `Filed a ticket in ${scope}${decided}.`,
-      values: { scope } as Record<string, string>,
-      actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
+      note: `Filed a ticket in ${scope}${decided}.${warn ? ` ${warn}` : ""}`,
+      values: { scope, __task_id: taskId ?? "" } as Record<string, string>,
+      actions: filedActions(taskId || null),
     };
   } catch (e) {
     return { status: "error", message: String(e) };
@@ -296,6 +325,16 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
   }
   if (!ctx.threadId) {
     return { status: "error", message: "This card is not attached to a chat yet." };
+  }
+  // BEFORE the ticket is filed. `scope_is_runnable` exists precisely so the UI
+  // can say this in advance (routes/tasks_all.py), and TicketDraftsDialog
+  // already honours it; this path did not, so a general chat scope filed the
+  // ticket and then reported the failure as a footnote on a success message.
+  if (!scopeIsRunnable(asked)) {
+    return {
+      status: "error",
+      message: `${asked} cannot run tickets. File it with "File ticket", or choose a scope that can run work.`,
+    };
   }
   let created: CreatedTask;
   try {
@@ -313,14 +352,15 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
   // that does not contain it. The server returns the scope it used; that is the
   // only one worth repeating. (TicketDraftsDialog already reads it this way.)
   const scope = (created.scope || asked).trim();
+  const taskId = created.task?.id ?? null;
   // A merge folded into an existing ticket, so the server deliberately does not
   // run it: re-running work that already exists would be a surprise.
   if (created.decision === "merge" || created.decision === "exact") {
     return {
       status: "success",
       note: `Merged into an existing ticket in ${scope}; did not start a new run.`,
-      values: { scope } as Record<string, string>,
-      actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
+      values: { scope, __task_id: taskId ?? "" } as Record<string, string>,
+      actions: filedActions(taskId),
     };
   }
   if (created.run_error) {
@@ -328,17 +368,21 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
     return {
       status: "success",
       note: `Filed the ticket in ${scope}, but could not run it now: ${created.run_error}`,
-      values: { scope } as Record<string, string>,
-      actions: [{ id: "openWork", label: "Open in Work", variant: "primary" }],
+      values: { scope, __task_id: taskId ?? "" } as Record<string, string>,
+      actions: filedActions(taskId),
     };
   }
   return {
     status: "success",
     note: `Filed and running in ${scope}.`,
-    values: { scope, __job_id: String(created.job_id || "") } as Record<string, string>,
+    values: {
+      scope,
+      __task_id: taskId ?? "",
+      __job_id: String(created.job_id || ""),
+    } as Record<string, string>,
     actions: [
       { id: "viewRun", label: "View run", variant: "primary" },
-      { id: "openWork", label: "Open in Work" },
+      ...filedActions(taskId),
     ],
   };
 };
@@ -346,6 +390,14 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
 const openWork: UiCardHandler = async (state, ctx) => {
   const scope = (state.values.scope || "").trim();
   ctx.navigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work");
+  return { status: "noop" };
+};
+
+// The ticket, not the list it is somewhere inside.
+const openTicket: UiCardHandler = async (state, ctx) => {
+  const taskId = (state.values.__task_id || "").trim();
+  const scope = (state.values.scope || "workshop").trim();
+  ctx.navigate(taskId ? ticketHref(scope, taskId) : `/work?scope=${encodeURIComponent(scope)}`);
   return { status: "noop" };
 };
 
@@ -362,6 +414,7 @@ export const UI_CARD_ACTIONS: Record<string, UiCardHandler> = {
   addTasks,
   addTasksAndRun,
   openWork,
+  openTicket,
   viewRun,
   dismiss,
 };

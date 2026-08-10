@@ -30,8 +30,9 @@ import {
   Textarea,
   type SegmentedOption,
 } from "../../ui";
-import { scopeLabel } from "../../lib/tasks";
+import { scopeLabel, ticketHref } from "../../lib/tasks";
 import { type Job, jobStatusKind } from "../../lib/jobs";
+import { pickupFor, pickupNote, type PickupMap } from "../../lib/scopePickup";
 import {
   KNOWN_KINDS,
   UI_CARD_ACTIONS,
@@ -457,13 +458,26 @@ function JobStatusCard({ spec, ctx }: { spec: UiCardSpec; ctx: UiCardCtx }) {
           <Button size="sm" variant="ghost" onClick={() => ctx.navigate(`/runs/${encodeURIComponent(jobId)}`)}>
             View job <ArrowUpRight size={14} aria-hidden />
           </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() => ctx.navigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work")}
-          >
-            Open ticket <ArrowUpRight size={14} aria-hidden />
-          </Button>
+          {/* "Open ticket" has to open THE ticket. This went to a scope-filtered
+              list while spec.task_id sat declared and populated beside it. With
+              no id the destination really is a list, and the label says so. */}
+          {spec.task_id ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => ctx.navigate(ticketHref(scope || "workshop", spec.task_id!))}
+            >
+              Open ticket <ArrowUpRight size={14} aria-hidden />
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => ctx.navigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work")}
+            >
+              Open in Work <ArrowUpRight size={14} aria-hidden />
+            </Button>
+          )}
         </Row>
       </Stack>
     </Card>
@@ -503,6 +517,21 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
   );
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // What will actually happen to a ticket filed from this card. The drafts
+  // dialog has always asked this before offering "File and run"; the card path
+  // did not, so a non-runnable scope produced the after-the-fact footnote the
+  // predicate exists to prevent.
+  const [pickupMap, setPickupMap] = useState<PickupMap | null>(null);
+  const isTaskProposal = spec?.kind === "task-proposal";
+  useEffect(() => {
+    if (!isTaskProposal) return;
+    let cancelled = false;
+    fetch("/api/tasks/scopes")
+      .then((r) => (r.ok ? r.json() : { pickup: null }))
+      .then((j) => { if (!cancelled) setPickupMap(j.pickup ?? null); })
+      .catch(() => { /* falls back to the pure predicate */ });
+    return () => { cancelled = true; };
+  }, [isTaskProposal]);
 
   // A card rendered before its thread's states arrived (or acted on in another
   // tab) reconciles when the record shows up, rather than staying stale.
@@ -611,6 +640,14 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
   }
 
   // Edit state.
+  const pickup = isTaskProposal ? pickupFor(pickupMap, (values.scope || "workshop").trim()) : null;
+  const pickupWarning = pickup ? pickupNote(pickup) : null;
+  // Do not offer a run that cannot happen. The same rule TicketDraftsDialog
+  // applies when it hides "File and run now".
+  const editActions = (spec.actions ?? []).filter(
+    (a) => a.id !== "addTasksAndRun" || !pickup || pickup.runnable,
+  );
+
   return (
     <Card>
       <Stack>
@@ -623,8 +660,11 @@ export function UiCard({ spec, raw, ctx }: { spec: UiCardSpec | null; raw: strin
             <CardField key={f.name} field={f} value={values[f.name] ?? ""} onChange={(v) => setValue(f.name, v)} />
           ))}
         </Stack>
+        {pickupWarning && (
+          <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{pickupWarning}</span>
+        )}
         {errorBlock}
-        <ActionButtons actions={spec.actions ?? []} busyId={busyId} onRun={(a) => void runAction(a)} requireHandler />
+        <ActionButtons actions={editActions} busyId={busyId} onRun={(a) => void runAction(a)} requireHandler />
       </Stack>
     </Card>
   );

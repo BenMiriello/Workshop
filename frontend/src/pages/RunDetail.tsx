@@ -15,8 +15,9 @@ import {
   catFor,
 } from "../ui";
 import type { StatusKind } from "../ui";
-import { type Job, jobStatusKind } from "../lib/jobs";
+import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
+import { nextWorkParams } from "../lib/workParams";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
 // evidence. Linked from Work's Runs tab, Home attention cards, and an agent's
@@ -228,8 +229,10 @@ export default function JobDetail() {
   const [acting, setActing] = useState<string | null>(null); // "<taskId>:<action>" in flight
   const [actErr, setActErr] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
+  // `quiet` is the polled read: it must not flash the Refresh button's spinner
+  // or blank the page every five seconds.
+  const refresh = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setErr(null);
     setNotFound(false);
     try {
@@ -252,13 +255,25 @@ export default function JobDetail() {
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (!quiet) setLoading(false);
     }
   }, [id]);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
+
+  // A run is a background process: it changes without us acting. This page used
+  // to read only on mount and on the manual button, so a run opened while in
+  // flight said "running" and "Ended: running" forever, however long ago it had
+  // actually finished. Poll while it can still move, and stop the moment it
+  // cannot (jobIsLive), so a finished run costs nothing.
+  const live = jobIsLive(job?.status);
+  useEffect(() => {
+    if (!live) return;
+    const t = setInterval(() => { void refresh(true); }, 5000);
+    return () => clearInterval(t);
+  }, [live, refresh]);
 
   const act = useCallback(
     async (taskId: string, action: string) => {
@@ -307,7 +322,7 @@ export default function JobDetail() {
       actions={
         <Row wrap style={{ gap: "var(--space-2)" }}>
           {back}
-          <Button size="sm" onClick={refresh} loading={loading}>
+          <Button size="sm" onClick={() => void refresh()} loading={loading}>
             <RefreshCw aria-hidden /> Refresh
           </Button>
         </Row>
@@ -322,7 +337,7 @@ export default function JobDetail() {
         variant="error"
         title="Couldn't load run"
         hint={<><code>/api/jobs/{id}</code>. {err}</>}
-        action={<Button size="sm" onClick={refresh}>Retry</Button>}
+        action={<Button size="sm" onClick={() => void refresh()}>Retry</Button>}
       />
     );
   } else if (notFound) {
@@ -454,6 +469,11 @@ export default function JobDetail() {
                 {typeof job.exit_code === "number" && (
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>exit {job.exit_code}</span>
                 )}
+                {live && (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    rechecked every 5 seconds
+                  </span>
+                )}
               </Row>
               {job.project_slug && (
                 <Row style={{ gap: "var(--space-1)", alignItems: "center", cursor: "pointer" }}
@@ -515,16 +535,33 @@ export default function JobDetail() {
                       <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
                         <StatusPill status={statusKind(c.status)}>{c.status ?? "unknown"}</StatusPill>
                         <span style={{ flex: "1 1 12rem", wordBreak: "break-word" }}>{c.title || c.task_text || c.id}</span>
-                        {cscope && (
+                        {/* A button labelled "task" has to go to THAT task. This
+                            went to a filtered list while c.task_id sat unused
+                            beside it, which is the same mistake the "Linked
+                            ticket" row above already avoids via ticketHref. The
+                            scope-filtered list is still offered when there is no
+                            task id, but it is then labelled as a list. */}
+                        {c.task_id ? (
                           <button
                             type="button"
                             className="ws-bc__link"
                             style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
-                            onClick={() => nav(`/work?scope=${encodeURIComponent(cscope)}`)}
+                            onClick={() => nav(ticketHref(cscope || runTicketScope(c), c.task_id!))}
                           >
-                            <ListTodo aria-hidden size={12} /> task
+                            <ListTodo aria-hidden size={12} /> ticket
                           </button>
-                        )}
+                        ) : cscope ? (
+                          <button
+                            type="button"
+                            className="ws-bc__link"
+                            style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "inline-flex", alignItems: "center", gap: "var(--space-1)", fontSize: "var(--fs-xs)" }}
+                            onClick={() =>
+                              nav(`/work?${nextWorkParams(new URLSearchParams(), { tab: "tickets", scope: cscope })}`)
+                            }
+                          >
+                            <ListTodo aria-hidden size={12} /> tickets in scope
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           className="ws-bc__link"
@@ -593,7 +630,15 @@ export default function JobDetail() {
           <Card style={{ padding: "var(--space-4)" }}>
             <Stack gap="sm">
               <Row between wrap><span className="ws-muted">Started</span><span>{fmtTs(job.started_at) || "not started"}</span></Row>
-              <Row between wrap><span className="ws-muted">Ended</span><span>{fmtTs(job.ended_at) || "running"}</span></Row>
+              {/* Never the bare word "running": a run with no end time is
+                  either still going or it died without recording one, and those
+                  are different facts. */}
+              <Row between wrap>
+                <span className="ws-muted">Ended</span>
+                <span>
+                  {fmtTs(job.ended_at) || (live ? "still running" : "no end time was recorded")}
+                </span>
+              </Row>
               {(typeof job.tasks_done === "number" || typeof job.tasks_failed === "number") && (
                 <Row between wrap>
                   <span className="ws-muted">Tasks</span>

@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Textarea, Markdown,
+  Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Textarea, Markdown,
   catFor,
 } from "../ui";
 import {
@@ -16,7 +16,14 @@ import {
   ticketHref,
   latitudeDesc, latitudeSourceLabel,
 } from "../lib/tasks";
+import { jobIsLive, jobStatusKind } from "../lib/jobs";
+import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
+import { nextWorkParams } from "../lib/workParams";
 
+// A ticket can only be launched from `todo`. This gate lived in Work.tsx's
+// unreachable Edit drawer and nowhere on the live path, so Run was offered on
+// `done` and `cancelled` tickets and simply re-ran finished work.
+const RUNNABLE_STATUSES = new Set(["todo"]);
 
 type JobRec = {
   id: string;
@@ -68,14 +75,21 @@ export default function TicketDetail() {
   const [deploys, setDeploys] = useState<Deploy[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [pickupMap, setPickupMap] = useState<PickupMap | null>(null);
   const [editing, setEditing] = useState(false);
   const [draftTitle, setDraftTitle] = useState("");
   const [draftDesc, setDraftDesc] = useState("");
+  // Status and latitude are ticket CONFIG, so they commit on Save with the rest
+  // of the ticket, not the instant the select moves (frontend/CLAUDE.md, "When
+  // does a control commit?"). They used to PATCH on change.
+  const [draftStatus, setDraftStatus] = useState("todo");
+  const [draftLatitude, setDraftLatitude] = useState("inherit");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [bannerErr, setBannerErr] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
   const [deployOpen, setDeployOpen] = useState(false);
@@ -83,6 +97,10 @@ export default function TicketDetail() {
   const [deployBusy, setDeployBusy] = useState(false);
 
   const projectSlug = scope.startsWith("project:") ? scope.slice("project:".length) : null;
+
+  // One banner, two meanings. A 409 used to land here as raw JSON.
+  const say = useCallback((text: string) => { setBanner(text); setBannerErr(false); }, []);
+  const fail = useCallback((text: string) => { setBanner(text); setBannerErr(true); }, []);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -113,10 +131,21 @@ export default function TicketDetail() {
   }, [scope, id, projectSlug]);
   useEffect(() => { load(); }, [load]);
 
+  // Whether anything picks this scope's tickets up on its own, and whether a
+  // worker can be launched here at all.
+  useEffect(() => {
+    fetch("/api/tasks/scopes")
+      .then((r) => (r.ok ? r.json() : { pickup: null }))
+      .then((j) => setPickupMap(j.pickup ?? null))
+      .catch(() => setPickupMap(null));
+  }, []);
+
   useEffect(() => {
     if (task && !editing) {
       setDraftTitle(titleOf(task));
       setDraftDesc(descriptionOf(task));
+      setDraftStatus(task.status ?? "todo");
+      setDraftLatitude(task.latitude ?? "inherit");
     }
   }, [task, editing]);
 
@@ -132,46 +161,64 @@ export default function TicketDetail() {
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setTask(await r.json());
     } catch (e) {
-      setBanner(e instanceof Error ? e.message : String(e));
+      fail(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
-  }, [scope, id]);
+  }, [scope, id, fail]);
 
   // Patches the canonical pair, not the joined blob: the store keeps title and
   // body as separate fields, and sending `text` would make the server re-split
-  // an edit the operator already split by hand.
-  const saveText = useCallback(async () => {
-    await patch({ title: cleanTitle(draftTitle), body: draftDesc });
+  // an edit the operator already split by hand. Status and latitude ride along,
+  // because they are part of the same explicit Save.
+  const saveEdits = useCallback(async () => {
+    await patch({
+      title: cleanTitle(draftTitle),
+      body: draftDesc,
+      status: draftStatus,
+      latitude: draftLatitude === "inherit" ? null : draftLatitude,
+    });
     setEditing(false);
-  }, [draftTitle, draftDesc, patch]);
+  }, [draftTitle, draftDesc, draftStatus, draftLatitude, patch]);
 
   const runTask = useCallback(async () => {
     setRunning(true);
     setBanner(null);
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/run`, { method: "POST" });
+      // A busy tree answers 409. It used to render as the raw JSON body of the
+      // error, which tells the operator nothing about what to do next.
+      if (r.status === 409) {
+        const e = await r.json().catch(() => ({} as { detail?: unknown }));
+        const detail = typeof e.detail === "string" ? e.detail : "";
+        fail(detail || "A sweep is already running against this scope. Wait for it to finish, or stop the queue runner.");
+        return;
+      }
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j = await r.json();
-      setBanner(`Run started: ${j.job_id || "(no id)"}`);
+      say(
+        j.job_id
+          ? "Run started. It appears under Runs below, and the ticket status moves when the run finishes."
+          : "The run was accepted but returned no id.",
+      );
       await load();
     } catch (e) {
-      setBanner(e instanceof Error ? e.message : String(e));
+      fail(e instanceof Error ? e.message : String(e));
     } finally {
       setRunning(false);
       setRunOpen(false);
     }
-  }, [scope, id, load]);
+  }, [scope, id, load, say, fail]);
 
   const deleteTask = useCallback(async () => {
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`, { method: "DELETE" });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-      nav("/work?tab=tickets", { replace: true });
+      nav(`/work?${nextWorkParams(new URLSearchParams(), { tab: "tickets", scope })}`, { replace: true });
     } catch (e) {
-      setBanner(e instanceof Error ? e.message : String(e));
+      fail(e instanceof Error ? e.message : String(e));
     }
-  }, [scope, id, nav]);
+  }, [scope, id, nav, fail]);
 
   const review = useCallback(async (action: string) => {
     setReviewBusy(action);
@@ -186,11 +233,11 @@ export default function TicketDetail() {
       setReviewNote("");
       await load();
     } catch (e) {
-      setBanner(e instanceof Error ? e.message : String(e));
+      fail(e instanceof Error ? e.message : String(e));
     } finally {
       setReviewBusy(null);
     }
-  }, [scope, id, reviewNote, load]);
+  }, [scope, id, reviewNote, load, fail]);
 
   const kickDeploy = useCallback(async () => {
     if (!deployPick || !projectSlug) return;
@@ -204,16 +251,16 @@ export default function TicketDetail() {
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j = await r.json();
-      setBanner(`Deploy started: ${j.job_id}. Watch it in this ticket's Runs list.`);
+      say(`Deploy started: ${j.job_id}. Watch it in this ticket's Runs list.`);
       setDeployOpen(false);
       setDeployPick("");
       await load();
     } catch (e) {
-      setBanner(e instanceof Error ? e.message : String(e));
+      fail(e instanceof Error ? e.message : String(e));
     } finally {
       setDeployBusy(false);
     }
-  }, [deployPick, projectSlug, id, load]);
+  }, [deployPick, projectSlug, id, load, say, fail]);
 
   const blocked = task?.status === "blocked" && !!task?.awaiting;
 
@@ -222,7 +269,37 @@ export default function TicketDetail() {
 
   const scopeLink = scopeHref(scope);
 
-  const workHref = "/work?tab=tickets" + (scope ? `&scope=${encodeURIComponent(scope)}` : "");
+  const workHref = `/work?${nextWorkParams(new URLSearchParams(), { tab: "tickets", scope })}`;
+
+  // A run this ticket started is a background process. The ticket record itself
+  // does not move when `launch_task_run` opens a Job, so without this the status
+  // pill still reads "To do" after a successful launch and the page reads as if
+  // nothing happened. Say that a run is in flight, and poll until it is not.
+  const liveRun = (runs || []).find((r) => jobIsLive(r.status)) || null;
+  const liveRunId = liveRun?.id ?? null;
+  useEffect(() => {
+    if (!liveRunId) return;
+    const t = setInterval(() => { void load(); }, 5000);
+    return () => clearInterval(t);
+  }, [liveRunId, load]);
+
+  const pickup = pickupFor(pickupMap, scope);
+  const pickupWarning = pickupNote(pickup);
+  const statusRunnable = RUNNABLE_STATUSES.has(task?.status ?? "");
+  const canRun = !!task && !saving && !running && !liveRunId && statusRunnable && pickup.runnable;
+  const cannotRunBecause = !task
+    ? ""
+    : liveRunId ? "A run for this ticket is already in flight."
+    : !pickup.runnable ? "This scope cannot run tickets."
+    : !statusRunnable ? `Run is offered while a ticket is To do. This one is ${taskStatusLabel(task.status)}.`
+    : "";
+
+  const dirty = !!task && editing && (
+    draftTitle !== titleOf(task)
+    || draftDesc !== descriptionOf(task)
+    || draftStatus !== (task.status ?? "todo")
+    || draftLatitude !== (task.latitude ?? "inherit")
+  );
 
   return (
     <div>
@@ -241,6 +318,9 @@ export default function TicketDetail() {
             {task && (
               <>
                 <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
+                {/* The ticket record does not move when a run is launched, so
+                    the two facts are shown as two pills rather than one lie. */}
+                {liveRunId && <StatusPill status="running">run in flight</StatusPill>}
                 {/* A hued Tag, matching Work's ticket card. The same scope
                     rendering as a neutral Badge here and a coloured Tag there
                     made one fact look like two different kinds of fact. */}
@@ -273,7 +353,13 @@ export default function TicketDetail() {
         actions={
           <Row wrap style={{ gap: "var(--space-2)" }}>
             <Button size="sm" variant="ghost" onClick={load}><RefreshCw aria-hidden /> Refresh</Button>
-            <Button size="sm" variant="primary" onClick={() => setRunOpen(true)} disabled={!task || saving || running}>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setRunOpen(true)}
+              disabled={!canRun}
+              title={cannotRunBecause || undefined}
+            >
               <Play aria-hidden /> Run
             </Button>
             {projectSlug && (deploys?.length ?? 0) > 0 && (
@@ -290,12 +376,21 @@ export default function TicketDetail() {
 
       {banner && (
         <div style={{ marginBottom: "var(--space-3)" }}>
-          <Card>
-            <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
-              <span style={{ flex: 1 }}>{banner}</span>
-              <Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>
-            </Row>
-          </Card>
+          {bannerErr ? (
+            <StateBlock
+              variant="error"
+              title="That didn't work"
+              hint={banner}
+              action={<Button size="sm" onClick={() => setBanner(null)}>Dismiss</Button>}
+            />
+          ) : (
+            <Card>
+              <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
+                <span style={{ flex: 1 }}>{banner}</span>
+                <Button size="sm" variant="ghost" onClick={() => setBanner(null)}>Dismiss</Button>
+              </Row>
+            </Card>
+          )}
         </div>
       )}
 
@@ -314,9 +409,10 @@ export default function TicketDetail() {
               {!editing ? (
                 <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>Edit</Button>
               ) : (
-                <Row style={{ gap: "var(--space-2)" }}>
+                <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                  {dirty && <Badge>unsaved</Badge>}
                   <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
-                  <Button size="sm" variant="primary" onClick={saveText} loading={saving} disabled={saving}>Save</Button>
+                  <Button size="sm" variant="primary" onClick={saveEdits} loading={saving} disabled={saving || !dirty}>Save</Button>
                 </Row>
               )}
             </Row>
@@ -376,12 +472,18 @@ export default function TicketDetail() {
             <SectionLabel>State</SectionLabel>
             <Card>
               <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
+                {/* Config, so it commits on the ticket's explicit Save, not the
+                    instant the select moves. Read-only until Edit is pressed. */}
                 <Field label="Status">
-                  <Select value={task.status} onChange={(e) => patch({ status: e.target.value })} disabled={saving}>
-                    {TASK_STATUSES.map((s) => (
-                      <option key={s} value={s}>{taskStatusLabel(s)}</option>
-                    ))}
-                  </Select>
+                  {editing ? (
+                    <Select value={draftStatus} onChange={(e) => setDraftStatus(e.target.value)} disabled={saving}>
+                      {TASK_STATUSES.map((s) => (
+                        <option key={s} value={s}>{taskStatusLabel(s)}</option>
+                      ))}
+                    </Select>
+                  ) : (
+                    <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
+                  )}
                 </Field>
                 <Field label="Latitude"
                   help={
@@ -392,12 +494,16 @@ export default function TicketDetail() {
                         : ""}
                     </>
                   }>
-                  <Select value={task.latitude ?? "inherit"} onChange={(e) => patch({ latitude: e.target.value === "inherit" ? null : e.target.value })} disabled={saving}>
-                    <option value="inherit">inherit</option>
-                    <option value="strict">strict</option>
-                    <option value="standard">standard</option>
-                    <option value="open">open</option>
-                  </Select>
+                  {editing ? (
+                    <Select value={draftLatitude} onChange={(e) => setDraftLatitude(e.target.value)} disabled={saving}>
+                      <option value="inherit">inherit</option>
+                      <option value="strict">strict</option>
+                      <option value="standard">standard</option>
+                      <option value="open">open</option>
+                    </Select>
+                  ) : (
+                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.latitude ?? "inherit"}</span>
+                  )}
                 </Field>
                 {task.assignee && (
                   <Field label="Assignee">
@@ -410,6 +516,20 @@ export default function TicketDetail() {
                   </Field>
                 )}
               </Row>
+              {!editing && (
+                <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0 0" }}>
+                  Press Edit above to change the status or latitude.
+                </p>
+              )}
+              {/* What will actually happen to this ticket if nobody presses
+                  Run. For a project scope today, the answer is nothing. */}
+              {pickupWarning && (
+                <div style={{ marginTop: "var(--space-2)" }}>
+                  <StatusDot status="warn">
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{pickupWarning}</span>
+                  </StatusDot>
+                </div>
+              )}
             </Card>
           </section>
 
@@ -516,9 +636,11 @@ export default function TicketDetail() {
                 <Stack gap="sm">
                   {(runs || []).map((r) => (
                     <Row key={r.id} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                      <StatusDot status={r.status === "done" ? "ok" : r.status === "failed" ? "danger" : r.status === "running" ? "running" : "stopped"}>
-                        {r.status}
-                      </StatusDot>
+                      {/* jobStatusKind, not a local ternary. The inlined one
+                          here had no awaiting_input case, so a run waiting on
+                          the operator rendered grey on this page and amber on
+                          every other one. */}
+                      <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
                       {r.kind && <Badge>{r.kind}</Badge>}
                       {r.trigger && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{r.trigger}</span>}
                       <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{ago(r.started_at)}</span>
@@ -543,19 +665,13 @@ export default function TicketDetail() {
               <SectionLabel icon={<Rocket aria-hidden />}>Deploy from this ticket</SectionLabel>
               <Card>
                 <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  <Field label="Target">
-                    <Select value={deployPick} onChange={(e) => setDeployPick(e.target.value)}>
-                      <option value="">Pick a target</option>
-                      {(deploys || []).map((d) => (
-                        <option key={d.id} value={d.id}>{d.name} · {d.target.kind}</option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Button size="sm" variant="primary" disabled={!deployPick || deployBusy}
-                          loading={deployBusy}
+                  <Button size="sm" variant="primary" disabled={deployBusy}
                           onClick={() => setDeployOpen(true)}>
-                    <Rocket aria-hidden /> Deploy
+                    <Rocket aria-hidden /> Choose a target
                   </Button>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    {(deploys?.length ?? 0)} target{(deploys?.length ?? 0) === 1 ? "" : "s"} configured for {projectSlug}
+                  </span>
                 </Row>
                 <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0 0" }}>
                   This kicks a deploy tied to this ticket (the resulting Run appears above and in the project's Deploys panel).
@@ -571,8 +687,15 @@ export default function TicketDetail() {
           open
           onCancel={() => setRunOpen(false)}
           title="Run this ticket now?"
-          body={<>A worker will pick this ticket up in the next sweep. Runs appear in the Runs section above.</>}
+          body={
+            <>
+              This launches a worker against this ticket immediately, in{" "}
+              <strong>{scopeLabel(scope)}</strong>. The run appears in the Runs section above.
+              The ticket keeps its current status until the run finishes.
+            </>
+          }
           confirmLabel="Run"
+          busy={running}
           onConfirm={runTask}
         />
       )}
@@ -588,20 +711,49 @@ export default function TicketDetail() {
         />
       )}
 
-      {deployOpen && deployPick && (
-        <ConfirmDialog
+      {/* The dialog CARRIES the target picker. It used to be gated on
+          `deployOpen && deployPick`, with deployPick set only by a Select
+          further down the page, so the header's Deploy button opened nothing at
+          all until the operator had already chosen a target somewhere else. */}
+      {deployOpen && (
+        <Modal
           open
-          onCancel={() => setDeployOpen(false)}
+          onClose={() => setDeployOpen(false)}
           title="Kick a deploy for this ticket?"
-          body={
+          actions={
             <>
-              Target: <strong>{deploys?.find((d) => d.id === deployPick)?.name}</strong> ({deploys?.find((d) => d.id === deployPick)?.target.kind}).
-              The deploy Run appears above; the ticket status is unchanged.
+              <Button onClick={() => setDeployOpen(false)}>Cancel</Button>
+              <Button
+                variant="primary"
+                disabled={!deployPick || deployBusy}
+                loading={deployBusy}
+                onClick={kickDeploy}
+              >
+                <Rocket aria-hidden /> Deploy
+              </Button>
             </>
           }
-          confirmLabel="Deploy"
-          onConfirm={kickDeploy}
-        />
+        >
+          <Stack gap="lg">
+            <Field label="Target" htmlFor="ticket-deploy-target">
+              <Select
+                id="ticket-deploy-target"
+                value={deployPick}
+                onChange={(e) => setDeployPick(e.target.value)}
+                data-autofocus
+              >
+                <option value="">Pick a target</option>
+                {(deploys || []).map((d) => (
+                  <option key={d.id} value={d.id}>{d.name} · {d.target.kind}</option>
+                ))}
+              </Select>
+            </Field>
+            <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
+              The deploy Run appears in this ticket's Runs list and in the project's Deploys panel.
+              The ticket status is unchanged.
+            </p>
+          </Stack>
+        </Modal>
       )}
     </div>
   );

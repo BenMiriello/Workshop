@@ -49,3 +49,14 @@ const JOB_STATUS_KIND: Record<string, StatusKind> = {
 
 export const jobStatusKind = (status?: string): StatusKind =>
   JOB_STATUS_KIND[status ?? ""] ?? "stopped";
+
+// The statuses a run can still leave on its own. Everything else is terminal:
+// `awaiting_input` included, because that run's process is gone and only an
+// operator action moves it.
+//
+// This is the predicate a surface polls on. A run detail page that never polled
+// read "running" and "Ended: running" forever, no matter what the run had since
+// done; the fix is only correct if "when do I stop" is answered in one place.
+const JOB_LIVE_STATES = new Set(["running", "queued"]);
+
+export const jobIsLive = (status?: string): boolean => JOB_LIVE_STATES.has(status ?? "");

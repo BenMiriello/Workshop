@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Power, Cpu } from "lucide-react";
 import { Button, ConfirmDialog, StatusDot } from "../ui";
+import { autonomyIsLive, describeAutonomy } from "../lib/autonomy";
 import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 
 // Autonomy & GPU controls. The global cron-autonomy pause (AUTONOMY_DISABLED)
@@ -121,20 +122,25 @@ export default function AutonomyControls() {
 
   const cronDisabled = !!auto?.cron_autonomy.disabled;
   const runnerRunning = !!auto?.queue_runner?.running;
-  const allStopped = cronDisabled;
+  // The pair, never collapsed. `enabled` is the override flag (work is
+  // permitted); `running` is a flock probe (a worker is resident). The summary
+  // used to be `allStopped = cronDisabled`, which reported "running" whenever
+  // the flag was merely clear.
+  const pair = { running: runnerRunning, enabled: !cronDisabled };
+  const view = describeAutonomy(pair);
+  const live = autonomyIsLive(pair);
 
+  // Stop all / Start all act on the RUNNER, not just the flag. They used to
+  // POST and DELETE the override alone, so "Start all" started nothing: it
+  // permitted work that no resident process existed to do. /queue/runner/start
+  // clears the override and ensures a runner (via the idempotent watchdog);
+  // /queue/runner/stop engages it and signals the runner, whose lease/reclaim
+  // path returns a half-worked ticket to the queue.
   const onStopAll = async () => {
     setBusy("stop-all");
     try {
-      // Engage the override FIRST so nothing reloads a model right after we
-      // unload it. The override is the canonical off-switch (autonomy-model
-      // 2026-07-18 §1.2); the legacy AUTONOMY_DISABLED flag is preserved but
-      // not touched from the UI.
-      await fetch("/api/agents/autonomy/override", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ reason: "Stop all" }),
-      });
+      // Stop the loop FIRST so nothing reloads a model right after we unload it.
+      await fetch("/api/queue/runner/stop", { method: "POST" });
       await fetch("/api/ollama/unload", { method: "POST" });
       await load();
     } finally {
@@ -146,7 +152,7 @@ export default function AutonomyControls() {
   const onStartAll = async () => {
     setBusy("start-all");
     try {
-      await fetch("/api/agents/autonomy/override", { method: "DELETE" });
+      await fetch("/api/queue/runner/start", { method: "POST" });
       await load();
     } finally {
       setBusy(null);
@@ -184,38 +190,31 @@ export default function AutonomyControls() {
       <Row label="all autonomy">
         {auto == null ? "loading…" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            <StatusDot status={allStopped ? "stopped" : "running"}>
-              {allStopped ? "stopped" : "running"}
-            </StatusDot>
-            {allStopped ? (
-              <Button size="sm" variant="primary" loading={busy === "start-all"} disabled={busy != null} onClick={onStartAll}>
-                Start all
-              </Button>
-            ) : (
+            {/* The same rule the queue runner card uses (lib/autonomy), so this
+                card can no longer contradict itself between two of its rows. */}
+            <StatusDot status={view.kind}>{view.hint}</StatusDot>
+            {live ? (
               <Button size="sm" variant="danger-ghost" disabled={busy != null} onClick={() => setConfirmStopAll(true)}>
                 <Power aria-hidden /> Stop all
+              </Button>
+            ) : (
+              <Button size="sm" variant="primary" loading={busy === "start-all"} disabled={busy != null} onClick={onStartAll}>
+                Start all
               </Button>
             )}
           </span>
         )}
       </Row>
 
-      <Row label="cron loop">
+      <Row label="unattended work">
         {auto == null ? "–" : (
           <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-            {/* Three real states, never "enabled" on the strength of a missing
-                flag file alone: work is permitted AND a worker is resident, or
-                it is permitted with nothing running (tickets pile up), or it is
-                switched off. The middle case is the one that used to read as
-                healthy while nothing ran. */}
-            <StatusDot
-              status={cronDisabled ? "stopped" : runnerRunning ? "running" : "warn"}
-            >
-              {cronDisabled
-                ? "disabled"
-                : runnerRunning
-                  ? "running (draining the queue)"
-                  : "permitted, but nothing is running. Tickets will queue"}
+            {/* ONE fact: whether work is PERMITTED. Whether anything is doing it
+                is the row above, and this row must never speak to it. Saying
+                both here is how the card came to report two different answers to
+                one question. */}
+            <StatusDot status={cronDisabled ? "stopped" : "ok"}>
+              {cronDisabled ? "switched off" : "permitted"}
             </StatusDot>
             <Button
               size="sm"
@@ -288,7 +287,7 @@ export default function AutonomyControls() {
         onCancel={() => setConfirmStopAll(false)}
         onConfirm={onStopAll}
         title="Stop all autonomy and free GPU?"
-        body="Stops scheduled work and frees the GPU. Starting it again reloads the models, which takes about 20 seconds."
+        body="Stops the resident queue runner, switches unattended work off, and frees the GPU. A ticket half-worked when the runner stops goes back on the queue. Starting it again reloads the models, which takes about 20 seconds."
         confirmLabel="Stop all"
         busy={busy === "stop-all"}
       />
