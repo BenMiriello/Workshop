@@ -9,6 +9,7 @@ import ProjectDetail from "./pages/ProjectDetail";
 import AppPreview from "./pages/AppPreview";
 import BaseApps from "./pages/settings/BaseApps";
 import Grants from "./pages/settings/Grants";
+import Trackers from "./pages/settings/Trackers";
 import Apps from "./pages/Apps";
 import Marketplace from "./pages/Marketplace";
 import Finance from "./pages/apps/Finance";
@@ -126,6 +127,7 @@ export default function App() {
           <Route path="/projects/:slug/run" element={<AppPreview />} />
           <Route path="/settings/base-apps" element={<BaseApps />} />
           <Route path="/settings/grants" element={<Grants />} />
+          <Route path="/settings/trackers" element={<Trackers />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/apps/finance" element={<Finance />} />

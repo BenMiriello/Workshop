@@ -19,6 +19,7 @@ import {
   LogOut,
   Smartphone,
   MessageSquare,
+  Link2,
 } from "lucide-react";
 import {
   Button,
@@ -87,6 +88,7 @@ export default function Settings() {
       <ChatSection />
       <BaseAppsSection />
       <PlatformSection />
+      <TrackersSection />
       <HealthSection />
       <AgentsSection />
       <AutonomyControls />
@@ -108,6 +110,27 @@ function BaseAppsSection() {
         </Link>
         <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
           (foundational tooling: workshop, clawdbot, infra)
+        </span>
+      </Row>
+    </Section>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Trackers section: pointer into Settings -> Trackers. ONE external ticket
+// integration for the system, with per-scope targets inside it. Everything that
+// looked like a setting collapsed into a decision already made, so this is a
+// pointer and not a panel.
+// ----------------------------------------------------------------------------
+function TrackersSection() {
+  return (
+    <Section icon={Link2} title="Trackers">
+      <Row label="integration">
+        <Link to="/settings/trackers" style={{ color: "var(--accent)" }}>
+          external tickets + triage ↗
+        </Link>
+        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
+          (one at a time; imported issues need approving)
         </span>
       </Row>
     </Section>
