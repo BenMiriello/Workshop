@@ -9,6 +9,9 @@ These pin the properties the rest of the chat system is now allowed to assume
     the message;
   - one writer at a time, so concurrent appends leave no gaps and no reordering;
   - a patch writes the fields it names and nothing else;
+  - the live log has a bounded size, and rotating its head into the archive
+    changes nothing a reader can observe: not a seq, not an order, not a cursor
+    handed out before the rotation, and not a single event;
   - migration off the old one-document-per-thread layout round-trips exactly and
     can be run again without duplicating anything.
 """
@@ -38,6 +41,31 @@ def tid(owned):
 
 def _seqs(thread_id):
     return [e["seq"] for e in chat_log.read_events(thread_id)]
+
+
+@pytest.fixture()
+def small_rotation(monkeypatch):
+    """The real thresholds in miniature, so a test can cross them in a few KB.
+
+    Proportions are kept: rotate at 4KB down to a 1KB tail, never fewer than a
+    handful of events live.
+    """
+    monkeypatch.setattr(chat_log, "ROTATE_BYTES", 4096)
+    monkeypatch.setattr(chat_log, "KEEP_BYTES", 1024)
+    monkeypatch.setattr(chat_log, "KEEP_MIN_EVENTS", 5)
+    monkeypatch.setattr(chat_log, "ROTATE_RETRY_EVENTS", 3)
+
+
+def _fill(thread_id, n, prefix="m", size=200):
+    """`n` messages fat enough that a few dozen cross the small threshold."""
+    for i in range(n):
+        chat_log.append_message_sync(thread_id, "user", f"{prefix}{i}:" + "x" * size)
+
+
+def _file_seqs(path):
+    if not path.exists():
+        return []
+    return [json.loads(ln)["seq"] for ln in path.read_text().splitlines() if ln.strip()]
 
 
 class TestSeq:
@@ -223,6 +251,257 @@ class TestReadEventsCursor:
             chat_log.append_message_sync(tid, "user", f"m{i}")
         got = chat_log.read_thread(tid, tail=3)
         assert [e["content"] for e in got["events"]] == ["m7", "m8", "m9"]
+
+
+class TestRotation:
+    """The live log is bounded. The record is not: nothing is ever dropped."""
+
+    def test_a_small_thread_never_grows_an_archive(self, tid, small_rotation):
+        _fill(tid, 5)
+        assert not chat_log.archive_path(tid).exists()
+        assert _seqs(tid) == [1, 2, 3, 4, 5]
+
+    def test_the_live_log_stops_growing_at_the_threshold(self, tid, small_rotation):
+        for i in range(60):
+            _fill(tid, 1, prefix=f"m{i}-")
+            assert chat_log.log_path(tid).stat().st_size <= chat_log.ROTATE_BYTES
+        assert chat_log.archive_path(tid).exists()
+
+    def test_every_event_survives_the_rotation_in_order(self, tid, small_rotation):
+        _fill(tid, 60)
+        events = chat_log.read_events(tid)
+        assert [e["seq"] for e in events] == list(range(1, 61))
+        assert [e["content"].split(":")[0] for e in events] == [f"m{i}" for i in range(60)]
+        # ...and they really did move: the live file no longer holds the head.
+        assert _file_seqs(chat_log.log_path(tid))[0] > 1
+        assert _file_seqs(chat_log.archive_path(tid))[0] == 1
+
+    def test_the_two_files_partition_the_log_exactly(self, tid, small_rotation):
+        _fill(tid, 60)
+        archived = _file_seqs(chat_log.archive_path(tid))
+        live = _file_seqs(chat_log.log_path(tid))
+        assert archived + live == list(range(1, 61))
+
+    def test_seqs_keep_counting_after_a_rotation(self, tid, small_rotation):
+        _fill(tid, 60)
+        ev = chat_log.append_message_sync(tid, "user", "next")
+        assert ev["seq"] == 61
+        assert chat_log.read_meta(tid)["last_seq"] == 61
+
+    def test_a_cursor_from_before_the_rotation_still_resolves(self, tid, small_rotation):
+        _fill(tid, 6)
+        cursor = chat_log.read_meta(tid)["last_seq"]        # a client polls, then goes quiet
+        _fill(tid, 54, prefix="later")
+        assert cursor < _file_seqs(chat_log.log_path(tid))[0]   # its cursor is now archived
+        got = chat_log.read_events(tid, after=cursor)
+        assert [e["seq"] for e in got] == list(range(cursor + 1, 61))
+        assert [e["content"].split(":")[0] for e in got] == [f"later{i}" for i in range(54)]
+
+    def test_a_cursor_at_the_very_start_returns_the_whole_log(self, tid, small_rotation):
+        _fill(tid, 60)
+        assert [e["seq"] for e in chat_log.read_events(tid, after=0)] == list(range(1, 61))
+
+    def test_a_limit_pages_across_the_boundary(self, tid, small_rotation):
+        _fill(tid, 60)
+        first_live = _file_seqs(chat_log.log_path(tid))[0]
+        page = chat_log.read_events(tid, after=first_live - 3, limit=6)
+        assert [e["seq"] for e in page] == list(range(first_live - 2, first_live + 4))
+
+    def test_a_current_cursor_never_opens_the_archive(self, tid, small_rotation, monkeypatch):
+        """The poll path is the hot one: it must not pay for the cold half."""
+        _fill(tid, 60)
+        opened = []
+        real = chat_log._read_rows
+        monkeypatch.setattr(chat_log, "_read_rows",
+                            lambda p: (opened.append(p.name), real(p))[1])
+        last = chat_log.read_meta(tid)["last_seq"]
+        chat_log.read_events(tid, after=last - 1)
+        assert opened == [chat_log.LOG_NAME]
+
+    def test_read_thread_tails_across_the_boundary(self, tid, small_rotation):
+        _fill(tid, 60)
+        got = chat_log.read_thread(tid, tail=3)
+        assert [e["seq"] for e in got["events"]] == [58, 59, 60]
+        assert got["last_seq"] == 60
+
+    def test_concurrent_appends_still_leave_no_gaps(self, tid, small_rotation):
+        async def main():
+            await asyncio.gather(*[
+                chat_log.append_message(tid, "user", f"m{i}:" + "x" * 200)
+                for i in range(60)
+            ])
+
+        asyncio.run(main())
+        assert _seqs(tid) == list(range(1, 61))
+        assert chat_log.archive_path(tid).exists()
+
+
+class TestRotationLeavesTheHotEventsAlone:
+    def test_the_context_boundary_and_everything_after_it_stay_live(
+            self, tid, small_rotation):
+        """`boundary_seq` is where the model's context starts. That much of the
+        thread is still being handed to a model on every turn, so it does not go
+        cold — and the boundary itself must still be findable where it was."""
+        _fill(tid, 10)
+        cut = chat_log.append_sync(tid, {"kind": "boundary", "mode": "compact"})
+        chat_log.patch_meta_sync(tid, boundary_seq=cut["seq"])
+        _fill(tid, 50, prefix="after")
+
+        assert chat_log.read_meta(tid)["boundary_seq"] == cut["seq"]
+        live = _file_seqs(chat_log.log_path(tid))
+        assert live[0] <= cut["seq"]
+        assert cut["seq"] in live
+        assert all(s < cut["seq"] for s in _file_seqs(chat_log.archive_path(tid)))
+        assert _seqs(tid) == list(range(1, 62))
+
+    def test_a_boundary_at_the_head_blocks_rotation_rather_than_moving_it(
+            self, tid, small_rotation):
+        _fill(tid, 2)
+        chat_log.patch_meta_sync(tid, boundary_seq=1)
+        _fill(tid, 40, prefix="after")
+        assert not chat_log.archive_path(tid).exists()
+        assert _seqs(tid) == list(range(1, 43))
+
+    def test_a_blocked_thread_is_not_rescanned_on_every_append(
+            self, tid, small_rotation, monkeypatch):
+        """Nothing movable is a valid answer, but recomputing it per append means
+        reading the whole oversized file per append — the cost rotation exists to
+        remove."""
+        _fill(tid, 2)
+        chat_log.patch_meta_sync(tid, boundary_seq=1)
+        _fill(tid, 30, prefix="fill")                 # well past the threshold
+        scans = []
+        real = chat_log._read_rows
+        monkeypatch.setattr(chat_log, "_read_rows",
+                            lambda p: (scans.append(p.name), real(p))[1])
+        _fill(tid, 30, prefix="more")
+        assert 0 < len(scans) <= 30 // chat_log.ROTATE_RETRY_EVENTS + 1
+
+    def test_a_log_of_fat_events_does_not_rotate_on_every_append(
+            self, tid, small_rotation, monkeypatch):
+        """`KEEP_MIN_EVENTS` of big enough events blows the threshold on its own.
+        Rotating one event per append — rewriting the file each time — is the
+        cost this function exists to remove, so it backs off instead."""
+        _fill(tid, 40, size=900)                      # 5 kept events > the 4KB threshold
+        assert chat_log.log_path(tid).stat().st_size > chat_log.ROTATE_BYTES
+        rewrites = []
+        real = chat_log.Path.replace
+        monkeypatch.setattr(chat_log.Path, "replace", lambda s, t: (
+            rewrites.append(t.name) if t.name == chat_log.LOG_NAME else None,
+            real(s, t))[1])
+        _fill(tid, 30, prefix="more", size=900)
+        assert 0 < len(rewrites) <= 30 // chat_log.ROTATE_RETRY_EVENTS + 1
+        assert _seqs(tid) == list(range(1, 71))
+
+    def test_a_run_in_flight_keeps_its_marker_live(self, tid, small_rotation):
+        _fill(tid, 10)
+        started = chat_log.append_sync(
+            tid, {"kind": "run", "run_id": "r1", "state": "started"})
+        chat_log.patch_meta_sync(tid, active_run_id="r1", active_run_seq=started["seq"])
+        _fill(tid, 50, prefix="during")
+
+        assert chat_log.active_run(tid) == {
+            "run_id": "r1", "started_seq": started["seq"], "live": None}
+        assert started["seq"] in _file_seqs(chat_log.log_path(tid))
+        assert _seqs(tid) == list(range(1, 62))
+
+    def test_an_older_run_marker_is_still_found_after_it_is_archived(
+            self, tid, small_rotation):
+        """A run opened by a build that did not record `active_run_seq` falls back
+        to scanning the events. The scan spans the archive, so the fallback keeps
+        working on a thread that has rotated."""
+        started = chat_log.append_sync(
+            tid, {"kind": "run", "run_id": "r1", "state": "started"})
+        chat_log.patch_meta_sync(tid, active_run_id="r1")
+        _fill(tid, 60, prefix="during")
+        assert started["seq"] not in _file_seqs(chat_log.log_path(tid))
+        assert chat_log.active_run(tid)["started_seq"] == started["seq"]
+
+
+class TestClientIdAcrossTheBoundary:
+    def test_a_resend_of_an_archived_message_still_appends_nothing(
+            self, tid, small_rotation):
+        first = chat_log.append_message_sync(
+            tid, "user", "the real one", client_id="c-1")
+        _fill(tid, 60)
+        assert first["seq"] not in _file_seqs(chat_log.log_path(tid))
+        assert first["seq"] in _file_seqs(chat_log.archive_path(tid))
+
+        again = chat_log.append_message_sync(
+            tid, "user", "a garbled retry", client_id="c-1")
+        assert again == first
+        assert chat_log.read_meta(tid)["last_seq"] == 61
+        assert _seqs(tid) == list(range(1, 62))
+
+    def test_a_new_client_id_still_lands_after_a_rotation(self, tid, small_rotation):
+        _fill(tid, 60)
+        ev = chat_log.append_message_sync(tid, "user", "fresh", client_id="c-2")
+        assert ev["seq"] == 61
+        assert chat_log.find_message_by_client_id(tid, "c-2") == ev
+
+
+class TestRotationIsCrashSafe:
+    def test_a_crash_before_the_live_file_is_replaced_duplicates_nothing(
+            self, tid, small_rotation):
+        """Step one of a rotation is durable and step two has not run: the head is
+        in both files. A reader must see one log, not one and a half."""
+        _fill(tid, 10)
+        lines = chat_log.log_path(tid).read_text().splitlines()
+        chat_log.archive_path(tid).write_text("\n".join(lines[:4]) + "\n")
+        assert _seqs(tid) == list(range(1, 11))
+        assert chat_log.find_message_by_client_id(tid, "nope") is None
+
+    def test_a_rotation_replayed_after_a_crash_duplicates_nothing(
+            self, tid, small_rotation):
+        _fill(tid, 60)
+        arc = chat_log.archive_path(tid)
+        arc.write_text(arc.read_text() + arc.read_text())   # the same head, twice
+        assert _seqs(tid) == list(range(1, 61))
+
+    def test_a_torn_archive_line_does_not_swallow_the_next_one(
+            self, tid, small_rotation):
+        """An append interrupted mid-line loses that line and nothing else: the
+        next rotation closes the torn line off before writing after it."""
+        _fill(tid, 30)
+        arc = chat_log.archive_path(tid)
+        text = arc.read_text()
+        torn_seq = _file_seqs(arc)[-1]
+        arc.write_text(text[:-12])                          # a half-written last line
+        _fill(tid, 40, prefix="more")                       # forces another rotation
+
+        seqs = _seqs(tid)
+        assert seqs == [s for s in range(1, 71) if s != torn_seq]
+        assert chat_log.read_events(tid, after=torn_seq)[0]["seq"] == torn_seq + 1
+
+    def test_the_thread_is_readable_at_every_point_of_a_rotation(
+            self, tid, small_rotation, monkeypatch):
+        """Whatever the rotation is in the middle of, `read_events` answers with
+        the whole log. The failure this rules out is a window with no log at all."""
+        _fill(tid, 30)
+        seen = []
+        real_replace = chat_log.Path.replace
+
+        def watched_replace(self, target):
+            if target.name == chat_log.LOG_NAME:
+                # The archive is durable and the live file has not been swapped
+                # yet — the one instant where the head exists in both.
+                seen.append(_seqs(tid))
+            return real_replace(self, target)
+
+        monkeypatch.setattr(chat_log.Path, "replace", watched_replace)
+        _fill(tid, 40, prefix="more")
+        assert len(seen) >= 2
+        assert all(s == list(range(1, len(s) + 1)) for s in seen)
+        assert _seqs(tid) == list(range(1, 71))
+
+    def test_a_rotation_that_fails_does_not_fail_the_append(
+            self, tid, small_rotation, monkeypatch):
+        _fill(tid, 30)
+        monkeypatch.setattr(chat_log, "maybe_rotate_sync",
+                            lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+        ev = chat_log.append_message_sync(tid, "user", "still committed")
+        assert ev["content"] == "still committed"
+        assert chat_log.read_events(tid, after=ev["seq"] - 1)[0] == ev
 
 
 # ---- migration -------------------------------------------------------------

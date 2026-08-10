@@ -8,6 +8,7 @@ Layout, per thread, under the owner's runtime dir:
 
     .runtime/users/<owner_id>/chat/<thread_id>/
         log.jsonl   append-only, one event per line, never rewritten, never spliced
+        log.1.jsonl the cold half of the same log: events rotated out of the head
         meta.json   the small mutable record, rewritten whole by one writer
 
 Why this shape. The store it replaces kept a whole thread in one JSON document
@@ -39,6 +40,17 @@ a slot claimed at turn START — which is precisely the arrangement that filed t
 operator's mid-turn messages BELOW a reply that had not answered them. Pass B
 deleted the claimed slot, and `revises` went with it: a reply is appended when it
 is finished, so it lands after everything it saw and before nothing.
+
+### Rotation
+
+Nothing is ever deleted, but `log.jsonl` does not grow forever either. Once it
+passes `ROTATE_BYTES` the head of the file is appended to `log.1.jsonl` and the
+live file is replaced by its tail. Seqs are NOT renumbered and no event is
+dropped: `read_events` reads the archive and the live file as one log, so a
+cursor issued before a rotation returns exactly the events it would have
+returned before. The archive is the cold half — nothing on the hot path (an
+append, `_tail_seq`, a poll with a current cursor, `read_thread(tail=...)`)
+touches it, and it is a plain jsonl file an operator can compress or move.
 
 ### The single writer
 
@@ -73,12 +85,27 @@ from . import ownership
 log = logging.getLogger("workshop.chat_log")
 
 LOG_NAME = "log.jsonl"
+ARCHIVE_NAME = "log.1.jsonl"
 META_NAME = "meta.json"
 
 # Files that live alongside thread directories and are not threads.
 NON_THREAD_FILES = ("drafts.json", "prefs.json")
 
 KINDS = ("message", "run", "boundary", "title")
+
+# ---- rotation thresholds ---------------------------------------------------
+#
+# Sized off the real corpus (2026-08-10: 59 threads, 5.1MB of log, the largest
+# one 1.26MB in 113 events; median line 293 bytes, p90 15KB, one 284KB reply).
+# A thread only rotates once it is bigger than every thread but the top few, and
+# what stays live is far more than any view renders at once.
+ROTATE_BYTES = 512 * 1024      # rotate a live log larger than this
+KEEP_BYTES = 128 * 1024        # ...down to roughly this much tail
+KEEP_MIN_EVENTS = 20           # ...but never fewer than this many events
+# A thread whose protected floor (see `maybe_rotate_sync`) leaves nothing to
+# move must not re-read the whole file on every append. Wait this many new
+# events before looking again.
+ROTATE_RETRY_EVENTS = 25
 
 
 # ---- ids -------------------------------------------------------------------
@@ -139,6 +166,11 @@ def thread_dir(thread_id: str) -> Path:
 
 def log_path(thread_id: str) -> Path:
     return thread_dir(thread_id) / LOG_NAME
+
+
+def archive_path(thread_id: str) -> Path:
+    """The cold half of the log. May not exist; a thread starts without one."""
+    return thread_dir(thread_id) / ARCHIVE_NAME
 
 
 def meta_path(thread_id: str) -> Path:
@@ -310,40 +342,99 @@ def read_meta(thread_id: str) -> dict | None:
     return m
 
 
+def _parse_event(raw: str) -> dict | None:
+    """One log line as an event, or None if it is not one."""
+    try:
+        ev = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(ev, dict) or not isinstance(ev.get("seq"), int):
+        return None
+    return ev
+
+
+def _read_rows(path: Path) -> tuple[list[tuple[str, dict | None]], int]:
+    """Every line of a log file as `(raw, event | None)`, plus a count of the
+    lines that did not parse.
+
+    The raw text is kept because rotation moves lines between files verbatim: an
+    event re-serialized on its way to the archive would not be byte-identical to
+    the one a client already has.
+    """
+    try:
+        text = path.read_text()
+    except OSError:
+        return [], 0
+    rows: list[tuple[str, dict | None]] = []
+    bad = 0
+    for raw in text.splitlines():
+        if not raw.strip():
+            continue
+        ev = _parse_event(raw)
+        if ev is None:
+            bad += 1
+        rows.append((raw, ev))
+    return rows, bad
+
+
 def read_events(thread_id: str, after: int = 0, limit: int | None = None) -> list[dict]:
     """Events with `seq > after`, in seq order, at most `limit` of them.
 
     `after` is a cursor, not an index: it survives anything the log does later,
     which is the whole reason seqs exist. `after=0` is the entire log.
+
+    Reads the archive and the live file as ONE log. Rotation moves the head of
+    `log.jsonl` into `log.1.jsonl` without touching a seq, so a cursor handed out
+    before a rotation still names the same place; it just resolves in the other
+    file now. The archive is only opened when the cursor actually predates the
+    live tail, which is never true of a poll.
+
+    Two crash artifacts are absorbed here rather than repaired on disk. A crash
+    between "archive is durable" and "live file is replaced" leaves the head in
+    both files, so an archived event at or after the live file's first seq is
+    ignored. A rotation retried after such a crash appends the same range twice,
+    so an archived event that does not advance the seq is ignored. Either way the
+    result is ascending, gapless and free of duplicates.
     """
-    p = log_path(thread_id)
-    if not p.exists():
-        return []
+    live_rows, bad = _read_rows(log_path(thread_id))
+    live = [ev for _, ev in live_rows if ev is not None]
+    first_live = live[0]["seq"] if live else None
     out: list[dict] = []
-    bad = 0
-    try:
-        text = p.read_text()
-    except OSError:
-        return []
-    for raw in text.splitlines():
-        if not raw.strip():
-            continue
-        try:
-            ev = json.loads(raw)
-        except json.JSONDecodeError:
-            bad += 1
-            continue
-        if not isinstance(ev, dict) or not isinstance(ev.get("seq"), int):
-            bad += 1
-            continue
+
+    arc = archive_path(thread_id)
+    if (first_live is None or after < first_live - 1) and arc.exists():
+        arc_rows, arc_bad = _read_rows(arc)
+        bad += arc_bad
+        highest = 0
+        for _, ev in arc_rows:
+            if ev is None:
+                continue
+            seq = ev["seq"]
+            if seq <= highest:
+                continue                      # a rotation replayed after a crash
+            highest = seq
+            if first_live is not None and seq >= first_live:
+                continue                      # the live file still holds this one
+            if seq <= after:
+                continue
+            out.append(ev)
+            if limit is not None and len(out) >= limit:
+                _warn_bad(thread_id, bad)
+                return out
+
+    for ev in live:
         if ev["seq"] <= after:
             continue
         out.append(ev)
         if limit is not None and len(out) >= limit:
             break
+    _warn_bad(thread_id, bad)
+    return out
+
+
+def _warn_bad(thread_id: str, bad: int) -> None:
     if bad:
         log.warning("thread %s: skipped %d unreadable log line(s)", thread_id, bad)
-    return out
 
 
 def read_thread(thread_id: str, tail: int | None = None) -> dict | None:
@@ -408,10 +499,30 @@ def active_run(thread_id: str, events: list[dict] | None = None,
 
 
 def find_message_by_client_id(thread_id: str, client_id: str) -> dict | None:
-    """The already-committed event for this client_id, if the browser resent it."""
+    """The already-committed event for this client_id, if the browser resent it.
+
+    Newest first, live file before archive: a resend is a retry of something sent
+    seconds ago, so the answer is at the tail if it exists at all. It still spans
+    the archive, because "the browser sent this twice" must not become "the
+    transcript holds it twice" merely because a rotation happened in between.
+    """
     if not client_id:
         return None
-    for ev in read_events(thread_id):
+    live_rows, _ = _read_rows(log_path(thread_id))
+    first_live = next((ev["seq"] for _, ev in live_rows if ev is not None), None)
+    for _, ev in reversed(live_rows):
+        if ev is not None and ev.get("kind") == "message" \
+                and ev.get("client_id") == client_id:
+            return ev
+    arc = archive_path(thread_id)
+    if not arc.exists():
+        return None
+    arc_rows, _ = _read_rows(arc)
+    for _, ev in reversed(arc_rows):
+        if ev is None:
+            continue
+        if first_live is not None and ev["seq"] >= first_live:
+            continue                          # a duplicate of a live line
         if ev.get("kind") == "message" and ev.get("client_id") == client_id:
             return ev
     return None
@@ -446,7 +557,155 @@ def delete_thread(thread_id: str) -> bool:
         return False
     shutil.rmtree(d)
     _locks.pop(thread_id, None)
+    _rotate_waiting_at.pop(thread_id, None)
     return True
+
+
+# ---- rotation --------------------------------------------------------------
+#
+# The live log is bounded; the record is not. Every event ever written stays
+# readable, it just stops being in the file the hot path opens.
+
+_rotate_waiting_at: dict[str, int] = {}
+
+
+def _rotation_floor(meta: dict) -> int | None:
+    """The lowest seq that must stay in the LIVE file, or None for no floor.
+
+    Two things pin the tail down. `boundary_seq` is where the context was last
+    cut, so everything from there on is the conversation the model is still
+    being handed — that stays hot. `active_run_seq` is the marker of a turn in
+    flight, and a run being reconciled mid-flight should not have to reach for
+    the archive to find its own start. Both are seqs, so neither moves.
+    """
+    floors = []
+    b = meta.get("boundary_seq")
+    if isinstance(b, int) and b > 0:
+        floors.append(b)
+    r = meta.get("active_run_seq")
+    if isinstance(r, int) and r > 0:
+        floors.append(r)
+    return min(floors) if floors else None
+
+
+def maybe_rotate_sync(thread_id: str, meta: dict | None = None) -> int | None:
+    """Move the head of `log.jsonl` into `log.1.jsonl`. Returns the seq cut at.
+
+    Returns None when nothing moved: the file is under `ROTATE_BYTES`, or every
+    event in it is protected by `_rotation_floor`.
+
+    NOTHING IS DELETED AND NOTHING IS RENUMBERED. The lines are appended to the
+    archive byte-for-byte and `read_events` reads the two files as one log, so
+    the only observable difference is which file a given seq lives in. That is
+    what lets a cursor a client has been holding since before the rotation keep
+    working: `after=41` means "seq greater than 41" in both halves.
+
+    Order, and why it is the only safe one:
+
+      1. the archive is healed (a torn tail line from an interrupted append gets
+         its newline) and the head is appended to it, flushed and fsynced;
+      2. the tail is written to `log.jsonl.tmp`, fsynced, and renamed over the
+         live file.
+
+    A crash before (1) finishes changes nothing a reader can see: the live file
+    still holds everything, and `read_events` ignores archived events that the
+    live file also has. A crash between (1) and (2) is the same picture with a
+    redundant copy in the archive, and the retry appends the range again — also
+    ignored, because an archived seq that does not advance is skipped. There is
+    no window in which the thread has no readable log, and none in which an
+    event exists in neither file.
+
+    Must be called on the loop and under the thread's write lock; `append_sync`
+    is the only caller in the system, and it holds both.
+    """
+    _assert_on_loop()
+    live_p = log_path(thread_id)
+    try:
+        size = live_p.stat().st_size
+    except OSError:
+        return None
+    if size <= ROTATE_BYTES:
+        _rotate_waiting_at.pop(thread_id, None)
+        return None
+    if meta is None:
+        meta = _read_meta_raw(thread_id) or {}
+    last_seq = int(meta.get("last_seq") or 0)
+    waiting = _rotate_waiting_at.get(thread_id)
+    if waiting is not None and last_seq < waiting + ROTATE_RETRY_EVENTS:
+        # Nothing was movable last time and barely anything has happened since.
+        # Re-reading a half-megabyte file on every append to learn that again is
+        # exactly the cost this function exists to avoid.
+        return None
+
+    rows, _ = _read_rows(live_p)
+    if not rows:
+        return None
+
+    # How much tail to keep: the newest events up to KEEP_BYTES, and never fewer
+    # than KEEP_MIN_EVENTS of them. Unparseable lines carry along with whichever
+    # side of the cut they sit on; they are never counted as kept events.
+    cut_at = 0
+    kept_events = 0
+    kept_bytes = 0
+    for i in range(len(rows) - 1, -1, -1):
+        raw, ev = rows[i]
+        if ev is not None and kept_events >= KEEP_MIN_EVENTS \
+                and kept_bytes + len(raw) > KEEP_BYTES:
+            cut_at = i + 1
+            break
+        kept_bytes += len(raw) + 1
+        if ev is not None:
+            kept_events += 1
+
+    floor = _rotation_floor(meta)
+    if floor is not None:
+        for i, (_, ev) in enumerate(rows):
+            if ev is not None and ev["seq"] >= floor:
+                cut_at = min(cut_at, i)
+                break
+
+    head = rows[:cut_at]
+    cut_seq = next((ev["seq"] for _, ev in reversed(head) if ev is not None), None)
+    if cut_seq is None:
+        # Nothing to move, or nothing but junk lines to move. Either way, leave
+        # the file alone and stop looking for a while.
+        _rotate_waiting_at[thread_id] = last_seq
+        return None
+
+    arc_p = archive_path(thread_id)
+    if arc_p.exists() and arc_p.stat().st_size:
+        with open(arc_p, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            torn = f.read(1) != b"\n"
+        if torn:
+            # An append interrupted mid-line. Close it off so the next line
+            # cannot be glued onto it and lost.
+            with open(arc_p, "a") as f:
+                f.write("\n")
+                f.flush()
+                os.fsync(f.fileno())
+    with open(arc_p, "a") as f:
+        f.write("".join(raw + "\n" for raw, _ in head))
+        f.flush()
+        os.fsync(f.fileno())
+
+    tmp = live_p.with_suffix(live_p.suffix + ".tmp")
+    with open(tmp, "w") as f:
+        f.write("".join(raw + "\n" for raw, _ in rows[cut_at:]))
+        f.flush()
+        os.fsync(f.fileno())
+    tmp.replace(live_p)
+
+    if live_p.stat().st_size > ROTATE_BYTES:
+        # The floor, or `KEEP_MIN_EVENTS` of very fat events, left the file over
+        # the threshold anyway. Without this the next append would rotate again,
+        # rewriting the whole file to move one event, forever.
+        _rotate_waiting_at[thread_id] = last_seq
+    else:
+        _rotate_waiting_at.pop(thread_id, None)
+    log.info("thread %s: rotated %d event(s) through seq %d into %s",
+             thread_id, len(head), cut_seq, ARCHIVE_NAME)
+    return cut_seq
 
 
 # ---- writes ----------------------------------------------------------------
@@ -485,6 +744,13 @@ def append_sync(thread_id: str, event: dict) -> dict:
     meta["last_seq"] = seq
     meta["updated_at"] = now_iso()
     _write_json_atomic(meta_path(thread_id), meta)
+    try:
+        maybe_rotate_sync(thread_id, meta)
+    except Exception as e:
+        # The event is committed. Rotation is housekeeping on top of that, and a
+        # caller told an append failed would send it again — so this is logged,
+        # not raised. The file stays oversized until the next append tries again.
+        log.error("thread %s: log rotation failed: %s", thread_id, e)
     return ev
 
 

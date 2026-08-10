@@ -17,6 +17,11 @@ Every recurring bug traced back to violating one of those sentences.
 Per thread, a directory `.runtime/users/<owner_id>/chat/<thread_id>/`:
 
 - `log.jsonl` — append-only. One event per line, never rewritten, never spliced.
+- `log.1.jsonl` — the same log, colder. Added 2026-08-10: once `log.jsonl` passes
+  `chat_log.ROTATE_BYTES` its head is appended here verbatim and the live file keeps the
+  tail. No event is dropped, no seq is renumbered, and `read_events` reads the two as one
+  log, so this is invisible to every reader including one holding an old cursor. The
+  per-event rule above is unchanged: a written line is never edited, only relocated.
 - `meta.json` — small mutable record, rewritten whole (it is small, and one writer owns it).
 
 ### Event shape
