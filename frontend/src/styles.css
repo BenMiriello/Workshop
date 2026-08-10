@@ -684,7 +684,6 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex; flex-direction: column; gap: 0.6rem;
 }
 .chat-empty { color: var(--muted); font-size: 0.85rem; text-align: center; margin: auto 0; }
-.chat-empty--err { color: var(--danger); }
 .chat-empty--note { font-size: var(--fs-xs); margin: 0 0 0.4rem; }
 
 .chat-msg { display: flex; flex-direction: column; max-width: 88%; min-width: 0; }
@@ -941,7 +940,6 @@ input[type="range"].grad::-moz-range-thumb {
   display: flex; align-items: center; gap: var(--space-2);
   margin-top: 0.3rem; font-size: var(--fs-sm); color: var(--muted);
 }
-.chat-err { padding: 0.4rem 0.8rem; font-size: 0.78rem; color: var(--danger); }
 
 /* "Turn into task" confirmation: a calm one-line note under the toolbar. */
 .chat-spawn-note {
@@ -954,6 +952,13 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-spawn-note__body { flex: 1 1 auto; min-width: 0; }
 .chat-spawn-note a { color: var(--accent); text-decoration: none; }
 .chat-spawn-note a:hover { text-decoration: underline; }
+
+/* A chat-scoped failure, wherever it lands: the slot above the composer, the
+   log's own error state, or the inbox panel. Layout only — the block itself is
+   the shared `StateBlock variant="error"` (see chat/ChatProblemBlock). It
+   replaced a bare red line that carried no endpoint and no retry. */
+.chat-problem { padding: var(--space-2) var(--space-3); }
+.chat-problem__endpoint { margin-top: var(--space-1); }
 
 /* Egress notice (build only). */
 .chat-egress { padding: var(--space-2) var(--space-3); }

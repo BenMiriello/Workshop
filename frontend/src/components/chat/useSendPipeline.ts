@@ -8,6 +8,7 @@ import { retiredCommand, typedCommand } from "./typedCommands";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import { committedMessages } from "./transcriptBlocks";
 import type { MessageQueue } from "./useMessageQueue";
+import type { ChatProblem } from "./chatProblem";
 
 // SENDING, as one decision.
 //
@@ -66,7 +67,7 @@ export function useSendPipeline({
   compacting: boolean;
   compact: () => Promise<void>;
   clear: () => Promise<void>;
-  setErr: (m: string | null) => void;
+  setErr: (problem: ChatProblem | null) => void;
   /** Housekeeping the chat does on every send: follow the log, drop the note. */
   onSend: () => void;
   /** What `/new` does: open the new-chat dialog, not start one silently. */
@@ -271,7 +272,9 @@ export function useSendPipeline({
     // where its job went. Sending it spawned a process and spent a full prompt
     // so the CLI could reply that it does not work.
     const retired = retiredCommand(text);
-    if (retired) { setErr(retired); return; }
+    // Not a failure of anything, so it names no endpoint: the command was
+    // answered here, locally, and the sentence is the whole answer.
+    if (retired) { setErr({ text: retired, endpoint: null }); return; }
     dispatchSend(text, newClientId());
   }, [setErr, onSend, compact, clear, dispatchSend]);
 

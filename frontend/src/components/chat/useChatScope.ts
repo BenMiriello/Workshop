@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { chatApi, type Provider } from "../../lib/chat";
 import { DEFAULT_SCOPE, readProvider, resolveScope, writeProvider } from "../../lib/chatSelection";
 import type { ChatMode } from "./chatScope";
+import type { ChatProblem } from "./chatProblem";
 import { MODEL_LABELS } from "./models";
 import { nearestEffort } from "./effort";
 
@@ -69,7 +70,7 @@ export function useChatScope({
   // consumed — the thread loader does that, once, after the scope is settled.
   startNewRef: React.MutableRefObject<boolean>;
   linkedThreadRef: React.MutableRefObject<string | null>;
-  onError: (msg: string) => void;
+  onError: (problem: ChatProblem | null) => void;
 }): ChatScope {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [providersReady, setProvidersReady] = useState(false);
@@ -82,6 +83,10 @@ export function useChatScope({
   // "" means the chat has never chosen and runs at the platform default, which
   // is what every chat did before this control existed.
   const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>("");
+  // Bumped by the Retry on the provider-list error block. The resolver below is
+  // idempotent — it re-reads the list and re-resolves the scope from it — so
+  // re-running it is exactly what "try that request again" means here.
+  const [providerNonce, setProviderNonce] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -96,7 +101,13 @@ export function useChatScope({
         // live source for the model picker; when it fails the picker silently
         // falls back to the frontend's hardcoded MODEL_LABELS, which can offer
         // models the backend does not serve.
-        if (!cancelled) onError(`Couldn't load the model/assistant list: ${e}. The picker may be showing stale options.`);
+        if (!cancelled) {
+          onError({
+            text: `Couldn't load the model/assistant list: ${e}. The picker may be showing stale options.`,
+            endpoint: scoped ? `/api/chat/providers?scope=${contextKey}` : "/api/chat/providers",
+            retry: () => setProviderNonce((n) => n + 1),
+          });
+        }
       }
       if (cancelled) return;
       if (effectiveMode === "data" && list.length) {
@@ -123,7 +134,7 @@ export function useChatScope({
     return () => { cancelled = true; };
     // The URL intents are refs on purpose: they are read, not depended on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contextKey, effectiveMode, scoped, initialThreadId, startNew]);
+  }, [contextKey, effectiveMode, scoped, initialThreadId, startNew, providerNonce]);
 
   const chooseProvider = useCallback((key: string) => {
     setActiveProvider(key);

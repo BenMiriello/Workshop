@@ -4,7 +4,13 @@ import {
   NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
+import type { ChatProblem } from "./chatProblem";
 import type { MessageQueue } from "./useMessageQueue";
+
+/** The request `chatApi.listThreads` makes, named so an error block can point at
+ *  the thing that actually failed. */
+const threadListEndpoint = (scope?: string) =>
+  scope ? `/api/chat/threads?context=${scope}` : "/api/chat/threads";
 
 // WHICH CONVERSATION IS OPEN, and the settings that belong to it.
 //
@@ -83,7 +89,7 @@ export function useChatThread({
   setSelectedModel: (id: string) => void;
   setSelectedEffort: (level: string) => void;
   setSelectedPermissionMode: (mode: string) => void;
-  onError: (msg: string | null) => void;
+  onError: (problem: ChatProblem | null) => void;
   /** The focused route has nothing left to show once its thread is deleted. */
   onLeaveForList: () => void;
 }): ChatThread {
@@ -95,6 +101,9 @@ export function useChatThread({
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmNew, setConfirmNew] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
+  // Bumped by the Retry on the "couldn't open this conversation" block. The
+  // resolver below is idempotent, so re-running it is what retrying means.
+  const [threadLoadNonce, setThreadLoadNonce] = useState(0);
 
   // Live mirror so the loader can read the thread we are currently on WITHOUT
   // listing activeId in its deps (which would re-run it on every switch). It
@@ -114,13 +123,19 @@ export function useChatThread({
   const chatModeRef = useRef<ChatModeId>(chatMode);
   chatModeRef.current = chatMode;
 
-  const refreshThreads = useCallback(async (): Promise<ThreadSummary[]> => {
+  const refreshThreads = useCallback<() => Promise<ThreadSummary[]>>(async () => {
     try {
       const list = await chatApi.listThreads(scope);
       setThreads(list);
       return list;
     } catch (e) {
-      onError(`Couldn't refresh the list of conversations: ${e}. The list may be out of date.`);
+      onError({
+        text: `Couldn't refresh the list of conversations: ${e}. The list may be out of date.`,
+        endpoint: threadListEndpoint(scope),
+        // Reading the list again is the whole action, so the retry is the call
+        // that just failed.
+        retry: () => { void refreshThreads(); },
+      });
       return [];
     }
   }, [scope, onError]);
@@ -162,7 +177,10 @@ export function useChatThread({
       // have: a chat that looks Direct while the server files tickets is worse
       // than a visible failure.
       setChatMode(prev);
-      onError(`Couldn't switch chat mode: ${e}`);
+      onError({
+        text: `Couldn't switch chat mode: ${e}. The control is back on ${prev}.`,
+        endpoint: `/api/chat/threads/${id}/mode`,
+      });
     });
   }, [chatMode, onError]);
 
@@ -244,7 +262,16 @@ export function useChatThread({
           queue.bindBlank();
         }
       } catch (e) {
-        if (!cancelled) onError(`Couldn't open this conversation: ${e}. Reload the page to try again.`);
+        if (!cancelled) {
+          onError({
+            text: `Couldn't open this conversation: ${e}`,
+            endpoint: threadListEndpoint(scope),
+            // A real retry: re-runs the whole resolver (list, then select), not
+            // just the list — refilling the list alone would leave the chat
+            // sitting on no thread while claiming it had recovered.
+            retry: () => setThreadLoadNonce((n) => n + 1),
+          });
+        }
       } finally {
         if (!cancelled) setLoadingThreads(false);
       }
@@ -253,7 +280,7 @@ export function useChatThread({
     // scope and the linked thread drive the reload — the URL naming a different
     // conversation has to re-run this even when the route is unchanged.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope, initialThreadId, providersReady]);
+  }, [scope, initialThreadId, providersReady, threadLoadNonce]);
 
   const newChat = useCallback(() => {
     setActiveId(null);
@@ -299,7 +326,10 @@ export function useChatThread({
     try {
       await chatApi.deleteThread(id);
     } catch (e) {
-      onError(`Couldn't delete this conversation: ${e}. It is still here; try again.`);
+      onError({
+        text: `Couldn't delete this conversation: ${e}. It is still here; try again.`,
+        endpoint: `/api/chat/threads/${id}`,
+      });
       return;
     }
     // The thread is gone, so everything this browser stored FOR it goes too —
@@ -326,7 +356,10 @@ export function useChatThread({
       setThreads((list) => list.map((x) => (x.id === t.id ? { ...x, title: t.title } : x)));
       setRenameOpen(false);
     } catch (e) {
-      onError(`Couldn't rename this conversation: ${e}. Its title is unchanged.`);
+      onError({
+        text: `Couldn't rename this conversation: ${e}. Its title is unchanged.`,
+        endpoint: `/api/chat/threads/${id}`,
+      });
     } finally {
       setRenameBusy(false);
     }

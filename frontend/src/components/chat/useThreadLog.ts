@@ -4,6 +4,7 @@ import {
   initialThreadState, threadReducer, type ThreadAction, type ThreadState,
 } from "./threadStore";
 import { selectTranscript, type TranscriptBlock } from "./transcriptBlocks";
+import type { ChatProblem } from "./chatProblem";
 
 // The client's copy of one thread's log, kept current from ONE endpoint.
 //
@@ -62,7 +63,7 @@ export function useThreadLog({
   onError,
 }: {
   threadId: string | null;
-  onError: (msg: string) => void;
+  onError: (problem: ChatProblem | null) => void;
 }): ThreadLog {
   const [state, dispatch] = useReducer(threadReducer, null, () => initialThreadState(null));
   const stateRef = useRef(state);
@@ -124,7 +125,11 @@ export function useThreadLog({
         setStaleSince((prev) => prev ?? Date.now());
       }
       if (stateRef.current.order.length === 0) {
-        onErrorRef.current(`Couldn't load this conversation: ${e}`);
+        onErrorRef.current({
+          text: `Couldn't load this conversation: ${e}`,
+          endpoint: `/api/chat/threads/${id}/events`,
+          retry: () => { void sync(); },
+        });
       }
     }
   }, []);
@@ -154,7 +159,13 @@ export function useThreadLog({
           requestedAt,
         });
       } catch (e) {
-        if (!cancelled) onErrorRef.current(`Couldn't load this conversation: ${e}`);
+        if (!cancelled) {
+          onErrorRef.current({
+            text: `Couldn't load this conversation: ${e}`,
+            endpoint: `/api/chat/threads/${threadId}/events`,
+            retry: () => { void sync(); },
+          });
+        }
       } finally {
         // Hydrated on failure too: a load that failed is settled, and the log
         // must be free to show the error instead of spinning forever.

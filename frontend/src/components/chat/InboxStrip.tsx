@@ -4,8 +4,9 @@ import {
   Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight,
   ListTodo, Play,
 } from "lucide-react";
-import { Button, Input, StateBlock } from "../../ui";
+import { Button, Input } from "../../ui";
 import { ticketHref } from "../../lib/tasks";
+import ChatProblemBlock from "./ChatProblemBlock";
 
 // Items an agent raised that need the operator.
 //
@@ -158,11 +159,8 @@ export default function InboxStrip({
   return (
     <div className="chat-inbox" role="region" aria-label="Agents needing you">
       {err && items && items.length === 0 ? (
-        <StateBlock
-          variant="error"
-          title="Couldn't load the inbox"
-          hint={<><code>{err}</code></>}
-          action={<Button size="sm" variant="ghost" onClick={() => void load()}>Retry</Button>}
+        <ChatProblemBlock
+          problem={{ text: `Couldn't load the inbox: ${err}`, endpoint: "/api/inbox", retry: () => void load() }}
         />
       ) : items === null ? (
         <div className="chat-inbox__empty">Loading…</div>
@@ -172,7 +170,17 @@ export default function InboxStrip({
         </div>
       ) : (
         <ul className="chat-inbox__list">
-          {err && <li className="chat-err">{err.slice(0, 240)}</li>}
+          {/* The list is showing real rows, so this is the poll or a refused
+              answer failing UNDER them — the same failure the empty branch
+              above states, said the same way rather than as a bare red line
+              with no endpoint and no retry. */}
+          {err && (
+            <li>
+              <ChatProblemBlock
+                problem={{ text: err, endpoint: "/api/inbox", retry: () => void load() }}
+              />
+            </li>
+          )}
           {shown.map((it) => {
             const Icon = KIND_ICON[it.kind] ?? Info;
             const isOpen = expanded === it.id;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVoiceSession } from "../../lib/useVoiceSession";
 import { unlockAudio } from "../../lib/voice";
+import type { ChatProblem } from "./chatProblem";
 
 // Voice as a MODE of this chat, not a separate screen: the same thread, the same
 // message log. The engine (mic / STT / TTS / barge-in over a warm worker) drives
@@ -34,7 +35,7 @@ export function useVoiceMode({
   // The engine created a thread for a brand-new chat: adopt it as this chat's,
   // so the transcript stays unified and never forks into a parallel thread.
   onAdoptThread: (id: string) => void;
-  onFatal: (message: string) => void;
+  onFatal: (problem: ChatProblem | null) => void;
 }) {
   const [voiceOn, setVoiceOn] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -105,7 +106,9 @@ export function useVoiceMode({
 
   useEffect(() => {
     if (voiceOn && vsnap.fatal) {
-      fatalRef.current(vsnap.error || "Voice unavailable.");
+      // The voice engine is a websocket to a resident worker, not one of the
+      // chat API routes, so there is no endpoint path to point at.
+      fatalRef.current({ text: vsnap.error || "Voice unavailable.", endpoint: null });
       setVoiceOn(false);
     }
   }, [voiceOn, vsnap.fatal, vsnap.error]);

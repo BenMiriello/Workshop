@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { chatApi, newClientId, type MsgStatus } from "../../lib/chat";
 import type { ThreadAction } from "./threadStore";
 import type { MessageQueue } from "./useMessageQueue";
+import type { ChatProblem } from "./chatProblem";
 
 // /compact — reclaim context now.
 //
@@ -138,7 +139,7 @@ export function useCompaction({
   // Owned by the chat, not by this hook: the composer and the message queue both
   // have to hold while a fold is in flight, and both are declared before it.
   setCompacting: (v: boolean) => void;
-  setErr: (m: string | null) => void;
+  setErr: (problem: ChatProblem | null) => void;
   sendTurn: (text: string, clientId: string) => void;
   // Pull the log after a boundary lands, so the divider draws from the event
   // rather than from an optimistic count.
@@ -149,7 +150,7 @@ export function useCompaction({
 
   const compact = useCallback(async () => {
     const id = activeIdRef.current;
-    if (!id) { setErr("Nothing to compact. This chat has no messages yet."); return; }
+    if (!id) { setErr({ text: "Nothing to compact. This chat has no messages yet.", endpoint: null }); return; }
     setErr(null);
     setCompacting(true);
 
@@ -223,7 +224,9 @@ export function useCompaction({
         }
         // Nothing happened at all, so say so; otherwise the divider is the
         // report and it is already drawn.
-        if (r.will_fold === 0) setErr("Nothing to compact. The transcript is already short.");
+        if (r.will_fold === 0) {
+          setErr({ text: "Nothing to compact. The transcript is already short.", endpoint: null });
+        }
       }
     } catch (e) {
       if (preQueued) {
@@ -231,7 +234,10 @@ export function useCompaction({
         setQueuedStatus(null);
       }
       dropRequestBubble();
-      setErr(`Couldn't compact: ${String(e)}`);
+      setErr({
+        text: `Couldn't compact: ${String(e)}. The transcript is unchanged.`,
+        endpoint: `/api/chat/threads/${id}/compact`,
+      });
     } finally {
       // Released only here: until it clears, the composer queues rather than
       // sends, so nothing typed during the fold can become a turn ahead of the
@@ -242,7 +248,7 @@ export function useCompaction({
 
   const clear = useCallback(async () => {
     const id = activeIdRef.current;
-    if (!id) { setErr("Nothing to clear. This chat has no messages yet."); return; }
+    if (!id) { setErr({ text: "Nothing to clear. This chat has no messages yet.", endpoint: null }); return; }
     setErr(null);
     // Reuses the compact hold: it closes the same window either command needs
     // closed — a message typed right after this call must not become a turn
@@ -258,7 +264,7 @@ export function useCompaction({
       // different things happened and only one was named. Nothing happened only
       // when NEITHER did.
       if (!r.cleared && !r.session_reset) {
-        setErr("Nothing to clear. This chat has no messages yet.");
+        setErr({ text: "Nothing to clear. This chat has no messages yet.", endpoint: null });
         return;
       }
       // Nothing is written to the transcript: keeping it is the entire point of
@@ -267,7 +273,10 @@ export function useCompaction({
       void sync();
       setCtxNonce((n) => n + 1);
     } catch (e) {
-      setErr(`Couldn't clear: ${String(e)}`);
+      setErr({
+        text: `Couldn't clear: ${String(e)}. The context is unchanged.`,
+        endpoint: `/api/chat/threads/${id}/clear`,
+      });
     } finally {
       setCompacting(false);
     }

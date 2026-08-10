@@ -3,7 +3,9 @@ import type { MsgStatus } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
-import { clampError, logPlaceholder } from "./chatLogState";
+import { logPlaceholder } from "./chatLogState";
+import type { ChatProblem } from "./chatProblem";
+import ChatProblemBlock from "./ChatProblemBlock";
 import MessageList, { type AnswerPermissionFor } from "./MessageList";
 import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
@@ -67,7 +69,10 @@ export default function ChatLog({
   scrollRef: RefObject<HTMLDivElement>;
   onScroll: () => void;
   loading: boolean;
-  error: string | null;
+  /** The chat's current chat-scoped failure. The log owns the ERROR one of its
+   *  four list states, so when there is nothing else to show this is where that
+   *  failure is rendered; the host suppresses its own copy. */
+  error: ChatProblem | null;
   blocks: TranscriptBlock[];
   isBuild: boolean;
   inFlight: boolean;
@@ -104,10 +109,11 @@ export default function ChatLog({
     <div className="chat-log" ref={scrollRef} onScroll={onScroll}>
       {placeholder === "loading" ? (
         <div className="chat-empty">Loading...</div>
-      ) : placeholder === "error" ? (
-        <div className="chat-empty chat-empty--err">
-          Couldn't load threads. {clampError(error)}
-        </div>
+      ) : placeholder === "error" && error ? (
+        // It used to say "Couldn't load threads." in front of the real message,
+        // which was a guess: the same slot carried a failed poll, a failed model
+        // list and a failed delete, and only one of those was about threads.
+        <ChatProblemBlock problem={error} />
       ) : placeholder === "empty" ? (
         <div className="chat-empty">
           {isBuild ? "Tell the agent what to build..." : "Ask anything, or tell me to change the plan."}

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ThreadAction, ThreadState } from "./threadStore";
+import type { ChatProblem } from "./chatProblem";
 
 // The live turn's SSE channel, and nothing else.
 //
@@ -80,7 +81,7 @@ export function useTurnStream({
   /** Pull the log up to date. Awaited before a turn is retired. */
   sync: () => Promise<void>;
   onTurnEnd: () => void;
-  onError: (msg: string | null) => void;
+  onError: (problem: ChatProblem | null) => void;
   onDrainQueue: () => void;
 }): TurnStream {
   const [attached, setAttached] = useState(false);
@@ -204,7 +205,12 @@ export function useTurnStream({
       // server, NOT a connection drop (that is es.onerror, which has no data).
       try {
         const d = JSON.parse((e as MessageEvent).data || "{}");
-        if (d.payload?.detail) cb.current.onError(String(d.payload.detail));
+        if (d.payload?.detail) {
+          cb.current.onError({
+            text: String(d.payload.detail),
+            endpoint: `/api/chat/turns/${turnId}/stream`,
+          });
+        }
       } catch { /* ignore */ }
     });
 
@@ -272,7 +278,10 @@ export function useTurnStream({
         finishingRef.current = true;
         setAttached(false);
         setReconnecting(false);
-        cb.current.onError("Lost the connection to this turn. It is still running; reattaching.");
+        cb.current.onError({
+          text: "Lost the connection to this turn. It is still running; reattaching.",
+          endpoint: `/api/chat/turns/${turnId}/stream`,
+        });
         return;
       }
       reconnectsRef.current += 1;

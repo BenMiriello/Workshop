@@ -18,7 +18,8 @@ import { scopeLabel } from "../../lib/tasks";
 //    the conversation: it is a StatusNote under its own message now, which also
 //    fixed a message sent mid-compaction reading as though it came first.
 //  - An `error` kind was declared and never constructed. Errors have their own
-//    line under the log (`chat-err`).
+//    two placements, neither of them this bar: under the message that caused
+//    them, or as the chat's `StateBlock` (see chat/chatProblem).
 //
 // So: one kind, one meaning, one placement. If some new note wants this bar, the
 // question to settle first is whether it points out of the chat. If it doesn't,

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { WifiOff, ArrowDown } from "lucide-react";
+import { WifiOff, ArrowDown, Unplug } from "lucide-react";
 import { StateBlock } from "../ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
@@ -8,6 +8,7 @@ import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
 import ChatComposer from "./chat/ChatComposer";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
+import ChatProblemBlock from "./chat/ChatProblemBlock";
 import ChatDialogs from "./chat/ChatDialogs";
 import ContextModal from "./chat/ContextModal";
 import { useCompaction } from "./chat/useCompaction";
@@ -27,7 +28,8 @@ import { useChatScope } from "./chat/useChatScope";
 import { useChatThread } from "./chat/useChatThread";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { canDrainQueue } from "./chat/sendPlan";
-import { clampError } from "./chat/chatLogState";
+import { logPlaceholder } from "./chat/chatLogState";
+import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import { committedMessages } from "./chat/transcriptBlocks";
@@ -94,7 +96,12 @@ export default function Chat({
 }: ChatProps) {
   const effectiveMode: ChatMode = mode ?? deriveMode(contextKey);
   const navigate = useNavigate();
-  const [err, setErr] = useState<string | null>(null);
+  // THE CHAT'S ONE PROBLEM SLOT. Everything in it is chat-scoped by definition —
+  // anything caused by a specific message is said under that message instead
+  // (see chat/chatProblem for the routing rule, chat/UnsentNote for the note).
+  // It carries the endpoint that failed and, where retrying is a real action, a
+  // retry, because that is what the error state owes the operator.
+  const [err, setErr] = useState<ChatProblem | null>(null);
   // Set only when this chat files a ticket — see chat/FiledNotice for why that
   // is the only thing allowed above the log.
   const [notice, setNotice] = useState<FiledNotice | null>(null);
@@ -224,7 +231,10 @@ export default function Chat({
     try {
       if (runId) await chatApi.stopTurn(runId);
     } catch (e) {
-      setErr(`Could not stop the turn: ${String(e)}`);
+      setErr({
+        text: `Could not stop the turn: ${String(e)}. It may still be running; press Stop again.`,
+        endpoint: `/api/chat/turns/${runId ?? "<run>"}/stop`,
+      });
     } finally {
       stopWatching();
     }
@@ -336,9 +346,10 @@ export default function Chat({
     turnId: string,
     a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean },
   ) => {
-    if (!activeIdRef.current) return;
+    const threadId = activeIdRef.current;
+    if (!threadId) return;
     try {
-      await chatApi.answerPermission(activeIdRef.current, turnId, {
+      await chatApi.answerPermission(threadId, turnId, {
         request_id: a.requestId,
         behavior: a.allow ? "allow" : "deny",
         ...(a.message ? { message: a.message } : {}),
@@ -347,11 +358,14 @@ export default function Chat({
       // "Stop asking" changes the chat's mode server-side; pull the new value in
       // rather than guessing it, so the composer's picker and the server agree.
       if (a.applySuggestion) {
-        const t = await chatApi.getThread(activeIdRef.current).catch(() => null);
+        const t = await chatApi.getThread(threadId).catch(() => null);
         if (t) setSelectedPermissionMode(t.permission_mode ?? "");
       }
     } catch (e) {
-      setErr(`Couldn't answer that request: ${e}`);
+      setErr({
+        text: `Couldn't answer that request: ${e}. The turn is still waiting; answer it again.`,
+        endpoint: `/api/chat/threads/${threadId}/turns/${turnId}/permission`,
+      });
     }
   }, [activeIdRef, setErr, setSelectedPermissionMode]);
   const { attach, hasOpenStream, isDetached, closeStream } = stream;
@@ -506,24 +520,47 @@ export default function Chat({
   });
 
   // ---- Egress banner (build only) -----------------------------------------
-  const lastErrorMessage = useMemo(() => {
+  // The one failure that arrives ATTACHED TO A MESSAGE and is nonetheless the
+  // chat's: the environment blocked the network, so the next message dies the
+  // same way and re-sending this one is not the remedy. `placementFor` is that
+  // rule, and it is the only thing that decides the escalation.
+  const lastFailedMessage = useMemo(() => {
     const msgs = messages;
     for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].meta?.error) return msgs[i].content;
+      if (msgs[i].meta?.error) {
+        return { messageId: msgs[i].meta?.client_id ?? msgs[i].ts, text: msgs[i].content };
+      }
     }
     return null;
   }, [messages]);
-  const egressDetail = isEgressFailure(err)
-    ? err
-    : isEgressFailure(lastErrorMessage)
-      ? lastErrorMessage
-      : null;
+  const egressDetail =
+    err && isEgressFailure(err.text)
+      ? err.text
+      : lastFailedMessage && placementFor(lastFailedMessage) === "chat-block"
+        ? lastFailedMessage.text
+        : null;
   const showEgressBanner = effectiveMode === "build" && egressDetail != null;
+  // The banner is a richer rendering of ONE failure, so it takes that failure
+  // out of the general slot — and only that one. The gate used to be "any
+  // banner hides any error", which swallowed an unrelated chat failure (a
+  // refused delete, a dead poll) for as long as a blocked-network reply sat in
+  // the transcript.
+  const chatProblem: ChatProblem | null =
+    err && showEgressBanner && egressDetail === err.text ? null : err;
 
   // Re-read on every render rather than on a timer: the chat re-renders often
   // enough that the elapsed figure stays honest, and a timer whose only job is
   // to age a string is a subscription that outlives the condition it describes.
   const staleNote = staleNoticeText(staleSince, Date.now());
+  const staleProblem: ChatProblem | null = staleNote
+    ? {
+      text: staleNote,
+      endpoint: activeId
+        ? `/api/chat/threads/${activeId}/events`
+        : "/api/chat/threads",
+      retry: () => { void sync(); },
+    }
+    : null;
 
   const egressBanner = showEgressBanner ? (
     <div className="chat-egress">
@@ -563,7 +600,10 @@ export default function Chat({
           // action" — it never did. The optimistic state simply diverged: the
           // card looked filed, the server had no record, and the next load
           // brought back an un-acted card for work that had already run.
-          setErr(`Couldn't record that action on the server: ${e}. Reload to see the real state of this card.`);
+          setErr({
+            text: `Couldn't record that action on the server: ${e}. Reload to see the real state of this card.`,
+            endpoint: `/api/chat/threads/${id}/card-state`,
+          });
         });
     },
     [thread.setCardStates, activeIdRef],
@@ -661,12 +701,25 @@ export default function Chat({
     [queue.items, state.pending],
   );
 
+  const logLoading = thread.loadingThreads || !hydrated;
+  // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
+  // of its four list states, so when it has nothing else to show, the problem
+  // block goes IN it; when the transcript is full of valid history the log is
+  // not the place for it, and the slot above the composer takes it instead.
+  // Both draw the same component — see ChatProblemBlock.
+  const logShowsProblem = logPlaceholder({
+    empty: transcript.length === 0,
+    loading: logLoading,
+    error: !!chatProblem,
+    inFlight: runActive || pipeline.starting,
+  }) === "error";
+
   const logView = (
     <ChatLog
       scrollRef={scrollRef}
       onScroll={onLogScroll}
-      loading={thread.loadingThreads || !hydrated}
-      error={err}
+      loading={logLoading}
+      error={chatProblem}
       blocks={transcript}
       isBuild={build}
       inFlight={runActive || pipeline.starting}
@@ -780,22 +833,28 @@ export default function Chat({
           which silently swallowed every error on a fresh chat — including the
           model-list load failure, which happens exactly there.
 
-          WHAT IS LEFT IN THIS SLOT is only what belongs to the CHAT rather than
-          to a message: the thread list, the model list, a failed delete, a
-          failed stop. Anything caused by a message the operator sent renders
-          under that message now (see UnsentNote), which is the log-placement
-          rule in frontend/CLAUDE.md and is why this could be one slot at all —
-          it used to also carry every send failure, overwritten by the next one.
-          The cap is a bound on a pathological body, not a summary: every writer
-          here passes a sentence, so it should never fire. */}
-      {err && !showEgressBanner && <div className="chat-err">{clampError(err)}</div>}
+          WHAT IS IN THIS SLOT is only what belongs to the CHAT rather than to a
+          message: the thread list, the model list, a failed delete, a failed
+          stop. Anything caused by a message the operator sent renders under
+          that message (see UnsentNote), which is the log-placement rule in
+          frontend/CLAUDE.md and the reason this can be one slot at all — it
+          used to also carry every send failure, overwritten by the next one.
+
+          It was a bare red div: no endpoint, no retry, and nothing to say
+          whether the thing that failed was this message, this thread or the
+          backend. It is the same `StateBlock variant="error"` the egress notice
+          and the log's error state use now. */}
+      {chatProblem && !logShowsProblem && <ChatProblemBlock problem={chatProblem} />}
       {/* THIS BROWSER HAS STOPPED HEARING THE BACKEND. It belongs in this slot
           and not in the log, because it is a fact about the connection rather
           than about any message: nothing in the transcript is wrong, it has
           simply stopped arriving. It used to be reported only when the
           transcript was EMPTY, so the case that matters — a full chat quietly
-          frozen — was the one case that said nothing. */}
-      {staleNote && <div className="chat-err">{staleNote}</div>}
+          frozen — was the one case that said nothing.
+
+          It names the poll that stopped landing and offers the retry, because
+          the one thing the operator can usefully do here is ask again. */}
+      {staleProblem && <ChatProblemBlock problem={staleProblem} icon={<Unplug aria-hidden />} />}
       {composer}
       {dialogs}
       <ContextModal
