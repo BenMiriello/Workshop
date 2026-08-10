@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 
-from services import tasks
+from services import tasks, ticket_format
 
 # A body that names a file, a command or a symbol tells a worker where to start.
 # Deliberately generous: a path with a separator, a fenced block, an inline-code
@@ -35,19 +35,11 @@ _ENTRY_POINT = re.compile(
     re.MULTILINE,
 )
 
-# "what done looks like". A ticket that says how it will be judged, in any of the
-# shapes the house style uses.
-_ACCEPTANCE_PROSE = re.compile(
-    r"^\s*(?:output|done|done looks like|acceptance|accept|verify|proof)\s*[:\-]",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-# "what am I actually trying to achieve". Either the labelled form the ticket
-# templates use, or simply a body with a real sentence in it.
-_OBJECTIVE_PROSE = re.compile(
-    r"^\s*(?:objective|goal|why|problem|outcome)\s*[:\-]",
-    re.IGNORECASE | re.MULTILINE,
-)
+# The labels come from `services/ticket_format`, which is also what the producers
+# compose with. They used to be written out here independently, and they did not
+# match: the chat dialog emitted "Done when: ..." while this file looked for
+# "Done:" or "Output:", so a ticket that plainly stated its acceptance failed the
+# acceptance check. A format and its checker cannot live in two files.
 
 # Checks worth refusing a RUN over. The rest are advice: they make a run more
 # likely to succeed, but a run without them is a judgement call, not an error.
@@ -70,19 +62,20 @@ def check(task: dict, *, known_ids: set[str] | None = None) -> dict:
     if not title:
         fail("title", "the ticket has no title")
 
-    if not (_OBJECTIVE_PROSE.search(body) or len(body) >= 40):
+    if not (ticket_format.states(body, "objective") or len(body) >= 40):
         fail("objective", "the body does not say what this is trying to achieve")
 
-    if not (_ACCEPTANCE_PROSE.search(body) or task.get("acceptance")):
+    if not (ticket_format.states(body, "output") or task.get("acceptance")):
         fail("acceptance", "the ticket does not say what done looks like")
 
     # A one-edit ticket does not need to name its entry points; anything larger
     # is asking the worker to go looking.
     if str(task.get("effort") or "").lower() not in ("quick", "s"):
-        if not _ENTRY_POINT.search(body):
+        if not (_ENTRY_POINT.search(body) or ticket_format.states(body, "entry_points")):
             fail("entry_points", "the body names no file, command or symbol to start from")
 
-    if not task.get("touches") and task.get("latitude") != "open":
+    if not (task.get("touches") or task.get("latitude") == "open"
+            or ticket_format.states(body, "boundaries")):
         fail("boundaries", "the ticket does not say which files it may change")
 
     if known_ids is not None:

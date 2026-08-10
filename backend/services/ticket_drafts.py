@@ -27,7 +27,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 
-from services import chat_store, llm_router
+from services import chat_store, llm_router, ticket_format
 
 log = logging.getLogger(__name__)
 
@@ -72,11 +72,20 @@ Return STRICT JSON, no prose, no code fence:
 {"tickets": [
   {
     "title": "short imperative line, under 80 characters",
-    "body": "what to do and why, self-contained, 1-3 sentences",
-    "acceptance": "how someone would confirm this is done",
+    "objective": "the concrete outcome, one sentence",
+    "output": "what done looks like: the artifact, or how it would be judged",
+    "entry_points": "the files, commands or symbols to read or run first",
+    "boundaries": "what NOT to touch and what not to build; \"none\" if genuinely unbounded",
     "confidence": "decided" | "likely" | "speculative"
   }
 ]}
+
+These four fields are what a worker needs and cannot get anywhere else, since it
+never sees this conversation. Fill in every one you can support from what was
+actually said. Do NOT invent a plausible-sounding file path or acceptance test:
+if the conversation did not establish it, write what IS known and leave the rest
+short. A ticket that admits it does not know where to start is useful; one that
+points confidently at a file nobody mentioned costs a wasted run.
 
 `confidence` is your read of the conversation:
   decided      the operator explicitly asked for this or agreed to it
@@ -134,11 +143,27 @@ def _parse(raw: str) -> list[dict]:
         title = str(t.get("title") or "").strip().replace("—", ", ")
         if not title:
             continue
+        def field(name: str, limit: int = 600) -> str:
+            return str(t.get(name) or "").strip().replace("—", ", ")[:limit]
+
+        # The body is COMPOSED from the four fields through the one shared
+        # formatter, so what the model returns and what `ticket_readiness` looks
+        # for cannot drift. A model that ignored the field names and wrote prose
+        # into `body` is not discarded: it rides along under the composed part.
+        body = ticket_format.compose(
+            objective=field("objective"),
+            output=field("output"),
+            entry_points=field("entry_points"),
+            boundaries=field("boundaries"),
+            extra=field("body", 1500),
+        )
         out.append({
             "id": uuid.uuid4().hex[:12],
             "title": title[:140],
-            "body": str(t.get("body") or "").strip().replace("—", ", ")[:1500],
-            "acceptance": str(t.get("acceptance") or "").strip().replace("—", ", ")[:600],
+            "body": body[:2400],
+            # Kept as its own field for the dialog's editor, and because a draft
+            # filed before this change still carries one.
+            "acceptance": field("output") or field("acceptance"),
             "confidence": (t.get("confidence") if t.get("confidence") in
                            ("decided", "likely", "speculative") else "likely"),
             "filed_task_id": None,

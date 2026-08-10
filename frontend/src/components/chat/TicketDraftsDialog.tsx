@@ -120,9 +120,18 @@ export default function TicketDraftsDialog({
     if (!chatId) return;
     setBusy(d.id);
     // The ticket text a worker sees is the whole draft, not just the title: it
-    // has to stand alone, so acceptance travels with it.
-    const text = [d.title, d.body, d.acceptance ? `Done when: ${d.acceptance}` : ""]
-      .filter(Boolean).join("\n\n");
+    // has to stand alone. The body is already composed in the canonical shape
+    // (Objective / Output / Start from / Boundaries) by services/ticket_format,
+    // so acceptance is normally inside it and must not be appended twice. A draft
+    // stored before that change carries a separate `acceptance` and a body that
+    // states no output; that one still gets it, under the label the readiness
+    // check actually looks for rather than the "Done when:" it never matched.
+    const statesOutput = /^\s*(?:output|done|acceptance|verify|proof)\s*[:\-]/im.test(d.body || "");
+    const text = [
+      d.title,
+      d.body,
+      d.acceptance && !statesOutput ? `Output: ${d.acceptance}` : "",
+    ].filter(Boolean).join("\n");
     try {
       const r = await fetch(`/api/chat/threads/${encodeURIComponent(chatId)}/spawn-task`, {
         method: "POST",
