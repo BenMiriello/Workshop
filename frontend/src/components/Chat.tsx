@@ -285,7 +285,12 @@ export default function Chat({
     chatModeRef: thread.chatModeRef, activeIdRef,
     adoptThread: thread.adoptThread,
     stateRef, dispatch, sync, queue,
-    compacting, compact, clear, setErr,
+    compacting,
+    // Typed `/compact` and `/clear` ask as well. One rule for the action, not
+    // one for the button and another for the keystroke.
+    compact: async () => { setConfirmCompact(true); },
+    clear: async () => { setConfirmClear(true); },
+    setErr,
     onSend: () => {
       // A note describes the LAST thing the operator did. Sending makes it
       // stale, so it goes with the error it sits beside.
@@ -399,6 +404,11 @@ export default function Chat({
   // The context breakdown, opened from the meter. It replaced /context, which
   // dumped sixty lines of table into the transcript.
   const [contextOpen, setContextOpen] = useState(false);
+  // Compact and clear ASK. Both are irreversible in the way that matters (the
+  // model's view of the conversation) and both are one click from a primary
+  // button in the context modal.
+  const [confirmCompact, setConfirmCompact] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const [mentionSel, setMentionSel] = useState(0);
   const slug = buildSlug(contextKey);
   const taskScope = taskScopeFor(contextKey);
@@ -612,6 +622,12 @@ export default function Chat({
       confirmNew={thread.confirmNew}
       onCancelNew={() => thread.setConfirmNew(false)}
       onConfirmNew={() => { thread.setConfirmNew(false); thread.newChat(); }}
+      confirmCompact={confirmCompact}
+      onCancelCompact={() => setConfirmCompact(false)}
+      onConfirmCompact={() => { setConfirmCompact(false); void compact(); }}
+      confirmClear={confirmClear}
+      onCancelClear={() => setConfirmClear(false)}
+      onConfirmClear={() => { setConfirmClear(false); void clear(); }}
       confirmDeleteId={thread.confirmDeleteId}
       confirmDeleteTitle={thread.confirmDeleteId ? thread.threads.find((t) => t.id === thread.confirmDeleteId)?.title : undefined}
       onCancelDelete={() => thread.setConfirmDeleteId(null)}
@@ -787,8 +803,8 @@ export default function Chat({
         onClose={() => setContextOpen(false)}
         threadId={activeId}
         compacting={compacting}
-        onCompact={() => { setContextOpen(false); void compact(); }}
-        onClear={() => { setContextOpen(false); void clear(); }}
+        onCompact={() => { setContextOpen(false); setConfirmCompact(true); }}
+        onClear={() => { setContextOpen(false); setConfirmClear(true); }}
       />
       <VoiceSettings
         open={voiceSettings}

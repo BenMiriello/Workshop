@@ -9,6 +9,7 @@ import StatusNote from "./StatusNote";
 import UnsentNote from "./UnsentNote";
 import { modelDisplay } from "./models";
 import { stoppedTag } from "./stopReason";
+import { hasBubble, noReplyText } from "./replyBody";
 import type { TranscriptBlock } from "./transcriptBlocks";
 
 // The transcript body: one rendered block per entry the selector produced.
@@ -61,23 +62,6 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
   );
 }
 
-// Why a turn produced no text, said in one plain sentence.
-//
-// A bubble with nothing in it is the worst of the three possible renderings: it
-// says something happened without saying what, and reads as a rendering bug
-// rather than as a turn that ended early. The `timeout`/`stopped` cases already
-// carry a tag above the body, so here they only need to answer the question that
-// tag leaves open — was anything written before it ended? The last case is the
-// genuinely unexplained one, and it says so rather than showing an empty box.
-function noReplyText(m: ChatMsg): string {
-  if (m.meta?.timeout) return "No reply was written before the time limit.";
-  // A stopped turn says so ONCE, on the line under the reply. It used to say it
-  // three times: a yellow border around the whole bubble, a tag above the body,
-  // and this sentence. The operator asked for the line and nothing else.
-  if (m.meta?.stopped) return "";
-  return "No response. The turn ended without sending a message.";
-}
-
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx,
                              answerPermission?: AnswerPermissionFor) {
   // An error with no text is still an error; don't fall through to a blank bubble.
@@ -112,12 +96,16 @@ function MessageBubble({
   answerPermission?: AnswerPermissionFor;
 }) {
   const threadCfg = modelDisplay(selectedModel);
+  // Stopping a turn before it wrote anything leaves nothing to put in a bubble,
+  // and an empty box above the "user interrupted" line reads as a rendering
+  // fault rather than as a turn the operator ended. See replyBody.hasBubble.
+  const body = hasBubble(msg);
   return (
     <div className={`chat-msg ${msg.role}`}>
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
-      <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
+      {body && <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
           {msg.role === "assistant" ? (
             <>
@@ -139,7 +127,7 @@ function MessageBubble({
           )}
         </div>
         {msg.content.trim() && <CopyMessage value={msg.content} />}
-      </div>
+      </div>}
       {/* One quiet line under the reply, and that is the whole treatment for a
           turn that ended early. No border, no tag above the body, no icon. */}
       {msg.meta?.stopped && (

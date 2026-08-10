@@ -20,6 +20,8 @@ export default function ChatDialogs({
   ticketsOpen, onCloseTickets, onFiled,
   renameOpen, renameBusy, onCancelRename, onSaveRename,
   confirmNew, onCancelNew, onConfirmNew,
+  confirmCompact, onCancelCompact, onConfirmCompact,
+  confirmClear, onCancelClear, onConfirmClear,
   confirmDeleteId, confirmDeleteTitle, onCancelDelete, onConfirmDelete,
 }: {
   scope: string;
@@ -33,6 +35,12 @@ export default function ChatDialogs({
   onCancelRename: () => void;
   onSaveRename: (title: string) => void;
   confirmNew: boolean;
+  confirmCompact: boolean;
+  onCancelCompact: () => void;
+  onConfirmCompact: () => void;
+  confirmClear: boolean;
+  onCancelClear: () => void;
+  onConfirmClear: () => void;
   onCancelNew: () => void;
   onConfirmNew: () => void;
   confirmDeleteId: string | null;
@@ -74,6 +82,43 @@ export default function ChatDialogs({
         }
         confirmLabel="New chat"
         danger={false}
+      />
+
+      {/* COMPACT AND CLEAR ASK FIRST. Both are one click from the primary in
+          the context modal, both change the conversation in a way nothing can
+          put back, and neither is obvious from its name: a fold keeps a running
+          summary, a clear keeps nothing. The dialog is where that difference
+          gets stated, once, at the moment it matters. */}
+      <ConfirmDialog
+        open={confirmCompact}
+        onCancel={onCancelCompact}
+        onConfirm={onConfirmCompact}
+        title="Compact this conversation?"
+        body={
+          <span>
+            Earlier messages are folded into a running summary so the model reads
+            less of them. The transcript stays here in full, but the detail the
+            model can still draw on is lost. This can't be undone.
+          </span>
+        }
+        confirmLabel="Compact"
+        danger={false}
+      />
+
+      <ConfirmDialog
+        open={confirmClear}
+        onCancel={onCancelClear}
+        onConfirm={onConfirmClear}
+        title="Clear this conversation's context?"
+        body={
+          <span>
+            The model stops seeing every earlier message, with NO summary kept.
+            The transcript stays here and you can still read it, but the next
+            turn starts from nothing. This can't be undone.
+          </span>
+        }
+        confirmLabel="Clear context"
+        danger
       />
 
       <ConfirmDialog
