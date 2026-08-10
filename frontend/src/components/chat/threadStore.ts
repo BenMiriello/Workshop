@@ -47,6 +47,12 @@ export type PendingSend = {
   text: string;
   ts: string;
   status: PendingStatus;
+  /** Why it failed, in a sentence, for rendering UNDER this message. Set only
+   *  with `failed`. It lives on the send rather than in the chat's one error
+   *  slot because that slot is overwritten by the next error and cleared by the
+   *  next send, so the explanation for a bubble outlived the bubble by about a
+   *  keystroke. See sendFailure.ts. */
+  error?: string;
   // Monotonic counter, not a timestamp: two sends in the same millisecond still
   // render in the order they were made.
   at: number;
@@ -83,7 +89,7 @@ export type ThreadAction =
     }
   | { type: "sendStarted"; clientId: string; text: string; ts: string }
   | { type: "sendAcked"; clientId: string }
-  | { type: "sendFailed"; clientId: string }
+  | { type: "sendFailed"; clientId: string; error?: string }
   | { type: "sendRetracted"; clientId: string }
   // A turn is starting: show it as running from the moment the operator hits
   // send, not from when the POST resolves. (Not in the spec's action list; the
@@ -91,6 +97,14 @@ export type ThreadAction =
   // gap is exactly the window a send used to fall through.)
   | { type: "runStarted"; runId: string; startedMs?: number; model?: string }
   | { type: "runDelta"; runId: string; event: StreamEvent }
+  // This tab is opening a FRESH socket for a run it is already showing. The
+  // stream is not resumable from a new EventSource — it carries no
+  // Last-Event-ID, so the server replays the turn from offset 0 — and
+  // applyStreamEvent APPENDS, so folding that replay into segments this tab
+  // already holds renders the whole turn twice. Rewind first; the replay puts it
+  // back. Triggers: a backend restart, an edge 502 mid-turn, and the 5s liveness
+  // re-attach, so this fires on the ordinary long turn, not an exotic one.
+  | { type: "runReattached"; runId: string }
   | { type: "runCommitted"; runId: string };
 
 export function initialThreadState(threadId: string | null = null): ThreadState {
@@ -112,6 +126,10 @@ function segWeight(s: ChatSegment | undefined): number {
   if (!s) return 0;
   if (s.t === "text") return s.text.length;
   if (s.t === "tool") return s.name.length + s.input.length;
+  // An approval changes weight exactly once, when it is answered, so its state
+  // is the whole signal. Without it a resolved approval looks identical to a
+  // pending one and the snapshot never overtakes the local render.
+  if (s.t === "approval") return s.label.length + s.state.length;
   // A subagent grows in place three ways — another step, a step of its own that
   // got longer, and finally its result — so this recurses rather than counting.
   let w = 1 + s.result.length + (s.done ? 1 : 0);
@@ -152,6 +170,10 @@ function adoptRun(
   const serverSegs = live.meta?.segments || [];
   const startedMs = live.ts ? Date.parse(live.ts) : NaN;
   if (prev && prev.runId === payload.run_id) {
+    // An answer to a question asked before this tab's own last move — the run
+    // starting, or a re-attach rewinding the live view — cannot speak about the
+    // state that move produced. Keep what we have and wait for a current one.
+    if (stale) return prev;
     // THE LOCAL COPY IS THE RENDER-AHEAD ONE. The server writes its snapshot on
     // a throttle (a turn rewrites it hundreds of times, so it deliberately lags
     // the stream). Taking it unconditionally would make a live turn flicker
@@ -263,10 +285,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       const cur = state.pending[action.clientId];
       if (!cur) return state;
       const status: PendingStatus = action.type === "sendAcked" ? "sent" : "failed";
-      if (cur.status === status) return state;
+      const error = action.type === "sendFailed" ? action.error : undefined;
+      if (cur.status === status && cur.error === error) return state;
       return {
         ...state,
-        pending: { ...state.pending, [action.clientId]: { ...cur, status } },
+        pending: { ...state.pending, [action.clientId]: { ...cur, status, error } },
       };
     }
 
@@ -300,6 +323,24 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       const segments = applyStreamEvent(run.segments, action.event);
       if (segments === run.segments) return state;
       return { ...state, activeRun: { ...run, segments } };
+    }
+
+    case "runReattached": {
+      const run = state.activeRun;
+      if (!run || run.runId !== action.runId) return state;
+      return {
+        ...state,
+        activeRun: {
+          ...run,
+          segments: [],
+          // Re-stamped so `adoptRun` treats a sync ISSUED BEFORE this rewind as
+          // what it is: an answer about a live view that no longer exists.
+          // Without it, an in-flight poll could land between the rewind and the
+          // replay, restore a full snapshot, and have the replay append onto it
+          // anyway.
+          localStartedAt: Date.now(),
+        },
+      };
     }
 
     case "runCommitted": {

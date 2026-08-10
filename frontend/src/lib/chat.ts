@@ -12,6 +12,22 @@
 export type ChatSegment =
   | { t: "text"; text: string }
   | { t: "tool"; name: string; input: string }
+  // The turn is BLOCKED, asking to use a tool. A segment rather than a transient
+  // event because the process stays blocked across a page reload, and the reload
+  // must not lose the only control that can unblock it.
+  | {
+      t: "approval";
+      id: string;            // the CLI's request_id; answering names it
+      tool: string;          // "Write", "Bash", "ExitPlanMode"
+      label: string;         // the CLI's own display name for it
+      detail: string;        // one line naming the target ("hello.txt")
+      input: Record<string, unknown>;
+      // The CLI's own proposals, e.g. {type:"setMode",mode:"acceptEdits"} —
+      // this is what "allow and stop asking" applies.
+      suggestions: { type?: string; mode?: string; destination?: string }[];
+      // stale = the turn ended without an answer, so answering can do nothing.
+      state: "pending" | "allowed" | "denied" | "stale";
+    }
   | {
       t: "agent";
       name: string;          // the subagent: a frontmatter name, or general-purpose
@@ -130,6 +146,9 @@ export type ThreadSummary = {
   // The effort level this chat runs at, persisted the same way `model` is.
   // Absent/null = the model's own default (no --effort is sent at all).
   effort?: string | null;
+  // How much this chat asks before acting. Absent/null = the platform default
+  // (bypassPermissions), which is what every chat ran at before the picker.
+  permission_mode?: string | null;
   // How many leading messages are out of the prompt — either folded into the
   // running summary, or dropped outright by /clear. Raw messages are never
   // deleted, so this is the only way a client can tell a cut thread from an
@@ -257,6 +276,9 @@ export type Provider = {
   default_model?: string;
   tools_active?: boolean;
   model_caps?: Record<string, ModelCaps>;
+  // Vendor-level: a permission mode is a property of the CLI running the turn,
+  // not of the model answering, so it is not repeated per model.
+  modes?: { options: string[]; default: string };
 };
 
 // ---- Per-agent task list (build agents only) -------------------------------
@@ -339,6 +361,21 @@ export const chatApi = {
   // Direct vs Orchestrated. Commits on change: cheap, reversible, and the mode
   // is re-stated to the model every turn, so a switch takes effect immediately
   // rather than only on a fresh session.
+  // Answer a tool-permission request from a running turn. The turn is blocked on
+  // stdin until this lands and there is no wall clock on a chat turn, so nothing
+  // else will ever unblock it. 409 means the request can no longer be answered
+  // (the turn ended) — a real answer, not a transport failure.
+  answerPermission: (
+    threadId: string,
+    turnId: string,
+    body: { request_id: string; behavior: "allow" | "deny"; message?: string; apply_suggestion?: boolean },
+  ) =>
+    fetch(`/api/chat/threads/${threadId}/turns/${turnId}/permission`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(j<{ state: string; permission_mode: string | null }>),
+
   setThreadMode: (id: string, mode: "direct" | "orchestrated") =>
     fetch(`/api/chat/threads/${id}/mode`, {
       method: "POST",

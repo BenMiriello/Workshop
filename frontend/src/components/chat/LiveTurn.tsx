@@ -1,6 +1,6 @@
 import type { ChatSegment } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
-import { AssistantTurn } from "./Transcript";
+import { AssistantTurn, type AnswerPermission } from "./Transcript";
 import WorkingIndicator from "./WorkingIndicator";
 
 // ONE CONTIGUOUS STRETCH of the turn currently running: an assistant bubble,
@@ -18,7 +18,7 @@ import WorkingIndicator from "./WorkingIndicator";
 // dropped past its reconnect budget, or one the operator stopped watching, is
 // still running and still says so.
 export default function LiveTurn({
-  segments, working, workingLabel, elapsed, model, cardCtx,
+  segments, working, workingLabel, elapsed, model, cardCtx, onAnswerPermission,
 }: {
   segments: ChatSegment[];
   working: boolean;
@@ -26,6 +26,7 @@ export default function LiveTurn({
   elapsed: number;
   model: string;
   cardCtx: UiCardCtx;
+  onAnswerPermission?: AnswerPermission;
 }) {
   if (!segments.length && !working) return null;
   return (
@@ -38,6 +39,7 @@ export default function LiveTurn({
             model={model}
             cardCtx={cardCtx}
             streaming
+            onAnswerPermission={onAnswerPermission}
           />
         )}
         {working && <WorkingIndicator label={workingLabel} elapsed={elapsed} />}

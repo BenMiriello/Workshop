@@ -47,6 +47,13 @@ export type ChatScope = {
   setSelectedEffort: (level: string) => void;
   /** What the meter displays: the choice, else the model's default level. */
   effectiveEffort: string;
+  /** Permission modes this backend offers. Runtime-served, not assumed. */
+  modeOptions: string[];
+  /** The explicit choice, or "" for "never chosen — use the platform default". */
+  selectedPermissionMode: string;
+  setSelectedPermissionMode: (mode: string) => void;
+  /** What the picker displays: the choice, else the platform default. */
+  effectivePermissionMode: string;
 };
 
 export function useChatScope({
@@ -72,6 +79,9 @@ export function useChatScope({
   // and runs at the model's own default. Kept distinct from "the default level"
   // so an untouched chat spawns exactly the argv it spawns today.
   const [selectedEffort, setSelectedEffort] = useState<string>("");
+  // "" means the chat has never chosen and runs at the platform default, which
+  // is what every chat did before this control existed.
+  const [selectedPermissionMode, setSelectedPermissionMode] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
@@ -157,9 +167,20 @@ export function useChatScope({
     setSelectedEffort(nearestEffort(selectedEffort, effortLevels));
   }, [effortLevels, selectedEffort]);
 
+  // Which modes exist is a RUNTIME fact: `auto` is account-gated and can be
+  // switched off by managed settings, so the list is served, never assumed.
+  const modeOptions = useMemo(
+    () => activeProviderObj?.modes?.options ?? [],
+    [activeProviderObj],
+  );
+  const effectivePermissionMode =
+    selectedPermissionMode || activeProviderObj?.modes?.default || "";
+
   return {
     providers, providersReady, activeProvider, chooseProvider, scope,
     activeProviderObj, modelOptions, selectedModel, setSelectedModel,
     effortLevels, selectedEffort, setSelectedEffort, effectiveEffort,
+    modeOptions, selectedPermissionMode, setSelectedPermissionMode,
+    effectivePermissionMode,
   };
 }

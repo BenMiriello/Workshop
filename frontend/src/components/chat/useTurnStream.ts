@@ -112,6 +112,15 @@ export function useTurnStream({
     detachedRef.current.delete(turnId);
     setAttached(true);
 
+    // REWIND BEFORE OPENING THE SOCKET. A fresh EventSource carries no
+    // Last-Event-ID (only the browser's own automatic retry does, and this is
+    // not that), so the server replays the turn from offset 0 every time. The
+    // reducer APPENDS, and `handleDrop` has usually just run a sync that
+    // restored the server's snapshot, so folding a replay into what is already
+    // there rendered the entire turn a second time. Rewinding costs nothing:
+    // the replay is the same events that built the view being dropped.
+    cb.current.dispatch({ type: "runReattached", runId: turnId });
+
     const es = new EventSource(`/api/chat/turns/${turnId}/stream`);
     sseRef.current = es;
 
@@ -160,6 +169,33 @@ export function useTurnStream({
       cb.current.dispatch({
         type: "runDelta", runId: turnId,
         event: { kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string },
+      });
+    });
+    // The turn is blocked, asking. This is the one event the operator MUST see:
+    // nothing else will unblock the run.
+    es.addEventListener("permission", (e) => {
+      markAlive();
+      const p = parse(e);
+      cb.current.dispatch({
+        type: "runDelta", runId: turnId,
+        event: {
+          kind: "permission",
+          id: p.id as string, tool: p.tool as string, label: p.label as string,
+          detail: p.detail as string,
+          input: (p.input || {}) as Record<string, unknown>,
+          suggestions: (p.suggestions || []) as { type?: string; mode?: string }[],
+        },
+      });
+    });
+    es.addEventListener("permission_resolved", (e) => {
+      markAlive();
+      const p = parse(e);
+      cb.current.dispatch({
+        type: "runDelta", runId: turnId,
+        event: {
+          kind: "permission_resolved",
+          id: p.id as string, state: p.state as string, stale: Boolean(p.stale),
+        },
       });
     });
     es.addEventListener("ping", markAlive); // server heartbeat (~1s) keeps this warm

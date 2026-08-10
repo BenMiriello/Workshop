@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { Markdown } from "../../ui";
 import type { ChatSegment } from "../../lib/chat";
+import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary, recentWorkStepCount } from "./segments";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
@@ -246,11 +247,21 @@ function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cf
 // into a re-openable accordion (widened to sweep in a nearby text checkpoint —
 // see recentWorkStepCount); on older turns all of it folds away (just the
 // answer shows). Tool calls and subagents stay individually expandable.
-function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay }) {
+function WorkSteps({ work, isLatest, cfg, onAnswerPermission }: {
+  work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay;
+  onAnswerPermission?: AnswerPermission;
+}) {
   const [open, setOpen] = useState(false);
   const inlineCount = recentWorkStepCount(work, isLatest, cfg.recentSteps, cfg.recentSteps * 4);
-  const older = inlineCount > 0 ? work.slice(0, Math.max(0, work.length - inlineCount)) : work;
-  const recent = inlineCount > 0 ? work.slice(Math.max(0, work.length - inlineCount)) : [];
+  // A PENDING approval is never foldable. The turn is blocked on it, so hiding
+  // it behind "3 steps hidden" would hide the only control that can restart the
+  // run — the operator would be looking at a chat that had simply stopped.
+  const firstPending = work.findIndex((s) => s.t === "approval" && s.state === "pending");
+  const keepFrom = firstPending >= 0
+    ? Math.min(firstPending, Math.max(0, work.length - Math.max(inlineCount, 0)))
+    : Math.max(0, work.length - inlineCount);
+  const older = inlineCount > 0 || firstPending >= 0 ? work.slice(0, keepFrom) : work;
+  const recent = inlineCount > 0 || firstPending >= 0 ? work.slice(keepFrom) : [];
   const olderTools = older.filter((s) => s.t === "tool" || s.t === "agent").length;
   // `expanded` follows the rule the answer already uses: the most recent turn
   // reads in full. The steps kept inline on a live turn are there precisely so
@@ -262,7 +273,9 @@ function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boo
       ? <ToolChip key={i} name={s.name} input={s.input} />
       : s.t === "agent"
         ? <AgentChip key={i} seg={s} cfg={cfg} />
-        : (s.text.trim() ? <WorkText key={i} text={s.text} cfg={cfg} expanded={expanded} /> : null);
+        : s.t === "approval"
+          ? <ApprovalBlock key={s.id || i} seg={s} onAnswer={onAnswerPermission ?? (async () => {})} />
+          : (s.text.trim() ? <WorkText key={i} text={s.text} cfg={cfg} expanded={expanded} /> : null);
   return (
     <div className="chat-work">
       {older.length > 0 && (
@@ -303,14 +316,19 @@ function WorkSteps({ work, isLatest, cfg }: { work: ChatSegment[]; isLatest: boo
 // An assistant turn: split the trailing run of text (the answer) from the work
 // (tools + interim thinking). The answer renders fully on the most recent turn
 // and is elided on older ones; the work collapses per WorkSteps.
+export type AnswerPermission = (a: {
+  requestId: string; allow: boolean; message?: string; applySuggestion?: boolean;
+}) => Promise<void>;
+
 export function AssistantTurn({
-  segments, isLatest, model, cardCtx, streaming,
+  segments, isLatest, model, cardCtx, streaming, onAnswerPermission,
 }: {
   segments: ChatSegment[];
   isLatest: boolean;
   model?: string;
   cardCtx: UiCardCtx;
   streaming?: boolean;
+  onAnswerPermission?: AnswerPermission;
 }) {
   const cfg = modelDisplay(model);
   let cut = segments.length;
@@ -319,7 +337,9 @@ export function AssistantTurn({
   const answer = segments.slice(cut);
   return (
     <>
-      {work.length > 0 && <WorkSteps work={work} isLatest={isLatest} cfg={cfg} />}
+      {work.length > 0 && (
+        <WorkSteps work={work} isLatest={isLatest} cfg={cfg} onAnswerPermission={onAnswerPermission} />
+      )}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (
           <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} streaming={streaming} />

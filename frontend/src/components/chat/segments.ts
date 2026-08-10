@@ -19,7 +19,17 @@ export type StreamEvent =
   | { kind: "tool"; name?: string; input?: string; detail?: string | null; id?: string; agent?: string | null; parent?: string | null }
   | { kind: "text"; content?: string; parent?: string | null }
   // The Agent call's own result, which closes its segment.
-  | { kind: "tool_result"; tool_use_id?: string | null; text?: string; parent?: string | null };
+  | { kind: "tool_result"; tool_use_id?: string | null; text?: string; parent?: string | null }
+  // The turn is asking to use a tool and is BLOCKED until answered.
+  | {
+      kind: "permission";
+      id?: string; tool?: string; label?: string; detail?: string;
+      input?: Record<string, unknown>;
+      suggestions?: { type?: string; mode?: string; destination?: string }[];
+    }
+  // An answer landed (from this client or another tab), or the turn ended with
+  // requests still open — `stale` resolves every one of them at once.
+  | { kind: "permission_resolved"; id?: string; state?: string; stale?: boolean };
 
 const isAgent = (s: ChatSegment): s is Extract<ChatSegment, { t: "agent" }> => s.t === "agent";
 
@@ -54,7 +64,9 @@ function pushText(segs: ChatSegment[], content: string): ChatSegment[] {
 
 /** Fold one stream event into the turn's segments. */
 export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegment[] {
-  const parent = ev.parent || "";
+  // Permission events have no sidechain: a subagent cannot ask on its own
+  // behalf, the parent turn's process is the one that blocks.
+  const parent = ("parent" in ev && ev.parent) || "";
   if (ev.kind === "text") {
     const content = ev.content || "";
     if (parent) {
@@ -65,6 +77,28 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
       if (nested) return nested;
     }
     return pushText(segs, content);
+  }
+  if (ev.kind === "permission") {
+    const id = ev.id || "";
+    // The same request can arrive twice (a reconnect replays the tail); asking
+    // twice for one decision would be worse than missing it.
+    if (segs.some((s) => s.t === "approval" && s.id === id)) return segs;
+    return [...segs, {
+      t: "approval",
+      id,
+      tool: ev.tool || "?",
+      label: ev.label || ev.tool || "?",
+      detail: ev.detail || "",
+      input: ev.input || {},
+      suggestions: ev.suggestions || [],
+      state: "pending",
+    }];
+  }
+  if (ev.kind === "permission_resolved") {
+    const next = ev.stale ? "stale" : (ev.state === "allowed" ? "allowed" : "denied");
+    return segs.map((s) =>
+      s.t !== "approval" || s.state !== "pending" ? s
+        : (ev.stale || s.id === ev.id) ? { ...s, state: next as typeof s.state } : s);
   }
   if (ev.kind === "tool") {
     const step: ChatSegment = { t: "tool", name: ev.name || "?", input: ev.input || "" };

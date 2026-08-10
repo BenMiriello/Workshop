@@ -1,12 +1,12 @@
 import { Fragment } from "react";
-import { AlertTriangle, Bot, Clock, Eraser, FoldVertical, Square, Unplug } from "lucide-react";
-import { Button } from "../../ui";
+import { Bot, Clock, Eraser, FoldVertical, Square, Unplug } from "lucide-react";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import CopyMessage from "./CopyMessage";
 import LiveTurn from "./LiveTurn";
 import StatusNote from "./StatusNote";
+import UnsentNote from "./UnsentNote";
 import { modelDisplay } from "./models";
 import { STOPPED_BY_OPERATOR, stoppedNoReplyText, stoppedTag } from "./stopReason";
 import type { TranscriptBlock } from "./transcriptBlocks";
@@ -74,24 +74,37 @@ function noReplyText(m: ChatMsg): string {
   return "No response. The turn ended without sending a message.";
 }
 
-function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx) {
+function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx,
+                             answerPermission?: AnswerPermissionFor) {
   // An error with no text is still an error; don't fall through to a blank bubble.
   if (m.meta?.error) return m.content.trim() || "The turn failed, but no error text was recorded.";
   const model = m.meta?.model ?? fallbackModel;
   if (m.meta?.segments && m.meta.segments.length) {
-    return <AssistantTurn segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx} />;
+    // Bound to the turn that ASKED. A persisted message carries its own
+    // turn_id, which is the only way an approval answered after a reload names
+    // the run it belongs to.
+    const tid = m.meta.turn_id;
+    return (
+      <AssistantTurn
+        segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx}
+        onAnswerPermission={
+          answerPermission && tid ? (a) => answerPermission(tid, a) : undefined
+        }
+      />
+    );
   }
   if (!m.content.trim()) return <span className="chat-noreply">{noReplyText(m)}</span>;
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
 function MessageBubble({
-  msg, isLatest, selectedModel, cardCtx,
+  msg, isLatest, selectedModel, cardCtx, answerPermission,
 }: {
   msg: ChatMsg;
   isLatest: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
+  answerPermission?: AnswerPermissionFor;
 }) {
   const threadCfg = modelDisplay(selectedModel);
   return (
@@ -122,7 +135,7 @@ function MessageBubble({
                   {" "}{stoppedTag(msg.meta.stopped)}
                 </div>
               )}
-              {renderAssistantBody(msg, isLatest, selectedModel, cardCtx)}
+              {renderAssistantBody(msg, isLatest, selectedModel, cardCtx, answerPermission)}
             </>
           ) : (
             <ElidedContent source={msg.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
@@ -147,12 +160,14 @@ function MessageBubble({
 //
 // `failed` is different and has to be: the turn never started, so the server has
 // no copy of this message. A bubble that quietly is not real is exactly what
-// "my messages keep disappearing" felt like from outside.
+// "my messages keep disappearing" felt like from outside. It carries WHY, in a
+// sentence, under the message it belongs to — see UnsentNote.
 function PendingBubble({
-  text, status, onRetry,
+  text, status, error, onRetry,
 }: {
   text: string;
   status: "sending" | "sent" | "failed";
+  error?: string;
   onRetry: () => void;
 }) {
   const failed = status === "failed";
@@ -161,13 +176,7 @@ function PendingBubble({
       <div className={`chat-bubble ${failed ? "" : "chat-bubble--inflight"}${text.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
           {text}
-          {failed && (
-            <div className="chat-unsent">
-              <AlertTriangle size={13} strokeWidth={1.8} aria-hidden />
-              <span>Not sent. This never reached the server.</span>
-              <Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>
-            </div>
-          )}
+          {failed && <UnsentNote reason={error} onRetry={onRetry} />}
         </div>
         {text.trim() && <CopyMessage value={text} />}
       </div>
@@ -175,8 +184,16 @@ function PendingBubble({
   );
 }
 
+// Bound by the caller to a THREAD; the turn id is supplied per call, because a
+// transcript can hold approvals from several different runs.
+export type AnswerPermissionFor = (
+  turnId: string,
+  a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean },
+) => Promise<void>;
+
 export default function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, onRetry,
+  answerPermission, liveTurnId,
 }: {
   blocks: TranscriptBlock[];
   selectedModel: string;
@@ -184,6 +201,8 @@ export default function MessageList({
   workingLabel: string;
   elapsed: number;
   onRetry: (clientId: string) => void;
+  answerPermission?: AnswerPermissionFor;
+  liveTurnId?: string | null;
 }) {
   // Recency nuance: the most recent assistant answer is expanded and older ones
   // auto-shorten — but only when nothing is running, because a live turn is
@@ -206,6 +225,7 @@ export default function MessageList({
               isLatest={b.key === latestAssistantKey}
               selectedModel={selectedModel}
               cardCtx={cardCtx}
+              answerPermission={answerPermission}
             />
           )}
           {b.kind === "live" && (
@@ -216,10 +236,16 @@ export default function MessageList({
               elapsed={elapsed}
               model={selectedModel}
               cardCtx={cardCtx}
+              onAnswerPermission={
+                answerPermission && liveTurnId ? (a) => answerPermission(liveTurnId, a) : undefined
+              }
             />
           )}
           {b.kind === "pending" && (
-            <PendingBubble text={b.text} status={b.status} onRetry={() => onRetry(b.clientId)} />
+            <PendingBubble
+              text={b.text} status={b.status} error={b.error}
+              onRetry={() => onRetry(b.clientId)}
+            />
           )}
         </Fragment>
       ))}

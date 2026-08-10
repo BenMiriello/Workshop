@@ -3,10 +3,11 @@ import type { MsgStatus } from "../../lib/chat";
 import type { VoiceSnapshot } from "../../lib/voiceSession";
 import type { UiCardCtx } from "./uiCardActions";
 import type { TranscriptBlock } from "./transcriptBlocks";
-import { logPlaceholder } from "./chatLogState";
-import MessageList from "./MessageList";
+import { clampError, logPlaceholder } from "./chatLogState";
+import MessageList, { type AnswerPermissionFor } from "./MessageList";
 import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
+import UnsentNote from "./UnsentNote";
 import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 
 // The scrolling transcript. It renders BLOCKS the selector produced, in the
@@ -58,7 +59,8 @@ import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 export default function ChatLog({
   scrollRef, onScroll,
   loading, error, blocks, isBuild, inFlight,
-  selectedModel, cardCtx, onRetry, workingLabel, elapsed,
+  selectedModel, cardCtx, onRetry, onRetryQueued, workingLabel, elapsed,
+  answerPermission, liveTurnId,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
 }: {
@@ -72,9 +74,17 @@ export default function ChatLog({
   selectedModel: string;
   cardCtx: UiCardCtx;
   onRetry: (clientId: string) => void;
+  /** Retry an entry the DURABLE queue is holding after a refusal. Distinct from
+   *  `onRetry`, which re-sends this tab's optimistic copy: after a reload only
+   *  the queue's copy exists, and it is the one that has to work. */
+  onRetryQueued: (clientId: string) => void;
   workingLabel: string;
   elapsed: number;
-  queued: { text: string; sentAt: string; clientId: string }[];
+  answerPermission?: AnswerPermissionFor;
+  // The run in flight, so a pending approval on it can be answered. Persisted
+  // messages carry their own turn id; a live one has not been committed yet.
+  liveTurnId?: string | null;
+  queued: { text: string; sentAt: string; clientId: string; failed?: boolean }[];
   // Progress on a queued message, keyed by the id it will be sent with so it
   // stays under the entry it belongs to as other messages queue up behind it.
   queuedStatus: { for: string; status: MsgStatus } | null;
@@ -96,7 +106,7 @@ export default function ChatLog({
         <div className="chat-empty">Loading...</div>
       ) : placeholder === "error" ? (
         <div className="chat-empty chat-empty--err">
-          Couldn't load threads. {String(error).slice(0, 240)}
+          Couldn't load threads. {clampError(error)}
         </div>
       ) : placeholder === "empty" ? (
         <div className="chat-empty">
@@ -111,15 +121,24 @@ export default function ChatLog({
         workingLabel={workingLabel}
         elapsed={elapsed}
         onRetry={onRetry}
+        answerPermission={answerPermission}
+        liveTurnId={liveTurnId}
       />
 
+      {/* A FAILED ENTRY IS NOT A WAITING ONE. The queue holds after a refusal,
+          by design, so "sends when the current turn finishes" is the one thing
+          it will not do — and it said exactly that, dimmed, indefinitely. It
+          reads as what it is instead, with the Retry that releases the hold. */}
       {queued.map((q) => (
         <div key={q.clientId} className="chat-msg user">
           <div
-            className={`chat-bubble chat-bubble--queued${q.text.trim() ? " chat-bubble--copyable" : ""}`}
-            title="Queued, sends when the current turn finishes"
+            className={`chat-bubble ${q.failed ? "" : "chat-bubble--queued"}${q.text.trim() ? " chat-bubble--copyable" : ""}`}
+            title={q.failed ? undefined : "Queued, sends when the current turn finishes"}
           >
-            <div className="chat-bubble__body">{q.text}</div>
+            <div className="chat-bubble__body">
+              {q.text}
+              {q.failed && <UnsentNote onRetry={() => onRetryQueued(q.clientId)} />}
+            </div>
             {q.text.trim() && <CopyMessage value={q.text} />}
           </div>
           {queuedStatus?.for === q.clientId && <StatusNote status={queuedStatus.status} />}

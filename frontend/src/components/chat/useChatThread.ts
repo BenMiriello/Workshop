@@ -67,7 +67,8 @@ export type ChatThread = {
 export function useChatThread({
   scope, providersReady, variant, queue,
   startNewRef, linkedThreadRef, initialThreadId,
-  stripNewParam, setSelectedModel, setSelectedEffort, onError, onLeaveForList,
+  stripNewParam, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
+  onError, onLeaveForList,
 }: {
   scope: string;
   providersReady: boolean;
@@ -79,6 +80,7 @@ export function useChatThread({
   stripNewParam: () => void;
   setSelectedModel: (id: string) => void;
   setSelectedEffort: (level: string) => void;
+  setSelectedPermissionMode: (mode: string) => void;
   onError: (msg: string | null) => void;
   /** The focused route has nothing left to show once its thread is deleted. */
   onLeaveForList: () => void;
@@ -114,7 +116,7 @@ export function useChatThread({
     try {
       setThreads(await chatApi.listThreads(scope));
     } catch (e) {
-      onError(String(e));
+      onError(`Couldn't refresh the list of conversations: ${e}. The list may be out of date.`);
     }
   }, [scope, onError]);
 
@@ -158,7 +160,8 @@ export function useChatThread({
     // default. Seeding this is what stops the picker and the server disagreeing
     // about the level after a reload.
     setSelectedEffort(t.effort ?? "");
-  }, [queue, setSelectedModel, setSelectedEffort]);
+    setSelectedPermissionMode(t.permission_mode ?? "");
+  }, [queue, setSelectedModel, setSelectedEffort, setSelectedPermissionMode]);
 
   useEffect(() => {
     // Gate: never load a thread under a scope that is still being resolved.
@@ -214,7 +217,7 @@ export function useChatThread({
           queue.bindBlank();
         }
       } catch (e) {
-        if (!cancelled) onError(String(e));
+        if (!cancelled) onError(`Couldn't open this conversation: ${e}. Reload the page to try again.`);
       } finally {
         if (!cancelled) setLoadingThreads(false);
       }
@@ -235,10 +238,11 @@ export function useChatThread({
     onError(null);
     setSelectedModel("");
     setSelectedEffort("");
+    setSelectedPermissionMode("");
     // Persist the intent so a reload lands on a blank new chat rather than
     // silently re-adopting the most-recent thread.
     writeSelection(scope, NEW_CHAT);
-  }, [queue, scope, onError, setSelectedModel, setSelectedEffort]);
+  }, [queue, scope, onError, setSelectedModel, setSelectedEffort, setSelectedPermissionMode]);
 
   const adoptThreadId = useCallback((id: string) => {
     setActiveId(id);
@@ -259,7 +263,18 @@ export function useChatThread({
   }, [adoptThreadId]);
 
   const removeThread = useCallback(async (id: string) => {
-    await chatApi.deleteThread(id);
+    // A DELETE THAT FAILED MUST NOT LOOK LIKE ONE THAT WORKED. This used to be a
+    // bare await: the dialog had already closed, so a 5xx skipped the refresh,
+    // said nothing, and left the thread in the list looking undeleted with no
+    // hint that anything had gone wrong. Nothing after this line may run on a
+    // failure either, or the chat navigates away from a conversation the server
+    // still has.
+    try {
+      await chatApi.deleteThread(id);
+    } catch (e) {
+      onError(`Couldn't delete this conversation: ${e}. It is still here; try again.`);
+      return;
+    }
     // Deleting the conversation you are looking at has to take you somewhere.
     // The focused route is nothing BUT that conversation, so staying put left a
     // page addressing a thread the server no longer has.
@@ -270,7 +285,7 @@ export function useChatThread({
       newChat();
     }
     void refreshThreads();
-  }, [newChat, refreshThreads, scope, variant, onLeaveForList]);
+  }, [newChat, refreshThreads, scope, variant, onLeaveForList, onError]);
 
   const saveRename = useCallback(async (title: string) => {
     const id = activeIdRef.current;
@@ -281,7 +296,7 @@ export function useChatThread({
       setThreads((list) => list.map((x) => (x.id === t.id ? { ...x, title: t.title } : x)));
       setRenameOpen(false);
     } catch (e) {
-      onError(String(e));
+      onError(`Couldn't rename this conversation: ${e}. Its title is unchanged.`);
     } finally {
       setRenameBusy(false);
     }

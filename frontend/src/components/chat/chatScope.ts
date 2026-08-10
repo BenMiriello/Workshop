@@ -140,7 +140,14 @@ export function estimateContextTokens(messages: ChatMsg[], draft: string): numbe
   for (const m of messages) {
     chars += (m.content || "").length;
     for (const s of m.meta?.segments || []) {
-      chars += s.t === "text" ? s.text.length : s.name.length + (s.input?.length || 0);
+      chars +=
+        s.t === "text" ? s.text.length
+          // An approval is a control, not content the model read. Its label is
+          // the only text of it that exists, and counting the tool input twice
+          // (once here, once when the call goes through) would overstate the
+          // window every time the operator allows something.
+          : s.t === "approval" ? s.label.length
+            : s.name.length + (s.input?.length || 0);
     }
   }
   return Math.ceil(chars / 4);

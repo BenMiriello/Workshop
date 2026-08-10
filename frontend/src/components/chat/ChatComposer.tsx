@@ -9,6 +9,7 @@ import { VoiceStrip, VoiceCluster } from "./VoiceControls";
 import { useVoiceComposer } from "./useVoiceComposer";
 import { modelLabel, orderModels } from "./models";
 import EffortMeter from "./EffortMeter";
+import { permissionModeDef } from "./permissionModes";
 
 // Everything below the log: the type-ahead pickers, the voice strip, the input,
 // and the per-turn controls.
@@ -33,6 +34,7 @@ export default function ChatComposer({
   streaming, onSend, onStop, canSend,
   modelOptions, selectedModel, onSelectModel,
   effortLevels, effectiveEffort, onSelectEffort,
+  modeOptions, effectivePermissionMode, onSelectPermissionMode,
   // Context meter
   activeId, messages, ctxNonce,
   // Voice
@@ -68,6 +70,9 @@ export default function ChatComposer({
   effortLevels: string[];
   effectiveEffort: string;
   onSelectEffort: (level: string) => void;
+  modeOptions: string[];
+  effectivePermissionMode: string;
+  onSelectPermissionMode: (mode: string) => void;
   activeId: string | null;
   messages: ChatMsg[];
   ctxNonce: number;
@@ -143,6 +148,49 @@ export default function ChatComposer({
           value={effectiveEffort}
           onSelect={onSelectEffort}
         />
+
+        {/* How much this chat asks before acting. Sits between effort and model
+            because it is the same class of per-turn knob, and because the three
+            read left to right as "how hard, how careful, which model". */}
+        {modeOptions.length > 1 && (
+          <Menu
+            label="Mode"
+            align="end"
+            side="top"
+            trigger={
+              <button
+                className="chat-mode"
+                onMouseDown={(e) => e.preventDefault()}
+                title={`${permissionModeDef(effectivePermissionMode).label}. ${permissionModeDef(effectivePermissionMode).hint}`}
+                aria-label={`Mode: ${permissionModeDef(effectivePermissionMode).label}`}
+              >
+                {(() => {
+                  const Icon = permissionModeDef(effectivePermissionMode).Icon;
+                  return <Icon size={14} aria-hidden />;
+                })()}
+                <span className="chat-mode__val">
+                  {permissionModeDef(effectivePermissionMode).label}
+                </span>
+              </button>
+            }
+          >
+            {modeOptions.map((id) => {
+              const def = permissionModeDef(id);
+              return (
+                <MenuItem
+                  key={id}
+                  checked={id === effectivePermissionMode}
+                  danger={def.danger}
+                  title={def.hint}
+                  icon={<def.Icon size={14} aria-hidden />}
+                  onSelect={() => onSelectPermissionMode(id)}
+                >
+                  {def.label}
+                </MenuItem>
+              );
+            })}
+          </Menu>
+        )}
 
         {/* Menu rather than <select>: the stock double-arrow was the loudest
             element in a row of quiet icon buttons. */}

@@ -1058,6 +1058,64 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-effort__bar:nth-child(5) { height: 1.1rem; }
 .chat-effort__bar.is-on { background: var(--accent); }
 
+/* Permission mode: the same quiet trigger as the model picker, with an icon
+   because the labels ("Manual", "Edit automatically") are longer than a model
+   name and the icon is what stays readable when the label is dropped. */
+.chat-mode {
+  flex: 0 0 auto; min-width: 0; max-width: 9rem;
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  height: 2.1rem; padding: 0 0.5rem;
+  font: inherit; font-size: var(--fs-sm); line-height: 1;
+  color: var(--muted); background: transparent;
+  border: none; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.chat-mode:hover { color: var(--fg); background: var(--card-hover); }
+.chat-mode[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
+.chat-mode__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The row is already crowded. Below the small breakpoint the mode keeps its icon
+   and drops its label, and the effort bars keep their full tap target — a
+   control that shrinks to nothing disappears exactly when the screen is small. */
+@media (max-width: 30rem) {
+  .chat-mode__val { display: none; }
+  .chat-mode { padding: 0 0.45rem; }
+}
+
+/* An approval: the turn has stopped and is asking. It is the only thing in the
+   transcript that is BLOCKING, so it gets a filled surface rather than the
+   borderless treatment the rest of the work uses — the weight is the signal
+   that this one needs an answer, not a border drawn around it. */
+.chat-approval {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  margin: var(--space-2) 0;
+  padding: var(--space-3);
+  background: var(--bg-inset);
+  border-radius: var(--radius-md);
+}
+.chat-approval__head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.chat-approval__icon { flex: 0 0 auto; color: var(--warn); }
+.chat-approval__title { font-size: var(--fs-sm); font-weight: 600; color: var(--fg); }
+.chat-approval__detail {
+  min-width: 0; font-size: var(--fs-sm); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-approval__plan { font-size: var(--fs-sm); color: var(--fg); }
+.chat-approval__reason { width: 100%; }
+.chat-approval__actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* Answered: history, not a prompt. It drops to one muted line so a transcript
+   full of allowed calls reads as a transcript, not as a wall of decisions. */
+.chat-approval.is-resolved {
+  flex-direction: row; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) 0; background: transparent;
+}
+.chat-approval.is-resolved .chat-approval__icon { color: var(--muted); }
+.chat-approval__resolved {
+  min-width: 0; font-size: var(--fs-sm); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* The model picker may truncate rather than push Send off the row — capped by
    max-width on the trigger, not by a min-width floor on the wrapper. */
 .chat-actions > .ws-menu { min-width: 0; }

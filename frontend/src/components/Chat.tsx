@@ -28,6 +28,7 @@ import { useChatScope } from "./chat/useChatScope";
 import { useChatThread } from "./chat/useChatThread";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { canDrainQueue } from "./chat/sendPlan";
+import { clampError } from "./chat/chatLogState";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import { committedMessages } from "./chat/transcriptBlocks";
 import { chatApi, type CardState } from "../lib/chat";
@@ -122,7 +123,9 @@ export default function Chat({
     contextKey, effectiveMode, scoped, initialThreadId, startNew,
     startNewRef, linkedThreadRef, onError: setErr,
   });
-  const { scope, selectedModel, setSelectedModel, setSelectedEffort } = scopeState;
+  const {
+    scope, selectedModel, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
+  } = scopeState;
 
   // The queue must know how to send, and the sender must know the queue. One of
   // the two has to be reached through a ref; the send side is the one that
@@ -172,6 +175,7 @@ export default function Chat({
     stripNewParam,
     setSelectedModel,
     setSelectedEffort,
+    setSelectedPermissionMode,
     onError: setErr,
     onLeaveForList: () => navigate("/chats"),
   });
@@ -277,6 +281,7 @@ export default function Chat({
 
   const pipeline = useSendPipeline({
     scope, selectedModel, selectedEffort: scopeState.selectedEffort,
+    selectedPermissionMode: scopeState.selectedPermissionMode,
     chatModeRef: thread.chatModeRef, activeIdRef,
     adoptThread: thread.adoptThread,
     stateRef, dispatch, sync, queue,
@@ -310,6 +315,37 @@ export default function Chat({
   // reattach-on-poll + reattach-on-send + reattach-on-drop paths each had their
   // own copy of this rule and each got it subtly different.
   const runId = state.activeRun?.runId ?? null;
+
+  // Answer a tool-permission request from a turn. The turn is BLOCKED on stdin
+  // until this lands, so a failure here has to be visible: a silent catch would
+  // leave the operator looking at a chat that had simply stopped.
+  //
+  // No optimistic update. The segment moves when the server says the frame
+  // reached the process (an SSE permission_resolved, or the refresh below) —
+  // showing "Allowed" for an answer that never landed would be the one lie this
+  // control cannot afford.
+  const answerPermission = useCallback(async (
+    turnId: string,
+    a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean },
+  ) => {
+    if (!activeIdRef.current) return;
+    try {
+      await chatApi.answerPermission(activeIdRef.current, turnId, {
+        request_id: a.requestId,
+        behavior: a.allow ? "allow" : "deny",
+        ...(a.message ? { message: a.message } : {}),
+        ...(a.applySuggestion ? { apply_suggestion: true } : {}),
+      });
+      // "Stop asking" changes the chat's mode server-side; pull the new value in
+      // rather than guessing it, so the composer's picker and the server agree.
+      if (a.applySuggestion) {
+        const t = await chatApi.getThread(activeIdRef.current).catch(() => null);
+        if (t) setSelectedPermissionMode(t.permission_mode ?? "");
+      }
+    } catch (e) {
+      setErr(`Couldn't answer that request: ${e}`);
+    }
+  }, [activeIdRef, setErr, setSelectedPermissionMode]);
   const { attach, hasOpenStream, isDetached, closeStream } = stream;
   useEffect(() => {
     // Keyed on the run's ID, not the run object: that object changes on every
@@ -655,6 +691,16 @@ export default function Chat({
   // false the moment a thread is selected, which is before the transcript's own
   // first page is even requested; on its own it let the empty state render over
   // an open conversation for a full round trip. That is "my chat opens blank".
+  // ONE BUBBLE PER MESSAGE. A send the server refused is written to the durable
+  // queue so it survives a reload (the reducer's `pending` does not), but while
+  // THIS tab still holds the optimistic copy both would draw — the same text,
+  // twice, each with its own Retry. The store's copy wins for as long as it
+  // exists; the queue's copy is what is left afterwards.
+  const queuedForDisplay = useMemo(
+    () => queue.items.filter((q) => !state.pending[q.clientId]),
+    [queue.items, state.pending],
+  );
+
   const logView = (
     <ChatLog
       scrollRef={scrollRef}
@@ -667,9 +713,12 @@ export default function Chat({
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={pipeline.retry}
+      onRetryQueued={queue.retryFailed}
       workingLabel={workingLabel}
       elapsed={elapsed}
-      queued={queue.items}
+      answerPermission={answerPermission}
+      liveTurnId={runId}
+      queued={queuedForDisplay}
       queuedStatus={queuedStatus}
       voiceOn={voiceOn}
       settling={settling}
@@ -736,6 +785,9 @@ export default function Chat({
       effortLevels={scopeState.effortLevels}
       effectiveEffort={scopeState.effectiveEffort}
       onSelectEffort={setSelectedEffort}
+      modeOptions={scopeState.modeOptions}
+      effectivePermissionMode={scopeState.effectivePermissionMode}
+      onSelectPermissionMode={setSelectedPermissionMode}
       activeId={activeId}
       messages={messages}
       ctxNonce={ctxNonce}
@@ -774,8 +826,17 @@ export default function Chat({
       {egressBanner}
       {/* Not gated on message count. It used to require `messages.length > 0`,
           which silently swallowed every error on a fresh chat — including the
-          model-list load failure, which happens exactly there. */}
-      {err && !showEgressBanner && <div className="chat-err">{String(err).slice(0, 240)}</div>}
+          model-list load failure, which happens exactly there.
+
+          WHAT IS LEFT IN THIS SLOT is only what belongs to the CHAT rather than
+          to a message: the thread list, the model list, a failed delete, a
+          failed stop. Anything caused by a message the operator sent renders
+          under that message now (see UnsentNote), which is the log-placement
+          rule in frontend/CLAUDE.md and is why this could be one slot at all —
+          it used to also carry every send failure, overwritten by the next one.
+          The cap is a bound on a pathological body, not a summary: every writer
+          here passes a sentence, so it should never fire. */}
+      {err && !showEgressBanner && <div className="chat-err">{clampError(err)}</div>}
       {composer}
       {dialogs}
       <VoiceSettings

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { chatApi, newClientId, shortHttpError, type ThreadSummary } from "../../lib/chat";
 import type { QueuedMessage } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
+import { sendFailureText } from "./sendFailure";
 import { planSend } from "./sendPlan";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import { committedMessages } from "./transcriptBlocks";
@@ -45,13 +46,15 @@ export type SendPipeline = {
 };
 
 export function useSendPipeline({
-  scope, selectedModel, selectedEffort, chatModeRef, activeIdRef, adoptThread,
+  scope, selectedModel, selectedEffort, selectedPermissionMode,
+  chatModeRef, activeIdRef, adoptThread,
   stateRef, dispatch, sync, queue,
   compacting, compact, clear, setErr, onSend,
 }: {
   scope: string;
   selectedModel: string;
   selectedEffort: string;
+  selectedPermissionMode: string;
   chatModeRef: React.MutableRefObject<ChatModeId>;
   activeIdRef: React.MutableRefObject<string | null>;
   adoptThread: (t: ThreadSummary) => void;
@@ -109,6 +112,9 @@ export function useSendPipeline({
           // effort is part of the rendered prompt, so emitting a level nobody
           // chose would cost every such chat its prompt-cache prefix.
           ...(selectedEffort ? { effort: selectedEffort } : {}),
+          // Same rule as effort: sent only when chosen, so a chat nobody has
+          // touched keeps running exactly as it did before the picker existed.
+          ...(selectedPermissionMode ? { permission_mode: selectedPermissionMode } : {}),
           // `parts` is present only when the queue drained several messages into
           // this one turn. It carries WHEN EACH WAS TYPED and its own id, so the
           // server stores them as the separate messages they were, at their real
@@ -129,7 +135,6 @@ export function useSendPipeline({
       void sync();
       return true;
     } catch (e) {
-      setErr(String(e));
       const ids = parts?.length ? parts.map((p) => p.clientId) : [clientId];
       // The turn never started, so the server has no copy. Mark the bubble
       // rather than leaving it looking delivered: a bubble that silently is not
@@ -140,14 +145,33 @@ export function useSendPipeline({
       // once queued, once as a dead bubble — and each dead bubble retried as its
       // own turn, so a refused batch of four came back as four turns instead of
       // the one turn it was sent as (invariant 4).
+      //
+      // THE FAILURE BELONGS TO THIS MESSAGE, so it renders under it and nowhere
+      // else. It used to also go to `setErr`, which is one slot above the
+      // composer that the next error overwrites and the next send clears — so
+      // the explanation for a bubble marked "Not sent" outlived the bubble by
+      // about one keystroke, and while it lasted it read "TypeError: Failed to
+      // fetch". See sendFailure.ts and frontend/CLAUDE.md's log-placement rule.
+      const reason = sendFailureText(e);
       for (const id of ids) {
-        dispatch({ type: opts?.fromQueue ? "sendRetracted" : "sendFailed", clientId: id });
+        dispatch(
+          opts?.fromQueue
+            ? { type: "sendRetracted", clientId: id }
+            : { type: "sendFailed", clientId: id, error: reason },
+        );
       }
+      // ...AND IT SURVIVES THE TAB. `pending` is reducer state, the composer was
+      // cleared synchronously before the POST, and `reset` drops pending on a
+      // thread switch: a 500 left a bubble with a Retry that a reload erased
+      // outright, text and all. The durable queue holds it, marked and held, so
+      // Retry is still there afterwards. A batch from the queue is skipped
+      // because the queue already holds those and is putting them back itself.
+      if (!opts?.fromQueue) queue.pushFailed(text, clientId);
       return false;
     } finally {
       setStartingBoth(false);
     }
-  }, [scope, selectedModel, selectedEffort, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
+  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
 
   // Hand a message to the run already in flight. It is PERSISTED BEFORE
   // DELIVERY server-side, so `delivered: true` means the chat has it whether or
