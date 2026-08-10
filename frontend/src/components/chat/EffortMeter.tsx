@@ -56,7 +56,11 @@ export default function EffortMeter({
   return (
     <Menu
       label="Effort"
-      align="end"
+      // "start" (grows rightward from the trigger's left edge), not "end": this
+      // sits early/left in the composer row, and "end" pinned the popover's
+      // RIGHT edge to the trigger and grew it leftward — on a narrow phone
+      // screen that ran the menu off the left edge entirely.
+      align="start"
       side="top"
       trigger={
         <button
