@@ -4,7 +4,7 @@ import type { QueuedMessage } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
 import { sendFailureText } from "./sendFailure";
 import { planSend } from "./sendPlan";
-import { unsupportedCommand } from "./slashCommands";
+import { retiredCommand, typedCommand } from "./typedCommands";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import { committedMessages } from "./transcriptBlocks";
 import type { MessageQueue } from "./useMessageQueue";
@@ -50,7 +50,7 @@ export function useSendPipeline({
   scope, selectedModel, selectedEffort, selectedPermissionMode,
   chatModeRef, activeIdRef, adoptThread,
   stateRef, dispatch, sync, queue,
-  compacting, compact, clear, setErr, onSend,
+  compacting, compact, clear, setErr, onSend, onNewChat,
 }: {
   scope: string;
   selectedModel: string;
@@ -69,6 +69,8 @@ export function useSendPipeline({
   setErr: (m: string | null) => void;
   /** Housekeeping the chat does on every send: follow the log, drop the note. */
   onSend: () => void;
+  /** What `/new` does: open the new-chat dialog, not start one silently. */
+  onNewChat: () => void;
 }): SendPipeline {
   const [starting, setStarting] = useState(false);
   const [turnIsCompact, setTurnIsCompact] = useState(false);
@@ -259,14 +261,17 @@ export function useSendPipeline({
     // come BEFORE the plan: queued behind a running turn it would be treated as
     // ordinary text and drained into the next turn joined to whatever else was
     // waiting, so it would neither compact nor read as a message.
-    if (text === "/compact") { void compact(); return; }
-    if (text === "/clear") { void clear(); return; }
-    // A command this environment cannot run is answered HERE, for free. Sending
-    // it spawned a process and spent a full prompt to have the CLI reply
-    // "/mcp isn't available in this environment" — measured, on 2026-08-10, for
-    // most of the catalogue this app was advertising in its own autocomplete.
-    const unsupported = unsupportedCommand(text);
-    if (unsupported) { setErr(unsupported); return; }
+    // The three that still work. Typed only — nothing suggests them, and there
+    // is no picker any more (see typedCommands).
+    const cmd = typedCommand(text);
+    if (cmd === "compact") { void compact(); return; }
+    if (cmd === "clear") { void clear(); return; }
+    if (cmd === "new") { onNewChat(); return; }
+    // A command that used to exist here is answered LOCALLY, for free, with
+    // where its job went. Sending it spawned a process and spent a full prompt
+    // so the CLI could reply that it does not work.
+    const retired = retiredCommand(text);
+    if (retired) { setErr(retired); return; }
     dispatchSend(text, newClientId());
   }, [setErr, onSend, compact, clear, dispatchSend]);
 

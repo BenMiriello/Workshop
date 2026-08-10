@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_store, chat_context, chat_log
+from services import context_report
 from services import model_caps
 from services import task_scope
 from services import scope_version
@@ -1311,6 +1312,50 @@ async def thread_context(thread_id: str):
         "model": model,
         "source": "estimated",
     }
+
+
+@router.get("/threads/{thread_id}/context/detail")
+async def thread_context_detail(thread_id: str):
+    """What is actually filling this chat's window, broken down.
+
+    Powers the context modal. A SIDE QUERY, not a turn: it claims no run, writes
+    no run event, and appends no message, because opening a panel is not
+    something that belongs in the transcript.
+
+    Free to serve. The CLI computes `/context` locally — measured 2026-08-10 at
+    `num_turns: 0`, `duration_api_ms: 0`, `total_cost_usd: 0` — so this can be
+    refreshed as often as the operator likes.
+
+    `available: false` is a normal answer, not an error: a thread that has not
+    run a turn yet has no session to inspect, and some CLI builds do not offer
+    the command here. The panel says so and still shows the meter's own total.
+    """
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    model = _resolve_model(None, t, provider)
+    window = _window_for(model, int(t.get("context_tokens") or 0))
+    session = t.get("claude_session")
+    base = {
+        "model": model,
+        "window_tokens": window,
+        # OUR measurement stays the headline number, exactly as the meter shows
+        # it. The breakdown explains that number; it must never quietly replace
+        # it with the CLI's, which is computed against a different window.
+        "used_tokens": int(t.get("context_tokens") or 0),
+    }
+    if not session:
+        return {**base, "available": False,
+                "reason": "This chat has not run a turn yet, so it has no session to inspect."}
+    cwd = (str(provider.dir) if chat_context.is_build_provider(provider)
+           else str(context_report.WORKSHOP_ROOT))
+    report = await context_report.run_context_report(session, cwd, model)
+    if report is None:
+        return {**base, "available": False,
+                "reason": "The breakdown could not be read for this chat."}
+    return {**base, "available": True, **{k: v for k, v in report.items()
+                                          if k not in ("model",)}}
 
 
 def _agent_role_for(provider) -> str | None:

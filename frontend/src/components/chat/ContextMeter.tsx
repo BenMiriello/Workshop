@@ -20,7 +20,7 @@ const RING_R = 7;
 const RING_C = 2 * Math.PI * RING_R;
 
 export default function ContextMeter({
-  activeId, streaming, messages, draft, model, nonce,
+  activeId, streaming, messages, draft, model, nonce, onOpen,
 }: {
   activeId: string | null;
   streaming: boolean;
@@ -28,6 +28,9 @@ export default function ContextMeter({
   draft: string;
   model: string;
   nonce: number;
+  // Open the breakdown. The reading answers "how full"; the panel behind it
+  // answers "with what", which is the question that follows it every time.
+  onOpen?: () => void;
 }) {
   const [server, setServer] = useState<{ used: number; window: number } | null>(null);
   // A FAILED READ IS NOT THE SAME AS NOT HAVING READ YET. This was
@@ -84,11 +87,8 @@ export default function ContextMeter({
 
   // A single accent tone, no threshold colors: this is a reading, not a status.
   // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.
-  return (
-    <div
-      className="chat-context-meter"
-      title={contextTooltip(ctx.used, ctx.win, source)}
-    >
+  const inner = (
+    <>
       <svg className="chat-context-meter__ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden>
         <circle className="chat-context-meter__track" cx="9" cy="9" r={RING_R} />
         <circle
@@ -98,6 +98,22 @@ export default function ContextMeter({
         />
       </svg>
       <span className="chat-context-meter__pct">{contextLabel(reading, source)}</span>
-    </div>
+    </>
+  );
+  const title = contextTooltip(ctx.used, ctx.win, source);
+  // A reading with nothing behind it stays a plain label rather than pretending
+  // to be a control: a blank chat has no session to break down.
+  if (!onOpen || !activeId) {
+    return <div className="chat-context-meter" title={title}>{inner}</div>;
+  }
+  return (
+    <button
+      type="button"
+      className="chat-context-meter chat-ctx-btn"
+      title={`${title}. Click for the breakdown`}
+      onClick={onOpen}
+    >
+      {inner}
+    </button>
   );
 }

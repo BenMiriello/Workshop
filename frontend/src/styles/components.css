@@ -1768,3 +1768,71 @@ a.ws-btn { text-decoration: none; }
   text-decoration: underline dashed;
   text-underline-offset: 2px;
 }
+
+/* ---- Context modal --------------------------------------------------------
+   The breakdown behind the composer's context meter. Rows are a label / tokens
+   / percent grid rather than a Table primitive because two of the three columns
+   are numeric and right-aligned at a fixed width, which is what keeps a list of
+   twenty rows scannable down the numbers. No borders (rule 6): the swatch and
+   the alignment do the grouping. */
+.ctx-body { display: flex; flex-direction: column; gap: var(--space-3); }
+
+.ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); }
+.ctx-head__total { font-size: var(--text-lg); font-weight: 600; }
+.ctx-head__pct { font-size: var(--text-lg); font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.ctx-bar { margin-block: var(--space-1); }
+
+.ctx-list { display: flex; flex-direction: column; }
+
+.ctx-row {
+  display: grid;
+  grid-template-columns: 10px 1fr 4.5rem 3rem;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-1);
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.ctx-row__swatch { width: 8px; height: 8px; border-radius: var(--radius-full); background: var(--border); }
+.ctx-row__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ctx-row__sub { color: var(--muted); margin-left: var(--space-2); font-size: var(--text-xs); }
+.ctx-row__tokens { text-align: right; font-variant-numeric: tabular-nums; }
+.ctx-row__pct { text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* An MCP server opens onto its tools. The whole row is the control. */
+.ctx-expand {
+  display: block; width: 100%; text-align: left;
+  background: none; border: 0; padding: 0; color: inherit; font: inherit;
+  cursor: pointer; border-radius: var(--radius-sm);
+}
+.ctx-expand:hover { background: var(--bg-inset); }
+.ctx-expand__chev { transition: transform var(--motion-fast) ease; color: var(--muted); }
+.ctx-expand.is-open .ctx-expand__chev { transform: rotate(90deg); }
+.ctx-expand .ctx-row { grid-template-columns: 10px 1fr 4.5rem 3rem; }
+.ctx-sublist { padding-left: var(--space-5); }
+.ctx-sublist .ctx-row__label { color: var(--muted); }
+
+.ctx-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-3); color: var(--muted); font-size: var(--text-xs);
+}
+.ctx-foot__model { font-variant-numeric: tabular-nums; }
+.ctx-refresh {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  background: none; border: 0; padding: var(--space-1) 0;
+  color: var(--muted); font: inherit; cursor: pointer;
+}
+.ctx-refresh:hover { color: var(--fg); }
+
+/* The meter is a button now: it opens the breakdown. Kept visually identical to
+   the static reading it replaced — a control that looks like a label is fine
+   when the whole affordance is "this number is clickable"; what is not fine is
+   a number that moves or recolors on hover, which reads as the value changing. */
+.chat-ctx-btn {
+  background: none; border: 0; padding: 0; margin: 0;
+  color: inherit; font: inherit; cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.chat-ctx-btn:hover { background: var(--bg-inset); }

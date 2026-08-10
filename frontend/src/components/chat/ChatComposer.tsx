@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { AudioLines, ChevronDown, CornerDownLeft, PhoneOff, Slash, Square } from "lucide-react";
+import { AudioLines, ChevronDown, CornerDownLeft, PhoneOff, Square } from "lucide-react";
 import { Menu, MenuItem } from "../../ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
@@ -14,7 +14,7 @@ import { permissionModeDef } from "./permissionModes";
 // Everything below the log: the type-ahead pickers, the voice strip, the input,
 // and the per-turn controls.
 //
-// The controls here are all PER-TURN knobs — model, voice, slash, send, stop —
+// The controls here are all PER-TURN knobs — model, voice, send, stop —
 // which is why the model picker lives here and not in the header beside the
 // things that change the whole surface (scope, which chat you are in).
 //
@@ -28,7 +28,6 @@ export default function ChatComposer({
   input, onChange, onKeyDown, placeholder,
   focused, onFocusChange,
   // Type-ahead
-  slashOptions, slashSelected, showSlash, onSlashHover, onSlashPick, onToggleSlash,
   mentionOptions, mentionSelected, showMentions, onMentionHover, onMentionPick,
   // Turn controls
   streaming, onSend, onStop, canSend,
@@ -39,7 +38,7 @@ export default function ChatComposer({
   activeId, messages, ctxNonce,
   // Voice
   voiceOn, onToggleVoice, isBuild,
-  vsnap, vprefs, vsession, orbRef, onUpdatePrefs, onOpenVoiceSettings,
+  vsnap, vprefs, vsession, orbRef, onUpdatePrefs, onOpenVoiceSettings, onOpenContext,
 }: {
   composerRef: RefObject<HTMLDivElement>;
   inputRef: RefObject<HTMLTextAreaElement>;
@@ -49,12 +48,6 @@ export default function ChatComposer({
   placeholder: string;
   focused: boolean;
   onFocusChange: (v: boolean) => void;
-  slashOptions: PickerOption[];
-  slashSelected: number;
-  showSlash: boolean;
-  onSlashHover: (i: number) => void;
-  onSlashPick: (key: string) => void;
-  onToggleSlash: () => void;
   mentionOptions: PickerOption[];
   mentionSelected: number;
   showMentions: boolean;
@@ -88,6 +81,8 @@ export default function ChatComposer({
   orbRef: RefObject<HTMLButtonElement>;
   onUpdatePrefs: (p: Partial<VoicePrefs>) => void;
   onOpenVoiceSettings: () => void;
+  /** Open the context breakdown from the meter. */
+  onOpenContext: () => void;
 }) {
   const voice = useVoiceComposer(vsnap, vprefs, vsession);
 
@@ -103,15 +98,6 @@ export default function ChatComposer({
           ariaLabel="Agents you can mention"
           onHover={onMentionHover}
           onPick={onMentionPick}
-        />
-      )}
-      {showSlash && (
-        <CommandPicker
-          options={slashOptions}
-          selected={slashSelected}
-          ariaLabel="Slash commands"
-          onHover={onSlashHover}
-          onPick={onSlashPick}
         />
       )}
       {voiceOn && <VoiceStrip status={voice.status} onRetry={() => vsession.retry()} />}
@@ -137,6 +123,7 @@ export default function ChatComposer({
             draft={input}
             model={selectedModel}
             nonce={ctxNonce}
+            onOpen={onOpenContext}
           />
         )}
         <span className="chat-actions__spacer" />
@@ -242,19 +229,6 @@ export default function ChatComposer({
         >
           {voiceOn ? <PhoneOff size={16} aria-hidden /> : <AudioLines size={16} aria-hidden />}
         </button>
-
-        {!voiceOn && (
-          <button
-            className={`chat-slash-btn${showSlash ? " is-active" : ""}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={onToggleSlash}
-            aria-label="Slash commands"
-            aria-expanded={showSlash}
-            title="Slash commands"
-          >
-            <Slash size={16} aria-hidden />
-          </button>
-        )}
 
         {/* Stop sits left of Send: Send is the primary, most-reached-for control
             (every turn ends at it), so it stays rightmost and closest to Enter's

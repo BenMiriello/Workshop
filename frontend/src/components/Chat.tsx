@@ -9,14 +9,13 @@ import ChatComposer from "./chat/ChatComposer";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
 import ChatDialogs from "./chat/ChatDialogs";
+import ContextModal from "./chat/ContextModal";
 import { useCompaction } from "./chat/useCompaction";
 import { useVoiceMode } from "./chat/useVoiceMode";
-import {
-  buildSlashCommands, matchSlash, matchMention, applyMention, type SlashCommand,
-} from "./chat/slashCommands";
+import { matchMention, applyMention } from "./chat/mentions";
 import { type ChatDrawer } from "./chat/drawers";
 import {
-  deriveMode, buildSlug, projectSlugFor, taskScopeFor, composerPlaceholder,
+  deriveMode, buildSlug, taskScopeFor, composerPlaceholder,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { useMessageQueue } from "./chat/useMessageQueue";
@@ -295,6 +294,9 @@ export default function Chat({
       // They are driving again, so the queue may resume draining itself.
       queue.release();
     },
+    // `/new` ASKS. It opens the same dialog the toolbar button does rather than
+    // abandoning the conversation on a four-character keystroke.
+    onNewChat: () => thread.setConfirmNew(true),
   });
   sendBatchRef.current = pipeline.sendBatch;
 
@@ -394,13 +396,10 @@ export default function Chat({
   const [inboxCount, setInboxCount] = useState(0);
   const [openTaskCount, setOpenTaskCount] = useState(0);
   const [ticketsOpen, setTicketsOpen] = useState(false);
-  const [slashSel, setSlashSel] = useState(0);
+  // The context breakdown, opened from the meter. It replaced /context, which
+  // dumped sixty lines of table into the transcript.
+  const [contextOpen, setContextOpen] = useState(false);
   const [mentionSel, setMentionSel] = useState(0);
-  // The slash BUTTON opens the command list as a menu. It is deliberately
-  // separate from "the operator is typing a /command": the button used to work
-  // by writing "/" into the composer, which meant tapping it destroyed whatever
-  // had been typed. A picker must never edit the thing you were writing.
-  const [slashOpen, setSlashOpen] = useState(false);
   const slug = buildSlug(contextKey);
   const taskScope = taskScopeFor(contextKey);
 
@@ -418,24 +417,6 @@ export default function Chat({
       .catch(() => { if (!cancelled) setMentionable([]); });
     return () => { cancelled = true; };
   }, [activeId]);
-
-  // A button-opened slash menu dismisses like any other popover. (The typed
-  // variant closes itself when the "/" stops being a command.)
-  useEffect(() => {
-    if (!slashOpen) return;
-    const onDown = (e: PointerEvent) => {
-      const el = e.target as HTMLElement;
-      if (el.closest(".chat-slash-menu") || el.closest(".chat-slash-btn")) return;
-      setSlashOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSlashOpen(false); };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [slashOpen]);
 
   const send = useCallback(() => {
     const text = input.trim();
@@ -457,38 +438,13 @@ export default function Chat({
     pipeline.submitText(text);
   }, [input, clearInput, voiceOn, vsession, pipeline]);
 
-  // ---- Slash commands ------------------------------------------------------
-  // Two kinds:
-  //   • "local"       - a Workshop chat action handled here (new chat, etc.).
-  //   • "passthrough" - a Claude Code command (/compact, /cost, /context, …)
-  //                     forwarded RAW to the agent's claude session, where the
-  //                     CLI executes it natively. Any "/x" that isn't listed
-  //                     still passes through when sent.
+  // ---- Composer helpers ----------------------------------------------------
+  // There is no slash catalogue and no picker any more. Three commands are
+  // accepted when TYPED (/compact, /clear, /new) and handled in the send
+  // pipeline; nothing suggests them. See chat/typedCommands.
   const build = effectiveMode === "build";
   const popOut = useCallback(() => navigate(`/chat/${encodeURIComponent(contextKey)}`), [navigate, contextKey]);
-  const slashCommands = buildSlashCommands({
-    isBuild: build,
-    hasThread: !!activeId,
-    hasTaskScope: !!taskScope,
-    canExpand: variant !== "full" && !hideExpand,
-    compacting,
-    actions: {
-      newChat: () => thread.newChat(),
-      deleteChat: () => { if (activeId) thread.setConfirmDeleteId(activeId); },
-      toggleTasks: () => setDrawer((d) => (d === "tasks" ? null : "tasks")),
-      toggleInbox: () => setDrawer((d) => (d === "inbox" ? null : "inbox")),
-      popOut,
-      showHelp: () => setSlashOpen(true),
-      openDeploys: () => {
-        const p = projectSlugFor(contextKey);
-        navigate(p ? `/projects/${encodeURIComponent(p)}#deploys` : "/deploys");
-      },
-      compact: () => void compact(),
-      clear: () => void clear(),
-    },
-  });
-  const { typed: slashTyped, matches: slashMatches, show: showSlash } =
-    matchSlash(input, slashCommands, slashOpen);
+
   const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
 
   const pickMention = (s: string) => {
@@ -496,16 +452,6 @@ export default function Chat({
     setMentionSel(0);
     inputRef.current?.focus();
   };
-  const runSlash = (c: SlashCommand) => {
-    // Only clear the composer when its contents WERE the command being typed.
-    // Picking from the button-opened menu leaves your draft exactly as it was.
-    if (slashTyped) setInput("");
-    setSlashOpen(false);
-    setSlashSel(0);
-    if (c.kind === "passthrough") { pipeline.submitText(`/${c.name}`); return; }
-    c.run?.();
-  };
-
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // The mention picker owns the same keys as the slash menu while it is open,
     // and is checked first: typing "@" is a narrower, more recent intent than a
@@ -516,14 +462,6 @@ export default function Chat({
       if (e.key === "ArrowUp") { e.preventDefault(); setMentionSel((i) => Math.max(i - 1, 0)); return; }
       if (e.key === "Escape") { e.preventDefault(); setMentionSel(0); setInput(input.replace(/@[a-z0-9-]*$/, "")); return; }
       if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); pickMention(mentionMatches[sel].slug); return; }
-    }
-    if (showSlash) {
-      const sel = Math.min(slashSel, slashMatches.length - 1);
-      if (e.key === "ArrowDown") { e.preventDefault(); setSlashSel((i) => Math.min(i + 1, slashMatches.length - 1)); return; }
-      if (e.key === "ArrowUp") { e.preventDefault(); setSlashSel((i) => Math.max(i - 1, 0)); return; }
-      if (e.key === "Escape") { e.preventDefault(); setInput(""); setSlashSel(0); return; }
-      if (e.key === "Tab") { e.preventDefault(); setInput(`/${slashMatches[sel].name}`); return; }
-      if (e.key === "Enter") { e.preventDefault(); runSlash(slashMatches[sel]); return; }
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -763,15 +701,6 @@ export default function Chat({
       }
       focused={inputFocused}
       onFocusChange={setInputFocused}
-      slashOptions={slashMatches.map((c) => ({ key: c.name, label: `/${c.name}`, desc: c.desc }))}
-      slashSelected={slashSel}
-      showSlash={showSlash}
-      onSlashHover={setSlashSel}
-      onSlashPick={(name) => {
-        const c = slashMatches.find((x) => x.name === name);
-        if (c) runSlash(c);
-      }}
-      onToggleSlash={() => { setSlashOpen((v) => !v); setSlashSel(0); }}
       mentionOptions={mentionMatches.map((a) => ({
         key: a.slug,
         label: `@${a.slug}`,
@@ -806,6 +735,7 @@ export default function Chat({
       orbRef={orbRef}
       onUpdatePrefs={vupdatePrefs}
       onOpenVoiceSettings={() => setVoiceSettings(true)}
+      onOpenContext={() => setContextOpen(true)}
     />
   );
 
@@ -852,6 +782,14 @@ export default function Chat({
       {staleNote && <div className="chat-err">{staleNote}</div>}
       {composer}
       {dialogs}
+      <ContextModal
+        open={contextOpen}
+        onClose={() => setContextOpen(false)}
+        threadId={activeId}
+        compacting={compacting}
+        onCompact={() => { setContextOpen(false); void compact(); }}
+        onClear={() => { setContextOpen(false); void clear(); }}
+      />
       <VoiceSettings
         open={voiceSettings}
         onClose={() => setVoiceSettings(false)}
