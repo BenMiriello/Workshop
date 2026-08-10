@@ -574,6 +574,18 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
 
     t["context_key"] = new_key
     chat_store.save_thread(t)
+    # AND DROP THE LIVE SESSION. The next turn resumes the claude session this
+    # thread already has, and a resumed session is handed only the new message:
+    # the persona, the protocol blocks and the project briefing were assembled
+    # once, at the start, from the OLD context. So re-keying alone moved the cwd
+    # and the write tools to the new scope while leaving the model believing it
+    # was still in the old one — the half-move that makes a rescoped chat act
+    # like a project chat with someone else's instructions.
+    #
+    # Clearing it is cheap and loses nothing: the next turn re-assembles the full
+    # prompt (summary + transcript tail) for a fresh session, which is the same
+    # path a pruned session already takes.
+    chat_store.clear_thread_session(thread_id)
 
     msgs = t.get("messages", [])
     return {

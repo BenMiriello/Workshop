@@ -662,7 +662,6 @@ export default function Chat({
       blocks={transcript}
       isBuild={build}
       inFlight={runActive || pipeline.starting}
-      overflowed={messages.length >= 500}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
       onRetry={pipeline.retry}

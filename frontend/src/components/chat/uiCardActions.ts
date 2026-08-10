@@ -266,7 +266,7 @@ async function fileTicket(
 }
 
 const addTasks: UiCardHandler = async (state, ctx) => {
-  const scope = (state.values.scope || "workshop").trim();
+  const asked = (state.values.scope || "workshop").trim();
   if (!composeTaskText(state.values).trim()) {
     return { status: "error", message: "Add a ticket title first." };
   }
@@ -276,6 +276,8 @@ const addTasks: UiCardHandler = async (state, ctx) => {
   try {
     const j = await fileTicket(state.values, ctx.threadId, false);
     const decided = j.decision && j.decision !== "distinct" ? ` (${j.message ?? j.decision})` : "";
+    // The scope the SERVER filed into — see addTasksAndRun.
+    const scope = (j.scope || asked).trim();
     return {
       status: "success",
       note: `Filed a ticket in ${scope}${decided}.`,
@@ -288,7 +290,7 @@ const addTasks: UiCardHandler = async (state, ctx) => {
 };
 
 const addTasksAndRun: UiCardHandler = async (state, ctx) => {
-  const scope = (state.values.scope || "workshop").trim();
+  const asked = (state.values.scope || "workshop").trim();
   if (!composeTaskText(state.values).trim()) {
     return { status: "error", message: "Add a ticket title first." };
   }
@@ -304,6 +306,13 @@ const addTasksAndRun: UiCardHandler = async (state, ctx) => {
   if (!created.task?.id) {
     return { status: "error", message: "Ticket filed but no id was returned." };
   }
+  // WHERE IT ACTUALLY WENT, not where the card asked for it to go. spawn-task
+  // falls back to the chat's own context, then to `workshop`, whenever the
+  // requested scope does not resolve — so the card could say "Filed and running
+  // in <a scope the ticket is not in>" and then hand the operator a Work link
+  // that does not contain it. The server returns the scope it used; that is the
+  // only one worth repeating. (TicketDraftsDialog already reads it this way.)
+  const scope = (created.scope || asked).trim();
   // A merge folded into an existing ticket, so the server deliberately does not
   // run it: re-running work that already exists would be a surprise.
   if (created.decision === "merge" || created.decision === "exact") {

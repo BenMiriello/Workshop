@@ -35,7 +35,10 @@ export function NoticeBar({ notice, onDismiss }: { notice: FiledNotice; onDismis
     <div className="chat-spawn-note" role="status">
       <span className="chat-spawn-note__body">
         {notice.ran ? (
-          <>Filed and running in <strong>{scopeLabel(notice.scope)}</strong>. The live status is in the card below.{" "}</>
+          // No "the live status is in the card below": the server-side
+          // job-status card append was removed (C12) and nothing emits that
+          // kind, so the sentence pointed at a card that is never there.
+          <>Filed and running in <strong>{scopeLabel(notice.scope)}</strong>.{" "}</>
         ) : notice.runError ? (
           <>Filed in <strong>{scopeLabel(notice.scope)}</strong>, but could not run now: {notice.runError}.{" "}</>
         ) : (

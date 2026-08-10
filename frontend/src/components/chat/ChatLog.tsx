@@ -47,10 +47,17 @@ import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 //
 // Scroll behaviour is not here — it belongs to useLogScroll, which owns the one
 // writer of "am I at the bottom" and every rule that depends on it.
+//
+// THERE IS NO OVERFLOW STATE, because there is no overflow. Past 500 messages
+// this used to say "Showing the latest messages. Scroll up to load older ones."
+// The client fetches `events?after=0` with no limit and there is no loader to
+// scroll up into: every message was already on screen, and the note described a
+// paging scheme that does not exist. If one is ever built, the banner comes back
+// with it.
 
 export default function ChatLog({
   scrollRef, onScroll,
-  loading, error, blocks, isBuild, inFlight, overflowed,
+  loading, error, blocks, isBuild, inFlight,
   selectedModel, cardCtx, onRetry, workingLabel, elapsed,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
@@ -62,7 +69,6 @@ export default function ChatLog({
   blocks: TranscriptBlock[];
   isBuild: boolean;
   inFlight: boolean;
-  overflowed: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
   onRetry: (clientId: string) => void;
@@ -97,12 +103,6 @@ export default function ChatLog({
           {isBuild ? "Tell the agent what to build..." : "Ask anything, or tell me to change the plan."}
         </div>
       ) : null}
-
-      {overflowed && (
-        <div className="chat-empty chat-empty--note">
-          Showing the latest messages. Scroll up to load older ones.
-        </div>
-      )}
 
       <MessageList
         blocks={blocks}
