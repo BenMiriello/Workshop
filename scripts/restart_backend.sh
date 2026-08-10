@@ -123,7 +123,20 @@ if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
   # And refuse during the COMMIT window, which the pid check above cannot see:
   # the child is gone, the backend is still assembling and appending the reply.
   # Restarting here loses the reply outright rather than rewinding it.
-  holder="$(grep -rl '"active_run_id": *"[0-9a-f-]' "$REPO_ROOT"/.runtime/users/*/chat/*/meta.json 2>/dev/null | head -1)"
+  #
+  # Only a RECENT holder counts. A crashed run leaves `active_run_id` set until
+  # the next startup reconcile clears it, and reconcile only runs on a restart:
+  # refusing on a stale field would mean the one action that fixes it is the one
+  # action forbidden, with --force as the only way out. A commit takes seconds,
+  # so a meta untouched for STALE_HOLD_S is not a commit in progress.
+  STALE_HOLD_S=300
+  holder=""
+  for meta in "$REPO_ROOT"/.runtime/users/*/chat/*/meta.json; do
+    [ -f "$meta" ] || continue
+    grep -q '"active_run_id": *"[0-9a-f-]' "$meta" || continue
+    age=$(( $(date +%s) - $(stat -c %Y "$meta" 2>/dev/null || echo 0) ))
+    [ "$age" -lt "$STALE_HOLD_S" ] && { holder="$meta"; break; }
+  done
   if [ -n "$holder" ]; then
     echo "REFUSING: a run still holds its thread, so its reply is not committed yet." >&2
     echo "  $holder" >&2

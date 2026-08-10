@@ -545,8 +545,18 @@ def _summarize_tool_input(inp: dict, tool_name: str | None = None) -> str:
     # Only for the Agent tool: elsewhere (Bash) `description` is a gloss and the
     # command itself is the useful thing.
     if tool_name in SUBAGENT_TOOLS:
-        v = str(inp.get("description") or inp.get("prompt") or "")
-        return v if len(v) <= 300 else v[:297] + "…"
+        desc = str(inp.get("description") or "").strip()
+        if desc:
+            return desc if len(desc) <= 300 else desc[:297] + "…"
+        # No description given. Falling back to the whole brief is how 300
+        # characters of raw instructions ended up as a delegation's title, so
+        # take only its first line and keep it to a title's length. The brief
+        # itself still travels whole, in _tool_detail, for the opened chip.
+        first = next((ln.strip() for ln in str(inp.get("prompt") or "").splitlines()
+                      if ln.strip()), "")
+        if not first:
+            return "delegated a task"
+        return first if len(first) <= 80 else first[:79] + "…"
     # A subagent's full brief is not a preview; see _tool_detail.
     for key in ("file_path", "path", "pattern", "command", "url", "query", "prompt"):
         if key in inp:

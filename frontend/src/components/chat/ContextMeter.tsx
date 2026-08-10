@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import { estimateContextTokens } from "./chatScope";
 import { contextWindowFor } from "./models";
+import { contextReading } from "./contextReading";
 
 // How full this conversation's context is, under the composer.
 //
@@ -55,18 +56,16 @@ export default function ContextMeter({
     if (server) {
       // Real assembled-context count plus the live (unsent) draft.
       const used = server.used + Math.ceil(draft.length / 4);
-      return { used, win: server.window, pct: Math.min(100, Math.round((used / server.window) * 100)) };
+      return { used, win: server.window };
     }
     const used = estimateContextTokens(messages, draft);
-    const win = contextWindowFor(model);
-    return { used, win, pct: Math.min(100, Math.round((used / win) * 100)) };
+    return { used, win: contextWindowFor(model) };
   }, [server, messages, draft, model]);
 
-  // No reading yet: the server has not answered and there is nothing local to
-  // estimate from. Show nothing. "0%" is not the absence of a number, it is a
-  // claim that this chat is empty, and it kept being made about chats that were
-  // not.
-  if (ctx.used <= 0) return null;
+  // No reading, or a reading too small to round to a whole percent. See
+  // contextReading: neither may render as "0%".
+  const reading = contextReading(ctx.used, ctx.win);
+  if (!reading) return null;
 
   // A single accent tone, no threshold colors: this is a reading, not a status.
   // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.
@@ -80,10 +79,10 @@ export default function ContextMeter({
         <circle
           className="chat-context-meter__arc"
           cx="9" cy="9" r={RING_R}
-          style={{ strokeDasharray: `${(ctx.pct / 100) * RING_C} ${RING_C}` }}
+          style={{ strokeDasharray: `${reading.fraction * RING_C} ${RING_C}` }}
         />
       </svg>
-      <span className="chat-context-meter__pct">{ctx.pct}%</span>
+      <span className="chat-context-meter__pct">{reading.label}</span>
     </div>
   );
 }

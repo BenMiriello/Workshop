@@ -123,12 +123,31 @@ class TestSegments:
         assert seg["input"] == "Probe the tree"
         assert seg["done"] is False
 
-    def test_a_launch_with_no_description_falls_back_to_the_prompt(self):
+    def test_a_launch_with_no_description_falls_back_to_the_prompts_first_line(self):
         t = _turn()
         line = _assistant([{"type": "tool_use", "id": AGENT_ID, "name": "Agent",
                             "input": {"prompt": "Read the thing and report back."}}])
         _feed(t, [line])
         assert t.segments[0]["input"] == "Read the thing and report back."
+
+    def test_a_launch_without_a_description_never_titles_itself_with_the_brief(self):
+        # The old fallback took 300 characters of raw instructions. A title is
+        # one line, so a multi-line brief contributes only its first.
+        brief = "Audit the store.\n\nRead these first:\n" + ("x" * 500)
+        t = _turn()
+        _feed(t, [_assistant([{"type": "tool_use", "id": AGENT_ID, "name": "Agent",
+                               "input": {"prompt": brief}}])])
+        seg = t.segments[0]
+        assert seg["input"] == "Audit the store."
+        # ...and the brief itself is still there to open.
+        assert seg["detail"].startswith("Audit the store.")
+        assert "x" * 100 in seg["detail"]
+
+    def test_a_long_single_line_brief_is_clamped_to_a_title(self):
+        t = _turn()
+        _feed(t, [_assistant([{"type": "tool_use", "id": AGENT_ID, "name": "Agent",
+                               "input": {"prompt": "y" * 400}}])])
+        assert len(t.segments[0]["input"]) == 80
 
     def test_an_ordinary_tool_still_shows_what_it_ran_not_its_gloss(self):
         # Bash carries a `description` too, and there the command is the useful
