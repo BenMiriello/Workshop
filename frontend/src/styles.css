@@ -720,15 +720,15 @@ input[type="range"].grad::-moz-range-thumb {
   display: inline-flex; align-items: center; justify-content: center;
   width: 1.15rem; height: 1.15rem; padding: 0;
   background: none; border: none; border-radius: 5px;
-  /* A real muted token rather than an opacity knock-back: a 45%-alpha icon on the
-     accent-filled user bubble misses the 3:1 non-text contrast floor. Same
-     treatment the Show more/less control already uses on each background. */
-  color: var(--muted); cursor: pointer;
+  /* Idle at ~half strength — dim, but a real color MIX toward the bubble
+     background, not an opacity knock-back: a low-alpha icon on the accent
+     bubble misses the 3:1 non-text contrast floor. Hover restores full color. */
+  color: color-mix(in srgb, var(--muted) 50%, var(--card)); cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
 }
 .chat-copy:hover { color: var(--fg); }
 .chat-copy:focus-visible { color: var(--fg); box-shadow: var(--focus-ring); }
-.chat-msg.user .chat-copy { color: color-mix(in srgb, var(--accent-fg) 85%, transparent); }
+.chat-msg.user .chat-copy { color: color-mix(in srgb, var(--accent-fg) 50%, var(--accent)); }
 .chat-msg.user .chat-copy:hover,
 .chat-msg.user .chat-copy:focus-visible { color: var(--accent-fg); }
 .chat-msg.user .chat-bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
