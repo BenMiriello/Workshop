@@ -347,14 +347,40 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     this system's history: five owners of the message list, concatenated by
     convention, disagreeing one pair at a time.
 
-    `after` is a cursor, not an index. `after=0` is the whole log."""
-    data = chat_log.read_thread(thread_id)
-    if data is None:
+    `after` is a cursor, not an index. `after=0` is the whole log.
+
+    IT READS THE LOG AT MOST ONCE, and usually not at all. This used to call
+    `read_thread` — which reads and parses the ENTIRE log to build a tail it then
+    threw away — and then `read_events` to read and parse the whole file a second
+    time for the part it actually wanted. Every 10 seconds. Per open tab. Per
+    thread, for the life of the conversation, on a file that only grows.
+
+    Two changes, neither of them a cache (a cache here would go stale against a
+    log another process appends to, which is the failure mode this endpoint
+    exists to avoid):
+
+      * `read_meta` is a small fixed-size read (meta.json plus the log's last
+        64KB, to reconcile `last_seq`), and it answers `last_seq` on its own;
+      * `active_run` reads the run's start seq straight out of meta now, so it
+        no longer needs the events at all.
+
+    That leaves `read_events`, and a poll with nothing new to fetch does not need
+    it either: `after >= last_seq` means the caller is already current. `last_seq`
+    is reconciled against the log's real tail inside `read_meta`, so this is an
+    exact test, not an optimistic one."""
+    meta = chat_log.read_meta(thread_id)
+    if meta is None:
         raise HTTPException(404, "thread not found")
+    last_seq = int(meta.get("last_seq") or 0)
+    cursor = max(0, after)
+    events = (
+        chat_log.read_events(thread_id, after=cursor, limit=limit)
+        if cursor < last_seq else []
+    )
     return {
-        "events": chat_log.read_events(thread_id, after=max(0, after), limit=limit),
-        "last_seq": data["last_seq"],
-        "active_run": data["active_run"],
+        "events": events,
+        "last_seq": last_seq,
+        "active_run": chat_log.active_run(thread_id, meta=meta),
     }
 
 

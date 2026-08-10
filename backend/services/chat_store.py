@@ -111,7 +111,8 @@ def _now_iso() -> str:
 # Meta fields that belong to the log machinery, not to the thread document. They
 # never appear in a thread dict a caller sees, so a caller can never write them
 # back, and `save_thread` never mistakes their absence for a deletion.
-_INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "live_message")
+_INTERNAL_META = ("last_seq", "boundary_seq", "active_run_id", "active_run_seq",
+                  "live_message")
 
 
 def _promotion_patch(meta: dict) -> dict:
@@ -821,9 +822,17 @@ def begin_run(thread_id: str, run_id: str, model: str | None = None,
         meta["model"] = model
     if agent:
         meta["agent"] = agent
-    chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
+    started = chat_log.append_sync(
+        thread_id, {"kind": "run", "run_id": run_id, "state": "started"})
     chat_log.patch_meta_sync(
         thread_id, active_run_id=run_id,
+        # WHERE THE RUN STARTED, recorded rather than searched for. It is the one
+        # thing `active_run` needed the whole log for: it scanned every event
+        # backwards looking for this marker, on every 10s poll from every open
+        # tab. The writer knows the answer for free. Threads written before this
+        # existed have no such field, and `active_run` still falls back to the
+        # scan for them, so nothing has to be migrated.
+        active_run_seq=started.get("seq"),
         live_message={"run_id": run_id, "content": "", "meta": meta, "ts": _now_iso()},
     )
 
@@ -911,6 +920,7 @@ def commit_run(
     clear: dict = {}
     if stored.get("active_run_id") == run_id:
         clear["active_run_id"] = None
+        clear["active_run_seq"] = None
         clear["live_message"] = None
     if clear:
         chat_log.patch_meta_sync(thread_id, **clear)
@@ -960,7 +970,8 @@ def release_run(thread_id: str, run_id: str) -> None:
     if stored is None or stored.get("active_run_id") != run_id:
         return
     chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": "finished"})
-    chat_log.patch_meta_sync(thread_id, active_run_id=None, live_message=None)
+    chat_log.patch_meta_sync(thread_id, active_run_id=None, active_run_seq=None,
+                             live_message=None)
 
 
 def previous_run_id(thread_id: str) -> str | None:

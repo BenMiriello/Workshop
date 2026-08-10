@@ -45,8 +45,13 @@ export type TranscriptBlock =
   // The turn in flight. `working` marks the block the indicator belongs on —
   // the last one, because that is where the work is still happening.
   | { kind: "live"; key: string; runId: string; segments: ChatSegment[]; working: boolean }
-  // Sent by this browser, not in the log yet.
-  | { kind: "pending"; key: string; clientId: string; text: string; status: PendingStatus }
+  // Sent by this browser, not in the log yet. `error` is set only on `failed`,
+  // and it renders UNDER this bubble: the failure belongs to this message, not
+  // to the chat's one error slot above the composer.
+  | {
+      kind: "pending"; key: string; clientId: string; text: string;
+      status: PendingStatus; error?: string;
+    }
   // The context boundary a /compact or /clear left behind.
   | { kind: "cut"; key: string; count: number; cleared: boolean };
 
@@ -237,7 +242,8 @@ export function selectTranscript(state: ThreadState): TranscriptBlock[] {
 
   for (const p of pendingSends(state)) {
     out.push({
-      kind: "pending", key: `p:${p.clientId}`, clientId: p.clientId, text: p.text, status: p.status,
+      kind: "pending", key: `p:${p.clientId}`, clientId: p.clientId, text: p.text,
+      status: p.status, ...(p.error ? { error: p.error } : {}),
     });
   }
 

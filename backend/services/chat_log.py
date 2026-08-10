@@ -382,13 +382,23 @@ def active_run(thread_id: str, events: list[dict] | None = None,
     run_id = m.get("active_run_id")
     if not run_id:
         return None
-    evs = events if events is not None else read_events(thread_id)
-    started = next(
-        (e["seq"] for e in reversed(evs)
-         if e.get("kind") == "run" and e.get("run_id") == run_id
-         and e.get("state") == "started"),
-        None,
-    )
+    # THE RECORDED ANSWER FIRST. `begin_run` writes the marker's seq into meta,
+    # so the common case costs nothing. This used to read and parse the entire
+    # log to find one event, on every 10s poll from every open tab, for the whole
+    # length of a turn. `active_run_seq` is only ever meaningful alongside the
+    # `active_run_id` written in the same patch, so a mismatch is impossible: the
+    # two move together or neither does.
+    started = m.get("active_run_seq")
+    if not isinstance(started, int):
+        # A thread whose run was opened by an older build. Fall back to the scan
+        # rather than migrating anything; it resolves itself on the next run.
+        evs = events if events is not None else read_events(thread_id)
+        started = next(
+            (e["seq"] for e in reversed(evs)
+             if e.get("kind") == "run" and e.get("run_id") == run_id
+             and e.get("state") == "started"),
+            None,
+        )
     live = m.get("live_message")
     return {
         "run_id": run_id,

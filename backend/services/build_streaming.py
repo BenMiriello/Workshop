@@ -224,11 +224,45 @@ class Turn:
     # check-and-set is await-free so they cannot both win.
     stop_requested: bool = False
     stop_signalled: bool = False
+    # Wall-clock at which this turn finished, or None while it is running. The
+    # ONE thing that makes the registry prunable: `complete` says a turn is over
+    # but not how long ago, so nothing could tell a turn that just ended (a
+    # client may still be reading it) from one that ended last Tuesday. Set in
+    # `_finalize_turn`, which is the single place a turn ends.
+    finished_at: float | None = None
 
 
 # In-memory turn registry. Build sessions are short-lived enough that this is
 # acceptable; a future upgrade can spill to disk for cross-process resume.
 TURNS: dict[str, Turn] = {}
+
+# How long a finished turn stays reachable by id. It holds its full event list
+# and segment tree, so without this the registry grew for the life of the
+# process: every turn ever run, with everything it ever emitted, until a restart.
+# Same window and the same reasoning as voice_worker's reaper.
+FINISHED_TURN_TTL_S = 600
+
+
+def _prune_turns(now: float | None = None) -> int:
+    """Drop finished turns that nothing can still be watching. Returns how many.
+
+    Called when a turn is created rather than from a timer, because a turn is
+    the only thing that puts an entry in here: the registry cannot grow while
+    nothing is happening, so it does not need sweeping while nothing is
+    happening either. That keeps this to one function with no lifecycle.
+
+    Safe by construction: a live SSE reader holds its own reference to the Turn
+    object, so removing the dict entry never interrupts one in flight, and only
+    a turn that finished more than the TTL ago qualifies. `run_is_live` already
+    answers False for anything complete, so no caller's answer changes."""
+    cutoff = (now or time.time()) - FINISHED_TURN_TTL_S
+    stale = [tid for tid, t in TURNS.items()
+             if t.finished_at is not None and t.finished_at < cutoff]
+    for tid in stale:
+        del TURNS[tid]
+    if stale:
+        log.debug("pruned %d finished turn(s) from the registry", len(stale))
+    return len(stale)
 
 
 class RunInFlight(RuntimeError):
@@ -244,6 +278,8 @@ class RunInFlight(RuntimeError):
 
 
 def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None) -> Turn:
+    # The registry only grows here, so this is the only place it has to shrink.
+    _prune_turns()
     # A claimed run is already registered (see claim_run); adopt it rather than
     # replacing it, so nothing that looked it up between the claim and the spawn
     # is holding an object this one has orphaned.
@@ -885,7 +921,7 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "permission_mode": permission_mode,
     }
     _write_meta(meta)
-    asyncio.create_task(_spawn_and_drive(turn, meta))
+    _drive_task(turn, meta, _spawn_and_drive(turn, meta))
     return turn
 
 
@@ -943,6 +979,90 @@ def _build_cmd(meta: dict) -> tuple[list[str], dict]:
     elif meta["session_id"]:
         cmd.extend(["--session-id", meta["session_id"]])
     return cmd, tool_env
+
+
+async def _end_wedged(turn: Turn, meta: dict, detail: str) -> None:
+    """End a run whose drive loop raised, instead of leaving it running forever.
+
+    Nothing else was going to end it. `_drive_turn` had no try/finally and its
+    task had no exception handler, so ANY raise inside it — an OSError from
+    `_drain` when the journal goes away, a TypeError in `_segment_ingest` on a
+    payload shape the CLI has not sent before — skipped `_finalize_turn`
+    entirely. `turn.complete` and `turn.finished` were never set, `active_run_id`
+    was never cleared, and the journal stayed `status: running`. There is no wall
+    clock on a chat turn (CHAT_TIMEOUT_S = 0, deliberately), so nothing would
+    ever time it out: the chat showed "Still running" with a ticking elapsed
+    clock indefinitely, and only a backend restart or another message recovered
+    it. The traceback surfaced, if at all, as a garbage-collection-time "Task
+    exception was never retrieved".
+
+    THE REPLY KEEPS WHAT IT HAD. Whatever the turn emitted before the crash is
+    already in `turn.segments`, so it is salvaged as the answer and a plain
+    sentence is appended saying the turn ended early and why. A crash with
+    nothing produced falls through to the ordinary "Ended unexpectedly" text,
+    which is the honest rendering of that case."""
+    if turn.finished.is_set():
+        # `_finalize_turn` already ran; its own `finally` guarantees that. The
+        # raise happened after the run ended and there is nothing left to close.
+        return
+    turn.error = turn.error or detail
+    _push(turn, "error", {"detail": turn.error})
+    salvaged = _turn_content(turn)
+    if salvaged:
+        turn.segments.append({"t": "text", "text": (
+            f"\n\nThis turn ended early: {detail}. "
+            "Everything above is what it had produced by then."
+        )})
+        turn.final_text = _turn_content(turn)
+    # Only when there IS a process. `_retire_turn_proc` polls for up to 2s
+    # waiting for one to die, and a run that crashed before it spawned would pay
+    # that wait for nothing while the operator watches the turn hang.
+    if meta.get("pid") or turn.proc is not None:
+        try:
+            await _retire_turn_proc(meta.get("pid"), turn.proc)
+        except Exception as e:  # pragma: no cover — best-effort
+            log.debug("turn %s: could not retire process after crash: %s", turn.id, e)
+    _cleanup_turn_input(turn.id)
+    await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
+
+
+def _drive_task(turn: Turn, meta: dict, coro) -> "asyncio.Task":
+    """Launch a turn's drive loop as a task that CANNOT wedge the thread.
+
+    Two layers, because they fail differently:
+
+      * the coroutine catches its own exceptions and routes them through
+        `_end_wedged`, which is what lets the run commit what it had; and
+      * a done-callback backstop releases anyone waiting even if that handling
+        itself could not run — a cancellation landing inside `_end_wedged`, or a
+        BaseException the `except` above does not cover. It cannot commit
+        anything (there is no loop left to await on), so it only unblocks: the
+        blocking POST /messages path waits on `turn.finished`, and a request held
+        open forever is the worst of the possible endings."""
+    async def _guarded() -> None:
+        try:
+            await coro
+        except asyncio.CancelledError:
+            # A cancelled turn is an ended turn. Say so and re-raise, so the
+            # cancellation is not swallowed from whoever asked for it.
+            await _end_wedged(turn, meta, "the turn was cancelled")
+            raise
+        except Exception as e:
+            log.exception("turn %s: drive loop failed", turn.id)
+            await _end_wedged(turn, meta, f"{type(e).__name__}: {e}")
+
+    task = asyncio.create_task(_guarded())
+
+    def _backstop(t: "asyncio.Task") -> None:
+        if not turn.finished.is_set():
+            log.error("turn %s: drive task ended without finalizing (%r)", turn.id,
+                      t.exception() if not t.cancelled() else "cancelled")
+            turn.complete = True
+            turn.new_event.set()
+            turn.finished.set()
+
+    task.add_done_callback(_backstop)
+    return task
 
 
 async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
@@ -1022,8 +1142,22 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
             log.warning("turn %s: could not open the approval channel; "
                         "gated tool calls will be auto-denied", turn.id)
     # Deliver the prompt as the run's first message.
+    #
+    # A FAILED DELIVERY ENDS THE RUN. This warned and carried on, which produced
+    # the worst available outcome: the CLI was spawned, sat on an open stdin with
+    # nothing to answer, and idled. It emits no result line, so the drive loop
+    # never breaks; the process stays alive, so the liveness check never fires;
+    # and there is no wall clock on a chat turn, so nothing ends it. The chat
+    # showed a turn running forever over a prompt the model never received, and
+    # the only record was one log line. Treated like the spawn failures above it
+    # instead: kill what we started, say so, and finalize.
     if not write_to_turn(turn.id, meta["prompt"]):
-        log.warning("turn %s: could not write the opening prompt to its input channel", turn.id)
+        turn.error = "could not deliver the prompt to the turn's input channel"
+        _push(turn, "error", {"detail": turn.error})
+        await _retire_turn_proc(proc.pid, proc)
+        _cleanup_turn_input(turn.id)
+        await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)
+        return
     meta["pid"] = proc.pid
     _write_meta(meta)
     await _drive_turn(turn, meta, proc=proc)
@@ -1280,6 +1414,7 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
         await _commit_turn(turn, meta, **kw)
     finally:
         turn.complete = True
+        turn.finished_at = time.time()
         turn.new_event.set()
         turn.finished.set()
 
@@ -1568,7 +1703,7 @@ def reattach_running_turns() -> None:
             TURNS[tid] = turn
             alive = _proc_alive(meta.get("pid"))
             log.info("re-attaching build turn %s (pid=%s alive=%s)", tid, meta.get("pid"), alive)
-            asyncio.create_task(_drive_turn(turn, meta, proc=None))
+            _drive_task(turn, meta, _drive_turn(turn, meta, proc=None))
     except Exception as e:  # pragma: no cover — never block startup
         log.warning("reattach_running_turns failed: %s", e)
 

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newClientId } from "../../lib/chat";
 import {
-  durableQueue, readHold, readQueue, restoreBatch, withoutIds, writeHold, writeQueue,
+  clearFailedFlag, durableQueue, markFailed, mergeQueue, readHold, readQueue,
+  restoreBatch, withoutIds, writeHold, writeQueue,
   type QueuedMessage,
 } from "../../lib/chatSelection";
 import { splitFirstTurn } from "./turnBatching";
@@ -66,6 +67,22 @@ import { splitFirstTurn } from "./turnBatching";
 //     the server has accepted them. A refusal puts them back as ONE batch
 //     (invariant 4) and holds the queue, so the retry is one turn the operator
 //     asks for rather than a loop this hook runs on its own.
+//  9. A WRITE MERGES; IT DOES NOT OVERWRITE. Every tab open on a thread writes
+//     the same storage key, and each one used to write its whole in-memory list
+//     over whatever was there. Two tabs on thread X: type A in tab 1 (storage
+//     `[A]`), type B in tab 2 — whose list is `[]`, because A was typed
+//     elsewhere — and tab 2 wrote `[B]`. A was gone. That is invariant 1 broken
+//     across tabs by the code that exists to keep it. A write now keeps anything
+//     in storage this tab has NEVER SEEN (chatSelection.mergeQueue) and adopts
+//     the merged list, so two tabs converge instead of racing. "Never seen" is
+//     the whole rule: an id this tab has held and dropped was dropped on
+//     purpose, and a plain union would resurrect every drained batch.
+// 10. A SEND THE SERVER REFUSED IS STILL THE OPERATOR'S TEXT. It used to live
+//     only in the reducer, with the composer already cleared, so a reload or a
+//     thread switch erased it with no trace at all. It goes onto the durable
+//     queue MARKED, and the queue holds: it renders as a message that failed,
+//     with a Retry, rather than as one that will send itself when the turn ends
+//     — which is the one thing it will not do.
 
 export type MessageQueue = {
   items: QueuedMessage[];
@@ -84,6 +101,12 @@ export type MessageQueue = {
   // turns out not to be needed — a no-op if the queue already drained, which is
   // the right answer: it was sent, so there is nothing to retract.
   drop: (clientId: string) => void;
+  // A send the server refused (invariant 10). Held durably, marked, and the
+  // queue holds so nothing sends it unattended.
+  pushFailed: (text: string, clientId: string, sentAt?: string) => void;
+  // Retry: unmark it and hand the wheel back, so the ordinary self-drain sends
+  // it as the turn it always was. Nothing bespoke re-sends a failed entry.
+  retryFailed: (clientId: string) => void;
   dispatch: () => void;
   // Is this thread's queue holding? Read by the chat into canDrainQueue, so the
   // queue and the send path share one answer to "may anything send now".
@@ -160,10 +183,22 @@ export function useMessageQueue({
   // still in durable storage, ahead of everything typed after it.
   const inFlightRef = useRef<QueuedMessage[]>([]);
 
+  // Every send id this tab has held for the CURRENT key (invariant 9). It is
+  // what separates "another tab queued this" from "I took this out on purpose",
+  // and it is per-key, so binding elsewhere starts it over.
+  const seenRef = useRef<Set<string>>(new Set());
+
   const set = useCallback((next: QueuedMessage[]) => {
-    itemsRef.current = next;
-    setItems(next);
-    writeQueue(keyRef.current, durableQueue(inFlightRef.current, next));
+    const key = keyRef.current;
+    // MERGE, never overwrite (invariant 9). The merged list is adopted, not just
+    // written: a tab that keeps rendering a queue it has already been told is
+    // longer is the same disagreement one layer up.
+    const merged = mergeQueue(readQueue(key), next, seenRef.current);
+    for (const m of merged) seenRef.current.add(m.clientId);
+    for (const m of inFlightRef.current) seenRef.current.add(m.clientId);
+    itemsRef.current = merged;
+    setItems(merged);
+    writeQueue(key, durableQueue(inFlightRef.current, merged));
   }, []);
 
   const push = useCallback((text: string, clientId?: string) => {
@@ -186,6 +221,9 @@ export function useMessageQueue({
   const drop = useCallback((clientId: string) => {
     const q = itemsRef.current;
     const i = q.findIndex((m) => m.clientId === clientId);
+    // Seen even if it is not here: `drop` is a decision about this id, and the
+    // merge must not read its absence as news from another tab.
+    seenRef.current.add(clientId);
     if (i >= 0) set([...q.slice(0, i), ...q.slice(i + 1)]);
   }, [set]);
 
@@ -200,6 +238,8 @@ export function useMessageQueue({
     // completion handler sees the key has moved and settles it there.
     inFlightRef.current = [];
     const q = readQueue(key);
+    // What this tab has seen of the NEW key is exactly what it just read.
+    seenRef.current = new Set(q.map((m) => m.clientId));
     itemsRef.current = q;
     setItems(q);
     setHeldBoth(readHold(key), false);
@@ -213,9 +253,17 @@ export function useMessageQueue({
     // Move the key to the blank slot FIRST. Clearing before moving would wipe
     // the queue still owed to the thread being left behind.
     keyRef.current = blankKey;
-    set([]);
+    // The ONE write that does not merge (invariant 9). "New chat" is an explicit
+    // discard of the blank slot; going through `set` would read the slot back,
+    // find every entry unseen under the key we have only just moved to, and
+    // faithfully restore what the operator just asked to clear.
+    seenRef.current = new Set();
+    inFlightRef.current = [];
+    itemsRef.current = [];
+    setItems([]);
+    writeQueue(blankKey, []);
     setHeldBoth(false);
-  }, [blankKey, set, setHeldBoth]);
+  }, [blankKey, setHeldBoth]);
 
   const carryToThread = useCallback((threadId: string) => {
     // A batch drained from the blank chat is the reason this thread exists, so
@@ -223,6 +271,7 @@ export function useMessageQueue({
     const carried = durableQueue(inFlightRef.current, itemsRef.current);
     const carriedHold = heldRef.current;
     keyRef.current = threadId;
+    seenRef.current = new Set(carried.map((m) => m.clientId));
     writeQueue(blankKey, []);
     writeHold(blankKey, false);
     if (carried.length) writeQueue(threadId, carried);
@@ -246,8 +295,31 @@ export function useMessageQueue({
     // ONE batch, and the queue holds: re-draining on the spot would spin the
     // failing request as fast as the effect can re-run. The operator's next
     // send releases it and it goes out as the single turn it always was.
-    set(restoreBatch(batch, itemsRef.current));
+    //
+    // MARKED, because it is held (invariant 10). Unmarked it rendered as an
+    // ordinary queued message — "sends when the current turn finishes" — which
+    // is precisely what a held entry does not do, so a refused batch looked like
+    // a patient one for as long as the operator left it alone.
+    set(restoreBatch(markFailed(batch), itemsRef.current));
     setHeldBoth(true);
+  }, [set, setHeldBoth]);
+
+  const pushFailed = useCallback((text: string, clientId: string, sentAt?: string) => {
+    seenRef.current.add(clientId);
+    set([
+      ...itemsRef.current.filter((m) => m.clientId !== clientId),
+      { text, sentAt: sentAt || new Date().toISOString(), clientId, failed: true },
+    ]);
+    setHeldBoth(true);
+  }, [set, setHeldBoth]);
+
+  const retryFailed = useCallback((clientId: string) => {
+    set(clearFailedFlag(itemsRef.current, clientId));
+    // Releasing is the retry. The self-drain (invariant 3) sends it, batched
+    // with anything else waiting (invariant 4), under the id it already has —
+    // so if the first attempt did reach the server after all, the log's
+    // client_id dedupe collapses the two.
+    setHeldBoth(false);
   }, [set, setHeldBoth]);
 
   const dispatch = useCallback(() => {
@@ -298,11 +370,12 @@ export function useMessageQueue({
   return useMemo(
     () => ({
       items, length: items.length,
-      set, push, insertAt, drop, dispatch,
+      set, push, insertAt, drop, dispatch, pushFailed, retryFailed,
       held, hold, release,
       bindThread, bindBlank, resetToBlank, carryToThread,
     }),
-    [items, set, push, insertAt, drop, dispatch, held, hold, release,
+    [items, set, push, insertAt, drop, dispatch, pushFailed, retryFailed,
+     held, hold, release,
      bindThread, bindBlank, resetToBlank, carryToThread],
   );
 }

@@ -27,6 +27,13 @@ def thread(tmp_path, monkeypatch):
         build_streaming.TURNS.clear()
 
 
+async def _run_guarded(turn, meta, coro) -> None:
+    """Drive one turn through the crash guard and wait for it to end."""
+    task = build_streaming._drive_task(turn, meta, coro)
+    await asyncio.wait_for(turn.finished.wait(), timeout=2)
+    await task
+
+
 def _live(run_id: str, thread_id: str, *, spawned: bool = True) -> build_streaming.Turn:
     t = build_streaming.Turn(id=run_id, thread_id=thread_id, agent_slug="a")
     t.spawned = spawned
@@ -488,3 +495,263 @@ class TestTheBlockingPathIsTheSamePipeline:
         with pytest.raises(HTTPException) as e:
             asyncio.run(rc.send_message(thread["id"], rc.PostMessage(content="   ")))
         assert e.value.status_code == 400
+
+
+class TestTheDriveLoopAlwaysEndsTheRun:
+    """A crash in the drive loop used to wedge the thread forever, silently.
+
+    `_spawn_and_drive` was a bare `asyncio.create_task` with no exception
+    handler and `_drive_turn` had no try/finally, so ANY raise skipped
+    `_finalize_turn`: `turn.complete` and `turn.finished` never set,
+    `active_run_id` never cleared, journal left `status: running`. There is no
+    wall clock on a chat turn (CHAT_TIMEOUT_S = 0), so nothing would ever end it
+    and the chat showed "Still running" with a ticking clock indefinitely. The
+    traceback surfaced only as a GC-time "Task exception was never retrieved".
+    """
+
+    @staticmethod
+    def _meta(tid: str, run_id: str) -> dict:
+        return {"turn_id": run_id, "thread_id": tid, "agent_slug": "a",
+                "cwd": "", "model": "m", "prompt": "hi", "timeout_s": 0,
+                "pid": None, "status": "running"}
+
+    def test_a_raise_finalizes_the_run_instead_of_wedging_it(self, thread):
+        tid = thread["id"]
+        run_id = "run-crash"
+        chat_store.begin_run(tid, run_id)
+        turn = _live(run_id, tid)
+
+        async def boom():
+            raise TypeError("unexpected payload shape")
+
+        async def go():
+            task = build_streaming._drive_task(turn, self._meta(tid, run_id), boom())
+            await asyncio.wait_for(turn.finished.wait(), timeout=2)
+            await task
+        asyncio.run(go())
+
+        assert turn.complete is True
+        assert turn.finished.is_set()
+        # The thread is free: the next message opens a run instead of joining a
+        # dead one, which is what "only a restart recovers it" meant.
+        assert chat_store.active_run_id(tid) is None
+
+    def test_the_operator_is_told_what_happened(self, thread):
+        tid = thread["id"]
+        run_id = "run-crash-2"
+        chat_store.begin_run(tid, run_id)
+        turn = _live(run_id, tid)
+
+        async def boom():
+            raise OSError("journal went away")
+
+        asyncio.run(_run_guarded(turn, self._meta(tid, run_id), boom()))
+        reply = chat_store.get_thread(tid)["messages"][-1]
+        assert reply["role"] == "assistant"
+        assert "OSError" in reply["content"] or "OSError" in (turn.error or "")
+        assert reply["meta"].get("error") is True
+
+    def test_the_reply_keeps_whatever_the_turn_had_produced(self, thread):
+        tid = thread["id"]
+        run_id = "run-crash-3"
+        chat_store.begin_run(tid, run_id)
+        turn = _live(run_id, tid)
+        turn.segments = [{"t": "text", "text": "Here is half an answer."}]
+
+        async def boom():
+            raise RuntimeError("mid-stream")
+
+        asyncio.run(_run_guarded(turn, self._meta(tid, run_id), boom()))
+        reply = chat_store.get_thread(tid)["messages"][-1]
+        assert "Here is half an answer." in reply["content"]
+        assert "ended early" in reply["content"]
+
+    def test_a_cancellation_ends_the_run_and_is_not_swallowed(self, thread):
+        tid = thread["id"]
+        run_id = "run-cancel"
+        chat_store.begin_run(tid, run_id)
+        turn = _live(run_id, tid)
+
+        async def forever():
+            await asyncio.sleep(60)
+
+        async def go():
+            task = build_streaming._drive_task(turn, self._meta(tid, run_id), forever())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        asyncio.run(go())
+        assert turn.finished.is_set()
+        assert chat_store.active_run_id(tid) is None
+
+    def test_a_clean_run_is_finalized_exactly_once(self, thread):
+        """The guard must not double-commit a turn that ended normally."""
+        tid = thread["id"]
+        run_id = "run-clean"
+        chat_store.begin_run(tid, run_id)
+        turn = _live(run_id, tid)
+        meta = self._meta(tid, run_id)
+
+        async def body():
+            turn.final_text = "all done"
+            await build_streaming._finalize_turn(
+                turn, meta, rc=0, timed_out=False, compacted=False)
+
+        asyncio.run(_run_guarded(turn, meta, body()))
+        replies = [m for m in chat_store.get_thread(tid)["messages"]
+                   if m["role"] == "assistant"]
+        assert [m["content"] for m in replies] == ["all done"]
+
+
+class TestAPromptThatCannotBeDeliveredEndsTheRun:
+    """It used to be a log line and nothing else: the CLI was spawned, idled on
+    an open stdin with no prompt, produced nothing, emitted no result line, and
+    stayed alive - so the drive loop never broke and no wall clock existed to
+    end it. Same visible symptom as a crashed drive loop."""
+
+    def test_the_run_ends_rather_than_idling_forever(self, thread, monkeypatch):
+        tid = thread["id"]
+        run_id = "run-nowrite"
+        chat_store.begin_run(tid, run_id)
+        turn = _live(run_id, tid)
+        turn.pid = None
+
+        meta = {"turn_id": run_id, "thread_id": tid, "agent_slug": "a", "cwd": "",
+                "model": "m", "prompt": "hi", "timeout_s": 0, "pid": None,
+                "status": "running", "session_id": None, "resume": False}
+
+        # The exact branch: the process exists, the write does not land.
+        monkeypatch.setattr(build_streaming, "write_to_turn", lambda *a, **k: False)
+        drove = []
+        monkeypatch.setattr(build_streaming, "_drive_turn",
+                            lambda *a, **k: drove.append(1))
+
+        class FakeProc:
+            pid = 4242
+            returncode = 0
+
+        async def fake_spawn(*a, **k):
+            return FakeProc()
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_spawn)
+        monkeypatch.setattr(build_streaming.llm_router, "_claude_env", lambda: {})
+
+        async def noop_retire(*a, **k):
+            return None
+        monkeypatch.setattr(build_streaming, "_retire_turn_proc", noop_retire)
+
+        asyncio.run(build_streaming._spawn_and_drive(turn, meta))
+
+        assert not drove, "the drive loop must not be entered for a prompt that never landed"
+        assert turn.finished.is_set()
+        assert chat_store.active_run_id(tid) is None
+        reply = chat_store.get_thread(tid)["messages"][-1]
+        assert reply["meta"].get("error") is True
+        assert "input channel" in reply["content"]
+
+
+class TestTheTurnRegistryIsBounded:
+    """`TURNS` never shrank: every Turn kept its full event list and segment
+    tree for the life of the process."""
+
+    def test_a_turn_that_finished_long_ago_is_dropped(self, thread):
+        import time as _t
+        old = _live("old", thread["id"])
+        old.complete = True
+        old.finished_at = _t.time() - build_streaming.FINISHED_TURN_TTL_S - 1
+        assert build_streaming._prune_turns() == 1
+        assert "old" not in build_streaming.TURNS
+
+    def test_a_running_turn_is_never_dropped(self, thread):
+        live = _live("live", thread["id"])
+        assert live.finished_at is None
+        build_streaming._prune_turns()
+        assert "live" in build_streaming.TURNS
+
+    def test_a_turn_that_just_finished_is_still_reachable(self, thread):
+        import time as _t
+        recent = _live("recent", thread["id"])
+        recent.complete = True
+        recent.finished_at = _t.time()
+        build_streaming._prune_turns()
+        assert "recent" in build_streaming.TURNS, "a client may still be reading it"
+
+    def test_starting_a_turn_sweeps_the_registry(self, thread):
+        import time as _t
+        old = _live("old2", thread["id"])
+        old.complete = True
+        old.finished_at = _t.time() - build_streaming.FINISHED_TURN_TTL_S - 1
+        build_streaming._make_turn(thread["id"], "a", turn_id="fresh")
+        assert "old2" not in build_streaming.TURNS
+        assert "fresh" in build_streaming.TURNS
+
+    def test_finalizing_stamps_the_time(self, thread):
+        tid = thread["id"]
+        chat_store.begin_run(tid, "stamped")
+        turn = _live("stamped", tid)
+        turn.final_text = "done"
+        asyncio.run(build_streaming._finalize_turn(
+            turn, {"turn_id": "stamped", "thread_id": tid, "prompt": "x", "cwd": ""},
+            rc=0, timed_out=False, compacted=False))
+        assert turn.finished_at is not None
+
+
+class TestTheSyncEndpointDoesNotReparseTheLog:
+    """It read and parsed the WHOLE log twice per call - once inside
+    `read_thread` to build a tail it discarded, once for the delta it wanted -
+    every 10s, per open tab, for the life of the conversation."""
+
+    def test_a_poll_with_nothing_new_does_not_read_the_log(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "one")
+        head = asyncio.run(rc.thread_events(tid, after=0))
+
+        reads = []
+        real = chat_log.read_events
+        monkeypatch.setattr(chat_log, "read_events",
+                            lambda *a, **k: (reads.append(1), real(*a, **k))[1])
+        got = asyncio.run(rc.thread_events(tid, after=head["last_seq"]))
+        assert got["events"] == []
+        assert got["last_seq"] == head["last_seq"]
+        assert reads == [], "a caller that is already current needs no log read"
+
+    def test_a_poll_with_something_new_reads_the_log_once(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "one")
+        chat_store.append_message(tid, "user", "two")
+
+        reads = []
+        real = chat_log.read_events
+        monkeypatch.setattr(chat_log, "read_events",
+                            lambda *a, **k: (reads.append(1), real(*a, **k))[1])
+        got = asyncio.run(rc.thread_events(tid, after=1))
+        assert [e["content"] for e in got["events"]] == ["two"]
+        assert len(reads) == 1
+
+    def test_the_live_run_still_comes_back_without_a_log_read(self, thread, monkeypatch):
+        import routes.chat as rc
+        tid = thread["id"]
+        chat_store.append_message(tid, "user", "one")
+        chat_store.begin_run(tid, "r9")
+        head = asyncio.run(rc.thread_events(tid, after=0))
+        assert head["active_run"]["run_id"] == "r9"
+        started = head["active_run"]["started_seq"]
+        assert started is not None
+
+        monkeypatch.setattr(chat_log, "read_events",
+                            lambda *a, **k: pytest.fail("no log read is needed here"))
+        got = asyncio.run(rc.thread_events(tid, after=head["last_seq"]))
+        assert got["active_run"]["run_id"] == "r9"
+        assert got["active_run"]["started_seq"] == started
+
+    def test_a_run_opened_before_the_seq_was_recorded_still_resolves(self, thread):
+        """Threads written by the older build carry no `active_run_seq`; the
+        scan is still there for them, so nothing needs migrating."""
+        tid = thread["id"]
+        chat_store.begin_run(tid, "legacy")
+        chat_log.patch_meta_sync(tid, active_run_seq=None)
+        run = chat_log.active_run(tid)
+        assert run["run_id"] == "legacy"
+        assert run["started_seq"] is not None

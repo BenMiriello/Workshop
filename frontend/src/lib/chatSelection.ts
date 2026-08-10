@@ -129,7 +129,15 @@ const QUEUE_PREFIX = "ws-chat-queue:";
 // operator has already hit enter on, so when it finally goes out it is that
 // same send arriving late — and the bubble on screen has to be matched to the
 // committed event by identity, not by comparing its text.
-export type QueuedMessage = { text: string; sentAt: string; clientId: string };
+//
+// `failed` marks an entry the server would not take. It is durable for the same
+// reason the rest of the entry is: a send that failed is text the operator hit
+// enter on and has not got back, and it used to live only in the reducer — so a
+// reload or a thread switch erased it with no trace. A failed entry never drains
+// on its own (the queue holds beside it); it waits for Retry.
+export type QueuedMessage = {
+  text: string; sentAt: string; clientId: string; failed?: boolean;
+};
 
 export function readQueue(threadKey: string): QueuedMessage[] {
   try {
@@ -153,6 +161,7 @@ export function readQueue(threadKey: string): QueuedMessage[] {
         return [{
           text: x.text,
           sentAt: typeof x.sentAt === "string" ? x.sentAt : "",
+          ...(x.failed ? { failed: true as const } : {}),
           // A queue written by an older build has no id. Minting one here is
           // right: it has not been sent, so no committed event can be carrying
           // an id it would need to match.
@@ -231,4 +240,55 @@ export function restoreBatch(batch: QueuedMessage[], items: QueuedMessage[]): Qu
 // thread's storage and nothing else will take them out.
 export function withoutIds(queue: QueuedMessage[], ids: Set<string>): QueuedMessage[] {
   return queue.filter((m) => !ids.has(m.clientId));
+}
+
+// Mark a batch the server refused, so it says so instead of sitting there
+// claiming it will send when the current turn finishes. It will not: the queue
+// holds after a refusal, by design, and only Retry releases it.
+export function markFailed(batch: QueuedMessage[]): QueuedMessage[] {
+  return batch.map((m) => (m.failed ? m : { ...m, failed: true }));
+}
+
+export function clearFailedFlag(queue: QueuedMessage[], clientId: string): QueuedMessage[] {
+  return queue.map((m) => {
+    if (m.clientId !== clientId || !m.failed) return m;
+    const { failed: _dropped, ...rest } = m;
+    return rest;
+  });
+}
+
+// TWO TABS ON ONE THREAD MUST NOT DESTROY EACH OTHER'S QUEUE.
+//
+// The queue is per-thread durable storage, and every tab open on that thread
+// writes the same key. A tab used to write its whole in-memory list over
+// whatever was there, so: two tabs on thread X, type A in tab 1 (storage is
+// `[A]`), type B in tab 2 — whose in-memory list is `[]`, because A was typed
+// somewhere else — and tab 2 writes `[B]`. A is gone, and it was a message the
+// operator had already hit enter on. That is invariant 1 broken across tabs by
+// the code that exists to keep it.
+//
+// So a write MERGES. The rule is not "union everything", which would resurrect
+// every entry this tab deliberately took out (a drain, a drop, an accepted
+// batch): it is
+//
+//   an entry this tab has NEVER SEEN belongs to another tab, and survives.
+//
+// `seen` is every id this tab has held for this key since it bound to it. An id
+// in `seen` and absent from `next` was removed on purpose. An id in neither is
+// news from elsewhere and is kept.
+//
+// Order is by WHEN THE OPERATOR HIT ENTER (invariant 5), which is the only
+// ordering that means anything once two tabs are involved — neither list's
+// position can speak for the other's. `sentAt` is an ISO string so it sorts
+// lexicographically; an entry with none (the pre-upgrade format) sorts first,
+// which is true of it, since it was written by an older build.
+export function mergeQueue(
+  stored: QueuedMessage[], next: QueuedMessage[], seen: Set<string>,
+): QueuedMessage[] {
+  const mine = new Set(next.map((m) => m.clientId));
+  const foreign = stored.filter((m) => !mine.has(m.clientId) && !seen.has(m.clientId));
+  if (!foreign.length) return next;
+  // Array.prototype.sort is stable, so entries typed in the same millisecond (or
+  // carrying no time at all) keep the order of the list they came from.
+  return [...next, ...foreign].sort((a, b) => (a.sentAt || "").localeCompare(b.sentAt || ""));
 }

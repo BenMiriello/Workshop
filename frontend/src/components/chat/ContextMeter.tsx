@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import { estimateContextTokens } from "./chatScope";
 import { contextWindowFor } from "./models";
-import { contextReading } from "./contextReading";
+import { contextLabel, contextReading, contextTooltip, type ContextSource } from "./contextReading";
 
 // How full this conversation's context is, under the composer.
 //
@@ -30,6 +30,11 @@ export default function ContextMeter({
   nonce: number;
 }) {
   const [server, setServer] = useState<{ used: number; window: number } | null>(null);
+  // A FAILED READ IS NOT THE SAME AS NOT HAVING READ YET. This was
+  // `.catch(() => {})` with a comment saying "keep the client estimate", and the
+  // meter then presented that estimate exactly as it presents the server's
+  // number. Both fall back to the estimate; only one of them is fine.
+  const [readFailed, setReadFailed] = useState(false);
 
   // A live turn must NOT block the reading. It used to: the fetch returned
   // early whenever `streaming` was true, so a meter that first mounted during a
@@ -43,14 +48,23 @@ export default function ContextMeter({
     if (!activeId) return;
     let cancelled = false;
     chatApi.threadContext(activeId)
-      .then((r) => { if (!cancelled) setServer({ used: r.used_tokens, window: r.window_tokens }); })
-      .catch(() => { /* keep the client estimate */ });
+      .then((r) => {
+        if (cancelled) return;
+        setServer({ used: r.used_tokens, window: r.window_tokens });
+        setReadFailed(false);
+      })
+      .catch(() => {
+        // The estimate still renders — a meter that disappears on a failed read
+        // says even less than one that lies. It renders MARKED, so the number
+        // stops claiming to be the server's.
+        if (!cancelled) setReadFailed(true);
+      });
     return () => { cancelled = true; };
   }, [activeId, nonce, streaming, streaming ? -1 : messages.length]);
 
   // Drop a stale count on thread switch rather than showing one chat's usage
   // against another's transcript.
-  useEffect(() => { setServer(null); }, [activeId]);
+  useEffect(() => { setServer(null); setReadFailed(false); }, [activeId]);
 
   const ctx = useMemo(() => {
     if (server) {
@@ -66,13 +80,14 @@ export default function ContextMeter({
   // contextReading: neither may render as "0%".
   const reading = contextReading(ctx.used, ctx.win);
   if (!reading) return null;
+  const source: ContextSource = server ? "server" : readFailed ? "unavailable" : "estimate";
 
   // A single accent tone, no threshold colors: this is a reading, not a status.
   // The arc is a dash on a rotated circle so it fills clockwise from 12 o'clock.
   return (
     <div
       className="chat-context-meter"
-      title={`~${ctx.used.toLocaleString()} of ${ctx.win.toLocaleString()} tokens used in this chat`}
+      title={contextTooltip(ctx.used, ctx.win, source)}
     >
       <svg className="chat-context-meter__ring" width="18" height="18" viewBox="0 0 18 18" aria-hidden>
         <circle className="chat-context-meter__track" cx="9" cy="9" r={RING_R} />
@@ -82,7 +97,7 @@ export default function ContextMeter({
           style={{ strokeDasharray: `${reading.fraction * RING_C} ${RING_C}` }}
         />
       </svg>
-      <span className="chat-context-meter__pct">{reading.label}</span>
+      <span className="chat-context-meter__pct">{contextLabel(reading, source)}</span>
     </div>
   );
 }

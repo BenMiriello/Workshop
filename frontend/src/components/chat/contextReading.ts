@@ -25,3 +25,37 @@ export function contextReading(used: number, win: number): ContextReading | null
     fraction: Math.min(1, used / win),
   };
 }
+
+// WHERE THE NUMBER CAME FROM, which the meter has to say.
+//
+// Only the backend can count this: it assembles the actual prompt (persona, live
+// app context, compacted history), none of which the client can see. The client
+// estimate is characters divided by four over the transcript, which is a
+// different quantity that happens to render in the same units.
+//
+// The meter used to swallow a failed `/context` read (`.catch(() => {})`, with a
+// comment saying "keep the client estimate") and go on printing a confident
+// percentage from that estimate, indistinguishable from the real one. So the
+// operator could not tell "this chat is 40% full" from "the server did not
+// answer and this is a guess about a prompt I cannot see".
+//
+//   server    — the backend's own count. Unmarked, because it is the truth.
+//   estimate  — no server count yet. Normal before a thread's first turn.
+//   unavailable — the server count could not be read. NOT normal, and said.
+//
+// Both estimate cases carry a leading "~" on the label. One character, no new
+// color, and it is the conventional mark for "about".
+export type ContextSource = "server" | "estimate" | "unavailable";
+
+export function contextLabel(reading: ContextReading, source: ContextSource): string {
+  return source === "server" ? reading.label : `~${reading.label}`;
+}
+
+export function contextTooltip(used: number, win: number, source: ContextSource): string {
+  const of = `${used.toLocaleString()} of ${win.toLocaleString()} tokens`;
+  if (source === "server") return `${of} used in this chat, counted by the server.`;
+  const why = source === "unavailable"
+    ? "The server's own count could not be read, so this is the browser's estimate"
+    : "Estimated in the browser until the server has counted this chat's prompt";
+  return `About ${of}. ${why}, which does not include the persona or any live context the model is sent.`;
+}

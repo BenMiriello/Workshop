@@ -171,7 +171,7 @@ export function useSendPipeline({
     } finally {
       setStartingBoth(false);
     }
-  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
+  }, [scope, selectedModel, selectedEffort, selectedPermissionMode, chatModeRef, activeIdRef, adoptThread, dispatch, sync, queue, setErr, setStartingBoth]);
 
   // Hand a message to the run already in flight. It is PERSISTED BEFORE
   // DELIVERY server-side, so `delivered: true` means the chat has it whether or
@@ -256,11 +256,16 @@ export function useSendPipeline({
     const pending = stateRef.current.pending[clientId];
     if (!pending) return;
     setErr(null);
+    // Take the durable copy back first. It IS this send — written so the text
+    // survives a reload — and this retry replaces it; leaving it there would
+    // draw the message a second time the moment the optimistic bubble
+    // reconciles away, and a failure would then queue a third under the same id.
+    queue.drop(clientId);
     // THE SAME ID. The log dedupes on it, so if the first attempt did reach the
     // server after all, this re-send appends nothing and reconciles against the
     // event that is already there.
     dispatchSend(pending.text, clientId);
-  }, [stateRef, setErr, dispatchSend]);
+  }, [stateRef, setErr, dispatchSend, queue]);
 
   return { starting, turnIsCompact, submitText, retry, sendBatch };
 }

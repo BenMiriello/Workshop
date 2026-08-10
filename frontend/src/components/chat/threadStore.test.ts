@@ -218,3 +218,58 @@ describe("reset", () => {
     expect(pendingSends(s)).toEqual([]);
   });
 });
+
+describe("re-attaching to a run already on screen", () => {
+  const started = (): ThreadState =>
+    apply(initialThreadState("t"), { type: "runStarted", runId: "r1" });
+
+  const text = (content: string) =>
+    ({ type: "runDelta", runId: "r1", event: { kind: "text", content } }) as const;
+
+  // THE BUG: a fresh EventSource sends no Last-Event-ID, so the server replays
+  // the turn from offset 0 — and applyStreamEvent appends. A backend restart, an
+  // edge 502, or the 5s liveness re-attach therefore rendered the whole turn
+  // twice, doubling again on every further re-attach.
+  it("rewinds the live view, so the replay rebuilds it instead of doubling it", () => {
+    const before = apply(started(), text("Hello "), text("world"));
+    expect(before.activeRun?.segments).toEqual([{ t: "text", text: "Hello world" }]);
+
+    const after = apply(before,
+      { type: "runReattached", runId: "r1" },
+      text("Hello "), text("world"));
+    expect(after.activeRun?.segments).toEqual([{ t: "text", text: "Hello world" }]);
+  });
+
+  it("leaves a different run alone", () => {
+    const s = apply(started(), text("keep me"), { type: "runReattached", runId: "other" });
+    expect(s.activeRun?.segments).toEqual([{ t: "text", text: "keep me" }]);
+  });
+
+  it("does nothing when there is no run to rewind", () => {
+    const s = initialThreadState("t");
+    expect(threadReducer(s, { type: "runReattached", runId: "r1" })).toBe(s);
+  });
+
+  it("keeps everything about the run except what the stream will resend", () => {
+    const s = apply(started(), text("partial"));
+    const before = s.activeRun!;
+    const after = threadReducer(s, { type: "runReattached", runId: "r1" }).activeRun!;
+    expect(after.runId).toBe(before.runId);
+    expect(after.startedMs).toBe(before.startedMs);
+    expect(after.segments).toEqual([]);
+  });
+
+  it("refuses a snapshot older than the rewind, which would restore what it dropped", () => {
+    // A poll in flight when the rewind happens answers about the live view that
+    // no longer exists; taking it and then folding in the replay is the same
+    // double-render one step removed.
+    const s = apply(started(), text("a lot of streamed text"));
+    const requestedAt = Date.now() - 5_000;
+    const rewound = threadReducer(s, { type: "runReattached", runId: "r1" });
+    const after = threadReducer(rewound, {
+      type: "eventsReceived", events: [], lastSeq: 0, requestedAt,
+      activeRun: { run_id: "r1", started_seq: 1, live: { meta: { segments: [{ t: "text", text: "a lot of streamed text" }] } } },
+    });
+    expect(after.activeRun?.segments).toEqual([]);
+  });
+});

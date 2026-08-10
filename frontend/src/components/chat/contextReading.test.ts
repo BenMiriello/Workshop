@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { contextReading } from "./contextReading";
+import { contextLabel, contextReading, contextTooltip } from "./contextReading";
 
 describe("contextReading", () => {
   it("renders nothing when there is no reading", () => {
@@ -34,5 +34,38 @@ describe("contextReading", () => {
   it("draws the arc from the true ratio, not the rounded percent", () => {
     // "<1%" still shows a sliver; a rounded 0 would show nothing.
     expect(contextReading(1_200, 1_000_000)?.fraction).toBeCloseTo(0.0012, 6);
+  });
+});
+
+describe("where the number came from", () => {
+  const r = contextReading(120_000, 1_000_000)!;
+
+  // The bug: a failed /context read was swallowed and the browser's own
+  // character estimate rendered as though the server had counted it.
+  it("marks an estimate and leaves the server's own count unmarked", () => {
+    expect(contextLabel(r, "server")).toBe("12%");
+    expect(contextLabel(r, "estimate")).toBe("~12%");
+    expect(contextLabel(r, "unavailable")).toBe("~12%");
+  });
+
+  it("marks a floored reading too, so <1% cannot pass as measured", () => {
+    const tiny = contextReading(10, 1_000_000)!;
+    expect(contextLabel(tiny, "unavailable")).toBe("~<1%");
+  });
+
+  it("says the server counted it only when the server did", () => {
+    expect(contextTooltip(120_000, 1_000_000, "server")).toMatch(/counted by the server/);
+    expect(contextTooltip(120_000, 1_000_000, "estimate")).not.toMatch(/counted by the server/);
+  });
+
+  it("distinguishes a read that has not happened from one that failed", () => {
+    expect(contextTooltip(1, 100, "unavailable")).toMatch(/could not be read/);
+    expect(contextTooltip(1, 100, "estimate")).not.toMatch(/could not be read/);
+  });
+
+  it("says what an estimate cannot see, since that is why it differs", () => {
+    for (const s of ["estimate", "unavailable"] as const) {
+      expect(contextTooltip(1, 100, s)).toMatch(/persona|live context/);
+    }
   });
 });
