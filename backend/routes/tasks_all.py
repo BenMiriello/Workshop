@@ -34,6 +34,7 @@ from pydantic import BaseModel, Field
 
 from services import (tasks, task_scope, task_dedup, jobs, build_agents, ownership,
                       knowledge, learnings, permissions, ticket_readiness,
+                      ticket_scope_review,
                       latitude as latitude_svc)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -991,6 +992,84 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     except OSError:
         pass
     return {"ok": True, "job_id": job["id"], "scope": scope, "task_id": task_id}
+
+
+@router.post("/{scope}/{task_id}/scope-review")
+async def scope_review(scope: str, task_id: str) -> dict:
+    """Judge whether this ticket is one piece of work, what blocks it, and whether
+    it is sequential. Reads only; proposes only.
+
+    Distinct from the readiness check, which is a regex pass and cannot tell a
+    well-written ticket from a well-written ticket that is really four tickets.
+    Meant to be run on a DRAFT, before approval — after approval a worker is about
+    to spend money on it, which is too late for the answer to be worth much."""
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    task = tasks.get_task(root, task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    try:
+        out = await ticket_scope_review.review(task)
+    except Exception as e:
+        raise HTTPException(502, f"could not review scope: {e}")
+    out["readiness"] = ticket_readiness.check(
+        task, known_ids={t["id"] for t in tasks.list_tasks(root)})
+    return out
+
+
+class SplitIn(BaseModel):
+    # The sub-tickets to create, as returned by scope-review and possibly edited
+    # by the operator. Sent back rather than re-derived so what they approved is
+    # exactly what gets filed.
+    subtickets: list[dict]
+
+
+@router.post("/{scope}/{task_id}/split")
+async def split_task(scope: str, task_id: str, body: SplitIn) -> dict:
+    """Turn one ticket into sub-tickets.
+
+    The children are `draft`s: a split is a proposal like any other, so each piece
+    still needs approving. The parent keeps its text and becomes the container —
+    it is not cancelled, because the original wording is the record of what was
+    asked for, and it is not queued, because the children are the work now.
+    """
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    parent = tasks.get_task(root, task_id)
+    if parent is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    if parent.get("parent"):
+        raise HTTPException(409, "a sub-ticket cannot be split again (depth is capped at two)")
+    rows = [r for r in (body.subtickets or []) if str(r.get("title") or "").strip()]
+    if len(rows) < 2:
+        raise HTTPException(400, "a split needs at least two sub-tickets")
+
+    created = []
+    for r in rows:
+        child = tasks.add(
+            root,
+            title=str(r.get("title")).strip(),
+            body=str(r.get("body") or ""),
+            status="draft",
+            parent=task_id,
+            priority=int(parent.get("priority") or 0),
+            labels=list(parent.get("labels") or []),
+            source=parent.get("source") or {"kind": "operator", "ref": None},
+            scoped_by="agent:scope-review",
+        )
+        created.append(dict(child, scope=scope))
+
+    # The parent is a container now. `draft` keeps it out of `next_ready` without
+    # pretending the request was withdrawn.
+    updated = tasks.update(
+        root, task_id, status="draft",
+        evidence={"kind": "split",
+                  "ref": f"split into {len(created)} sub-tickets: "
+                         + ", ".join(c["id"] for c in created)})
+    return {"parent": _with_latitude(dict(updated or parent, scope=scope), scope),
+            "subtickets": created}
 
 
 class TaskApproveIn(BaseModel):

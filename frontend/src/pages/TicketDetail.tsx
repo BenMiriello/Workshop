@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, Rocket, ExternalLink,
-  Play, CheckCheck, XCircle, KeyRound, ScrollText, Ban, ClipboardList,
+  Play, CheckCheck, XCircle, KeyRound, ScrollText, Ban, ClipboardList, Scissors,
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
@@ -24,6 +24,16 @@ import { nextWorkParams } from "../lib/workParams";
 // unreachable Edit drawer and nowhere on the live path, so Run was offered on
 // `done` and `cancelled` tickets and simply re-ran finished work.
 const RUNNABLE_STATUSES = new Set(["todo"]);
+
+// The scope review's answer. Proposals only: applying a split is a second,
+// explicit act, and the review never edits the ticket's own text.
+type ScopeReview = {
+  verdict: "ok" | "split" | "underspecified";
+  reason: string;
+  subtickets: { title: string; body: string }[];
+  blockers: string[];
+  stages: string[];
+};
 
 type JobRec = {
   id: string;
@@ -89,6 +99,12 @@ export default function TicketDetail() {
   const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [approving, setApproving] = useState(false);
+  // The scope review: a judgement pass over whether this is ONE piece of work.
+  // Only offered on a draft, because after approval a worker is about to spend
+  // money on it and the answer stops being worth much.
+  const [scopeCheck, setScopeCheck] = useState<ScopeReview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [splitting, setSplitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [bannerErr, setBannerErr] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
@@ -210,6 +226,41 @@ export default function TicketDetail() {
       setApproving(false);
     }
   }, [scope, id, load, say, fail]);
+
+  const scopeReview = useCallback(async () => {
+    setReviewing(true);
+    setScopeCheck(null);
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/scope-review`, { method: "POST" });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setScopeCheck(await r.json());
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReviewing(false);
+    }
+  }, [scope, id, fail]);
+
+  const applySplit = useCallback(async () => {
+    if (!scopeCheck?.subtickets?.length) return;
+    setSplitting(true);
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/split`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subtickets: scopeCheck.subtickets }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const j = await r.json();
+      say(`Split into ${j.subtickets.length} sub-tickets. Each needs approving.`);
+      setScopeCheck(null);
+      await load();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSplitting(false);
+    }
+  }, [scope, id, scopeCheck, load, say, fail]);
 
   const runTask = useCallback(async () => {
     setRunning(true);
@@ -476,6 +527,72 @@ export default function TicketDetail() {
               )}
             </Card>
           </section>
+
+          {/* Scope review: is this one piece of work? ------------------- */}
+          {task.status === "draft" && (
+            <section>
+              <SectionLabel icon={<Scissors aria-hidden />}>Scope</SectionLabel>
+              <Card>
+                <Stack gap="sm">
+                  {!scopeCheck && (
+                    <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
+                      <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                        Check whether this is one piece of work before approving it.
+                      </span>
+                      <Button size="sm" variant="ghost" onClick={scopeReview}
+                              loading={reviewing} disabled={reviewing}>
+                        Review scope
+                      </Button>
+                    </Row>
+                  )}
+                  {scopeCheck && (
+                    <>
+                      <StatusDot status={scopeCheck.verdict === "ok" ? "ok" : "warn"}>
+                        <strong>{scopeCheck.verdict === "ok" ? "One piece of work"
+                          : scopeCheck.verdict === "split" ? "Should be split" : "Underspecified"}</strong>
+                        {scopeCheck.reason ? <span className="ws-muted"> — {scopeCheck.reason}</span> : null}
+                      </StatusDot>
+                      {scopeCheck.blockers.length > 0 && (
+                        <Stack gap="sm">
+                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Blockers</span>
+                          {scopeCheck.blockers.map((b) => (
+                            <StatusDot key={b} status="warn"><span className="ws-muted">{b}</span></StatusDot>
+                          ))}
+                        </Stack>
+                      )}
+                      {scopeCheck.stages.length > 0 && (
+                        <Stack gap="sm">
+                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>Stages, in order</span>
+                          {scopeCheck.stages.map((st, i) => (
+                            <span key={st} style={{ fontSize: "var(--fs-sm)" }}>{i + 1}. {st}</span>
+                          ))}
+                        </Stack>
+                      )}
+                      {scopeCheck.subtickets.length > 0 && (
+                        <Stack gap="sm">
+                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                            Proposed sub-tickets
+                          </span>
+                          {scopeCheck.subtickets.map((st) => (
+                            <span key={st.title} style={{ fontSize: "var(--fs-sm)" }}>{st.title}</span>
+                          ))}
+                        </Stack>
+                      )}
+                      <Row wrap style={{ gap: "var(--space-2)" }}>
+                        {scopeCheck.subtickets.length > 1 && (
+                          <Button size="sm" variant="primary" onClick={applySplit}
+                                  loading={splitting} disabled={splitting}>
+                            <Scissors aria-hidden /> Split into {scopeCheck.subtickets.length}
+                          </Button>
+                        )}
+                        <Button size="sm" variant="ghost" onClick={() => setScopeCheck(null)}>Dismiss</Button>
+                      </Row>
+                    </>
+                  )}
+                </Stack>
+              </Card>
+            </section>
+          )}
 
           {/* What the ticket does not yet say -------------------------- */}
           {task.readiness && !task.readiness.ok && (
