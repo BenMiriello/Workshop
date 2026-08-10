@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
-  ChevronDown, ChevronRight, Gauge, GitFork, HelpCircle, SlidersHorizontal, Compass,
+  ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal, Compass,
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill,
-  Skeleton, Input, Field, ActionBar, Tag, Toggle, Segmented, catFor,
+  Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor,
   useEditMode, type StatusKind, type SegmentedOption,
 } from "../ui";
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
@@ -19,14 +19,21 @@ import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib
 //   scheduled   swept on a cron cadence when work is ready
 //   continuous  swept every tick while work is ready, bounded by limits
 //
-// depth (quick/standard/deep) and fanout (off/read-only) tune each sweep;
-// latitude (strict/standard/open) sets what a sweep may do WHERE THE TICKET DOES
-// NOT SAY — decision rights, not effort, and never a widening of what the run is
-// allowed to write (that is `touches` + grants, which are enforced); limits
-// bound a continuous loop. All of these are a CONFIG write: edit-mode + explicit
-// Save (never commit-on-change per the design system). The raw expanded trigger
-// list stays reachable under an "Advanced" disclosure for the operator who wants
-// it. A manual "Run now" is a deliberate foreground sweep and stays a button.
+// latitude (strict/standard/open) sets what a sweep is TOLD to do WHERE THE
+// TICKET DOES NOT SAY — decision rights, not effort. It is prompt text, and
+// nothing here bounds what a run may write: `touches` is a declared intent
+// checked against the committed diff AFTER the fact, so a stray write is
+// flagged and the ticket blocked, not prevented. Limits bound a continuous
+// loop. All of these are a CONFIG write: edit-mode + explicit Save (never
+// commit-on-change per the design system). The raw expanded trigger list stays
+// reachable under an "Advanced" disclosure for the operator who wants it. A
+// manual "Run now" is a deliberate foreground sweep and stays a button.
+//
+// This panel used to offer `depth` (quick/standard/deep) and `fanout`
+// (off/read-only) as well. Nothing anywhere read either one — no sweep, no
+// runner, no prompt — so they were deleted rather than left as decoration
+// (docs/system-honesty-plan-2026-08-10.md, item 19). Don't add them back
+// without the code that honors them.
 //
 // The panel serves BOTH scopes off one prop set: a project (default) writes the
 // preset directly to PUT /projects/{slug}/autonomy; an agent expands the preset
@@ -34,8 +41,6 @@ import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib
 // unchanged; agent scope is opt-in via the optional `scope`/`agentId` props.
 
 type Preset = "off" | "on-demand" | "scheduled" | "continuous";
-type Depth = "quick" | "standard" | "deep";
-type Fanout = "off" | "read-only";
 // autonomy-model 2026-07-18 §1.1. Per-agent field, controls whether the
 // dispatcher fires this agent's triggers in the background AND whether a
 // completed run commits directly to `done` or lands in `in_review`. Distinct
@@ -77,8 +82,6 @@ type Autonomy = {
   // Per-agent autonomy mode from the 2026-07-18 model. Populated for scope=
   // "agent"; ignored for scope="project" (project is a scope, not an agent).
   autonomy_mode?: AutonomyMode;
-  depth: Depth;
-  fanout: Fanout;
   // null = this scope sets none, so work here inherits the default. Kept null
   // (never defaulted to "standard") so the scope never claims a setting it lacks.
   latitude: Latitude | null;
@@ -97,8 +100,6 @@ type PrimaryDraft = {
   // Agent-scope autonomy mode. For project scope this field is present but the
   // control is not rendered and the Save path drops it.
   autonomy_mode: AutonomyMode;
-  depth: Depth;
-  fanout: Fanout;
   // The draft carries the default rather than null: the control always shows a
   // position. Saving `standard` clears the stored value back to null, which is
   // the same behavior — the scope stops asserting a latitude.
@@ -133,12 +134,6 @@ function isAutonomyMode(v: unknown): v is AutonomyMode {
   return v === "reactive" || v === "supervised" || v === "autonomous";
 }
 
-const DEPTH_OPTIONS: SegmentedOption<Depth>[] = [
-  { value: "quick", label: "Quick" },
-  { value: "standard", label: "Standard" },
-  { value: "deep", label: "Deep" },
-];
-
 const LATITUDE_OPTIONS: SegmentedOption<Latitude>[] = LATITUDES.map((v) => ({
   value: v,
   label: v.charAt(0).toUpperCase() + v.slice(1),
@@ -151,20 +146,8 @@ const PRESET_DESC: Record<Preset, string> = {
   continuous: "Sweeps every tick while work is ready, bounded by limits.",
 };
 
-const DEPTH_DESC: Record<Depth, string> = {
-  quick: "Shallow passes, fast turnaround.",
-  standard: "Balanced effort per task.",
-  deep: "Thorough, more iterations per task.",
-};
-
 function isPreset(v: unknown): v is Preset {
   return v === "off" || v === "on-demand" || v === "scheduled" || v === "continuous";
-}
-function isDepth(v: unknown): v is Depth {
-  return v === "quick" || v === "standard" || v === "deep";
-}
-function isFanout(v: unknown): v is Fanout {
-  return v === "off" || v === "read-only";
 }
 function isLatitude(v: unknown): v is Latitude {
   return v === "strict" || v === "standard" || v === "open";
@@ -277,8 +260,6 @@ export default function AutonomyPanel({
       const cfgNext: Autonomy = {
         autonomy: isPreset(raw.autonomy) ? raw.autonomy : "off",
         autonomy_mode: isAutonomyMode(raw.autonomy_mode) ? raw.autonomy_mode : "reactive",
-        depth: isDepth(raw.depth) ? raw.depth : "standard",
-        fanout: isFanout(raw.fanout) ? raw.fanout : "read-only",
         latitude: isLatitude(raw.latitude) ? raw.latitude : null,
         limits: (raw.limits && typeof raw.limits === "object") ? raw.limits : {},
         triggers: Array.isArray(raw.triggers) ? raw.triggers : [],
@@ -311,8 +292,6 @@ export default function AutonomyPanel({
   const primaryModel = useMemo<PrimaryDraft>(() => ({
     preset: cfg?.autonomy ?? "off",
     autonomy_mode: cfg?.autonomy_mode ?? "reactive",
-    depth: cfg?.depth ?? "standard",
-    fanout: cfg?.fanout ?? "read-only",
     latitude: cfg?.latitude ?? DEFAULT_LATITUDE,
     cron: cronFromTriggers(cfg?.triggers),
     maxIterations: cfg?.limits?.max_iterations != null ? String(cfg.limits.max_iterations) : "",
@@ -327,8 +306,6 @@ export default function AutonomyPanel({
       body = {
         triggers: presetToTriggers(draft.preset, draft.cron, limits),
         autonomy: draft.autonomy_mode,
-        depth: draft.depth,
-        fanout: draft.fanout,
         latitude: draft.latitude,
         limits,
       };
@@ -336,8 +313,6 @@ export default function AutonomyPanel({
       body = {
         preset: draft.preset,
         cron: draft.preset === "scheduled" ? draft.cron : undefined,
-        depth: draft.depth,
-        fanout: draft.fanout,
         latitude: draft.latitude,
         limits,
       };
@@ -503,15 +478,6 @@ export default function AutonomyPanel({
                   </Field>
                 )}
 
-                <Field label={<><Gauge size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Depth</>} help={DEPTH_DESC[pedit.draft.depth]}>
-                  <Segmented
-                    ariaLabel="Sweep depth"
-                    options={DEPTH_OPTIONS}
-                    value={pedit.draft.depth}
-                    onChange={(v) => pedit.set("depth", v)}
-                  />
-                </Field>
-
                 <Field
                   label={<><Compass size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Latitude</>}
                   help={latitudeDesc(pedit.draft.latitude)}
@@ -521,14 +487,6 @@ export default function AutonomyPanel({
                     options={LATITUDE_OPTIONS}
                     value={pedit.draft.latitude}
                     onChange={(v) => pedit.set("latitude", v)}
-                  />
-                </Field>
-
-                <Field label={<><GitFork size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.35rem" }} />Fan-out</>} help="Allow read-only fan-out to helper agents during a sweep.">
-                  <Toggle
-                    checked={pedit.draft.fanout === "read-only"}
-                    onChange={(next) => pedit.set("fanout", next ? "read-only" : "off")}
-                    label={<span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{pedit.draft.fanout === "read-only" ? "read-only" : "off"}</span>}
                   />
                 </Field>
 
@@ -584,19 +542,11 @@ export default function AutonomyPanel({
                 </Row>
                 <Row wrap style={{ gap: "var(--space-4)" }}>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    <Gauge size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                    depth: <strong>{cfg?.depth ?? "standard"}</strong>
-                  </span>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     <Compass size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
                     {/* Says "(default)" when this scope sets none, so an inherited
                         value is never mistaken for one the operator chose here. */}
                     latitude: <strong>{cfg?.latitude ?? DEFAULT_LATITUDE}</strong>
                     {cfg?.latitude ? "" : " (default)"}
-                  </span>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    <GitFork size={12} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.3rem" }} />
-                    fan-out: <strong>{cfg?.fanout ?? "read-only"}</strong>
                   </span>
                   {preset === "scheduled" && cronFromTriggers(cfg?.triggers) && (
                     <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>

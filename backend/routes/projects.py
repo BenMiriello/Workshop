@@ -613,14 +613,19 @@ RUNNING_STALE_S = 7200
 
 
 class TriggersIn(BaseModel):
-    # Preset shape (primary, O6/O7-config): an autonomy preset + effort/fan-out
-    # knobs + budget limits, expanded to triggers under the hood. The raw
-    # `triggers` list remains the "advanced" escape hatch; when both are present,
-    # an explicit preset wins.
+    # Preset shape (primary, O6/O7-config): an autonomy preset + budget limits,
+    # expanded to triggers under the hood. The raw `triggers` list remains the
+    # "advanced" escape hatch; when both are present, an explicit preset wins.
+    #
+    # `fanout` was accepted here and stored, and nothing ever read it back — the
+    # sweep does not fan out to helper agents and never consulted the field. It
+    # is gone rather than kept as a setting that does nothing
+    # (docs/system-honesty-plan-2026-08-10.md, item 19). `depth` is equally
+    # unconsumed by any sweep, but /api/tasks/autonomy-scopes still reports it
+    # per scope, so it stays until that readout goes with it.
     preset: str | None = None
     cron: str | None = None
     depth: str | None = None
-    fanout: str | None = None
     # Decision rights for work in this tree: strict | standard | open. Null (or
     # "standard", which is never stored) means inherit — see services/latitude.py.
     latitude: str | None = None
@@ -714,7 +719,6 @@ async def get_autonomy(slug: str) -> dict:
     return {
         "autonomy": preset,
         "depth": autonomy.get("depth") or "standard",
-        "fanout": autonomy.get("fanout") or "read-only",
         # Stays null when unset: this scope is one level of the latitude cascade,
         # not the bottom of it, so a defaulted value here would read as a choice.
         "latitude": latitude_svc.coerce(autonomy.get("latitude")),
@@ -751,8 +755,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     mode = triggers.project_mode_from_triggers(norm)
     depth = body.depth if body.depth in ("quick", "standard", "deep") else \
         ((proj.get("autonomy") or {}).get("depth") or "standard")
-    fanout = body.fanout if body.fanout in ("off", "read-only") else \
-        ((proj.get("autonomy") or {}).get("fanout") or "read-only")
     limits = body.limits if body.limits is not None else \
         ((proj.get("autonomy") or {}).get("limits") or {})
     # Emit-only-when-non-default (latitude.py): `standard` is stored as null so a
@@ -770,7 +772,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
         "mode": mode,
         "preset": preset,
         "depth": depth,
-        "fanout": fanout,
         "latitude": lat,
         "limits": limits,
         "triggers": norm,
@@ -781,7 +782,6 @@ async def put_autonomy(slug: str, body: TriggersIn) -> dict:
     return {
         "autonomy": preset,
         "depth": depth,
-        "fanout": fanout,
         "latitude": lat,
         "limits": limits,
         "triggers": norm,
