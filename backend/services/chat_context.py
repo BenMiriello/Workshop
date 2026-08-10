@@ -462,8 +462,7 @@ def agent_self_preamble(
     role: str,
     scope: str,
     cwd: str,
-    tools_active: bool,
-    capabilities: list[str] | None = None,
+    tools: list[str] | None,
     triggers: list | None = None,
     mentionable: bool = False,
     delegatable: bool = False,
@@ -483,8 +482,25 @@ def agent_self_preamble(
     act; not delegatable => it genuinely does not take tickets). A constraint
     that is asserted whether or not it holds teaches a model to discount all of
     them.
+
+    WHY `capabilities` IS NOT HERE. It used to be, as a "CAPABILITIES: discord,
+    plaid, google-docs" line under a header that calls this block the enforced
+    truth — while the caller passed `mcp_servers=[]`, hardcoded. The agent was
+    being handed a list of things it had no tool for and told the list was
+    authoritative, so it would confidently agree to do them and then silently
+    could not. `capabilities` is free text an agent definition writes about
+    itself; two of masini's three are not even workshop MCP servers (only `plaid`
+    and `workshop` are installed). It stays on the agent's page as a declared
+    description, and it is not shown to the model as something it HAS. If an
+    agent should genuinely reach a server, grant it: pass `mcp_servers` at
+    start_turn, as `app_personas` does.
     """
-    caps = [c for c in (capabilities or []) if str(c).strip()]
+    # The ACTUAL grant, not a word for it. This took the tool list rather than a
+    # boolean because "TOOLS: the Claude Code toolset" was read by a triager
+    # holding Read, Grep and Glob — a sentence that promises Write and Bash to an
+    # agent that has neither. Named, the line cannot say more than was granted.
+    granted = [str(t) for t in (tools or []) if str(t).strip()]
+    tools_active = bool(granted)
     trig = [t for t in (triggers or []) if t]
     reach = []
     if mentionable:
@@ -501,12 +517,11 @@ def agent_self_preamble(
         f"WORKSPACE: {cwd}",
     ]
     lines.append(
-        "TOOLS: the Claude Code toolset, in your workspace." if tools_active
+        f"TOOLS: {', '.join(granted)} — in your workspace, and nothing else "
+        "this turn." if tools_active
         else "TOOLS: none this turn. You cannot read files, run commands, or "
              "change anything — answer from what is given below."
     )
-    if caps:
-        lines.append("CAPABILITIES: " + ", ".join(caps) + ".")
     if reach:
         lines.append("REACHED BY: " + "; ".join(reach) + ".")
 

@@ -11,16 +11,34 @@ JSON. What IS settable is the standing policy for the underspecified residue:
     standard  Decide REVERSIBLE things and record the decision as evidence.
               Block on irreversible ones, on anything outside `touches`, and on
               any hard gate. Few blocks. The default.
-    open      Pursue the goal, decide freely within the enforced floor, report
-              decisions at the end. Rare blocks.
+    open      Pursue the goal, decide freely, report decisions at the end.
+              Rare blocks.
 
 Latitude IS the block rate: the escalation loop is not a subsystem beside this
 dial, it is the dial's runtime behavior.
 
-Latitude is ADVISORY policy ABOVE the enforced floor. It never widens the floor:
-`touches` (tasks.enforce_touches) and resource grants (permissions) say what a
-run MAY write, and no latitude value overrides them. `open` does not authorize
-writing `auth/` when a grant says otherwise.
+WHAT THIS IS: PROMPT TEXT. Say it plainly, because this docstring used to say
+something else. Latitude's effect is that the resolved value is written into the
+sweep's instructions (`ralph.sh`, LATITUDE_RULE_*) and the model is asked to
+behave accordingly. It has exactly ONE machine-visible consequence anywhere:
+`project_ralph.sh` treats ralph's rc=7 — a `strict` run whose completion gate
+could not establish completeness — as a block for the operator rather than a
+retry. Everything else about latitude is persuasion, and a model that ignores it
+is not stopped by anything.
+
+It is therefore NOT a permission, and nothing enforced sits beneath it for it to
+be "above". That phrasing was here, and it was wrong twice over: `touches`
+(`tasks.enforce_touches`) is an AFTER-THE-FACT AUDIT — it runs on the committed
+diff once the run is over, so the write it names already happened and is already
+committed — and it flags strays by blocking the ticket, not by refusing the
+write. Resource grants gate the mediated Store paths and nothing the agent's own
+tools do. None of the three may be described in the UI or in a prompt as a
+boundary that stops a run mid-write, because none of them is one.
+
+Both mechanisms are worth keeping and neither is being weakened here. An audit
+that reliably catches a stray and hands it to the operator is a real, useful
+thing. It is just not a wall, and calling it one is how the operator ends up
+trusting a wall that is not there.
 
 The cascade (identical to `depth`; no new mechanism):
 

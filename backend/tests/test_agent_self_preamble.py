@@ -12,8 +12,8 @@ from services import chat_context as cc
 def _preamble(**over):
     kw = dict(
         name="Reviewer", slug="reviewer", role="reviewer", scope="workshop",
-        cwd="/home/clawd-a/workshop", tools_active=False,
-        capabilities=None, triggers=None, mentionable=False, delegatable=False,
+        cwd="/home/clawd-a/workshop", tools=None,
+        triggers=None, mentionable=False, delegatable=False,
     )
     kw.update(over)
     return cc.agent_self_preamble(**kw)
@@ -30,13 +30,38 @@ def test_states_identity_scope_and_workspace():
 
 def test_tools_line_tracks_the_run_config():
     """The one claim most likely to be false if it were written by hand."""
-    assert "TOOLS: none this turn" in _preamble(tools_active=False)
-    assert "Claim you will do something" in _preamble(tools_active=False)
+    assert "TOOLS: none this turn" in _preamble(tools=None)
+    assert "Claim you will do something" in _preamble(tools=[])
 
-    on = _preamble(tools_active=True)
-    assert "TOOLS: the Claude Code toolset" in on
+    on = _preamble(tools=["Read", "Grep", "Glob"])
     # With tools, the "you cannot act" bound is FALSE and must not be asserted.
     assert "Claim you will do something" not in on
+
+
+def test_the_tools_line_names_the_grant_rather_than_describing_it():
+    """It said "the Claude Code toolset" whatever it had actually been given.
+
+    A triager holds Read, Grep and Glob. Told it has "the Claude Code toolset",
+    it will agree to edit a file and then find it has no Edit. The line is built
+    from the same list handed to the CLI, so it cannot promise more."""
+    out = _preamble(tools=["Read", "Grep", "Glob"])
+    assert "TOOLS: Read, Grep, Glob" in out
+    assert "toolset" not in out
+    for absent in ("Write", "Edit", "Bash"):
+        assert absent not in out
+
+
+def test_capabilities_are_never_asserted_to_the_agent():
+    """`capabilities` is free text an agent writes about itself, and it was
+    rendered here under a header calling this block the enforced truth while the
+    caller passed mcp_servers=[]. masini declares discord/plaid/google-docs; only
+    plaid is even an installed MCP server. The agent must not be told it has
+    them."""
+    import inspect
+    assert "capabilities" not in inspect.signature(cc.agent_self_preamble).parameters
+    out = _preamble(tools=["Read"])
+    assert "CAPABILITIES" not in out
+    assert "discord" not in out
 
 
 def test_delegate_bound_only_when_it_holds():
@@ -56,10 +81,8 @@ def test_reach_is_derived_from_the_record():
 
 
 def test_optional_lines_are_omitted_not_empty():
-    out = _preamble(capabilities=[], triggers=[])
-    assert "CAPABILITIES:" not in out
+    out = _preamble(triggers=[])
     assert "REACHED BY:" not in out
-    assert "CAPABILITIES: consolidate." in _preamble(capabilities=["consolidate"])
 
 
 def test_scope_names_the_boundary_it_is_bounding():

@@ -717,17 +717,31 @@ def _normalize(task: dict) -> dict:
     return rec
 
 
-# --- touches: the task's fan-out boundary -----------------------------------
-# `touches` has been in the schema since v2, documented as "fan-out safety", and
-# read by NOTHING — every worker path could write anywhere regardless. It is now
-# enforced: a task that DECLARES what it writes may only cause writes matching one
-# of its globs, and a run that strays outside them blocks the task with an
-# evidence line instead of landing.
+# --- touches: an after-the-fact audit of what a run wrote --------------------
+# `touches` sat in the schema since v2, documented as "fan-out safety", and read
+# by nothing. It is now checked — but check is the honest word, and BOUNDARY is
+# not, so the section that used to be titled "the task's fan-out boundary" is
+# titled this instead.
+#
+# WHEN THIS RUNS. `project_ralph.sh` calls it after the sweep returns, against
+# the COMMITTED diff between the pre-run baseline and HEAD. By then the write has
+# happened, been staged and been committed. Nothing here refused it, because
+# nothing here was consulted while it was happening: writes to the tree go
+# through the agent's own tools inside its own subprocess, where no in-process
+# Python check can see them. The only preventive control available at that layer
+# is not granting the tool (agent_authority.tools_for_role) or denying the
+# command (agent_authority.IRREVERSIBLE_PATTERNS).
+#
+# WHAT IT DOES DO, which is worth having: it names the stray in an evidence line
+# and blocks the ticket, so a run that wandered out of its lane surfaces to the
+# operator instead of quietly landing. Detective, not preventive. Describe it
+# that way everywhere — a detective control mistaken for a preventive one is
+# worse than no control, because it is trusted for something it never does.
 #
 # touches == [] means UNRESTRICTED. That is the default and today's behavior for
-# every task in every store; the gate is opt-in per task, exactly as the field
+# every task in every store; the check is opt-in per task, exactly as the field
 # always advertised. This is not a permission system for the operator — it is a
-# task saying what it is about, and the sweep holding it to that.
+# task saying what it is about, and the sweep reporting whether that held.
 _GLOB_MAGIC = re.compile(r"[*?\[]")
 
 # Repo-relative paths named in a ticket body, e.g. "backend/services/tasks.py" or
@@ -829,8 +843,13 @@ def touches_violations(root: Path, tid: str, paths: list[str]) -> list[str]:
 def enforce_touches(root: Path, tid: str, paths: list[str], *,
                     job_id: str | None = None,
                     expect_claim_token: int | None = None) -> list[str]:
-    """Hold a run to its task's declared `touches`. Returns the violating paths
-    (empty = nothing to do).
+    """Audit what a finished run actually wrote against the task's declared
+    `touches`. Returns the violating paths (empty = nothing to do).
+
+    NOT A GATE. Called by `project_ralph.sh` after the run, on the committed
+    diff: every path passed in has already been written and committed, and this
+    function's job is to notice, not to prevent. The name is `enforce_` for the
+    ticket's state machine — it enforces the CONSEQUENCE — and not for the write.
 
     On a violation: record ONE evidence line naming what strayed and BLOCK the
     task. Blocking (not failing) is the right terminal state — the work happened

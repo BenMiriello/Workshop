@@ -62,9 +62,20 @@ export const taskAcceptanceLabel = (kind?: string): string =>
   TASK_ACCEPTANCE_LABEL[(kind ?? "") as TaskAcceptanceKind] ?? String(kind ?? "");
 
 // ---- latitude ---------------------------------------------------------------
-// What a worker may do WHERE THE TICKET DOES NOT SAY (backend services/latitude.py).
-// Not effort (that is depth) and not blast radius (that is `touches` + grants,
-// which are enforced and which latitude never widens).
+// What a worker is TOLD to do where the ticket does not say (backend
+// services/latitude.py). Not effort (that is depth).
+//
+// This is prompt text. The resolved value is written into the sweep's
+// instructions and the model is asked to behave accordingly; the one thing
+// downstream that reads it is the rule that a `strict` run whose completion gate
+// came back ambiguous blocks for the operator instead of retrying. Nothing
+// refuses a write because of a latitude value.
+//
+// This comment used to call `touches` and grants an enforced blast radius that
+// latitude could never widen. They are not that. `touches` is checked after the
+// run against the committed diff, so it flags a stray and blocks the ticket
+// rather than stopping the write. Both are worth having; neither is a wall, and
+// the copy below must not imply one.
 export type Latitude = "strict" | "standard" | "open";
 
 export const LATITUDES: Latitude[] = ["strict", "standard", "open"];
@@ -73,7 +84,7 @@ export const DEFAULT_LATITUDE: Latitude = "standard";
 const LATITUDE_DESC: Record<Latitude, string> = {
   strict: "Where the ticket does not say, ask. Blocks often.",
   standard: "Decides reversible things and records them; blocks on irreversible ones.",
-  open: "Pursues the goal, decides freely within the enforced floor, reports at the end.",
+  open: "Pursues the goal, decides freely, reports the decisions at the end.",
 };
 
 export const latitudeDesc = (v?: string): string =>

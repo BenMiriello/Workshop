@@ -40,12 +40,10 @@ import {
 import { ticketHref } from "../lib/tasks";
 
 // One Agent, one config surface. `runtime` is a field, not a separate noun.
-// This page is the definition (editable), triggers + limits, the grant set
+// This page is the definition (editable), triggers, the grant set
 // (Phase-4 scoped Store tokens, minted here via the broker), and its Job history. The
 // builder work pane (files / editor / preview / diff + chat) lives separately at
 // /agents/:slug/chat.
-
-type Limits = { max_iterations?: number; budget?: { max_wall_s?: number } };
 
 type AgentDetailData = UnifiedAgent & {
   definition?: string;
@@ -543,8 +541,8 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   const [grantsErr, setGrantsErr] = useState<string | null>(null);
   const [grantPickerOpen, setGrantPickerOpen] = useState(false);
 
-  // Draft (edit-mode). Nested triggers/limits are managed manually so dirty
-  // detection is deep, not the shallow useEditMode compare.
+  // Draft (edit-mode). Nested triggers are managed manually so dirty detection
+  // is deep, not the shallow useEditMode compare.
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [flash, setFlash] = useState(false);
@@ -554,7 +552,6 @@ function ExistingAgent({ agentId }: { agentId: string }) {
   const [dMentionable, setDMentionable] = useState(false);
   const [dDelegatable, setDDelegatable] = useState(false);
   const [dTriggers, setDTriggers] = useState<Trigger[]>([]);
-  const [dLimits, setDLimits] = useState<Limits>({});
 
   useCrumbLabel(agent?.name || null);
 
@@ -634,7 +631,6 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     setDPurpose(agent.purpose || "");
     setDBody(agent.runtime === "assistant" ? personaValue : agent.definition || "");
     setDTriggers((agent.triggers || []).map((t) => ({ ...t })));
-    setDLimits(agent.limits || { max_iterations: 20, budget: { max_wall_s: 3000 } });
     setDMentionable(!!agent.mentionable);
     setDDelegatable(!!agent.delegatable);
     setEditing(true);
@@ -653,7 +649,6 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           name: dName,
           purpose: dPurpose,
           triggers: dTriggers,
-          limits: dLimits,
           mentionable: dMentionable,
           delegatable: dDelegatable,
           definition: dBody,
@@ -764,20 +759,37 @@ function ExistingAgent({ agentId }: { agentId: string }) {
                   {agent.role === "broker" && "Mediates cross-store access; never reads the data it adjudicates."}
                 </span>
               </Row>
-              {/* What the role actually permits. Derived server-side from the
-                  write set, so the page cannot promise a grant the run does not
-                  have. Worded as the declaration it is: this is coordination,
-                  and it is not called a security boundary, because the autonomy
-                  loop still shares a uid with everything else (SEC-A1). */}
+              {/* What the role permits, derived server-side from the write set.
+                  This is coordination, not a security boundary: the autonomy
+                  loop shares a uid with everything else (SEC-A1).
+
+                  THE TOOL LIST SAYS WHERE IT APPLIES, because it does not apply
+                  everywhere. It is passed to the CLI as --allowedTools when this
+                  agent is addressed in a chat, and that grant is real. A
+                  SCHEDULED run is a different process: the sweep runner invokes
+                  `claude -p` with the inherited toolset and one narrowing, the
+                  irreversible-action deny list. Printing a bare "Tools: Read
+                  Grep Glob" over both was the page describing a restriction that
+                  half the runs did not have. Naming the surface is not softened
+                  wording; it is the actual extent of the grant. */}
               {agent.authority && (
                 <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline", marginTop: "var(--space-2)" }}>
                   <span style={{ fontSize: "var(--fs-sm)" }}>{agent.authority.describes}</span>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     {agent.authority.tools.length
-                      ? <>Tools: <code className="ws-mono">{agent.authority.tools.join(" ")}</code></>
-                      : "No tools: it cannot read or write anything directly."}
+                      ? <>Tools when addressed in a chat: <code className="ws-mono">{agent.authority.tools.join(" ")}</code></>
+                      : "No tools when addressed in a chat: it answers from what it is given."}
                   </span>
                 </Row>
+              )}
+              {/* The other surface, stated rather than left to be inferred from
+                  the absence of a sentence about it. */}
+              {agent.activation?.runs_unattended && (
+                <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", marginTop: "var(--space-2)" }}>
+                  On a scheduled run it uses the full toolset, minus the actions
+                  that cannot be undone (push, merge, publish, sudo). The role
+                  above says what it is for, not what it is prevented from doing.
+                </p>
               )}
             </Card>
           </section>
@@ -962,40 +974,19 @@ function ExistingAgent({ agentId }: { agentId: string }) {
           )}
         </section>
 
-        {/* --- Limits --- */}
-        <section>
-          <SectionLabel>Limits</SectionLabel>
-          {editing ? (
-            <Row wrap>
-              <Field label="Max iterations" htmlFor="ad-iters">
-                <Input
-                  id="ad-iters"
-                  type="number"
-                  min={1}
-                  value={dLimits.max_iterations ?? 20}
-                  onChange={(e) => setDLimits((l) => ({ ...l, max_iterations: Number(e.target.value) || 1 }))}
-                  style={{ width: "8rem" }}
-                />
-              </Field>
-              <Field label="Budget (wall seconds)" htmlFor="ad-budget">
-                <Input
-                  id="ad-budget"
-                  type="number"
-                  min={1}
-                  value={dLimits.budget?.max_wall_s ?? 3000}
-                  onChange={(e) => setDLimits((l) => ({ ...l, budget: { max_wall_s: Number(e.target.value) || 1 } }))}
-                  style={{ width: "8rem" }}
-                />
-              </Field>
-            </Row>
-          ) : (
-            <Card style={{ padding: "var(--space-3)" }}>
-              <p className="ws-card__meta">
-                max {agent.limits?.max_iterations ?? 20} iterations · budget {agent.limits?.budget?.max_wall_s ?? 3000}s
-              </p>
-            </Card>
-          )}
-        </section>
+        {/* --- Limits: REMOVED, because nothing read them. ---
+             This section offered "Max iterations" and "Budget (wall seconds)"
+             as editable numbers, persisted them to the agent's frontmatter, and
+             ended there. No executor consulted either one. A sweep's iteration
+             cap comes from RALPH_INNER_MAX_ITER in project_ralph.sh, adjusted by
+             the TICKET's effort tier; its spend bound is the usage ledger. The
+             `limits.budget` value reached only triggers.dispatch(), which has no
+             callers at all. The operator could set these dials to anything and
+             change nothing about how long an agent ran or what it cost.
+             Honoring them instead would mean inventing a per-agent budget path
+             that does not exist and that the per-ticket effort tier already
+             covers, so the control is gone rather than decorated. The real
+             bounds are shown where they actually apply. */}
 
         {/* --- Grants (Phase 4: scoped capability tokens over Stores) --- */}
         <section>

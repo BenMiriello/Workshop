@@ -9,12 +9,33 @@ behaviourally identical to each other and to no role at all.
 TWO HALVES, AND ONLY ONE OF THEM IS ENFORCEABLE IN PROCESS.
 
   * Writes we mediate (tickets, notes, learnings, verdicts) go through our own
-    Python. `may_write()` is the check those paths ask.
+    Python. `may_write()` is the check those paths ask, and it is asked wherever
+    an agent speaks in the chat (`build_streaming`, on every protocol block).
   * Writes to the TREE happen inside the agent's own `claude -p` subprocess,
     through its tools. No in-process check can see them. The only real control
     is not granting the tool in the first place, which is what `tools_for_role`
-    is for. This is why the two must ship together: a role that gates ticket
-    writes but hands out Edit is not a role, it is a label with extra steps.
+    is for.
+
+WHERE `tools_for_role` ACTUALLY APPLIES, because "the two ship together" was
+stated here as if it were universal and it is not:
+
+  * The @mention path passes it as `--allowedTools`. Real, and enforced by the
+    CLI.
+  * Scheduled runs do NOT use it, and mostly do not need it. A keeper and a
+    triager are dispatched to `memory_keeper_run.sh` / `triager_run.sh`, which
+    never spawn a tool-carrying agent at all: they call `llm_router.call_cloud`
+    with `tools_disabled=True`, so those two roles run with strictly FEWER tools
+    than this table grants them. A reviewer has no standalone runner and is never
+    dispatched. That leaves the maker sweep as the only scheduled run with tools.
+  * The maker sweep (`ralph.sh`) runs on the inherited toolset. Narrowing it to
+    this table would be theatre and is deliberately not done: `maker` includes
+    Bash, and an allowlist containing Bash restricts nothing. Its real narrowing
+    is `IRREVERSIBLE_PATTERNS` below, passed as `--disallowedTools`, which denies
+    specific commands a shell would otherwise happily run.
+
+So: for a maker, the role is a statement of purpose and the deny list is the
+control. Do not describe the role's tool list in the UI as something that binds a
+scheduled run — it does not.
 
 WHAT THIS IS NOT. It is coordination, not confinement. The autonomy loop runs as
 the same uid as everything else (verified 2026-08-04: `queue_runner.sh` runs as

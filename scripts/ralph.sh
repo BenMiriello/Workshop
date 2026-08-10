@@ -425,9 +425,14 @@ else
   log "irreversible-action gate: NOT APPLIED (agent_authority produced no patterns)"
 fi
 
-# The persona paragraph. Latitude is ADVISORY policy ABOVE the enforced floor:
-# it never widens what `touches` and the grants allow, it only says what to do
-# with the residue the ticket left unspecified.
+# The persona paragraph. Latitude is an INSTRUCTION about the residue the ticket
+# left unspecified. It is prompt text: it changes what the model is told to do,
+# and the only thing downstream that reads the value is the strict-and-ambiguous
+# block (rc=7). It is not a permission, and it does not sit "above" a floor that
+# stops anything mid-run — `touches` is audited after the commit, not before the
+# write. Do not describe either one to the model as a thing that binds it: a
+# claim the model can falsify by simply doing the thing teaches it to discount
+# every other line in this prompt.
 LATITUDE_RULE_strict="STRICT: do what the ticket says and nothing more. Where the
 ticket does not say, ASK — do not decide. Raise the question with
 \`project_tasks.py set-awaiting\` (or block the task with a specific reason) and
@@ -436,9 +441,11 @@ LATITUDE_RULE_standard="STANDARD: decide REVERSIBLE things yourself and record t
 choice as task evidence (\`project_tasks.py note\`). BLOCK on anything
 irreversible, on anything outside the task's declared \`touches\`, and on any hard
 gate."
-LATITUDE_RULE_open="OPEN: pursue the goal. Decide freely within the enforced floor
-(\`touches\` + your grants still bind you absolutely) and report the decisions you
-made at the end, in the task evidence."
+LATITUDE_RULE_open="OPEN: pursue the goal. Decide freely and report the decisions
+you made at the end, in the task evidence. Stay inside the ticket's declared
+\`touches\`: nothing stops you writing outside them, but the sweep checks the
+committed diff against them afterwards and BLOCKS the ticket if you strayed, so
+work that wanders out of its lane is work the operator has to come back to."
 LATITUDE_RULE_VAR="LATITUDE_RULE_$LATITUDE"
 RALPH_INSTRUCTIONS="$RALPH_INSTRUCTIONS
 
@@ -452,9 +459,12 @@ is no external side effect, and no third party has observed it. Adding a file is
 reversible. Adding a dependency others will install, pushing a branch, sending a
 message, deleting a store: NOT reversible.
 
-Latitude never widens the enforced floor. It is advice about decisions, not
-permission: no latitude value lets you write outside the task's \`touches\` or
-outside a grant. Those are enforced and they win."
+What \`touches\` actually is, stated plainly because you can check it: it is an
+AUDIT, not a gate. Nothing in this environment refuses a write outside the
+ticket's globs. After the run, the sweep compares the committed diff against them
+and blocks the ticket if anything strayed, with an evidence line naming the file.
+So the cost of writing out of lane is not a refusal, it is a blocked ticket and
+the operator's time. Stay in lane because that is what the ticket is about."
 GLOBAL_LEARN=$(learn_block global)
 SCOPE_LEARN=""
 if [[ -n "$LEARN_SCOPE" && "$LEARN_SCOPE" != "global" ]]; then

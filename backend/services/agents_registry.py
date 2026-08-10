@@ -102,11 +102,25 @@ SINGLETON_ROLES = ("triager", "keeper")
 
 # Role taxonomy + per-agent effort/fan-out knobs (Phase O6/O7-config). All three
 # are optional frontmatter fields with safe defaults, surfaced in the parsed
-# record and re-serialized on write. `role` TYPES an agent: it selects which
-# HANDLER the dispatcher runs for it (scripts/dispatch_triggers.sh ROLE_HANDLERS),
-# it does not change how work is assigned (assignment stays
-# `assignee=agent:<slug>`). `depth` is the effort tier a sweep runs the agent at;
-# `fanout` bounds native subagent use.
+# record and re-serialized on write.
+#
+# `role` TYPES an agent: it selects which HANDLER the dispatcher runs for it
+# (scripts/dispatch_triggers.sh ROLE_HANDLERS), it does not change how work is
+# assigned (assignment stays `assignee=agent:<slug>`). That one is live.
+#
+# `depth` and `fanout` ARE NOT. This comment used to read "`depth` is the effort
+# tier a sweep runs the agent at; `fanout` bounds native subagent use", and both
+# halves were aspirational: no executor reads either field. A sweep's effort tier
+# comes from the TICKET's `effort` (project_ralph.sh reads it to pick
+# RALPH_ITER_QUICK / _DEEP and the model tier), and nothing anywhere consults
+# `fanout` before a subagent is spawned. No agent definition in the tree declares
+# either one, so today they are parsed, echoed to the API, and dropped.
+#
+# They are kept because the ticket-level effort tier is the mechanism that works
+# and an agent-level default could route into it later. Until something reads
+# them, they must not be presented to the operator as controls that change a run.
+# The agent page does not offer them. AutonomyPanel still renders both at PROJECT
+# scope; that surface is honest only once a consumer exists.
 DEPTHS = ("quick", "standard", "deep")
 FANOUTS = ("off", "read-only")
 DEFAULT_DEPTH = "standard"
@@ -195,6 +209,33 @@ def _coerce_latitude(v: object) -> str | None:
     """Read-side: a canonical latitude, or None meaning inherit from the cascade.
     Writes go through `_validate_latitude`, which raises instead of coercing."""
     return _latitude.coerce(v)
+
+
+def _coerce_tools(v: object) -> list[str] | None:
+    """An explicit `tools:` list, or None meaning "whatever the role allows".
+
+    None and [] are DIFFERENT and the difference is the whole point. None is no
+    request, so `agent_authority.narrow_tools` hands back the role's full set;
+    [] is a definition asking for no tools at all, which it is entitled to do.
+    Collapsing them (`fm.get("tools") or []`) would silently disarm every agent
+    that simply did not mention tools.
+
+    This field was documented at two call sites as the way a definition narrows
+    its role, and was never parsed — `rec.get("tools")` was always None, so the
+    narrowing described in those comments could not happen."""
+    if not isinstance(v, list):
+        return None
+    return [str(t).strip() for t in v if str(t).strip()]
+
+
+def _coerce_model(v: object) -> str | None:
+    """A model tier or name the definition pins, or None meaning inherit.
+
+    An agent that declares a model gets it wherever it runs, instead of running
+    on whatever the composer happened to be set to when someone @mentioned it."""
+    if not isinstance(v, str):
+        return None
+    return v.strip() or None
 
 
 def _validate_latitude(v: object) -> str | None:
@@ -338,10 +379,19 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         "runtime": runtime,
         "name": fm.get("name") or slug,
         "purpose": fm.get("purpose") or "",
+        # DECLARED, not granted. `capabilities` is a free-text list an agent
+        # definition writes about itself; nothing derives a tool or an MCP server
+        # from it, and it is deliberately not shown to the model as something it
+        # HAS (see chat_context.agent_self_preamble). Echoed to the UI as the
+        # description it is.
         "capabilities": fm.get("capabilities") or [],
         "triggers": triggers.definition_triggers(fm),
         "limits": fm.get("limits") or dict(DEFAULT_LIMITS),
         "role": _coerce_role(fm.get("role")) or _role_for_runtime(runtime),
+        # May only NARROW what the role permits (agent_authority.narrow_tools).
+        # None = no request = the role's full set.
+        "tools": _coerce_tools(fm.get("tools")),
+        "model": _coerce_model(fm.get("model")),
         "mentionable": _coerce_bool(fm.get("mentionable")),
         "delegatable": _coerce_bool(fm.get("delegatable")),
         "depth": _coerce_depth(fm.get("depth")),

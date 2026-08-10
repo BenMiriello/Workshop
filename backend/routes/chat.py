@@ -1698,6 +1698,25 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     agent_denied = agent_authority.disallowed_for(
         unattended=agent_authority.is_unattended(rec.get("autonomy")))
 
+    # The agent's OWN model, when its definition pins one. An @mentioned agent
+    # used to run on whatever the composer happened to be set to, so an agent
+    # declared to run on a cheap tier answered on the expensive one and vice
+    # versa, silently, depending on a dropdown that is about the chat's
+    # assistant. The definition is the agent; the composer is the chat.
+    #
+    # Tolerant on the way in: a definition naming a model this build cannot pick
+    # falls back to the composer's rather than failing the turn, because the
+    # operator addressing an agent should get an answer, not a 400 about a file
+    # they may not have written. It is logged so the bad value is findable.
+    if rec.get("model"):
+        try:
+            declared = chat_context.normalize_model(rec.get("model"))
+            if declared:
+                model = declared
+        except ValueError as e:
+            log.warning("agent %s declares a model this build cannot pick (%s); "
+                        "using the chat's model instead", slug, e)
+
     # This agent's session IN THIS THREAD. Every mention used to spawn with no
     # session, so an agent rebuilt its preamble, definition and knowledge layers
     # from scratch each time it was addressed — the one path in the system that
@@ -1733,8 +1752,10 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
     parts = [
         chat_context.agent_self_preamble(
             name=agent["name"], slug=slug, role=role, scope=agent["scope"], cwd=cwd,
-            tools_active=tools_active,
-            capabilities=rec.get("capabilities"), triggers=rec.get("triggers"),
+            # The list itself, so the sentence the agent reads and the flag the
+            # CLI is given are literally the same value.
+            tools=agent_tools,
+            triggers=rec.get("triggers"),
             mentionable=bool(rec.get("mentionable")),
             delegatable=bool(rec.get("delegatable")),
         ),
