@@ -1842,10 +1842,36 @@ a.ws-btn { text-decoration: none; }
 .ctx-sublist { padding-left: var(--space-5); }
 .ctx-sublist .ctx-row__label { color: var(--muted); }
 
+/* A server with no tools to open onto. Same geometry as the expander so the
+   names stay in one column, but inert: no pointer, no hover, and NOT dimmed —
+   these are the broken ones, which is the opposite of the thing to fade out. */
+.ctx-expand--leaf { cursor: default; }
+.ctx-expand--leaf:hover { background: none; }
+.ctx-expand--leaf .ctx-expand__chev { width: 14px; height: 14px; }
+
+/* Why a server is broken, in the CLI's words, under the row it belongs to.
+   Wraps rather than truncates: `ENOENT: Executable not found in $PATH: "bun"`
+   is only useful whole. */
+.ctx-detail {
+  padding-left: calc(var(--space-5) + var(--space-2));
+  color: var(--muted); font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+
+/* The MCP heading carries the one-line verdict beside the label, so "3 of 8
+   not working" is legible without reading eight rows. */
+.ctx-mcp-head { display: flex; align-items: center; gap: var(--space-3); }
+.ctx-mcp-head .ws-section-label { margin: 0; }
+
+/* Rule 9's overflow case. Eight servers is where the list stops being a glance;
+   past that it scrolls rather than pushing the footer off the modal. */
+.ctx-list--scroll { max-height: 15rem; overflow-y: auto; }
+
 .ctx-foot {
   display: flex; align-items: center; justify-content: space-between;
   gap: var(--space-3); color: var(--muted); font-size: var(--text-xs);
 }
+.ctx-foot__age { margin-left: auto; }
 .ctx-foot__model { font-variant-numeric: tabular-nums; }
 .ctx-refresh {
   display: inline-flex; align-items: center; gap: var(--space-2);
