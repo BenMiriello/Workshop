@@ -78,11 +78,33 @@ def _prefs_path() -> Path:
 
 
 def _read_prefs() -> dict:
+    # OwnerUnset is caught alongside the io errors on purpose. Reading a
+    # preference is a SOFT layer in every resolution chain that consults it
+    # (routes.chat._resolve_effort / _resolve_permission_mode), so "nobody is
+    # pinned" has to mean "no preference", not an exception thrown out of the
+    # middle of a turn. Writes still fail closed: `_prefs_path()` is called
+    # outside this guard in every setter below.
     try:
         data = json.loads(_prefs_path().read_text())
         return data if isinstance(data, dict) else {}
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, ownership.OwnerUnset):
         return {}
+
+
+def _write_pref(key: str, value: object) -> None:
+    """Set (or, on None, clear) one key in prefs.json. Read-modify-write of a
+    handful of scalars written only from the settings screen; there is no
+    concurrent writer to lose an update to."""
+    prefs = _read_prefs()
+    if value is None:
+        prefs.pop(key, None)
+    else:
+        prefs[key] = value
+    p = _prefs_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(prefs, indent=2))
+    tmp.replace(p)
 
 
 def get_default_mode() -> str:
@@ -94,13 +116,80 @@ def get_default_mode() -> str:
 def set_default_mode(mode: str) -> str:
     """Persist the default for new chats. Returns the stored (clamped) value."""
     value = _clamp_mode(mode)
-    prefs = _read_prefs()
-    prefs["default_mode"] = value
-    p = _prefs_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(prefs, indent=2))
-    tmp.replace(p)
+    _write_pref("default_mode", value)
+    return value
+
+
+# ---- operator defaults for the two turn-posture controls -------------------
+# `default_mode` above is baked into a chat AT CREATION, because it says where
+# work goes and a conversation should not change its mind about that. These two
+# are different: they are consulted at RESOLUTION time, per turn, between the
+# thread's stored value and the model's own default (the chain in
+# routes.chat._resolve_effort / _resolve_permission_mode). Changing one of these
+# therefore moves every chat that never chose for itself, which is what an
+# operator asking for "my default" means — a chat that made a choice keeps it.
+
+
+def get_default_effort() -> str | None:
+    """The operator's preferred effort level, or None for "no preference".
+
+    Stored as a bare level name, NOT validated against any model here: which
+    levels exist is a per-model fact and the model isn't known until a turn
+    resolves. An unspellable value reads as no preference rather than raising, so
+    a hand-edited prefs file cannot fail a turn."""
+    from services import model_caps
+
+    v = _read_prefs().get("default_effort")
+    if not isinstance(v, str):
+        return None
+    v = v.strip()
+    return v if v in model_caps.EFFORT_LEVELS else None
+
+
+def set_default_effort(effort: str | None) -> str | None:
+    """Persist the operator's effort default. Empty/None clears it (back to the
+    model's own default). Raises ValueError on a level that isn't a level."""
+    from services import model_caps
+
+    value = (effort or "").strip() or None
+    if value is not None and value not in model_caps.EFFORT_LEVELS:
+        raise ValueError(
+            f"unknown effort {effort!r}; pick one of {list(model_caps.EFFORT_LEVELS)}")
+    _write_pref("default_effort", value)
+    return value
+
+
+def get_default_permission_mode() -> str | None:
+    """The operator's preferred permission mode, or None for "no preference".
+
+    Clamped to the modes the CHAT PICKER offers, which excludes
+    `bypassPermissions` — a preference is a chat posture, and this system does
+    not offer bypass as one (model_caps.OFFERED_MODES). The unattended paths that
+    still pass bypass pass it explicitly and never read this."""
+    from services import model_caps
+
+    v = _read_prefs().get("default_permission_mode")
+    if not isinstance(v, str):
+        return None
+    try:
+        mode = model_caps.normalize_permission_mode(v)
+    except ValueError:
+        return None
+    return mode if mode in model_caps.OFFERED_MODES else None
+
+
+def set_default_permission_mode(mode: str | None) -> str | None:
+    """Persist the operator's permission-mode default. Empty/None clears it (back
+    to model_caps.DEFAULT_PERMISSION_MODE). Raises ValueError on anything the
+    picker does not offer, bypass included."""
+    from services import model_caps
+
+    value = model_caps.normalize_permission_mode(mode)
+    if value is not None and value not in model_caps.OFFERED_MODES:
+        raise ValueError(
+            f"{value!r} is not offered as a chat default; "
+            f"pick one of {list(model_caps.OFFERED_MODES)}")
+    _write_pref("default_permission_mode", value)
     return value
 
 
@@ -564,8 +653,36 @@ def set_thread_permission_mode(thread_id: str, mode: str | None) -> dict | None:
     Plan mode is the one value a caller should think twice about storing: it is a
     ONE-TURN posture (routes.chat clears it once a plan is approved), so writing
     it here is what makes the picker show plan until that happens, not a claim
-    that the chat is permanently in plan mode."""
-    return _patch(thread_id, permission_mode=mode)
+    that the chat is permanently in plan mode.
+
+    ENTERING PLAN RECORDS WHERE THE CHAT CAME FROM. `pre_plan_permission_mode`
+    is written on the transition into plan and removed on the transition out, so
+    approving a plan can put the chat back where it was instead of on one fixed
+    landing mode. It stores the mode the chat was actually RUNNING at, resolved
+    through the operator's default — storing the raw stored value would make
+    "was following the default" and "recorded nothing" the same absent field, and
+    a chat that had never touched the control would land on the fallback instead
+    of on its own posture.
+
+    Every writer goes through here (the composer, and the CLI's own setMode
+    suggestion), so there is one transition to get right rather than one per
+    caller."""
+    from services import model_caps
+
+    # read_meta, not get_thread: this needs one meta field, and get_thread folds
+    # the whole event log to produce it.
+    current = (chat_log.read_meta(thread_id) or {}).get("permission_mode")
+    fields: dict[str, object] = {"permission_mode": mode}
+    if mode == "plan":
+        if current != "plan":
+            fields["pre_plan_permission_mode"] = (
+                current or get_default_permission_mode()
+                or model_caps.DEFAULT_PERMISSION_MODE)
+    else:
+        # Leaving plan (or a plain mode change that was never in plan): the note
+        # has been spent. None removes the field — see chat_log.patch_meta_sync.
+        fields["pre_plan_permission_mode"] = None
+    return _patch(thread_id, **fields)
 
 
 def set_thread_effort(thread_id: str, effort: str | None) -> dict | None:

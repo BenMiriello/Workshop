@@ -1569,9 +1569,17 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
     effort ladder has to change in the same paint as the model that determines
     its length."""
     from routes.chat import ENABLE_CHAT_TOOLS
-    from services import model_caps
+    from services import chat_store, model_caps
 
     tools_active, _summary = capability_for(provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
+    # The OPERATOR's defaults, folded into the declared defaults here. The
+    # composer shows the level and mode that will actually run when nothing is
+    # picked, and since the resolution chain consults these prefs below the
+    # thread (routes.chat._resolve_effort), they are part of that answer. Reading
+    # them here rather than in model_caps keeps the caps table a pure statement
+    # about vendors and models.
+    pref_effort = chat_store.get_default_effort()
+    pref_mode = chat_store.get_default_permission_mode()
     return {
         "key": provider.key,
         "label": label if label is not None else provider.label,
@@ -1579,11 +1587,11 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
         "models": list(PICKABLE_MODELS),
         "default_model": provider.default_model,
         "tools_active": tools_active,
-        "model_caps": {m: model_caps.caps_for(m) for m in PICKABLE_MODELS},
+        "model_caps": {m: model_caps.caps_for(m, pref_effort) for m in PICKABLE_MODELS},
         # Vendor-level, so it sits beside the models rather than inside each one:
         # a permission mode is a property of the CLI running the turn, not of the
         # model answering it.
-        "modes": model_caps.modes_payload(),
+        "modes": model_caps.modes_payload(pref_mode),
     }
 
 

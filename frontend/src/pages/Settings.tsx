@@ -20,13 +20,18 @@ import {
   Smartphone,
   MessageSquare,
   Link2,
+  Pencil,
 } from "lucide-react";
 import {
+  ActionBar,
   Button,
   ConfirmDialog,
   PageHeader,
+  ReadOnly,
   Segmented,
+  Select,
   StatusDot,
+  useEditMode,
   useTheme,
   usePalette,
   useResolvedMode,
@@ -39,8 +44,10 @@ import {
   type SegmentedOption,
   type ThemeMode,
 } from "../ui";
-import { chatApi } from "../lib/chat";
+import { chatApi, type ChatPrefs } from "../lib/chat";
 import { CHAT_MODES, chatModeDef, type ChatModeId } from "../components/chat/chatModes";
+import { effortLabel } from "../components/chat/effort";
+import { permissionModeDef } from "../components/chat/permissionModes";
 import { useAuth } from "../auth/AuthProvider";
 import Services from "./Services";
 import Events from "./Events";
@@ -476,66 +483,193 @@ function AppearanceSection() {
 }
 
 // ----------------------------------------------------------------------------
-// Chat — the mode a NEW chat starts in.
+// Chat — the operator's three chat defaults.
 //
-// Commits ON CHANGE: it is a preference about future chats, not a write to any
-// conversation. Existing chats keep the mode they were created with, so this can
-// never reroute work already in flight; the per-chat control in the chat toolbar
-// is what changes a conversation you are in.
+// `new chats` is baked into a chat at creation, so changing it never reroutes
+// work already in flight. `effort` and `asks before acting` are different: they
+// are consulted per turn, BELOW whatever the thread itself stored, so changing
+// one moves every chat that never picked for itself and no chat that did.
+//
+// All three commit on explicit Save. They write config (design system rule 7),
+// and a mis-click on the mode picker would put the next chat's work somewhere
+// the operator did not intend.
 // ----------------------------------------------------------------------------
 const CHAT_MODE_OPTIONS: SegmentedOption<ChatModeId>[] = CHAT_MODES.map(({ id, label, Icon }) => ({
   value: id,
   label: <><Icon size={15} strokeWidth={1.8} aria-hidden /> {label}</>,
 }));
 
+// "" is a real, chosen value here: no preference. It is what clears a default
+// back to the model's own (effort) or the platform's (permission mode).
+const NO_PREFERENCE = "";
+
+type ChatPrefsDraft = {
+  default_mode: ChatModeId;
+  default_effort: string;
+  default_permission_mode: string;
+};
+
 function ChatSection() {
-  const [mode, setMode] = useState<ChatModeId | null>(null);
+  const [prefs, setPrefs] = useState<ChatPrefs | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
     void chatApi.getChatPrefs()
-      .then((p) => { if (live) setMode(p.default_mode); })
+      .then((p) => { if (live) setPrefs(p); })
       .catch((e) => { if (live) setErr(String(e)); });
     return () => { live = false; };
   }, []);
 
-  const choose = (next: ChatModeId) => {
-    const prev = mode;
-    setMode(next);
-    setErr(null);
-    void chatApi.setChatPrefs(next).catch((e) => {
-      // Show the stored value, not the one that failed to store.
-      setMode(prev);
-      setErr(String(e));
-    });
+  const current: ChatPrefsDraft = {
+    default_mode: (prefs?.default_mode ?? "direct") as ChatModeId,
+    default_effort: prefs?.default_effort ?? NO_PREFERENCE,
+    default_permission_mode: prefs?.default_permission_mode ?? NO_PREFERENCE,
   };
+
+  const edit = useEditMode<ChatPrefsDraft>(current, async (draft) => {
+    setSaveErr(null);
+    try {
+      setPrefs(await chatApi.setChatPrefs(draft));
+    } catch (e) {
+      // Keep the stored values on screen; the draft is what failed to store.
+      setSaveErr(String(e));
+      throw e;
+    }
+  });
+
+  if (err) {
+    return (
+      <Section icon={MessageSquare} title="Chat">
+        <StateBlock
+          variant="error"
+          title="Couldn't load chat settings"
+          hint={`GET /api/chat/prefs failed: ${err}`}
+        />
+      </Section>
+    );
+  }
+  if (!prefs) {
+    return (
+      <Section icon={MessageSquare} title="Chat">
+        <Row label="new chats"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
+        <Row label="effort"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
+        <Row label="asks before acting"><Skeleton width="12rem" style={{ height: "var(--control-h)" }} /></Row>
+      </Section>
+    );
+  }
+
+  const platformMode = permissionModeDef(prefs.platform_permission_mode).label;
+  // What the hints describe: the draft while editing, the stored values while
+  // not. A hint that keeps describing the old value during an edit is a caption
+  // for a control that has already moved.
+  const shown = edit.editing ? edit.draft : current;
 
   return (
     <Section icon={MessageSquare} title="Chat">
-      <Row label="new chats">
-        {err ? (
-          <StateBlock
-            variant="error"
-            title="Couldn't load chat settings"
-            hint={`GET /api/chat/prefs failed: ${err}`}
-          />
-        ) : mode === null ? (
-          <Skeleton width="12rem" style={{ height: "var(--control-h)" }} />
-        ) : (
+      <Row
+        label="new chats"
+        // The hint follows what is SELECTED, so it explains the choice being
+        // made rather than the one being replaced.
+        hint={`${chatModeDef(shown.default_mode).title} Existing chats keep the mode they were started in.`}
+      >
+        {edit.editing ? (
           <Segmented
             options={CHAT_MODE_OPTIONS}
-            value={mode}
-            onChange={choose}
+            value={edit.draft.default_mode}
+            onChange={(v) => edit.set("default_mode", v)}
             ariaLabel="Mode for new chats"
+          />
+        ) : (
+          <ReadOnly value={chatModeDef(current.default_mode).label} />
+        )}
+      </Row>
+
+      <Row
+        label="effort"
+        hint="How hard the model works on a turn, for any chat that hasn't picked its own. A level the chosen model doesn't offer falls back to that model's default."
+      >
+        {edit.editing ? (
+          <Select
+            value={edit.draft.default_effort}
+            onChange={(e) => edit.set("default_effort", e.target.value)}
+            aria-label="Default effort"
+          >
+            <option value={NO_PREFERENCE}>Model default</option>
+            {prefs.efforts.map((level) => (
+              <option key={level} value={level}>{effortLabel(level)}</option>
+            ))}
+          </Select>
+        ) : (
+          <ReadOnly
+            value={current.default_effort ? effortLabel(current.default_effort) : "Model default"}
           />
         )}
       </Row>
-      <Row label="">
-        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-          {chatModeDef(mode ?? undefined).title} Existing chats keep the mode they were started in.
-        </span>
+
+      <Row
+        label="asks before acting"
+        hint={
+          shown.default_permission_mode
+            ? permissionModeDef(shown.default_permission_mode).hint
+            : `Chats that haven't picked run at ${platformMode}: ` +
+              `${permissionModeDef(prefs.platform_permission_mode).hint}`
+        }
+      >
+        {edit.editing ? (
+          <Select
+            value={edit.draft.default_permission_mode}
+            onChange={(e) => edit.set("default_permission_mode", e.target.value)}
+            aria-label="Default permission mode"
+          >
+            <option value={NO_PREFERENCE}>{`System default (${platformMode})`}</option>
+            {prefs.permission_modes.map((id) => (
+              <option key={id} value={id}>{permissionModeDef(id).label}</option>
+            ))}
+          </Select>
+        ) : (
+          <ReadOnly
+            value={
+              current.default_permission_mode
+                ? permissionModeDef(current.default_permission_mode).label
+                : `System default (${platformMode})`
+            }
+          />
+        )}
       </Row>
+
+      {saveErr && (
+        <StateBlock
+          variant="error"
+          title="Couldn't save chat settings"
+          hint={`POST /api/chat/prefs failed: ${saveErr}`}
+        />
+      )}
+
+      {/* Direct children of the card, not a Row: the action bar is sticky and
+          full width, and a label-beside-value grid cell is neither. */}
+      {edit.editing ? (
+        <ActionBar flash={edit.flash ? "Saved" : undefined}>
+          <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
+          <Button
+            variant="primary"
+            // The rejection is already surfaced as `saveErr`; swallowing it here
+            // keeps a failed save from becoming an unhandled rejection.
+            onClick={() => { void edit.save().catch(() => {}); }}
+            loading={edit.saving}
+            disabled={!edit.dirty}
+          >
+            Save
+          </Button>
+        </ActionBar>
+      ) : (
+        <div style={{ paddingTop: "var(--space-3)" }}>
+          <Button size="sm" variant="ghost" onClick={edit.begin}>
+            <Pencil aria-hidden /> Edit
+          </Button>
+        </div>
+      )}
     </Section>
   );
 }

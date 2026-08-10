@@ -94,10 +94,19 @@ DEFAULT_PERMISSION_MODE = "auto"
 NEEDS_APPROVAL_CHANNEL = tuple(m for m in PERMISSION_MODES if m != "bypassPermissions")
 
 
-def modes_payload() -> dict:
+def modes_payload(operator_default: str | None = None) -> dict:
     """What the picker renders. Offers only what a chat may choose, so the UI
-    cannot show the operator a mode this system has decided not to offer."""
-    return {"options": list(OFFERED_MODES), "default": DEFAULT_PERMISSION_MODE}
+    cannot show the operator a mode this system has decided not to offer.
+
+    `operator_default` is the operator's own preference (chat_store prefs), which
+    is the mode a chat with no stored choice ACTUALLY runs at. The picker shows
+    the mode in force, so it has to be told which one that is; passing None means
+    nobody has a preference and the platform default is in force. Anything not on
+    offer is ignored rather than displayed as a choice the picker cannot make."""
+    default = DEFAULT_PERMISSION_MODE
+    if operator_default in OFFERED_MODES:
+        default = operator_default
+    return {"options": list(OFFERED_MODES), "default": default}
 
 
 def normalize_permission_mode(value: str | None) -> str | None:
@@ -140,14 +149,23 @@ def default_effort_for(model: str | None) -> str | None:
     return DEFAULT_EFFORT if DEFAULT_EFFORT in levels else levels[-1]
 
 
-def caps_for(model: str | None) -> dict:
+def caps_for(model: str | None, operator_default_effort: str | None = None) -> dict:
     """The capability descriptor the composer renders from. `modes` is absent
-    until the approval channel exists to make a non-bypass mode work; a picker
-    over modes we can't honour would be a lie in the shape of a control."""
+    because a permission mode is a property of the CLI, not of the model; it
+    rides on the provider entry beside the models instead.
+
+    `efforts.default` is WHAT WILL RUN when nothing is picked, not a fact about
+    the model in isolation — so the operator's preference displaces the model's
+    own where the model has that rung. A preference this model has no rung for
+    falls back to the model's default rather than showing a level the turn would
+    drop."""
     levels = efforts_for(model)
+    default = default_effort_for(model)
+    if operator_default_effort and operator_default_effort in levels:
+        default = operator_default_effort
     return {
         "vendor": VENDOR,
-        "efforts": {"levels": list(levels), "default": default_effort_for(model)},
+        "efforts": {"levels": list(levels), "default": default},
     }
 
 

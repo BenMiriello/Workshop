@@ -1,9 +1,11 @@
 # Chat effort and mode: design plan
 
 Status: **built**, 2026-08-09. P1 (effort) shipped in `1584843`; the approval
-channel and the mode picker followed in the same session. What was built differs
-from this plan in three places, recorded in §11 rather than quietly edited into
-the sections above.
+channel and the mode picker followed in the same session. P4's leftovers — the
+operator-pref tier in §4/§6, the per-agent frontmatter in §7, and plan mode
+reverting to the PREVIOUS mode rather than a fixed one — landed 2026-08-10.
+What was built differs from this plan in three places, recorded in §11 rather
+than quietly edited into the sections above.
 
 Adds two per-chat controls under the composer, to the left of the model picker:
 an **effort** ladder and a **mode** selector. Both are vendor-declared, not
@@ -367,13 +369,39 @@ exercised end to end: in `bypassPermissions` nothing ever asks, so every line of
 it would have been untested until the next phase. They went in together so the
 path could be verified as a path.
 
-**There is no `allow_bypass` opt-in toggle.** The plan proposed gating Bypass
-behind a preference, mirroring the vendor's desktop app. But bypass is what every
-chat in this system has always run at, so a gate would not be protecting the
-operator from a new capability; it would be a confirmation prompt in front of the
-status quo, on a single-operator system whose own conventions forbid exactly that
-(`CLAUDE.md`, "no defensive cruft for single-user setups"). Bypass is in the menu,
-in the danger tone, as the default.
+**There is no `allow_bypass` opt-in toggle, and Bypass is not in the menu at
+all.** This landed in two steps on 2026-08-09 and the second one reversed the
+first, so both are recorded here.
+
+The first decision was to drop the gate the plan proposed (§6: "Bypass appears in
+the menu only when `allow_bypass` is set in prefs"). Bypass was what every chat in
+this system had always run at, so a preference in front of it would not have been
+protecting the operator from a new capability; it would have been a confirmation
+prompt in front of the status quo, on a single-operator system whose own
+conventions forbid exactly that (`CLAUDE.md`, "no defensive cruft for single-user
+setups"). Bypass shipped in the menu, in the danger tone, as the default.
+
+The operator then instructed that this system should not offer Bypass at all —
+it is `--dangerously-skip-permissions`, and the approval channel that shipped in
+the same session is precisely what makes a mode that can stop and ask usable in
+a chat. So:
+
+- `bypassPermissions` was removed from the picker (`model_caps.OFFERED_MODES`).
+  It stays in `PERMISSION_MODES` as a valid VALUE, because the unattended paths
+  pass it explicitly — job runners, sweeps and the voice worker have no operator
+  to ask, and for them a mode that can stop and ask is not "safer", it is a turn
+  that auto-denies everything and reports success. A chat that had chosen Bypass
+  before it was withdrawn still loads and still renders under its own name
+  (`permissionModes.ts` keeps the entry the picker no longer lists).
+- The default is now **`auto`** (`model_caps.DEFAULT_PERMISSION_MODE`):
+  everything, with background safety checks. Measured the same day with the
+  approval channel live, `auto` approved a read-only `ls` by classifier and
+  asked once about a file write.
+
+With no Bypass to gate, `allow_bypass` has nothing left to do, and it was never
+built. The prefs file carries `default_mode`, `default_effort` and
+`default_permission_mode` — the last two being the operator-pref tier §4 asks
+for, added 2026-08-10 — and no bypass flag.
 
 **No shared `cardKit` was extracted.** The plan proposed lifting `CardField` and
 `ActionButtons` out of `UiCard.tsx` for the approval block to reuse. On reading

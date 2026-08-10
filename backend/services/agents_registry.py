@@ -37,6 +37,7 @@ identified authoritatively by membership in the channel-agent map.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -47,6 +48,8 @@ import yaml
 from services import triggers
 from services import build_agents as _build_agents
 from services import latitude as _latitude
+
+log = logging.getLogger("workshop.agents_registry")
 
 WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
 USER_AGENTS_DIR = Path(os.environ.get(
@@ -238,6 +241,57 @@ def _coerce_model(v: object) -> str | None:
     return v.strip() or None
 
 
+def _coerce_effort(v: object, slug: str = "") -> str | None:
+    """An effort level the definition pins, or None meaning inherit the chat's.
+
+    Validated here against the vendor's ladder (`model_caps.EFFORT_LEVELS`), not
+    against a model: which rungs a model has is a fact about the turn, and the
+    model an agent runs on can differ from the one the chat is set to. The
+    per-model check happens at the turn site, where the model is finally known.
+
+    A junk value reads as "declared nothing" and is logged, rather than raising:
+    an operator addressing an agent should get an answer, not a stack trace about
+    a definition file."""
+    from services import model_caps
+
+    if not isinstance(v, str) or not v.strip():
+        return None
+    level = v.strip()
+    if level not in model_caps.EFFORT_LEVELS:
+        log.warning("agent %s declares effort %r, which is not a level (%s); ignoring",
+                    slug or "?", v, list(model_caps.EFFORT_LEVELS))
+        return None
+    return level
+
+
+def _coerce_permission_mode(v: object, slug: str = "") -> str | None:
+    """A permission mode the definition pins, or None meaning inherit the chat's.
+
+    Validated against `model_caps.OFFERED_MODES`, NOT the full mode list: a
+    mention runs inside a chat, and `bypassPermissions` is not a posture this
+    system offers a chat (operator instruction, 2026-08-09). The unattended paths
+    that legitimately need bypass pass it explicitly and do not read frontmatter.
+    The point of the field is an agent being MORE careful than the chat it is
+    speaking in, not less.
+
+    Junk (bypass included) is logged and ignored, for the same reason as
+    `_coerce_effort`."""
+    from services import model_caps
+
+    if not isinstance(v, str) or not v.strip():
+        return None
+    try:
+        mode = model_caps.normalize_permission_mode(v)
+    except ValueError:
+        mode = None
+    if mode is None or mode not in model_caps.OFFERED_MODES:
+        log.warning("agent %s declares permission_mode %r, which a chat may not "
+                    "choose (%s); ignoring", slug or "?", v,
+                    list(model_caps.OFFERED_MODES))
+        return None
+    return mode
+
+
 def _validate_latitude(v: object) -> str | None:
     """Write-side: raises ValueError on an unknown latitude so create/update
     surface a 400 rather than writing a value no sweep will honor."""
@@ -392,6 +446,12 @@ def _record_from_def(path: Path, scope: str, project_slug: str | None = None) ->
         # None = no request = the role's full set.
         "tools": _coerce_tools(fm.get("tools")),
         "model": _coerce_model(fm.get("model")),
+        # The agent's own TURN POSTURE, read the same way its model is: what it
+        # declares wins over the chat it is speaking in, so a reviewer can be
+        # careful inside a conversation that is otherwise on Auto. None (the
+        # normal case) changes nothing — the chat's own resolution stands.
+        "effort": _coerce_effort(fm.get("effort"), slug),
+        "permission_mode": _coerce_permission_mode(fm.get("permission_mode"), slug),
         "mentionable": _coerce_bool(fm.get("mentionable")),
         "delegatable": _coerce_bool(fm.get("delegatable")),
         "depth": _coerce_depth(fm.get("depth")),

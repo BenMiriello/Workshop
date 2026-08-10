@@ -48,6 +48,55 @@ class TestPrefs:
         assert client.get("/chat/prefs").json()["default_mode"] == "direct"
 
 
+class TestTurnPostureDefaults:
+    """The other two prefs: the effort and permission mode a chat resolves
+    through when it never picked for itself. Unlike `default_mode` these are NOT
+    baked in at creation — they are consulted per turn, so the settings screen
+    needs to be able to set them and to clear them again."""
+
+    def test_no_preference_is_reported_as_null(self, client):
+        p = client.get("/chat/prefs").json()
+        assert p["default_effort"] is None
+        assert p["default_permission_mode"] is None
+
+    def test_the_choices_are_named_by_the_server(self, client):
+        p = client.get("/chat/prefs").json()
+        assert p["efforts"] == ["low", "medium", "high", "xhigh", "max"]
+        # Bypass is not on offer, so it cannot be defaulted to either.
+        assert "bypassPermissions" not in p["permission_modes"]
+        assert p["platform_permission_mode"] == "auto"
+
+    def test_setting_them_sticks(self, client):
+        r = client.post("/chat/prefs",
+                        json={"default_effort": "max", "default_permission_mode": "plan"})
+        assert r.status_code == 200
+        p = client.get("/chat/prefs").json()
+        assert p["default_effort"] == "max"
+        assert p["default_permission_mode"] == "plan"
+
+    def test_an_empty_string_clears_one(self, client):
+        client.post("/chat/prefs", json={"default_effort": "max"})
+        client.post("/chat/prefs", json={"default_effort": ""})
+        assert client.get("/chat/prefs").json()["default_effort"] is None
+
+    def test_a_field_that_is_not_sent_is_left_alone(self, client):
+        """The settings screen must be able to save one control without echoing
+        the others back — otherwise every save races the others."""
+        client.post("/chat/prefs", json={"default_effort": "low"})
+        client.post("/chat/prefs", json={"default_mode": "orchestrated"})
+        p = client.get("/chat/prefs").json()
+        assert p["default_effort"] == "low"
+        assert p["default_mode"] == "orchestrated"
+
+    def test_junk_is_refused(self, client):
+        assert client.post("/chat/prefs", json={"default_effort": "ultra"}).status_code == 400
+        assert client.post(
+            "/chat/prefs", json={"default_permission_mode": "bypassPermissions"}).status_code == 400
+        p = client.get("/chat/prefs").json()
+        assert p["default_effort"] is None
+        assert p["default_permission_mode"] is None
+
+
 class TestCreateWithMode:
     def test_a_new_chat_follows_the_default(self, client):
         client.post("/chat/prefs", json={"default_mode": "orchestrated"})

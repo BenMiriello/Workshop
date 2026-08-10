@@ -294,6 +294,27 @@ export type ModelCaps = {
   efforts: { levels: string[]; default: string | null };
 };
 
+// Operator-level chat settings (GET/POST /api/chat/prefs). `null` on either
+// default means "no preference": the model's own effort, and the platform's
+// permission mode (`platform_permission_mode`, shown so the settings screen can
+// name what "no preference" resolves to instead of leaving it blank).
+export type ChatPrefs = {
+  default_mode: "direct" | "orchestrated";
+  modes: string[];
+  default_effort: string | null;
+  efforts: string[];
+  default_permission_mode: string | null;
+  permission_modes: string[];
+  platform_permission_mode: string;
+};
+
+// Write shape: every field optional, `""` clears one to "no preference".
+export type ChatPrefsPatch = {
+  default_mode?: "direct" | "orchestrated";
+  default_effort?: string;
+  default_permission_mode?: string;
+};
+
 export type Provider = {
   key: string;
   label: string;
@@ -351,18 +372,26 @@ export const chatApi = {
       body: JSON.stringify({ context_key: contextKey, title, ...(mode ? { mode } : {}) }),
     }).then(j<Thread>),
 
-  // Operator-level chat settings. One field: the mode a NEW chat starts in.
-  // Existing chats keep the mode they were created with, so this never rewrites
-  // a conversation in flight.
-  getChatPrefs: () =>
-    fetch(`/api/chat/prefs`).then(j<{ default_mode: "direct" | "orchestrated"; modes: string[] }>),
+  // Operator-level chat settings.
+  //
+  // `default_mode` is baked into a chat AT CREATION, so changing it never
+  // rewrites a conversation in flight. The other two are consulted per turn,
+  // BELOW the thread's own stored value — so they move every chat that never
+  // picked for itself, and no chat that did.
+  //
+  // The CHOICES are served, never assumed here: which permission modes a chat
+  // may pick is the backend's decision (bypass is not among them) and the effort
+  // ladder is the vendor's.
+  getChatPrefs: () => fetch(`/api/chat/prefs`).then(j<ChatPrefs>),
 
-  setChatPrefs: (defaultMode: "direct" | "orchestrated") =>
+  // Only the fields passed are written. `""` clears a default back to "no
+  // preference"; omitting a field leaves it alone.
+  setChatPrefs: (patch: ChatPrefsPatch) =>
     fetch(`/api/chat/prefs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ default_mode: defaultMode }),
-    }).then(j<{ default_mode: "direct" | "orchestrated" }>),
+      body: JSON.stringify(patch),
+    }).then(j<ChatPrefs>),
 
   // The thread's SETTINGS: title, model, mode, card states, scope. Called once
   // when a chat opens and after a write that changes one of them.
