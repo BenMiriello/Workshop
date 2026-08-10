@@ -166,6 +166,27 @@ function TicketsTab() {
     [refresh],
   );
 
+  // Work the system proposed and nobody has agreed to yet. A draft is never
+  // picked up by a sweep and cannot be run, so if it is not surfaced it is
+  // simply lost — which is the failure the approval gate would otherwise cause
+  // rather than prevent. Hidden once the operator is already looking at drafts.
+  const draftCount = tasks.filter((t) => t.status === "draft").length;
+  const draftStrip = draftCount > 0 && status !== "draft" ? (
+    <Card>
+      <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
+        <StatusDot status="warn">
+          {draftCount} proposed {draftCount === 1 ? "ticket is" : "tickets are"} waiting for you
+        </StatusDot>
+        <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+          Nothing runs them until you approve.
+        </span>
+        <Button size="sm" variant="ghost" onClick={() => setStatus("draft")}>
+          Review {draftCount === 1 ? "it" : "them"}
+        </Button>
+      </Row>
+    </Card>
+  ) : null;
+
   const filterBar = (
     <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
       <Field label="Status" inline>
@@ -261,6 +282,7 @@ function TicketsTab() {
       {notice && (
         <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>{notice}</p>
       )}
+      {draftStrip && <div style={{ marginBottom: "var(--space-3)" }}>{draftStrip}</div>}
       <div style={{ marginBottom: "var(--space-4)" }}>{filterBar}</div>
       {/* Whether anything will pick these up on its own. A ticket filed to a
           project scope is picked up by nothing today, and the list of them
