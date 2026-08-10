@@ -46,8 +46,24 @@ if [ "${1:-}" = "--deferred" ]; then
   max_wait="${2:-21600}"
   self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
   turns="$REPO_ROOT/.runtime/turns"
+  chat="$REPO_ROOT/.runtime/users"
+  # THE CHILD EXITING IS NOT THE REPLY LANDING.
+  #
+  # A turn's claude process writes its last line and exits; the BACKEND then
+  # folds the result and appends the assistant message. That gap is short, and
+  # restarting inside it kills the commit: the process is already gone, so the
+  # pid check says "no turn running", the backend dies before the append, and
+  # the reply exists nowhere. On 2026-08-09 that destroyed a long reply
+  # outright, and from the chat it read as the assistant never answering at all.
+  #
+  # So there are two waits. First for the process, then for the commit: a thread
+  # holds `active_run_id` in its meta from the moment a run is claimed until the
+  # moment its reply is committed, which is exactly the window that must be
+  # clear. The second wait is bounded, because a crashed run can leave the field
+  # set until the next startup reconcile and must not park a restarter forever.
+  commit_grace=180
   setsid bash -c '
-    self="$1"; turns="$2"; max="$3"; waited=0
+    self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; waited=0
     turn_live() {
       [ -d "$turns" ] || return 1
       for meta in "$turns"/*/meta.json; do
@@ -58,10 +74,17 @@ if [ "${1:-}" = "--deferred" ]; then
       done
       return 1
     }
+    commit_pending() {
+      [ -d "$chat" ] || return 1
+      grep -rlq "\"active_run_id\": *\"[0-9a-f-]" "$chat"/*/chat/*/meta.json 2>/dev/null
+    }
     while turn_live && [ "$waited" -lt "$max" ]; do sleep 3; waited=$((waited+3)); done
+    settled=0
+    while commit_pending && [ "$settled" -lt "$grace" ]; do sleep 2; settled=$((settled+2)); done
+    [ "$settled" -ge "$grace" ] && echo "warn: a run still held its thread after ${grace}s; restarting anyway"
     sleep 1
     bash "$self"
-  ' _ "$self" "$turns" "$max_wait" >>/tmp/workshop-backend.log 2>&1 </dev/null &
+  ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" >>/tmp/workshop-backend.log 2>&1 </dev/null &
   disown || true
   echo "Backend restart armed: it fires as soon as the running turn finishes (waiting up to ${max_wait}s)."
   exit 0
@@ -95,6 +118,16 @@ if [ "${1:-}" != "--force" ] && [ -d "$turns_dir" ]; then
     echo "Wait for it to finish, or use:" >&2
     echo "  scripts/restart_backend.sh --deferred   # restart after the reply lands" >&2
     echo "  scripts/restart_backend.sh --force      # restart anyway" >&2
+    exit 2
+  fi
+  # And refuse during the COMMIT window, which the pid check above cannot see:
+  # the child is gone, the backend is still assembling and appending the reply.
+  # Restarting here loses the reply outright rather than rewinding it.
+  holder="$(grep -rl '"active_run_id": *"[0-9a-f-]' "$REPO_ROOT"/.runtime/users/*/chat/*/meta.json 2>/dev/null | head -1)"
+  if [ -n "$holder" ]; then
+    echo "REFUSING: a run still holds its thread, so its reply is not committed yet." >&2
+    echo "  $holder" >&2
+    echo "Restarting now would lose that reply. Use --deferred, which waits for it." >&2
     exit 2
   fi
 fi
