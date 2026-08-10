@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Keep the BirdNET analyzer service AND the Workshop backend up while testing.
 # Checks health every 15s and restarts whichever is down. The permanent fix is
-# the systemd units (Restart=always) in birdnet/analyzer/ and for the backend;
+# the systemd units (Restart=always) in apps/birds/analyzer/ and for the backend;
 # this is the no-sudo stand-in for live testing.
 #
-#   nohup birdnet/analyzer/watchdog.sh > /tmp/birdnet-watchdog.log 2>&1 &
+#   nohup apps/birds/analyzer/watchdog.sh > /tmp/birdnet-watchdog.log 2>&1 &
 set -u
 
 PIDFILE=/tmp/birdnet-watchdog.pid
@@ -15,8 +15,9 @@ fi
 echo $$ > "$PIDFILE"
 trap 'rm -f "$PIDFILE"' EXIT
 
-ANALYZER_DIR=/home/clawd-a/workshop/birdnet/analyzer
-BACKEND_DIR=/home/clawd-a/workshop/backend
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+ANALYZER_DIR="$WORKSHOP/apps/birds/analyzer"
+BACKEND_DIR="$WORKSHOP/backend"
 LOG() { echo "[$(date '+%F %T')] $*"; }
 
 # Capture the backend's service env once, so a restart preserves it.
@@ -28,9 +29,8 @@ KEY=""
 # finance routes lose their auth + creds. (Previously the watchdog preserved only
 # WORKSHOP_511_API_KEY, so every restart silently degraded those subsystems.)
 ENV_FILES=(
-  /home/clawd-a/.config/workshop/secrets.env
-  /home/clawd-a/.config/clawdbot/health-auth.env
-  /home/clawd-a/.config/clawdbot/owntracks-auth.env
+  "${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"
+  "${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/instance.env"
 )
 [ -n "$KEY" ] && export WORKSHOP_511_API_KEY="$KEY"
 for f in "${ENV_FILES[@]}"; do

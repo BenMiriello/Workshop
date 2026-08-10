@@ -70,7 +70,7 @@ realtime:
     # bounds how long voice-capable audio survives on disk.
     export:
       enabled: true
-      path: /home/clawd-a/birdnet/clips
+      path: ${BIRDNET_CLIPS}
       type: wav            # wav keeps detection-fidelity; mp3 would hurt re-analysis
       bitrate: 192k
 
@@ -85,7 +85,7 @@ realtime:
 output:
   sqlite:
     enabled: true
-    path: /home/clawd-a/birdnet/data/birdnet.db
+    path: ${BIRDNET_DB}
   mysql:
     enabled: false
 

@@ -4,8 +4,8 @@ Raw BirdNET is eager: out of the box it will tag birds that cannot possibly be
 where you are, and it will announce a species off a single 3-second blip. The
 Birds app layers four filters over the model so the detections it keeps are
 trustworthy. This doc is the rationale + the knobs; the code lives in
-`backend/services/birds_analyze.py`, `birdnet/analyzer/service.py`, and (for the
-always-on yard Pi) `birdnet/brain/config.yaml`.
+`backend/services/birds_analyze.py`, `apps/birds/analyzer/service.py`, and (for the
+always-on yard Pi) `apps/birds/brain/config.yaml`.
 
 ## The four layers
 
@@ -91,7 +91,7 @@ Endpoints: `/suggestions`, `/new-count`, `/confirm`, `/reject`,
 
 ## The always-on yard Pi (BirdNET-Go)
 
-`birdnet/brain/config.yaml` carries the equivalent settings for the production
+`apps/birds/brain/config.yaml` carries the equivalent settings for the production
 path: `birdnet.threshold: 0.65`, `rangefilter.threshold: 0.01`, `overlap: 2.0`
 (deep detection — required hits = `max(1, 3 / max(0.1, 3.0 - overlap))` ≈ 3), and
 `realtime.dynamicthreshold` for per-species recent-history-aware thresholds.

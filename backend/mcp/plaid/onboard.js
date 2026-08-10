@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Plaid Hosted Link onboarding for masini.
+// Plaid Hosted Link onboarding.
 //
 // Usage:
 //   node onboard.js create               -> creates link_token, prints hosted URL + link_token
@@ -8,17 +8,23 @@
 //   node onboard.js remove <item_id>     -> remove a connected institution
 //   node onboard.js rotate <item_id>     -> invalidate + replace the access_token (incident response)
 //
-// Reads Plaid credentials from /home/clawd-a/.config/clawdbot/plaid-auth.env
-// Persists access_tokens to /home/clawd-a/.config/clawdbot/plaid-tokens.json (mode 600).
+// Reads Plaid credentials from $WORKSHOP_CONFIG_DIR/plaid-auth.env
+// Persists access_tokens to $WORKSHOP_CONFIG_DIR/plaid-tokens.json (mode 600).
 
 import { Configuration, PlaidApi, PlaidEnvironments, Products, CountryCode } from "plaid";
 import { config as dotenvConfig } from "dotenv";
 import { readFileSync, writeFileSync, existsSync, chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import path from "node:path";
+import os from "node:os";
 
-dotenvConfig({ path: "/home/clawd-a/.config/clawdbot/plaid-auth.env" });
+const CONFIG_DIR = process.env.WORKSHOP_CONFIG_DIR
+  || path.join(os.homedir(), ".config", "workshop");
 
-const TOKENS_PATH = "/home/clawd-a/.config/clawdbot/plaid-tokens.json";
+
+dotenvConfig({ path: path.join(CONFIG_DIR, "plaid-auth.env") });
+
+const TOKENS_PATH = path.join(CONFIG_DIR, "plaid-tokens.json");
 
 function plaidClient() {
   const env = process.env.PLAID_ENV || "production";
@@ -47,8 +53,8 @@ function saveTokens(tokens) {
 async function cmdCreate() {
   const client = plaidClient();
   const resp = await client.linkTokenCreate({
-    user: { client_user_id: "benmiriello" },
-    client_name: "masini",
+    user: { client_user_id: process.env.WORKSHOP_PLAID_USER_ID || "workshop" },
+    client_name: process.env.WORKSHOP_PLAID_CLIENT_NAME || "Workshop",
     products: [Products.Transactions, Products.Investments],
     country_codes: [CountryCode.Us],
     language: "en",
@@ -121,7 +127,7 @@ async function cmdComplete(linkToken, label) {
     item_id: itemId,
     institution: institutionName,
     tokens_file: TOKENS_PATH,
-    next: "Restart masini-bot to load the new token: XDG_RUNTIME_DIR=/run/user/1003 systemctl --user restart masini-bot.service",
+    next: "Restart the backend to load the new token: systemctl --user restart workshop-backend.service",
   }, null, 2));
 }
 
@@ -185,7 +191,7 @@ async function cmdRotate(itemId) {
   console.log(JSON.stringify({
     ok: true,
     rotated,
-    note: "Old access_token(s) invalidated; new ones saved (mode 0600). Restart masini-bot to reload: XDG_RUNTIME_DIR=/run/user/1003 systemctl --user restart masini-bot.service",
+    note: "Old access_token(s) invalidated; new ones saved (mode 0600). Restart the backend to reload: systemctl --user restart workshop-backend.service",
   }, null, 2));
 }
 

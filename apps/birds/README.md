@@ -86,7 +86,7 @@ Pending hardware (tomorrow):
 
 ```bash
 # Seed a fixture BirdNET-Go DB (matches the real GORM schema):
-backend/.venv/bin/python3 birdnet/publish/seed_fixture_db.py
+backend/.venv/bin/python3 apps/birds/publish/seed_fixture_db.py
 
 # Exercise the API:
 curl -s localhost:8000/birds/summary
@@ -97,7 +97,7 @@ curl -s -X POST localhost:8000/birds/webhook -H 'content-type: application/json'
   -d '{"scientific_name":"Cardinalis cardinalis","common_name":"Northern Cardinal","confidence":0.9,"date":"2026-06-06","time":"07:01:00"}'
 
 # Produce + sanity-check the sanitized public dataset (no push):
-DRY_RUN=1 birdnet/publish/publish.sh
+DRY_RUN=1 apps/birds/publish/publish.sh
 
 # Private UI: open the Workshop frontend -> Apps -> Yard Birds (/apps/birds).
 ```

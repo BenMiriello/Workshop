@@ -16,7 +16,8 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT="${BIRDS_PUBLIC_OUT:-/home/clawd-a/workshop/.runtime/birds-public.json}"
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+OUT="${BIRDS_PUBLIC_OUT:-$WORKSHOP/.runtime/birds-public.json}"
 BACKEND="${WORKSHOP_BACKEND:-http://127.0.0.1:8000}"
 
 # Cloudflare config (R2). Fill cloudflare.env from cloudflare.env.example.

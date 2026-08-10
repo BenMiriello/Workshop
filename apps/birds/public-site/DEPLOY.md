@@ -12,7 +12,7 @@ leak audio, clips, or coordinates.
 npx wrangler r2 bucket create yard-birds-public
 
 # 2. Create the Pages project (first deploy also creates it).
-cd birdnet/public-site
+cd apps/birds/public-site
 npx wrangler pages project create yard-birds --production-branch main
 
 # 3. Bind the bucket to the Pages project so the Function can read it:
@@ -23,7 +23,7 @@ npx wrangler pages project create yard-birds --production-branch main
 ## Deploy
 
 ```bash
-cd birdnet/public-site
+cd apps/birds/public-site
 npx wrangler pages deploy . --project-name yard-birds
 ```
 
@@ -45,9 +45,9 @@ public page /birds-public.json  ->  index.html renders it
 ## Local preview
 
 ```bash
-cd birdnet/public-site
+cd apps/birds/public-site
 # point the page at a locally-produced sanitized file:
-cp /home/clawd-a/workshop/.runtime/birds-public.json ./birds-public.json
+cp "$WORKSHOP/.runtime/birds-public.json" ./birds-public.json
 python3 -m http.server 8088
 # open http://localhost:8088/?src=./birds-public.json
 ```

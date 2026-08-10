@@ -16,9 +16,9 @@ After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/clawd-a/workshop/birdnet/analyzer
+WorkingDirectory=@WORKSHOP_ROOT@/apps/birds/analyzer
 Environment=BIRDNET_ANALYZER_PORT=8013
-ExecStart=/home/clawd-a/workshop/birdnet/analyzer/.venv/bin/python /home/clawd-a/workshop/birdnet/analyzer/service.py
+ExecStart=@WORKSHOP_ROOT@/apps/birds/analyzer/.venv/bin/python @WORKSHOP_ROOT@/apps/birds/analyzer/service.py
 Restart=always
 RestartSec=5
 

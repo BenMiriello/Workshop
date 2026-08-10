@@ -32,8 +32,8 @@ status.md
 .runtime/finance-cache.json
 
 # BirdNET: local-preview copy of the sanitized dataset + any local fixture DB
-birdnet/public-site/birds-public.json
-birdnet/**/*.db
+apps/birds/public-site/birds-public.json
+apps/birds/**/*.db
 
 # Infra deploy state (containers, secrets dropped in by deploy scripts)
 infra/open-wearables/repo/
@@ -105,3 +105,12 @@ tmp/
 **/scratch/
 **/tmp/
 .tasks.json.lock
+
+# Per-rig engineering records for an installed app: one operator's hardware,
+# tailnet addresses and bring-up history. Useful on the box, never in the repo.
+apps/birds/BIRDSTATION-CONTEXT*.md
+
+# Operator state, not platform source: declared Store access rules and the
+# append-only routing-decision log. Templates: backend/store-policies.example.json.
+backend/store-policies.json
+shared/relay-corpus.jsonl

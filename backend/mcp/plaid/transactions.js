@@ -6,10 +6,16 @@
 import { Configuration, PlaidApi, PlaidEnvironments } from "plaid";
 import { config as dotenvConfig } from "dotenv";
 import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
-dotenvConfig({ path: "/home/clawd-a/.config/clawdbot/plaid-auth.env" });
+const CONFIG_DIR = process.env.WORKSHOP_CONFIG_DIR
+  || path.join(os.homedir(), ".config", "workshop");
 
-const TOKENS_PATH = "/home/clawd-a/.config/clawdbot/plaid-tokens.json";
+
+dotenvConfig({ path: path.join(CONFIG_DIR, "plaid-auth.env") });
+
+const TOKENS_PATH = path.join(CONFIG_DIR, "plaid-tokens.json");
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);

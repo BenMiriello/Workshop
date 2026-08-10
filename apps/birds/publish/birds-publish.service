@@ -7,5 +7,5 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=clawd-a
-ExecStart=/home/clawd-a/workshop/birdnet/publish/publish.sh
+User=@SERVICE_USER@
+ExecStart=@WORKSHOP_ROOT@/apps/birds/publish/publish.sh

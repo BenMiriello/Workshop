@@ -13,7 +13,7 @@
 set +e
 D=${1:-15}
 PI=pi@raspberrypi
-PIFQDN=pi@raspberrypi.tail38e62e.ts.net
+PIFQDN="${BIRDS_PI_HOST:?set BIRDS_PI_HOST=user@host for the capture Pi}"
 LISTEN=/tmp/yard_listen
 TAILIP=100.104.196.85
 mkdir -p "$LISTEN"

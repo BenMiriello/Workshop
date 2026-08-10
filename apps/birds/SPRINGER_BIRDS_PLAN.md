@@ -1,6 +1,6 @@
 # Springer Birds — standalone multi-account plan
 
-Status: **partially implemented** · Updated: 2026-06-09 · Author: clawd-a
+Status: **partially implemented** · Updated: 2026-06-09 · Author: platform agent
 
 ## 2026-06-09 update — decisions locked by the operator + what is now BUILT
 
@@ -42,7 +42,7 @@ What is BUILT and verified (backend live; frontend on Vite HMR):
 
 ### Auth + exposure decided 2026-06-09 (supersedes §3 "Bundle A")
 
-- **Domain**: `benmiriello.com` (existing Cloudflare zone). App at `birds.benmiriello.com`
+- **Domain**: your own Cloudflare zone. App at `birds.<your-domain>`
   via a **named cloudflared tunnel → 127.0.0.1:8001**. Apex/www site untouched.
 - **Auth = our own app-native login (Bundle B), NOT Cloudflare Access.** Operator
   wants a standalone username/password login, not CF email-OTP. Tradeoff accepted:
@@ -74,7 +74,7 @@ Remaining work (the parts that genuinely need the operator / are not yet wired):
 
 ---
 
-Status (original): **proposal / for operator review** · Date: 2026-06-07 · Author: clawd-a
+Status (original): **proposal / for operator review** · Date: 2026-06-07 · Author: platform agent
 
 Goal (operator's words, 2026-06-07): take the existing Workshop birds app, give
 it an accounts/auth layer, keep it the *same data and same app* but run it

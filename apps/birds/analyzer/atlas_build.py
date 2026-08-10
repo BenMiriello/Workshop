@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 """Soundscape Atlas — batch cluster build (runs in the analyzer venv).
 
+
+
+def _data_dir():
+    """Where this install keeps the birds data.
+
+    BIRDNET_DATA_DIR wins; otherwise the platform default under the repo's
+    runtime tree, resolved from where this file sits (apps/birds/analyzer/).
+    """
+    import os
+    from pathlib import Path as _P
+
+    env = os.environ.get("BIRDNET_DATA_DIR")
+    if env:
+        return _P(env).expanduser()
+    root = _P(os.environ.get("WORKSHOP_ROOT") or _P(__file__).resolve().parents[3])
+    return root / ".runtime" / "apps" / "birds"
 Reads the 1024-d BirdNET embeddings the backend captured for every stored
 detection, forms acoustic clusters, and writes them back for the Atlas UI:
 
@@ -38,9 +54,9 @@ from datetime import datetime, timezone
 import numpy as np
 
 BROWSER_DB = os.environ.get("BIRDNET_BROWSER_DB",
-                            "/home/clawd-a/birdnet/data/browser-stations.db")
+                            str(_data_dir() / "browser-stations.db"))
 ATLAS_CLIPS_DIR = os.environ.get("BIRDNET_ATLAS_CLIPS_DIR",
-                                 "/home/clawd-a/birdnet/data/atlas-clips")
+                                 str(_data_dir() / "atlas-clips"))
 
 # A species needs at least this many embedded detections before we try to split
 # it into call types — fewer than this and clusters are noise, so it stays one

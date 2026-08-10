@@ -5,7 +5,7 @@ This is the "test without the always-on mic" path. Detections land in a SEPARATE
 backend-owned SQLite (never the BirdNET-Go yard DB) under a named test station,
 so test audio never merges into the yard species list and is never published.
 
-The heavy ML runs in the isolated analyzer service (services/../birdnet/analyzer);
+The heavy ML runs in the isolated analyzer service (services/../apps/birds/analyzer);
 this module only does ffmpeg transcode + a localhost HTTP call + storage.
 """
 from __future__ import annotations
@@ -1754,7 +1754,7 @@ def _capture_clip(c: sqlite3.Connection, d: dict, det_id: int, src_mp3: str,
 # --------------------------------------------------------------------------
 # Soundscape Atlas: embedding capture, live nearest-centroid call-type tagging,
 # and the independent exemplar-clip pool. The batch cluster build lives in
-# services/../birdnet/analyzer/atlas_build.py (heavy ML kept out of this venv).
+# services/../apps/birds/analyzer/atlas_build.py (heavy ML kept out of this venv).
 # --------------------------------------------------------------------------
 
 def atlas_settings() -> dict:

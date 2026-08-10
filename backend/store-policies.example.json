@@ -1,0 +1,22 @@
+{
+  "_comment": [
+    "Store access policy: the operator's declared MAXIMUM per Store URI. Read by",
+    "services/policy.py; enforced against a broker verdict by services/broker.py.",
+    "Operator-owned, backend-managed, same posture as grants.json.",
+    "",
+    "This file lives OUTSIDE every store it protects, deliberately: a sidecar in",
+    "the folder would make the gate writable by the party it gates, and `write` on",
+    "a notes folder is the most ordinary grant we mint.",
+    "",
+    "An EMPTY policies list means every Store is `open`, which means exactly the",
+    "behavior before any of this existed. A record is opt-in, per store, and the",
+    "operator is never gated by one \u2014 these bound an agent job's PERIMETER.",
+    "",
+    "Fields: verbs_max / topics_allow / topics_deny / requesters_allow /",
+    "response_modes / fields_max are PROGRAMMATIC and checked in code after the",
+    "broker returns. rules_text is prose handed to the broker as guidance. The",
+    "asymmetry is the safety argument: prose can only narrow, because widening is",
+    "checked against the programmatic fields the model never touches."
+  ],
+  "policies": []
+}

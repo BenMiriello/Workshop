@@ -22,7 +22,7 @@ The workshop box blocks outbound shell traffic (egress-guard), so it can't pull
 these itself. Run from your laptop (or any networked machine) and copy over:
 
 ```sh
-cd birdnet/test-clips && ./fetch.sh
+cd apps/birds/test-clips && ./fetch.sh
 ```
 
 Binaries are gitignored; `manifest.json` + `fetch.sh` are the reproducible

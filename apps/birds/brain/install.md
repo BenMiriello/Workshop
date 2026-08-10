@@ -18,15 +18,15 @@ birdnet-go --version
 ## Wire up
 
 ```bash
-mkdir -p /home/clawd-a/birdnet/data /home/clawd-a/birdnet/clips
+mkdir -p $BIRDNET_DATA_DIR $BIRDNET_CLIPS
 # Generate the release's default config once, then reconcile our template into it:
 birdnet-go realtime --help            # inspect current flags/keys
-cp /home/clawd-a/workshop/birdnet/brain/config.yaml /home/clawd-a/birdnet/config.yaml
-cp /home/clawd-a/workshop/birdnet/brain/secrets.env.example /home/clawd-a/workshop/birdnet/brain/secrets.env
-chmod 600 /home/clawd-a/workshop/birdnet/brain/secrets.env
+cp $WORKSHOP/apps/birds/brain/config.yaml $BIRDNET_DATA_DIR/config.yaml
+cp $WORKSHOP/apps/birds/brain/secrets.env.example $WORKSHOP/apps/birds/brain/secrets.env
+chmod 600 $WORKSHOP/apps/birds/brain/secrets.env
 # edit secrets.env: real lat/long + Pi tailscale host
 
-sudo cp /home/clawd-a/workshop/birdnet/brain/birdnet-go.service /etc/systemd/system/
+sudo cp $WORKSHOP/apps/birds/brain/birdnet-go.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now birdnet-go
 journalctl -u birdnet-go -f
@@ -38,10 +38,10 @@ journalctl -u birdnet-go -f
 - Stock dashboard reachable over tailnet at `http://debian.tailnet:8080` (NOT public).
 - After a real bird (or a test playback near the mic), a row appears in the DB:
   ```bash
-  sqlite3 /home/clawd-a/birdnet/data/birdnet.db \
+  sqlite3 $BIRDNET_DATA_DIR/birdnet.db \
     "select date,time,common_name,round(confidence,2) from notes order by id desc limit 5;"
   ```
-- A WAV clip lands in `/home/clawd-a/birdnet/clips/`.
+- A WAV clip lands in `$BIRDNET_CLIPS/`.
 - The Workshop app at `/apps/birds` shows the same rows (it reads this DB read-only).
 
 ## Webhook into the assistant

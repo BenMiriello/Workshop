@@ -1,5 +1,9 @@
 # BirdNET Yard Station — bring-up runbook
 
+> Paths below are the environment variables the code reads, not literals.
+> Set them once in `~/.config/workshop/instance.env` (`BIRDNET_DB`,
+> `BIRDNET_CLIPS`, `BIRDNET_DATA_DIR`); `$WORKSHOP` is your checkout.
+
 This is the file you open tomorrow and follow top to bottom. Every step is an
 exact command. The plan is here, the configs are here, the verification gates
 are here.
@@ -37,13 +41,13 @@ Pi's entire job is: ALSA input → ffmpeg → RTSP on `:8554/yard`. See
   OwnTracks, matches 1849 S Springer Rd) and a placeholder Pi hostname. Mode
   0600. Confirmed gitignored.
 - `workshop-backend` is running on `:8000` and healthy. It is supervised by
-  an orphan watchdog (`~/workshop/birdnet/analyzer/watchdog.sh`, PID parented
+  an orphan watchdog (`$WORKSHOP/apps/birds/analyzer/watchdog.sh`, PID parented
   to init), not by systemd. **Survives this session, does NOT survive a
   reboot.** Promotion to the systemd unit is your one click step at the top
   of tomorrow's session — see step "Promote backend to systemd" below.
 - BirdNET-Go binary not yet installed on the Brain.
 - No real hardware tested. Tailnet has an offline node `raspberrypi`
-  (`100.84.51.96`, last seen 171d ago) — pick: revive it or flash new.
+  (`<tailnet-ip>`, last seen 171d ago) — pick: revive it or flash new.
 
 ## Step 0 — Promote workshop-backend to systemd (5 min, BEFORE the Pi)
 
@@ -75,7 +79,7 @@ back automatically. If you also want the analyzer service auto-restarted by
 systemd instead of the watchdog, install its unit too:
 
 ```bash
-sudo cp ~/workshop/birdnet/analyzer/birdnet-analyzer.service /etc/systemd/system/
+sudo cp $WORKSHOP/apps/birds/analyzer/birdnet-analyzer.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now birdnet-analyzer
 ```
@@ -98,17 +102,17 @@ On your laptop, SD card inserted:
 3. Copy the Pi files from the Brain over to the Pi. **Do not sign into
    GitHub on the Pi, do not clone the workshop repo there** — the Pi only
    needs four small files and shouldn't carry repo credentials outdoors.
-   Run this one line from the laptop; it tars `~/workshop/birdnet/pi/` on
+   Run this one line from the laptop; it tars `$WORKSHOP/apps/birds/pi/` on
    the Brain straight into `~/birdnet-pi/` on the Pi:
    ```bash
-   ssh clawd-a@debian.tail38e62e.ts.net \
+   ssh <service-user>@<brain-host> \
      "tar -C ~/workshop/birdnet -czf - pi/" \
      | ssh pi@birdpi.local "mkdir -p ~/birdnet-pi && tar -C ~/birdnet-pi -xzf -"
    ```
    If you're reusing the existing `raspberrypi` node that's already on
    tailnet, you can do this from the Brain directly instead:
    ```bash
-   rsync -av ~/workshop/birdnet/pi/ pi@raspberrypi.tail38e62e.ts.net:~/birdnet-pi/
+   rsync -av $WORKSHOP/apps/birds/pi/ pi@<pi-host>:~/birdnet-pi/
    ```
 4. Run the staging script on the Pi:
    ```bash
@@ -125,7 +129,7 @@ On your laptop, SD card inserted:
    ```
 6. From the Brain, confirm connectivity:
    ```bash
-   ping -c5 birdpi.tail38e62e.ts.net
+   ping -c5 <pi-host>
    ```
 
 Gate 1: ping succeeds, < 5% loss. If yard wifi is shaky, fix it here — every
@@ -134,7 +138,7 @@ later layer assumes the link is up.
 If you reuse the existing `raspberrypi` node instead of `birdpi`:
 - Skip the imager step, bring the Pi online, re-auth tailscale, confirm
   `tailscale status` shows it.
-- Edit `brain/secrets.env` line `PI_TAILSCALE_HOST=raspberrypi.tail38e62e.ts.net`.
+- Edit `brain/secrets.env` line `PI_TAILSCALE_HOST=<pi-host>`.
 
 ## Step 2 — Confirm the mic, set the ALSA device (10-20 min)
 
@@ -182,9 +186,9 @@ sudo journalctl -u mediamtx -f
 From the Brain:
 
 ```bash
-ffprobe rtsp://birdpi.tail38e62e.ts.net:8554/yard
+ffprobe rtsp://<pi-host>:8554/yard
 # Expect: 1 audio stream, codec pcm_s16be, 1 channel, 48000 Hz.
-ffplay rtsp://birdpi.tail38e62e.ts.net:8554/yard    # optional: listen
+ffplay rtsp://<pi-host>:8554/yard    # optional: listen
 ```
 
 Gate 3: ffprobe clean. If it hangs or "connection refused": tailnet down or
@@ -193,10 +197,10 @@ mediamtx not on `:8554`. On the Pi, `ss -tlnp | grep 8554`.
 ## Step 4 — Install BirdNET-Go on the Brain (20-40 min)
 
 This is the actual detector. Single binary, runs as systemd, owns the SQLite
-DB at `/home/clawd-a/birdnet/data/birdnet.db` and clips at
-`/home/clawd-a/birdnet/clips/`.
+DB at `$BIRDNET_DB` and clips at
+`$BIRDNET_CLIPS/`.
 
-On the Brain (as `clawd-a`):
+On the Brain (as the service user):
 
 ```bash
 # 1. Confirm the upstream installer URL — it has drifted in the past:
@@ -210,30 +214,30 @@ which birdnet-go
 # /usr/local/bin/birdnet-go.
 
 # 3. Make data dirs (already exist as empty; just confirm):
-mkdir -p /home/clawd-a/birdnet/data /home/clawd-a/birdnet/clips
+mkdir -p $BIRDNET_DATA_DIR $BIRDNET_CLIPS
 
 # 4. Let BirdNET-Go materialize the release's default config and inspect:
 birdnet-go realtime --help | less
 # This shows the keys the installed release expects. Compare to our template.
 
 # 5. Reconcile our config template against the release default and install it:
-cp /home/clawd-a/workshop/birdnet/brain/config.yaml /home/clawd-a/birdnet/config.yaml
+cp $WORKSHOP/apps/birds/brain/config.yaml $BIRDNET_DATA_DIR/config.yaml
 # Edit if the installed release uses a different notification block name
 # (alert-rules engine vs top-level webhook). The target URL and JSON body in
 # brain/webhook-template.json don't change.
 
 # 6. secrets.env is already written and 0600. Confirm:
-ls -la /home/clawd-a/workshop/birdnet/brain/secrets.env
-# -rw------- 1 clawd-a clawd-a ... secrets.env
+ls -la $WORKSHOP/apps/birds/brain/secrets.env
+# -rw------- 1 <service-user> <service-user> ... secrets.env
 # If you reused raspberrypi instead of birdpi, edit PI_TAILSCALE_HOST in it.
 
 # 7. Install the systemd unit:
-sudo cp /home/clawd-a/workshop/birdnet/brain/birdnet-go.service \
+sudo cp $WORKSHOP/apps/birds/brain/birdnet-go.service \
   /etc/systemd/system/birdnet-go.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now birdnet-go
 journalctl -u birdnet-go -f
-# Expect: "Connected to RTSP source rtsp://birdpi.tail38e62e.ts.net:8554/yard"
+# Expect: "Connected to RTSP source rtsp://<pi-host>:8554/yard"
 # NO reconnect spam.
 ```
 
@@ -241,9 +245,9 @@ Gate 4: any of these within ~30 min of going live (if the yard is quiet, play
 a clear bird-call YouTube clip near the mic to force one):
 
 ```bash
-sqlite3 /home/clawd-a/birdnet/data/birdnet.db \
+sqlite3 $BIRDNET_DB \
   "select date,time,common_name,round(confidence,2) from notes order by id desc limit 5;"
-ls -la /home/clawd-a/birdnet/clips/ | tail        # at least one WAV
+ls -la $BIRDNET_CLIPS/ | tail        # at least one WAV
 curl -s localhost:8000/birds/summary              # available:true, count>0
 curl -s localhost:8000/events/recent?source=birdnet | head -c 1000
 ```
@@ -290,29 +294,29 @@ npx wrangler login
 
 # One-time provisioning:
 npx wrangler r2 bucket create yard-birds-public
-cd ~/workshop/birdnet/public-site
+cd $WORKSHOP/apps/birds/public-site
 npx wrangler pages project create yard-birds --production-branch main
 # Then in the Cloudflare dashboard: Pages > yard-birds > Settings > Functions
 # > R2 bindings: variable name BIRDS_BUCKET = yard-birds-public.
 
 # Token + env file:
-cp ~/workshop/birdnet/publish/cloudflare.env.example \
-   ~/workshop/birdnet/publish/cloudflare.env
-chmod 600 ~/workshop/birdnet/publish/cloudflare.env
+cp $WORKSHOP/apps/birds/publish/cloudflare.env.example \
+   $WORKSHOP/apps/birds/publish/cloudflare.env
+chmod 600 $WORKSHOP/apps/birds/publish/cloudflare.env
 # Edit it with CLOUDFLARE_ACCOUNT_ID + scoped token (R2 write on yard-birds-public ONLY) + R2_BUCKET=yard-birds-public.
 
 # Sanity check the boundary BEFORE the first push:
-DRY_RUN=1 ~/workshop/birdnet/publish/publish.sh
+DRY_RUN=1 $WORKSHOP/apps/birds/publish/publish.sh
 head -c 500 ~/workshop/.runtime/birds-public.json   # no lat/long/clips
 
 # Real publish + deploy site:
-~/workshop/birdnet/publish/publish.sh
-cd ~/workshop/birdnet/public-site
+$WORKSHOP/apps/birds/publish/publish.sh
+cd $WORKSHOP/apps/birds/public-site
 npx wrangler pages deploy . --project-name yard-birds
 
 # Install the hourly auto-publish timer:
-sudo cp ~/workshop/birdnet/publish/birds-publish.service \
-        ~/workshop/birdnet/publish/birds-publish.timer \
+sudo cp $WORKSHOP/apps/birds/publish/birds-publish.service \
+        $WORKSHOP/apps/birds/publish/birds-publish.timer \
         /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now birds-publish.timer
@@ -326,25 +330,25 @@ Gate 7: Pages URL renders species/counts/confidence/first-seen.
 
 | Thing | Path |
 |---|---|
-| This runbook | `~/workshop/birdnet/BRINGUP.md` |
-| Real secrets (lat/long, Pi host) | `~/workshop/birdnet/brain/secrets.env` (0600, gitignored) |
-| Pi setup script | `~/workshop/birdnet/pi/setup.sh` |
-| Pi mic test script | `~/workshop/birdnet/pi/record-test.sh` |
-| Pi mediamtx config | `~/workshop/birdnet/pi/mediamtx.yml` |
-| Pi systemd unit | `~/workshop/birdnet/pi/mediamtx.service` |
-| Brain BirdNET-Go config | `~/workshop/birdnet/brain/config.yaml` |
-| Brain BirdNET-Go systemd unit | `~/workshop/birdnet/brain/birdnet-go.service` |
-| Webhook JSON template | `~/workshop/birdnet/brain/webhook-template.json` |
+| This runbook | `$WORKSHOP/apps/birds/BRINGUP.md` |
+| Real secrets (lat/long, Pi host) | `$WORKSHOP/apps/birds/brain/secrets.env` (0600, gitignored) |
+| Pi setup script | `$WORKSHOP/apps/birds/pi/setup.sh` |
+| Pi mic test script | `$WORKSHOP/apps/birds/pi/record-test.sh` |
+| Pi mediamtx config | `$WORKSHOP/apps/birds/pi/mediamtx.yml` |
+| Pi systemd unit | `$WORKSHOP/apps/birds/pi/mediamtx.service` |
+| Brain BirdNET-Go config | `$WORKSHOP/apps/birds/brain/config.yaml` |
+| Brain BirdNET-Go systemd unit | `$WORKSHOP/apps/birds/brain/birdnet-go.service` |
+| Webhook JSON template | `$WORKSHOP/apps/birds/brain/webhook-template.json` |
 | Backend bird routes | `~/workshop/backend/routes/birds.py` |
 | SQLite read + sanitizer | `~/workshop/backend/services/birds_store.py` |
 | Frontend private UI | `~/workshop/frontend/src/pages/apps/Birds.tsx` |
-| Sanitizing publisher | `~/workshop/birdnet/publish/publish.sh` |
-| Hourly publish timer | `~/workshop/birdnet/publish/birds-publish.timer` |
-| Public-site static page | `~/workshop/birdnet/public-site/` |
-| Public-site deploy guide | `~/workshop/birdnet/public-site/DEPLOY.md` |
-| Cloudflare env (you create) | `~/workshop/birdnet/publish/cloudflare.env` (0600, gitignored) |
-| SQLite (created by birdnet-go) | `/home/clawd-a/birdnet/data/birdnet.db` |
-| Clips (created by birdnet-go) | `/home/clawd-a/birdnet/clips/` |
+| Sanitizing publisher | `$WORKSHOP/apps/birds/publish/publish.sh` |
+| Hourly publish timer | `$WORKSHOP/apps/birds/publish/birds-publish.timer` |
+| Public-site static page | `$WORKSHOP/apps/birds/public-site/` |
+| Public-site deploy guide | `$WORKSHOP/apps/birds/public-site/DEPLOY.md` |
+| Cloudflare env (you create) | `$WORKSHOP/apps/birds/publish/cloudflare.env` (0600, gitignored) |
+| SQLite (created by birdnet-go) | `$BIRDNET_DB` |
+| Clips (created by birdnet-go) | `$BIRDNET_CLIPS/` |
 | BirdNET-Go journal | `journalctl -u birdnet-go -f` |
 | Workshop backend journal | `journalctl --user -u workshop-backend -f` |
 | Mediamtx journal (on Pi) | `sudo journalctl -u mediamtx -f` |

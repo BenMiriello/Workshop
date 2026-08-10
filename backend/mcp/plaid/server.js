@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Custom Plaid MCP server for masini (clawd-a tenant).
+// Plaid MCP server. Single-operator, single-file.
 //
-// Reads credentials from /home/clawd-a/.config/clawdbot/plaid-auth.env
-// Reads connected-bank access_tokens from /home/clawd-a/.config/clawdbot/plaid-tokens.json
+// Reads credentials from $WORKSHOP_CONFIG_DIR/plaid-auth.env
+// Reads connected-bank access_tokens from $WORKSHOP_CONFIG_DIR/plaid-tokens.json
 //
 // Tools:
 //   list_connections                       — show linked banks
@@ -22,10 +22,16 @@ import {
 import { Configuration, PlaidApi, PlaidEnvironments, CountryCode } from "plaid";
 import { config as dotenvConfig } from "dotenv";
 import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
 
-dotenvConfig({ path: "/home/clawd-a/.config/clawdbot/plaid-auth.env" });
+const CONFIG_DIR = process.env.WORKSHOP_CONFIG_DIR
+  || path.join(os.homedir(), ".config", "workshop");
 
-const TOKENS_PATH = "/home/clawd-a/.config/clawdbot/plaid-tokens.json";
+
+dotenvConfig({ path: path.join(CONFIG_DIR, "plaid-auth.env") });
+
+const TOKENS_PATH = path.join(CONFIG_DIR, "plaid-tokens.json");
 
 function plaidClient() {
   const env = process.env.PLAID_ENV || "production";

@@ -45,9 +45,9 @@ already saved.
 
 | Piece | File |
 |---|---|
-| `/embed` endpoint (shared preserve-all-tensors interpreter) | `birdnet/analyzer/service.py` |
+| `/embed` endpoint (shared preserve-all-tensors interpreter) | `apps/birds/analyzer/service.py` |
 | Embedding capture + live tag + clip pool | `backend/services/birds_analyze.py` |
-| Batch cluster build (heavy ML, analyzer venv) | `birdnet/analyzer/atlas_build.py` |
+| Batch cluster build (heavy ML, analyzer venv) | `apps/birds/analyzer/atlas_build.py` |
 | Serving routes (`/birds/atlas*`) | `backend/routes/birds.py` |
 | Labelling UI (`/apps/birds/atlas`) | `frontend/src/pages/apps/birds/Atlas.tsx` |
 

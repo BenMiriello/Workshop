@@ -1,9 +1,9 @@
 {
-  "name": "clawd-a-plaid-mcp",
+  "name": "workshop-plaid-mcp",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Custom Plaid MCP server for masini (clawd-a tenant). Single-user, single-file.",
+  "description": "Plaid MCP server for Workshop. Single-operator, single-file.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
