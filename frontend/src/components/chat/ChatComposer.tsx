@@ -10,6 +10,7 @@ import { useVoiceComposer } from "./useVoiceComposer";
 import { modelLabel, orderModels } from "./models";
 import EffortMeter from "./EffortMeter";
 import { permissionModeDef } from "./permissionModes";
+import { keepFocusOnTap } from "./keepFocus";
 
 // Everything below the log: the type-ahead pickers, the voice strip, the input,
 // and the per-turn controls.
@@ -18,10 +19,12 @@ import { permissionModeDef } from "./permissionModes";
 // which is why the model picker lives here and not in the header beside the
 // things that change the whole surface (scope, which chat you are in).
 //
-// One rule runs through every button in this file: `onMouseDown` calls
-// preventDefault so tapping an action never blurs the textarea. On mobile a blur
-// closes the keyboard, the layout jumps, and the tap lands where the button no
-// longer is — the "send needs two taps" bug.
+// One rule runs through every button in this file: tapping an action never
+// blurs the textarea. On mobile a blur closes the keyboard, the layout jumps,
+// and the tap lands where the button no longer is — the "send needs two taps"
+// bug. It is enforced ONCE, by `keepFocusOnTap` on the action row, not by a
+// handler per button; the per-button version cancelled `mousedown`, which on
+// touch arrives after focus has already moved and so did nothing.
 
 export default function ChatComposer({
   composerRef, inputRef,
@@ -114,7 +117,10 @@ export default function ChatComposer({
         onBlur={() => onFocusChange(false)}
       />
 
-      <div className="chat-actions">
+      {/* One handler for the whole row: a tap here never steals focus from the
+          textarea, so it never spends itself closing the mobile keyboard
+          instead of pressing the button. See keepFocus. */}
+      <div className="chat-actions" onPointerDown={keepFocusOnTap}>
         {!voiceOn && (
           <ContextMeter
             activeId={activeId}
@@ -146,7 +152,6 @@ export default function ChatComposer({
             trigger={
               <button
                 className="chat-mode"
-                onMouseDown={(e) => e.preventDefault()}
                 title={`${permissionModeDef(effectivePermissionMode).label}. ${permissionModeDef(effectivePermissionMode).hint}`}
                 aria-label={`Mode: ${permissionModeDef(effectivePermissionMode).label}`}
               >
@@ -185,7 +190,7 @@ export default function ChatComposer({
             label="Model"
             side="top"
             trigger={
-              <button className="chat-model" onMouseDown={(e) => e.preventDefault()} title="Model for this conversation">
+              <button className="chat-model" title="Model for this conversation">
                 <span className="chat-model__val">{modelLabel(selectedModel)}</span>
                 <ChevronDown size={14} aria-hidden className="chat-model__caret" />
               </button>
@@ -221,7 +226,7 @@ export default function ChatComposer({
             listening orb's AudioLines: AudioLines invites voice, PhoneOff leaves it. */}
         <button
           className={`chat-slash-btn${voiceOn ? " is-active" : ""}`}
-          onMouseDown={(e) => e.preventDefault()}
+         
           onClick={onToggleVoice}
           aria-pressed={voiceOn}
           aria-label={voiceOn ? "Exit voice mode" : "Voice mode"}
@@ -237,7 +242,7 @@ export default function ChatComposer({
         {streaming && (
           <button
             className="chat-stop"
-            onMouseDown={(e) => e.preventDefault()}
+           
             onClick={onStop}
             aria-label="Stop the turn"
             title="Stop the turn"
@@ -247,7 +252,7 @@ export default function ChatComposer({
         )}
         <button
           className="chat-send"
-          onMouseDown={(e) => e.preventDefault()}
+         
           onClick={onSend}
           disabled={!canSend}
           aria-label="Send (Enter)"

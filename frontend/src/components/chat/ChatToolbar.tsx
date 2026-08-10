@@ -10,6 +10,7 @@ import {
 } from "./chatScope";
 import type { ChatDrawer } from "./drawers";
 import { chatModeDef, type ChatModeId } from "./chatModes";
+import { keepFocusOnTap } from "./keepFocus";
 
 // One icon per scope KIND, not per scope: the icon says what kind of place a
 // row is, and the name says which one. Sixteen project rows all carrying the
@@ -93,7 +94,9 @@ export default function ChatToolbar({
     onSetDrawer((d) => (d === which ? null : which));
 
   return (
-    <div className="chat-toolbar">
+    // Same rule as the composer's action row: with the keyboard up, a tap here
+    // presses the button instead of spending itself closing the keyboard.
+    <div className="chat-toolbar" onPointerDown={keepFocusOnTap}>
       {variant === "full" && (
         <button className="chat-tb__btn" onClick={onBack} title="Back" aria-label="Back">
           <ChevronLeft size={16} aria-hidden />

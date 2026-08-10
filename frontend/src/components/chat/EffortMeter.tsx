@@ -60,8 +60,8 @@ export default function EffortMeter({
       trigger={
         <button
           className="chat-effort"
-          // Same rule as every other button in this row: never blur the textarea.
-          onMouseDown={(e) => e.preventDefault()}
+          // Never blurs the textarea: the action row cancels pointerdown for
+          // every control in it (see keepFocus).
           title={`Effort: ${label}. ${effortHint(value)}`}
           aria-label={`Effort: ${label}`}
           onKeyDown={(e) => {

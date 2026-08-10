@@ -1,4 +1,5 @@
 import { Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { OverlayHost } from "./ui/OverlayHost";
 import Agents from "./pages/Agents";
 import AgentDetail from "./pages/AgentDetail";
 import AgentBuild from "./pages/AgentBuild";
@@ -99,6 +100,11 @@ export default function App() {
         <BreadcrumbBar />
         <SectionNav />
       </header>
+      {/* The content region, and the only place an overlay may land. Dialogs
+          portal into the host this renders, so they cover the app and not the
+          top nav above it — that scoping is the shell's job, and no page or
+          dialog has to know about it. See ui/OverlayHost. */}
+      <OverlayHost>
       <main>
         <Routes>
           <Route path="/" element={<Home />} />
@@ -175,6 +181,7 @@ export default function App() {
           <Route path="/location" element={<Navigate to="/apps/location" replace />} />
         </Routes>
       </main>
+      </OverlayHost>
     </div>
     </BreadcrumbProvider>
     </RecorderProvider>

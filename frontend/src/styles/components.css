@@ -657,12 +657,16 @@ a.ws-btn { text-decoration: none; }
 .ws-reveal__val--hidden { letter-spacing: 0.15em; }
 
 /* ---- MODAL / SHEET ------------------------------------------------------- */
+/* Fixed is the fallback for an overlay with no shell around it (the springer
+   entry). Inside the shell's host it is absolute, so it fills the content
+   region and stops at the top nav. */
 .ws-overlay {
   position: fixed; inset: 0; z-index: var(--z-overlay);
   background: var(--scrim); backdrop-filter: blur(2px);
-  display: flex; align-items: center; justify-content: center; padding: var(--space-4);
+  display: flex; align-items: center; justify-content: center; padding: var(--space-6);
   animation: ws-fade var(--dur-base) var(--ease-out);
 }
+.ws-overlay-host > .ws-overlay { position: absolute; pointer-events: auto; }
 .ws-modal {
   position: relative; z-index: var(--z-modal);
   /* border-box so the max-height cap includes our padding — the modal is
@@ -670,8 +674,11 @@ a.ws-btn { text-decoration: none; }
   box-sizing: border-box;
   display: flex; flex-direction: column;
   width: 100%; max-width: 30rem;
-  max-height: calc(100vh - var(--space-4) * 2);
-  max-height: calc(100dvh - var(--space-4) * 2);
+  /* Of the overlay's CONTENT box, so the overlay's padding is always visible
+     around the dialog — a dialog never fills its region edge to edge, however
+     long its content is. Percentage rather than a viewport calc because the
+     region is not the viewport: it is whatever box the shell handed us. */
+  max-height: 100%;
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-xl);
   box-shadow: var(--shadow-lg); padding: var(--space-5);
   animation: ws-pop var(--dur-base) var(--ease-out);
@@ -698,8 +705,7 @@ a.ws-btn { text-decoration: none; }
 .ws-overlay--sheet .ws-modal,
 .ws-overlay--sheet .ws-modal--lg {
   max-width: none; border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-  max-height: calc(100vh - var(--space-6));
-  max-height: calc(100dvh - var(--space-6));
+  max-height: calc(100% - var(--space-6));
   animation: ws-sheet-up var(--dur-base) var(--ease-out);
 }
 @keyframes ws-sheet-up { from { transform: translateY(12px); opacity: 0; } }
@@ -707,11 +713,9 @@ a.ws-btn { text-decoration: none; }
 /* Centered dialogs still have to fit a phone: shrink the padding and let the
    dialog use the full width minus a margin, without becoming a sheet. */
 @media (max-width: 560px) {
-  .ws-overlay { padding: var(--space-3); }
+  .ws-overlay { padding: var(--space-4); }
   .ws-modal, .ws-modal--lg {
     max-width: none; padding: var(--space-4);
-    max-height: calc(100vh - var(--space-6));
-    max-height: calc(100dvh - var(--space-6));
   }
 }
 
@@ -895,7 +899,25 @@ a.ws-btn { text-decoration: none; }
   border-bottom: 1px solid var(--border);
   background: var(--bg);
 }
-.ws-app > main {
+/* The content region: everything below the top nav, and the containing block
+   for overlays. A dialog is scoped to the app it was opened in — it covers
+   this box and never the nav above it. The scoping lives here, in the shell,
+   precisely so no app or dialog has to style around the chrome. */
+.ws-app__body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ws-overlay-host {
+  position: absolute;
+  inset: 0;
+  /* Empty almost always; must never eat taps when it is. Each overlay turns
+     pointer events back on for itself. */
+  pointer-events: none;
+}
+.ws-app .ws-app__body > main {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -1383,7 +1405,8 @@ a.ws-btn { text-decoration: none; }
   display: flex; flex-direction: column;
   overflow: hidden;
 }
-.ws-app.ws-app--chatfull > main {
+.ws-app.ws-app--chatfull > .ws-app__body { display: flex; flex-direction: column; }
+.ws-app.ws-app--chatfull .ws-app__body > main {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
   padding: 0; overflow: hidden;
@@ -1521,7 +1544,7 @@ a.ws-btn { text-decoration: none; }
      topnav stays one row (never wraps → never grows taller). */
   :root { --page-pad-x: var(--space-4); }
   .ws-topnav { gap: var(--space-3); }
-  .ws-app > main { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); padding-top: var(--space-4); }
+  .ws-app .ws-app__body > main { padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); padding-top: var(--space-4); }
 }
 
 /* Auth / login screen — a single centered card on a full-height surface. */

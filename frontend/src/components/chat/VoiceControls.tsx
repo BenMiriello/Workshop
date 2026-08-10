@@ -61,7 +61,6 @@ export function VoiceCluster({
       <button
         ref={orbRef}
         className={`chat-voice-orb is-${orbState}${errored ? " is-error" : ""}`}
-        onMouseDown={(e) => e.preventDefault()}
         onClick={onOrb}
         aria-label={orbLabel}
         title={orbLabel}
@@ -70,7 +69,6 @@ export function VoiceCluster({
       </button>
       <button
         className={`chat-slash-btn${micEnabled ? " is-active" : ""}`}
-        onMouseDown={(e) => e.preventDefault()}
         onClick={onToggleMic}
         aria-pressed={micEnabled}
         aria-label={micEnabled ? "Mute microphone" : "Unmute microphone"}
@@ -80,7 +78,6 @@ export function VoiceCluster({
       </button>
       <button
         className="chat-slash-btn"
-        onMouseDown={(e) => e.preventDefault()}
         onClick={onOpenSettings}
         aria-label="Voice settings"
         title="Voice settings"

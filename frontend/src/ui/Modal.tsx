@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "./cx";
 import { Button } from "./controls";
+import { useOverlayHost } from "./OverlayHost";
 
 // Modal. Scrim click + Esc close, focus trap, restore focus on close. Renders
 // nothing when not open.
+//
+// SCOPED TO THE SHELL'S CONTENT REGION when one exists (`OverlayHost`): the
+// dialog sits under the Workshop top nav rather than over it. This file does
+// not know what that chrome is or how tall it is, and must not learn.
 //
 // A CENTERED DIALOG AT EVERY WIDTH. This used to become a bottom sheet under
 // 560px automatically, which made every dialog in the app a drawer on a phone.
@@ -37,6 +42,10 @@ export function Modal({
 }) {
   const modalRef = useRef<HTMLDivElement>(null);
   const lastFocus = useRef<HTMLElement | null>(null);
+  // The shell's content region, when there is one. A dialog is scoped to the
+  // app it was opened in — it never covers the Workshop top nav. See
+  // OverlayHost; <body> is the fallback for entries with no shell.
+  const host = useOverlayHost();
 
   useEffect(() => {
     if (!open) return;
@@ -102,7 +111,7 @@ export function Modal({
         {actions != null && <div className="ws-modal__actions">{actions}</div>}
       </div>
     </div>,
-    document.body,
+    host ?? document.body,
   );
 }
 
