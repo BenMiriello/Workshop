@@ -1214,9 +1214,19 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 _push(turn, k2, p2)
             # Track the latest assistant call's context size (preferred signal —
             # it's the exact input the final model call read).
-            ctx = _ctx_tokens_from_usage(payload.get("usage"))
-            if ctx:
-                state["last_ctx"] = ctx
+            #
+            # ONLY THIS TURN'S OWN CALLS. A subagent's assistant messages arrive
+            # here too, carrying `parent`, and a delegate runs on its own fresh
+            # context: a few tens of thousands of tokens against the parent's
+            # hundreds. Without this check the last delegate to speak overwrote
+            # the thread's reading, and the meter fell from 44% to 8% without
+            # the conversation having shrunk by a single message. Spend is the
+            # opposite case and is accumulated below for every call, delegates
+            # included, because a delegate's tokens are really spent.
+            if payload.get("parent") is None:
+                ctx = _ctx_tokens_from_usage(payload.get("usage"))
+                if ctx:
+                    state["last_ctx"] = ctx
             # Spend accumulates across tool rounds: each assistant message is a
             # separate API call and is billed separately. (Contrast last_ctx,
             # which is overwritten because only the latest window size matters.)
