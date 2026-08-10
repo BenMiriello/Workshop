@@ -47,8 +47,11 @@ export type TurnStream = {
   attached: boolean;
   reconnecting: boolean;
   attach: (turnId: string) => void;
-  /** Stop WATCHING this run. The run keeps going; this tab stops reading it and
-   *  will not silently re-attach. */
+  /** Close this tab's socket for the current run and do not silently re-attach.
+   *  The SOCKET half of Stop: the run itself is ended by the server
+   *  (`api.stopTurn`), and the caller does that first. On its own this leaves a
+   *  run running, which is what the old Stop button did and why it never
+   *  stopped anything. */
   stopWatching: () => void;
   closeStream: () => void;
   hasOpenStream: () => boolean;
@@ -247,11 +250,13 @@ export function useTurnStream({
     finishingRef.current = true;
     if (runId) detachedRef.current.add(runId);
     closeStream();
-    // The run keeps going, so the transcript keeps showing it — from the
-    // server's snapshot now instead of this socket. Nothing is thrown away,
-    // which is what the old Stop had to reconcile by hand.
+    // Pull the log: by now the server has committed whatever the run produced
+    // before it was stopped, and this is what puts that reply on screen.
     void cb.current.sync();
-    cb.current.onDrainQueue();
+    // THE QUEUE IS LEFT ALONE, deliberately. Stop is how the operator takes the
+    // wheel back; sending everything they had typed ahead, immediately and
+    // unattended, is the opposite of what they just asked for. The queued
+    // messages stay queued until they send them.
   }, [closeStream, stateRef]);
 
   useEffect(() => () => { sseRef.current?.close(); sseRef.current = null; }, []);

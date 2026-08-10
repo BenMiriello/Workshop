@@ -206,8 +206,8 @@ export default function ChatComposer({
             className="chat-stop"
             onMouseDown={(e) => e.preventDefault()}
             onClick={onStop}
-            aria-label="Stop watching (the turn keeps running)"
-            title="Stop watching (the turn keeps running)"
+            aria-label="Stop the turn"
+            title="Stop the turn"
           >
             <Square size={16} aria-hidden />
           </button>

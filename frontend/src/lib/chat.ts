@@ -44,11 +44,14 @@ export type ChatMsg = {
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.
     timeout?: boolean;
-    // Any OTHER non-completion ending. Currently one value in practice:
-    // "interrupted" — the backend self-heal in GET /threads/{id} writes it
-    // when a message is left streaming=true by a turn that is simply GONE
-    // from memory (a backend restart mid-turn), so a reply that will never
-    // be finished doesn't render as either answered or a wordless bubble.
+    // Any OTHER non-completion ending, and WHICH one. Two values, because they
+    // are two different events and must not read alike:
+    //   "operator"    — the operator pressed Stop. The run's process group was
+    //                   signalled and whatever it had produced was committed.
+    //   "interrupted" — a restart orphaned the run; the startup reconcile closed
+    //                   it out so a reply that will never come doesn't render as
+    //                   either answered or a wordless bubble.
+    // The wording for each lives in components/chat/stopReason.ts.
     stopped?: string;
     // The AGENT that produced this reply, when the turn was addressed to one by
     // @mention. Absent on ordinary assistant replies, which is what makes the
@@ -405,6 +408,16 @@ export const chatApi = {
       delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
       turn_id: string | null; at_segment?: number | null; reason: string;
     }>),
+
+  // Stop a running turn. Not "stop watching it": the run's process group is
+  // signalled, whatever it produced is committed as the reply, and the thread
+  // stops reporting a run in flight. Idempotent — stopping a turn that already
+  // finished answers `stopped: false` and is not an error, so a double-click and
+  // a race with the turn's own ending both land somewhere sane.
+  stopTurn: (turnId: string) =>
+    fetch(`/api/chat/turns/${turnId}/stop`, { method: "POST" }).then(
+      j<{ turn_id: string; stopped: boolean; committed?: boolean; reason: string }>,
+    ),
 
   sendMessage: (id: string, content: string, model?: string) =>
     fetch(`/api/chat/threads/${id}/messages`, {

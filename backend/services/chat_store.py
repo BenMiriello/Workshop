@@ -845,8 +845,10 @@ def commit_run(
 
     `timed_out` flags a turn that hit its wall-clock limit (vs a hard error) so
     the UI can render a calm "stopped, continue" note instead of a red error.
-    `stopped` names any OTHER non-completion ending. `notes` carries the action
-    pipeline's human-readable results (e.g. "Updated the plan")."""
+    `stopped` names any OTHER non-completion ending — STOPPED_BY_OPERATOR when
+    the operator pressed Stop, STOPPED_INTERRUPTED when a restart orphaned the
+    run. `notes` carries the action pipeline's human-readable results (e.g.
+    "Updated the plan")."""
     stored = chat_log.read_meta(thread_id)
     if stored is None:
         return None
@@ -886,6 +888,15 @@ def commit_run(
     return _msg_from_event(ev)
 
 
+# The two ways a run ends without finishing, as `meta.stopped` on the committed
+# message. They are different events and the transcript says which: the operator
+# pressed Stop, or the backend went down under a run and nothing was left to
+# answer for it. One value each, so the client has one thing to switch on and no
+# reason to infer it from anything else.
+STOPPED_BY_OPERATOR = "operator"
+STOPPED_INTERRUPTED = "interrupted"
+
+
 # The one wording for a run this backend can no longer account for. Used by the
 # startup reconcile and by the re-attach path, so the operator reads the same
 # sentence however the run was lost.
@@ -898,8 +909,14 @@ LOST_RUN_TEXT = (
 def lose_run(thread_id: str, run_id: str) -> dict | None:
     """Close out a run whose process is dead or gone: a `run: lost` marker and a
     message saying so, so the chat is never left waiting on something that will
-    never answer."""
-    return commit_run(thread_id, run_id, [], LOST_RUN_TEXT, state="lost")
+    never answer.
+
+    Marked `stopped=interrupted`, which is the value the client's tag has always
+    been written for and which nothing had set since the per-read self-heal was
+    deleted. Without it this renders as an ordinary reply that happens to be
+    about a restart; with it, it reads as what it is."""
+    return commit_run(thread_id, run_id, [], LOST_RUN_TEXT, state="lost",
+                      stopped=STOPPED_INTERRUPTED)
 
 
 def release_run(thread_id: str, run_id: str) -> None:

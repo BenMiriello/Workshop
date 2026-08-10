@@ -181,6 +181,28 @@ export default function Chat({
     onDrainQueue: () => queue.dispatch(),
   });
 
+  // STOP ENDS THE RUN. It used to close this tab's socket and nothing else: the
+  // turn kept working and kept spending, and the UI looked idle only because a
+  // local flag said so. The indicator now reads liveness from the server, so
+  // that arrangement showed itself — "Still running", right after Stop.
+  //
+  // The server call comes first and is awaited: it returns once the run has
+  // committed whatever it produced, so the socket closes onto a transcript that
+  // already holds the partial reply. A failure still closes the socket, because
+  // leaving the operator holding a button that did nothing visible is worse than
+  // the error line beside it.
+  const { stopWatching } = stream;
+  const onStopTurn = useCallback(async () => {
+    const runId = stateRef.current.activeRun?.runId ?? null;
+    try {
+      if (runId) await chatApi.stopTurn(runId);
+    } catch (e) {
+      setErr(`Could not stop the turn: ${String(e)}`);
+    } finally {
+      stopWatching();
+    }
+  }, [stateRef, stopWatching]);
+
   // /compact reaches BOTH homes of a chat's context — see useCompaction.
   const { ctxNonce, compact, queuedStatus, clear } = useCompaction({
     activeIdRef, runActiveRef, queue, dispatch,
@@ -678,7 +700,7 @@ export default function Chat({
       onMentionPick={pickMention}
       streaming={runActive}
       onSend={send}
-      onStop={stream.stopWatching}
+      onStop={() => { void onStopTurn(); }}
       canSend={!!input.trim()}
       modelOptions={scopeState.modelOptions}
       selectedModel={selectedModel}

@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { AlertTriangle, Bot, Clock, Eraser, FoldVertical, Unplug } from "lucide-react";
+import { AlertTriangle, Bot, Clock, Eraser, FoldVertical, Square, Unplug } from "lucide-react";
 import { Button } from "../../ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
@@ -8,6 +8,7 @@ import CopyMessage from "./CopyMessage";
 import LiveTurn from "./LiveTurn";
 import StatusNote from "./StatusNote";
 import { modelDisplay } from "./models";
+import { STOPPED_BY_OPERATOR, stoppedNoReplyText, stoppedTag } from "./stopReason";
 import type { TranscriptBlock } from "./transcriptBlocks";
 
 // The transcript body: one rendered block per entry the selector produced.
@@ -35,10 +36,11 @@ import type { TranscriptBlock } from "./transcriptBlocks";
 //    is marked, and it offers the retry.
 //  - THE STATUS LINE. Progress on work a message set off belongs under that
 //    message, not in a bar above the log — see StatusNote.
-//  - THE INTERRUPTED TAG. A run the backend could not account for is closed out
-//    with `meta.stopped`. Without a tag it rendered as a normal reply that just
-//    happens to be blank, which reads as either "answered with nothing" or
-//    "broken", not "interrupted".
+//  - THE STOPPED TAG. A run that ended early is closed out with `meta.stopped`.
+//    Without a tag it rendered as a normal reply that just happens to be blank,
+//    which reads as either "answered with nothing" or "broken". The tag also
+//    says WHICH ending: the operator pressed Stop, or a restart took the run.
+//    One value each, one sentence each — see stopReason.ts.
 
 // One divider, two meanings. `cleared` is the ONLY thing that decides which:
 // a fold's summary is real content the operator can still draw on; a clear's
@@ -68,7 +70,7 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
 // genuinely unexplained one, and it says so rather than showing an empty box.
 function noReplyText(m: ChatMsg): string {
   if (m.meta?.timeout) return "No reply was written before the time limit.";
-  if (m.meta?.stopped) return "No reply was written before the turn was interrupted.";
+  if (m.meta?.stopped) return stoppedNoReplyText(m.meta.stopped);
   return "No response. The turn ended without sending a message.";
 }
 
@@ -114,7 +116,10 @@ function MessageBubble({
               )}
               {msg.meta?.stopped && (
                 <div className="chat-timeout-tag">
-                  <Unplug size={13} strokeWidth={1.8} aria-hidden /> Turn interrupted. Send a message to continue.
+                  {msg.meta.stopped === STOPPED_BY_OPERATOR
+                    ? <Square size={13} strokeWidth={1.8} aria-hidden />
+                    : <Unplug size={13} strokeWidth={1.8} aria-hidden />}
+                  {" "}{stoppedTag(msg.meta.stopped)}
                 </div>
               )}
               {renderAssistantBody(msg, isLatest, selectedModel, cardCtx)}

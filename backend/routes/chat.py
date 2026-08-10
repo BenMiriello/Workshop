@@ -2066,6 +2066,23 @@ async def inject_into_turn(turn_id: str, body: InjectMessage):
     }
 
 
+@router.post("/turns/{turn_id}/stop")
+async def stop_turn(turn_id: str):
+    """Stop a running turn. What the composer's Stop button calls.
+
+    STOP MEANS STOP. It used to mean "close this tab's socket": the turn kept
+    running and kept spending, and the operator's only signal that it had worked
+    was the indicator going quiet, which it did by lying. The indicator now reads
+    the server's `active_run`, so the honest version of the old behaviour was the
+    chat still saying "Still running" after Stop — which is what was reported.
+
+    The run's process group is signalled and whatever it produced is committed as
+    the reply, marked `meta.stopped`. Never an error: stopping a run that has
+    already finished is a no-op that returns `stopped: false`, because "it is
+    already stopped" is the outcome the caller wanted."""
+    return await build_streaming.stop_turn(turn_id)
+
+
 @router.get("/turns/{turn_id}/stream")
 async def stream_turn(turn_id: str, request: Request):
     turn = build_streaming.get_turn(turn_id)

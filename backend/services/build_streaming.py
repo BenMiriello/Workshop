@@ -148,6 +148,18 @@ class Turn:
     # run whose channel has been cleaned up because it is finishing, and the
     # injection path has to tell them apart.
     spawned: bool = False
+    # The turn's process, for the one caller that has to end it early (stop_turn).
+    # `pid` is set on the re-attach path too, where this process never held a
+    # handle; `proc` only when we spawned it ourselves.
+    pid: int | None = None
+    proc: object | None = None
+    # The operator pressed Stop. Two flags, not one, because two different
+    # coroutines act on it: stop_turn signals the process group, the drive loop
+    # words the finalize. `stop_signalled` is the interlock that keeps the group
+    # from being signalled twice — whichever gets there first sets it, and the
+    # check-and-set is await-free so they cannot both win.
+    stop_requested: bool = False
+    stop_signalled: bool = False
 
 
 # In-memory turn registry. Build sessions are short-lived enough that this is
@@ -852,6 +864,10 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     # is what keeps the channel from hitting EOF.
     os.close(in_fd)
     turn.spawned = True
+    # Hand the process to the Turn as well as to the journal: Stop has a run id
+    # and nothing else, and reading the pid back off disk to signal it would be a
+    # second source of truth for something this process is holding.
+    turn.proc, turn.pid = proc, proc.pid
     # Deliver the prompt as the run's first message.
     if not write_to_turn(turn.id, meta["prompt"]):
         log.warning("turn %s: could not write the opening prompt to its input channel", turn.id)
@@ -983,6 +999,14 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         if state["saw_result"]:
             await _retire_turn_proc(meta.get("pid"), proc)
             break
+        if turn.stop_requested and not turn.stop_signalled:
+            # The operator stopped a run whose process did not exist yet when
+            # they pressed it (the claim window: a run owns the thread from
+            # before its prompt is assembled). stop_turn had nothing to signal
+            # then, so the loop signals it now — same helper, same interlock, so
+            # the group is signalled exactly once either way.
+            turn.stop_signalled = True
+            await _retire_turn_proc(meta.get("pid"), proc)
         alive = (proc.returncode is None) if proc is not None else _proc_alive(meta.get("pid"))
         if not alive:
             _drain(final=True)
@@ -997,6 +1021,10 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
 
     _cleanup_turn_input(turn.id)
     turn.final_text = _turn_content(turn)
+    # THE STOP IS READ AFTER THE FINAL DRAIN, never before it. Everything the
+    # process wrote before the signal reached it is on disk, and the drain above
+    # is what turns those bytes into the segments this run commits.
+    stopped = turn.stop_requested
     lost = False
     if state["saw_result"]:
         # The result line is the authoritative end of a turn, and we are the one
@@ -1010,13 +1038,16 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         # Re-attach path (this backend did not spawn the process — it adopted the
         # turn's journal after a restart). No result line and no live pid means
         # the run is simply gone, which is a different thing from a crash and
-        # deserves to be named as one.
+        # deserves to be named as one. Unless we ended it ourselves: a run the
+        # operator stopped is accounted for, and calling it lost would tell them
+        # the backend dropped something they were holding the button on.
         rc = -1
-        lost = True
+        lost = not stopped
     await _finalize_turn(turn, meta, rc=rc, timed_out=timed_out, compacted=state["compacted"],
                          context_tokens=int(state.get("last_ctx") or 0),
                          spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
-                         subtype=str(state.get("result_subtype") or ""), lost=lost)
+                         subtype=str(state.get("result_subtype") or ""), lost=lost,
+                         stopped=stopped)
 
 
 async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
@@ -1035,7 +1066,8 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
 
 async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
                        context_tokens: int = 0, spend_tokens: int = 0,
-                       subtype: str = "", lost: bool = False) -> None:
+                       subtype: str = "", lost: bool = False,
+                       stopped: bool = False) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 0) or 0)
@@ -1056,6 +1088,14 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # runs for a caller that deliberately asked for a budget.
     if turn.final_text:
         text = turn.final_text
+        is_error = False
+    elif stopped:
+        # The operator stopped it before it wrote anything. No sentence here: the
+        # tag on the message already says who ended it, and a body repeating that
+        # is the same thing said twice. The segments (the tools it had already
+        # run) are committed regardless, and they are the honest record of what
+        # the turn got through.
+        text = ""
         is_error = False
     elif timed_out:
         text = (
@@ -1165,6 +1205,10 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             turn.thread_id, turn.id, turn.segments, text,
             error=is_error, timed_out=timed_out, notes=notes,
             agent=meta.get("speaker"), state=("lost" if lost else "finished"),
+            # A stopped run is FINISHED, not lost: it produced what it produced
+            # and nothing is coming later. `stopped` is what tells the operator
+            # apart from a restart in the transcript.
+            stopped=(chat_store.STOPPED_BY_OPERATOR if stopped else None),
         )
     except Exception as e:
         log.warning("turn %s: chat_store commit failed: %s", turn.id, e)
@@ -1296,8 +1340,11 @@ def reattach_running_turns() -> None:
             turn.started = meta.get("started", time.time())
             # This process did not spawn it, but the process it belongs to did:
             # its input channel is either on disk or gone for good, which is the
-            # distinction `run_is_ending` needs to make.
+            # distinction `run_is_ending` needs to make. The pid comes off the
+            # journal for the same reason — an adopted run must still be
+            # stoppable, and it is a process group like any other.
             turn.spawned = True
+            turn.pid = meta.get("pid")
             TURNS[tid] = turn
             alive = _proc_alive(meta.get("pid"))
             log.info("re-attaching build turn %s (pid=%s alive=%s)", tid, meta.get("pid"), alive)
@@ -1355,6 +1402,67 @@ def _first_user_text(thread_id: str) -> str:
 
 def get_turn(turn_id: str) -> Turn | None:
     return TURNS.get(turn_id)
+
+
+# How long a stop waits for the run to commit before answering anyway. The kill
+# itself is bounded (_retire_turn_proc: ~2s of SIGTERM, then SIGKILL) and the
+# drive loop polls at 0.15s, so this is slack, not a budget. Answering late is
+# fine; answering before the commit would tell the client the run is over while
+# the events endpoint still reports it active.
+STOP_WAIT_S = 20.0
+
+
+async def stop_turn(turn_id: str) -> dict:
+    """END a run: signal its process group, commit what it produced, release the
+    thread. What the Stop button does, and the only thing that does it.
+
+    ONE PIPELINE. This does not write a message. It kills the process and lets
+    the drive loop finish the turn the way every other ending finishes it — final
+    drain, segments folded, `chat_store.commit_run` once at the tail — with
+    `meta.stopped` naming the operator. A second finalize path here is exactly
+    what the rebuild collapsed, and it would lose the partial output on the way.
+
+    IDEMPOTENT. A run that already finished, one this process never held (a
+    restart orphan, which the startup reconcile owns), and one another request is
+    already stopping all return without raising: `stopped` says whether this call
+    found a run to end, and neither answer is an error.
+
+    The check-and-claim is under the thread's WRITE LOCK, like every other run
+    transition, and holds no await — so two Stops cannot both claim the kill, and
+    a Stop cannot land between a rival send's check and its claim. The kill and
+    the wait happen outside the lock: they take seconds, and nothing else on the
+    thread should block on them."""
+    turn = TURNS.get(turn_id)
+    if turn is None:
+        return {"turn_id": turn_id, "stopped": False,
+                "reason": "no run by that id is going here"}
+    if turn.complete:
+        return {"turn_id": turn_id, "stopped": False, "reason": "the turn already finished"}
+    async with chat_log.lock_for(turn.thread_id):
+        if turn.complete:
+            return {"turn_id": turn_id, "stopped": False,
+                    "reason": "the turn already finished"}
+        first = not turn.stop_requested
+        turn.stop_requested = True
+        # Whoever claims the signal does it; the drive loop takes it instead when
+        # the process does not exist yet (the claim window).
+        signal_now = first and turn.pid is not None and not turn.stop_signalled
+        if signal_now:
+            turn.stop_signalled = True
+        pid, proc = turn.pid, turn.proc
+    if signal_now:
+        log.info("turn %s: stopped by the operator; signalling pid %s", turn_id, pid)
+        await _retire_turn_proc(pid, proc)
+    try:
+        await asyncio.wait_for(turn.finished.wait(), STOP_WAIT_S)
+    except asyncio.TimeoutError:
+        # The commit is still coming (the loop owns it and always runs). Say so
+        # rather than claiming an ending that has not been written yet.
+        log.warning("turn %s: stop signalled but it has not committed yet", turn_id)
+        return {"turn_id": turn_id, "stopped": True, "committed": False,
+                "reason": "stopping; it has not finished writing yet"}
+    return {"turn_id": turn_id, "stopped": True,
+            "committed": turn.committed is not None, "reason": ""}
 
 
 def inject(turn_id: str, text: str) -> bool:

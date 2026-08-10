@@ -9,7 +9,9 @@
 //   - the reconnect budget ran out (8 tries): the code set streaming false, said
 //     "it is still running; reattaching" in the error line, and removed the only
 //     moving thing on the page for however long the reattach took;
-//   - Stop means "stop watching", and the turn genuinely keeps going;
+//   - Stop used to mean "stop watching", and the turn genuinely kept going. It
+//     ends the run now (POST /chat/turns/{id}/stop), so this case is gone at the
+//     source rather than papered over here;
 //   - the turn was started in another tab or on another device, so this one
 //     never had a socket to begin with.
 //
