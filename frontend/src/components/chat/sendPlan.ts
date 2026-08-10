@@ -54,7 +54,19 @@ export function planSend(text: string, s: SendState): SendPlan {
  *  The queue used to answer this on a 250ms timer, re-checking a ref when it
  *  fired, because a turn that was in the act of starting looked idle. `starting`
  *  is that fact stated directly, so the answer is available immediately and the
- *  race it was covering does not exist. */
-export function canDrainQueue(s: SendState & { loadingThread: boolean }): boolean {
+ *  race it was covering does not exist.
+ *
+ *  `heldByStop` is the one case where an idle chat does NOT drain. The queue
+ *  normally self-drains the moment nothing is running, because a queued message
+ *  is one the operator already hit enter on and delivery is owed. But Stop ends
+ *  a run precisely so the operator can take the wheel back, and the instant it
+ *  lands the chat is idle — so without this, pressing Stop would fire everything
+ *  they had typed ahead, unattended, which is the opposite of what they asked
+ *  for. The hold lasts until they send again; the messages stay queued and
+ *  visible, and nothing is dropped. */
+export function canDrainQueue(
+  s: SendState & { loadingThread: boolean; heldByStop?: boolean },
+): boolean {
+  if (s.heldByStop) return false;
   return !s.compacting && !s.starting && !s.runActive && !s.loadingThread;
 }

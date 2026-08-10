@@ -47,6 +47,13 @@ export type TurnStream = {
   attached: boolean;
   reconnecting: boolean;
   attach: (turnId: string) => void;
+  /** Claim the end of this run WITHOUT closing the socket, before asking the
+   *  server to stop it. The server pushes `done` at the top of its commit, so
+   *  that frame lands while the stop request is still in flight — and its
+   *  handler retires the turn and DRAINS THE QUEUE, which is the one thing a
+   *  stop must not do. Claiming first suppresses it; the socket stays open so
+   *  the last of the output still renders. */
+  beginStop: () => void;
   /** Close this tab's socket for the current run and do not silently re-attach.
    *  The SOCKET half of Stop: the run itself is ended by the server
    *  (`api.stopTurn`), and the caller does that first. On its own this leaves a
@@ -244,22 +251,31 @@ export function useTurnStream({
   }, [stateRef]);
   attachRef.current = attach;
 
-  const stopWatching = useCallback(() => {
+  const beginStop = useCallback(() => {
     const runId = stateRef.current.activeRun?.runId;
-    // Claim the finish so a pending drop handler cannot re-attach behind us.
     finishingRef.current = true;
     if (runId) detachedRef.current.add(runId);
+  }, [stateRef]);
+
+  const stopWatching = useCallback(() => {
+    // Claim the finish so a pending drop handler cannot re-attach behind us.
+    // Idempotent with beginStop, which the stop path has usually run already.
+    beginStop();
     closeStream();
     // Pull the log: by now the server has committed whatever the run produced
     // before it was stopped, and this is what puts that reply on screen.
-    void cb.current.sync();
+    // The run ended, so everything a normal ending refreshes still has to
+    // happen: the thread list, the auto-name, the task panel. `finish` is the
+    // one that usually does it and it is suppressed here by design.
+    void cb.current.sync().then(() => cb.current.onTurnEnd());
     // THE QUEUE IS LEFT ALONE, deliberately. Stop is how the operator takes the
     // wheel back; sending everything they had typed ahead, immediately and
     // unattended, is the opposite of what they just asked for. The queued
     // messages stay queued until they send them.
-  }, [closeStream, stateRef]);
+  }, [beginStop, closeStream]);
 
   useEffect(() => () => { sseRef.current?.close(); sseRef.current = null; }, []);
 
-  return { attached, reconnecting, attach, stopWatching, closeStream, hasOpenStream, isDetached };
+  return { attached, reconnecting, attach, beginStop, stopWatching, closeStream,
+           hasOpenStream, isDetached };
 }

@@ -136,6 +136,12 @@ export default function Chat({
   // stale `true`). See useMessageQueue.
   const [canDrain, setCanDrain] = useState(false);
   const canDrainRef = useRef(false);
+  // Stop hands the wheel back, so the queue stops draining ITSELF until the
+  // operator sends again. Without this the queue's self-drain (it fires the
+  // moment nothing is running, and a stop makes that moment) would send
+  // everything they had typed ahead the instant they stopped the turn. Nothing
+  // is dropped: the messages stay queued and on screen. See canDrainQueue.
+  const [heldByStop, setHeldByStop] = useState(false);
   const queue = useMessageQueue({
     scope,
     canDrain,
@@ -191,9 +197,13 @@ export default function Chat({
   // already holds the partial reply. A failure still closes the socket, because
   // leaving the operator holding a button that did nothing visible is worse than
   // the error line beside it.
-  const { stopWatching } = stream;
+  const { beginStop, stopWatching } = stream;
   const onStopTurn = useCallback(async () => {
     const runId = stateRef.current.activeRun?.runId ?? null;
+    // Claim the ending before the request goes out: the `done` frame arrives
+    // mid-flight and its handler would retire the turn and drain the queue.
+    beginStop();
+    setHeldByStop(true);
     try {
       if (runId) await chatApi.stopTurn(runId);
     } catch (e) {
@@ -201,7 +211,7 @@ export default function Chat({
     } finally {
       stopWatching();
     }
-  }, [stateRef, stopWatching]);
+  }, [beginStop, stateRef, stopWatching]);
 
   // /compact reaches BOTH homes of a chat's context — see useCompaction.
   const { ctxNonce, compact, queuedStatus, clear } = useCompaction({
@@ -262,6 +272,8 @@ export default function Chat({
       // stale, so it goes with the error it sits beside.
       setNotice(null);
       followLatest();
+      // They are driving again, so the queue may resume draining itself.
+      setHeldByStop(false);
     },
   });
   sendBatchRef.current = pipeline.sendBatch;
@@ -270,6 +282,7 @@ export default function Chat({
   // path so they cannot disagree about whether the chat is busy.
   const drainable = canDrainQueue({
     compacting, starting: pipeline.starting, runActive, loadingThread: thread.loadingThreads,
+    heldByStop,
   });
   canDrainRef.current = drainable;
   useEffect(() => { setCanDrain(drainable); }, [drainable]);
@@ -318,6 +331,11 @@ export default function Chat({
 
   // Leaving a thread closes its socket. The store is reset by useThreadLog.
   useEffect(() => () => closeStream(), [activeId, closeStream]);
+
+  // A stop hold belongs to the chat it was taken in. Carrying it to the next
+  // chat would leave that one's queue sitting there for no reason the operator
+  // could see.
+  useEffect(() => { setHeldByStop(false); }, [activeId]);
 
   // The committed messages, flat. Read by the context meter's local estimate and
   // by the egress banner; nothing renders from it (the transcript is `blocks`).

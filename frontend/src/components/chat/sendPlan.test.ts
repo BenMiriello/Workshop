@@ -53,6 +53,23 @@ describe("canDrainQueue", () => {
     expect(canDrainQueue({ ...idle, loadingThread: false, compacting: true })).toBe(false);
     expect(canDrainQueue({ ...idle, loadingThread: true })).toBe(false);
   });
+
+  it("does not fire the queue at the moment the operator stops a turn", () => {
+    // The trap: Stop ends the run, which makes the chat idle, which is exactly
+    // the condition the queue self-drains on. So the press that was meant to
+    // take the wheel back would instead send everything typed ahead, unattended.
+    expect(canDrainQueue({ ...idle, loadingThread: false, heldByStop: true })).toBe(false);
+  });
+
+  it("resumes once the operator sends again", () => {
+    // The hold is released on the next send (Chat.tsx, the pipeline's onSend),
+    // so nothing queued is stranded — it goes out when they are driving again.
+    expect(canDrainQueue({ ...idle, loadingThread: false, heldByStop: false })).toBe(true);
+  });
+
+  it("is absent by default, so every other caller is unaffected", () => {
+    expect(canDrainQueue({ ...idle, loadingThread: false })).toBe(true);
+  });
 });
 
 describe("the working indicator never goes quiet on a running turn", () => {
