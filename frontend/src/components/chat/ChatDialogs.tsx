@@ -85,10 +85,8 @@ export default function ChatDialogs({
       />
 
       {/* COMPACT AND CLEAR ASK FIRST. Both are one click from the primary in
-          the context modal, both change the conversation in a way nothing can
-          put back, and neither is obvious from its name: a fold keeps a running
-          summary, a clear keeps nothing. The dialog is where that difference
-          gets stated, once, at the moment it matters. */}
+          the context modal and neither is obvious from its name: compact
+          summarizes, clear drops. One line each, said where it matters. */}
       <ConfirmDialog
         open={confirmCompact}
         onCancel={onCancelCompact}
@@ -96,9 +94,7 @@ export default function ChatDialogs({
         title="Compact this conversation?"
         body={
           <span>
-            Earlier messages are folded into a running summary so the model reads
-            less of them. The transcript stays here in full, but the detail the
-            model can still draw on is lost. This can't be undone.
+            Replace chat history with a context summary.
           </span>
         }
         confirmLabel="Compact"
@@ -112,9 +108,7 @@ export default function ChatDialogs({
         title="Clear this conversation's context?"
         body={
           <span>
-            The model stops seeing every earlier message, with NO summary kept.
-            The transcript stays here and you can still read it, but the next
-            turn starts from nothing. This can't be undone.
+            Previous messages will still be kept but not included in chat context.
           </span>
         }
         confirmLabel="Clear context"
