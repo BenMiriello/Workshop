@@ -165,6 +165,12 @@ def disallowed_for(*, unattended: bool) -> list[str]:
     manually invoked agent can ask the operator who just invoked it, an
     unattended one has nobody, so for it the answer is no rather than a prompt
     into the void.
+
+    TWO CALLERS, and for a long time only one of them mattered. `routes/chat.py`
+    asks on the @mention path, where the operator has just typed the mention, so
+    the answer there is always the empty list. The list was therefore designed
+    for a run that never consulted it. `scripts/ralph.sh` is that run, and it now
+    asks through `python -m services.agent_authority denied --unattended`.
     """
     return list(IRREVERSIBLE_PATTERNS) if unattended else []
 
@@ -197,3 +203,35 @@ def describe(role: str | None) -> str:
     if len(listed) == 1:
         return f"Writes {listed[0]}."
     return f"Writes {', '.join(listed[:-1])} and {listed[-1]}."
+
+
+def main(argv: list[str]) -> int:
+    """`python -m services.agent_authority denied --unattended` — the shell's
+    entry point.
+
+    ralph.sh builds its `--disallowedTools` flag through this rather than
+    repeating the pattern list in bash, so the denylist has one definition and
+    the sweep cannot drift from the module that documents it. One pattern per
+    line; the caller reads it into an array.
+    """
+    import argparse
+
+    ap = argparse.ArgumentParser(prog="agent_authority")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sp = sub.add_parser("denied")
+    sp.add_argument("--unattended", action="store_true",
+                    help="nobody is watching this run, so nothing irreversible")
+    args = ap.parse_args(argv)
+    for pattern in disallowed_for(unattended=args.unattended):
+        print(pattern)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    from pathlib import Path
+
+    _BACKEND = str(Path(__file__).resolve().parent.parent)
+    if _BACKEND not in sys.path:
+        sys.path.insert(0, _BACKEND)
+    raise SystemExit(main(sys.argv[1:]))

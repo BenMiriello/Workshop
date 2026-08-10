@@ -43,6 +43,11 @@ export type ChatSegment =
       id: string;            // the Agent tool_use id its steps point back at
       steps: ChatSegment[];  // its own tool calls and interim text
       done: boolean;
+      // Why it ended, when it did not end by reporting back. Empty (or absent,
+      // on turns recorded before the backend sent it) means it finished
+      // normally. A delegate is killed with its parent, so a turn the operator
+      // stopped and a turn lost to a restart both leave one of these behind.
+      outcome?: "" | "stopped" | "lost" | "unfinished";
       result: string;        // what it reported back
     };
 

@@ -233,3 +233,61 @@ class TestSegments:
         _feed(t, [_assistant([{"type": "tool_use", "id": "z", "name": "Bash",
                                "input": {"command": "ls"}}], parent="toolu_unknown")])
         assert [s["t"] for s in t.segments] == ["tool"]
+
+
+class TestUnfinishedDelegates:
+    """A delegate is killed with its parent, so the chip must stop saying it is
+    working the moment the turn ends.
+
+    Nothing used to close an open `agent` segment: `done` was set only by the
+    Agent tool's own `tool_result`, and a turn that was stopped or lost never
+    produced one. `_commit_turn` then committed the segment as-is, so the chip
+    read "working" for the rest of the thread's life, describing a process that
+    had died with the turn.
+    """
+
+    def test_stop_closes_an_open_delegate_and_says_so(self):
+        t = _turn()
+        _feed(t, [
+            _agent_call(),
+            _assistant([{"type": "tool_use", "id": "x", "name": "Bash",
+                         "input": {"command": "ls"}}], parent=AGENT_ID),
+        ])
+        seg = t.segments[0]
+        assert seg["done"] is False        # still running, correctly
+        bs._close_open_agents(t, stopped=True, lost=False)
+        assert seg["done"] is True
+        assert seg["outcome"] == "stopped"
+        assert "Stopped" in seg["result"]
+
+    def test_a_lost_turn_says_lost_not_stopped(self):
+        """The two endings are different events and the chip names which."""
+        t = _turn()
+        _feed(t, [_agent_call()])
+        bs._close_open_agents(t, stopped=False, lost=True)
+        assert t.segments[0]["outcome"] == "lost"
+
+    def test_an_ending_with_no_named_reason_still_closes(self):
+        t = _turn()
+        _feed(t, [_agent_call()])
+        bs._close_open_agents(t, stopped=False, lost=False)
+        assert t.segments[0]["done"] is True
+        assert t.segments[0]["outcome"] == "unfinished"
+
+    def test_a_delegate_that_reported_back_is_left_alone(self):
+        """Closing must not relabel work that genuinely finished."""
+        t = _turn()
+        _feed(t, [_agent_call(), _tool_result(text="Found three files.")])
+        bs._close_open_agents(t, stopped=True, lost=False)
+        seg = t.segments[0]
+        assert seg["done"] is True
+        assert seg["outcome"] == ""
+        assert seg["result"] == "Found three files."
+
+    def test_partial_text_it_had_already_reported_survives(self):
+        t = _turn()
+        _feed(t, [_agent_call()])
+        t.segments[0]["result"] = "Halfway through: two of five files read."
+        bs._close_open_agents(t, stopped=True, lost=False)
+        assert t.segments[0]["result"].startswith("Halfway through")
+        assert t.segments[0]["outcome"] == "stopped"

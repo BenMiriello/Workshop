@@ -139,3 +139,67 @@ class TestReversibility:
         denied = set(aa.disallowed_for(unattended=True))
         for ordinary in ("Bash(git commit:*)", "Edit", "Write", "Bash(pytest:*)"):
             assert ordinary not in denied
+
+
+class TestTheGateReachesTheUnattendedRun:
+    """The denylist is only worth having where nobody is watching, and until now
+    the only caller was the one place someone always is.
+
+    `disallowed_for` was asked exactly once, from the chat's @mention path, where
+    the operator has just typed the mention — so it returned `[]` every time it
+    was ever called. The sweep it was designed for (`dispatch_triggers.sh` ->
+    `project_ralph.sh` -> `ralph.sh`) invoked `claude -p` with no `--allowedTools`,
+    no `--disallowedTools` and no `--permission-mode`, inheriting a user-scope
+    settings file that allows `Bash(git push:*)` at `defaultMode: auto`.
+
+    These tests pin both halves of the wiring: the shell's entry point, and the
+    fact that ralph.sh actually passes the flag to the CLI.
+    """
+
+    def _ralph(self) -> str:
+        from pathlib import Path
+        p = Path(__file__).resolve().parents[2] / "scripts" / "ralph.sh"
+        return p.read_text()
+
+    def test_the_shell_entry_point_prints_the_patterns(self):
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            assert aa.main(["denied", "--unattended"]) == 0
+        assert buf.getvalue().split() != []
+        assert buf.getvalue().splitlines() == list(aa.IRREVERSIBLE_PATTERNS)
+
+    def test_the_shell_entry_point_denies_nothing_when_watched(self):
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            assert aa.main(["denied"]) == 0
+        assert buf.getvalue() == ""
+
+    def test_ralph_asks_this_module_rather_than_repeating_the_list(self):
+        """One definition. A second copy in bash is a denylist that drifts."""
+        src = self._ralph()
+        assert "services.agent_authority denied --unattended" in src
+        for pattern in aa.IRREVERSIBLE_PATTERNS:
+            assert pattern not in src, f"ralph.sh hardcodes {pattern}"
+
+    def test_ralph_passes_the_deny_flag_to_the_cli(self):
+        """The flag has to reach the process, not just be computed near it."""
+        src = self._ralph()
+        assert "DENY_FLAGS=(--disallowedTools" in src
+        invocation = src.split('"$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT"')[1][:300]
+        assert '"${DENY_FLAGS[@]}"' in invocation
+
+    def test_the_sweep_scripts_do_not_push_on_their_own_behalf(self):
+        """The deny list gates the AGENT's tool calls, not this script's own
+        shell. If the loop ever needs to push, it must do it in bash, and this
+        test is the reminder that adding it to the prompt instead will not work.
+        """
+        from pathlib import Path
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        for name in ("ralph.sh", "project_ralph.sh", "reviewer.sh"):
+            assert "git push" not in (scripts / name).read_text()

@@ -558,6 +558,10 @@ def _seg_agent(turn: "Turn", payload: dict) -> None:
         "id": payload.get("id") or "",
         "steps": [],
         "done": False,
+        # Empty while it runs and after it reports back normally. Set only when
+        # the turn ended before the report arrived (`_close_open_agents`), so a
+        # chip that says nothing here is a delegation that actually finished.
+        "outcome": "",
         "result": "",
     }
     turn.segments.append(seg)
@@ -1354,6 +1358,35 @@ def _stale_pending_approvals(turn: Turn) -> None:
         _push(turn, "permission_resolved", {"stale": True})
 
 
+def _close_open_agents(turn: Turn, *, stopped: bool, lost: bool) -> None:
+    """Any subagent still open when the turn ends did NOT finish. Say which.
+
+    A subagent segment is closed by the Agent tool's own `tool_result`. When the
+    turn ends before that arrives — the operator pressed Stop, or the backend was
+    restarted under a detached run — the result never comes, so `done` stayed
+    False and the chip read "working" for the rest of the thread's life. The
+    delegation was over; only the row was still claiming otherwise.
+
+    Closed with the SAME reason the turn ended for, because that is what actually
+    happened to the subagent: it was killed with its parent. `outcome` carries
+    the reason to the collapsed chip so the row itself is honest without being
+    opened, and `result` says it in words for when it is."""
+    if stopped:
+        outcome, said = "stopped", "Stopped with the turn, before it reported back."
+    elif lost:
+        outcome, said = "lost", "Lost with the turn, before it reported back."
+    else:
+        outcome, said = "unfinished", "The turn ended before it reported back."
+    for seg in turn.agent_segs.values():
+        if seg.get("done"):
+            continue
+        seg["done"] = True
+        seg["outcome"] = outcome
+        # Never overwrite partial text the subagent had already reported.
+        if not seg.get("result"):
+            seg["result"] = said
+
+
 def resolve_permission(turn_id: str, request_id: str, allow: bool,
                        message: str | None = None) -> tuple[bool, str]:
     """Answer a pending approval. Returns (ok, detail).
@@ -1410,6 +1443,7 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     awaits `turn.finished`, and a finalize that fails silently would leave that
     request hanging for as long as the client will hold the socket open."""
     _stale_pending_approvals(turn)
+    _close_open_agents(turn, stopped=bool(kw.get("stopped")), lost=bool(kw.get("lost")))
     try:
         await _commit_turn(turn, meta, **kw)
     finally:

@@ -390,6 +390,41 @@ except Exception: print('default')" 2>/dev/null || echo "default")
 export LATITUDE
 log "latitude=$LATITUDE (source=$LATITUDE_SOURCE scope=${LEARN_SCOPE:-none} task=${TASK_ID:-none})"
 
+# --- the reversibility gate, for a run nobody is watching --------------------
+#
+# THIS is the run agent_authority.IRREVERSIBLE_PATTERNS was written for. The list
+# existed for weeks with one caller — the chat's @mention path — where the
+# operator has just typed the mention, so `disallowed_for` returned the empty
+# list every single time it was asked. The genuinely unattended sweep, this one,
+# passed no tool flags at all and inherited ~/.claude/settings.json, which
+# allow-lists the push and release commands at defaultMode auto.
+#
+# Unconditional, not conditional on a mode flag: `claude -p` is headless. There
+# is no approval prompt in this process and no one to answer it, so "ask before
+# something irreversible" can only be spelled "no". A ralph run started by hand
+# from a terminal is the same headless subprocess as one started by cron.
+#
+# This denies the AGENT's tool calls. It does not touch the commands this script
+# runs itself, which are ordinary shell and never pass through the CLI's tool
+# gate — none of ralph.sh, project_ralph.sh or reviewer.sh publishes anything on
+# its own behalf, so the loop's own machinery is unaffected by the deny list.
+# test_agent_authority.py holds all three to that.
+#
+# Read from Python so the patterns have exactly one definition. If the call
+# fails, the array is empty and the run proceeds without the gate: a broken
+# import must not stop the autonomy loop, and the log line below says which of
+# the two happened.
+DENY_TOOLS=()
+mapfile -t DENY_TOOLS < <( (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" \
+  python3 -m services.agent_authority denied --unattended 2>>"$LOG") || true)
+DENY_FLAGS=()
+if (( ${#DENY_TOOLS[@]} > 0 )); then
+  DENY_FLAGS=(--disallowedTools "${DENY_TOOLS[@]}")
+  log "irreversible-action gate: ${#DENY_TOOLS[@]} patterns denied (${DENY_TOOLS[*]})"
+else
+  log "irreversible-action gate: NOT APPLIED (agent_authority produced no patterns)"
+fi
+
 # The persona paragraph. Latitude is ADVISORY policy ABOVE the enforced floor:
 # it never widens what `touches` and the grants allow, it only says what to do
 # with the residue the ticket left unspecified.
@@ -564,6 +599,7 @@ Re-read ~/workshop/scripts/reviewer.sh's output if you need the full structured 
   ITER_START=$(date +%s)
   timeout "$PER_ITER_TIMEOUT" "$CLAUDE" "${RESUME_FLAG[@]}" -p "$ITER_PROMPT" \
     --output-format json \
+    "${DENY_FLAGS[@]}" \
     "${TURN_CAP[@]}" \
     </dev/null >"$ITER_OUT" 2>&1
   CLAUDE_EXIT=$?

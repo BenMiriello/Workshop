@@ -162,11 +162,22 @@ export function agentBrief(seg: AgentSegment): string {
   return detail.replace(/\s+/g, " ").trim() === agentChipLine(seg) ? "" : detail;
 }
 
-/** One line describing what a subagent did, for the collapsed chip. */
+/** One line describing what a subagent did, for the collapsed chip.
+ *
+ *  "working" is claimed only while the turn is actually running. A delegate is
+ *  killed with its parent, so a stopped or lost turn closes its open subagents
+ *  with an `outcome` and the chip says which — it used to keep reading "working"
+ *  for the rest of the thread's life, describing a process that had been dead
+ *  since the moment the operator pressed Stop. */
 export function agentSummary(seg: AgentSegment): string {
   const tools = seg.steps.filter((s) => s.t === "tool").length;
-  if (!seg.done) return tools ? `working · ${tools} step${tools > 1 ? "s" : ""}` : "working";
-  return tools ? `${tools} step${tools > 1 ? "s" : ""}` : "done";
+  const steps = tools ? `${tools} step${tools > 1 ? "s" : ""}` : "";
+  if (!seg.done) return steps ? `working · ${steps}` : "working";
+  if (seg.outcome) {
+    const why = seg.outcome === "unfinished" ? "did not finish" : seg.outcome;
+    return steps ? `${why} · ${steps}` : why;
+  }
+  return steps || "done";
 }
 
 /** How many of a turn's trailing work segments stay inline (unfolded) on the
