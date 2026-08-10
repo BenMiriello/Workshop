@@ -5,6 +5,7 @@
 // which meant every question about a chat's identity was answered by reading the
 // component.
 import type { ChatMsg } from "../../lib/chat";
+import { DEV_MODE, DEVELOPMENT_SCOPE } from "../../lib/devMode";
 
 export type ChatMode = "data" | "build";
 export type ChatVariant = "dock" | "panel" | "full";
@@ -39,13 +40,18 @@ export function projectSlugFor(contextKey: string): string | null {
 // scopes). Unifying them means settling the context_key/scope axis, which is a
 // migration, not a rename. Do not add a third naming function in the meantime.
 
-export type ScopeKind = "workshop" | "project" | "app" | "agent" | "other";
+export type ScopeKind = "development" | "workshop" | "project" | "app" | "agent" | "other";
 
 // App chats bind a BARE app id (finance, budget, …), not `app:<id>`. build: and
 // agent: are two runtimes of one scope kind (entity model 2026-07-18 §6), so
 // they collapse here; the runtime distinction shows on AgentDetail, not in a
 // list of places.
+//
+// `development` is its own kind, not a project (ADR 0014). It is work ON the
+// Workshop — its source and this installation's host — and it is the only name
+// that means the platform repo. Present only in a developer build.
 export function scopeKind(key: string): ScopeKind {
+  if (key === DEVELOPMENT_SCOPE) return "development";
   if (!key || key === "general" || key === "workshop") return "workshop";
   if (!key.includes(":")) return "app";
   const kind = key.split(":", 1)[0];
@@ -55,6 +61,7 @@ export function scopeKind(key: string): ScopeKind {
 }
 
 export function scopeLabel(key: string): string {
+  if (key === DEVELOPMENT_SCOPE) return "Development";
   if (!key || key === "general" || key === "workshop") return "Workshop";
   if (!key.includes(":")) return `App · ${key}`;
   const [kind, rest] = key.split(":", 2);
@@ -68,6 +75,7 @@ export function scopeLabel(key: string): string {
 // only its own name. The full "Project · foo" form is for surfaces with no
 // heading above the row: the chat list, and the picker's own trigger.
 export function scopeName(key: string): string {
+  if (key === DEVELOPMENT_SCOPE) return "Development";
   if (!key || key === "general" || key === "workshop") return "Workshop";
   if (!key.includes(":")) return key; // a bare app id, shown as the chat list shows it
   const [, rest] = key.split(":", 2);
@@ -91,24 +99,37 @@ export function composerPlaceholder(key: string): string {
     case "project": return `Message the ${scopeName(key)} project...`;
     case "app": return `Message the ${scopeName(key)} app...`;
     case "agent": return `Message ${scopeName(key)}...`;
+    case "development": return "Message the Workshop's own source...";
     case "workshop": return "Message the workshop...";
     default: return `Message ${scopeName(key)}...`;
   }
 }
 
-// Group headings for the scope picker, in the order they read best: the widest
-// scope first, then the places work actually happens, then individual agents.
-// Workshop takes no heading — it is one row, and "Workshop" above "Workshop"
-// says it twice; sitting unlabelled at the top is what makes it read as the
-// root. `other` takes none either: an unrecognised key is shown rather than
-// hidden, but it does not deserve a section.
-export const SCOPE_GROUPS: { kind: ScopeKind; label: string }[] = [
-  { kind: "workshop", label: "" },
-  { kind: "project", label: "Projects" },
-  { kind: "app", label: "Apps" },
-  { kind: "agent", label: "Agents" },
-  { kind: "other", label: "" },
-];
+// Group headings for the scope picker, in the order they read best: Development
+// and Workshop unlabelled at the top, then the places work actually happens,
+// then individual agents. Those two take no heading — each is one row, and
+// "Workshop" above "Workshop" says it twice; sitting unlabelled at the top is
+// what makes them read as the roots. `other` takes none either: an unrecognised
+// key is shown rather than hidden, but it does not deserve a section.
+//
+// Development sorts ABOVE Workshop: it is where a developer already is, and
+// putting the root organising layer first would make the common case second.
+// `orderScopes` in lib/devMode applies the same rank to flat scope lists.
+//
+// The group is present only in a developer build (ADR 0014) — absent, not
+// disabled, so a normal bundle does not advertise a capability it lacks.
+export function scopeGroups(devMode: boolean = DEV_MODE): { kind: ScopeKind; label: string }[] {
+  return [
+    ...(devMode ? [{ kind: "development" as ScopeKind, label: "" }] : []),
+    { kind: "workshop" as ScopeKind, label: "" },
+    { kind: "project" as ScopeKind, label: "Projects" },
+    { kind: "app" as ScopeKind, label: "Apps" },
+    { kind: "agent" as ScopeKind, label: "Agents" },
+    { kind: "other" as ScopeKind, label: "" },
+  ];
+}
+
+export const SCOPE_GROUPS = scopeGroups();
 
 // The task-store scope a chat maps to, or null when the chat has no task queue
 // (general chat, app docks). build/project/agent chats all get the shared

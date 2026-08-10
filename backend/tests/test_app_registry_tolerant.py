@@ -96,7 +96,11 @@ def test_chat_context_has_no_hardcoded_app_personas_or_operator():
     for banned in ("class BudgetContextProvider", "class FinanceContextProvider",
                    "class CommuteContextProvider", "class LocationContextProvider"):
         assert banned not in src, f"chat_context still defines {banned!r}"
-    assert "is benmiriello" not in src, "chat_context hardcodes the operator name"
+    # Assert the MECHANISM, not a name: a test that greps for one operator's
+    # name is the same hardcoding it is trying to forbid, and says nothing
+    # about a fork. scripts/check_no_hardcoding.sh covers the literal case by
+    # asking the machine who it is.
+    assert "operator_name" in src, "chat_context no longer resolves the operator from config"
 
 
 def test_catalog_never_hard_imports_app_modules_at_toplevel():

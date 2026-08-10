@@ -6,7 +6,7 @@
 # it survives logout/reboot without an active session, frees :8000 from any
 # ad-hoc nohup backend, then enables + starts the service and verifies health.
 #
-# Reproducible by design: nothing here is specific to the original clawd-a host.
+# Reproducible by design: nothing here is specific to the host it was written on.
 # Anyone who clones the repo and runs `bash scripts/install_service.sh` gets the
 # same setup. Run it as the user who should own the service (NOT root/sudo).
 set -euo pipefail

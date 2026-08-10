@@ -25,7 +25,18 @@ CHATCTX="backend/services/chat_context.py"
 
 # App route modules — these belong to installed apps and must mount from
 # services/app_registry, never from main.py.
-APP_MODULES="finance|budget|plaid_webhook|commute|location|owntracks|health|birds|environment"
+# Derived from the catalog, never typed here: a guard with its own hardcoded
+# app roster misses exactly the app someone just added, which is the only case
+# that matters. Falls back to the union of route modules an AppSpec mounts.
+APP_MODULES="$(
+  grep -hoE '^[[:space:]]*from routes import .*' "$REGISTRY" 2>/dev/null \
+    | sed 's/.*from routes import //' | tr ',' '\n' \
+    | tr -d ' ' | grep -E '^[a-z_]+$' | sort -u | paste -sd'|' -
+)"
+if [[ -z "$APP_MODULES" ]]; then
+  VIOL+=("$REGISTRY names no route modules — the catalog cannot be read, so this guard cannot tell an app from platform code.")
+  APP_MODULES="__none__"
+fi
 # App-specific startup loops that were moved into app_registry.
 APP_LOOPS="_prewarm_finance_cache|_prewarm_loop|_categorize_loop|_env_refresh_loop|_atlas_rebuild_loop"
 
@@ -70,8 +81,11 @@ if [[ -f "$CHATCTX" ]]; then
   if grep -nE "^class (Budget|Finance|Commute|Location)ContextProvider" "$CHATCTX" >/dev/null; then
     VIOL+=("$CHATCTX defines an app persona class. App personas belong in services/app_personas.py, registered via AppSpec.chat_provider — never hardcoded in chat plumbing.")
   fi
-  if grep -nE "operator is benmiriello|is benmiriello" "$CHATCTX" >/dev/null; then
-    VIOL+=("$CHATCTX hardcodes the operator name. Use operator_name() (env-driven) so a fresh instance isn't branded with one operator's identity.")
+  # The operator's name is checked by scripts/check_no_hardcoding.sh, which
+  # asks the machine who it is rather than naming anyone here. What this file
+  # can assert is the mechanism: the name must come from operator_name().
+  if ! grep -q "operator_name" "$CHATCTX"; then
+    VIOL+=("$CHATCTX no longer resolves the operator via operator_name() (env-driven) — a fresh instance would be branded with whoever's name is in source.")
   fi
   if ! grep -q "installed_chat_providers\|provider_map" "$CHATCTX"; then
     VIOL+=("$CHATCTX no longer assembles providers from installed apps (provider_map/installed_chat_providers) — app personas would not be install-gated.")
@@ -93,13 +107,17 @@ if [[ -f "$APPS_TSX" ]]; then
   if ! grep -q "/base-apps/launcher" "$APPS_TSX"; then
     VIOL+=("$APPS_TSX no longer fetches /base-apps/launcher — the launcher must be manifest-driven, not a hardcoded card array.")
   fi
-  if grep -nE 'to:\s*"/apps/(finance|budget|birds|location|commute)"' "$APPS_TSX" >/dev/null; then
+  if grep -nE "to:\s*\"/apps/($APP_MODULES)\"" "$APPS_TSX" >/dev/null; then
     VIOL+=("$APPS_TSX hardcodes an app route (to: \"/apps/...\"). Launcher cards come from GET /base-apps/launcher.")
   fi
 fi
 
 # 4) Per-instance data / state must stay untracked (a fresh clone inherits none).
 FORBIDDEN_TRACKED=(
+  ".tasks.json"
+  "TODO.md"
+  "backend/store-policies.json"
+  "shared/relay-corpus.jsonl"
   "projects.json"
   "build_agents.json"
   "backend/apps.json"

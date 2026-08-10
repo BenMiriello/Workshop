@@ -34,7 +34,7 @@ AUTH_ENV = os.path.expanduser("~/.config/clawdbot/auth.env")
 RELAY_LOCAL_URL = os.environ.get("WORKSHOP_RELAY_LOCAL_URL", "http://127.0.0.1:8000/relay/local")
 
 SYSTEM = (
-    "You are benmiriello's commute assistant. You receive a JSON 'brief' (the live "
+    "You are the operator's commute assistant. You receive a JSON 'brief' (the live "
     "scored commute) plus 'patterns' (what his PAST commutes actually looked like) "
     "and 'data_quality'. Produce ONE message as STRICT JSON, no prose around it:\n"
     '{"kind":"brief|alert|insight|nudge","severity":"ok|info|caution|urgent",'

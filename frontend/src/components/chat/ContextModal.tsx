@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
+import { Check, ChevronRight, Pencil, RefreshCw } from "lucide-react";
 import {
-  Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock, StatusDot,
-  StatusPill, catFor,
+  ActionBar, Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock,
+  StatusDot, StatusPill, Toggle, catFor, useEditMode,
 } from "../../ui";
 import {
   contextHeadline, contextSlices, formatPct, formatTokens, refreshedLabel,
@@ -12,6 +13,10 @@ import {
   healthSummaryLine, mergeMcpServers, worstKind,
   type McpHealth, type McpRow,
 } from "./mcpHealth";
+import {
+  decode, encode, isEnabled, selectionSummary, toggle as toggleServer,
+  type McpSelection,
+} from "./mcpSelection";
 
 // What is filling this conversation's context, and the two things you can do
 // about it.
@@ -33,6 +38,15 @@ import {
 // MCP IS THE SECOND QUERY. Cost comes from `/context`, health from
 // `claude mcp list`, and a broken server appears only in the latter — it loads
 // no tools, so it costs nothing and was therefore invisible. See mcpHealth.
+//
+// MCP IS ALSO WRITABLE, and that half is behind Edit mode (rule 7). Turning a
+// server off changes what the next turn can DO, which puts it firmly on the
+// config side of the commit table — a stray tap must not silently remove a
+// chat's access to Plaid. View state (which server is expanded) still commits
+// on click; the switches do not commit until Save.
+//
+// The default is ALL servers and it must stay indistinguishable from never
+// having chosen; see mcpSelection for why that asymmetry is load-bearing.
 
 // How often the "Refreshed Nm ago" line re-renders. Half a minute: the label's
 // own resolution is a minute, so this can never be more than one tick behind.
@@ -61,13 +75,17 @@ function Row({ label, tokens, window: win, hue, sub }: {
 /** A server's own line: how many tools it contributes, and whether it works.
  *  The state is the CLI's own words, so the panel never paraphrases a vendor
  *  into something more or less alarming than what it said. */
-function ServerSub({ row }: { row: McpRow }) {
+function ServerSub({ row, off }: { row: McpRow; off?: boolean }) {
   const tools = `${row.tools.length} tool${row.tools.length === 1 ? "" : "s"}`;
-  if (!row.health) return <>{tools}</>;
+  // "Off for this chat" is said in words, not by a sixth status color: it is a
+  // choice the operator made, not a condition of the server (rule 3).
+  const chosen = off ? <span className="ctx-row__sub">off for this chat</span> : null;
+  if (!row.health) return <>{tools}{chosen}</>;
   return (
     <>
       <StatusDot status={row.health.kind}>{row.health.state}</StatusDot>
       <span className="ctx-row__sub">{tools}</span>
+      {chosen}
     </>
   );
 }
@@ -90,6 +108,7 @@ export default function ContextModal({
   const [healthFailed, setHealthFailed] = useState(false);
   const [openServer, setOpenServer] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [saveFailed, setSaveFailed] = useState<string | null>(null);
 
   const load = useCallback(async (force = false) => {
     if (!threadId) return;
@@ -143,6 +162,43 @@ export default function ContextModal({
   const servers = mergeMcpServers(data?.mcp, health?.available ? health.servers : undefined);
   const worst = worstKind(servers);
   const summary = healthSummaryLine(servers);
+
+  // ---- the per-chat MCP selection ----------------------------------------
+  // Only servers whose launch spec the backend could find can be switched: a
+  // subset runs under --strict-mcp-config, which means the survivors have to be
+  // re-declared, and a server we hold no spec for cannot be. Offering a switch
+  // that silently did nothing (or worse, dropped a different server) would be
+  // the exact class of quiet lie this panel exists to remove.
+  const switchable = useMemo(
+    () => servers.filter((s) => s.health?.spec_available).map((s) => s.name),
+    [servers]);
+  const stored: McpSelection = health?.enabled ?? null;
+  // The draft is a STRING, not an array: useEditMode compares drafts shallowly,
+  // and two arrays with equal contents are never shallow-equal, so an array
+  // draft would read as dirty from the moment Edit opened.
+  const current = useMemo(() => ({ sel: encode(stored) }), [stored]);
+
+  const edit = useEditMode(current, async (draft) => {
+    setSaveFailed(null);
+    const id = encodeURIComponent(threadId ?? "");
+    const r = await fetch(`/api/chat/threads/${id}/mcp/servers`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ servers: decode(draft.sel) }),
+    });
+    if (!r.ok) {
+      setSaveFailed(`PUT /api/chat/threads/${threadId ?? ""}/mcp/servers returned ${r.status}`);
+      throw new Error(String(r.status));
+    }
+    const body = await r.json();
+    // Take the SERVER's answer, not the draft: it is the side that collapses
+    // "every box ticked" back to "all", and the panel must show what was
+    // actually stored rather than what was asked for.
+    setHealth((h) => (h ? { ...h, enabled: body.enabled ?? null } : h));
+  });
+
+  const draftSel = edit.editing ? decode(edit.draft.sel) : stored;
+  const selSummary = selectionSummary(draftSel, switchable);
   // The oldest of the two readings is the one the footer must date: saying the
   // panel was refreshed a minute ago when half of it is five minutes old would
   // be the same lie the freshness line exists to prevent.
@@ -245,6 +301,19 @@ export default function ContextModal({
             {!healthLoading && worst && summary && (
               <StatusPill status={worst}>{summary}</StatusPill>
             )}
+            {!healthLoading && selSummary && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{selSummary}</span>
+            )}
+            {!edit.editing && switchable.length > 0 && (
+              <Button size="sm" variant="ghost" onClick={edit.begin}>
+                <Pencil aria-hidden /> Edit
+              </Button>
+            )}
+            {edit.flash && (
+              <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                <Check size={13} strokeWidth={1.8} aria-hidden /> Saved
+              </span>
+            )}
           </div>
 
           {healthLoading && servers.length === 0 && (
@@ -279,18 +348,38 @@ export default function ContextModal({
           {servers.length > 0 && (
             <div className={`ctx-list${mcpOverflow ? " ctx-list--scroll" : ""}`}>
               {servers.map((s) => {
+                const on = isEnabled(draftSel, s.name);
                 const row = (
                   <Row
                     label={s.name}
-                    sub={<ServerSub row={s} />}
+                    sub={<ServerSub row={s} off={!on} />}
                     tokens={s.tokens}
                     window={win}
                     hue={catFor(s.key)}
                   />
                 );
+                const canSwitch = !!s.health?.spec_available;
                 return (
-                  <div key={s.key}>
-                    {s.tools.length > 0 ? (
+                  <div key={s.key} className={on ? undefined : "ctx-off"}>
+                    {edit.editing ? (
+                      // Edit mode: the row stops being a disclosure and becomes
+                      // a switch. One gesture per mode — a row that both
+                      // expanded and toggled would make the tap ambiguous.
+                      <div className="ctx-expand ctx-expand--edit">
+                        {canSwitch ? (
+                          <Toggle
+                            className="ctx-toggle"
+                            checked={on}
+                            onChange={() => edit.set(
+                              "sel",
+                              encode(toggleServer(draftSel, s.name, switchable)))}
+                          />
+                        ) : (
+                          <span className="ctx-expand__chev" aria-hidden />
+                        )}
+                        {row}
+                      </div>
+                    ) : s.tools.length > 0 ? (
                       <button
                         type="button"
                         className={`ctx-expand${openServer === s.key ? " is-open" : ""}`}
@@ -314,7 +403,16 @@ export default function ContextModal({
                         rather than behind a disclosure: this is the sentence
                         the operator opened the panel to find. */}
                     {s.health?.detail && <div className="ctx-detail">{s.health.detail}</div>}
-                    {openServer === s.key && s.tools.length > 0 && (
+                    {/* And why it has no switch, when it has none. Saying "we
+                        do not know where this server is configured" is the
+                        honest version of an absent control. */}
+                    {edit.editing && !canSwitch && (
+                      <div className="ctx-nospec">
+                        No launch spec found for this server, so it cannot be turned off for one
+                        chat.
+                      </div>
+                    )}
+                    {!edit.editing && openServer === s.key && s.tools.length > 0 && (
                       <div className="ctx-sublist">
                         {s.tools.map((t) => (
                           <Row key={t.name} label={t.name} tokens={t.tokens} window={win} />
@@ -325,6 +423,43 @@ export default function ContextModal({
                 );
               })}
             </div>
+          )}
+
+          {edit.editing && (
+            <>
+              <p className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                Applies from the next turn — a run already in flight had its tools fixed when it
+                started. Every server is on until you turn one off.{" "}
+                <Link to="/settings/mcp" style={{ color: "var(--accent)" }}>
+                  Settings → MCP
+                </Link>{" "}
+                lists them all, with what each costs.
+              </p>
+              <ActionBar flash={edit.dirty ? "unsaved" : null}>
+                <Button onClick={() => void edit.save()} disabled={edit.saving}>
+                  {edit.saving ? "Saving" : "Save"}
+                </Button>
+                <Button variant="ghost" onClick={() => { setSaveFailed(null); edit.cancel(); }}>
+                  Cancel
+                </Button>
+              </ActionBar>
+            </>
+          )}
+
+          {saveFailed && (
+            <StateBlock
+              variant="error"
+              title="Couldn't save the server selection"
+              hint={saveFailed}
+              action={<Button variant="ghost" onClick={() => void edit.save()}>Try again</Button>}
+            />
+          )}
+
+          {!edit.editing && switchable.length > 0 && (
+            <p className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+              <Link to="/settings/mcp" style={{ color: "var(--accent)" }}>Settings → MCP</Link>
+              {" "}lists every server on this machine, where it comes from, and what it costs.
+            </p>
           )}
 
           {data.available && (

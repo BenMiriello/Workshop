@@ -77,7 +77,7 @@ _SUPERSEDE_RE = re.compile(
 
 # --- selectivity: keep heartbeat/status chatter OUT of long-term memory -------
 # Only substantive material becomes memory. The single-operator Job log is full
-# of overseer/masini heartbeat ticks and per-run status narration; folding those
+# of overseer/bridge heartbeat ticks and per-run status narration; folding those
 # in produces garbage semantic "facts". These filters drop that noise at gather.
 
 # Generic prose shorter than this is treated as status narration, not a fact.
@@ -101,10 +101,21 @@ _VACUOUS_RE = re.compile(
 )
 
 # Jobs bound to these sources are heartbeat/coordination chatter, never work.
-_NOISE_AGENT_RE = re.compile(
-    r"(overseer|masini|heartbeat|supervisor|per[- ]channel|discord)",
-    re.IGNORECASE,
-)
+# Roles and surfaces, not agent names: which agent bridges a chat surface is a
+# per-install choice, so an install that wants its own excluded adds it to
+# WORKSHOP_NOISE_AGENTS rather than the platform learning its name.
+_NOISE_AGENT_PATTERN = r"(overseer|heartbeat|supervisor|bridge|per[- ]channel|discord)"
+
+
+def _noise_agent_re() -> re.Pattern:
+    extra = (os.environ.get("WORKSHOP_NOISE_AGENTS") or "").strip()
+    if not extra:
+        return re.compile(_NOISE_AGENT_PATTERN, re.IGNORECASE)
+    names = "|".join(re.escape(n.strip()) for n in extra.split(",") if n.strip())
+    return re.compile(f"({_NOISE_AGENT_PATTERN}|{names})", re.IGNORECASE)
+
+
+_NOISE_AGENT_RE = _noise_agent_re()
 
 
 def _is_narration(text: str) -> bool:
@@ -124,7 +135,7 @@ def _is_vacuous(text: str) -> bool:
 
 def _is_noise_job(rec: dict) -> bool:
     """True for a Job that is heartbeat/coordination chatter, not real work: an
-    overseer/masini/supervisor binding, or a per-channel (chat-bound) tick."""
+    overseer/bridge/supervisor binding, or a per-channel (chat-bound) tick."""
     if _NOISE_AGENT_RE.search(rec.get("agent_id") or ""):
         return True
     if rec.get("chat_id"):
@@ -221,7 +232,9 @@ def _scope_jobs(scope_key: str, since_iso: str) -> list[dict]:
     else:  # workshop: the `self` scope, jobs with no other binding
         recs = [
             r for r in jobs.read(limit=_JOBS_SCAN_LIMIT)
-            if (r.get("project_slug") in (None, "", "self", "workshop"))
+            # "workshop" is the pre-ADR-0014 slug for a platform-repo sweep;
+            # "development" is what one stamps now. Both are the same runs.
+            if (r.get("project_slug") in (None, "", "self", "workshop", "development"))
             and not (r.get("agent_id") or "").startswith("agent:")
         ]
     out = []

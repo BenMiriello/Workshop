@@ -114,3 +114,8 @@ apps/birds/BIRDSTATION-CONTEXT*.md
 # append-only routing-decision log. Templates: backend/store-policies.example.json.
 backend/store-policies.json
 shared/relay-corpus.jsonl
+
+# The work queue is instance state. A fresh clone starts empty, the way it
+# starts with no projects and no installed apps.
+/.tasks.json
+/TODO.md

@@ -18,12 +18,18 @@ import {
   type SegmentedOption,
 } from "../ui";
 import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
+import { DEVELOPMENT_SCOPE } from "../lib/devMode";
 
 // The task-store scope a job worked in, for a "View task" deep-link into Work.
 // Mirrors routes/jobs._scope_root_for_job: project_slug wins, else an agent id.
 function scopeForJob(job: Job): string | null {
-  if (job.project_slug && job.project_slug !== "workshop") return `project:${job.project_slug}`;
-  if (job.project_slug === "workshop") return "workshop";
+  // "workshop" is the pre-ADR-0014 project_slug for a platform-repo sweep; the
+  // tickets it worked did not move, the queue was renamed, so it resolves to
+  // Development or a year of run history loses its ticket link.
+  if (job.project_slug === "workshop" || job.project_slug === DEVELOPMENT_SCOPE) {
+    return DEVELOPMENT_SCOPE;
+  }
+  if (job.project_slug) return `project:${job.project_slug}`;
   if (job.agent_id && job.agent_id.startsWith("agent:")) return job.agent_id;
   return null;
 }

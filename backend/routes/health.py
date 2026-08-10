@@ -19,6 +19,17 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from deps_user import require_user
 from services import health, auth_store, ownership
 
+def _viewer_url(path: str) -> str:
+    """Where a human would go to see this, on THIS deployment.
+
+    WORKSHOP_CANONICAL_ORIGIN when the install has one; otherwise a relative
+    path, which the caller's own origin resolves correctly and which cannot
+    point a stranger at somebody else's box.
+    """
+    origin = os.environ.get("WORKSHOP_CANONICAL_ORIGIN", "").rstrip("/")
+    return f"{origin}{path}" if origin else path
+
+
 router = APIRouter(prefix="/health", tags=["health"])
 
 
@@ -36,7 +47,7 @@ async def ingest_help() -> dict[str, Any]:
     return {
         "ok": False,
         "hint": "POST-only endpoint. Health Auto Export iOS publishes here.",
-        "viewer": "https://debian.tail38e62e.ts.net:8443/settings",
+        "viewer": _viewer_url("/settings"),
     }
 
 

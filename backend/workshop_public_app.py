@@ -1,4 +1,4 @@
-"""Public edge app for workshop.benmiriello.com (port 8002).
+"""Public edge app — the origin this install serves publicly (default port 8002).
 
 Sits behind the Cloudflare tunnel and in front of the main backend (:8000). It
 holds NO auth logic of its own — the backend authenticates the user (session

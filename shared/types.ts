@@ -81,7 +81,7 @@ export type ProjectSurfaces = {
 
 // A project's GitHub binding (Phase G1). Absent until the project is connected
 // to a remote via POST /api/projects/{slug}/connect-github. Owner is always the
-// operator's personal account; never the veritusagent org.
+// operator's own account; never an owner listed in WORKSHOP_BLOCKED_REPO_OWNERS.
 export type ProjectRepo = {
   provider: string;
   owner: string;

@@ -4,7 +4,7 @@
 // identity and target a different backend origin WITHOUT editing committed
 // config (mirrors the EXPO_PUBLIC_WORKSHOP_URL override that native/config.ts
 // already reads for the backend URL). Unset => the app.json defaults are used
-// unchanged, so the normal (main/clawd-a) build is byte-identical to before.
+// unchanged, so a build that sets nothing is byte-identical to app.json.
 //
 // This is what lets a SECOND Workshop instance's app coexist on one device:
 // a distinct bundle id + name via env, same source. Per-instance build values

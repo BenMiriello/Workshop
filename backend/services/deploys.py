@@ -1,7 +1,7 @@
 """Deploy record store — one record per (project, deploy target) binding.
 
 A Deploy binds a project to a hosted target (e.g. Cloudflare Pages project
-"benmiriello"). Each deploy attempt runs through the Job pipeline
+"my-site"). Each deploy attempt runs through the Job pipeline
 (kind="deploy") — attempts are not stored here; only the target binding,
 the source config, and the "what's currently live" pointer.
 

@@ -2,7 +2,7 @@
 # autonomy_report.sh — daily visibility tick.
 #
 # Once per day, summarize what the autonomous loop did in the last 24h and
-# drop the summary into ~/workshop/.runtime/notify-masini.txt so masini
+# drop the summary into the operator notify queue so the chat bridge
 # surfaces it on his next Discord inbound. Operator should never wonder
 # "did anything happen overnight?" — this answers it.
 #
@@ -13,7 +13,7 @@
 #   - .runtime/work_verifier.log + work_generator.log  (pre-flight stats)
 #   - TODO.md  (current queue state)
 #
-# Output is plain text — no markdown — because notify-masini.txt is sourced
+# Output is plain text — no markdown — because the notify queue is sourced
 # into Discord directly.
 
 set -u
@@ -108,7 +108,7 @@ except Exception:
 PYEOF
 )
 
-# Write the report line into notify-masini.txt.
+# Write the report line into the notify queue.
 {
   printf '[%s] DAILY AUTONOMY REPORT — 24h summary\n' "$NOW_ISO"
   printf '  Queue: open=%d in_review=%d blocked=%d done=%d\n' "$OPEN" "$IN_REVIEW" "$BLOCKED" "$DONE"

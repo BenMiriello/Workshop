@@ -573,7 +573,7 @@ for a in agents:
         # Distinguish "not due yet" from "can NEVER fire here". This loop only
         # matches `cron` and `loop`; an agent whose triggers are all some other
         # kind is dropped every tick, forever, with no trace. That is why the
-        # triager (masini, trigger kind `discord`) has never run despite 530
+        # triager (the bridge agent, trigger kind `discord`) has never run despite 530
         # lines of implemented handler behind it - .runtime/triager/ does not
         # exist. An unroutable trigger kind is a wiring bug, not a schedule.
         kinds = {t.get("kind") for t in trigs}

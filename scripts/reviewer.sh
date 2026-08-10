@@ -247,6 +247,21 @@ if $_APPS_RELEVANT; then
 fi
 unset _APPS_CORE _APPS_FORBIDDEN _APPS_RELEVANT _apf
 
+# 4.6b No hardcoded machine or operator identity. Unlike the apps check this has
+# no relevance precondition: a path or a hostname can land in any file, and the
+# whole point is that it looks fine from inside the install that has it.
+HARDCODE_CHECK="skip"
+if [[ -x "$WORKSHOP/scripts/check_no_hardcoding.sh" ]]; then
+  if bash "$WORKSHOP/scripts/check_no_hardcoding.sh" >/dev/null 2>&1; then
+    HARDCODE_CHECK="ok"
+  else
+    HARDCODE_CHECK="fail"
+  fi
+else
+  AMBIGUOUS+=("hardcoding_check_unavailable")
+fi
+export HARDCODE_CHECK
+
 # 4.7 Executed-criteria results (optional). A task can carry machine-checkable
 #     acceptance assertions; project_ralph.sh EXECUTES them in the scope dir and
 #     passes the RESULTS here via REVIEWER_CRITERIA_FILE. Surfacing them makes the
@@ -291,6 +306,10 @@ if [[ "$DESIGN_CHECK" == "fail" ]]; then
 fi
 if [[ "$APPS_CHECK" == "fail" ]]; then
   REASONS+=("pluggable_app_violations")
+  COMPLETE="false"
+fi
+if [[ "$HARDCODE_CHECK" == "fail" ]]; then
+  REASONS+=("hardcoded_identity")
   COMPLETE="false"
 fi
 
@@ -373,6 +392,7 @@ out = {
     "typecheck": {"py": os.environ["PY_CHECK"], "ts": os.environ["TS_CHECK"]},
     "design":    os.environ["DESIGN_CHECK"],
     "pluggable_apps": os.environ["APPS_CHECK"],
+    "hardcoding": os.environ.get("HARDCODE_CHECK", "skip"),
     # executed machine-checkable acceptance assertions (empty unless the caller
     # passed REVIEWER_CRITERIA_FILE); surfaced so the Work UI shows what was checked.
     "criteria":  criteria,

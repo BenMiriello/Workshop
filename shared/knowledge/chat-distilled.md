@@ -38,3 +38,23 @@
 - Proactive cleanup and ownership preferred over incremental feature-stacking
 - Chat composer input retention fixed via clearNow; watch for recurrence on mobile with IME events
 - Autonomy disabled until queue has supersession relations, dry-run capability, blast-radius tracking
+- Agent system requires one coherent definition method, not seven competing paths (registry files, synthetic state, subagents, templates, groups, Python classes)
+- Autonomy gates per action reversibility, not as a per-agent global switch
+- Tickets are the approval unit for autonomous agent work: approve the plan, agent executes inside plan scope
+- Scope is a location where work lives (Workshop and Projects only); agents and apps are participants, not scopes
+- Apps are data/tool grants and personas, accessible from the chat picker as convenience but properly scoped to the app itself
+- Chat modes are named direct and orchestrated
+- Agents must come from explicit declarations, not runtime synthesis
+- Autonomy containment is coordination-based until SEC-A1 separate uid is implemented
+- Reversibility gate denies irreversible actions when operator is not watching, not based on role
+- work-reviewer subagent had invalid YAML in frontmatter for months due to lenient vs strict parser mismatch
+- Chat default mode changed to Direct instead of Orchestrated
+- Chat modes are named Direct (MessageSquare icon) and Tickets (Ticket icon)
+- Mobile chat mode selector shows icon only when closed, full text in dropdown menu
+- UI information should appear on hover with title attribute, not as inline description text
+- Chat message ordering rule: messages render in the order the agent could have seen them, constrained by turn start and reply generation progress
+- Color schemes decided: five fixed pairs (Violet default unchanged, Cobalt cool blue, Teal quiet, Plum warm magenta, Sandstone warm paper cool accent), each light and dark mode
+- Status colors ok/warn/danger remain byte-identical across all palettes, only running and stopped follow the scheme
+- Chat bubbles sent mid-turn should render dimmed until turn completes, but this behavior remains broken after attempted fix
+- Operator prefers research-first approach before implementing design or styling decisions
+- Multiple concurrent agents editing chat UI concurrently creates file races; coordinate carefully on overlapping regions

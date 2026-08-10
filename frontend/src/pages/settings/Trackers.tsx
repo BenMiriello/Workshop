@@ -164,7 +164,7 @@ export default function Trackers() {
                       </Select>
                     </Field>
                     <Field label="Repo" inline help="owner/repo — chosen, never guessed">
-                      <Input value={target} placeholder="BenMiriello/workshop-tickets"
+                      <Input value={target} placeholder="owner/workshop-tickets"
                              onChange={(e) => setTarget(e.target.value)} />
                     </Field>
                     <Field label="Mode" inline>

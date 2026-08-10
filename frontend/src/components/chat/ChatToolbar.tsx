@@ -1,5 +1,5 @@
 import {
-  Bell, Blocks, Bot, ChevronLeft, FolderGit2, Home, ListPlus, ListTodo,
+  Bell, Blocks, Bot, ChevronLeft, CodeXml, FolderGit2, Home, ListPlus, ListTodo,
   Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Ticket, Trash2,
 } from "lucide-react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "../../ui";
@@ -16,6 +16,10 @@ import { keepFocusOnTap } from "./keepFocus";
 // row is, and the name says which one. Sixteen project rows all carrying the
 // same folder is the point — that is how you see the group at a glance.
 function ScopeIcon({ kind }: { kind: ScopeKind }) {
+  // Development is the source of the Workshop itself, so it takes the code
+  // icon rather than a second house — the point of the row is that it is a
+  // different KIND of place from the root scope, not another root.
+  if (kind === "development") return <CodeXml size={14} aria-hidden />;
   if (kind === "project") return <FolderGit2 size={14} aria-hidden />;
   if (kind === "app") return <Blocks size={14} aria-hidden />;
   if (kind === "agent") return <Bot size={14} aria-hidden />;

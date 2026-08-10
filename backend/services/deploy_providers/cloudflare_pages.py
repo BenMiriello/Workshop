@@ -9,7 +9,7 @@ preflight check verifies both the API token and the CLI.
 Target config:
     {
       "kind": "cloudflare-pages",
-      "project_name": "benmiriello",      # CF Pages project (must exist in CF)
+      "project_name": "my-site",      # CF Pages project (must exist in CF)
       "account_id": "..."                 # optional override, else from env
     }
 

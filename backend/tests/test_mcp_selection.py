@@ -222,7 +222,7 @@ class TestSpecResolution:
             "args": ["run", "--cwd", "${CLAUDE_PLUGIN_ROOT}", "start"]}}}))
         installed = tmp_path / "installed.json"
         installed.write_text(json.dumps({"plugins": {
-            "discord@clawd-a-plugins": [{"installPath": str(root)}]}}))
+            "discord@example-plugins": [{"installPath": str(root)}]}}))
         monkeypatch.setattr(mcp_registry, "CLAUDE_JSON", tmp_path / "absent.json")
         monkeypatch.setattr(mcp_registry, "INSTALLED_PLUGINS", installed)
         got = mcp_registry.resolve_specs(str(tmp_path))

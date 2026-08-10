@@ -7,10 +7,10 @@
 # world-readable file, an auth dependency that got deleted, a firewall that got
 # turned off). One fact per check. Exit 0 = all green, exit 1 = something drifted.
 #
-# Run nightly:  see docs/masini/security-audit-install-cron.txt
+# Run nightly from cron; see docs/security-audit-2026-07-18.md.
 # Run by hand:  bash ~/workshop/scripts/security_audit.sh
 #
-# Pairs with the invariants reference at docs/masini/security-invariants.md.
+# Pairs with the invariants reference in the same document.
 #
 # Audits the host this install runs on: the service user, its config directory,
 # the bound ports and the repo history. Every subject is resolved at runtime, so

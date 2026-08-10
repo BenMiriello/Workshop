@@ -15,6 +15,12 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 
 from services import owntracks, auth_store, ownership
 
+def _viewer_url(path: str) -> str:
+    """This deployment's own origin, or a relative path when it has none."""
+    origin = os.environ.get("WORKSHOP_CANONICAL_ORIGIN", "").rstrip("/")
+    return f"{origin}{path}" if origin else path
+
+
 router = APIRouter(prefix="/location", tags=["location"])
 
 
@@ -26,7 +32,7 @@ async def owntracks_help() -> dict[str, Any]:
     return {
         "ok": False,
         "hint": "POST-only endpoint. This URL is meant for Owntracks iOS to publish location pings.",
-        "viewer": "https://debian.tail38e62e.ts.net/apps/location",
+        "viewer": _viewer_url("/apps/location"),
     }
 
 

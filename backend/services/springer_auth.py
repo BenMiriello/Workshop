@@ -3,7 +3,7 @@
 The private Workshop app at /apps/birds is tailnet-gated and uses NONE of this:
 it has no login, the operator just reaches it over Tailscale. This module backs
 the SEPARATE hardened process (springer_app.py on :8001, behind the Cloudflare
-tunnel at birds.benmiriello.com) where a real second person logs in.
+tunnel at the app's own public hostname) where a real second person logs in.
 
 Design (stdlib only — the box's egress guard blocks pip, and we don't need it):
   - Passwords: hashlib.scrypt (memory-hard, salted). Stored on users.password_hash

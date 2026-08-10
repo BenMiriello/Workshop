@@ -25,6 +25,7 @@ import logging
 import os
 import re
 from pathlib import Path
+from services import paths
 
 log = logging.getLogger("workshop.knowledge")
 
@@ -43,7 +44,7 @@ _INDEX_RE = re.compile(
 
 # --- roots (env-overridable so tests can point at a temp tree) ---------------
 def _root() -> Path:
-    return Path(os.environ.get("WORKSHOP_ROOT", "/home/clawd-a/workshop"))
+    return paths.workshop_root()
 
 
 def _runtime() -> Path:
@@ -70,6 +71,8 @@ def scope_for_context(context_key: str) -> str:
     - any other bare key -> `app:<key>` (treated as an app provider)
     """
     ck = (context_key or "general").strip()
+    if ck == "development":
+        return "development"
     if ck in ("general", "new-project"):
         return "workshop"
     if ck in APP_CONTEXT_KEYS:
@@ -86,9 +89,21 @@ def scope_for_context(context_key: str) -> str:
 
 
 def _parse_scope(scope_key: str) -> tuple[str, str]:
-    """Return (kind, slug). Raises ValueError on an unknown shape."""
+    """Return (kind, slug). Raises ValueError on an unknown shape.
+
+    `development` is present only in developer mode (ADR 0014). Off, it is not a
+    scope at all and raises like any other unknown key — the notes layer for
+    work on the Workshop's own source does not exist in a normal install, rather
+    than existing and refusing."""
     if scope_key == "workshop":
         return ("workshop", "")
+    if scope_key == "development":
+        from services import app_runner
+        if app_runner.dev_mode_on():
+            return ("development", "")
+        raise ValueError(
+            "unknown scope_key: 'development' (developer mode is off; "
+            "set WORKSHOP_DEV_MODE=1 for this installation to enable it)")
     if ":" in scope_key:
         kind, _, slug = scope_key.partition(":")
         if kind in ("project", "app", "agent", "role") and slug and _SLUG_RE.fullmatch(slug):
@@ -100,6 +115,7 @@ def scope_dir(scope_key: str) -> Path:
     """The knowledge directory for a scope, created on demand.
 
     - `workshop`       -> shared/knowledge/
+    - `development`    -> shared/knowledge/development/  (developer mode only)
     - `project:<slug>` -> projects/<slug>/knowledge/
     - `app:<name>`     -> apps/<name>/knowledge/
     - `agent:<id>`     -> .runtime/agents/<id>/knowledge/
@@ -114,6 +130,11 @@ def scope_dir(scope_key: str) -> Path:
     root = _root()
     if kind == "workshop":
         d = root / "shared" / "knowledge"
+    elif kind == "development":
+        # A sub-directory of the workshop notes layer, like `role:`: durable,
+        # git-inspectable knowledge about this installation's own source, kept
+        # out of the layer every other scope inherits from.
+        d = root / "shared" / "knowledge" / "development"
     elif kind == "project":
         d = root / "projects" / slug / "knowledge"
     elif kind == "app":
@@ -520,6 +541,11 @@ def register_knowledge_stores() -> None:
     ws = root / "shared" / "knowledge"
     if ws.exists():
         found.append(("workshop", ws))
+
+    from services import app_runner
+    dev = ws / "development"
+    if dev.is_dir() and app_runner.dev_mode_on():
+        found.append(("development", dev))
 
     for kind, base in (("project", root / "projects"), ("app", root / "apps")):
         if base.exists():

@@ -10,7 +10,8 @@ Terminology: the store, CLI, and API all say `task`. The UI may call these
 "tickets" in prose, but every identifier here stays `task`.
 
 Scope keys mirror `task_scope.root_for_context`:
-  workshop        -> the top-level `.tasks.json`
+  development     -> the platform repo itself; developer mode only (ADR 0014)
+  workshop        -> the root inbox (shared/queue), which has no working tree
   project:<slug>  -> projects/<slug>
   agent:<slug>    -> .runtime/agent-scopes/<slug> (assistant runtime)
   build:<slug>    -> a build agent's linked project dir or its own cwd
@@ -52,10 +53,31 @@ _SCRIPTS_ROOT = _WORKSHOP_ROOT / "scripts"
 
 def _root_for_scope(scope: str | None) -> Path | None:
     """Resolve a scope key to its task-store root. `task_scope` owns every kind
-    (workshop / project: / agent: / build:); an unknown scope returns None."""
+    (development / workshop / project: / agent: / build:); an unknown scope
+    returns None.
+
+    A scope refused by the developer-mode gate also returns None here, because
+    listing paths must not raise. Route handlers call `_require_root` instead,
+    which turns the refusal into the sentence that explains it."""
     if not scope:
         return None
     return task_scope.root_for_context(scope)
+
+
+def _require_root(scope: str | None) -> Path:
+    """`_root_for_scope` for a route: a Path, or the HTTP error that says why not.
+
+    Two different failures used to look identical. A scope the gate refuses is
+    not an unknown scope, and reporting it as one sent the operator looking for
+    a typo in a scope key that is spelled correctly and simply not enabled here
+    (ADR 0014)."""
+    root = _root_for_scope(scope)
+    if root is not None:
+        return root
+    refusal = task_scope.dev_mode_refusal(scope)
+    if refusal:
+        raise HTTPException(403, refusal)
+    raise HTTPException(400, f"unknown scope: {scope}")
 
 
 def _with_latitude(rec: dict, scope: str, cache: dict[str, str | None] | None = None) -> dict:
@@ -97,9 +119,16 @@ def _project_slugs() -> list[str]:
 def _scope_roots() -> list[tuple[str, Path]]:
     """Every task scope that actually has a store, deduped by resolved path so a
     build agent sharing a project's tree is not counted twice. Priority order:
-    workshop root, projects, assistant scopes, build agents. Only a scope with an
-    existing `.tasks.json` or `TODO.md` is surfaced, keeping the sweep cheap and
-    non-destructive (no scope is created just by listing)."""
+    development, workshop, projects, assistant scopes, build agents. Only a scope
+    with an existing `.tasks.json` or `TODO.md` is surfaced, keeping the sweep
+    cheap and non-destructive (no scope is created just by listing).
+
+    Development sorts first — above Workshop — because it is the narrower, more
+    specific place and the one a developer is usually in. It is absent entirely
+    when developer mode is off (`task_scope.dev_scopes`), which is also what
+    makes the dedupe below the thing that keeps the platform repo to ONE name: it
+    claims the repo's path first, so a registry row or build agent pointing at
+    the same tree collapses into it instead of appearing as a second door."""
     seen: set[str] = set()
     order: list[tuple[str, Path]] = []
 
@@ -120,6 +149,8 @@ def _scope_roots() -> list[tuple[str, Path]]:
         seen.add(key)
         order.append((scope, rp))
 
+    for dev_scope in task_scope.dev_scopes():
+        add(dev_scope, _root_for_scope(dev_scope))
     add("workshop", _root_for_scope("workshop"))
     for slug in _project_slugs():
         add(f"project:{slug}", _root_for_scope(f"project:{slug}"))
@@ -221,19 +252,28 @@ async def autonomy_scopes() -> dict:
 
     No `depth`: it was reported here and rendered in two places, and read by
     nothing that runs (docs/system-honesty-plan-2026-08-10.md item 19).
-    Bounded: one pass over the projects registry + the agents roster."""
+    Bounded: one pass over the projects registry + the agents roster.
+
+    The platform repo appears here exactly once, as `development`, and only in
+    developer mode (ADR 0014). Its registry row carries the `self` flag, so it is
+    recognised by what it resolves to rather than by its key: renaming the row
+    cannot smuggle it back in as an ordinary project."""
     # Lazy imports keep this route free of any module-load ordering concern with
     # the project/agent routers (neither imports tasks_all, so there is no cycle).
     from routes import projects as projects_route
     from routes import agents as agents_route
-    from services import agents_registry, triggers
+    from services import agents_registry, app_runner, triggers
 
     rows: list[dict] = []
 
-    # ---- Projects ----
+    # ---- Projects (+ the self row, surfaced as `development`) ----
     reg = projects_route._load_registry()
+    dev_on = app_runner.dev_mode_on()
     for slug, raw in (reg.get("projects") or {}).items():
         if raw.get("state") == "retired":
+            continue
+        is_self = app_runner.is_self_project(slug)
+        if is_self and not dev_on:
             continue
         autonomy = raw.get("autonomy") or {}
         trigs = projects_route._stored_triggers(autonomy)
@@ -242,8 +282,8 @@ async def autonomy_scopes() -> dict:
         snap = projects_route._queue_snapshot(projects_route._project_dir(slug))
         q = snap["queue"]
         rows.append({
-            "scope_key": f"project:{slug}",
-            "kind": "project",
+            "scope_key": "development" if is_self else f"project:{slug}",
+            "kind": "development" if is_self else "project",
             "title": raw.get("title") or slug,
             "preset": preset,
             "running": running,
@@ -252,6 +292,9 @@ async def autonomy_scopes() -> dict:
             "awaiting_count": len(snap["awaiting"]),
             "last_run": _last_run_summary(last),
         })
+    # Development sorts above everything else: it is the narrowest scope and the
+    # one a developer is usually in, and the picker orderings elsewhere agree.
+    rows.sort(key=lambda r: 0 if r["kind"] == "development" else 1)
 
     # ---- Agents (assistant + builder registry agents, incl. memory-keeper) ----
     for rec in agents_registry.list_agents():
@@ -298,9 +341,7 @@ async def create(body: TaskCreateIn) -> dict:
     """File a task into a scope through the dedup path, so a manual ticket
     dedupes against open tasks exactly like a chat-filed one. Returns the task
     plus the dedup decision (exact | merge | related | distinct)."""
-    root = _root_for_scope(body.scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {body.scope}")
+    root = _require_root(body.scope)
     # Dedup embeds the whole ticket, so the pair is joined back into one blob
     # here rather than teaching the embedder about the split.
     if body.title is not None:
@@ -388,9 +429,7 @@ class TaskPatchIn(BaseModel):
 
 @router.get("/{scope}/{task_id}")
 async def get_one(scope: str, task_id: str) -> dict:
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     t = tasks.get_task(root, task_id)
     if t is None:
         raise HTTPException(404, f"task not found: {task_id}")
@@ -472,9 +511,7 @@ def _pending_tracker_fields(root: Path, task_id: str, body: TaskPatchIn) -> dict
 
 @router.patch("/{scope}/{task_id}")
 async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     if all(v is None for v in (
         body.status, body.title, body.body, body.text, body.labels,
         body.priority, body.assignee, body.effort,
@@ -547,9 +584,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
 
 @router.delete("/{scope}/{task_id}")
 async def delete_one(scope: str, task_id: str) -> dict:
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     if not tasks.remove(root, task_id):
         raise HTTPException(404, f"task not found: {task_id}")
     return {"deleted": True}
@@ -636,9 +671,7 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
     action = (body.action or "").strip()
     if action not in _REVIEW_ACTIONS:
         raise HTTPException(400, f"action must be one of {list(_REVIEW_ACTIONS)}")
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
@@ -857,16 +890,27 @@ def _tree_busy(dir_str: str) -> bool:
 def scope_is_runnable(scope: str | None) -> bool:
     """Can a worker actually be launched against this scope?
 
-    `launch_task_run` accepts project / workshop / agent / build and rejects
+    `launch_task_run` accepts development / project / agent / build and rejects
     everything else with a 400. A general chat resolves to `general`, which is
     NOT runnable — so "file and run" from a general chat could only ever file.
     Exposed as a predicate so the UI can say that BEFORE the operator commits,
     rather than reporting it as a footnote on a success message afterwards.
-    """
+
+    `workshop` is not runnable, and that is the definition rather than an
+    omission (ADR 0014 §4.1): it is the root organising layer — notes, the
+    inbox, triage, routing — and it has no code tree for a sweep to run in. A
+    workshop ticket that turns out to need code is re-scoped to whatever owns
+    that code, which is the triage step and the root scope's actual job.
+
+    `development` is runnable only when developer mode is on, because its
+    working tree IS the platform repo; the resolution itself is gated in
+    `task_scope.root_for_context`, so this answers False by consequence rather
+    than by naming the flag a second time."""
     if not scope:
         return False
-    return (scope == "workshop"
-            or scope.startswith("project:")
+    if scope == "development":
+        return _root_for_scope("development") is not None
+    return (scope.startswith("project:")
             or scope.startswith("agent:")
             or scope.startswith("build:"))
 
@@ -904,7 +948,7 @@ def scope_pickup(scope: str | None) -> dict:
       automatic  something picks the ticket up WITHOUT the operator pressing anything.
 
     `automatic` is false far more often than it looks. One resident queue runner
-    covers the workshop root and nothing else; the cron dispatcher fires only
+    covers the platform repo and nothing else; the cron dispatcher fires only
     scopes carrying a `loop` trigger (projects) or a `cron`/`loop` trigger
     (agents), and today zero registered projects carry one; and the autonomy
     brake disables both paths wholesale. So a ticket filed to `project:<slug>`
@@ -912,8 +956,12 @@ def scope_pickup(scope: str | None) -> dict:
     to be told it BEFORE filing, which is what `why` is for.
     """
     if not scope_is_runnable(scope):
-        return {"scope": scope, "runnable": False, "automatic": False,
-                "why": "this scope cannot run tickets; file it somewhere runnable"}
+        why = task_scope.dev_mode_refusal(scope) or (
+            "the workshop scope is the root inbox: work is filed and triaged here, "
+            "then routed to the scope that owns the code. Re-scope this ticket to "
+            "run it." if scope == "workshop" else
+            "this scope cannot run tickets; file it somewhere runnable")
+        return {"scope": scope, "runnable": False, "automatic": False, "why": why}
 
     from services import autonomy_override
 
@@ -925,11 +973,11 @@ def scope_pickup(scope: str | None) -> dict:
     except Exception:
         pass
 
-    if scope == "workshop":
+    if scope == "development":
         if _queue_runner_covers(str(_WORKSHOP_ROOT)):
             return {"scope": scope, "runnable": True, "automatic": True, "why": ""}
         return {"scope": scope, "runnable": True, "automatic": False,
-                "why": "no queue runner is polling the workshop root right now"}
+                "why": "no queue runner is polling the platform repo right now"}
 
     if scope.startswith("project:"):
         slug = scope.split(":", 1)[1]
@@ -972,7 +1020,7 @@ def launch_task_run(scope: str, task_id: str) -> dict:
 
     Scope -> launcher (dir resolved via task_scope.root_for_context):
       project:<slug> -> project_ralph.sh <slug> --force --job-id --task-id
-      workshop       -> ... --dir <workshop root> --force --job-id --task-id
+      development    -> ... --dir <platform repo> --force --job-id --task-id
       agent:<slug>   -> ... --dir <scope root> --assignee agent:<slug> --force ...
       build:<slug>   -> ... --dir <build agent root> --force --job-id --task-id
 
@@ -981,12 +1029,21 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     launch a run for a ticket the /run endpoint would have rejected. One gate,
     every caller.
 
-    Raises HTTPException(409) when a sweep already holds the tree, (400) on an
-    unknown scope or a broken ticket, (404) when the ticket is gone, (500) when
-    the driver is missing. Returns {ok, job_id, scope, task_id}."""
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    CHOKEPOINT 2 of the developer-mode gate (ADR 0014), for the same reason: this
+    is the single Popen for ticket runs, and the chat path reaches it without
+    passing the route. `_require_root` has already refused a scope that names the
+    platform repo, and `assert_run_target` re-asks the question of the resolved
+    directory — belt and braces, because the cost is one comparison and the
+    failure mode is an autonomous sweep rewriting the running application.
+
+    Raises HTTPException(403) when the target is the platform repo and developer
+    mode is off, (409) when a sweep already holds the tree, (400) on an unknown
+    scope or a broken ticket, (404) when the ticket is gone, (500) when the
+    driver is missing. Returns {ok, job_id, scope, task_id}."""
+    from services import app_runner
+
+    root = _require_root(scope)
+    app_runner.assert_run_target(root, f"a {scope} ticket run")
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
@@ -1013,8 +1070,8 @@ def launch_task_run(scope: str, task_id: str) -> dict:
         slug = scope.split(":", 1)[1]
         start_kwargs["project_slug"] = slug
         cmd_tail = [slug]
-    elif scope == "workshop":
-        start_kwargs["project_slug"] = "workshop"
+    elif scope == "development":
+        start_kwargs["project_slug"] = "development"
         cmd_tail = ["--dir", str(root)]
     elif scope.startswith("agent:"):
         slug = scope.split(":", 1)[1]
@@ -1061,9 +1118,7 @@ async def scope_review(scope: str, task_id: str) -> dict:
     well-written ticket from a well-written ticket that is really four tickets.
     Meant to be run on a DRAFT, before approval — after approval a worker is about
     to spend money on it, which is too late for the answer to be worth much."""
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
@@ -1092,9 +1147,7 @@ async def split_task(scope: str, task_id: str, body: SplitIn) -> dict:
     it is not cancelled, because the original wording is the record of what was
     asked for, and it is not queued, because the children are the work now.
     """
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     parent = tasks.get_task(root, task_id)
     if parent is None:
         raise HTTPException(404, f"task not found: {task_id}")
@@ -1147,9 +1200,7 @@ async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = No
     matters. Refusing their own approval would make the checklist an obstacle
     instead of advice, which is how the last set of hygiene signals got ignored.
     """
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
+    root = _require_root(scope)
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")

@@ -457,7 +457,7 @@ export default function ProjectDetail() {
   const [discarding, setDiscarding] = useState(false);
 
   // Connect-to-GitHub (the Repository section). Create a new private repo or
-  // bind an existing BenMiriello remote; writes the project's `repo` field.
+  // bind an existing remote you own; writes the project's `repo` field.
   const [connectOpen, setConnectOpen] = useState(false);
   const [connectMode, setConnectMode] = useState<"create" | "bind">("create");
   const [bindUrl, setBindUrl] = useState("");
@@ -721,7 +721,7 @@ export default function ProjectDetail() {
 
   // ---- Connect to GitHub ----------------------------------------------------
   // Create a new private repo (workshop-<slug> for a scratch project) or bind an
-  // existing BenMiriello remote. The server rejects any veritusagent owner with
+  // existing owned remote. The server rejects any blocked owner with
   // a 400, which we surface inline rather than crashing.
   const doConnect = useCallback(async () => {
     setConnecting(true);
@@ -1661,16 +1661,16 @@ export default function ProjectDetail() {
           />
           {connectMode === "create" ? (
             <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
-              Creates a new private repository under <code className="ws-mono">BenMiriello</code> and
+              Creates a new private repository under this install's configured GitHub account and
               pushes the current project. A scratch project lands as{" "}
               <code className="ws-mono">workshop-{slug}</code>.
             </p>
           ) : (
-            <Field label="Remote URL" help="An existing BenMiriello repository.">
+            <Field label="Remote URL" help="An existing repository you own.">
               <Input
                 value={bindUrl}
                 onChange={(e) => setBindUrl(e.target.value)}
-                placeholder="https://github.com/BenMiriello/my-repo.git"
+                placeholder="https://github.com/your-account/my-repo.git"
                 spellCheck={false}
                 autoFocus
               />

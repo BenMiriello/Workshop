@@ -2,7 +2,7 @@
 
 BirdNET-Go owns the database (the Brain writes it); this module only ever opens
 it READ-ONLY (sqlite uri mode=ro). The Workshop backend runs as the same user
-(clawd-a) that BirdNET-Go runs as, so it can read the file with no perms juggling.
+that BirdNET-Go runs as, so it can read the file with no perms juggling.
 
 The `notes` table is BirdNET-Go's GORM model (snake_case columns):
   id, source_node, date, time, begin_time, end_time, species_code,

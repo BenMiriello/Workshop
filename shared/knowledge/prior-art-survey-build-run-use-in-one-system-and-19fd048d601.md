@@ -1,0 +1,17 @@
+Research sweep 2026-08-04, prompted by "why can't finance become a project". Five families:
+
+**1. Live image (no split).** Smalltalk/Squeak, Emacs, Lisp machines. One running image edited from inside; no build step, so no artifact distinct from source. Closest to Workshop's actual character today. Cost: no packaging boundary, so nothing can be shared or installed. None of them grew marketplaces.
+
+**2. One primitive + a type field.** Hugging Face Hub: models, datasets, Spaces are ALL git repos differing by type; a Space is a repo that runs; "duplicate" is the install. Nx: apps and libs are both projects in one graph. This is the facets model, validated at scale, and it supports a marketplace.
+
+**3. Bundle + registry, repo IS the registry.** Claude Code plugins: a marketplace is a GitHub repo distributing versioned bundles (skills/MCP/hooks/subagents); no central store. VS Code: `publisher.extension` identity, repo is just a link on the listing. KEY: a marketplace does NOT require a second entity type; the listing is metadata on the one primitive.
+
+**4. Host platform with hard build/install boundary.** Salesforce AppExchange/AgentExchange, ServiceNow Store, Home Assistant. HA is the warning case: integrations (talk to core directly) vs add-ons (Docker, reach core only via an integration) vs HACS custom components (community tier). Explainer articles exist purely because users cannot keep the three straight. Workshop's current app/project split is in this family, and chronic confusion is its signature failure.
+
+**5. AI-native, builder and user in ONE surface.** ChatGPT apps (build a GPT in the window you use it; Apps SDK = MCP + embedded widgets; App Directory + review; publishing is a STATE not a different object). Val Town (every function gets a URL, auto-deploy on save ~100ms, fork/remix). Replit Agent (describe, agent builds+deploys in-browser, sharing is forking). Dify/Coze/n8n (build workflow, publish to channels, template library as marketplace).
+
+**Synthesis.** In every family except #4, the distinction is never project-vs-app. It is: one primitive, a type/facet, and a publish flag. The systems that split into two hard entity types are enterprise host platforms whose builders and users are different companies. Workshop's builder and user are the same person and will remain so on day one of any marketplace. This strengthens the facets option (B) and undercuts the chart/release option (D): HF, Claude Code, VS Code, and Val Town all run marketplaces on a single primitive.
+
+**Most valuable idea to steal (family 5):** the builder surface and the use surface should be the SAME surface. A chat scoped to `app:finance` that can edit finance while you look at it is the Val Town/ChatGPT move, and it is worth more than registry cleanup. Registry work is what unblocks it, since that chat currently has no workspace for notes/tickets/agents.
+
+Sources: huggingface.co/docs/hub/spaces-overview, github.com/nrwl/nx/discussions/16184, claudefa.st/blog/tools/mcp-extensions/plugins-distribution, code.visualstudio.com/api/working-with-extensions/publishing-extension, fricklr.com (HA integrations vs add-ons vs HACS), openai.com/index/introducing-apps-in-chatgpt, docs.val.town, martinfowler.com/bliki/InternalReprogrammability.html

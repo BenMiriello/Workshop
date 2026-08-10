@@ -8,7 +8,7 @@
     "scheme": "workshop",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.benmiriello.workshop",
+      "bundleIdentifier": "com.example.workshop",
       "infoPlist": {
         "UIBackgroundModes": ["location", "audio", "fetch"],
         "NSLocationWhenInUseUsageDescription": "Workshop uses your location for the Location and Commute apps.",

@@ -431,6 +431,12 @@ def create_thread(
         # How much this chat asks before acting. None = the platform default
         # (bypassPermissions), which is what every chat has always run at.
         "permission_mode": None,
+        # Which MCP servers this chat's turns may reach. None = ALL of them,
+        # which is both the default and what every chat did before the control
+        # existed; a list is an explicit subset. Never [] by default — a chat
+        # nobody has configured must not silently lose its tools. See
+        # set_thread_mcp_servers.
+        "mcp_servers_enabled": None,
         "title": title or "New chat",
         "created_at": now,
         "updated_at": now,
@@ -683,6 +689,61 @@ def set_thread_permission_mode(thread_id: str, mode: str | None) -> dict | None:
         # has been spent. None removes the field — see chat_log.patch_meta_sync.
         fields["pre_plan_permission_mode"] = None
     return _patch(thread_id, **fields)
+
+
+def normalize_mcp_selection(names: object, known: list[str] | None = None) -> list[str] | None:
+    """The stored form of a per-chat MCP selection, or None for "all servers".
+
+    Pure, and the ONE place the "all" collapse happens, so the store and the
+    route cannot disagree about what a full selection means.
+
+    A selection naming every server the machine currently has is stored as None,
+    not as that list. The two are not the same thing later: a frozen list stops
+    at the servers that existed the day it was saved, so a server added next
+    month would arrive switched off, in a chat whose UI says everything is on.
+    "All" has to stay a statement about the set, not a snapshot of it.
+
+    An empty list is preserved as an empty list. "No MCP servers at all" is a
+    real, reachable choice and must survive a round trip.
+    """
+    if names is None:
+        return None
+    if not isinstance(names, (list, tuple, set)):
+        raise ValueError("mcp servers must be a list of names, or null for all")
+    cleaned = [str(n) for n in names if str(n).strip()]
+    # De-duped, order-stable: the list is a set with a stable rendering.
+    out = list(dict.fromkeys(cleaned))
+    if known is not None and set(out) >= set(known):
+        return None
+    return out
+
+
+def set_thread_mcp_servers(thread_id: str, names: list[str] | None,
+                           known: list[str] | None = None) -> dict | None:
+    """Persist which MCP servers this chat's turns may reach.
+
+    None (or a selection covering every known server) clears the field, and a
+    cleared field is what "all servers" IS — the same shape a chat that never
+    touched the control has. That is deliberate: there is exactly one
+    representation of the default, so no chat can be in a state that looks
+    configured but behaves like the default or vice versa.
+
+    Stored the same way the model, effort and permission mode are: a field on
+    the thread's meta, written through _patch, read back by the next turn.
+    """
+    value = normalize_mcp_selection(names, known)
+    # _patch removes a field set to None (chat_log.patch_meta_sync), which is
+    # how "back to all servers" erases the selection rather than recording an
+    # empty one — an empty LIST means the opposite and is stored as `[]`.
+    return _patch(thread_id, mcp_servers_enabled=value)
+
+
+def get_thread_mcp_servers(thread_id: str) -> list[str] | None:
+    """This chat's MCP selection, or None for all. Reads meta directly rather
+    than folding the whole event log: a turn asks this on every send."""
+    meta = chat_log.read_meta(thread_id) or {}
+    value = meta.get("mcp_servers_enabled")
+    return list(value) if isinstance(value, list) else None
 
 
 def set_thread_effort(thread_id: str, effort: str | None) -> dict | None:

@@ -1,7 +1,7 @@
 """Springer Birds — standalone hardened app (public face, behind cloudflared).
 
 A SEPARATE FastAPI process from the Workshop backend, on 127.0.0.1:8001, reached
-only through the Cloudflare tunnel at birds.benmiriello.com. It imports ONLY the
+only through the Cloudflare tunnel at its own public hostname. It imports ONLY the
 bird data layer + auth — no finance/agents/plaid/chat code or creds — so even a
 full compromise here can read nothing but bird data.
 

@@ -43,6 +43,7 @@ import {
   scopeLabel,
   ticketHref,
 } from "../lib/tasks";
+import { orderScopes } from "../lib/devMode";
 import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
 import { ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkTab } from "../lib/workParams";
 
@@ -149,7 +150,10 @@ function TicketsTab() {
   useEffect(() => {
     fetch("/api/tasks/scopes")
       .then((r) => (r.ok ? r.json() : { scopes: [] }))
-      .then((j) => { setScopes(j.scopes ?? []); setPickup(j.pickup ?? null); })
+      // `orderScopes` puts Development above Workshop and drops it entirely
+      // from a non-dev bundle, so this list reads the same whichever backend
+      // answered (ADR 0014).
+      .then((j) => { setScopes(orderScopes(j.scopes ?? [])); setPickup(j.pickup ?? null); })
       .catch(() => { setScopes([]); setPickup(null); });
   }, []);
 
@@ -317,7 +321,13 @@ function CreateTicket({
   onClose: () => void;
   onCreated: (msg?: string) => void;
 }) {
-  const [scope, setScope] = useState<string>(scopes[0] ?? "workshop");
+  // Filing defaults to the root inbox, not to whatever happens to sort first.
+  // `workshop` is where work is filed, triaged and routed to the scope that
+  // owns it (ADR 0014 §4.1); Development leads the picker because that is where
+  // a developer usually is, which is a different question from where a new,
+  // unsorted ticket belongs.
+  const [scope, setScope] = useState<string>(
+    scopes.includes("workshop") ? "workshop" : (scopes[0] ?? "workshop"));
   const [titleLine, setTitleLine] = useState("");
   const [desc, setDesc] = useState("");
   const [priority, setPriority] = useState("0");

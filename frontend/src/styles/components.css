@@ -1894,6 +1894,51 @@ a.ws-btn { text-decoration: none; }
 }
 .ctx-refresh:hover { color: var(--fg); }
 
+/* Per-chat MCP toggles, inside the context modal's server list. The switch sits
+   in the swatch column so the names stay in one column whether or not Edit mode
+   is on, and the row does not reflow when it is turned on. */
+.ctx-expand--edit { cursor: default; }
+.ctx-expand--edit:hover { background: none; }
+.ctx-toggle { flex: 0 0 auto; }
+.ctx-toggle .ws-toggle__track { margin: 0; }
+/* A server that cannot be re-declared has no switch, and says why in its own
+   line rather than wearing a dead control. */
+.ctx-nospec {
+  padding-left: calc(var(--space-5) + var(--space-2));
+  color: var(--muted); font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}
+/* A row switched off. Dimmed, because unlike a BROKEN server this one is
+   inactive by the operator's own choice — fading it is the correct signal. */
+.ctx-off .ctx-row__label,
+.ctx-off .ctx-row__tokens,
+.ctx-off .ctx-row__pct { opacity: 0.55; }
+
+/* ---- Settings -> MCP -------------------------------------------------- */
+/* The server name doubles as the disclosure for its command, its source file
+   and its tools. Same idiom as the context modal's expander so the two screens
+   do not teach two gestures for one thing. */
+.mcp-name {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  background: none; border: 0; padding: 0; color: inherit; font: inherit;
+  cursor: pointer; border-radius: var(--radius-sm); text-align: left;
+}
+.mcp-name__chev { transition: transform var(--motion-fast) ease; color: var(--muted); }
+.mcp-name.is-open .mcp-name__chev { transform: rotate(90deg); }
+.mcp-why td {
+  color: var(--muted); font-size: var(--text-xs);
+  padding-top: 0; overflow-wrap: anywhere;
+}
+.mcp-more td { background: var(--bg-inset); font-size: var(--text-sm); }
+.mcp-tools {
+  display: grid; grid-template-columns: 1fr auto;
+  gap: var(--space-1) var(--space-4); font-size: var(--text-xs);
+}
+.mcp-tools__row { display: contents; }
+/* Rule 9's overflow case: past eight servers the table scrolls in place rather
+   than pushing the rest of the page away. */
+.mcp-scroll { max-height: 28rem; overflow-y: auto; }
+
 /* The meter is a button now: it opens the breakdown. Kept visually identical to
    the static reading it replaced — a control that looks like a label is fine
    when the whole affordance is "this number is clickable"; what is not fine is

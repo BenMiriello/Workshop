@@ -11,6 +11,7 @@ import AppPreview from "./pages/AppPreview";
 import BaseApps from "./pages/settings/BaseApps";
 import Grants from "./pages/settings/Grants";
 import Trackers from "./pages/settings/Trackers";
+import McpServers from "./pages/settings/McpServers";
 import Apps from "./pages/Apps";
 import Marketplace from "./pages/Marketplace";
 import Finance from "./pages/apps/Finance";
@@ -134,6 +135,7 @@ export default function App() {
           <Route path="/settings/base-apps" element={<BaseApps />} />
           <Route path="/settings/grants" element={<Grants />} />
           <Route path="/settings/trackers" element={<Trackers />} />
+          <Route path="/settings/mcp" element={<McpServers />} />
           <Route path="/apps" element={<Apps />} />
           <Route path="/marketplace" element={<Marketplace />} />
           <Route path="/apps/finance" element={<Finance />} />

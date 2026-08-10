@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 
 // The birds page components are SHARED with the Workshop app, where they live at
 // "/apps/birds/…" and hardcode that prefix in every internal link. The standalone
-// is a root-mounted app (birds.benmiriello.com/, /locations, /devices, …), so we
+// is a root-mounted app (/, /locations, /devices, …), so we
 // rewrite those nav paths to root at build time — "/apps/birds/x" -> "/x" and the
 // bare "/apps/birds" -> "/". This only touches THIS build; the Workshop bundle is
 // untouched. ("/api/birds" API calls are a different string and are not affected.)

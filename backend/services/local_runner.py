@@ -65,9 +65,18 @@ RUNTIME_STORE = Path(os.environ.get(
 
 # Projects registry — same file routes/projects.py owns. We reflect a deploy into
 # surfaces.standalone here (best-effort) so the Projects hub sees the running URL.
+#
+# The default is `.runtime/projects.json`, which is where the registry actually
+# is (routes/projects.REGISTRY, build_agents.PROJECTS_REGISTRY and tasks_all all
+# read that path under the same env var). This used to default to a repo-root
+# `projects.json` that has not existed for a long time, so every read through
+# here silently found nothing: `app_runner.is_self_project` — which shares this
+# constant — answered False for the self project itself. Harmless while it only
+# suppressed an auto-checkpoint; not harmless now that ADR 0014 makes it half of
+# the developer-mode predicate.
 PROJECTS_REGISTRY = Path(os.environ.get(
     "WORKSHOP_PROJECTS_REGISTRY",
-    str(Path.home() / "workshop" / "projects.json"),
+    str(Path.home() / "workshop" / ".runtime" / "projects.json"),
 ))
 
 # Per-project manifest filenames that may carry a `run` field (the contract both

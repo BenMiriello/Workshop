@@ -81,14 +81,20 @@ def _clip(s: str | None, n: int = 100) -> str:
 
 def _scope_root_for_job(job: dict):
     """The task-store root this job worked in, from its project_slug or agent_id,
-    so we can join the Task it ran. Best-effort -> None (legacy/unresolvable)."""
+    so we can join the Task it ran. Best-effort -> None (legacy/unresolvable).
+
+    `workshop` is accepted alongside `development` because every sweep against
+    the platform repo before ADR 0014 stamped its job with that slug. The
+    tickets those jobs worked did not move — the queue was renamed, not
+    relocated — so resolving the old slug to `development` is what keeps a
+    year of run history joined to its tasks."""
     slug = job.get("project_slug")
     agent = job.get("agent_id") or ""
     try:
-        if slug and slug != "workshop":
+        if slug in ("workshop", "development"):
+            return task_scope.root_for_context("development")
+        if slug:
             return task_scope.root_for_context(f"project:{slug}")
-        if slug == "workshop":
-            return task_scope.root_for_context("workshop")
         if agent.startswith("agent:"):
             return task_scope.root_for_context(agent)
     except Exception:

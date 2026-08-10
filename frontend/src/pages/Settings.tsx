@@ -21,6 +21,7 @@ import {
   MessageSquare,
   Link2,
   Pencil,
+  Plug,
 } from "lucide-react";
 import {
   ActionBar,
@@ -93,6 +94,7 @@ export default function Settings() {
       <DeviceSection />
       <AppearanceSection />
       <ChatSection />
+      <McpSection />
       <BaseAppsSection />
       <PlatformSection />
       <TrackersSection />
@@ -101,6 +103,28 @@ export default function Settings() {
       <AutonomyControls />
       <SystemSection />
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// MCP section: pointer into Settings -> MCP. A pointer rather than a panel
+// because the answer needs two CLI probes and a few seconds, and the Settings
+// index should not wait on them to render. The reason it exists at all: on
+// 2026-08-10 three of this host's MCP servers were failing to connect, two more
+// were unauthenticated, and no screen in the app said so.
+// ----------------------------------------------------------------------------
+function McpSection() {
+  return (
+    <Section icon={Plug} title="MCP">
+      <Row label="servers">
+        <Link to="/settings/mcp" style={{ color: "var(--accent)" }}>
+          installed servers + health + cost ↗
+        </Link>
+        <span className="ws-muted" style={{ marginLeft: "0.5rem", fontSize: "var(--fs-xs)" }}>
+          (what each one costs every turn, and whether it connects)
+        </span>
+      </Row>
+    </Section>
   );
 }
 
@@ -767,7 +791,7 @@ function HealthSection() {
 function HealthCredentials() {
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
-  const url = "https://debian.tail38e62e.ts.net:8446/api/health/ingest";
+  const url = `${window.location.origin}/api/health/ingest`;
 
   const copy = async (label: string, value: string) => {
     try {

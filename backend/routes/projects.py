@@ -397,13 +397,13 @@ async def create_project(body: CreateProjectIn) -> Project:
     }
 
     # Provision a private GitHub repo unless this is a scratch/blank scaffold
-    # (default off there). Owner is always BenMiriello; the repo is always
+    # (default off there). Owner is the configured account; the repo is always
     # private; a scratch project lands in the `workshop-` namespace.
     scratch = _is_scratch_template(body.template)
     want_repo = body.create_repo if body.create_repo is not None else (not scratch)
     if want_repo:
         from services import github
-        github.reject_veritus(slug, title)
+        github.reject_blocked(slug, title)
         base = github.repo_base_name(slug, scratch)
         name = github.unique_repo_name(base)
         info = github.create_repo(str(target), name)
@@ -426,7 +426,7 @@ async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
 
     try:
         if body.mode == "create":
-            github.reject_veritus(slug, raw.get("title") or "")
+            github.reject_blocked(slug, raw.get("title") or "")
             # Unknown scratch-ness defaults to scratch: safer, keeps a clean
             # `workshop-` namespace and never publishes a real repo by accident.
             scratch = body.scratch if body.scratch is not None else True
@@ -436,7 +436,7 @@ async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
         elif body.mode == "bind":
             if not (body.remote_url or "").strip():
                 raise HTTPException(400, "bind requires remote_url")
-            github.reject_veritus(body.remote_url)
+            github.reject_blocked(body.remote_url)
             info = github.bind_repo(str(proj_dir), body.remote_url.strip())
         else:  # pragma: no cover - pydantic Literal blocks this
             raise HTTPException(400, f"unknown mode: {body.mode}")
@@ -790,8 +790,18 @@ async def run_autonomy(slug: str) -> dict:
     """Fire a project Ralph sweep in the background as a manual Job. Uses --force
     so neither the global cron off-switch nor the per-project mode blocks a
     deliberate operator action; project_ralph.sh adopts the Job we open here as
-    its run-state and finish()es it on exit."""
+    its run-state and finish()es it on exit.
+
+    The developer-mode gate applies here too (ADR 0014 §2 door 6). The self
+    project's registry row is an ordinary row to this route, so without the check
+    a POST to this endpoint sweeps the Workshop's own source. `project_ralph.sh`
+    would refuse it a second later, but as an exit code in a log rather than as
+    an answer to the request — so the refusal is made here, where the caller can
+    read it. A safety interlock, not a security boundary."""
+    from services import app_runner
+
     _ensure_project(slug)
+    app_runner.assert_run_target(_project_dir(slug), f"the {slug} autonomy run")
     running, _ = _run_state(slug)
     if running:
         raise HTTPException(409, "a sweep is already running for this project")

@@ -31,7 +31,7 @@ def _valid_email(value: str) -> str:
 def _registration_open() -> bool:
     # Fail-CLOSED: registration is open ONLY when explicitly enabled. A deploy that
     # forgets the env var must not expose internet-facing signup (this app is public
-    # at workshop.benmiriello.com). Changed from default-open 2026-07-18
+    # at the public origin). Changed from default-open 2026-07-18
     # (security-audit-2026-07-18 M4).
     return os.environ.get("WORKSHOP_REGISTRATION_OPEN", "0").strip().lower() in {
         "1", "true", "yes",

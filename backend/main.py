@@ -14,6 +14,7 @@ from deps_user import (
 # app catalog (services/app_registry) so adding/removing an app never edits this
 # file. See docs/apps-are-pluggable.md.
 from routes import agents, projects, base_apps, relay, services, events, jobs, backlog, auto_pr, push, redaction, tools, autonomy, chat, worktrees, auth, voice, knowledge, skills, grants, usage, tasks_all, notes_all, docs_index, inbox, trackers
+from routes import mcp as mcp_routes
 from routes import stores as stores_routes
 from routes import deploys as deploys_routes
 from services import app_registry
@@ -161,6 +162,9 @@ app.include_router(autonomy.router, dependencies=_OPERATOR)
 app.include_router(usage.router, dependencies=_OPERATOR)  # rolling-window token usage (/usage)
 app.include_router(redaction.router, dependencies=_OPERATOR)
 app.include_router(redaction.restore_router, dependencies=_OPERATOR)
+# Settings -> MCP: which MCP servers exist, whether they connect, what they
+# cost. Machine-wide facts, so it hangs off settings rather than a chat.
+app.include_router(mcp_routes.router, dependencies=_OPERATOR)
 
 # Platform per-user primitives — owner-scoped to the authenticated user. These
 # are the shell (chat, voice, push), NOT apps: apps build on them, so they mount
@@ -200,7 +204,7 @@ app.include_router(auth.router)
 
 # Browser-facing origin for the Workshop SPA (e.g. a Tailscale Serve HTTPS URL).
 # Per-deployment; empty by default so a fresh clone never bounces callers to
-# another instance's hostname. clawd-a sets WORKSHOP_CANONICAL_ORIGIN on its
+# another instance's hostname. An install sets WORKSHOP_CANONICAL_ORIGIN on its
 # service to preserve the existing tailnet redirect.
 CANONICAL_ORIGIN = os.environ.get("WORKSHOP_CANONICAL_ORIGIN", "").rstrip("/")
 

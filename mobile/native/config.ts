@@ -11,7 +11,9 @@
 //   1. EXPO_PUBLIC_WORKSHOP_URL   (env; put in mobile/.env.local for dev, e.g. a
 //      tailnet URL — gitignored, so nothing private lands in git)
 //   2. app.json  extra.serverUrl  (if you'd rather set it there)
-//   3. the operator's public deployment (default; works from anywhere, no VPN)
+//
+// There is NO default. A build that was never told which backend it talks to
+// would otherwise ship pointing at whoever built it.
 
 import Constants from "expo-constants";
 
@@ -19,7 +21,7 @@ type Extra = { serverUrl?: string; webUrl?: string; tier?: "free" | "paid" };
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Extra;
 
-const DEFAULT_SERVER = "https://workshop.benmiriello.com";
+const DEFAULT_SERVER = "";
 
 const SERVER_URL: string = (
   process.env.EXPO_PUBLIC_WORKSHOP_URL ||
@@ -27,6 +29,13 @@ const SERVER_URL: string = (
   extra.webUrl ||              // back-compat with older single-URL configs
   DEFAULT_SERVER
 ).replace(/\/+$/, "");
+
+if (!SERVER_URL) {
+  throw new Error(
+    "No Workshop backend configured. Set EXPO_PUBLIC_WORKSHOP_URL in " +
+      "mobile/.env.local (or extra.serverUrl in app.json) before building.",
+  );
+}
 
 /**
  * Entitlement tier. "free" until the operator enrols in the Apple Developer

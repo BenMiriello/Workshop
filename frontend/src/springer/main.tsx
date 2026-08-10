@@ -1,7 +1,7 @@
 // Springer Birds — standalone entry. This is the REAL birds app (the same React
 // pages as /apps/birds) with the Workshop cross-app wrapper removed, behind a
 // login gate. Served as a built bundle by backend/springer_app.py at
-// birds.benmiriello.com. The pages call /api/birds/* which springer_app serves,
+// its own public hostname. The pages call /api/birds/* which springer_app serves,
 // scoped to the logged-in user.
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";

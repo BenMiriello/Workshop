@@ -1,5 +1,5 @@
-"""Commute service — data + scoring + alerting for benmiriello's daily
-Mountain View ↔ San Francisco commute. See ~/workshop/commute/README.md for
+"""Commute service — data + scoring + alerting for the operator's daily
+commute between two configured places.
 the schedule/legs/targets data shape and notification policy.
 
 Public surface:

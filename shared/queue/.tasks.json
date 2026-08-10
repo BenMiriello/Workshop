@@ -1,0 +1,71 @@
+{
+  "version": 2,
+  "tasks": [
+    {
+      "id": "02646867bc6e417bb9944eb37d7502fc",
+      "title": "Should not be filed",
+      "body": "",
+      "status": "draft",
+      "assignee": "operator",
+      "parent": null,
+      "priority": 0,
+      "depends_on": [],
+      "relates_to": [],
+      "labels": [],
+      "acceptance": null,
+      "max_attempts": null,
+      "blocked_reason": null,
+      "awaiting": null,
+      "attempts": 0,
+      "claim_token": null,
+      "lease_until": null,
+      "last_heartbeat": null,
+      "claim_pid": null,
+      "job_ids": [],
+      "evidence": [
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from t1: Should not be filed",
+          "ts": "2026-08-10T18:01:45+00:00"
+        },
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from t1: Should not be filed",
+          "ts": "2026-08-10T18:01:56+00:00"
+        },
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from t1: Should not be filed",
+          "ts": "2026-08-10T18:06:53+00:00"
+        },
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from t1: Should not be filed",
+          "ts": "2026-08-10T18:08:40+00:00"
+        },
+        {
+          "kind": "dedup-merge",
+          "ref": "also filed from t1: Should not be filed",
+          "ts": "2026-08-10T18:08:49+00:00"
+        }
+      ],
+      "source": {
+        "kind": "chat",
+        "ref": "t1"
+      },
+      "provenance": "b0f7adea1b265f2ed6016b14b3f53fa77a45e964a1922159e983ba4dc0bf7f67",
+      "touches": [],
+      "discovered_from": null,
+      "effort": null,
+      "latitude": null,
+      "scoped_by": "agent:chat",
+      "sync": null,
+      "external_refs": [],
+      "created": "2026-08-10T18:01:01+00:00",
+      "updated": "2026-08-10T18:08:49+00:00",
+      "owner": "operator",
+      "text": "Should not be filed"
+    }
+  ],
+  "export_sha": "834cccf574dfbbdfbe05b352a9079d7ac9fab5bd4681bbe7e39ca56c2d5fad4b"
+}

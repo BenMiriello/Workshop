@@ -39,7 +39,7 @@ scheduled run — it does not.
 
 WHAT THIS IS NOT. It is coordination, not confinement. The autonomy loop runs as
 the same uid as everything else (verified 2026-08-04: `queue_runner.sh` runs as
-`clawd-a`), so an agent that wanted to could rewrite the definition that grants
+the service user), so an agent that wanted to could rewrite the definition that grants
 it these permissions. It prevents accidents and makes intent reviewable; it does
 not stop a determined or confused agent. Real confinement is a separate
 execution identity — SEC-A1, still open. Nothing here may be described in the UI

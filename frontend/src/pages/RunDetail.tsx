@@ -17,6 +17,7 @@ import {
 import type { StatusKind } from "../ui";
 import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
+import { DEVELOPMENT_SCOPE } from "../lib/devMode";
 import { nextWorkParams } from "../lib/workParams";
 
 // One RUN's detail: its binding, trigger, timing, outcome, and freeform
@@ -70,8 +71,13 @@ const statusKind = jobStatusKind;
 
 // The task-store scope a job worked in, for a "View task" deep-link into Work.
 function scopeForJob(job: Job): string | null {
-  if (job.project_slug && job.project_slug !== "workshop") return `project:${job.project_slug}`;
-  if (job.project_slug === "workshop") return "workshop";
+  // "workshop" is the pre-ADR-0014 project_slug for a platform-repo sweep; the
+  // tickets it worked did not move, the queue was renamed, so it resolves to
+  // Development or a year of run history loses its ticket link.
+  if (job.project_slug === "workshop" || job.project_slug === DEVELOPMENT_SCOPE) {
+    return DEVELOPMENT_SCOPE;
+  }
+  if (job.project_slug) return `project:${job.project_slug}`;
   if (job.agent_id && job.agent_id.startsWith("agent:")) return job.agent_id;
   return null;
 }

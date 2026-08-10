@@ -27,7 +27,7 @@ def _tokens_file():
 APNS_KEY_ID = os.environ.get("APNS_KEY_ID", "")
 APNS_TEAM_ID = os.environ.get("APNS_TEAM_ID", "")
 APNS_KEY_PATH = os.environ.get("APNS_KEY_P8_PATH", "")
-APNS_TOPIC = os.environ.get("APNS_TOPIC", "com.benmiriello.workshop")
+APNS_TOPIC = os.environ.get("APNS_TOPIC") or os.environ.get("WORKSHOP_MOBILE_BUNDLE", "")
 APNS_HOST = os.environ.get("APNS_HOST", "https://api.push.apple.com")
 
 

@@ -997,7 +997,23 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
     `run_id` is a run the caller already claimed (`claim_run`). Passing one is
     how the route holds the thread from before it starts assembling a prompt —
     which takes awaits, and therefore ticks — through to the spawn. Omit it and
-    this claims one itself, raising RunInFlight if the thread is busy."""
+    this claims one itself, raising RunInFlight if the thread is busy.
+
+    CHOKEPOINT 3 of the developer-mode gate (ADR 0014). This is the one funnel
+    every chat and build turn passes through before the spawn, and the spawn
+    runs `claude` with the full agentic toolset at `cwd`. So `cwd` is asked the
+    single developer-mode question here: is the platform repo a permitted run
+    target? Off, a turn whose cwd is the Workshop's own source tree is refused
+    with 403 before anything is claimed or written, which is what stops doors 3,
+    4 and 5 of the §2 survey — a `project:` row, a revived build agent, an
+    `agent:` maker — from being three separate ways to edit the running app.
+
+    A product capability boundary and a safety interlock, not a security
+    boundary: this stops the app being used to rewrite itself, not a person with
+    a shell from editing the source."""
+    from services import app_runner
+
+    app_runner.assert_run_target(cwd, "a chat turn")
     turn = _make_turn(thread_id, agent_slug, turn_id=run_id)
     if run_id is None:
         joined = await claim_run(thread_id, turn.id, model=model, agent=speaker)

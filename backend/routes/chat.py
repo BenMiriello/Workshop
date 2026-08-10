@@ -27,6 +27,7 @@ from services import chat_store, chat_context, chat_log
 from services import tasks
 from services import context_report
 from services import mcp_health
+from services import mcp_registry
 from services import model_caps
 from services import task_scope
 from services import scope_version
@@ -1485,15 +1486,70 @@ async def thread_mcp_health(thread_id: str, refresh: bool = False):
     bypasses it. `available: false` with a `reason` is what an unrunnable CLI
     looks like — there is no fallback list, because a made-up server list would
     report health for things that may not exist.
+
+    Also carries this chat's own MCP selection (`enabled`, null for "all"), so
+    the panel can draw the toggles from the same reading that drew the list.
+    Each row gains `spec_available`: whether a launch spec for that server can
+    be found, and therefore whether it can be part of a subset at all. See
+    services/mcp_registry.
     """
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    result, checked_at, cached = await mcp_health.cached_mcp_health(
-        _side_query_cwd(provider), force=bool(refresh),
-    )
-    return {**result, "checked_at": checked_at, "cached": cached}
+    cwd = _side_query_cwd(provider)
+    result, checked_at, cached = await mcp_health.cached_mcp_health(cwd, force=bool(refresh))
+    if result.get("available"):
+        result = {**result, "servers": mcp_registry.annotate(
+            result.get("servers") or [], mcp_registry.resolve_specs(cwd))}
+    return {**result, "checked_at": checked_at, "cached": cached,
+            "enabled": chat_store.get_thread_mcp_servers(thread_id)}
+
+
+class McpSelectionIn(BaseModel):
+    """`null` = every server (the default, and what a chat that never chose
+    has). A list = exactly those. `[]` = none, which is a real choice."""
+    servers: list[str] | None = None
+
+
+@router.put("/threads/{thread_id}/mcp/servers")
+async def set_thread_mcp_servers(thread_id: str, body: McpSelectionIn):
+    """Choose which MCP servers this chat's turns may reach.
+
+    A CONFIG WRITE, which is why the UI puts it behind Edit mode and an explicit
+    Save rather than committing on each toggle (frontend/CLAUDE.md rule 7): it
+    changes what the next turn can do.
+
+    The selection is stored against the thread exactly as the model, effort and
+    permission mode are, and is read at spawn time — so it applies from the next
+    turn, not to a run already in flight, whose argv was fixed when its process
+    started.
+
+    Sending every server the machine currently has is stored as "all" rather
+    than as that list; see chat_store.normalize_mcp_selection for why a frozen
+    full list is a different, worse thing later.
+    """
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
+    cwd = _side_query_cwd(provider)
+    known: list[str] | None = None
+    if body.servers is not None:
+        # The full set as the CLI sees it right now, so "everything ticked"
+        # collapses to the default. Read from cache: this is a write path and
+        # must not wait on a 90s probe, and a stale-by-minutes membership list
+        # only ever costs the collapse, never correctness.
+        health, _at, _cached = await mcp_health.cached_mcp_health(cwd)
+        if health.get("available"):
+            known = [s["name"] for s in health.get("servers") or []]
+    try:
+        updated = chat_store.set_thread_mcp_servers(thread_id, body.servers, known)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if updated is None:
+        raise HTTPException(404, "thread not found")
+    return {"enabled": chat_store.get_thread_mcp_servers(thread_id)}
 
 
 def _agent_role_for(provider) -> str | None:
@@ -2175,6 +2231,15 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
             permission_mode=permission_mode,
         )
 
+    # This chat's own MCP choice: None (the overwhelmingly common case) means
+    # every server, and every branch below must then produce exactly the argv it
+    # produced before the control existed. A list narrows the servers the turn
+    # can reach, and — because a tool named in --allowedTools whose server is
+    # not in the strict config is a tool that cannot exist — it narrows the
+    # allowlist to match. Applied HERE rather than deeper down so the filter
+    # runs once, on the values actually handed to the spawn.
+    mcp_selection = chat_store.get_thread_mcp_servers(thread_id)
+
     is_project = chat_context.is_build_provider(provider)
     if is_project:
         _link_build_skills(provider)
@@ -2185,8 +2250,10 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
     else:
         cwd = os.environ.get("WORKSHOP_CHAT_CWD", os.path.expanduser("~"))
         if ENABLE_CHAT_TOOLS:
-            allowed_tools = chat_context.effective_allowed_tools(provider)
-            mcp_servers = list(provider.mcp_servers)
+            mcp_servers = llm_router.select_names(list(provider.mcp_servers), mcp_selection)
+            allowed_tools = llm_router.filter_allowed_tools(
+                chat_context.effective_allowed_tools(provider),
+                {n: {} for n in mcp_servers}, mcp_selection)
             tools_disabled = False
         else:
             allowed_tools, mcp_servers, tools_disabled = None, [], True

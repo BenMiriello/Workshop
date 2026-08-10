@@ -5,7 +5,7 @@ chat context so a chat stops losing track of work happening in other chats.
 Scope-correct (single-operator, so scope is correctness not a permission wall):
 
   - a project / build / agent chat -> ITS OWN task scope only.
-  - a general chat -> a workspace-wide roll-up (workshop root + every project).
+  - a general chat -> a workspace-wide roll-up (the workshop inbox + every project).
 
 Two things this block must NOT do (review F6, research 2026-07-15 #1/#4):
   - bust the prompt cache. It sits in the cache-stable prefix, so its BYTES must
@@ -28,7 +28,6 @@ chat path, mirroring chat_context.learnings_context.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 # Small cap keeps the block cache-friendly and distractor-light (research: ~5-7).
@@ -39,10 +38,6 @@ _TEXT_CLIP = 90
 def _clip(s: str, n: int = _TEXT_CLIP) -> str:
     s = (s or "").split("\n", 1)[0].strip()
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
-
-
-def _workshop_root() -> Path:
-    return Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
 
 
 def _project_roots() -> list[tuple[str, Path]]:
@@ -134,11 +129,18 @@ def digest_for_context(
     if ck and ck not in ("general", "new-project"):
         return ""
 
-    # Workspace-wide roll-up for a general chat. Aggregate across the workshop root
-    # and every project, still capped, with a remainder count.
+    # Workspace-wide roll-up for a general chat. Aggregate across the workshop
+    # inbox and every project, still capped, with a remainder count.
+    #
+    # The inbox is asked for by scope, not by path. It used to read WORKSHOP_ROOT
+    # directly, which since ADR 0014 is the `development` store — so with
+    # developer mode on the same tickets were listed twice, once as "workshop"
+    # and again as "development" via the self registry row below.
+    from services import task_scope
     agg: list[str] = []
     total_all = 0
-    wl, wt = _open_task_lines(_workshop_root(), cap_tasks, label="workshop")
+    ws_root = task_scope.root_for_context("workshop")
+    wl, wt = _open_task_lines(ws_root, cap_tasks, label="workshop") if ws_root else ([], 0)
     agg += wl
     total_all += wt
     for slug, root in _project_roots():

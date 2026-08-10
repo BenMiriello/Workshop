@@ -54,7 +54,7 @@ export default function Shell() {
   const onShouldStart = useCallback(
     (req: { url: string }) => {
       // Exact origin or a path UNDER it — with the "/" boundary so a look-alike host
-      // like `workshop.benmiriello.com.evil.com` can't satisfy a bare startsWith and
+      // like `your-host.example.com.evil.com` can't satisfy a bare startsWith and
       // inherit the bridge (security-audit-2026-07-18 re-audit finding 9).
       if (req.url === webOrigin || req.url.startsWith(webOrigin + "/") || req.url === "about:blank") {
         return true;

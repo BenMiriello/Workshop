@@ -34,6 +34,16 @@ export type McpServerHealth = {
    *  in the section when it is there, so it gets its own line rather than being
    *  crushed into the status. */
   detail?: string;
+  /** Whether a launch spec for this server was found in the real config
+   *  (services/mcp_registry). Only a server with one can be part of a per-chat
+   *  subset: a subset runs under `--strict-mcp-config`, which requires every
+   *  surviving server to be re-declared. False means the toggle is absent and
+   *  the panel says why — not a dead switch. */
+  spec_available?: boolean;
+  /** Which config file holds it: user | local | project | plugin. Empty when no
+   *  spec was found. NOT the CLI's scope column, which it does not print. */
+  scope?: string;
+  source?: string;
 };
 
 export type McpHealth = {
@@ -44,6 +54,11 @@ export type McpHealth = {
   /** Epoch SECONDS at which the CLI actually ran. Null when it never did. */
   checked_at?: number | null;
   cached?: boolean;
+  /** This chat's MCP selection. NULL MEANS EVERY SERVER — the state of a chat
+   *  that has never chosen — and an empty array means none. Getting those two
+   *  the wrong way round would strip the tools off every existing chat, which
+   *  is why the rules live in mcpSelection.ts with tests on them. */
+  enabled?: string[] | null;
 };
 
 export type McpRow = {

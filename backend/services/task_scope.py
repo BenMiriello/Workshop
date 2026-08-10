@@ -37,25 +37,53 @@ _LEARNING_BLOCK = re.compile(r"```learning-note\s*\n(.*?)\n```", re.DOTALL)
 # act instead of a hope that compaction catches it.
 _NOTE_BLOCK = re.compile(r"```note\s*\n(.*?)\n```", re.DOTALL)
 
-# The workshop-root task store (the top-level `.tasks.json`). This is the scope
-# for tickets parked at the root, distinct from the `workshop` PROJECT under
-# projects/. Overridable for tests / alternate checkouts; the default is this
-# checkout's repo root (backend/services -> parents[2]).
+# The platform repo — the Workshop's own source tree. Overridable for tests /
+# alternate checkouts; the default is this checkout's repo root
+# (backend/services -> parents[2]).
+#
+# Since ADR 0014 this is what the `development` scope means, and ONLY what
+# `development` means: it is the one name that resolves to the platform repo,
+# and it resolves only when developer mode is on.
 WORKSHOP_ROOT = Path(os.environ.get(
     "WORKSHOP_ROOT", str(Path(__file__).resolve().parents[2])))
 
+# The `workshop` scope's task store — the root inbox, where work is filed,
+# triaged and routed to the scope that owns it.
+#
+# It used to BE the platform repo (the top-level `.tasks.json`), which is the
+# accident ADR 0014 unwinds: one name meant both "the root organising layer" and
+# "permission to run an agent against the Workshop's own source". Those are two
+# different things and now have two different directories. `workshop` is a store
+# with no working tree — nothing sweeps it, because there is no code in it — and
+# `development` is the platform repo. The root `.tasks.json` did not move; it was
+# always the development queue, and is now named that.
+WORKSHOP_SCOPE_DIR = Path(os.environ.get(
+    "WORKSHOP_SCOPE_DIR", str(WORKSHOP_ROOT / "shared" / "queue")))
 
-def root_for_context(context_key: str | None) -> Path | None:
-    """The task-store directory for a chat's context binding, or None if the
-    binding has no task scope (general / app chats)."""
+
+def _raw_root_for_context(context_key: str | None) -> Path | None:
+    """Where a scope's task store WOULD be, before the developer-mode gate.
+
+    Split out from `root_for_context` so the gate is applied in exactly one
+    place and so a refusal can be explained (`dev_mode_refusal`) rather than
+    reported as an unknown scope."""
     if not context_key:
         return None
-    if context_key in ("workshop", "general"):
-        # The general chat is the orchestrator (Phase 4): it owns the workshop
-        # root queue, so a task-patch / task-proposal default resolves to the same
-        # root store the `workshop` binding uses. This is what turns "a chat that
-        # talks about work" into "a chat that owns a queue".
+    if context_key == "development":
         return WORKSHOP_ROOT
+    if context_key in ("workshop", "general"):
+        # The general chat is the orchestrator: it owns the workshop root queue,
+        # so a task-patch / task-proposal default resolves to the same store the
+        # `workshop` binding uses. This is what turns "a chat that talks about
+        # work" into "a chat that owns a queue".
+        #
+        # This is NOT the `general` -> platform-repo aliasing that ADR 0014
+        # removed (§2 door 2). That door existed because `workshop` meant
+        # WORKSHOP_ROOT, so a general chat could dispatch a sweep against the
+        # Workshop's own source. `workshop` no longer resolves there, so this
+        # mapping now reaches an inbox with no working tree, which is the whole
+        # point of the split.
+        return _workshop_scope_dir()
     if context_key.startswith("project:"):
         from services import build_agents
         return build_agents._project_dir(context_key.split(":", 1)[1])
@@ -71,6 +99,59 @@ def root_for_context(context_key: str | None) -> Path | None:
     return None
 
 
+def root_for_context(context_key: str | None) -> Path | None:
+    """The task-store directory for a chat's context binding, or None if the
+    binding has no task scope (app chats) or the binding is refused.
+
+    CHOKEPOINT 1 of the developer-mode gate (ADR 0014). Every scope kind funnels
+    through here, so this is where "does this scope resolve to the platform
+    repo?" gets asked once for the ticket launcher, the chat providers and the
+    jobs router alike. A scope whose root IS the platform repo resolves to None
+    unless developer mode is on — whatever it is called, so renaming a registry
+    row or reviving a retired build agent does not reopen the door.
+
+    A product capability boundary and a safety interlock, not a security
+    boundary: someone with a shell on this box edits the source directly. See
+    ADR 0014.
+
+    Callers that face the operator should pair this with `dev_mode_refusal`, so
+    a refusal reads as a refusal instead of as an unknown scope."""
+    root = _raw_root_for_context(context_key)
+    if root is None:
+        return None
+    from services import app_runner
+    if app_runner.is_self_dir(root) and not app_runner.dev_mode_on():
+        return None
+    return root
+
+
+def dev_mode_refusal(context_key: str | None) -> str | None:
+    """Why `root_for_context` returned None, when the reason was the gate and
+    not an unknown scope. None means "not gated" — the caller should report the
+    scope as unknown, which is then true."""
+    root = _raw_root_for_context(context_key)
+    if root is None:
+        return None
+    from services import app_runner
+    if app_runner.is_self_dir(root) and not app_runner.dev_mode_on():
+        return app_runner.self_dir_refusal(root, f"the {context_key} scope")
+    return None
+
+
+def dev_scopes() -> list[str]:
+    """The scope keys that exist only in developer mode. Empty in a normal
+    deployment, which is what makes `development` absent from the scope list
+    rather than present and refusing."""
+    from services import app_runner
+    return ["development"] if app_runner.dev_mode_on() else []
+
+
+def _workshop_scope_dir() -> Path:
+    """The workshop inbox store, created on demand (mirrors _agent_scope_dir)."""
+    WORKSHOP_SCOPE_DIR.mkdir(parents=True, exist_ok=True)
+    return WORKSHOP_SCOPE_DIR
+
+
 def key_for_root(root: Path | str | None) -> str | None:
     """The inverse of root_for_context: which scope does this task store belong
     to? Returns None for a path that is not a recognised scope root.
@@ -81,7 +162,12 @@ def key_for_root(root: Path | str | None) -> str | None:
 
     A build agent shares its project's tree, so a project root maps back to
     `project:<slug>` and never to the agent that happened to write there — the
-    change belongs to the place, not to whoever touched it."""
+    change belongs to the place, not to whoever touched it.
+
+    The platform repo maps back to `development`, never to `workshop` (ADR
+    0014). That is the inverse of the one mapping this redesign changed, and
+    getting it wrong would re-key every ticket in the root queue on the next
+    write."""
     if root is None:
         return None
     try:
@@ -90,6 +176,11 @@ def key_for_root(root: Path | str | None) -> str | None:
         return None
     try:
         if p == WORKSHOP_ROOT.resolve():
+            return "development"
+    except OSError:
+        pass
+    try:
+        if p == WORKSHOP_SCOPE_DIR.resolve():
             return "workshop"
     except OSError:
         pass

@@ -432,6 +432,124 @@ def _mcp_server_specs() -> dict[str, dict]:
     return app_registry.installed_mcp_servers()
 
 
+# ---- per-chat MCP selection ------------------------------------------------
+#
+# A chat may run with a SUBSET of the machine's MCP servers. Three functions,
+# all pure, because the thing that must not be got wrong here is the argv, and
+# an argv is only trustworthy if it can be asserted on without spawning a CLI
+# (tests/test_mcp_selection.py).
+#
+# THE ONE INVARIANT: `selection is None` means the chat has never chosen, and
+# every function below must then return exactly what the caller would have got
+# before per-chat selection existed. Default is ALL servers, never none — a
+# chat nobody has configured must not quietly lose its tools.
+
+
+def select_names(available: list[str], selection: list[str] | None) -> list[str]:
+    """`available`, narrowed to the chat's chosen servers, order preserved.
+
+    A FILTER, not a set: a name in `selection` that is not in `available` adds
+    nothing. That direction matters. The selection is written by a UI listing
+    what the machine had at the time; a server that has since been removed, or
+    that this particular code path never offered, must not be conjured into a
+    turn by a stale checkbox.
+    """
+    if selection is None:
+        return list(available)
+    keep = set(selection)
+    return [name for name in available if name in keep]
+
+
+def select_servers(available: dict[str, dict], selection: list[str] | None) -> dict[str, dict]:
+    """`select_names`, over a name -> launch-spec mapping."""
+    kept = set(select_names(list(available), selection))
+    return {name: spec for name, spec in available.items() if name in kept}
+
+
+def filter_allowed_tools(allowed_tools: list[str], servers: dict[str, dict],
+                         selection: list[str] | None) -> list[str]:
+    """`allowed_tools` with the tools of disabled MCP servers removed.
+
+    `mcp__<server>__<tool>` is the CLI's naming, so the server a tool belongs to
+    is readable off the tool name. Built-ins (anything without the prefix) are
+    untouched — the selection governs MCP, not the toolset.
+
+    Unchanged when nothing was chosen, so a chat that never touched the control
+    keeps the byte-identical allowlist it had.
+    """
+    if selection is None:
+        return list(allowed_tools)
+    kept: list[str] = []
+    for t in allowed_tools:
+        if not t.startswith("mcp__"):
+            kept.append(t)
+            continue
+        parts = t.split("__")
+        if len(parts) >= 3 and parts[1] in servers:
+            kept.append(t)
+    return kept
+
+
+def strict_mcp_flags(servers: dict[str, dict]) -> list[str]:
+    """`--mcp-config <json> --strict-mcp-config` for exactly `servers`.
+
+    Strict is the whole mechanism and the whole hazard: the turn gets these
+    servers and nothing else, so an omission is silent. Every caller that builds
+    a subset goes through here so there is one place the JSON shape is decided.
+
+    THE ORDER IS DELIBERATE AND IT IS NOT COSMETIC. `--mcp-config` is VARIADIC
+    (`<configs...>` — "JSON files or strings, space-separated"), so it keeps
+    eating arguments until it meets something starting with `--`. Measured
+    2026-08-10: `--mcp-config '{...}' hi` made the CLI look for a config file
+    named `hi` and exit 1 with "MCP config file not found". Emitting
+    `--strict-mcp-config` AFTER the JSON makes this group terminate itself, so
+    it stays correct wherever a caller splices it in — including in front of a
+    positional prompt, which is how call_cloud builds its argv.
+    """
+    return ["--mcp-config", json.dumps({"mcpServers": servers}), "--strict-mcp-config"]
+
+
+def resolve_agentic_selection(selection: list[str], cwd: str) -> dict[str, dict]:
+    """The chosen servers' real launch specs, for a full-agentic turn.
+
+    A selected server whose spec cannot be found is DROPPED and logged, because
+    the alternative is worse in both directions: inventing a spec launches
+    something the operator did not configure, and aborting the turn would make a
+    settings screen able to break a chat. The UI does not offer a toggle for a
+    server with no spec (`mcp_registry.annotate` -> `spec_available: false`), so
+    reaching this branch means the config changed under a saved selection.
+    """
+    from services import mcp_registry
+    specs = mcp_registry.resolve_specs(cwd)
+    chosen: dict[str, dict] = {}
+    for name in selection:
+        entry = specs.get(name)
+        if entry is None:
+            log.warning("mcp selection: no launch spec for %r in %s; it cannot be "
+                        "re-declared, so this turn runs without it", name, cwd)
+            continue
+        chosen[name] = entry["spec"]
+    return chosen
+
+
+def agentic_mcp_flags(selection: list[str] | None, cwd: str) -> list[str]:
+    """MCP flags for a FULL-AGENTIC turn that has chosen a subset of servers.
+
+    The agentic path normally sends no MCP flags at all and inherits whatever
+    the CLI's own configuration provides. There is no CLI flag for "all of that,
+    minus one", so honouring a selection means switching that turn into strict
+    mode and re-declaring the survivors from their real config
+    (services/mcp_registry — read off ~/.claude.json, <cwd>/.mcp.json and the
+    installed plugins, never reconstructed from `claude mcp list` output).
+
+    Returns [] when the chat has never chosen, which is what keeps every
+    existing turn byte-identical.
+    """
+    if selection is None:
+        return []
+    return strict_mcp_flags(resolve_agentic_selection(selection, cwd))
+
+
 def tool_flags(
     *,
     tools_disabled: bool = False,
@@ -439,6 +557,8 @@ def tool_flags(
     disallowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
     permission_mode: str = "bypassPermissions",
+    mcp_selection: list[str] | None = None,
+    cwd: str = "",
 ) -> tuple[list[str], dict, bool]:
     """The tool / MCP / permission CLI flags for one of the three tool modes,
     shared by call_cloud (the blocking data path) and build_streaming (streaming
@@ -454,7 +574,14 @@ def tool_flags(
       server is actually spawned.
     - neither        -> full agentic inheritance; NO flags here (the caller adds
       its own permission-mode: call_cloud keeps the CLI default, build_streaming
-      sets bypassPermissions for its headless turns)."""
+      sets bypassPermissions for its headless turns).
+
+    `mcp_selection` is the CHAT's own per-thread choice of servers, and it is a
+    filter over whichever set the mode above would have used — never an addition
+    to it. None means the chat has never chosen, which must behave exactly as it
+    did before this parameter existed. See `select_servers`. `cwd` is only read
+    on the full-agentic path, where the surviving servers have to be re-declared
+    from the configuration that directory actually sees."""
     if tools_disabled:
         return ([
             "--strict-mcp-config",
@@ -464,16 +591,28 @@ def tool_flags(
         ], {}, False)
     if allowed_tools:
         _specs = _mcp_server_specs()
-        servers_subset = {
-            name: _specs[name] for name in (mcp_servers or []) if name in _specs
-        }
-        builtin_tools = [t for t in allowed_tools if not t.startswith("mcp__")]
-        flags = ["--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": servers_subset})]
+        servers_subset = select_servers(
+            {name: _specs[name] for name in (mcp_servers or []) if name in _specs},
+            mcp_selection,
+        )
+        # A disabled server's tools must not stay on the allowlist: leaving
+        # `mcp__plaid__*` in --allowedTools while plaid is absent from the
+        # strict config names a tool that cannot exist, which is at best noise
+        # in the prompt and at worst an invitation to hallucinate the call.
+        kept_tools = filter_allowed_tools(allowed_tools, servers_subset, mcp_selection)
+        builtin_tools = [t for t in kept_tools if not t.startswith("mcp__")]
+        flags = strict_mcp_flags(servers_subset)
         flags += (["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
         # The allowlist is the gate on this path, so the mode defaults to bypass
         # and every non-chat caller (voice, jobs, blocking data turns) keeps
         # exactly the posture it had. A chat that has chosen a mode passes it in.
-        flags += ["--allowedTools", *allowed_tools, "--permission-mode", permission_mode]
+        #
+        # An empty allowlist is written as one explicit empty argument rather
+        # than omitted: `--allowedTools` followed immediately by
+        # `--permission-mode` would eat the next flag as its value, since the
+        # option is variadic. Disabling every server a narrow chat had is a real
+        # state (it leaves the built-ins), and it must not corrupt the argv.
+        flags += ["--allowedTools", *(kept_tools or [""]), "--permission-mode", permission_mode]
         # Deny list applies AFTER the allow list, which is what makes it a
         # reversibility gate rather than a second allowlist: a maker keeps Bash
         # and loses exactly the commands that cannot be undone. See
@@ -481,10 +620,20 @@ def tool_flags(
         if disallowed_tools:
             flags += ["--disallowedTools", *disallowed_tools]
         _write_tools = {"Write", "Edit", "MultiEdit"}
-        if _write_tools & set(allowed_tools):
+        if _write_tools & set(kept_tools):
             flags += ["--append-system-prompt", _WRITE_BOUNDARY_NUDGE]
         env = dict(_MCP_BLOCK_STARTUP_ENV) if servers_subset else {}
         return (flags, env, bool(servers_subset))
+    # Full agentic. No flags unless the chat has chosen a subset — see
+    # agentic_mcp_flags for why a subset has to become strict mode here.
+    if mcp_selection is not None:
+        chosen = resolve_agentic_selection(mcp_selection, cwd)
+        # Same reason as the narrow path: when a server IS being spawned for
+        # this turn, the CLI must finish the stdio handshake before the first
+        # model turn, or the model sees `tools: []` and either says it has none
+        # or fabricates a call.
+        env = dict(_MCP_BLOCK_STARTUP_ENV) if chosen else {}
+        return (strict_mcp_flags(chosen), env, bool(chosen))
     return ([], {}, False)
 
 

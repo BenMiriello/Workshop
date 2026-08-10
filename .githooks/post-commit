@@ -21,7 +21,7 @@
 # the log is for diagnosing, not for trusting.
 set -uo pipefail
 
-CANONICAL=/home/clawd-a/workshop
+CANONICAL="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEFAULT_BRANCH=main
 
 [ "${WORKSHOP_NO_AUTOBUILD:-0}" = "1" ] && exit 0

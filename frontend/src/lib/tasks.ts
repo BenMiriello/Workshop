@@ -8,6 +8,7 @@
 // back to splitting `text` for a payload cached before the change. Backed by GET
 // /api/tasks and /api/tasks/{scope}/{id}.
 import type { StatusKind } from "../ui";
+import { DEVELOPMENT_SCOPE } from "./devMode";
 
 // All eight shipped statuses (backend services/tasks.py STATUSES). ProjectDetail
 // previously knew only four of these and rendered a broken StatusDot for the
@@ -290,6 +291,9 @@ export const readinessLabel = (check: string): string =>
 // A friendly label for a scope key, for filters and the scope link.
 export function scopeLabel(scope?: string): string {
   if (!scope) return "unknown";
+  // Work ON the Workshop: the platform repo and this installation's host. The
+  // only name that resolves there, and only in a developer build (ADR 0014).
+  if (scope === DEVELOPMENT_SCOPE) return "Development";
   if (scope === "workshop") return "Workshop root";
   const [kind, slug] = scope.split(":", 2);
   if (!slug) return scope;
@@ -311,16 +315,27 @@ export function ticketHref(scope: string, id: string): string {
 }
 
 // The scope a Run's ticket lives in. A Run is bound to a project or it is not,
-// and its ticket sits in that project's queue or the workshop root — the same
-// rule task_scope.root_for_context applies server-side.
+// and its ticket sits in that project's queue or the development queue — the
+// same rule task_scope.root_for_context applies server-side.
+//
+// `workshop` and `development` both map to Development. Every sweep against the
+// platform repo before ADR 0014 stamped its job `project_slug: "workshop"`, and
+// those tickets did not move — the queue was renamed, not relocated — so the old
+// slug has to keep resolving or a year of run history loses its ticket link.
+// A job with no project binding is a platform-repo run too, which is what it
+// always meant.
 export function runTicketScope(job: { project_slug?: string }): string {
-  return job.project_slug ? `project:${job.project_slug}` : "workshop";
+  if (!job.project_slug || job.project_slug === "workshop") return DEVELOPMENT_SCOPE;
+  if (job.project_slug === DEVELOPMENT_SCOPE) return DEVELOPMENT_SCOPE;
+  return `project:${job.project_slug}`;
 }
 
 // The in-app route a scope links to (project detail / agent detail), or null
-// when the scope has no dedicated page (workshop root, build agents).
+// when the scope has no dedicated page (development, workshop root, build
+// agents).
 export function scopeHref(scope?: string): string | null {
   if (!scope) return null;
+  if (scope === DEVELOPMENT_SCOPE) return null;
   const [kind, slug] = scope.split(":", 2);
   if (kind === "project" && slug) return `/projects/${encodeURIComponent(slug)}`;
   if (kind === "agent" && slug) return `/agents/${encodeURIComponent(slug)}`;

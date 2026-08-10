@@ -40,7 +40,7 @@ export default function CommuteSettings() {
   return (
     <SettingsSection icon={TrainFront} title="Commute">
       <Row label="config">
-        <a href="https://debian.tail38e62e.ts.net:8444/" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
+        <a href="/apps/commute" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
           Open Commute · Config tab ↗
         </a>
       </Row>

@@ -21,7 +21,7 @@
 #   - Each invocation reads ~/workshop/TODO.md fresh.
 #   - Each invocation drains up to 5 pending-queue events first (Layer 4).
 #   - Output goes to ~/workshop/cron_agent.log; status to ~/workshop/status.md.
-#   - notify-masini.txt is dropped per substantive change so masini surfaces
+#   - a notify line is dropped per substantive change so the bridge surfaces
 #     to Discord on next inbound.
 
 set -u
@@ -183,7 +183,7 @@ except Exception:
     fi
     [[ -z "$EVENT_JSON" ]] && EVENT_JSON='{"_note":"event payload unavailable"}'
 
-    EVENT_PROMPT="Webhook event for $AGENT_ID from $SOURCE: $EVENT_JSON. Summarize in one line; append to ~/workshop/.runtime/notify-masini.txt only if it crosses a rule in shared/global-memory.md (default skip). Exit."
+    EVENT_PROMPT="Webhook event for $AGENT_ID from $SOURCE: $EVENT_JSON. Summarize in one line; append to the operator notify queue only if it crosses a rule in shared/global-memory.md (default skip). Exit."
 
     # Low-value-code shortcut.
     LOW_VALUE_CODES="SYNC_UPDATES_AVAILABLE HISTORICAL_UPDATE INITIAL_UPDATE DEFAULT_UPDATE WEBHOOK_UPDATE_ACKNOWLEDGED"

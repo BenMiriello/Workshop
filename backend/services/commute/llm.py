@@ -27,6 +27,14 @@ from typing import Any
 
 import httpx
 
+def _operator() -> str:
+    """Who the agent is assisting. One name in source would address every
+    other deployment's operator by the author's name."""
+    from services.chat_context import operator_name
+
+    return operator_name()
+
+
 from . import config
 
 
@@ -41,7 +49,7 @@ def _build_prompt(brief: dict[str, Any], checkpoint: str) -> str:
     `checkpoint` is one of: "pre-1h", "pre-30m", "during", "post".
     """
     base = (
-        "You are a commute-assist agent for benmiriello. Decide whether to interject "
+        f"You are a commute-assist agent for {_operator()}. Decide whether to interject "
         "in his Discord. Hard rule: ONLY alert if he's at risk of being LATE past his "
         "flex window. NEVER alert when running early or on-time. Default to NOT "
         "interjecting unless there is a clear, actionable late-risk signal.\n\n"

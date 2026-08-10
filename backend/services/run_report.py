@@ -148,13 +148,31 @@ def _worked_for_job(job_id: str) -> tuple[dict, Path, list[dict]]:
     if not job:
         job = {"id": job_id}
     # root_for_job resolves a job BOUND to a project or an agent. A job with
-    # neither works the workshop root queue, which is the common case for
-    # anything filed from the workshop chat — so fall back to it here rather
-    # than widening root_for_job, whose other callers rely on None meaning
-    # "not bound".
-    root = task_scope.root_for_job(job) or task_scope.WORKSHOP_ROOT
+    # neither works a root queue, which is the common case for anything filed
+    # from the workshop chat — so fall back to it here rather than widening
+    # root_for_job, whose other callers rely on None meaning "not bound".
+    #
+    # There are two root queues since ADR 0014, and an unbound job can belong to
+    # either: the workshop inbox is where such a job lands now, and the
+    # development queue is where every one of them landed before the rename
+    # (it is the same file, under its true name). So both are candidates, and
+    # the one that actually holds this job's tickets wins.
+    root = task_scope.root_for_job(job)
+    candidates = [root] if root is not None else [
+        c for c in (task_scope.root_for_context("workshop"),
+                    task_scope.root_for_context("development"))
+        if c is not None
+    ] or [task_scope.WORKSHOP_SCOPE_DIR]
+    root = candidates[0]
     all_tasks = tasks._load(root)
     worked = [t for t in all_tasks if job_id in (t.get("job_ids") or [])]
+    for candidate in candidates[1:]:
+        if worked:
+            break
+        found = tasks._load(candidate)
+        hits = [t for t in found if job_id in (t.get("job_ids") or [])]
+        if hits:
+            root, all_tasks, worked = candidate, found, hits
     if not worked:
         # `job_ids` is written by the CLAIM, so a run that stalled before
         # claiming (budget refused, tree busy, ticket not claimable) matches

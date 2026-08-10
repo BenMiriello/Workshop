@@ -9,7 +9,7 @@ Run from the backend dir with its venv:
     .venv/bin/python scripts/springer_account.py set <email> <password> [--name N] [--role admin|member]
     .venv/bin/python scripts/springer_account.py list
 
-The account is keyed by email, so setting a password for benmiriello@gmail.com
+The account is keyed by email, so setting a password for a given address
 attaches a login to the SAME user 1 that already owns all the Workshop history.
 """
 from __future__ import annotations
@@ -64,7 +64,7 @@ def main() -> int:
         except ValueError as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
-        base = os.environ.get("SPRINGER_BASE_URL", "https://birds.benmiriello.com").rstrip("/")
+        base = os.environ.get("SPRINGER_BASE_URL", "https://birds.example.com").rstrip("/")
         print(f"Invite for {args.email.strip().lower()} (valid {springer_auth.INVITE_TTL_DAYS} days). Send them this link:")
         print(f"  {base}/invite/{token}")
         return 0

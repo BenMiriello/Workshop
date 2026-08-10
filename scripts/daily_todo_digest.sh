@@ -1,6 +1,6 @@
 #!/bin/bash
 # Daily TODO digest (task 92) — every morning summarizes TODO state and
-# writes to notify-masini.txt so masini surfaces it on next inbound.
+# writes to the notify queue so the chat bridge surfaces it on next inbound.
 # Decoupled from cron_agent.sh per spec.
 #
 # Install: `0 14 * * * <workshop>/scripts/daily_todo_digest.sh`

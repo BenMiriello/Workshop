@@ -6,7 +6,8 @@
 # memory = union of its node + all ancestors.
 #
 # Backend uses `services.memory_tree.effective_memory(agent_id, persona)` to
-# build the list. masini's persona = "ops/personal-ai" → inherits root + ops.
+# build the list. A personal-assistant agent's persona = "ops/personal-ai" →
+# inherits root + ops.
 # plaid-watcher's persona = "ops/event-watchers" → inherits root + ops.
 
 root:
@@ -21,11 +22,11 @@ root:
         - workshop.ops      # operational logs, runtime state, incidents
       children:
         personal-ai:
-          # masini lives here — full operator-facing assistant.
+          # The operator-facing assistant lives here.
           blocks:
             - operator-preferences   # tone, defaults, hard rules (future block)
           archival_namespaces:
-            - masini.private         # masini's own learnings
+            - personal-ai.private    # the assistant's own learnings
           children: {}
         event-watchers:
           # Plaid-watcher, gmail-watcher, calendar-watcher, etc.
