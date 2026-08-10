@@ -57,7 +57,10 @@ ts() { date -Iseconds; }
 # Parse args.
 TASK=""
 BASELINE=""
-DIR="$WORKSHOP"          # working tree to drive (default = workshop root)
+DIR=""                   # working tree to drive. NO DEFAULT: a target must be
+                         # named (ADR 0014). This used to default to $WORKSHOP,
+                         # which meant a bare `ralph.sh "some task"` drove the
+                         # platform's own source tree.
 MAX_ITER=10
 MAX_WALL=1500   # 25 minutes
 # NO step cap per iteration by default. An iteration has to cover the whole
@@ -104,6 +107,12 @@ while [[ $# -gt 0 ]]; do
     *)               TASK="$1"; shift ;;
   esac
 done
+
+# Developer-mode gate (ADR 0014). The platform repo is a permitted run target
+# only when WORKSHOP_DEV_MODE=1, and a target must be named either way. Checked
+# here, before any work, so a refusal costs nothing. Exit 4 = startup failure.
+source "$WORKSHOP/scripts/dev_mode_gate.sh"
+assert_run_target "$DIR" "ralph.sh" || exit 4
 
 # The heartbeat targets the task STORE, which lives in the project dir even when
 # this run drives an isolated worktree (--dir), so default it to the tree we drive.

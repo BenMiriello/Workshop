@@ -551,6 +551,14 @@ PYEOF
 )
 fi
 [[ "$DEFAULT_BRANCH" == "-" ]] && DEFAULT_BRANCH=""
+# Developer-mode gate (ADR 0014), applied once DIR is resolved from either
+# route. This is the door the comment above deliberately leaves open: a --dir
+# sweep "trusts the caller's decision", and the dispatcher's project loop treats
+# the `self: true` registry row as an ordinary loop candidate. Neither of those
+# should be able to sweep the platform's own tree with dev mode off.
+source "$WORKSHOP/scripts/dev_mode_gate.sh"
+assert_run_target "$DIR" "project_ralph.sh" || exit 2
+
 WT_ENABLED=0
 [[ "$CONCURRENT_WT" == "1" && -n "$SLUG" ]] && WT_ENABLED=1
 WORK_DIR="$DIR"

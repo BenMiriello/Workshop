@@ -38,7 +38,9 @@
 set -u
 
 WORKSHOP=/home/clawd-a/workshop
-DIR="$WORKSHOP"
+# NO DEFAULT: a target must be named (ADR 0014). This used to be DIR="$WORKSHOP",
+# so the resident loop swept the platform's own source tree unless told otherwise.
+DIR=""
 POLL=60
 MAX_TASKS=3
 ONCE=0
@@ -55,9 +57,15 @@ while [[ $# -gt 0 ]]; do
     --poll)      POLL="$2"; shift 2 ;;
     --max-tasks) MAX_TASKS="$2"; shift 2 ;;
     --once)      ONCE=1; shift ;;
-    *) echo "usage: queue_runner.sh [--dir PATH] [--poll SEC] [--max-tasks N] [--once]" >&2; exit 2 ;;
+    *) echo "usage: queue_runner.sh --dir PATH [--poll SEC] [--max-tasks N] [--once]" >&2; exit 2 ;;
   esac
 done
+
+# Developer-mode gate (ADR 0014): the target must be named, and the platform
+# repo is permitted only under WORKSHOP_DEV_MODE=1. Checked before the flock so
+# a refused runner never holds a tree's lock.
+source "$WORKSHOP/scripts/dev_mode_gate.sh"
+assert_run_target "$DIR" "queue_runner.sh" || exit 2
 
 LOG="$WORKSHOP/.runtime/queue-runner.log"
 PIDFILE="$WORKSHOP/.runtime/queue-runner.pid"

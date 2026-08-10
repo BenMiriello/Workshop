@@ -9,16 +9,28 @@
 #
 # Deliberately cron + nohup rather than a systemd unit, per repo learnings.
 #
-# Install (already in crontab):
-#   */5 * * * * /home/clawd-a/workshop/scripts/queue_runner_watchdog.sh
+# The tree to supervise must be NAMED (ADR 0014). This used to default to
+# $WORKSHOP, which made the always-on supervisor a standing autonomous writer on
+# the platform's own source — door 9 of the survey in
+# docs/platform-redesign/dev-mode-and-development-scope-2026-08-09.md §2.
+#
+# Install (crontab, currently commented out — re-enable with an explicit tree):
+#   */5 * * * * /home/clawd-a/workshop/scripts/queue_runner_watchdog.sh /path/to/tree
 
 set -u
 
 WORKSHOP=/home/clawd-a/workshop
 LOG="$WORKSHOP/.runtime/queue-runner.log"
-DIR="${1:-$WORKSHOP}"
+DIR="${1:-}"
 
 ts() { date -Iseconds; }
+
+# Same gate the runner applies, checked here too so cron logs the refusal once
+# rather than spawning a runner every five minutes that exits immediately.
+source "$WORKSHOP/scripts/dev_mode_gate.sh"
+if ! assert_run_target "$DIR" "queue_runner_watchdog.sh" 2>>"$LOG"; then
+  exit 2
+fi
 
 LOCK="/tmp/workshop-queue-runner-$(printf '%s\n' "$DIR" | md5sum | cut -c1-12).lock"
 
