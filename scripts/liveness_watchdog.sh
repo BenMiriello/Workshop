@@ -21,10 +21,11 @@
 # actually fails.
 #
 # Suggested crontab (every 5 minutes), NOT installed by this script:
-#   */5 * * * * /home/clawd-a/workshop/scripts/liveness_watchdog.sh >/dev/null 2>&1
+#   */5 * * * * <workshop>/scripts/liveness_watchdog.sh >/dev/null 2>&1
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
 RUNTIME="$WORKSHOP/.runtime"
 LOG="$RUNTIME/liveness_watchdog.log"
 HEALTH_URL="${WORKSHOP_HEALTH_URL:-http://127.0.0.1:8000/health}"
@@ -46,10 +47,10 @@ OUT=$(cd "$WORKSHOP" && python3 - <<'PYEOF' 2>&1
 import json, os, sys
 from pathlib import Path
 
-sys.path.insert(0, "/home/clawd-a/workshop/backend")
+sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
 from services import jobs, tasks  # noqa: E402
 
-WORKSHOP = Path("/home/clawd-a/workshop")
+WORKSHOP = Path(os.environ["WORKSHOP"])
 
 # 1) Fail Jobs stuck `running` whose process is dead.
 try:

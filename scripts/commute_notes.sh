@@ -83,8 +83,10 @@ for s in schedule.get("schedules", []):
 
 flex = targets.get("policy", {}).get("flex_minutes_late", 15)
 
+operator = os.environ.get("WORKSHOP_OPERATOR_NAME", "the operator")
+
 lines = [
-    f"You are writing {today}'s commute log entry for benmiriello's personal notes.",
+    f"You are writing {today}'s commute log entry for {operator}'s personal notes.",
     "Write ONE concise paragraph (3-5 sentences) summarising how today's commute went.",
     "Cover: on-time vs delayed, what the monitoring system flagged, any patterns worth remembering.",
     "Be factual and ground every claim in the data below. Only call the commute on-time or delayed if a checkpoint or alert says so; if the data doesn't show it, say monitoring had no clear signal rather than assuming on-time.",

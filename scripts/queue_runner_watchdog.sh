@@ -15,11 +15,11 @@
 # docs/platform-redesign/dev-mode-and-development-scope-2026-08-09.md §2.
 #
 # Install (crontab, currently commented out — re-enable with an explicit tree):
-#   */5 * * * * /home/clawd-a/workshop/scripts/queue_runner_watchdog.sh /path/to/tree
+#   */5 * * * * <workshop>/scripts/queue_runner_watchdog.sh /path/to/tree
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 LOG="$WORKSHOP/.runtime/queue-runner.log"
 DIR="${1:-}"
 

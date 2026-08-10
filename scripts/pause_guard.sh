@@ -24,7 +24,7 @@
 # ISO YYYY-MM-DD form (valid because zero-padded ISO dates sort lexically).
 #
 # Usage (in a cron entry-point script):
-#   source /home/clawd-a/workshop/scripts/pause_guard.sh
+#   source <workshop>/scripts/pause_guard.sh
 #   workshop_pause_guard            # exits 0 (silently) if paused
 # or with a per-script log line:
 #   workshop_pause_guard "$LOG" "cron_agent"
@@ -32,7 +32,7 @@
 # This file is intentionally side-effect-free until workshop_pause_guard is
 # called, so it is safe to `source` unconditionally.
 
-WORKSHOP_PAUSE_FILE="${WORKSHOP_PAUSE_FILE:-/home/clawd-a/workshop/.runtime/pause-until}"
+WORKSHOP_PAUSE_FILE="${WORKSHOP_PAUSE_FILE:-${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/.runtime/pause-until}"
 
 # workshop_pause_guard [logfile] [label]
 #   logfile (optional): append a one-line note when suppressing

@@ -55,7 +55,8 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
 # ROOT is the tree to inspect (git repo + stub scan). Defaults to the workshop
 # install, but a per-project Ralph run points it at projects/<slug> via
 # REVIEWER_ROOT so the reviewer gates the PROJECT's own git repo. WORKSHOP stays

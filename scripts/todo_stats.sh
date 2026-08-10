@@ -10,7 +10,7 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 TODO=${1:-$WORKSHOP/TODO.md}
 
 if [[ ! -f "$TODO" ]]; then

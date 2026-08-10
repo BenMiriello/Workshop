@@ -1,7 +1,7 @@
 # Workshop public edge (SPA + cookie-forwarding proxy) — systemd --user unit
 # (template). Serves frontend/dist and proxies the personal+auth API surface to
 # the main backend on :8000. Sits behind the Cloudflare tunnel for
-# workshop.benmiriello.com. Install via scripts/install_public_service.sh
+# Sits behind the Cloudflare tunnel for this instance's public hostname
 # (substitutes @WORKSHOP_ROOT@).
 [Unit]
 Description=Workshop public edge (static SPA + API proxy)

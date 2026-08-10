@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Workshop SPA for workshop.benmiriello.com.
+# Build the Workshop SPA that the public edge serves from frontend/dist.
 #
 # The public edge (workshop-public.service on :8002) serves frontend/dist from
 # DISK, per request (StaticFiles + FileResponse) — so a frontend rebuild is

@@ -4,8 +4,10 @@
 # iPhone. Two variants coexist on one device (distinct bundle ids), same source.
 # Run on the Mac, phone plugged in + unlocked, nvm node active.
 #
-#   scripts/mobile-build.sh workshop2   # the simonsays instance (tailnet :8447)
-#   scripts/mobile-build.sh workshop    # our main app (workshop.benmiriello.com)
+#   scripts/mobile-build.sh primary     # points at the public origin
+#   scripts/mobile-build.sh secondary   # points at the local/tailnet origin
+#
+# Both identities come from ~/.config/workshop/instance.env, never from source.
 #
 # Each run: sets the variant identity, writes .env.local, does a clean prebuild
 # (identity is stamped at prebuild time), writes the Release Node path, then
@@ -19,18 +21,28 @@
 #
 set -euo pipefail
 
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/instance.sh"
+
 VARIANT="${1:-}"
 case "$VARIANT" in
-  workshop|main|1)
-    APP_NAME="Workshop"; APP_SLUG="workshop-mobile"; APP_SCHEME="workshop"
-    BUNDLE_ID="com.benmiriello.workshop"
-    SERVER_URL="https://workshop.benmiriello.com" ;;
-  workshop2|simonsays|2)
-    APP_NAME="workshop2"; APP_SLUG="workshop2"; APP_SCHEME="workshop2"
-    BUNDLE_ID="com.benmiriello.workshop2"
-    SERVER_URL="https://debian.tail38e62e.ts.net:8447" ;;
+  primary|main|1)
+    require_instance WORKSHOP_MOBILE_BUNDLE
+    require_instance WORKSHOP_PUBLIC_ORIGIN
+    APP_NAME="${WORKSHOP_MOBILE_NAME:-Workshop}"
+    APP_SLUG="${WORKSHOP_MOBILE_SLUG:-workshop-mobile}"
+    APP_SCHEME="${WORKSHOP_MOBILE_SCHEME:-workshop}"
+    BUNDLE_ID="$WORKSHOP_MOBILE_BUNDLE"
+    SERVER_URL="$WORKSHOP_PUBLIC_ORIGIN" ;;
+  secondary|2)
+    require_instance WORKSHOP_MOBILE_BUNDLE_ALT
+    require_instance WORKSHOP_LOCAL_ORIGIN
+    APP_NAME="${WORKSHOP_MOBILE_NAME_ALT:-Workshop 2}"
+    APP_SLUG="${WORKSHOP_MOBILE_SLUG_ALT:-workshop2}"
+    APP_SCHEME="${WORKSHOP_MOBILE_SCHEME_ALT:-workshop2}"
+    BUNDLE_ID="$WORKSHOP_MOBILE_BUNDLE_ALT"
+    SERVER_URL="$WORKSHOP_LOCAL_ORIGIN" ;;
   *)
-    echo "usage: $0 {workshop|workshop2}" >&2; exit 2 ;;
+    echo "usage: $0 {primary|secondary}" >&2; exit 2 ;;
 esac
 
 REPO="${WORKSHOP_REPO:-$HOME/Development/Workshop}"

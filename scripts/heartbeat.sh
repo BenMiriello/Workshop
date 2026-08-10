@@ -22,7 +22,7 @@ fi
 AGENT_ID="$1"
 shift
 
-HEARTBEATS_DIR="${WORKSHOP_HEARTBEATS_DIR:-/home/clawd-a/workshop/.runtime/heartbeats}"
+HEARTBEATS_DIR="${WORKSHOP_HEARTBEATS_DIR:-${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}/.runtime/heartbeats}"
 TARGET="${HEARTBEATS_DIR}/${AGENT_ID}.json"
 
 mkdir -p "$HEARTBEATS_DIR"

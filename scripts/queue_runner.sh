@@ -37,7 +37,7 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # NO DEFAULT: a target must be named (ADR 0014). This used to be DIR="$WORKSHOP",
 # so the resident loop swept the platform's own source tree unless told otherwise.
 DIR=""
@@ -113,7 +113,7 @@ trap cleanup EXIT
 trap 'log "caught TERM/INT — draining out"; exit 0' TERM INT
 
 # Subscription auth, matching cron_agent.sh. Never an API key.
-AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
+AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 if [[ -r "$AUTH_ENV" ]]; then set -a; . "$AUTH_ENV"; set +a; fi
 unset ANTHROPIC_API_KEY
 

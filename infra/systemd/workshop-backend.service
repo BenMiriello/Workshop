@@ -6,7 +6,9 @@
 # which substitutes the real checkout path and installs/enables the unit.
 #
 # Portable by design: %h resolves to the invoking user's home, so this works
-# for any user/clone location, not just the original clawd-a setup.
+# for any user and any clone location. Nothing about a particular deployment
+# (hostname, operator name, where an app's data lives) belongs in this file —
+# that goes in ~/.config/workshop/instance.env, loaded below.
 
 [Unit]
 Description=Workshop FastAPI backend
@@ -32,9 +34,11 @@ Type=simple
 # child running for the length of one turn; that is the intended behaviour here.
 KillMode=process
 WorkingDirectory=@WORKSHOP_ROOT@/backend
-# Optional secrets (Plaid, 511, Discord, etc.). The leading "-" makes it
-# non-fatal when the file is absent. See infra/systemd/secrets.env.example.
+# Optional secrets (Plaid, 511, Discord, etc.) and this deployment's identity
+# and data locations. The leading "-" makes each non-fatal when absent. See
+# infra/systemd/secrets.env.example and instance.env.example.
 EnvironmentFile=-%h/.config/workshop/secrets.env
+EnvironmentFile=-%h/.config/workshop/instance.env
 Environment=WORKSHOP_ROOT=@WORKSHOP_ROOT@
 Environment=WORKSHOP_PROJECTS_ROOT=%h
 Environment=LETTA_URL=http://127.0.0.1:8283

@@ -35,7 +35,7 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # Resolve the claude CLI to a real EXECUTABLE. A pinned nvm node-version path is
 # fragile: a node upgrade moves it, and a reinstall while the disk is full can
 # leave a truncated, non-executable stub (observed 2026-07-16: a 500-byte
@@ -43,12 +43,12 @@ WORKSHOP=/home/clawd-a/workshop
 # follows the symlink so a broken target is skipped. Override with CLAUDE_BIN.
 CLAUDE=""
 for _c in "${CLAUDE_BIN:-}" /usr/local/bin/claude "$(command -v claude 2>/dev/null || true)" \
-          /home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude; do
+          "$HOME"/.nvm/versions/node/*/bin/claude; do
   if [[ -n "$_c" && -x "$_c" ]]; then CLAUDE="$_c"; break; fi
 done
 [[ -z "$CLAUDE" ]] && CLAUDE=/usr/local/bin/claude
 unset _c
-AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
+AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 REVIEWER=$WORKSHOP/scripts/reviewer.sh
 PTASKS=$WORKSHOP/scripts/project_tasks.py
 

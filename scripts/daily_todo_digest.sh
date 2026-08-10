@@ -3,11 +3,11 @@
 # writes to notify-masini.txt so masini surfaces it on next inbound.
 # Decoupled from cron_agent.sh per spec.
 #
-# Install: `0 14 * * * /home/clawd-a/workshop/scripts/daily_todo_digest.sh`
+# Install: `0 14 * * * <workshop>/scripts/daily_todo_digest.sh`
 # (14:00 UTC = 7:00 PDT in summer; adjust per DST if needed)
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 TODO=$WORKSHOP/TODO.md
 NOTIFY=$WORKSHOP/.runtime/notify-masini.txt
 STATE=$WORKSHOP/.runtime/digest-state.json
@@ -17,7 +17,7 @@ mkdir -p "$WORKSHOP/.runtime"
 
 # Pause-until guard: skip silently if autonomy is paused until a future PT
 # date (self-clearing). See scripts/pause_guard.sh.
-source /home/clawd-a/workshop/scripts/pause_guard.sh
+source "$WORKSHOP/scripts/pause_guard.sh"
 workshop_pause_guard "$WORKSHOP/.runtime/pause.log" "daily_todo_digest"
 
 # Counts from the canonical task store (post-O7 root migration). The old

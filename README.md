@@ -18,7 +18,6 @@ workshop/
 ├── mobile/                # Expo + React Native scaffold
 ├── shared/types.ts        # Agent + Project types shared with frontend & mobile
 ├── scripts/
-│   └── migrate_memory.py  # CLAUDE.md/MEMORY.md → Letta core + archival
 └── vault/                 # Obsidian-style markdown notes (Phase 1+)
 ```
 
@@ -34,7 +33,6 @@ cd ~/workshop/backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 LETTA_URL=http://127.0.0.1:8283 LETTA_SERVER_PASS=workshop-local \
-  .venv/bin/python ../scripts/migrate_memory.py
 
 # 3. Install + start backend as a systemd --user service.
 # Renders infra/systemd/workshop-backend.service for THIS checkout, enables

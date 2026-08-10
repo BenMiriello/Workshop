@@ -26,12 +26,12 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 TODO=$WORKSHOP/TODO.md
 LOG=$WORKSHOP/cron_agent.log
 LOCK=/tmp/workshop-cron-agent.lock
-CLAUDE=/home/clawd-a/.nvm/versions/node/v22.22.3/bin/claude
-AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
+CLAUDE="${CLAUDE_BIN:-$(command -v claude || echo /usr/local/bin/claude)}"
+AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 
 # Total wall-time budget for this tick (event-consumer + worker loop). Cron
 # fires every 20min, so leave a 5-min safety margin to make sure we exit before
@@ -77,7 +77,7 @@ cd "$WORKSHOP" || { echo "[$(date -Iseconds)] cannot cd to $WORKSHOP" >> "$LOG";
 
 # Pause-until guard: if the operator has paused autonomy until a future PT
 # date, exit silently (self-clearing on the resume date). See pause_guard.sh.
-source /home/clawd-a/workshop/scripts/pause_guard.sh
+source "$WORKSHOP/scripts/pause_guard.sh"
 workshop_pause_guard "$LOG" "cron_agent"
 
 # Operator off-switch. Touched by the /agents/autonomy/disable endpoint or by

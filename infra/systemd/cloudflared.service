@@ -1,13 +1,15 @@
 # Cloudflare tunnel runner — systemd --user unit (template).
-# Runs the existing benmiriello.com-zone tunnel (eca1421d) using
-# ~/.cloudflared/config.yml, which routes birds.benmiriello.com -> :8001 and
-# workshop.benmiriello.com -> :8002. Install via scripts/install_public_service.sh.
 #
-# Before first start, the operator must create the DNS record once:
-#   cloudflared tunnel route dns eca1421d-9e82-4bbd-a131-3960065cf953 workshop.benmiriello.com
+# Runs whichever tunnel ~/.cloudflared/config.yml points at. The hostnames and
+# the tunnel id are this deployment's, not the platform's: they live in
+# ~/.config/workshop/instance.env (WORKSHOP_PUBLIC_HOST, WORKSHOP_TUNNEL_ID) and
+# are written into the cloudflared config by scripts/install_public_service.sh.
+#
+# Before first start, create the DNS record once:
+#   cloudflared tunnel route dns "$WORKSHOP_TUNNEL_ID" "$WORKSHOP_PUBLIC_HOST"
 # (the egress guard blocks that API call from an agent shell).
 [Unit]
-Description=Cloudflare tunnel (benmiriello.com zone)
+Description=Cloudflare tunnel
 After=network-online.target workshop-public.service
 Wants=network-online.target
 

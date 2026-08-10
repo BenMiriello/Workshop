@@ -14,7 +14,7 @@ PATTERN=${1:?usage: log_learning.sh <pattern> [source] [scope]}
 SOURCE=${2:-anon}
 SCOPE=${3:-global}
 
-ROOT=/home/clawd-a/workshop
+ROOT="${ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PY=$ROOT/backend/.venv/bin/python
 [[ -x "$PY" ]] || PY=python3
 

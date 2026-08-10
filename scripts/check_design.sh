@@ -28,7 +28,8 @@
 # Exit 0 = clean, 1 = violations, 2 = foundation broken.
 
 set -u
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
 FE="$WORKSHOP/frontend"
 MODE="full"
 REV="HEAD"
@@ -84,7 +85,7 @@ python3 - "$MODE" "$REV" <<'PYEOF'
 import os, re, subprocess, sys
 
 mode, rev = sys.argv[1], sys.argv[2]
-FE = "/home/clawd-a/workshop/frontend"
+FE = os.environ["WORKSHOP"] + "/frontend"
 
 EXEMPT = (
     "frontend/src/styles/",
@@ -143,7 +144,7 @@ if mode == "full":
             if not f.endswith(".tsx"):
                 continue
             abs_p = os.path.join(root, f)
-            rel = os.path.relpath(abs_p, "/home/clawd-a/workshop")
+            rel = os.path.relpath(abs_p, os.environ["WORKSHOP"])
             if exempt(rel):
                 continue
             with open(abs_p, encoding="utf-8", errors="replace") as fh:
@@ -153,7 +154,7 @@ else:
     # Added lines only. Parse unified diff; track new-file line numbers.
     diff = subprocess.run(
         ["git", "diff", "--unified=0", rev, "--", "frontend/src/**/*.tsx", "frontend/src"],
-        capture_output=True, text=True, cwd="/home/clawd-a/workshop",
+        capture_output=True, text=True, cwd=os.environ["WORKSHOP"],
     ).stdout
     cur_file = None
     new_ln = 0

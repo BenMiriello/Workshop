@@ -25,7 +25,7 @@
 #   source "$WORKSHOP/scripts/autonomy_gate.sh"
 #   if autonomy_engaged; then echo "skipping"; exit 0; fi
 
-WORKSHOP="${WORKSHOP:-/home/clawd-a/workshop}"
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # Prints "engaged" or "clear". Never fails, never prints anything else.
 autonomy_state() {

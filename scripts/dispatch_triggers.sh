@@ -25,7 +25,8 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
 PROJECT_RALPH=$WORKSHOP/scripts/project_ralph.sh
@@ -54,11 +55,11 @@ import json, os, sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, "/home/clawd-a/workshop/backend")
+sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
 from services import tasks, jobs, triggers, agents_registry, usage_ledger  # noqa: E402
 from services import dispatch_grants  # noqa: E402
 
-WORKSHOP = Path("/home/clawd-a/workshop")
+WORKSHOP = Path(os.environ["WORKSHOP"])
 STATE_PATH = WORKSHOP / ".runtime" / "trigger-state.json"
 CB_PATH = WORKSHOP / ".runtime" / "circuit-breaker.json"
 # Canonical projects registry (moved to .runtime by the pluggable-apps refactor;

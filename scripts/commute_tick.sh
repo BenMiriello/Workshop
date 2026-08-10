@@ -21,7 +21,8 @@ BACKEND=${WORKSHOP_BACKEND:-http://127.0.0.1:8000}
 SECRETS_ENV="${WORKSHOP_SECRETS_ENV:-$HOME/.config/workshop/secrets.env}"
 [ -f "$SECRETS_ENV" ] && { set -a; . "$SECRETS_ENV"; set +a; }
 COMMUTE_AUTH=(-H "Authorization: Bearer ${WORKSHOP_SVC_COMMUTE:-}")
-LOG=/home/clawd-a/workshop/.runtime/commute/tick.log
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+LOG="$WORKSHOP/.runtime/commute/tick.log"
 LOCK=/tmp/workshop-commute-tick.lock
 CHECKPOINT="${1:-during}"  # pre-1h | pre-30m | during | post (default: during)
 
@@ -40,7 +41,7 @@ TS=$(date -Iseconds)
 # If the operator has paused all autonomy until a future PT date, suppress
 # this commute tick too (self-clearing on the resume date). This supersedes
 # the single-day skip-dates mechanism below. See scripts/pause_guard.sh.
-source /home/clawd-a/workshop/scripts/pause_guard.sh
+source "$WORKSHOP/scripts/pause_guard.sh"
 workshop_pause_guard "$LOG" "commute_tick checkpoint=$CHECKPOINT"
 # -------------------------------------------------------------------------
 
@@ -54,7 +55,7 @@ workshop_pause_guard "$LOG" "commute_tick checkpoint=$CHECKPOINT"
 # clock rolls to the next PT day the entry no longer matches and the schedule
 # resumes automatically. We also prune any dates strictly in the past on every
 # run so the file doesn't accumulate stale entries.
-SKIP_FILE=/home/clawd-a/workshop/.runtime/commute/skip-dates.txt
+SKIP_FILE="$WORKSHOP/.runtime/commute/skip-dates.txt"
 TODAY_PT=$(TZ=America/Los_Angeles date +%F)
 if [[ -f "$SKIP_FILE" ]]; then
     # Prune past dates (keep today + future; drop blanks/comments-safe).
@@ -104,8 +105,8 @@ echo "[$TS] reason: $(echo "$REASON_RES" | head -c 400)" >> "$LOG"
 # pulls the token from there, and POSTs each queued line to Discord. Atomic:
 # moves the queue file aside before draining so any concurrent backend write
 # during the drain isn't lost.
-NOTIFY_FILE=/home/clawd-a/workshop/.runtime/commute/notify-commute.txt
-DISCORD_ENV=/home/clawd-a/.claude/channels/discord/.env
+NOTIFY_FILE="$WORKSHOP/.runtime/commute/notify-commute.txt"
+DISCORD_ENV="${WORKSHOP_DISCORD_ENV:-$HOME/.config/workshop/discord.env}"
 if [[ -s "$NOTIFY_FILE" && -r "$DISCORD_ENV" ]]; then
     set -a
     . "$DISCORD_ENV"

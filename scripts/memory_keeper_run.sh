@@ -35,8 +35,9 @@ for arg in "$@"; do
 done
 RUN_FLAG="--apply"; [[ "$DRY" == "1" ]] && RUN_FLAG="--dry-run"
 
-WORKSHOP=/home/clawd-a/workshop
-AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
+AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 BACKEND="$WORKSHOP/backend"
 VENV_PY="$BACKEND/.venv/bin/python"
 PY="${VENV_PY:-python3}"
@@ -67,7 +68,7 @@ mapfile -t SCOPES < <("$PY" - <<'PYEOF'
 import json, os
 from pathlib import Path
 
-runtime = Path(os.environ.get("WORKSHOP_RUNTIME", "/home/clawd-a/workshop/.runtime"))
+runtime = Path(os.environ.get("WORKSHOP_RUNTIME") or Path(os.environ["WORKSHOP"]) / ".runtime")
 scopes = ["workshop"]
 
 reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY", str(runtime / "projects.json")))

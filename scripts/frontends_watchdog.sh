@@ -12,7 +12,8 @@
 # hand with its EnvironmentFile, not blind-relaunched.
 set -u
 
-RUNTIME=/home/clawd-a/workshop/.runtime
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+RUNTIME="$WORKSHOP/.runtime"
 LOG="$RUNTIME/frontends_watchdog.log"
 mkdir -p "$RUNTIME"
 
@@ -38,6 +39,6 @@ ensure() {
   log "  relaunched '$name'"
 }
 
-ensure workshop 5173 /home/clawd-a/workshop/frontend
+ensure workshop "${WORKSHOP_VITE_PORT:-5173}" "$WORKSHOP/frontend"
 # Commute was retired as a standalone app (:8444 PWA) — it's now a native page
 # inside the Workshop frontend at /apps/commute. No separate dev server.

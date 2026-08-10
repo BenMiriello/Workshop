@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nightly security-regression check for the clawd-a financial / MCP setup.
+# Nightly security-regression check for this instance's financial / MCP setup.
 #
 # This is NOT multi-user "defensive cruft" — it is a drift detector. It asserts
 # the security INVARIANTS established in the 2026-06-02 audit and screams if any
@@ -12,13 +12,15 @@
 #
 # Pairs with the invariants reference at docs/masini/security-invariants.md.
 #
-# Ported from ~/clawdbot/security/audit.sh into the workshop repo (final-plan
-# PM.1). The Plaid MCP it checks now lives in-tree at backend/mcp/plaid/; secrets
-# it references stay at their host paths under ~/.config/clawdbot/.
+# Audits the host this install runs on: the service user, its config directory,
+# the bound ports and the repo history. Every subject is resolved at runtime, so
+# the same script is meaningful on any deployment.
 
 set -uo pipefail
-HOME_DIR="/home/clawd-a"
-CFG="$HOME_DIR/.config/clawdbot"
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+HOME_DIR="$HOME"
+SVC_USER="$(id -un)"
+CFG="${WORKSHOP_CONFIG_DIR:-$HOME_DIR/.config/workshop}"
 FAILS=0
 WARNS=0
 
@@ -95,11 +97,11 @@ if [ -f "$SRV" ]; then
 fi
 
 hdr "6. Host-level isolation"
-if id -nG clawd-a | grep -qw docker; then
-  fail "clawd-a is in the 'docker' group = root-equivalent (defeats tenant isolation)" \
-       "sudo gpasswd -d clawd-a docker; manage letta/ollama compose as benmiriello or via a narrow sudo rule"
+if id -nG "$SVC_USER" | grep -qw docker; then
+  fail "$SVC_USER is in the 'docker' group = root-equivalent (defeats tenant isolation)" \
+       "sudo gpasswd -d $SVC_USER docker; manage the letta/ollama compose from an admin account or via a narrow sudo rule"
 else
-  pass "clawd-a is NOT in the docker group"
+  pass "$SVC_USER is NOT in the docker group"
 fi
 
 hdr "7. Host firewall (the only thing gating ~15 services bound to 0.0.0.0)"
@@ -146,12 +148,12 @@ else
   pass "backend :8000 not on 0.0.0.0"
 fi
 
-hdr "10. No secrets committed to the clawdbot git repo"
-if git -C "$HOME_DIR/clawdbot" log --all -p -- . 2>/dev/null \
+hdr "10. No secrets committed to the workshop git repo"
+if git -C "$WORKSHOP" log --all -p -- . 2>/dev/null \
      | grep -qE 'access-production-|GOCSPX-|PLAID_SECRET=[A-Za-z0-9]'; then
-  fail "secret material found in clawdbot git history" "rotate the secret, then scrub history (git filter-repo)"
+  fail "secret material found in git history" "rotate the secret, then scrub history (git filter-repo)"
 else
-  pass "clawdbot git history clean of known secret patterns"
+  pass "git history clean of known secret patterns"
 fi
 
 hdr "11. CRIT-1 egress controls (shorten the exfil leg of the trifecta)"

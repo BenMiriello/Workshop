@@ -28,8 +28,9 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
-AUTH_ENV=/home/clawd-a/.config/clawdbot/auth.env
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
+AUTH_ENV="${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}"
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
 AUTONOMY_OVERRIDE=$WORKSHOP/.runtime/autonomy-override.json
@@ -499,7 +500,7 @@ from pathlib import Path
 slug = sys.argv[1]
 import os
 reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
-                          "/home/clawd-a/workshop/.runtime/projects.json"))
+                          str(Path(os.environ["WORKSHOP"]) / ".runtime" / "projects.json")))
 try:
     data = json.loads(reg.read_text())
 except Exception:
@@ -536,7 +537,7 @@ import json, os, sys
 from pathlib import Path
 slug = sys.argv[1]
 reg = Path(os.environ.get("WORKSHOP_PROJECTS_REGISTRY",
-                          "/home/clawd-a/workshop/.runtime/projects.json"))
+                          str(Path(os.environ["WORKSHOP"]) / ".runtime" / "projects.json")))
 try:
     data = json.loads(reg.read_text())
 except Exception:
@@ -1091,7 +1092,7 @@ DURATION=$(( $(date +%s) - START_EPOCH ))
 OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" "${SLUG:-$DIR}" <<'PYEOF'
 import json, sys
 from pathlib import Path
-sys.path.insert(0, "/home/clawd-a/workshop/backend")
+sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
 from services import tasks
 root = Path(sys.argv[1]); assignee = sys.argv[2] or None; scope = sys.argv[3]
 ready = tasks.next_ready(root, assignee=assignee)

@@ -18,13 +18,14 @@
 
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+export WORKSHOP
 NOTIFY=$WORKSHOP/.runtime/notify-masini.txt
 mkdir -p "$(dirname "$NOTIFY")"
 
 # Pause-until guard: skip silently if autonomy is paused until a future PT
 # date (self-clearing). See scripts/pause_guard.sh.
-source /home/clawd-a/workshop/scripts/pause_guard.sh
+source "$WORKSHOP/scripts/pause_guard.sh"
 workshop_pause_guard "$WORKSHOP/.runtime/pause.log" "autonomy_report"
 
 NOW_ISO=$(date -Iseconds)
@@ -98,7 +99,7 @@ LAST_ACTIVITY=$(PYTHONPATH=$WORKSHOP/backend "$WORKSHOP/backend/.venv/bin/python
 from pathlib import Path
 try:
     from services import tasks
-    done = [t for t in tasks.list_tasks(Path('/home/clawd-a/workshop')) if t.get('status') == 'done']
+    done = [t for t in tasks.list_tasks(Path(os.environ['WORKSHOP'])) if t.get('status') == 'done']
     done.sort(key=lambda t: t.get('updated') or '', reverse=True)
     if done:
         print((done[0].get('text') or '').splitlines()[0][:200])

@@ -10,7 +10,7 @@
 # Usage: root_task_counts.sh [scope-dir]   (default: workshop root)
 set -u
 
-WORKSHOP=/home/clawd-a/workshop
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 DIR=${1:-$WORKSHOP}
 PY=$WORKSHOP/backend/.venv/bin/python
 

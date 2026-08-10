@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Instance identity — sourced by any script that needs to know WHICH deployment
+# it is running for. None of this belongs in the repo: a fork is a different
+# operator with a different domain, bundle id and name.
+#
+#   source "$(dirname "${BASH_SOURCE[0]}")/lib/instance.sh"
+#
+# Values come from $WORKSHOP_CONFIG_DIR/instance.env (default
+# ~/.config/workshop/instance.env), which is created by install_service.sh and
+# never tracked. Anything already in the environment wins, so CI and one-off
+# runs can override without touching the file.
+#
+# Keys (all optional; a script that REQUIRES one should say so itself):
+#   WORKSHOP_PUBLIC_HOST     public hostname served through the tunnel
+#   WORKSHOP_LOCAL_ORIGIN    the LAN/tailnet origin the operator browses
+#   WORKSHOP_OPERATOR_NAME   how agents should address the operator
+#   WORKSHOP_MOBILE_BUNDLE   iOS bundle identifier for the mobile build
+#   WORKSHOP_MOBILE_SCHEME   URL scheme for the mobile build
+
+WORKSHOP_CONFIG_DIR="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}"
+_INSTANCE_ENV="$WORKSHOP_CONFIG_DIR/instance.env"
+
+if [ -f "$_INSTANCE_ENV" ]; then
+  # Existing environment wins: only set what is still unset.
+  while IFS='=' read -r _k _v; do
+    case "$_k" in ''|\#*) continue ;; esac
+    _k="${_k// /}"
+    _v="${_v%\"}"; _v="${_v#\"}"; _v="${_v%\'}"; _v="${_v#\'}"
+    if [ -z "${!_k:-}" ]; then export "$_k=$_v"; fi
+  done < "$_INSTANCE_ENV"
+fi
+unset _k _v _INSTANCE_ENV
+
+# require_instance <VAR> [hint] — fail loudly rather than half-configured.
+require_instance() {
+  local var="$1" hint="${2:-}"
+  if [ -z "${!var:-}" ]; then
+    echo "error: $var is not set." >&2
+    echo "  set it in $WORKSHOP_CONFIG_DIR/instance.env${hint:+ ($hint)}" >&2
+    return 1
+  fi
+}

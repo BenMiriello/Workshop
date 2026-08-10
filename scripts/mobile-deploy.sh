@@ -5,7 +5,7 @@
 # with the phone plugged in, unlocked, and trusted.
 #
 # NOTE: most Workshop updates DON'T need this. The app is a WebView around
-# workshop.benmiriello.com, so backend/frontend changes appear on next app open.
+# the instance's public origin, so backend/frontend changes appear on next open.
 # You only rebuild when the native shell changes (mobile/native/*, app.json,
 # native deps, or the app's bundled JS) — or when the free-tier 7-day signing
 # expires and the app stops launching.
@@ -26,7 +26,9 @@ REPO="${WORKSHOP_REPO:-$HOME/Development/Workshop}"
 MOBILE="$REPO/mobile"
 SCHEME="Workshop"
 CONFIG="Release"
-BUNDLE_ID="com.benmiriello.workshop"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/instance.sh"
+require_instance WORKSHOP_MOBILE_BUNDLE
+BUNDLE_ID="$WORKSHOP_MOBILE_BUNDLE"
 
 DO_PREBUILD=0
 [ "${1:-}" = "--prebuild" ] && DO_PREBUILD=1

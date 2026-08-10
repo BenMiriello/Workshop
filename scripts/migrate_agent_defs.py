@@ -6,7 +6,7 @@ Sources:
     `project_slug` is set, else user scope). Body from the agent cwd's
     PROJECT.md when present.
   * The Letta agent list           -> runtime: assistant (user scope), EXCLUDING
-    masini per-channel agents (authoritative via the channel-agent map) and the
+    per-channel bridge agents (authoritative via the channel-agent map) and the
     supervisor's internal plumbing (name-prefix skip list). Persona body from the
     Letta persona block; triggers from Letta autonomy metadata.
 
