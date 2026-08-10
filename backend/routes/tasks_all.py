@@ -931,6 +931,12 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     task = tasks.get_task(root, task_id)
     if task is None:
         raise HTTPException(404, f"task not found: {task_id}")
+    # A draft is a SUGGESTION the operator has not agreed to. `next_ready` already
+    # skips it, so no sweep can pick one up; this closes the other door, the
+    # explicit "run now". Without it the approval model would hold for autonomous
+    # work and quietly not hold for a button.
+    if task.get("status") == "draft":
+        raise HTTPException(409, "this ticket is a draft; approve it before running it")
     known = {t["id"] for t in tasks.list_tasks(root)}
     broken = ticket_readiness.blocking(ticket_readiness.check(task, known_ids=known))
     if broken:
@@ -985,6 +991,51 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     except OSError:
         pass
     return {"ok": True, "job_id": job["id"], "scope": scope, "task_id": task_id}
+
+
+class TaskApproveIn(BaseModel):
+    # Approve and immediately run, for the case where the operator read the draft
+    # and wants it started. Two clicks collapsed into one, not a different rule.
+    run: bool = False
+
+
+@router.post("/{scope}/{task_id}/approve")
+async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = None) -> dict:
+    """Approve a draft: the operator agrees this work should happen. `draft` ->
+    `todo`, which is the only thing that makes a ticket eligible to be run.
+
+    The readiness report rides along in the response but does NOT refuse the
+    approval. The operator is the authority here: the system's job is to say what
+    the ticket does not answer, and the operator's is to decide whether that
+    matters. Refusing their own approval would make the checklist an obstacle
+    instead of advice, which is how the last set of hygiene signals got ignored.
+    """
+    root = _root_for_scope(scope)
+    if root is None:
+        raise HTTPException(400, f"unknown scope: {scope}")
+    task = tasks.get_task(root, task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    if task.get("status") not in ("draft", "todo"):
+        raise HTTPException(409,
+                            f"only a draft can be approved; this ticket is {task.get('status')}")
+
+    readiness = ticket_readiness.check(
+        task, known_ids={t["id"] for t in tasks.list_tasks(root)})
+    updated = task
+    if task.get("status") == "draft":
+        tasks.update(root, task_id, evidence={
+            "kind": "approval",
+            "ref": "approved by the operator" if readiness["ok"]
+                   else f"approved by the operator ({ticket_readiness.summary(readiness)})",
+        })
+        updated = tasks.update(root, task_id, status="todo") or task
+
+    out: dict = {"task": _with_latitude(dict(updated, scope=scope), scope),
+                 "readiness": readiness}
+    if body and body.run:
+        out["run"] = launch_task_run(scope, task_id)
+    return out
 
 
 @router.post("/{scope}/{task_id}/run")

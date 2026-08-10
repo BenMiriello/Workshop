@@ -210,6 +210,11 @@ def apply_task_patch(context_key: str | None, reply: str,
                 # its work even though the request was the operator's. `source`
                 # keeps the request, `scoped_by` records the author.
                 scoped_by="agent:chat",
+                # A ticket the assistant wrote for itself is a SUGGESTION until
+                # the operator agrees to it. `draft` is never picked by
+                # `next_ready`, so filing one can propose work but can never
+                # start it. Approving is the operator's act (POST .../approve).
+                status="draft",
             )
             decision = res.get("decision")
             if decision in ("exact", "merge"):

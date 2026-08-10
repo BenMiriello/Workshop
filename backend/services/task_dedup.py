@@ -346,8 +346,14 @@ def dedup_add(
     effort: str | None = None,
     labels: list[str] | None = None,
     scoped_by: str | None = None,
+    status: str = "todo",
 ) -> dict:
     """Create a task from a chat, deduped against open tasks in this scope.
+
+    ``status`` is what a NEWLY created task starts as. A ticket the system wrote
+    for itself starts as ``draft``: a suggestion the operator has not agreed to
+    yet. A merge never changes the matched task's status — folding a new request
+    into live work must not quietly send it back for re-approval.
 
     Returns {decision, task, matched_id, cosine, message} where `task` is the
     canonical existing task (on merge) or the newly created one (related/distinct),
@@ -402,7 +408,7 @@ def dedup_add(
             acceptance=acceptance, touches=touches or [],
             discovered_from=matched_id, source=src,
             provenance=prov, effort=effort, labels=labels or [],
-            scoped_by=scoped_by,
+            scoped_by=scoped_by, status=status,
         )
         # Evidence on BOTH sides so the link is navigable either direction.
         tasks.update(root, task["id"],
@@ -426,7 +432,7 @@ def dedup_add(
         root, text=text, priority=priority, depends_on=depends_on or [],
         acceptance=acceptance, touches=touches or [], source=src,
         provenance=prov, effort=effort, labels=labels or [],
-        scoped_by=scoped_by,
+        scoped_by=scoped_by, status=status,
     )
     return {
         "decision": "distinct",

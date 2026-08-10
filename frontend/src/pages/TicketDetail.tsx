@@ -88,6 +88,7 @@ export default function TicketDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
   const [running, setRunning] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [bannerErr, setBannerErr] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
@@ -180,6 +181,35 @@ export default function TicketDetail() {
     });
     setEditing(false);
   }, [draftTitle, draftDesc, draftStatus, draftLatitude, patch]);
+
+  // A draft is a suggestion the system made. Approving is the operator agreeing
+  // to it, and it is the only thing that makes a ticket eligible to run — the
+  // sweep skips drafts and the run endpoint refuses them.
+  const approve = useCallback(async () => {
+    setApproving(true);
+    setBanner(null);
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ run: false }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      const j = await r.json();
+      // Approving does not require a well-specified ticket, but it should not be
+      // silent about approving one that is not: the checklist is the reason the
+      // draft step exists.
+      const gaps = j?.readiness?.missing?.length ?? 0;
+      say(gaps
+        ? `Approved and queued, with ${gaps} thing${gaps === 1 ? "" : "s"} the ticket still does not say.`
+        : "Approved and queued.");
+      await load();
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApproving(false);
+    }
+  }, [scope, id, load, say, fail]);
 
   const runTask = useCallback(async () => {
     setRunning(true);
@@ -353,9 +383,15 @@ export default function TicketDetail() {
         actions={
           <Row wrap style={{ gap: "var(--space-2)" }}>
             <Button size="sm" variant="ghost" onClick={load}><RefreshCw aria-hidden /> Refresh</Button>
+            {task?.status === "draft" && (
+              <Button size="sm" variant="primary" onClick={approve}
+                      loading={approving} disabled={approving}>
+                <CheckCheck aria-hidden /> Approve
+              </Button>
+            )}
             <Button
               size="sm"
-              variant="primary"
+              variant={task?.status === "draft" ? "ghost" : "primary"}
               onClick={() => setRunOpen(true)}
               disabled={!canRun}
               title={cannotRunBecause || undefined}

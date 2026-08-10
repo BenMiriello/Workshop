@@ -566,6 +566,12 @@ async def spawn_task(thread_id: str, body: SpawnTask):
         # paragraph a model actually wrote. Distilled-from-thread specs are the
         # main way tickets get filed, so this is the common case, not an edge.
         scoped_by="agent:chat",
+        # Approval is the line, and `run` already draws it. "File and run" is the
+        # operator asking for the work outright, so the ticket is approved by the
+        # act and starts as `todo`. Filing alone is the assistant SUGGESTING work,
+        # so it starts as `draft` — visible, editable, and never picked up by
+        # `next_ready` until the operator approves it.
+        status="todo" if body.run else "draft",
     )
     resp = {
         "task": result["task"],
