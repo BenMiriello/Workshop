@@ -223,7 +223,8 @@ making → ticket execution.** Questions surface in the inbox.
 | 4 | Approval gate: draft → approve → run | shipped `9c33b1c` |
 | 5 | Questions in the inbox as one list | **already shipped** — see below |
 | 6 | User-triggered chat scan → proposed tickets | **already shipped** — see below |
-| 7 | Scope help: split suggestions, blockers, stages, on the draft | **next** |
+| 7 | Ticket body format + one checker reading it | shipped `e8d00b2`, `d3c1257` |
+| 8 | Scope help: split suggestions, blockers, stages, on the draft | **next** |
 
 Two of these turned out to exist already, which is worth recording so they are
 not rebuilt:
@@ -246,9 +247,9 @@ What is genuinely missing from #6 is that these thread-local proposals are a
 SECOND draft concept alongside `draft` tickets. They should converge on one:
 a proposal is a `draft` ticket. Doing that also gets deduping (`task_dedup`) and
 the readiness checklist for free, both of which the thread-local drafts lack.
-| 8 | Tracker binding: settings, GitHub App + device flow, one connection | then |
-| 9 | Triage inbox; connect/disconnect/reconnect per §6 | then |
-| 10 | Two-way sync: write-through, shadow merge, conflicts, ADF handling | then |
+| 9 | Tracker binding: settings, GitHub App + device flow, one connection | then |
+| 10 | Triage inbox; connect/disconnect/reconnect per §6 | then |
+| 11 | Two-way sync: write-through, shadow merge, conflicts, ADF handling | then |
 
 ## 8. Explicitly later, recorded so it is not re-litigated
 
@@ -271,14 +272,56 @@ the readiness checklist for free, both of which the thread-local drafts lack.
 
 ---
 
-## 9. Open, with a recommendation
+## 9. Decided (2026-08-10)
 
-1. **Does an imported ticket need operator approval before running?** Recommend
-   **yes** — it arrives as `draft` like any other suggestion. Someone else's Jira
-   issue is exactly the kind of thing that should not silently start a worker.
-2. **Comment mirroring.** Recommend a single run-summary comment per run, and the
-   question text when a ticket blocks in `import` mode (that is where the person
-   who can answer lives). Not full comment sync.
-3. **`scoped_by` for an imported ticket.** Recommend `import:<binding>` — the
-   spec's author is the tracker, and a run that fails on a vague Jira description
-   should point there.
+Taken rather than left open, since each had one sensible answer:
+
+1. **An imported ticket needs approval before running.** It arrives as `draft`
+   like any other suggestion. Someone else's Jira issue is exactly the thing that
+   should not silently start a worker.
+2. **Comment mirroring is one run-summary comment per run**, plus the question
+   text when a ticket blocks in `import` mode (that is where the person who can
+   answer lives). Not full comment sync.
+3. **`scoped_by` for an imported ticket is `import:<binding>`.** The spec's author
+   is the tracker, so a run that fails on a vague Jira description points there.
+
+---
+
+## 10. The ticket format, and two bugs it uncovered
+
+Shipped `e8d00b2` and `d3c1257`. A ticket body is free-form markdown, but the four
+things a worker needs are fixed, because it never sees the conversation:
+
+```
+Objective:   the concrete outcome, in one sentence
+Output:      what done looks like
+Start from:  the files, commands or symbols to read first
+Boundaries:  what NOT to touch
+```
+
+`services/ticket_format` holds the one table of labels and the synonyms a model
+actually emits. Producers compose with it; `ticket_readiness` matches against it.
+Writing a format and its checker in two files produced both of these:
+
+- **The checker rejected what the producer wrote.** The chat dialog composed
+  acceptance as `Done when: ...`; the checker matched `done\s*[:-]`, which
+  `"Done when:"` fails. Every ticket filed from a chat failed the acceptance check
+  while plainly stating its acceptance, and the operator would have read a
+  checklist complaining about something the ticket said.
+- **`effort` did nothing for most tickets that set it.** Three vocabularies were
+  in use (`s|m|l`, `quick|standard|deep`, and both in the live stores).
+  `project_ralph.sh` maps effort to an iteration cap and a model tier through a
+  case-sensitive bash `case` on `quick|q|s` / `deep|d|l`, so the 24 tickets stored
+  as uppercase `S`/`L` fell through to the default branch. A quick ticket silently
+  got the standard budget and the standard model. The store now canonicalizes to
+  `quick|standard|deep` on read and write; the sweep needed no change.
+
+The loop is now closed in both directions: a proposed draft composes into a body
+that passes every readiness check, verified end to end from the model's JSON to
+the checker's verdict.
+
+**Still true and worth stating:** only 1 of 40 pre-existing open tickets passes
+every check, because they were written before any of this. That is fine — they
+were mostly written badly or are stale, and the operator's position is that
+reviewing and dropping them is an acceptable outcome. The format matters for what
+gets written from now on.
