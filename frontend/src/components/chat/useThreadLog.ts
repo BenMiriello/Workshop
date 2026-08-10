@@ -25,6 +25,12 @@ import { selectTranscript, type TranscriptBlock } from "./transcriptBlocks";
 
 const POLL_MS = 10_000;
 
+// How many polls in a row must fail before the chat says it has gone quiet.
+// Three at POLL_MS is half a minute of silence — long enough that a single
+// dropped request never cries wolf, short enough that the operator is not left
+// talking to a frozen transcript.
+const STALE_AFTER_FAILURES = 3;
+
 export type ThreadLog = {
   state: ThreadState;
   /** The current state, readable from a callback without re-creating it. */
@@ -45,6 +51,10 @@ export type ThreadLog = {
    *  which is BEFORE this fetch is even issued. Without this, every chat open
    *  flashed the empty state for a round trip. */
   hydrated: boolean;
+  /** When this browser stopped hearing from the backend, or null while it is
+   *  current. Epoch ms of the FIRST failure in the run, so the UI can say how
+   *  long it has been rather than just that it happened. */
+  staleSince: number | null;
 };
 
 export function useThreadLog({
@@ -72,6 +82,12 @@ export function useThreadLog({
   const [hydratedId, setHydratedId] = useState<string | null>(null);
   const hydrated = !threadId || hydratedId === threadId;
 
+  // Consecutive failed polls, and when the run of them began. Two of these is a
+  // hiccup; the threshold is what separates a blip from a chat that has stopped
+  // hearing the backend.
+  const failuresRef = useRef(0);
+  const [staleSince, setStaleSince] = useState<number | null>(null);
+
   const sync = useCallback(async () => {
     const id = threadIdRef.current;
     if (!id) return;
@@ -90,9 +106,23 @@ export function useThreadLog({
         activeRun: page.active_run ?? null,
         requestedAt,
       });
+      // A poll landed, so whatever this chat is showing is current.
+      failuresRef.current = 0;
+      setStaleSince((prev) => (prev === null ? prev : null));
     } catch (e) {
-      // Transient by nature (this runs on a timer). Only the initial load has an
-      // empty screen to explain, and that path reports its own failure.
+      // Transient by nature (this runs on a timer), and ONE failure says
+      // nothing: a hiccup between two polls is not worth a word.
+      //
+      // A RUN OF THEM IS DIFFERENT, and this used to report it only when the
+      // transcript was empty. So the failure mode that matters — a chat with
+      // plenty on screen, silently frozen because the backend went away — was
+      // the exact case that said nothing at all. The operator had no way to tell
+      // "it is still thinking" from "this browser stopped hearing minutes ago",
+      // which is a large share of what "the chat is stuck" has meant.
+      failuresRef.current += 1;
+      if (failuresRef.current >= STALE_AFTER_FAILURES) {
+        setStaleSince((prev) => prev ?? Date.now());
+      }
       if (stateRef.current.order.length === 0) {
         onErrorRef.current(`Couldn't load this conversation: ${e}`);
       }
@@ -105,6 +135,10 @@ export function useThreadLog({
   useEffect(() => {
     threadIdRef.current = threadId;
     dispatch({ type: "reset", threadId });
+    // A new thread starts from a clean slate: the previous chat's stale run says
+    // nothing about this one.
+    failuresRef.current = 0;
+    setStaleSince(null);
     if (!threadId) return;
     let cancelled = false;
     const requestedAt = Date.now();
@@ -150,5 +184,6 @@ export function useThreadLog({
 
   const transcript = useMemo(() => selectTranscript(state), [state]);
 
-  return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun, hydrated };
+  return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun,
+           hydrated, staleSince };
 }

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { chatApi, newClientId, type MsgStatus } from "../../lib/chat";
 import type { ThreadAction } from "./threadStore";
 import type { MessageQueue } from "./useMessageQueue";
@@ -84,6 +84,15 @@ import type { MessageQueue } from "./useMessageQueue";
 const BUSY_QUEUED: MsgStatus = {
   text: "Compacting. The live session folds when the running turn finishes",
   busy: true,
+};
+
+// ...and what it says once the operator presses Stop. The line above promises
+// something that is no longer going to happen on its own: Stop holds the queue
+// precisely so nothing sends itself, so a pulsing "folds when the running turn
+// finishes" sat under the message forever, describing a turn that had ended.
+// Not busy, because nothing is happening.
+const HELD_QUEUED: MsgStatus = {
+  text: "Compacting is waiting. It goes out with your next message",
 };
 
 // /clear — drop context, keep the transcript. See the file-level comment
@@ -242,7 +251,13 @@ export function useCompaction({
     setCompacting(true);
     try {
       const r = await chatApi.clearThreadContext(id);
-      if (!r.cleared) {
+      // `cleared` is about the TRANSCRIPT boundary; `session_reset` is about the
+      // live session. A fully folded chat has no messages left to cut, so
+      // `cleared` is false, and this reported "Nothing to clear" for a call that
+      // had just reset the agent's session out from under the operator. Two
+      // different things happened and only one was named. Nothing happened only
+      // when NEITHER did.
+      if (!r.cleared && !r.session_reset) {
         setErr("Nothing to clear. This chat has no messages yet.");
         return;
       }
@@ -258,5 +273,17 @@ export function useCompaction({
     }
   }, [activeIdRef, setCompacting, setErr, sync]);
 
-  return { ctxNonce, compact, queuedStatus, clear };
+  // THE STATUS FOLLOWS THE QUEUE ENTRY, rather than being cleared by hand at
+  // each of the five places the request can end. It was cleared on the failure
+  // paths only, so the one path nobody had written a clear for — the request
+  // draining normally, or being taken by Stop — left the line on screen.
+  useEffect(() => {
+    if (!queuedStatus) return;
+    if (!queue.items.some((m) => m.clientId === queuedStatus.for)) setQueuedStatus(null);
+  }, [queue.items, queuedStatus]);
+
+  const liveQueuedStatus =
+    queuedStatus && queue.held ? { ...queuedStatus, status: HELD_QUEUED } : queuedStatus;
+
+  return { ctxNonce, compact, queuedStatus: liveQueuedStatus, clear };
 }

@@ -29,6 +29,7 @@ import { useChatThread } from "./chat/useChatThread";
 import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { canDrainQueue } from "./chat/sendPlan";
 import { clampError } from "./chat/chatLogState";
+import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import { committedMessages } from "./chat/transcriptBlocks";
 import { chatApi, type CardState } from "../lib/chat";
@@ -183,7 +184,7 @@ export default function Chat({
 
   // The conversation itself: one store, fed by one endpoint from a cursor.
   const log = useThreadLog({ threadId: activeId, onError: setErr });
-  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated } = log;
+  const { state, stateRef, dispatch, transcript, sync, runActive, hydrated, staleSince } = log;
   const runActiveRef = useRef(runActive);
   runActiveRef.current = runActive;
 
@@ -571,6 +572,11 @@ export default function Chat({
       : null;
   const showEgressBanner = effectiveMode === "build" && egressDetail != null;
 
+  // Re-read on every render rather than on a timer: the chat re-renders often
+  // enough that the elapsed figure stays honest, and a timer whose only job is
+  // to age a string is a subscription that outlives the condition it describes.
+  const staleNote = staleNoticeText(staleSince, Date.now());
+
   const egressBanner = showEgressBanner ? (
     <div className="chat-egress">
       <StateBlock
@@ -837,6 +843,13 @@ export default function Chat({
           The cap is a bound on a pathological body, not a summary: every writer
           here passes a sentence, so it should never fire. */}
       {err && !showEgressBanner && <div className="chat-err">{clampError(err)}</div>}
+      {/* THIS BROWSER HAS STOPPED HEARING THE BACKEND. It belongs in this slot
+          and not in the log, because it is a fact about the connection rather
+          than about any message: nothing in the transcript is wrong, it has
+          simply stopped arriving. It used to be reported only when the
+          transcript was EMPTY, so the case that matters — a full chat quietly
+          frozen — was the one case that said nothing. */}
+      {staleNote && <div className="chat-err">{staleNote}</div>}
       {composer}
       {dialogs}
       <VoiceSettings

@@ -746,11 +746,20 @@ export class ServerSpeaker implements Speaker {
     return Math.sqrt(s / buf.length);
   }
 
+  // Every render in flight for this turn, so stop() can actually cancel them.
+  // Without it, `stop()` paused the audio element and left the SERVER
+  // synthesizing every sentence already queued — the operator hears silence,
+  // the machine keeps working, and a barge-in on a long answer costs its full
+  // synthesis anyway. Silence is not the same as stopping.
+  private renderAbort: AbortController | null = null;
+
   private async render(text: string): Promise<string> {
+    if (!this.renderAbort) this.renderAbort = new AbortController();
     const r = await fetch("/api/voice/tts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, voice: this.voice, speed: this.speed }),
+      signal: this.renderAbort.signal,
     });
     if (!r.ok) throw new Error(`tts ${r.status}`);
     const blob = await r.blob();
@@ -776,6 +785,9 @@ export class ServerSpeaker implements Speaker {
     this.playing = false;
     this.speaking = true;
     this.blockedNotified = false;
+    // A fresh turn gets a fresh controller, or the previous stop() would abort
+    // this turn's first sentence before it was ever fetched.
+    this.renderAbort = null;
   }
 
   // Held: keep rendering ahead (audio is fetched at enqueue) but do not start
@@ -855,6 +867,8 @@ export class ServerSpeaker implements Speaker {
   stop() {
     this.stopped = true;
     if (this.audio) { try { this.audio.pause(); } catch { /* noop */ } this.audio = null; }
+    // Cancel the synthesis too, not just the playback.
+    if (this.renderAbort) { try { this.renderAbort.abort(); } catch { /* noop */ } this.renderAbort = null; }
     this.finish(this.idx);
   }
 }

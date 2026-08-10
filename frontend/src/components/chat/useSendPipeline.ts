@@ -229,7 +229,7 @@ export function useSendPipeline({
       compacting: compactingRef.current,
       starting: startingRef.current,
       runActive: !!stateRef.current.activeRun,
-      commandRunning: !!stateRef.current.activeRun?.command,
+      runAcceptsInput: stateRef.current.activeRun?.acceptsInput,
     });
     if (plan === "queue") {
       queue.push(text, clientId);

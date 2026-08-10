@@ -230,11 +230,13 @@ export type LogEvent = {
 export type ActiveRunPayload = {
   run_id: string;
   started_seq?: number | null;
-  // This run is a slash command, which reads no input at all: it folds or
-  // resets or reports, and exits. A message sent into one is a message nothing
-  // will ever answer, so the client queues instead of injecting. Absent from an
-  // older backend, which reads as false and restores the old behaviour.
-  command?: boolean;
+  // May a message be handed to this run while it is going? False for a slash
+  // command (it folds or resets or reports and exits without reading a word) and
+  // for a voice turn (driven by the voice worker, not by this module's input
+  // channel). A message sent into either is a message nothing will ever answer,
+  // so the client queues instead of injecting. Absent from an older backend,
+  // which reads as "yes" and restores the old behaviour.
+  accepts_input?: boolean;
   live?: {
     run_id?: string;
     content?: string;

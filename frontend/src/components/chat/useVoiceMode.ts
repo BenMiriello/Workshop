@@ -46,7 +46,8 @@ export function useVoiceMode({
   fatalRef.current = onFatal;
 
   const {
-    session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs, prewarm: vprewarm,
+    session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs,
+    prewarm: vprewarm, endSession: vendSession,
   } = useVoiceSession(
     contextKey,
     model || undefined,
@@ -63,8 +64,17 @@ export function useVoiceMode({
     if (!voiceOn) return;
     vprewarm();
     vsession.start();
-    return () => vsession.stop();
-  }, [voiceOn, vsession, vprewarm]);
+    // A closing tab does not run React cleanup, and voice holds a real process
+    // on the other end. `pagehide` fires for a close, a navigation and a mobile
+    // background alike, which is the whole set of ways this can end without an
+    // unmount.
+    const release = () => { vsession.stop(); vendSession(); };
+    window.addEventListener("pagehide", release);
+    return () => {
+      window.removeEventListener("pagehide", release);
+      release();
+    };
+  }, [voiceOn, vsession, vprewarm, vendSession]);
 
   // Probe capabilities when voice turns on or the settings sheet opens, so the
   // provider controls reflect the truth before a session ever starts. Caps live

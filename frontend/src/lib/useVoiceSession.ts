@@ -203,6 +203,18 @@ export function useVoiceSession(
   // so first-turn latency isn't paid on the mic. No-op if already warm.
   const prewarm = useCallback(() => { ensureSession().catch(() => {}); }, [ensureSession]);
 
+  // Give the resident worker back. Voice mode spawns a claude process and, until
+  // this existed, never released one: switching voice off stopped the mic and
+  // the speaker and left the process holding memory until the idle reaper took
+  // it ten minutes later. Idempotent — the ref is cleared first, so a double
+  // teardown sends one request.
+  const endSession = useCallback(() => {
+    const id = workerThreadRef.current;
+    if (!id) return;
+    workerThreadRef.current = null;
+    void voiceApi.endSession(id);
+  }, []);
+
   // Load persisted prefs once and push them into the live session.
   useEffect(() => {
     let alive = true;
@@ -275,5 +287,5 @@ export function useVoiceSession(
     [session],
   );
 
-  return { session, snapshot, prefs, updatePrefs, prewarm };
+  return { session, snapshot, prefs, updatePrefs, prewarm, endSession };
 }

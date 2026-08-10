@@ -19,4 +19,13 @@ export const voiceApi = {
     fetch("/api/voice/health").then(
       j<{ stt: { available: boolean }; tts: { available: boolean }; device?: string }>,
     ),
+
+  // Release the resident worker for a thread. The endpoint has existed since
+  // voice shipped and had NO caller anywhere in the app, so turning voice off
+  // left a claude process resident until the reaper collected it ten minutes
+  // later. `keepalive` so it still goes out when this is the last thing a
+  // closing tab does.
+  endSession: (threadId: string) =>
+    fetch(`/api/voice/session/${threadId}`, { method: "DELETE", keepalive: true })
+      .then(() => undefined, () => undefined),
 };

@@ -114,7 +114,7 @@ export function writeProvider(contextKey: string, providerKey: string): void {
 // closing the tab or refreshing destroyed them silently — a real message-loss
 // path, not just a display bug. Keyed by thread id (the queue belongs to the
 // conversation, not the surface).
-const QUEUE_PREFIX = "ws-chat-queue:";
+export const QUEUE_PREFIX = "ws-chat-queue:";
 
 // A queued message carries WHEN IT WAS TYPED, not just what it said.
 //
@@ -202,7 +202,7 @@ export function writeQueue(threadKey: string, queue: QueuedMessage[]): void {
 //
 // Same key as the queue (a thread id, or the blank-chat slot for a scope),
 // because it is a property OF that queue and has to travel with it.
-const HOLD_PREFIX = "ws-chat-hold:";
+export const HOLD_PREFIX = "ws-chat-hold:";
 
 export function readHold(threadKey: string): boolean {
   try {
@@ -219,6 +219,18 @@ export function writeHold(threadKey: string, held: boolean): void {
   } catch {
     /* see writeSelection */
   }
+}
+
+/** Everything this browser stores for a thread that no longer exists.
+ *
+ *  The delete path cleared the QUEUE, and only when the deleted thread was the
+ *  one on screen. So deleting any other conversation left its queue behind, and
+ *  every delete left its `ws-chat-hold:` key behind forever — a key that says
+ *  "do not self-drain" for a chat that is gone. Neither leak was reachable
+ *  afterwards, which is precisely why neither was ever noticed. */
+export function forgetThread(threadKey: string): void {
+  writeQueue(threadKey, []);
+  writeHold(threadKey, false);
 }
 
 // What durable storage must hold: everything the server has not accepted yet, in

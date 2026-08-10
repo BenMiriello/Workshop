@@ -181,14 +181,21 @@ class Turn:
     # Ordered text/tool segments, persisted incrementally so a reload mid-turn
     # reconstructs the interleaving (text → tool → text …).
     segments: list[dict] = field(default_factory=list)
-    # This turn IS a slash command (`/compact`, `/clear`, `/model`). It runs, it
-    # reports, and it exits without ever reading its input channel — so a message
-    # delivered into it is a message nothing will ever answer. That is not a
-    # theory: on 2026-08-10 the operator sent `/compact`, typed a message 41s
-    # later, and it was filed against the compact run and swallowed whole. He had
-    # to send it again 22 minutes on. `inject` refuses on this flag so the
-    # message waits for a turn that can actually read it.
-    is_command: bool = False
+    # Can a message be handed to this turn while it runs? False for two kinds:
+    #
+    #   A SLASH COMMAND (`/compact`, `/clear`, `/model`) runs, reports, and exits
+    #   without ever reading its input channel. On 2026-08-10 the operator sent
+    #   `/compact`, typed a message 41s later, and it was filed against the
+    #   compact run and swallowed whole; he had to send it again 22 minutes on.
+    #
+    #   A VOICE TURN is driven by voice_worker, not by this module's stdin FIFO.
+    #   It owns the thread while it speaks, and the way to add something to it is
+    #   to say it, not to type into a channel it does not read.
+    #
+    # One flag rather than one per subsystem: every caller asks the same question
+    # ("may I deliver this?") and the answer must not depend on which reason
+    # applies. `inject` refuses on it, and the client is told so it can queue.
+    accepts_input: bool = True
     complete: bool = False
     error: str | None = None
     final_text: str = ""
@@ -286,7 +293,7 @@ class RunInFlight(RuntimeError):
 
 
 def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None,
-               is_command: bool = False) -> Turn:
+               accepts_input: bool = True) -> Turn:
     # The registry only grows here, so this is the only place it has to shrink.
     _prune_turns()
     # A claimed run is already registered (see claim_run); adopt it rather than
@@ -299,10 +306,10 @@ def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None,
     else:
         t.agent_slug = agent_slug
         t.started = time.time()
-    # Only ever set true. A turn is a command from the moment it is claimed, and
-    # the spawn path re-makes the same object without knowing the prompt.
-    if is_command:
-        t.is_command = True
+    # Only ever narrows. A turn that cannot be spoken to is decided at claim
+    # time, and the spawn path re-makes the same object without knowing why.
+    if not accepts_input:
+        t.accepts_input = False
     return t
 
 
@@ -324,11 +331,16 @@ def run_is_live(run_id: str | None) -> bool:
     return t is not None and not t.complete
 
 
-def run_is_command(run_id: str | None) -> bool:
-    """Is the run holding this thread a slash command, which will never read a
-    message sent to it? See Turn.is_command."""
+def run_accepts_input(run_id: str | None) -> bool:
+    """May a message be delivered into the run holding this thread?
+
+    True for a run this process is not driving at all: nothing is known against
+    it, and the injection path has its own answer for that case. See
+    Turn.accepts_input for the two kinds that say no."""
     t = TURNS.get(run_id or "")
-    return t is not None and t.is_command and not t.complete
+    if t is None or t.complete:
+        return True
+    return t.accepts_input
 
 
 def run_is_ending(run_id: str | None) -> bool:
@@ -346,7 +358,7 @@ def run_is_ending(run_id: str | None) -> bool:
 
 async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
                     agent: str | None = None, force: bool = False,
-                    command: bool = False) -> str | None:
+                    accepts_input: bool = True) -> str | None:
     """Take this thread for `run_id`. Returns the run that already owns it (join
     that one), or None when the claim succeeded.
 
@@ -375,8 +387,26 @@ async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
         # the run is in TURNS a message arriving during that window would see an
         # `active_run_id` naming a run nothing is driving and take the thread
         # over — starting the rival turn the claim exists to prevent.
-        _make_turn(thread_id, "", turn_id=run_id, is_command=command)
+        _make_turn(thread_id, "", turn_id=run_id, accepts_input=accepts_input)
         return None
+
+
+def release_external_run(thread_id: str, run_id: str) -> None:
+    """Give the thread back after a run this module did not drive.
+
+    Voice turns claim a thread so the rest of the system can see them — "a run in
+    flight is always visible" was simply false for voice, and a message typed
+    during a spoken turn used to open a second, rival turn on the same session.
+    They persist their own reply, so there is nothing here to commit; the claim
+    just has to end, and the registry entry has to become prunable."""
+    t = TURNS.get(run_id)
+    if t is not None:
+        t.complete = True
+        t.finished_at = time.time()
+    try:
+        chat_store.release_run(thread_id, run_id)
+    except Exception:  # pragma: no cover — the reconcile owns whatever is left
+        log.debug("could not release external run %s on %s", run_id, thread_id)
 
 
 def _push(turn: Turn, kind: str, payload: dict) -> None:
@@ -1810,7 +1840,7 @@ def reattach_running_turns() -> None:
             turn.started = meta.get("started", time.time())
             # Re-derived from the journal, not carried in memory: a run adopted
             # after a restart must still refuse messages it will never read.
-            turn.is_command = (meta.get("prompt") or "").strip().startswith("/")
+            turn.accepts_input = not (meta.get("prompt") or "").strip().startswith("/")
             # This process did not spawn it, but the process it belongs to did:
             # its input channel is either on disk or gone for good, which is the
             # distinction `run_is_ending` needs to make. The pid comes off the
@@ -1963,7 +1993,7 @@ def inject(turn_id: str, text: str) -> bool:
     # write would SUCCEED, which is what made this invisible. Refusing here is
     # what turns a swallowed message into a queued one.
     t = TURNS.get(turn_id)
-    if t is not None and t.is_command:
+    if t is not None and not t.accepts_input:
         return False
     return write_to_turn(turn_id, text)
 

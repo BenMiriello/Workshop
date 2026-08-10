@@ -118,7 +118,7 @@ class TestSealing:
 class TestACommandTurnCannotBeSpokenTo:
     def test_inject_refuses_a_command_turn(self):
         turn = _turn()
-        turn.is_command = True
+        turn.accepts_input = False
         turn.spawned = True
         build_streaming.TURNS[turn.id] = turn
         assert build_streaming.inject(turn.id, "and also do this") is False
@@ -135,19 +135,19 @@ class TestACommandTurnCannotBeSpokenTo:
         assert build_streaming.inject(turn.id, "and also do this") is True
         assert wrote == ["and also do this"]
 
-    def test_run_is_command_is_false_once_it_has_finished(self):
+    def test_a_finished_command_no_longer_blocks_delivery(self):
         turn = _turn()
-        turn.is_command = True
+        turn.accepts_input = False
         turn.complete = True
         build_streaming.TURNS[turn.id] = turn
-        assert build_streaming.run_is_command(turn.id) is False
+        assert build_streaming.run_accepts_input(turn.id) is True
 
     def test_the_claim_marks_a_command_run(self, thread):
         async def go():
             return await build_streaming.claim_run(
-                thread["id"], "run-cmd", model="m", command=True)
+                thread["id"], "run-cmd", model="m", accepts_input=False)
         assert asyncio.run(go()) is None
-        assert build_streaming.run_is_command("run-cmd") is True
+        assert build_streaming.run_accepts_input("run-cmd") is False
 
 
 class TestSendDuringACommandTurn:
@@ -161,7 +161,7 @@ class TestSendDuringACommandTurn:
         tid = thread["id"]
 
         async def go():
-            await build_streaming.claim_run(tid, "run-cmd", model="m", command=True)
+            await build_streaming.claim_run(tid, "run-cmd", model="m", accepts_input=False)
             return await chat_routes._send(tid, "and now do the other thing")
 
         out = asyncio.run(go())

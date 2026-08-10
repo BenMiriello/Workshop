@@ -32,7 +32,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import chat_context, chat_store, llm_router
+from services import build_streaming, chat_context, chat_store, llm_router
 from services.build_streaming import (
     session_alive, usage_scope_for_thread, _spend_tokens_from_usage,
     _summarize_tool_input,
@@ -139,6 +139,10 @@ class VoiceTurn:
     completed_at: float | None = None
     done_event: asyncio.Event = field(default_factory=asyncio.Event)
     new_event: asyncio.Event = field(default_factory=asyncio.Event)
+    # This turn holds the thread's run claim, so the rest of the system can see
+    # that something is in flight. Set only when the claim succeeded — a turn
+    # that lost the race to a text turn does not get to release someone else's.
+    holds_run: bool = False
 
     def push(self, kind: str, payload: dict) -> None:
         self.events.append({"kind": kind, "payload": payload, "ts": time.time()})
@@ -184,6 +188,11 @@ class VoiceWorker:
     # model what the user actually heard before barging in.
     pending_note: str = ""
     pump_task: asyncio.Task | None = None
+    # Interrupts waiting on the CLI's control response, by request id. An
+    # interrupt used to be written and forgotten: the write almost always
+    # succeeds (it is a pipe), so "I stopped it" was reported for a generation
+    # that carried right on producing tokens. The pump resolves these.
+    control_waiters: dict[str, asyncio.Future] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_activity = time.time()
@@ -254,10 +263,26 @@ async def _pump(worker: VoiceWorker) -> None:
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            turn = worker.current
-            if turn is None or turn.complete:
-                continue
             t = ev.get("type")
+            # A control response belongs to the WORKER, not to a turn — and it
+            # arrives exactly when the turn it cancels has already been closed,
+            # which is why the old `turn.complete` bail below dropped every one
+            # of them and made an interrupt unanswerable.
+            if t == "control_response":
+                _resolve_control(worker, ev)
+                continue
+            turn = worker.current
+            if turn is None:
+                continue
+            if turn.complete:
+                # THE TURN IS OVER; THE SPEND IS NOT. A cancelled turn is closed
+                # immediately and the CLI's `result` — the only event carrying
+                # usage — lands after that, so every interrupted generation was
+                # billed to the operator's account and recorded nowhere. The
+                # tokens were spent whether or not he heard the answer.
+                if t == "result":
+                    _record_spend(turn, ev.get("usage"))
+                continue
             if t == "stream_event":
                 e = ev.get("event", {})
                 if e.get("type") == "content_block_delta":
@@ -310,6 +335,21 @@ async def _pump(worker: VoiceWorker) -> None:
         _finish_turn(worker.current, error="worker exited")
 
 
+def _resolve_control(worker: VoiceWorker, ev: dict) -> None:
+    """Hand a control response to whoever is waiting on it.
+
+    The CLI answers `{"type":"control_response","response":{"subtype":"success"
+    |"error", "request_id":...}}`; the id is read from either level because the
+    two CLI versions this has run against put it in different places, and an
+    interrupt that is silently never matched is the bug this exists to end."""
+    resp = ev.get("response") or {}
+    request_id = resp.get("request_id") or ev.get("request_id") or ""
+    fut = worker.control_waiters.pop(request_id, None)
+    if fut is None or fut.done():
+        return
+    fut.set_result(resp.get("subtype") != "error")
+
+
 def _record_spend(turn: VoiceTurn, usage: object) -> None:
     """Meter a spoken turn's SPEND, exactly as the text path does.
 
@@ -347,6 +387,10 @@ def _finish_turn(turn: VoiceTurn, *, error: str | None) -> None:
     if error:
         turn.push("error", {"detail": error})
     turn.push("done", {"text_len": len(turn.text), "error": bool(error)})
+    # The single place a voice turn ends, so the single place the claim ends.
+    if turn.holds_run:
+        turn.holds_run = False
+        build_streaming.release_external_run(turn.thread_id, turn.id)
     turn.done_event.set()
     turn.new_event.set()
 
@@ -423,6 +467,21 @@ async def start_turn(*, context_key: str, thread_id: str, text: str,
         user_text=text, speculative=speculative, deferred_persist=speculative,
     )
     TURNS[turn.id] = turn
+    # CLAIM THE THREAD. A spoken turn is a turn: it holds the session, it spends
+    # money, and it produces the next assistant message. Without this the thread
+    # reported no active run while voice was mid-sentence, so "a run in flight is
+    # always visible" was false for voice, the working indicator stayed dark, and
+    # a message typed during a spoken reply opened a SECOND turn on the same
+    # session. It is claimed as a run that takes no input: the way to add
+    # something to a spoken turn is to say it, and the text path now queues
+    # instead of injecting into a channel voice does not read.
+    joined = await build_streaming.claim_run(
+        thread_id, turn.id, model=worker.model, accepts_input=False)
+    if joined is None:
+        turn.holds_run = True
+    else:
+        log.info("voice turn %s: thread %s is already running %s; not claiming",
+                 turn.id, thread_id, joined)
     asyncio.create_task(_run_turn(worker, turn))
     return turn
 
@@ -505,22 +564,47 @@ def _persist_turn(turn: VoiceTurn) -> None:
         log.warning("voice turn %s persist failed: %s", turn.id, e)
 
 
-async def _interrupt(worker: VoiceWorker) -> None:
-    """Ask the resident process to abandon the in-flight generation. Uses the
-    streaming-input control channel; falls back to respawn on the next turn if the
-    process does not honor it."""
+# How long an interrupt waits for the CLI to say it took it. The control channel
+# answers in milliseconds when the process is healthy, so this is slack for a
+# busy event loop, not a budget. Exceeding it means the generation is still
+# running, and the caller says so rather than claiming the turn stopped.
+INTERRUPT_WAIT_S = 5.0
+
+
+async def _interrupt(worker: VoiceWorker) -> bool:
+    """Ask the resident process to abandon the in-flight generation, and find out
+    whether it did. True when the CLI acknowledged.
+
+    THE ANSWER MATTERS BECAUSE THE TOKENS ARE REAL. This wrote the control
+    request, swallowed every exception, and returned nothing — and a write to a
+    pipe succeeds whether or not anything acts on it, so a cancel that changed
+    nothing was indistinguishable from one that worked. The generation continued,
+    its tokens were spent, and the operator had been told it stopped."""
     if not worker.proc or worker.proc.stdin is None or worker.dead:
-        return
+        return False
+    request_id = str(uuid.uuid4())
     ctrl = json.dumps({
         "type": "control_request",
-        "request_id": str(uuid.uuid4()),
+        "request_id": request_id,
         "request": {"subtype": "interrupt"},
     }) + "\n"
+    fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    worker.control_waiters[request_id] = fut
     try:
         worker.proc.stdin.write(ctrl.encode())
         await worker.proc.stdin.drain()
-    except Exception:
-        pass
+    except Exception as e:
+        worker.control_waiters.pop(request_id, None)
+        log.warning("voice: interrupt could not be sent: %s", e)
+        return False
+    try:
+        return bool(await asyncio.wait_for(fut, INTERRUPT_WAIT_S))
+    except asyncio.TimeoutError:
+        log.warning("voice: interrupt was not acknowledged in %.0fs; the "
+                    "generation may still be running", INTERRUPT_WAIT_S)
+        return False
+    finally:
+        worker.control_waiters.pop(request_id, None)
 
 
 async def cancel_turn(turn_id: str, *, reason: str = "superseded",
@@ -534,8 +618,11 @@ async def cancel_turn(turn_id: str, *, reason: str = "superseded",
     if heard is not None:
         turn.heard_count = heard
     worker = WORKERS.get(turn.session_key)
+    # True when nothing had to be stopped; otherwise whatever the CLI actually
+    # said. Reported rather than assumed — see _interrupt.
+    stopped = True
     if worker:
-        await _interrupt(worker)
+        stopped = await _interrupt(worker)
         # Barge-in on a real (spoken) turn: tell the model what actually landed so
         # its memory matches what the user heard (OpenAI Realtime truncate analogue).
         if reason == "barge" and heard_text:
@@ -560,7 +647,11 @@ async def cancel_turn(turn_id: str, *, reason: str = "superseded",
         turn.discarded = True
     if not turn.complete:
         _finish_turn(turn, error=None)
-        turn.push("cancelled", {"reason": reason})
+        # `stopped` travels with the event because it is the one fact the
+        # operator cannot see for themselves: a generation that ignored the
+        # interrupt keeps spending, and the reply they were listening to has
+        # simply gone quiet. Silence is not evidence either way.
+        turn.push("cancelled", {"reason": reason, "stopped": stopped})
     return True
 
 

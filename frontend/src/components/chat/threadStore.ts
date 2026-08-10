@@ -33,9 +33,9 @@ export type ActiveRun = {
   startedMs: number;
   model?: string;
   agent?: string;
-  // The run is a slash command and takes no input. The send path reads this to
-  // queue rather than inject; see sendPlan.
-  command?: boolean;
+  // False when the run takes no input at all (a slash command, a voice turn).
+  // The send path reads this to queue rather than inject; see sendPlan.
+  acceptsInput?: boolean;
   // Epoch ms at which THIS TAB dispatched `runStarted`, if it did. Not a display
   // value: it is what lets a sync response be dated against the run, so an
   // answer computed before the run existed cannot erase it. Absent on a run
@@ -189,7 +189,7 @@ function adoptRun(
       startedMs: Number.isFinite(startedMs) ? startedMs : prev.startedMs,
       model: live.meta?.model ?? prev.model,
       agent: live.meta?.agent ?? prev.agent,
-      command: payload.command ?? prev.command,
+      acceptsInput: payload.accepts_input ?? prev.acceptsInput,
     };
   }
   return {
@@ -199,7 +199,7 @@ function adoptRun(
     startedMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
     model: live.meta?.model,
     agent: live.meta?.agent,
-    command: payload.command,
+    acceptsInput: payload.accepts_input,
   };
 }
 

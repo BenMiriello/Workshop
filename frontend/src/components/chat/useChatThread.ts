@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { chatApi, type CardState, type Thread, type ThreadSummary } from "../../lib/chat";
 import {
-  NEW_CHAT, readSelection, writeQueue, writeSelection,
+  NEW_CHAT, forgetThread, readSelection, writeSelection,
 } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
 import type { MessageQueue } from "./useMessageQueue";
@@ -44,7 +44,9 @@ export type ChatThread = {
   chooseChatMode: (next: ChatModeId) => void;
   cardStates: Record<string, CardState>;
   setCardStates: React.Dispatch<React.SetStateAction<Record<string, CardState>>>;
-  refreshThreads: () => Promise<void>;
+  /** Re-read the thread list. Returns it, so a caller waiting on a
+   *  server-side change (the auto-namer) can tell whether it has landed. */
+  refreshThreads: () => Promise<ThreadSummary[]>;
   scheduleAutoNameRefetch: (wasFirstExchange: boolean) => void;
   newChat: () => void;
   removeThread: (id: string) => Promise<void>;
@@ -112,17 +114,42 @@ export function useChatThread({
   const chatModeRef = useRef<ChatModeId>(chatMode);
   chatModeRef.current = chatMode;
 
-  const refreshThreads = useCallback(async () => {
+  const refreshThreads = useCallback(async (): Promise<ThreadSummary[]> => {
     try {
-      setThreads(await chatApi.listThreads(scope));
+      const list = await chatApi.listThreads(scope);
+      setThreads(list);
+      return list;
     } catch (e) {
       onError(`Couldn't refresh the list of conversations: ${e}. The list may be out of date.`);
+      return [];
     }
   }, [scope, onError]);
 
+  // The namer runs detached and takes as long as it takes. This used to look
+  // ONCE, 2.5 seconds later, and a namer slower than that left "New chat" in the
+  // picker until the operator happened to reload — for a title that had been
+  // sitting on the server the whole time. Look a few times, spaced out, and stop
+  // as soon as the thread has a real title.
   const scheduleAutoNameRefetch = useCallback((wasFirstExchange: boolean) => {
     if (!wasFirstExchange) return;
-    window.setTimeout(() => { void refreshThreads(); }, 2500);
+    const id = activeIdRef.current;
+    if (!id) return;
+    // Backing off rather than polling flat: the common case is answered by the
+    // first look, and the last is a long wait for a namer that is genuinely
+    // slow. Each look stops the chain as soon as there is a title, so the usual
+    // outcome is exactly the single request this used to make.
+    const delays = [2500, 5000, 10000, 20000];
+    let cancelled = false;
+    for (const ms of delays) {
+      window.setTimeout(async () => {
+        // Cancelled by a look that already found the name, or the operator moved
+        // to another conversation. Either way, stop asking.
+        if (cancelled || activeIdRef.current !== id) return;
+        const list = await refreshThreads();
+        const named = list.find((t) => t.id === id)?.title?.trim();
+        if (named) cancelled = true;
+      }, ms);
+    }
   }, [refreshThreads]);
 
   const chooseChatMode = useCallback((next: ChatModeId) => {
@@ -275,12 +302,15 @@ export function useChatThread({
       onError(`Couldn't delete this conversation: ${e}. It is still here; try again.`);
       return;
     }
+    // The thread is gone, so everything this browser stored FOR it goes too —
+    // whichever thread it was. This used to clear only the queue, and only when
+    // the deleted thread happened to be the one on screen.
+    forgetThread(id);
     // Deleting the conversation you are looking at has to take you somewhere.
     // The focused route is nothing BUT that conversation, so staying put left a
     // page addressing a thread the server no longer has.
     if (id === activeIdRef.current) {
       writeSelection(scope, NEW_CHAT);
-      writeQueue(id, []);
       if (variant === "full") { onLeaveForList(); return; }
       newChat();
     }

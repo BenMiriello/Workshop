@@ -9,19 +9,19 @@ describe("planSend", () => {
     expect(planSend("hello", idle)).toBe("newTurn");
   });
 
-  it("queues an ordinary message while a COMMAND turn is running", () => {
+  it("queues an ordinary message while a turn that reads nothing is running", () => {
     // 2026-08-10, from the thread log: `/compact` opened a turn at 06:28:19, the
     // operator typed at 06:29:00, and the message was injected into the fold —
     // which reads nothing, replies "Compacted." and exits. He had to send it
     // again 22 minutes later. A command turn is never spoken to.
-    expect(planSend("and also do this", { ...idle, runActive: true, commandRunning: true }))
+    expect(planSend("and also do this", { ...idle, runActive: true, runAcceptsInput: false }))
       .toBe("queue");
   });
 
   it("still injects into an ordinary turn", () => {
     // The fix must not turn into "never inject": delivering a message to a
     // running turn is the behaviour the operator asked for in the first place.
-    expect(planSend("and also do this", { ...idle, runActive: true, commandRunning: false }))
+    expect(planSend("and also do this", { ...idle, runActive: true, runAcceptsInput: true }))
       .toBe("inject");
   });
 

@@ -5,8 +5,9 @@
 with its own session — so talking instead of typing made the cost vanish from
 /usage entirely. The same account, the same model, and no record.
 
-These pin the metering only. Voice turns still lack a run object and the
-liveness that goes with it; that is a larger piece of work and is not this.
+These pin the metering only. A voice turn's run object, its liveness, and the
+spend of a turn the operator interrupted are pinned next door, in
+test_voice_cancel_is_real.py.
 """
 import json
 

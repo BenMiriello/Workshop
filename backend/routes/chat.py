@@ -392,8 +392,8 @@ def _active_run_payload(thread_id: str, meta: dict) -> dict | None:
     message and queueing it: a command turn takes no input, and a client that
     does not know that sends into a void."""
     run = chat_log.active_run(thread_id, meta=meta)
-    if run and build_streaming.run_is_command(run.get("run_id")):
-        return {**run, "command": True}
+    if run and not build_streaming.run_accepts_input(run.get("run_id")):
+        return {**run, "accepts_input": False}
     return run
 
 
@@ -1881,7 +1881,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
     run_id = build_streaming.new_run_id()
     joined = await build_streaming.claim_run(
         thread_id, run_id, model=model, agent=speaker, force=bool(take_over),
-        command=_is_raw_command(content))
+        accepts_input=not _is_raw_command(content))
     if joined is not None:
         raise build_streaming.RunInFlight(joined)
 
@@ -2044,7 +2044,7 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     take_over: str | None = None
     already_recorded = False
     run_id = _live_run_id(thread_id)
-    if run_id and build_streaming.run_is_command(run_id):
+    if run_id and not build_streaming.run_accepts_input(run_id):
         # A COMMAND TURN CANNOT BE SPOKEN TO. `/compact` folds the session and
         # exits; it never reads a word of its input. Filing this message against
         # it is what made one disappear on 2026-08-10 — recorded in the log,
@@ -2367,7 +2367,18 @@ async def inject_into_turn(turn_id: str, body: InjectMessage):
     turn = build_streaming.get_turn(turn_id)
     if turn is None or turn.complete:
         return {"delivered": False, "reason": "turn is no longer running"}
-    at_segment = _file_during_run(turn.thread_id, turn_id, content)
+    if not turn.accepts_input:
+        # A command turn, or a voice turn. It will never read this, and recording
+        # it against that run is how one was lost. See _send.
+        return {"delivered": False, "deferred": True,
+                "reason": "this turn takes no input; send it after"}
+    # THE BROWSER'S ID IS CARRIED THROUGH. The model accepted `client_id` and
+    # dropped it on the floor, so a retry after a lost response would have landed
+    # as a second copy of the same message rather than reconciling against the
+    # first. Nothing calls this route today, which is exactly why it was able to
+    # sit wrong.
+    at_segment = _file_during_run(turn.thread_id, turn_id, content,
+                                  client_id=body.client_id)
     delivered = build_streaming.inject(turn_id, content)
     return {
         "delivered": delivered,

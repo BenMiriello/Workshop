@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newClientId } from "../../lib/chat";
 import {
+  HOLD_PREFIX, QUEUE_PREFIX,
   clearFailedFlag, durableQueue, markFailed, mergeQueue, readHold, readQueue,
   restoreBatch, withoutIds, writeHold, writeQueue,
   type QueuedMessage,
@@ -83,6 +84,10 @@ import { splitFirstTurn } from "./turnBatching";
 //     queue MARKED, and the queue holds: it renders as a message that failed,
 //     with a Retry, rather than as one that will send itself when the turn ends
 //     — which is the one thing it will not do.
+// 11. A QUEUE BELONGS TO A THREAD, NOT TO A TAB. Storage was read once, at
+//     bind, so a second tab open on the same chat never learned about anything
+//     queued elsewhere — and the tab that DID hold it might not be the one that
+//     notices the turn end. A `storage` listener adopts another tab's write.
 
 export type MessageQueue = {
   items: QueuedMessage[];
@@ -364,6 +369,26 @@ export function useMessageQueue({
 
   // Memoized: see the sendRef/appendRef note above — the identity of this object
   // is load-bearing for the caller's dep arrays.
+  // Invariant 11: A QUEUE BELONGS TO A THREAD, NOT TO A TAB. Storage was read
+  // once, at bind, so a message typed in one tab sat in another tab's storage
+  // and was never seen by the tab that would go on to notice the turn end and
+  // drain. Two tabs on one chat is ordinary — the operator keeps a focused chat
+  // open beside the app — and in that arrangement a queued message could wait
+  // out every turn until the tab that typed it happened to come back.
+  //
+  // `storage` fires only in OTHER tabs, which is exactly the notification
+  // wanted, and `set` merges rather than overwrites (invariant 9), so adopting
+  // another tab's write cannot resurrect a batch this tab drained on purpose.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      const key = keyRef.current;
+      if (e.key === QUEUE_PREFIX + key) set(itemsRef.current);
+      else if (e.key === HOLD_PREFIX + key) setHeldBoth(readHold(key), false);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [set, setHeldBoth]);
+
   const hold = useCallback(() => setHeldBoth(true), [setHeldBoth]);
   const release = useCallback(() => setHeldBoth(false), [setHeldBoth]);
 

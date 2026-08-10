@@ -72,9 +72,16 @@ export function buildSlashCommands({
     { name: "deploy", desc: "Open deploys for this project (or the index)", available: true, kind: "local", run: actions.openDeploys },
     { name: "compact", desc: "Summarize + compact the conversation to free up context", available: !compacting, kind: "local", run: actions.compact },
 
-    { name: "context", desc: "Show what's currently in the context window", available: isBuild, kind: "passthrough" },
-    { name: "cost", desc: "Show token usage and plan limits", available: isBuild, kind: "passthrough" },
-    { name: "model", desc: "Show or switch the model", available: isBuild, kind: "passthrough" },
+    // THESE THREE ARE ABOUT THE SESSION, and every chat has a session now. They
+    // were gated on `isBuild` back when only a build chat ran a CLI session at
+    // all; that stopped being true, and the gate stayed. So the operator could
+    // not ask an ordinary chat what was in its context window or what it had
+    // cost — the two questions most likely to be asked of exactly that chat.
+    // The build-only entries below are a different case and stay: they are about
+    // a project's working tree, not about this conversation.
+    { name: "context", desc: "Show what's currently in the context window", available: hasThread, kind: "passthrough" },
+    { name: "cost", desc: "Show token usage and plan limits", available: hasThread, kind: "passthrough" },
+    { name: "model", desc: "Show or switch the model", available: hasThread, kind: "passthrough" },
     { name: "memory", desc: "Show the agent's memory (CLAUDE.md)", available: isBuild, kind: "passthrough" },
     { name: "init", desc: "Generate a CLAUDE.md for this project", available: isBuild, kind: "passthrough" },
     { name: "review", desc: "Review a pull request", available: isBuild, kind: "passthrough" },

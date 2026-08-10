@@ -626,11 +626,23 @@ export class VoiceSession {
   private armListen() {
     this.partial = "";
     this.browserReArms = 0;
+    if (this.micOff) { this.set("listening"); return; }   // composer-only: no mic capture
+    // NO HEARING ENGINE, BUT THE MIC IS OPEN. Every tier was unavailable, so
+    // nothing will ever transcribe a word — and this used to set "listening"
+    // before the check and return, leaving the indicator lit, the mic light on,
+    // and the operator talking to a session that could not hear. Close the mic
+    // and say why. The composer still drives turns and replies are still
+    // spoken, which is what "listening" then honestly means.
+    if (!this.sttProvider) {
+      this.micOff = true;
+      this.mic.stop();
+      this.micFail = this.micFail ?? "unsupported";
+      this.error = this.error ?? micFailText(this.micFail);
+      this.set("listening");
+      this.emit();
+      return;
+    }
     this.set("listening");
-    if (this.micOff) return;   // composer-only: no mic capture
-    // No resolved hearing engine (input_mode "text", or every tier unavailable).
-    // "listening" here means "waiting for your turn", which the composer serves.
-    if (!this.sttProvider) return;
     if (this.sttProvider === "browser") this.armBrowserListen();
     else if (this.sttProvider === "native") this.armNativeListen();
     else this.armServerListen();
@@ -1033,21 +1045,11 @@ export class VoiceSession {
   }
 
   // ---- typed input (mixed modes) ------------------------------------------
-  // Send a typed message. Merges any pending voice segments captured this turn,
-  // so "type over" what you were saying sends both, transcript first.
-  submitText(raw: string) {
-    const typed = (raw || "").trim();
-    const merged = [this.segs.join(" ").trim(), typed].filter(Boolean).join(" ").trim();
-    this.resetSegs();
-    this.typing = false;
-    if (!merged) return;
-    // Enter always interrupts and always sends — no queued-send path. The epoch
-    // bump abandons any in-flight eager continuation immediately.
-    this.bumpEpoch();
-    if (this.state === "speaking") this.bargeIn();   // stop speech, report heard
-    else if (this.held) this.supersedeDraft();
-    this.startTurn(merged);
-  }
+  // There is no submitText here any more. Typed text goes through the chat's own
+  // send path (useSendPipeline) so a typed message is one message however voice
+  // happens to be set, and this second entry point had been unreferenced since
+  // that rerouting — a whole parallel turn-start, with its own barge and
+  // supersede handling, that nothing could reach and no test covered.
 
   // Typing is a soft turn-hold: while the composer has text (or a keystroke
   // landed recently) the voice endpoint is deferred, as if the user is still
