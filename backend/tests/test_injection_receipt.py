@@ -70,7 +70,13 @@ class TestEchoesAreNotShown:
 class TestTheFlagIsPassed:
     def test_replay_is_requested(self):
         """Still required: without it the CLI emits no user echoes at all, and
-        the sidechain subagent prompts this reader classifies never appear."""
-        import inspect
-        src = inspect.getsource(bs._spawn_and_drive)
-        assert "--replay-user-messages" in src
+        the sidechain subagent prompts this reader classifies never appear.
+
+        Asserted against the argv the turn is actually spawned with, not against
+        the source text of the function that used to build it — which is why
+        extracting the builder broke this and not the behaviour."""
+        cmd, _ = bs._build_cmd({
+            "turn_id": "t1", "model": "claude-opus-5",
+            "session_id": None, "resume": False, "cwd": "/tmp",
+        })
+        assert "--replay-user-messages" in cmd

@@ -338,6 +338,9 @@ def create_thread(
         # the newly-picked model doesn't support resolves back to None rather
         # than riding along invisibly (services/model_caps.normalize_effort).
         "effort": None,
+        # How much this chat asks before acting. None = the platform default
+        # (bypassPermissions), which is what every chat has always run at.
+        "permission_mode": None,
         "title": title or "New chat",
         "created_at": now,
         "updated_at": now,
@@ -552,6 +555,16 @@ def set_thread_model(thread_id: str, model: str | None) -> dict | None:
     if model is None:
         return _patch(thread_id, model=None)
     return _patch(thread_id, model=model)
+
+
+def set_thread_permission_mode(thread_id: str, mode: str | None) -> dict | None:
+    """Persist how much this chat asks before acting (None = platform default).
+
+    Plan mode is the one value a caller should think twice about storing: it is a
+    ONE-TURN posture (routes.chat clears it once a plan is approved), so writing
+    it here is what makes the picker show plan until that happens, not a claim
+    that the chat is permanently in plan mode."""
+    return _patch(thread_id, permission_mode=mode)
 
 
 def set_thread_effort(thread_id: str, effort: str | None) -> dict | None:

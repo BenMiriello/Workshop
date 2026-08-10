@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import build_agents, chat_log, chat_store, llm_router, ownership
+from services import build_agents, chat_log, chat_store, llm_router, model_caps, ownership
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -55,6 +55,65 @@ def _user_message_line(text: str) -> str:
         "type": "user",
         "message": {"role": "user", "content": [{"type": "text", "text": text}]},
     }) + "\n"
+
+
+def _initialize_line() -> str:
+    """The control-protocol handshake the CLI expects before it will use the
+    stdio permission channel.
+
+    Verified against CLI 2.1.143: with `--permission-prompt-tool stdio` AND this
+    frame sent first, a gated tool call arrives as a `can_use_tool`
+    control_request and an approval written back lets it through. Without the
+    flag the CLI never asks and silently auto-denies instead. Whether the
+    handshake alone is sufficient was not isolated — this is the combination
+    that was measured, so it is the combination that is sent."""
+    return json.dumps({
+        "type": "control_request",
+        "request_id": "init-1",
+        "request": {"subtype": "initialize", "hooks": None},
+    }) + "\n"
+
+
+def _write_line(turn_id: str, line: str) -> bool:
+    """Write one raw frame to a running turn's stdin. See write_to_turn for why
+    this is non-blocking."""
+    fifo = _stdin_fifo(turn_id)
+    if not fifo.exists():
+        return False
+    fd = None
+    try:
+        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+        os.write(fd, line.encode())
+        return True
+    except OSError as e:
+        log.debug("turn %s: control write failed (%s)", turn_id, e)
+        return False
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+
+def answer_permission(turn_id: str, request_id: str, allow: bool,
+                      updated_input: dict | None = None,
+                      message: str | None = None) -> bool:
+    """Answer one `can_use_tool` request. True if the frame reached the process.
+
+    The turn is BLOCKED until this lands: the CLI is waiting on stdin and there
+    is no wall clock on a chat turn, so an unanswered request waits forever. That
+    is why every path that ends a turn resolves what is still pending."""
+    response: dict = (
+        {"behavior": "allow", "updatedInput": updated_input or {}}
+        if allow else
+        {"behavior": "deny", "message": message or "Denied by the operator."}
+    )
+    line = json.dumps({
+        "type": "control_response",
+        "response": {"subtype": "success", "request_id": request_id, "response": response},
+    }) + "\n"
+    return _write_line(turn_id, line)
 
 
 def write_to_turn(turn_id: str, text: str) -> bool:
@@ -135,6 +194,11 @@ class Turn:
     # work. Rebuilt from the journal on re-attach (the drive loop re-reads from
     # offset 0), so it never has to survive a restart.
     agent_segs: dict[str, dict] = field(default_factory=dict)
+    # Permission requests already answered, by request_id -> "allowed"/"denied".
+    # Seeded from the turn's meta on re-attach, because the drive loop re-reads
+    # the journal from offset 0 and would otherwise rebuild every answered
+    # approval as pending — showing live buttons on a decision already made.
+    answers: dict[str, str] = field(default_factory=dict)
     # Set once this run's message has been committed to the thread, with the
     # committed message in `committed`. This is what the blocking POST /messages
     # path awaits, so there is ONE finalize pipeline instead of a streaming one
@@ -314,6 +378,30 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     except json.JSONDecodeError:
         return None
     t = ev.get("type")
+    # The turn is ASKING. Only reachable in a mode that can stop and ask, and
+    # only when the stdio permission channel was wired up at spawn. The process
+    # is blocked on stdin from here until answer_permission writes back, so this
+    # event has to reach the operator: it is the turn's only way out.
+    if t == "control_request":
+        req = ev.get("request") or {}
+        if req.get("subtype") != "can_use_tool":
+            return ("meta", ev)
+        return ("permission", {
+            "id": ev.get("request_id") or "",
+            "tool": req.get("tool_name") or "?",
+            "label": req.get("display_name") or req.get("tool_name") or "?",
+            # One line naming the target ("hello.txt"), the CLI's own summary.
+            "detail": req.get("description") or "",
+            "input": req.get("input") or {},
+            # e.g. [{"type":"setMode","mode":"acceptEdits","destination":"session"}]
+            # — "allow and stop asking", in the vendor's own words.
+            "suggestions": req.get("permission_suggestions") or [],
+            "tool_use_id": req.get("tool_use_id") or "",
+        })
+    # Our own answer, echoed. Nothing to render: the segment already moved when
+    # the answer was written.
+    if t == "control_response":
+        return ("meta", ev)
     # A SIDECHAIN event: emitted by a subagent the turn launched, not by the
     # turn's own model. The CLI marks every one with the id of the Agent tool_use
     # that started it, which is the only way to tell "my subagent ran ls" from "I
@@ -484,6 +572,26 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
                 _seg_agent(turn, payload)
             else:
                 _seg_tool(turn, payload.get("name"), payload.get("input"))
+        return True
+    if kind == "permission":
+        # An approval is a segment, not a transient event: the turn is blocked on
+        # it, so it has to survive a reload of the page that is supposed to
+        # answer it. `state` moves to allowed/denied when answered and to stale
+        # if the turn ends without an answer.
+        rid = payload.get("id") or ""
+        for seg in turn.segments:
+            if seg.get("t") == "approval" and seg.get("id") == rid:
+                return True          # re-read of the journal, not a second ask
+        turn.segments.append({
+            "t": "approval",
+            "id": rid,
+            "tool": payload.get("tool") or "?",
+            "label": payload.get("label") or "?",
+            "detail": payload.get("detail") or "",
+            "input": payload.get("input") or {},
+            "suggestions": payload.get("suggestions") or [],
+            "state": turn.answers.get(rid, "pending"),
+        })
         return True
     if kind == "tool_result":
         # The Agent tool's own result closes its segment. Nested tool results
@@ -725,7 +833,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      tools_disabled: bool = False,
                      speaker: str | None = None,
                      run_id: str | None = None,
-                     effort: str | None = None) -> Turn:
+                     effort: str | None = None,
+                     permission_mode: str | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -771,17 +880,21 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         # so a turn resumed after a restart respawns at the level it was started
         # at rather than silently dropping to the default.
         "effort": effort,
+        # How much this turn asks before acting. None = the platform default
+        # (bypassPermissions), which is what every chat has always run at.
+        "permission_mode": permission_mode,
     }
     _write_meta(meta)
     asyncio.create_task(_spawn_and_drive(turn, meta))
     return turn
 
 
-async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
-    # The prompt goes in over stdin as a stream-json message rather than as an
-    # argv positional, because stdin then STAYS open for the rest of the run and
-    # anything else the operator sends lands at the next step boundary. (It also
-    # takes the assembled prompt off the argv length limit.)
+def _build_cmd(meta: dict) -> tuple[list[str], dict]:
+    """The claude argv for one turn, plus any env the tool surface needs.
+
+    Pure and total so the one coupling that cannot be got wrong — a permission
+    mode that can ask, sent without the channel to ask on — is testable without
+    spawning anything (tests/test_permission_channel.py)."""
     cmd: list[str] = [
         CLAUDE_CLI, "-p",
         "--model", meta["model"],
@@ -806,20 +919,38 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     # no interactive approver, so without it the model stalls asking to write.
     # The auto-checkpoint + git history are the safety net (every turn revertable).
     tool_env: dict = {}
+    mode = meta.get("permission_mode") or model_caps.DEFAULT_PERMISSION_MODE
     if meta.get("allowed_tools") is not None or meta.get("tools_disabled"):
         _tflags, tool_env, _block = llm_router.tool_flags(
             tools_disabled=bool(meta.get("tools_disabled")),
             allowed_tools=meta.get("allowed_tools"),
             disallowed_tools=meta.get("disallowed_tools"),
             mcp_servers=meta.get("mcp_servers"),
+            permission_mode=mode,
         )
         cmd.extend(_tflags)
     else:
-        cmd.extend(["--permission-mode", "bypassPermissions"])
+        cmd.extend(["--permission-mode", mode])
+    # THE COUPLING THAT MATTERS. Every mode except bypass can stop and ask, and
+    # without a channel to ask ON the CLI accepts the mode and then silently
+    # auto-denies every gated call: the turn ends "success", the file is never
+    # written, and the only trace is a permission_denials array nobody reads.
+    # Measured against CLI 2.1.143. Never send one of these without the other.
+    if model_caps.needs_approval_channel(mode):
+        cmd.extend(["--permission-prompt-tool", "stdio"])
     if meta["session_id"] and meta["resume"]:
         cmd.extend(["--resume", meta["session_id"]])
     elif meta["session_id"]:
         cmd.extend(["--session-id", meta["session_id"]])
+    return cmd, tool_env
+
+
+async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
+    # The prompt goes in over stdin as a stream-json message rather than as an
+    # argv positional, because stdin then STAYS open for the rest of the run and
+    # anything else the operator sends lands at the next step boundary. (It also
+    # takes the assembled prompt off the argv length limit.)
+    cmd, tool_env = _build_cmd(meta)
 
     _push(turn, "started", {"cwd": meta["cwd"], "model": meta["model"],
                             "resume": meta["resume"], "effort": meta.get("effort")})
@@ -884,6 +1015,12 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     # and nothing else, and reading the pid back off disk to signal it would be a
     # second source of truth for something this process is holding.
     turn.proc, turn.pid = proc, proc.pid
+    # The control-protocol handshake goes FIRST, before the prompt, so the
+    # channel is live before the model can reach a tool that needs it.
+    if model_caps.needs_approval_channel(meta.get("permission_mode")):
+        if not _write_line(turn.id, _initialize_line()):
+            log.warning("turn %s: could not open the approval channel; "
+                        "gated tool calls will be auto-denied", turn.id)
     # Deliver the prompt as the run's first message.
     if not write_to_turn(turn.id, meta["prompt"]):
         log.warning("turn %s: could not write the opening prompt to its input channel", turn.id)
@@ -911,6 +1048,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     # spend is governed by the usage cap, which is the correct lever.
     _budget = float(meta.get("timeout_s", 0) or 0)
     deadline = ((meta.get("started") or time.time()) + _budget) if _budget > 0 else None
+    # Answers recorded on disk win over anything the journal replay implies.
+    turn.answers.update(meta.get("answers") or {})
     state = {"compacted": False, "saw_result": False, "last_ctx": 0}
     buf = ""
     offset = 0
@@ -960,7 +1099,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                     state["last_ctx"] = ctx
             _push(turn, "result", payload)
         else:
-            if kind in ("text", "tool", "tool_result"):
+            if kind in ("text", "tool", "tool_result", "permission"):
                 saw_tool = _segment_ingest(turn, kind, payload)
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
@@ -1066,12 +1205,77 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                          stopped=stopped)
 
 
+def _stale_pending_approvals(turn: Turn) -> None:
+    """Any approval still pending when the turn ends is STALE, not pending.
+
+    The process it was blocking is gone, so answering it can no longer do
+    anything. Leaving the buttons live would offer the operator a decision that
+    silently does nothing, which is the one outcome worse than not asking."""
+    changed = False
+    for seg in turn.segments:
+        if seg.get("t") == "approval" and seg.get("state") == "pending":
+            seg["state"] = "stale"
+            changed = True
+    if changed:
+        _push(turn, "permission_resolved", {"stale": True})
+
+
+def resolve_permission(turn_id: str, request_id: str, allow: bool,
+                       message: str | None = None) -> tuple[bool, str]:
+    """Answer a pending approval. Returns (ok, detail).
+
+    Order matters: the frame goes to the process FIRST, because that is the part
+    that unblocks the turn, and only a write that landed is recorded as a
+    decision. Recording first and failing to deliver would show the operator an
+    approved action that never ran."""
+    turn = TURNS.get(turn_id)
+    seg = None
+    if turn is not None:
+        for s in turn.segments:
+            if s.get("t") == "approval" and s.get("id") == request_id:
+                seg = s
+                break
+        if seg is None:
+            return False, "no such permission request on this turn"
+        if seg.get("state") == "stale":
+            return False, "that turn has ended; the request can no longer be answered"
+        if seg.get("state") in ("allowed", "denied"):
+            # Answering twice is a no-op, not an error: a double-click or a
+            # retried request must not read as a failure.
+            return True, seg["state"]
+    updated_input = (seg or {}).get("input") if allow else None
+    if not answer_permission(turn_id, request_id, allow, updated_input, message):
+        return False, "the turn's input channel is gone; it can no longer be answered"
+    state = "allowed" if allow else "denied"
+    # Recorded on disk as well as in memory: the drive loop re-reads the journal
+    # from the start after a restart, and would otherwise rebuild this as pending.
+    try:
+        meta = _read_meta(_journal_dir(turn_id)) or {}
+        if meta.get("turn_id"):
+            answers = dict(meta.get("answers") or {})
+            answers[request_id] = state
+            meta["answers"] = answers
+            _write_meta(meta)
+    except Exception as e:  # pragma: no cover — the answer already landed
+        log.debug("turn %s: could not record answer %s: %s", turn_id, request_id, e)
+    if turn is not None and seg is not None:
+        turn.answers[request_id] = state
+        seg["state"] = state
+        _push(turn, "permission_resolved", {"id": request_id, "state": state})
+        try:
+            chat_store.update_run(turn.thread_id, turn.id, turn.segments, _turn_content(turn))
+        except Exception as e:  # pragma: no cover — defensive
+            log.debug("turn %s: approval persist failed: %s", turn_id, e)
+    return True, state
+
+
 async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     """Commit the run and wake whoever is waiting on it.
 
     Always wakes, even if the commit raised. The blocking POST /messages path
     awaits `turn.finished`, and a finalize that fails silently would leave that
     request hanging for as long as the client will hold the socket open."""
+    _stale_pending_approvals(turn)
     try:
         await _commit_turn(turn, meta, **kw)
     finally:

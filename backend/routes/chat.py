@@ -207,6 +207,25 @@ def _resolve_effort(body_effort: str | None, thread: dict, model: str) -> str | 
         return None
 
 
+def _resolve_permission_mode(body_mode: str | None, thread: dict) -> str:
+    """Resolution order: explicit body > thread > the platform default.
+
+    Always returns a mode (never None): unlike effort, there is no "let the
+    vendor decide" here — the CLI has its own default and it is not the one this
+    chat has always run at, so the value is made explicit at every spawn."""
+    try:
+        explicit = model_caps.normalize_permission_mode(body_mode)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if explicit:
+        return explicit
+    try:
+        stored = model_caps.normalize_permission_mode(thread.get("permission_mode"))
+    except ValueError:
+        stored = None
+    return stored or model_caps.DEFAULT_PERMISSION_MODE
+
+
 @router.get("/providers")
 async def providers(scope: str | None = None):
     return chat_context.list_providers(scope=scope)
@@ -1537,6 +1556,9 @@ class StartTurnIn(BaseModel):
     # entirely (None) leaves the stored preference alone — an older client that
     # never sends this must not silently reset it.
     effort: str | None = None
+    # Optional per-turn permission mode (default/plan/acceptEdits/auto/
+    # bypassPermissions). Persisted like `effort`; omitted leaves it alone.
+    permission_mode: str | None = None
     # Present only when several queued messages became ONE turn. `content` is
     # still what the model reads (they are joined); this is how they were sent.
     # Without it the transcript stored one blob stamped at the instant the queue
@@ -1584,7 +1606,8 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
                                     content: str, model: str, run_id: str,
-                                    effort: str | None = None):
+                                    effort: str | None = None,
+                                    permission_mode: str | None = None):
     """Run one turn AS the mentioned agent, inside the chat.
 
     The agent answers with its own definition, its own memory scope and its own
@@ -1676,6 +1699,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
             allowed_tools=agent_tools, disallowed_tools=agent_denied,
             mcp_servers=[], tools_disabled=not tools_active,
             speaker=slug, run_id=run_id, effort=effort,
+            permission_mode=permission_mode,
         )
         _ = kscope  # the CHAT's scope; the agent read its own layers on turn one
         return turn
@@ -1725,6 +1749,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug, run_id=run_id, effort=effort,
+        permission_mode=permission_mode,
     )
     _ = kscope  # the CHAT's scope; the agent reads its own layers above
     return turn
@@ -1751,7 +1776,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
                            *, take_over: str | None = None,
                            already_recorded: bool = False,
                            client_id: str | None = None,
-                           effort_in: str | None = None) -> "build_streaming.Turn":
+                           effort_in: str | None = None,
+                           mode_in: str | None = None) -> "build_streaming.Turn":
     """Claim a run for this message and start it. THE send path.
 
     The claim is taken FIRST, before a single await, and held until the
@@ -1774,6 +1800,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
     effort = _resolve_effort(effort_in, t, model)
     if effort_in is not None and effort != t.get("effort"):
         chat_store.set_thread_effort(thread_id, effort)
+    permission_mode = _resolve_permission_mode(mode_in, t)
 
     from services import mentions as _mentions
     _chat_scope = knowledge.scope_for_context(t.get("context_key") or "general")
@@ -1797,10 +1824,12 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         if _mentioned is not None:
             return await _start_agent_mention_turn(
                 thread_id=thread_id, thread=t, agent=_mentioned, content=content,
-                model=model, run_id=run_id, effort=effort)
+                model=model, run_id=run_id, effort=effort,
+                permission_mode=permission_mode)
         return await _start_assistant_turn(
             thread_id=thread_id, t=t, provider=provider, content=content,
-            model=model, run_id=run_id, effort=effort)
+            model=model, run_id=run_id, effort=effort,
+            permission_mode=permission_mode)
     except Exception:
         # The claim outlives nothing. Give the thread back so the next message is
         # not told a run is in flight that never spawned.
@@ -1809,7 +1838,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 
 
 async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
-                                model: str, run_id: str, effort: str | None = None):
+                                model: str, run_id: str, effort: str | None = None,
+                                permission_mode: str | None = None):
     """Spawn the turn for an ordinary (non-mention) message.
 
     Build-agent chats carry the AGENT's persistent Claude Code session; every
@@ -1851,6 +1881,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
             timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
+            permission_mode=permission_mode,
         )
 
     is_project = chat_context.is_build_provider(provider)
@@ -1884,6 +1915,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         prompt=prompt, model=model, cwd=cwd,
         session_id=sid, resume=resume_flag,
         timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
+        permission_mode=permission_mode,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
 
@@ -1891,7 +1923,8 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
 async def _send(thread_id: str, content: str, model_in: str | None = None,
                 parts: list[TurnPart] | None = None,
                 client_id: str | None = None,
-                effort_in: str | None = None) -> dict:
+                effort_in: str | None = None,
+                mode_in: str | None = None) -> dict:
     """Send one message into a chat: deliver it to the run in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
@@ -1930,6 +1963,11 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         if _eff != t.get("effort"):
             chat_store.set_thread_effort(thread_id, _eff)
             t = chat_store.get_thread(thread_id) or t
+    if mode_in is not None:
+        _pm = _resolve_permission_mode(mode_in, t)
+        if _pm != t.get("permission_mode"):
+            chat_store.set_thread_permission_mode(thread_id, _pm)
+            t = chat_store.get_thread(thread_id) or t
 
     take_over: str | None = None
     already_recorded = False
@@ -1955,7 +1993,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                                       take_over=take_over,
                                       already_recorded=already_recorded,
                                       client_id=client_id,
-                                      effort_in=effort_in)
+                                      effort_in=effort_in,
+                                      mode_in=mode_in)
     except build_streaming.RunInFlight as e:
         # Another POST won the same event-loop tick. Join its run rather than
         # starting a rival, which is the whole reason the claim is atomic.
@@ -1972,11 +2011,94 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if not content:
         raise HTTPException(400, "empty message")
     out = await _send(thread_id, content, body.model, body.parts,
-                      client_id=body.client_id, effort_in=body.effort)
+                      client_id=body.client_id, effort_in=body.effort,
+                      mode_in=body.permission_mode)
     if out["injected"]:
         return {"turn_id": out["turn_id"], "injected": True,
                 "at_segment": out["at_segment"]}
     return {"turn_id": out["turn_id"]}
+
+
+class PermissionAnswer(BaseModel):
+    request_id: str
+    # allow | deny. Spelled out rather than a bool so the wire says what it means
+    # and a third option (allow-and-stop-asking) can join it without a migration.
+    behavior: str
+    # Read by the model on a deny. "Not that file, use the other one" steers the
+    # next attempt; a bare refusal makes it guess what went wrong.
+    message: str | None = None
+    # Apply the CLI's own `setMode` suggestion at the same time — this is what
+    # "allow and stop asking" is, in the vendor's words rather than ours.
+    apply_suggestion: bool = False
+
+
+@router.post("/threads/{thread_id}/turns/{turn_id}/permission")
+async def answer_turn_permission(thread_id: str, turn_id: str, body: PermissionAnswer):
+    """Answer a tool-permission request from a running turn.
+
+    The turn is BLOCKED on stdin until this lands. There is no wall clock on a
+    chat turn, so nothing else will ever unblock it."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    if body.behavior not in ("allow", "deny"):
+        raise HTTPException(400, "behavior must be 'allow' or 'deny'")
+    allow = body.behavior == "allow"
+    # Approving a plan always leaves plan mode; every other "stop asking" is
+    # opt-in, because it loosens the chat and the operator has to mean it.
+    suggestion = _mode_suggestion(turn_id, body.request_id) if allow and (
+        body.apply_suggestion or _is_plan_exit(turn_id, body.request_id)
+    ) else None
+    ok, detail = build_streaming.resolve_permission(
+        turn_id, body.request_id, allow, message=body.message)
+    if not ok:
+        raise HTTPException(409, detail)
+    # Applied only after the answer landed: a mode change recorded for a turn
+    # that never got the approval would leave the chat looser than the operator
+    # believes, on the strength of a click that did nothing.
+    if suggestion:
+        chat_store.set_thread_permission_mode(thread_id, suggestion)
+    return {"state": detail, "permission_mode": suggestion or t.get("permission_mode")}
+
+
+# Where a chat lands after its plan is approved. Plan mode is a ONE-TURN
+# posture: staying in it after the plan is agreed leaves a chat that has just
+# been told to go ahead and still cannot edit anything.
+POST_PLAN_MODE = "acceptEdits"
+
+
+def _is_plan_exit(turn_id: str, request_id: str) -> bool:
+    turn = build_streaming.TURNS.get(turn_id)
+    if turn is None:
+        return False
+    return any(
+        seg.get("t") == "approval" and seg.get("id") == request_id
+        and seg.get("tool") == "ExitPlanMode"
+        for seg in turn.segments
+    )
+
+
+def _mode_suggestion(turn_id: str, request_id: str) -> str | None:
+    """The mode the CLI itself proposed for this request, if it proposed one.
+
+    Only `setMode` suggestions are honoured; anything else the CLI may add later
+    is ignored rather than guessed at. Approving an ExitPlanMode falls back to
+    POST_PLAN_MODE when the CLI proposed nothing, because leaving plan mode is
+    what approving a plan MEANS — that one is not a guess."""
+    turn = build_streaming.TURNS.get(turn_id)
+    if turn is None:
+        return None
+    for seg in turn.segments:
+        if seg.get("t") != "approval" or seg.get("id") != request_id:
+            continue
+        for s in seg.get("suggestions") or []:
+            if isinstance(s, dict) and s.get("type") == "setMode" and s.get("mode"):
+                try:
+                    return model_caps.normalize_permission_mode(str(s["mode"]))
+                except ValueError:
+                    break
+        return POST_PLAN_MODE if seg.get("tool") == "ExitPlanMode" else None
+    return None
 
 
 class InjectMessage(BaseModel):

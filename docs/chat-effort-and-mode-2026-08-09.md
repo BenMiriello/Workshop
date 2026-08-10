@@ -1,6 +1,9 @@
 # Chat effort and mode: design plan
 
-Status: proposed, 2026-08-09. Not yet implemented.
+Status: **built**, 2026-08-09. P1 (effort) shipped in `1584843`; the approval
+channel and the mode picker followed in the same session. What was built differs
+from this plan in three places, recorded in §11 rather than quietly edited into
+the sections above.
 
 Adds two per-chat controls under the composer, to the left of the model picker:
 an **effort** ladder and a **mode** selector. Both are vendor-declared, not
@@ -352,6 +355,35 @@ Each phase is independently shippable and P1 does not depend on P2.
    against the vendor's supported-model list as models are added.
 5. `auto` is account-gated and can be turned off by managed settings. Treat its
    absence as normal and let the caps payload omit it.
+
+## 11. What was built differently, and why
+
+Three deviations from the plan above. Each was a decision made against the real
+code, not a shortcut.
+
+**P2 and P3 shipped together, not in sequence.** The plan phased the approval
+channel ahead of the mode picker. A channel with no selectable mode cannot be
+exercised end to end: in `bypassPermissions` nothing ever asks, so every line of
+it would have been untested until the next phase. They went in together so the
+path could be verified as a path.
+
+**There is no `allow_bypass` opt-in toggle.** The plan proposed gating Bypass
+behind a preference, mirroring the vendor's desktop app. But bypass is what every
+chat in this system has always run at, so a gate would not be protecting the
+operator from a new capability; it would be a confirmation prompt in front of the
+status quo, on a single-operator system whose own conventions forbid exactly that
+(`CLAUDE.md`, "no defensive cruft for single-user setups"). Bypass is in the menu,
+in the danger tone, as the default.
+
+**No shared `cardKit` was extracted.** The plan proposed lifting `CardField` and
+`ActionButtons` out of `UiCard.tsx` for the approval block to reuse. On reading
+them: `CardField` is a switch over ui-card field types (`template`, `taskscope`,
+`sensitivity`) that an approval never uses, and `ActionButtons` is bound to the
+ui-card action registry, which an approval must not go through. Extracting them
+would have shared nothing. `ApprovalBlock` builds on the `src/ui` primitives
+directly, which is what the design system asks for anyway. The plan's *reasoning*
+about the ui-card channel still holds and is why the approval is a chat-log
+segment rather than a fenced block in message text.
 
 ## 10. Out of scope
 

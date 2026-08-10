@@ -438,6 +438,7 @@ def tool_flags(
     allowed_tools: list[str] | None = None,
     disallowed_tools: list[str] | None = None,
     mcp_servers: list[str] | None = None,
+    permission_mode: str = "bypassPermissions",
 ) -> tuple[list[str], dict, bool]:
     """The tool / MCP / permission CLI flags for one of the three tool modes,
     shared by call_cloud (the blocking data path) and build_streaming (streaming
@@ -469,7 +470,10 @@ def tool_flags(
         builtin_tools = [t for t in allowed_tools if not t.startswith("mcp__")]
         flags = ["--strict-mcp-config", "--mcp-config", json.dumps({"mcpServers": servers_subset})]
         flags += (["--tools", *builtin_tools] if builtin_tools else ["--tools", ""])
-        flags += ["--allowedTools", *allowed_tools, "--permission-mode", "bypassPermissions"]
+        # The allowlist is the gate on this path, so the mode defaults to bypass
+        # and every non-chat caller (voice, jobs, blocking data turns) keeps
+        # exactly the posture it had. A chat that has chosen a mode passes it in.
+        flags += ["--allowedTools", *allowed_tools, "--permission-mode", permission_mode]
         # Deny list applies AFTER the allow list, which is what makes it a
         # reversibility gate rather than a second allowlist: a maker keeps Bash
         # and loses exactly the commands that cannot be undone. See

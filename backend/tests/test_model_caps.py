@@ -45,10 +45,14 @@ class TestCapsPayload:
         assert caps["efforts"]["levels"][0] == "low"
         assert caps["efforts"]["default"] == "high"
 
-    def test_it_omits_modes_until_they_can_be_honoured(self):
-        # A mode picker over modes the backend pins to bypassPermissions would be
-        # a lie in the shape of a control.
+    def test_modes_are_not_per_model(self):
+        # A permission mode is a property of the CLI running the turn, not of the
+        # model answering, so it rides on the provider entry beside the models
+        # rather than being repeated inside each one.
         assert "modes" not in model_caps.caps_for("claude-opus-5")
+        payload = model_caps.modes_payload()
+        assert payload["default"] == "bypassPermissions"
+        assert payload["options"][0] == "default"
 
 
 class TestNormalizeEffort:

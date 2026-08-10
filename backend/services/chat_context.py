@@ -1565,6 +1565,10 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
         "default_model": provider.default_model,
         "tools_active": tools_active,
         "model_caps": {m: model_caps.caps_for(m) for m in PICKABLE_MODELS},
+        # Vendor-level, so it sits beside the models rather than inside each one:
+        # a permission mode is a property of the CLI running the turn, not of the
+        # model answering it.
+        "modes": model_caps.modes_payload(),
     }
 
 
