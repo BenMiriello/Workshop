@@ -154,7 +154,7 @@ class TestPersistBeforeDeliver:
         monkeypatch.setattr(build_streaming, "inject", lambda *a: False)
         started = []
 
-        async def fake_start(*, thread_id, t, provider, content, model, run_id):
+        async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
             started.append(run_id)
             turn = build_streaming.TURNS[run_id]
             turn.spawned = True
@@ -218,7 +218,7 @@ class TestSameTickRivals:
         started: list[str] = []
         delivered: list[str] = []
 
-        async def fake_start(*, thread_id, t, provider, content, model, run_id):
+        async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
             started.append(run_id)
             turn = build_streaming.TURNS[run_id]
             turn.spawned = True
@@ -459,7 +459,7 @@ class TestTheBlockingPathIsTheSamePipeline:
         import routes.chat as rc
         tid = thread["id"]
 
-        async def fake_start(*, thread_id, t, provider, content, model, run_id):
+        async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
             turn = build_streaming.TURNS[run_id]
             turn.spawned = True
 

@@ -1028,6 +1028,36 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-model.is-static:hover { color: var(--muted); background: transparent; }
 .chat-model__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-model__caret { flex: 0 0 auto; }
+/* Effort meter: a ladder of bars, filled to the level in use, sitting just left
+   of the model picker. Same quiet trigger language as .chat-model (transparent,
+   2.1rem tall, background carries hover and open) — it is the same kind of
+   control, so it must not read as a different one.
+
+   The bar COUNT is set by the model, not by this sheet: a model with four levels
+   draws four bars. Sizing is therefore per-bar and the control grows with them,
+   rather than a fixed width that would space four bars differently from five. */
+.chat-effort {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: flex-end; gap: 2px;
+  height: 2.1rem; padding: 0 0.5rem;
+  background: transparent; border: none; border-radius: var(--radius-md);
+  cursor: pointer;
+}
+.chat-effort:hover { background: var(--card-hover); }
+.chat-effort[aria-expanded="true"] { background: var(--card-hover); }
+/* Rungs rise left to right, so the shape says "more" before the fill does and
+   the control is still readable to anyone who can't distinguish the two tones. */
+.chat-effort__bar {
+  width: 3px; border-radius: 1px;
+  background: var(--border);
+  height: 0.5rem;
+}
+.chat-effort__bar:nth-child(2) { height: 0.65rem; }
+.chat-effort__bar:nth-child(3) { height: 0.8rem; }
+.chat-effort__bar:nth-child(4) { height: 0.95rem; }
+.chat-effort__bar:nth-child(5) { height: 1.1rem; }
+.chat-effort__bar.is-on { background: var(--accent); }
+
 /* The model picker may truncate rather than push Send off the row — capped by
    max-width on the trigger, not by a min-width floor on the wrapper. */
 .chat-actions > .ws-menu { min-width: 0; }

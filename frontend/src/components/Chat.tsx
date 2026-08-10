@@ -122,7 +122,7 @@ export default function Chat({
     contextKey, effectiveMode, scoped, initialThreadId, startNew,
     startNewRef, linkedThreadRef, onError: setErr,
   });
-  const { scope, selectedModel, setSelectedModel } = scopeState;
+  const { scope, selectedModel, setSelectedModel, setSelectedEffort } = scopeState;
 
   // The queue must know how to send, and the sender must know the queue. One of
   // the two has to be reached through a ref; the send side is the one that
@@ -171,6 +171,7 @@ export default function Chat({
     initialThreadId,
     stripNewParam,
     setSelectedModel,
+    setSelectedEffort,
     onError: setErr,
     onLeaveForList: () => navigate("/chats"),
   });
@@ -275,7 +276,8 @@ export default function Chat({
   });
 
   const pipeline = useSendPipeline({
-    scope, selectedModel, chatModeRef: thread.chatModeRef, activeIdRef,
+    scope, selectedModel, selectedEffort: scopeState.selectedEffort,
+    chatModeRef: thread.chatModeRef, activeIdRef,
     adoptThread: thread.adoptThread,
     stateRef, dispatch, sync, queue,
     compacting, compact, clear, setErr,
@@ -731,6 +733,9 @@ export default function Chat({
       modelOptions={scopeState.modelOptions}
       selectedModel={selectedModel}
       onSelectModel={setSelectedModel}
+      effortLevels={scopeState.effortLevels}
+      effectiveEffort={scopeState.effectiveEffort}
+      onSelectEffort={setSelectedEffort}
       activeId={activeId}
       messages={messages}
       ctxNonce={ctxNonce}

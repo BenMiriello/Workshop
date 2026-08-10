@@ -333,6 +333,11 @@ def create_thread(
         # Per-thread model preference (full model id) chosen via the composer's
         # model picker. None = fall back to the provider default at call time.
         "model": model,
+        # Per-thread effort preference, persisted the same way the model is: it
+        # arrives on a turn and sticks. None = the model's own default. A level
+        # the newly-picked model doesn't support resolves back to None rather
+        # than riding along invisibly (services/model_caps.normalize_effort).
+        "effort": None,
         "title": title or "New chat",
         "created_at": now,
         "updated_at": now,
@@ -547,6 +552,17 @@ def set_thread_model(thread_id: str, model: str | None) -> dict | None:
     if model is None:
         return _patch(thread_id, model=None)
     return _patch(thread_id, model=model)
+
+
+def set_thread_effort(thread_id: str, effort: str | None) -> dict | None:
+    """Persist the per-thread effort preference (a level name, or None to fall
+    back to the model default). Returns the updated thread, or None if missing.
+
+    Validation belongs to the caller: this stores what it is handed, exactly as
+    set_thread_model does, so a level is checked once against the resolved model
+    (model_caps.normalize_effort) rather than twice against different ideas of
+    which model is in play."""
+    return _patch(thread_id, effort=effort)
 
 
 # ---- messages --------------------------------------------------------------

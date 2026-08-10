@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from services import chat_store, chat_context, chat_log
+from services import model_caps
 from services import task_scope
 from services import scope_version
 from services import agent_authority
@@ -178,6 +179,32 @@ def _resolve_model(
     if stored:
         return stored
     return provider.default_model
+
+
+def _resolve_effort(body_effort: str | None, thread: dict, model: str) -> str | None:
+    """Resolution order: explicit body.effort > thread.effort > None.
+
+    None means "send no --effort at all", which is the model's own default and
+    byte-identical to the argv a chat spawns today. That matters beyond tidiness:
+    effort is part of the rendered prompt, so emitting it where it was never
+    chosen would cost every untouched chat its prompt-cache prefix.
+
+    A level the resolved model doesn't support is dropped rather than inherited
+    from the thread — the operator's latest choice wins over stale stored state,
+    even when the win is "fall back to the default". Raises 400 only for a value
+    that isn't a level at all."""
+    try:
+        explicit = model_caps.normalize_effort(body_effort, model)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if explicit:
+        return explicit
+    if (body_effort or "").strip():
+        return None
+    try:
+        return model_caps.normalize_effort(thread.get("effort"), model)
+    except ValueError:
+        return None
 
 
 @router.get("/providers")
@@ -1502,6 +1529,11 @@ class StartTurnIn(BaseModel):
     # Optional per-turn model override (short tier name or full id); same
     # semantics as PostMessage.model.
     model: str | None = None
+    # Optional per-turn effort level (low/medium/high/xhigh/max). Persisted onto
+    # the thread the same way `model` is, so it sticks until changed. Omitted
+    # entirely (None) leaves the stored preference alone — an older client that
+    # never sends this must not silently reset it.
+    effort: str | None = None
     # Present only when several queued messages became ONE turn. `content` is
     # still what the model reads (they are joined); this is how they were sent.
     # Without it the transcript stored one blob stamped at the instant the queue
@@ -1548,7 +1580,8 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
 
 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
-                                    content: str, model: str, run_id: str):
+                                    content: str, model: str, run_id: str,
+                                    effort: str | None = None):
     """Run one turn AS the mentioned agent, inside the chat.
 
     The agent answers with its own definition, its own memory scope and its own
@@ -1639,7 +1672,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
             allowed_tools=agent_tools, disallowed_tools=agent_denied,
             mcp_servers=[], tools_disabled=not tools_active,
-            speaker=slug, run_id=run_id,
+            speaker=slug, run_id=run_id, effort=effort,
         )
         _ = kscope  # the CHAT's scope; the agent read its own layers on turn one
         return turn
@@ -1688,7 +1721,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         cwd=cwd, session_id=sid, resume=False, timeout_s=CHAT_TIMEOUT_S,
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=[], tools_disabled=not tools_active,
-        speaker=slug, run_id=run_id,
+        speaker=slug, run_id=run_id, effort=effort,
     )
     _ = kscope  # the CHAT's scope; the agent reads its own layers above
     return turn
@@ -1714,7 +1747,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
                            model: str | None, parts: list[TurnPart] | None,
                            *, take_over: str | None = None,
                            already_recorded: bool = False,
-                           client_id: str | None = None) -> "build_streaming.Turn":
+                           client_id: str | None = None,
+                           effort_in: str | None = None) -> "build_streaming.Turn":
     """Claim a run for this message and start it. THE send path.
 
     The claim is taken FIRST, before a single await, and held until the
@@ -1731,6 +1765,12 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
     if model is not None and model != t.get("model"):
         chat_store.set_thread_model(thread_id, model)
     model = model or _resolve_model(None, t, provider)
+    # Effort resolves against the model we just settled on, not the one stored
+    # on the thread, so switching model and level in the same send is judged by
+    # what the operator is actually looking at.
+    effort = _resolve_effort(effort_in, t, model)
+    if effort_in is not None and effort != t.get("effort"):
+        chat_store.set_thread_effort(thread_id, effort)
 
     from services import mentions as _mentions
     _chat_scope = knowledge.scope_for_context(t.get("context_key") or "general")
@@ -1754,10 +1794,10 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         if _mentioned is not None:
             return await _start_agent_mention_turn(
                 thread_id=thread_id, thread=t, agent=_mentioned, content=content,
-                model=model, run_id=run_id)
+                model=model, run_id=run_id, effort=effort)
         return await _start_assistant_turn(
             thread_id=thread_id, t=t, provider=provider, content=content,
-            model=model, run_id=run_id)
+            model=model, run_id=run_id, effort=effort)
     except Exception:
         # The claim outlives nothing. Give the thread back so the next message is
         # not told a run is in flight that never spawned.
@@ -1766,7 +1806,7 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 
 
 async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
-                                model: str, run_id: str):
+                                model: str, run_id: str, effort: str | None = None):
     """Spawn the turn for an ordinary (non-mention) message.
 
     Build-agent chats carry the AGENT's persistent Claude Code session; every
@@ -1807,7 +1847,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         return await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
-            timeout_s=CHAT_TIMEOUT_S, run_id=run_id,
+            timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
         )
 
     is_project = chat_context.is_build_provider(provider)
@@ -1840,14 +1880,15 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         thread_id=thread_id, agent_slug=getattr(provider, "slug", provider.key),
         prompt=prompt, model=model, cwd=cwd,
         session_id=sid, resume=resume_flag,
-        timeout_s=CHAT_TIMEOUT_S, run_id=run_id,
+        timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
 
 
 async def _send(thread_id: str, content: str, model_in: str | None = None,
                 parts: list[TurnPart] | None = None,
-                client_id: str | None = None) -> dict:
+                client_id: str | None = None,
+                effort_in: str | None = None) -> dict:
     """Send one message into a chat: deliver it to the run in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
@@ -1875,6 +1916,18 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # Effort is a per-thread preference, so it is recorded HERE, before the
+    # join-or-start fork. A message that joins a run in flight cannot change that
+    # run's effort — the process is spawned and --effort is fixed at spawn — but
+    # the level the operator just picked still has to survive to the next turn,
+    # or the picker and the thread disagree the moment the run ends.
+    if effort_in is not None:
+        _eff = _resolve_effort(
+            effort_in, t, _resolve_model(model, t, chat_context.get_provider(t.get("context_key"))))
+        if _eff != t.get("effort"):
+            chat_store.set_thread_effort(thread_id, _eff)
+            t = chat_store.get_thread(thread_id) or t
+
     take_over: str | None = None
     already_recorded = False
     run_id = _live_run_id(thread_id)
@@ -1898,7 +1951,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         turn = await _run_for_message(thread_id, t, content, model, parts,
                                       take_over=take_over,
                                       already_recorded=already_recorded,
-                                      client_id=client_id)
+                                      client_id=client_id,
+                                      effort_in=effort_in)
     except build_streaming.RunInFlight as e:
         # Another POST won the same event-loop tick. Join its run rather than
         # starting a rival, which is the whole reason the claim is atomic.
@@ -1915,7 +1969,7 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     if not content:
         raise HTTPException(400, "empty message")
     out = await _send(thread_id, content, body.model, body.parts,
-                      client_id=body.client_id)
+                      client_id=body.client_id, effort_in=body.effort)
     if out["injected"]:
         return {"turn_id": out["turn_id"], "injected": True,
                 "at_segment": out["at_segment"]}

@@ -8,6 +8,7 @@ import ContextMeter from "./ContextMeter";
 import { VoiceStrip, VoiceCluster } from "./VoiceControls";
 import { useVoiceComposer } from "./useVoiceComposer";
 import { modelLabel, orderModels } from "./models";
+import EffortMeter from "./EffortMeter";
 
 // Everything below the log: the type-ahead pickers, the voice strip, the input,
 // and the per-turn controls.
@@ -31,6 +32,7 @@ export default function ChatComposer({
   // Turn controls
   streaming, onSend, onStop, canSend,
   modelOptions, selectedModel, onSelectModel,
+  effortLevels, effectiveEffort, onSelectEffort,
   // Context meter
   activeId, messages, ctxNonce,
   // Voice
@@ -63,6 +65,9 @@ export default function ChatComposer({
   modelOptions: string[];
   selectedModel: string;
   onSelectModel: (id: string) => void;
+  effortLevels: string[];
+  effectiveEffort: string;
+  onSelectEffort: (level: string) => void;
   activeId: string | null;
   messages: ChatMsg[];
   ctxNonce: number;
@@ -130,6 +135,14 @@ export default function ChatComposer({
           />
         )}
         <span className="chat-actions__spacer" />
+
+        {/* Effort sits left of the model because it reads as a modifier of it:
+            the ladder's length is a property of the model beside it. */}
+        <EffortMeter
+          levels={effortLevels}
+          value={effectiveEffort}
+          onSelect={onSelectEffort}
+        />
 
         {/* Menu rather than <select>: the stock double-arrow was the loudest
             element in a row of quiet icon buttons. */}

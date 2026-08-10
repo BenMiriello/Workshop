@@ -67,7 +67,7 @@ export type ChatThread = {
 export function useChatThread({
   scope, providersReady, variant, queue,
   startNewRef, linkedThreadRef, initialThreadId,
-  stripNewParam, setSelectedModel, onError, onLeaveForList,
+  stripNewParam, setSelectedModel, setSelectedEffort, onError, onLeaveForList,
 }: {
   scope: string;
   providersReady: boolean;
@@ -78,6 +78,7 @@ export function useChatThread({
   initialThreadId?: string;
   stripNewParam: () => void;
   setSelectedModel: (id: string) => void;
+  setSelectedEffort: (level: string) => void;
   onError: (msg: string | null) => void;
   /** The focused route has nothing left to show once its thread is deleted. */
   onLeaveForList: () => void;
@@ -153,7 +154,11 @@ export function useChatThread({
     setCardStates(t.card_states ?? {});
     setChatMode(t.mode === "orchestrated" ? "orchestrated" : "direct");
     if (t.model) setSelectedModel(t.model);
-  }, [queue, setSelectedModel]);
+    // "" when the thread has none: the meter falls back to showing the model's
+    // default. Seeding this is what stops the picker and the server disagreeing
+    // about the level after a reload.
+    setSelectedEffort(t.effort ?? "");
+  }, [queue, setSelectedModel, setSelectedEffort]);
 
   useEffect(() => {
     // Gate: never load a thread under a scope that is still being resolved.
@@ -229,10 +234,11 @@ export function useChatThread({
     queue.resetToBlank();
     onError(null);
     setSelectedModel("");
+    setSelectedEffort("");
     // Persist the intent so a reload lands on a blank new chat rather than
     // silently re-adopting the most-recent thread.
     writeSelection(scope, NEW_CHAT);
-  }, [queue, scope, onError, setSelectedModel]);
+  }, [queue, scope, onError, setSelectedModel, setSelectedEffort]);
 
   const adoptThreadId = useCallback((id: string) => {
     setActiveId(id);

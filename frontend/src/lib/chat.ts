@@ -127,6 +127,9 @@ export type ThreadSummary = {
   message_count: number;
   last_message: string;
   model?: string | null;
+  // The effort level this chat runs at, persisted the same way `model` is.
+  // Absent/null = the model's own default (no --effort is sent at all).
+  effort?: string | null;
   // How many leading messages are out of the prompt — either folded into the
   // running summary, or dropped outright by /clear. Raw messages are never
   // deleted, so this is the only way a client can tell a cut thread from an
@@ -237,6 +240,15 @@ export function shortHttpError(status: number, statusText: string, body: string)
 
 export type ProviderRole = "assistant" | "builder";
 
+// What a given model actually honours for a turn. Vendor-declared: the frontend
+// renders the levels it is handed and never carries its own list, because the
+// ladder differs per model (Sonnet 4.6 has `max` but no `xhigh`) and per vendor.
+// An empty `levels` means no control at all, not a disabled one.
+export type ModelCaps = {
+  vendor: string;
+  efforts: { levels: string[]; default: string | null };
+};
+
 export type Provider = {
   key: string;
   label: string;
@@ -244,6 +256,7 @@ export type Provider = {
   models?: string[];
   default_model?: string;
   tools_active?: boolean;
+  model_caps?: Record<string, ModelCaps>;
 };
 
 // ---- Per-agent task list (build agents only) -------------------------------

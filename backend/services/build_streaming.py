@@ -724,7 +724,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      mcp_servers: list[str] | None = None,
                      tools_disabled: bool = False,
                      speaker: str | None = None,
-                     run_id: str | None = None) -> Turn:
+                     run_id: str | None = None,
+                     effort: str | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -766,6 +767,10 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "allowed_tools": allowed_tools, "disallowed_tools": disallowed_tools,
         "mcp_servers": mcp_servers,
         "tools_disabled": bool(tools_disabled),
+        # None = send no --effort, i.e. the model's own default. Carried in meta
+        # so a turn resumed after a restart respawns at the level it was started
+        # at rather than silently dropping to the default.
+        "effort": effort,
     }
     _write_meta(meta)
     asyncio.create_task(_spawn_and_drive(turn, meta))
@@ -788,6 +793,12 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
         # difference between a chat that is waiting and one that looks broken.
         "--replay-user-messages",
     ]
+    # Effort is validated by the CLI against one fixed list for EVERY model, so a
+    # level the model doesn't honour is accepted and quietly does nothing. The
+    # caller resolves against services/model_caps before this point; by here a
+    # value is already known-good for this model.
+    if meta.get("effort"):
+        cmd.extend(["--effort", meta["effort"]])
     # Tool surface. Data/assistant turns (allowed_tools set) and tools-off turns
     # get their narrow flags from the SAME helper llm_router.call_cloud uses, so
     # a streamed data turn and a blocking one expose identical capabilities. Full
@@ -810,7 +821,8 @@ async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
     elif meta["session_id"]:
         cmd.extend(["--session-id", meta["session_id"]])
 
-    _push(turn, "started", {"cwd": meta["cwd"], "model": meta["model"], "resume": meta["resume"]})
+    _push(turn, "started", {"cwd": meta["cwd"], "model": meta["model"],
+                            "resume": meta["resume"], "effort": meta.get("effort")})
     # NO PLACEHOLDER. The run is already claimed on the thread (`claim_run`) and
     # its output goes to the journal below plus `meta.live_message`; the reply
     # enters the log once, at finalize. Seeding an empty assistant message here

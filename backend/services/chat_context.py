@@ -1546,9 +1546,15 @@ def get_provider(context_key: str | None) -> ContextProvider:
 
 def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict:
     """Rich /providers entry the composer relies on: key, label, role, the
-    pickable models, the default model, and whether this provider actually gets
-    tools in the current run config."""
+    pickable models, the default model, whether this provider actually gets
+    tools in the current run config, and each model's turn capabilities.
+
+    `model_caps` rides along here rather than on its own endpoint because the
+    composer already makes this one fetch to populate the model picker, and the
+    effort ladder has to change in the same paint as the model that determines
+    its length."""
     from routes.chat import ENABLE_CHAT_TOOLS
+    from services import model_caps
 
     tools_active, _summary = capability_for(provider, enable_chat_tools=ENABLE_CHAT_TOOLS)
     return {
@@ -1558,6 +1564,7 @@ def _provider_entry(provider: ContextProvider, label: str | None = None) -> dict
         "models": list(PICKABLE_MODELS),
         "default_model": provider.default_model,
         "tools_active": tools_active,
+        "model_caps": {m: model_caps.caps_for(m) for m in PICKABLE_MODELS},
     }
 
 
@@ -1571,7 +1578,8 @@ def list_providers(scope: str | None = None) -> list[dict]:
                    projects/build agents). Returns [] if the key resolves to
                    nothing valid.
 
-    Each entry: {key, label, role, models, default_model, tools_active}.
+    Each entry: {key, label, role, models, default_model, tools_active,
+    model_caps}.
     """
     if scope:
         provider = get_provider(scope)

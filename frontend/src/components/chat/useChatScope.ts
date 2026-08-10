@@ -3,6 +3,7 @@ import { chatApi, type Provider } from "../../lib/chat";
 import { DEFAULT_SCOPE, readProvider, resolveScope, writeProvider } from "../../lib/chatSelection";
 import type { ChatMode } from "./chatScope";
 import { MODEL_LABELS } from "./models";
+import { nearestEffort } from "./effort";
 
 // WHICH SCOPE THIS MOUNT BELONGS IN, and which model it will use — resolved
 // ONCE, before any thread loads.
@@ -39,6 +40,13 @@ export type ChatScope = {
   modelOptions: string[];
   selectedModel: string;
   setSelectedModel: (id: string) => void;
+  /** Effort levels the SELECTED model honours, backend-declared. [] hides the control. */
+  effortLevels: string[];
+  /** The operator's explicit choice, or "" for "never chosen — use the model default". */
+  selectedEffort: string;
+  setSelectedEffort: (level: string) => void;
+  /** What the meter displays: the choice, else the model's default level. */
+  effectiveEffort: string;
 };
 
 export function useChatScope({
@@ -60,6 +68,10 @@ export function useChatScope({
   const [providersReady, setProvidersReady] = useState(false);
   const [activeProvider, setActiveProvider] = useState<string>(contextKey);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  // "" means the operator has not chosen: the turn is sent with no effort at all
+  // and runs at the model's own default. Kept distinct from "the default level"
+  // so an untouched chat spawns exactly the argv it spawns today.
+  const [selectedEffort, setSelectedEffort] = useState<string>("");
 
   useEffect(() => {
     let cancelled = false;
@@ -125,8 +137,29 @@ export function useChatScope({
     else if (modelOptions.length) setSelectedModel(modelOptions[0]);
   }, [activeProviderObj, modelOptions, selectedModel]);
 
+  // The effort ladder belongs to the MODEL, so it changes in the same paint the
+  // model does. No caps (an older backend, or a model it does not know) means no
+  // control, which is the right failure: better absent than lying.
+  const caps = activeProviderObj?.model_caps?.[selectedModel];
+  const effortLevels = useMemo(() => caps?.efforts.levels ?? [], [caps]);
+  const defaultEffort = caps?.efforts.default ?? "";
+  // What the meter shows: the choice if there is one, else the model's default.
+  // The default is displayed because it is what actually runs, not because it
+  // was picked — `selectedEffort` stays empty and no flag is sent.
+  const effectiveEffort = selectedEffort || defaultEffort;
+
+  // A model switch can strip a level out from under a live choice (xhigh exists
+  // on Opus 5 and not on Sonnet 4.6). Step to the nearest supported level rather
+  // than silently running at a level the picker still shows.
+  useEffect(() => {
+    if (!selectedEffort) return;
+    if (effortLevels.includes(selectedEffort)) return;
+    setSelectedEffort(nearestEffort(selectedEffort, effortLevels));
+  }, [effortLevels, selectedEffort]);
+
   return {
     providers, providersReady, activeProvider, chooseProvider, scope,
     activeProviderObj, modelOptions, selectedModel, setSelectedModel,
+    effortLevels, selectedEffort, setSelectedEffort, effectiveEffort,
   };
 }

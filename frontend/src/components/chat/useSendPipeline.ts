@@ -45,12 +45,13 @@ export type SendPipeline = {
 };
 
 export function useSendPipeline({
-  scope, selectedModel, chatModeRef, activeIdRef, adoptThread,
+  scope, selectedModel, selectedEffort, chatModeRef, activeIdRef, adoptThread,
   stateRef, dispatch, sync, queue,
   compacting, compact, clear, setErr, onSend,
 }: {
   scope: string;
   selectedModel: string;
+  selectedEffort: string;
   chatModeRef: React.MutableRefObject<ChatModeId>;
   activeIdRef: React.MutableRefObject<string | null>;
   adoptThread: (t: ThreadSummary) => void;
@@ -103,6 +104,11 @@ export function useSendPipeline({
           content: text,
           client_id: clientId,
           ...(selectedModel ? { model: selectedModel } : {}),
+          // Sent ONLY when the operator has actually picked a level. Omitting it
+          // is what makes an untouched chat spawn today's argv exactly, and
+          // effort is part of the rendered prompt, so emitting a level nobody
+          // chose would cost every such chat its prompt-cache prefix.
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
           // `parts` is present only when the queue drained several messages into
           // this one turn. It carries WHEN EACH WAS TYPED and its own id, so the
           // server stores them as the separate messages they were, at their real
@@ -141,7 +147,7 @@ export function useSendPipeline({
     } finally {
       setStartingBoth(false);
     }
-  }, [scope, selectedModel, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
+  }, [scope, selectedModel, selectedEffort, chatModeRef, activeIdRef, adoptThread, dispatch, sync, setErr, setStartingBoth]);
 
   // Hand a message to the run already in flight. It is PERSISTED BEFORE
   // DELIVERY server-side, so `delivered: true` means the chat has it whether or

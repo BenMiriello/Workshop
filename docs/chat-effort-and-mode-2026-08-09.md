@@ -119,18 +119,34 @@ by full model id with a vendor-family fallback. Served by extending
 `model_caps: {model_id: TurnCaps}`, so `GET /api/chat/providers` stays the one
 fetch the composer already makes.
 
-Starting table:
+Table, from the vendor's
+[effort docs](https://platform.claude.com/docs/en/build-with-claude/effort)
+(supported-model list and per-level availability), not from probing:
 
-| models | efforts | modes |
+| model | effort levels | default |
 |---|---|---|
-| `claude-opus-5`, `claude-sonnet-5`, `claude-fable-5` | low, medium, high, xhigh, max (default high) | manual, plan, acceptEdits, auto, bypass |
-| `claude-opus-4-8`, `claude-sonnet-4-6` | **unverified, ships as `[]`** | same |
-| `claude-haiku-4-5-*` | `[]` | same |
+| `claude-opus-5` | low, medium, high, xhigh, max | high |
+| `claude-sonnet-5` | low, medium, high, xhigh, max | high |
+| `claude-fable-5` | low, medium, high, xhigh, max | high |
+| `claude-opus-4-8` | low, medium, high, xhigh, max | high |
+| `claude-sonnet-4-6` | low, medium, high, max | high |
+| `claude-haiku-4-5-*` | none, control hidden | n/a |
 
-The 4.x row is an open question, not an omission: the CLI accepts `--effort` for
-them but whether it reaches the API is unmeasured. Resolve it before P1 ships by
-diffing reported thinking-token usage at `low` versus `max` on `claude-sonnet-4-6`;
-if it moves, give them `low, medium, high`.
+Two things to note. **`claude-sonnet-4-6` supports `max` but not `xhigh`**, so
+its ladder is four rungs, not five: the level list is not a contiguous prefix of
+one global ladder, which is why the UI must size itself from the list it is
+handed rather than from a fixed count. And **Haiku 4.5 is absent from the
+vendor's supported-model list**, so it gets no control even though the CLI
+accepts the flag for it.
+
+Permission modes are a CLI-level concept and do not vary by model. They belong
+to the vendor entry, not the per-model entry; every Claude Code model gets the
+same mode list.
+
+The earlier draft of this plan listed the 4.x row as unverified pending a
+measurement. The measurement was inconclusive for the wrong reason (the probe
+prompt was small enough that effort had no room to move the output), and the
+docs answer it directly: 4.x support effort, Haiku does not.
 
 **Frontend renders exactly what the payload lists.** Labels come from one lookup
 module per axis (`effort.ts`, `permissionModes.ts`) beside the existing
@@ -311,8 +327,8 @@ The CLI's `--agent` flag is out of scope.
 Each phase is independently shippable and P1 does not depend on P2.
 
 - **P1, effort.** Caps table and endpoint, thread fields, `--effort` in argv,
-  `EffortMeter`. Resolve the 4.x effort question first. No approval channel, so
-  mode stays pinned at today's `bypassPermissions`.
+  `EffortMeter`. No approval channel, so mode stays pinned at today's
+  `bypassPermissions`.
 - **P2, approval channel.** Persistent stdin, initialize handshake,
   `--permission-prompt-tool stdio`, control_request routing, approval block and
   route, staleness on exit/interrupt/restart. Ships behind the existing
@@ -330,8 +346,10 @@ Each phase is independently shippable and P1 does not depend on P2.
 3. `--permission-prompt-tool` is absent from `claude --help` in 2.1.143. It
    works, but it is an unadvertised surface. Pin it with a smoke test that fails
    loudly on CLI upgrade rather than degrading quietly.
-4. Effort levels are accepted and possibly ignored per model. Our caps table is
-   the only thing standing between the operator and a control that does nothing.
+4. The CLI accepts every effort level for every model, including models the API
+   does not support effort on. Our caps table is the only thing standing between
+   the operator and a control that does nothing, and it has to be kept current
+   against the vendor's supported-model list as models are added.
 5. `auto` is account-gated and can be turned off by managed settings. Treat its
    absence as normal and let the caps payload omit it.
 
