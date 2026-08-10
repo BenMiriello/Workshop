@@ -105,9 +105,18 @@ def test_an_elided_title_is_a_warning():
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(tasks_all, "_root_for_scope",
                         lambda scope: tmp_path if scope == "workshop" else None)
-    monkeypatch.setattr(tasks_all, "launch_task_run",
-                        lambda scope, task_id: {"ok": True, "job_id": "j1",
-                                                "scope": scope, "task_id": task_id})
+    # Stub the PROCESS LAUNCH, not `launch_task_run`. The readiness gate lives
+    # inside `launch_task_run` (so the chat's "file and run" path cannot skip
+    # it), and stubbing the whole function would stub the gate along with it and
+    # leave this file asserting against its own mock.
+    from services import jobs as jobs_svc
+
+    monkeypatch.setattr(jobs_svc, "JOBS_LOG", tmp_path / "jobs.jsonl")
+
+    class _FakeProc:
+        pid = 424242
+
+    monkeypatch.setattr(tasks_all.subprocess, "Popen", lambda *a, **k: _FakeProc())
     app = FastAPI()
     app.include_router(tasks_all.router, prefix="/api")
     return TestClient(app), tmp_path

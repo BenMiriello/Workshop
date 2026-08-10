@@ -172,8 +172,13 @@ async def list_all(
 @router.get("/scopes")
 async def list_scopes() -> dict:
     """The scope keys that currently have a task store, for the create/filter
-    controls. Cheap directory + registry scan, no task load."""
-    return {"scopes": [skey for skey, _ in _scope_roots()]}
+    controls. Cheap directory + registry scan, no task load.
+
+    `pickup` carries, per scope, whether a ticket filed there can be run by hand
+    and whether anything will pick it up unattended (see `scope_pickup`). It is
+    additive: `scopes` is unchanged."""
+    keys = [skey for skey, _ in _scope_roots()]
+    return {"scopes": keys, "pickup": {k: scope_pickup(k) for k in keys}}
 
 
 # ---- Autonomy scopes (central management surface) --------------------------
@@ -807,6 +812,100 @@ def scope_is_runnable(scope: str | None) -> bool:
             or scope.startswith("build:"))
 
 
+def _queue_runner_covers(dir_str: str) -> bool:
+    """True when a resident queue runner currently holds this tree's runner lock.
+
+    Mirrors the lock path scripts/queue_runner.sh derives (md5 of `echo "$DIR"`,
+    first 12 hex chars). A held lock means a runner process is alive for the tree;
+    an unheld one means nothing is polling it right now."""
+    digest = hashlib.md5((dir_str + "\n").encode()).hexdigest()[:12]
+    lock = Path(f"/tmp/workshop-queue-runner-{digest}.lock")
+    if not lock.exists():
+        return False
+    try:
+        fd = os.open(str(lock), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False  # we took it, so no runner holds it
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def scope_pickup(scope: str | None) -> dict:
+    """How work filed to `scope` actually gets run: {scope, runnable, automatic, why}.
+
+    Two different questions the UI has been conflating into one:
+
+      runnable   a worker CAN be launched here by hand ("Run now", "File and run").
+      automatic  something picks the ticket up WITHOUT the operator pressing anything.
+
+    `automatic` is false far more often than it looks. One resident queue runner
+    covers the workshop root and nothing else; the cron dispatcher fires only
+    scopes carrying a `loop` trigger (projects) or a `cron`/`loop` trigger
+    (agents), and today zero registered projects carry one; and the autonomy
+    brake disables both paths wholesale. So a ticket filed to `project:<slug>`
+    sits until someone presses Run. That is a fine answer, but the operator has
+    to be told it BEFORE filing, which is what `why` is for.
+    """
+    if not scope_is_runnable(scope):
+        return {"scope": scope, "runnable": False, "automatic": False,
+                "why": "this scope cannot run tickets; file it somewhere runnable"}
+
+    from services import autonomy_override
+
+    try:
+        if autonomy_override.is_engaged():
+            reason = (autonomy_override.read() or {}).get("reason") or "no reason recorded"
+            return {"scope": scope, "runnable": True, "automatic": False,
+                    "why": f"the autonomy brake is engaged, so nothing runs unattended ({reason})"}
+    except Exception:
+        pass
+
+    if scope == "workshop":
+        if _queue_runner_covers(str(_WORKSHOP_ROOT)):
+            return {"scope": scope, "runnable": True, "automatic": True, "why": ""}
+        return {"scope": scope, "runnable": True, "automatic": False,
+                "why": "no queue runner is polling the workshop root right now"}
+
+    if scope.startswith("project:"):
+        slug = scope.split(":", 1)[1]
+        try:
+            reg = json.loads(_PROJECTS_REGISTRY.read_text())
+            autonomy = ((reg.get("projects") or {}).get(slug) or {}).get("autonomy")
+        except (json.JSONDecodeError, OSError):
+            autonomy = None
+        from services import triggers as triggers_svc
+        kinds = {(t or {}).get("kind") for t in triggers_svc.project_triggers(autonomy)}
+        if "loop" in kinds:
+            return {"scope": scope, "runnable": True, "automatic": True, "why": ""}
+        return {"scope": scope, "runnable": True, "automatic": False,
+                "why": f"no runner covers {slug}; set its autonomy to continuous or press Run"}
+
+    if scope.startswith("agent:"):
+        slug = scope.split(":", 1)[1]
+        kinds = set()
+        try:
+            from services import agents_registry
+            for a in agents_registry.list_agents():
+                if a.get("slug") == slug or a.get("id") == slug or a.get("id") == f"agent:{slug}":
+                    kinds = {(t or {}).get("kind") for t in (a.get("triggers") or [])}
+                    break
+        except Exception:
+            kinds = set()
+        if kinds & {"cron", "loop"}:
+            return {"scope": scope, "runnable": True, "automatic": True, "why": ""}
+        return {"scope": scope, "runnable": True, "automatic": False,
+                "why": f"{slug} has no cron or loop trigger, so the dispatcher never fires it"}
+
+    return {"scope": scope, "runnable": True, "automatic": False,
+            "why": "no runner sweeps build agent trees; press Run to work this ticket"}
+
+
 def launch_task_run(scope: str, task_id: str) -> dict:
     """Open a manual Job and Popen a detached single-task sweep against `scope`
     for exactly `task_id`. Shared by the /tasks run endpoint and the chat
@@ -818,12 +917,24 @@ def launch_task_run(scope: str, task_id: str) -> dict:
       agent:<slug>   -> ... --dir <scope root> --assignee agent:<slug> --force ...
       build:<slug>   -> ... --dir <build agent root> --force --job-id --task-id
 
+    A ticket that is BROKEN is refused HERE rather than in the route, because
+    the chat "file and run" path calls this function directly and so used to
+    launch a run for a ticket the /run endpoint would have rejected. One gate,
+    every caller.
+
     Raises HTTPException(409) when a sweep already holds the tree, (400) on an
-    unknown scope, (500) when the driver is missing. Returns {ok, job_id, scope,
-    task_id}."""
+    unknown scope or a broken ticket, (404) when the ticket is gone, (500) when
+    the driver is missing. Returns {ok, job_id, scope, task_id}."""
     root = _root_for_scope(scope)
     if root is None:
         raise HTTPException(400, f"unknown scope: {scope}")
+    task = tasks.get_task(root, task_id)
+    if task is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    known = {t["id"] for t in tasks.list_tasks(root)}
+    broken = ticket_readiness.blocking(ticket_readiness.check(task, known_ids=known))
+    if broken:
+        raise HTTPException(400, "; ".join(m["why"] for m in broken))
     script = _SCRIPTS_ROOT / "project_ralph.sh"
     if not script.exists():
         raise HTTPException(500, f"driver missing: {script}")
@@ -857,13 +968,22 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     except OSError:
         logf = subprocess.DEVNULL
     cmd = ["bash", str(script), *cmd_tail, "--force", "--job-id", job["id"], "--task-id", task_id]
-    subprocess.Popen(
+    proc = subprocess.Popen(
         cmd,
         cwd=str(_WORKSHOP_ROOT),
         stdout=logf,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    # The Job record has to exist before the child can write to it (the id is on
+    # its command line), so the pid can only be attached after the Popen. Attach
+    # it: without a pid, reconcile_stuck cannot probe the process and degrades to
+    # a two-hour age ceiling, which is how manual and chat-launched runs came to
+    # sit at `running` for hours after they died.
+    try:
+        jobs.record_pid(job["id"], proc.pid)
+    except OSError:
+        pass
     return {"ok": True, "job_id": job["id"], "scope": scope, "task_id": task_id}
 
 
@@ -877,15 +997,8 @@ async def run_task(scope: str, task_id: str) -> dict:
     underspecified tickets are not refused: measured against the live stores when
     this shipped, 0 of 40 open tickets passed every readiness check, so a full
     gate would have stopped all work rather than improving any of it. The rest of
-    the check is reported, not enforced (services/ticket_readiness)."""
-    root = _root_for_scope(scope)
-    if root is None:
-        raise HTTPException(400, f"unknown scope: {scope}")
-    task = tasks.get_task(root, task_id)
-    if task is None:
-        raise HTTPException(404, f"task not found: {task_id}")
-    known = {t["id"] for t in tasks.list_tasks(root)}
-    broken = ticket_readiness.blocking(ticket_readiness.check(task, known_ids=known))
-    if broken:
-        raise HTTPException(400, "; ".join(m["why"] for m in broken))
+    the check is reported, not enforced (services/ticket_readiness).
+
+    The scope/404/readiness checks all live in `launch_task_run` now, so the
+    chat's "file and run" path cannot skip them."""
     return launch_task_run(scope, task_id)

@@ -129,6 +129,20 @@ def start(
     return record
 
 
+def record_pid(job_id: str, pid: int) -> dict:
+    """Attach a pid to an already-opened Job by appending a partial line.
+
+    A launcher that has to Popen AFTER opening the record (it needs the job id on
+    the child's command line) cannot pass `pid=` to `start()`. Without the pid,
+    `reconcile_stuck` cannot tell a dead run from a live one and falls back to a
+    two-hour age ceiling, so a crashed run reads `running` for two hours. Append
+    rather than reorder: the opening line must land before the child can write
+    its own terminal line, or the collapse would resurrect a finished Job."""
+    line = _clean(id=job_id, pid=int(pid))
+    _append(line)
+    return line
+
+
 def finish(
     job_id: str,
     *,
@@ -315,6 +329,35 @@ def reconcile_stuck(*, min_age_sec: int = 120, max_age_sec: int = 7200,
         )
         failed.append(rec)
     return failed
+
+
+RECONCILE_INTERVAL_S = 120
+
+
+async def reconcile_loop(interval_s: int = RECONCILE_INTERVAL_S) -> None:
+    """Run `reconcile_stuck` forever, inside the backend process.
+
+    Until this existed, reconcile had no caller that actually ran: the dispatcher
+    call sits after an early exit that fires whenever autonomy is engaged, and
+    liveness_watchdog.sh is not in crontab. So a crashed run stayed `running`
+    indefinitely and the operator watched a dead job spin. The backend is already
+    the process that survives everything else, so it is the right owner.
+    """
+    import asyncio
+    import logging
+
+    log = logging.getLogger("workshop.jobs")
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+            failed = await asyncio.to_thread(reconcile_stuck)
+            if failed:
+                log.info("reconciled %d stuck job(s): %s",
+                         len(failed), ", ".join(j.get("id", "?") for j in failed))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("job reconcile pass failed: %s", e)
 
 
 # ---------------------------------------------------------------------------

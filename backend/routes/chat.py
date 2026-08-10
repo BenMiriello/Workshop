@@ -455,8 +455,11 @@ async def ticket_scope(thread_id: str):
     scope_key = t.get("context_key")
     if task_scope.root_for_context(scope_key) is None:
         scope_key = "workshop"
-    from routes.tasks_all import scope_is_runnable
-    return {"scope": scope_key, "runnable": scope_is_runnable(scope_key)}
+    from routes.tasks_all import scope_pickup
+    # `runnable` answers "can this be run by hand". `automatic` answers "will
+    # anything pick it up on its own", which is false for every project scope
+    # today and was previously invisible until the ticket sat forever.
+    return scope_pickup(scope_key)
 
 
 @router.post("/threads/{thread_id}/spawn-task")

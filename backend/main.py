@@ -46,6 +46,12 @@ async def lifespan(app: FastAPI):
     # moves forward at the git remote. Respects both autonomy overrides.
     from services import deploy_watcher
     app.state._bg_deploy_watcher = asyncio.create_task(deploy_watcher.watcher_loop())
+    # Job liveness: close Jobs left `running` by a process that died. Its two
+    # shell callers never fire (the dispatcher exits early while autonomy is
+    # engaged, and liveness_watchdog.sh is not in crontab), so a crashed run used
+    # to read `running` forever. The backend outlives every run, so it reaps.
+    from services import jobs as jobs_svc
+    app.state._bg_job_reconcile = asyncio.create_task(jobs_svc.reconcile_loop())
     # Crash/restart resilience: re-attach to any build turn that was still running
     # when the backend went down. Detached claude subprocesses keep working across
     # a restart; this tails their on-disk journals to completion (or finalizes a
@@ -71,7 +77,8 @@ async def lifespan(app: FastAPI):
     yield
     for t in [*getattr(app.state, "_app_bg", []),
               getattr(app.state, "_bg_app_monitor", None),
-              getattr(app.state, "_bg_deploy_watcher", None)]:
+              getattr(app.state, "_bg_deploy_watcher", None),
+              getattr(app.state, "_bg_job_reconcile", None)]:
         if t:
             t.cancel()
 
