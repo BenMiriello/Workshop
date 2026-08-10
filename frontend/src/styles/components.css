@@ -1362,10 +1362,16 @@ a.ws-btn { text-decoration: none; }
    A centred, viewport-tall column. The Chat panel fills it; the log scrolls
    internally and the composer pins to the bottom (same on mobile and desktop —
    no unbounded growth, no sidebar that dumps on top of the conversation). */
-/* Fills its page container rather than imposing a second, narrower cap — the
-   shell above already applies --page-max, and two stacked caps is what made the
-   chat look like it followed different rules from every other page. Bubbles keep
-   their own relative cap (.chat-msg), which is what actually holds the measure. */
+/* This shell stays UNCAPPED — it fills the page container, which already sits
+   at --page-max above it. The cap lives one level in, on .chat-panel--full
+   (below), and only on that one element. That is the fix for the mistake this
+   comment used to describe: the OLD narrow cap sat on the log alone, so the
+   chat's own toolbar spanned the full page while the transcript under it did
+   not — two different widths in the same chat, the "different rules from every
+   other page" bug. Capping .chat-panel--full instead means the toolbar, the
+   log, AND the composer share the exact same narrower measure, because all
+   three are its children — one column, one width, on purpose (frontend/CLAUDE.md
+   "Page width"). */
 .ws-chat-full {
   max-width: none; width: 100%; margin: 0 auto;
   flex: 1 1 auto; min-height: 0;
@@ -1374,6 +1380,14 @@ a.ws-btn { text-decoration: none; }
      (Merged from a duplicate rule in the legacy styles.css, which loads after
      this sheet and was quietly winning.) */
   min-width: 0; overflow-x: hidden;
+}
+/* The narrower measure: toolbar + log + composer, together, as one column.
+   --chat-max is the one sanctioned second number in the app — see its
+   definition in tokens.css for why it is allowed to exist at all. */
+.chat-panel--full {
+  max-width: var(--chat-max);
+  width: 100%;
+  margin: 0 auto;
 }
 
 /* Focused-chat shell: the whole app becomes a viewport-tall flex column that

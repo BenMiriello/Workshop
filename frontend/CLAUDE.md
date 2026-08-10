@@ -42,7 +42,9 @@ There is exactly one token, `--page-max: 1680px` in `tokens.css`, applied by `.w
 
 If a screen looks like it wants to be narrower, it doesn't. That instinct is what produced 720/760/820/880/980/1040/1280/1680 in one app, each with a sensible-sounding local reason: this form's inputs are too wide, this page is mostly prose, this one is a dashboard. The variance was worse than any of the individual problems it solved.
 
-The focused chat is a page like any other. `.ws-app--chatfull` is **not** a width modifier — it keeps `--page-max` and changes only scrolling (fixed + viewport-tall so the composer rides above the mobile keyboard).
+The focused chat's SHELL is a page like any other. `.ws-app--chatfull` is **not** a width modifier — it keeps `--page-max` and changes only scrolling (fixed + viewport-tall so the composer rides above the mobile keyboard), and the global top nav above it (`.ws-topnav`) is never touched.
+
+**The one sanctioned exception, and it is exactly one element.** `.chat-panel--full` — the conversation column itself: the chat's own toolbar, log, and composer, which are its direct children and so automatically share whatever it is capped to — is narrower, at `--chat-max: 900px` (`tokens.css`), operator-directed. This is not "a screen that wants to be narrower" (the instinct the rule above forbids acting on unilaterally); it is a standing, explicit operator decision, and it is deliberately scoped to ONE inner element so the chat's outer shell and the global top nav stay identical to every other page — the earlier mistake this replaced had the chat's *toolbar* at `--page-max` and only the *log* narrower, which read as two different widths in the same chat. Do not extend `--chat-max` to any other page, and do not read this exception as license to add another one elsewhere: that judgment call still isn't yours to make. If the operator wants a DIFFERENT page narrower, that is a new instruction, not a precedent this paragraph already grants.
 
 ## Theming — two axes, one generated color layer
 

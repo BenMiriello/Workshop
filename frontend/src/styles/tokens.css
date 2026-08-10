@@ -103,6 +103,14 @@
      If a screen seems to want a different width, it doesn't — change this one
      number and every page moves together. */
   --page-max: 1680px;
+  /* The ONE deliberate exception, and it is scoped to a single element: the
+     focused chat's own toolbar+log+composer column (.chat-panel--full), which
+     reads better as a centred conversation column than stretched to the full
+     page. It does NOT touch --page-max, .ws-app, or the global top nav above
+     it — those stay identical to every other page, which is the whole point of
+     --page-max existing. See frontend/CLAUDE.md "Page width" for the one rule
+     that governs when a SECOND number like this is allowed to exist at all. */
+  --chat-max: 900px;
   /* The matching horizontal inset. Width alone does not make two pages look
      alike: the chat sat in the right container but inset its content by 12px
      while every other page used 24px, so it still read as a different page.
