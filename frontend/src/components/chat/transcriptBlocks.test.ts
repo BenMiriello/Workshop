@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
-import {
-  selectTranscript, splitSegments, type TranscriptBlock,
-} from "./transcriptBlocks";
+import { selectTranscript, type TranscriptBlock } from "./transcriptBlocks";
+import { splitAtUnits } from "./transcriptUnits";
 
 const text = (s: string): ChatSegment => ({ t: "text", text: s });
 const tool = (n: string): ChatSegment => ({ t: "tool", name: n, input: "" });
@@ -30,18 +29,21 @@ const shape = (blocks: TranscriptBlock[]) => blocks.map((b) => {
   return `cut:${b.count}${b.cleared ? ":cleared" : ""}`;
 });
 
-describe("splitSegments", () => {
+describe("splitAtUnits", () => {
+  // With no subagents a unit IS a segment, so these read exactly as they did
+  // when the splitter counted segments — which is the point: the ordinary reply
+  // must not move.
   it("cuts where it is told", () => {
-    expect(splitSegments([text("a"), text("b"), text("c")], [1]))
+    expect(splitAtUnits([text("a"), text("b"), text("c")], [1]))
       .toEqual([[text("a")], [text("b"), text("c")]]);
   });
 
   it("clamps a cut past the end rather than inventing segments", () => {
-    expect(splitSegments([text("a")], [99])).toEqual([[text("a")], []]);
+    expect(splitAtUnits([text("a")], [99])).toEqual([[text("a")], []]);
   });
 
   it("forces cuts non-decreasing, so a stale index can only empty a block", () => {
-    expect(splitSegments([text("a"), text("b")], [2, 1]))
+    expect(splitAtUnits([text("a"), text("b")], [2, 1]))
       .toEqual([[text("a"), text("b")], [], []]);
   });
 });

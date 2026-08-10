@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   agentBrief, agentChipLine, agentSummary, applyStreamEvent, recentWorkStepCount,
-  type StreamEvent,
+  sealTrailingText, type StreamEvent,
 } from "./segments";
 import type { ChatSegment } from "../../lib/chat";
 
@@ -197,5 +197,51 @@ describe("the collapsed chip is one line, and the brief is behind it", () => {
   it("reveals nothing when the brief is only the chip line again", () => {
     // A disclosure that opens onto a repeat of its own label is worse than none.
     expect(agentBrief(agent({ input: "Audit the writers", detail: "Audit the writers" }))).toBe("");
+  });
+});
+
+describe("sealTrailingText", () => {
+  // The half of the placement fix that is not a coordinate. Text streams into
+  // the trailing segment, so without a seal the reply is cut where the message
+  // landed and then text written afterwards merges back ABOVE the cut — the
+  // operator's message renders below words that were written after it.
+  const stream = (segs: ChatSegment[], ev: StreamEvent) => applyStreamEvent(segs, ev);
+
+  it("stops later text merging into text that preceded the message", () => {
+    let segs: ChatSegment[] = stream([], { kind: "text", content: "A" });
+    segs = sealTrailingText(segs);
+    segs = stream(segs, { kind: "text", content: "B" });
+    expect(segs.map((s) => (s.t === "text" ? s.text : "?"))).toEqual(["A", "B"]);
+  });
+
+  it("leaves an uninterrupted reply as one text segment", () => {
+    let segs: ChatSegment[] = [];
+    for (const c of "abc") segs = stream(segs, { kind: "text", content: c });
+    expect(segs).toHaveLength(1);
+    expect(segs[0]).toEqual({ t: "text", text: "abc" });
+  });
+
+  it("seals a delegate's interim text too", () => {
+    let segs = stream([], { kind: "tool", name: "Agent", agent: "Explore", id: "a1", input: "look" });
+    segs = stream(segs, { kind: "text", content: "A", parent: "a1" });
+    segs = sealTrailingText(segs);
+    segs = stream(segs, { kind: "text", content: "B", parent: "a1" });
+    const steps = (segs[0] as Extract<ChatSegment, { t: "agent" }>).steps;
+    expect(steps.map((s) => (s.t === "text" ? s.text : "?"))).toEqual(["A", "B"]);
+  });
+
+  it("is idempotent, so a replayed event cannot cut twice", () => {
+    const once = sealTrailingText([{ t: "text", text: "A" }]);
+    expect(sealTrailingText(once)).toBe(once);
+  });
+
+  it("does nothing to a reply that has produced no text yet", () => {
+    const segs: ChatSegment[] = [];
+    expect(sealTrailingText(segs)).toBe(segs);
+  });
+
+  it("does not disturb a trailing tool call", () => {
+    const segs: ChatSegment[] = [{ t: "tool", name: "Read", input: "a.py" }];
+    expect(sealTrailingText(segs)).toBe(segs);
   });
 });

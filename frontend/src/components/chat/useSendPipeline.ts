@@ -182,6 +182,16 @@ export function useSendPipeline({
   ) => {
     try {
       const r = await chatApi.injectIntoThread(threadId, text, clientId);
+      // The chat is running a command, which reads nothing. The server did NOT
+      // record this message, so there is nothing to reconcile and nothing to
+      // re-send now: it goes back on the queue and leaves as its own turn when
+      // the command finishes. Sending it as a turn here would only be refused
+      // again, by the run the command still holds.
+      if (r.deferred) {
+        dispatch({ type: "sendRetracted", clientId });
+        queue.push(text, clientId);
+        return;
+      }
       if (!r.delivered) { void sendTurn(text, clientId); return; }
       dispatch({ type: "sendAcked", clientId });
       // Pull the log immediately: the server recorded the message with the
@@ -219,6 +229,7 @@ export function useSendPipeline({
       compacting: compactingRef.current,
       starting: startingRef.current,
       runActive: !!stateRef.current.activeRun,
+      commandRunning: !!stateRef.current.activeRun?.command,
     });
     if (plan === "queue") {
       queue.push(text, clientId);

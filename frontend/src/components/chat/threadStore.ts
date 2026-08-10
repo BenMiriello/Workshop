@@ -1,5 +1,5 @@
 import type { ActiveRunPayload, ChatSegment, LogEvent } from "../../lib/chat";
-import { applyStreamEvent, type StreamEvent } from "./segments";
+import { applyStreamEvent, sealTrailingText, type StreamEvent } from "./segments";
 
 // The wire shapes live with the rest of the API surface (lib/chat); re-exported
 // here because this module is where they are reasoned about.
@@ -33,6 +33,9 @@ export type ActiveRun = {
   startedMs: number;
   model?: string;
   agent?: string;
+  // The run is a slash command and takes no input. The send path reads this to
+  // queue rather than inject; see sendPlan.
+  command?: boolean;
   // Epoch ms at which THIS TAB dispatched `runStarted`, if it did. Not a display
   // value: it is what lets a sync response be dated against the run, so an
   // answer computed before the run existed cannot erase it. Absent on a run
@@ -186,6 +189,7 @@ function adoptRun(
       startedMs: Number.isFinite(startedMs) ? startedMs : prev.startedMs,
       model: live.meta?.model ?? prev.model,
       agent: live.meta?.agent ?? prev.agent,
+      command: payload.command ?? prev.command,
     };
   }
   return {
@@ -195,6 +199,7 @@ function adoptRun(
     startedMs: Number.isFinite(startedMs) ? startedMs : Date.now(),
     model: live.meta?.model,
     agent: live.meta?.agent,
+    command: payload.command,
   };
 }
 
@@ -239,6 +244,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       const idBySeq = { ...state.idBySeq };
       let order = state.order;
       let added = false;
+      // Runs a message just landed in the middle of. Collected from events this
+      // batch is seeing for the FIRST time: sealing is a cut at "here, now", so
+      // doing it again for a replayed cursor would cut a second time, further
+      // down, at a point no message ever arrived at.
+      const interrupted: string[] = [];
       for (const ev of action.events) {
         if (!ev || typeof ev.seq !== "number" || !ev.id) continue;
         if (byId[ev.id]) continue;   // dedupe by id: a replayed cursor is free
@@ -246,8 +256,22 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         idBySeq[ev.seq] = ev.id;
         if (!added) { order = state.order.slice(); added = true; }
         order.push(ev.seq);
+        if (ev.kind === "message" && ev.role === "user" && ev.meta?.during_run) {
+          interrupted.push(ev.meta.during_run);
+        }
       }
       if (added) order.sort((a, b) => a - b);
+      // No `requestedAt` means the caller cannot date its response, so it is
+      // treated as current — the guard only ever suppresses a demonstrably
+      // older answer.
+      let activeRun = adoptRun(
+        action.activeRun, state.activeRun, action.requestedAt ?? Date.now());
+      // The live half of the cut. The server seals the turn it is driving; this
+      // seals what THIS tab is rendering, on the same trigger, so a message
+      // typed in another tab still closes the block here.
+      if (activeRun && interrupted.includes(activeRun.runId)) {
+        activeRun = { ...activeRun, segments: sealTrailingText(activeRun.segments) };
+      }
       return {
         ...state,
         byId,
@@ -255,10 +279,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
         order,
         cursor: Math.max(state.cursor, action.lastSeq || 0),
         pending: reconcilePending(state.pending, action.events),
-        // No `requestedAt` means the caller cannot date its response, so it is
-        // treated as current — the guard only ever suppresses a demonstrably
-        // older answer.
-        activeRun: adoptRun(action.activeRun, state.activeRun, action.requestedAt ?? Date.now()),
+        activeRun,
       };
     }
 

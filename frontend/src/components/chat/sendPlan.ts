@@ -33,12 +33,21 @@ export type SendState = {
   starting: boolean;
   // The server says a run is in flight on this thread.
   runActive: boolean;
+  // ...and that run is a slash command, which never reads its input.
+  commandRunning?: boolean;
 };
 
 export function planSend(text: string, s: SendState): SendPlan {
   if (s.compacting) return "queue";
   const busy = s.starting || s.runActive;
   if (!busy) return "newTurn";
+  // A RUNNING COMMAND CANNOT BE SPOKEN TO EITHER, and this is the direction that
+  // was missing. The rule below stops a command being injected INTO a turn; this
+  // stops an ordinary message being injected into a COMMAND turn, which is what
+  // ate one on 2026-08-10: `/compact` at 06:28:19, the operator's message filed
+  // against that run at 06:29:00, the fold finishing at 06:30:23, and the
+  // message never read by anything. It waits and goes out as its own turn.
+  if (s.commandRunning) return "queue";
   // A SLASH COMMAND CANNOT BE INJECTED. Injection hands text to the MODEL;
   // commands are handled by the CLI's own command layer, which only runs
   // BETWEEN turns. Measured against the CLI directly (2.1.220): "/compact" sent

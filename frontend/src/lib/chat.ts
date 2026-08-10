@@ -10,7 +10,12 @@
 // (build_streaming._segment_ingest) so a live turn and a reloaded one render
 // identically.
 export type ChatSegment =
-  | { t: "text"; text: string }
+  // `sealed` marks a text run that a mid-turn message closed. Streamed text
+  // normally merges into the trailing text segment, so without this "A", a
+  // message, then "B" would be one segment "AB" by the time the reply is cut,
+  // and the message would render below text written after it. A sealed segment
+  // never absorbs more text; the next character starts a new segment.
+  | { t: "text"; text: string; sealed?: boolean }
   | { t: "tool"; name: string; input: string }
   // The turn is BLOCKED, asking to use a tool. A segment rather than a transient
   // event because the process stays blocked across a page reload, and the reload
@@ -100,6 +105,15 @@ export type ChatMsg = {
     // that had already been emitted stays above it and work produced after it
     // reads as having been produced after it. See transcriptBlocks.ts.
     at_segment?: number;
+    // THE SAME CUT POINT, COUNTED PROPERLY, and the one the client reads when it
+    // is there. `at_segment` counts only TOP-LEVEL segments, and a subagent's
+    // steps nest inside one of those — so for the whole of a delegation the
+    // coordinate does not move, and every message sent during it records the
+    // same index and renders above work that had already happened. `at_unit`
+    // counts a top-level segment OR a nested step, so it advances with the work.
+    // Absent on messages recorded before 2026-08-10, which keep their original
+    // placement via at_segment rather than shifting under the operator.
+    at_unit?: number;
     // The browser's own id for this send. Present on messages this client sent;
     // it is what an optimistic bubble is reconciled against, never the text.
     client_id?: string;
@@ -216,6 +230,11 @@ export type LogEvent = {
 export type ActiveRunPayload = {
   run_id: string;
   started_seq?: number | null;
+  // This run is a slash command, which reads no input at all: it folds or
+  // resets or reports, and exits. A message sent into one is a message nothing
+  // will ever answer, so the client queues instead of injecting. Absent from an
+  // older backend, which reads as false and restores the old behaviour.
+  command?: boolean;
   live?: {
     run_id?: string;
     content?: string;
@@ -461,6 +480,11 @@ export const chatApi = {
       body: JSON.stringify(clientId ? { content, client_id: clientId } : { content }),
     }).then(j<{
       delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
+      // The chat is running a slash command, which reads no input. NOT recorded
+      // and NOT taken — the caller keeps it and sends it as its own turn once
+      // the command is done. Distinct from `delivered: false`, which means no
+      // run was going and the message should be sent as a turn right now.
+      deferred?: boolean;
       turn_id: string | null; at_segment?: number | null; reason: string;
     }>),
 

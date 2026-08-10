@@ -380,8 +380,21 @@ async def thread_events(thread_id: str, after: int = 0, limit: int | None = None
     return {
         "events": events,
         "last_seq": last_seq,
-        "active_run": chat_log.active_run(thread_id, meta=meta),
+        "active_run": _active_run_payload(thread_id, meta),
     }
+
+
+def _active_run_payload(thread_id: str, meta: dict) -> dict | None:
+    """The live run, plus whether it can be spoken to.
+
+    `command` is added HERE rather than in chat_log because only this layer can
+    see the turn registry. The client needs it to decide between injecting a
+    message and queueing it: a command turn takes no input, and a client that
+    does not know that sends into a void."""
+    run = chat_log.active_run(thread_id, meta=meta)
+    if run and build_streaming.run_is_command(run.get("run_id")):
+        return {**run, "command": True}
+    return run
 
 
 @router.patch("/threads/{thread_id}")
@@ -1867,7 +1880,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 
     run_id = build_streaming.new_run_id()
     joined = await build_streaming.claim_run(
-        thread_id, run_id, model=model, agent=speaker, force=bool(take_over))
+        thread_id, run_id, model=model, agent=speaker, force=bool(take_over),
+        command=_is_raw_command(content))
     if joined is not None:
         raise build_streaming.RunInFlight(joined)
 
@@ -2030,6 +2044,18 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     take_over: str | None = None
     already_recorded = False
     run_id = _live_run_id(thread_id)
+    if run_id and build_streaming.run_is_command(run_id):
+        # A COMMAND TURN CANNOT BE SPOKEN TO. `/compact` folds the session and
+        # exits; it never reads a word of its input. Filing this message against
+        # it is what made one disappear on 2026-08-10 — recorded in the log,
+        # delivered to a process that had stopped listening, and never answered.
+        #
+        # It is NOT recorded here. Nothing is owed by a message that has not been
+        # accepted, and the client keeps it queued and sends it as its own turn
+        # the moment the command finishes, which is what the operator expects
+        # from typing while something runs.
+        return {"turn_id": run_id, "injected": False, "deferred": True,
+                "at_segment": None}
     if run_id:
         at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id)
         if build_streaming.inject(run_id, content):
@@ -2071,6 +2097,10 @@ async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     out = await _send(thread_id, content, body.model, body.parts,
                       client_id=body.client_id, effort_in=body.effort,
                       mode_in=body.permission_mode)
+    if out.get("deferred"):
+        # Not taken, not recorded, not lost: the chat is running a command turn
+        # that cannot read it. The client keeps it queued and sends it next.
+        return {"turn_id": out["turn_id"], "injected": False, "deferred": True}
     if out["injected"]:
         return {"turn_id": out["turn_id"], "injected": True,
                 "at_segment": out["at_segment"]}
@@ -2197,9 +2227,32 @@ def _at_segment(run_id: str, thread_id: str) -> int:
     live = build_streaming.get_turn(run_id)
     if live is not None:
         return len(live.segments)
+    return len(_snapshot_segments(run_id, thread_id))
+
+
+def _snapshot_segments(run_id: str, thread_id: str) -> list[dict]:
     run = chat_log.active_run(thread_id)
     snap = (run or {}).get("live") or {}
-    return len(((snap.get("meta") or {}).get("segments")) or [])
+    return ((snap.get("meta") or {}).get("segments")) or []
+
+
+def _cut_point(run_id: str, thread_id: str) -> tuple[int, int]:
+    """Where a message landed in the running reply, as (segment, unit).
+
+    BOTH, and the unit one is the answer. `at_segment` counts top-level segments
+    and freezes for the whole of a subagent delegation, so every message sent
+    during one recorded the same index and rendered above work that had already
+    happened. `at_unit` counts steps too (build_streaming.unit_count) and moves
+    with the work. The old key is still written because messages already on disk
+    carry only that, and a client reading a transcript must not have two rules.
+
+    Sealing happens here as well, on the live turn: the cut is only real if text
+    written afterwards cannot merge back above it."""
+    live = build_streaming.get_turn(run_id)
+    if live is not None:
+        return len(live.segments), build_streaming.cut_here(live)
+    segs = _snapshot_segments(run_id, thread_id)
+    return len(segs), build_streaming.unit_count(segs)
 
 
 def _file_during_run(thread_id: str, run_id: str, content: str,
@@ -2215,10 +2268,11 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
     Persist first and the transcript can only ever be AHEAD of what the model
     saw, which is the recoverable direction. Returns `at_segment`, which the
     caller also reports to the client."""
-    at_segment = _at_segment(run_id, thread_id)
+    at_segment, at_unit = _cut_point(run_id, thread_id)
     chat_store.append_message_during_turn(
         thread_id, "user", content,
-        meta={"injected": True, "during_run": run_id, "at_segment": at_segment},
+        meta={"injected": True, "during_run": run_id,
+              "at_segment": at_segment, "at_unit": at_unit},
         client_id=client_id,
     )
     return at_segment
@@ -2263,6 +2317,14 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
                 "at_segment": None,
                 "reason": "no turn is running on this chat"}
     out = await _send(thread_id, content, client_id=body.client_id)
+    if out.get("deferred"):
+        # The one other case where re-sending is correct, and for the same
+        # reason: this endpoint has NOT taken the message. A command turn owns
+        # the chat and will not read it.
+        return {"delivered": False, "queued_for_turn": False,
+                "turn_id": out["turn_id"], "at_segment": None,
+                "deferred": True,
+                "reason": "a command is running on this chat; send it after"}
     delivered = bool(out["injected"])
     run_id = out["turn_id"]
     at_segment = out["at_segment"]

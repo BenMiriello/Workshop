@@ -181,6 +181,14 @@ class Turn:
     # Ordered text/tool segments, persisted incrementally so a reload mid-turn
     # reconstructs the interleaving (text → tool → text …).
     segments: list[dict] = field(default_factory=list)
+    # This turn IS a slash command (`/compact`, `/clear`, `/model`). It runs, it
+    # reports, and it exits without ever reading its input channel — so a message
+    # delivered into it is a message nothing will ever answer. That is not a
+    # theory: on 2026-08-10 the operator sent `/compact`, typed a message 41s
+    # later, and it was filed against the compact run and swallowed whole. He had
+    # to send it again 22 minutes on. `inject` refuses on this flag so the
+    # message waits for a turn that can actually read it.
+    is_command: bool = False
     complete: bool = False
     error: str | None = None
     final_text: str = ""
@@ -277,7 +285,8 @@ class RunInFlight(RuntimeError):
         self.run_id = run_id
 
 
-def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None) -> Turn:
+def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None,
+               is_command: bool = False) -> Turn:
     # The registry only grows here, so this is the only place it has to shrink.
     _prune_turns()
     # A claimed run is already registered (see claim_run); adopt it rather than
@@ -290,6 +299,10 @@ def _make_turn(thread_id: str, agent_slug: str, turn_id: str | None = None) -> T
     else:
         t.agent_slug = agent_slug
         t.started = time.time()
+    # Only ever set true. A turn is a command from the moment it is claimed, and
+    # the spawn path re-makes the same object without knowing the prompt.
+    if is_command:
+        t.is_command = True
     return t
 
 
@@ -311,6 +324,13 @@ def run_is_live(run_id: str | None) -> bool:
     return t is not None and not t.complete
 
 
+def run_is_command(run_id: str | None) -> bool:
+    """Is the run holding this thread a slash command, which will never read a
+    message sent to it? See Turn.is_command."""
+    t = TURNS.get(run_id or "")
+    return t is not None and t.is_command and not t.complete
+
+
 def run_is_ending(run_id: str | None) -> bool:
     """Has this run spawned and lost its input channel?
 
@@ -325,7 +345,8 @@ def run_is_ending(run_id: str | None) -> bool:
 
 
 async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
-                    agent: str | None = None, force: bool = False) -> str | None:
+                    agent: str | None = None, force: bool = False,
+                    command: bool = False) -> str | None:
     """Take this thread for `run_id`. Returns the run that already owns it (join
     that one), or None when the claim succeeded.
 
@@ -354,7 +375,7 @@ async def claim_run(thread_id: str, run_id: str, *, model: str | None = None,
         # the run is in TURNS a message arriving during that window would see an
         # `active_run_id` naming a run nothing is driving and take the thread
         # over — starting the rival turn the claim exists to prevent.
-        _make_turn(thread_id, "", turn_id=run_id)
+        _make_turn(thread_id, "", turn_id=run_id, is_command=command)
         return None
 
 
@@ -532,10 +553,59 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
 # running a subprocess. See tests/test_subagent_stream.py.
 
 
+def unit_count(segments: list[dict]) -> int:
+    """How many RENDERED UNITS a segment list holds: every top-level segment,
+    plus every step nested inside a subagent.
+
+    This is the cut coordinate for a mid-turn message, and counting top-level
+    segments alone is why the placement broke. A delegation is ONE top-level
+    segment that grows internally for as long as it runs, so the top-level count
+    freezes for the whole delegation. Measured on the operator's own thread: one
+    reply had 128 top-level segments and 672 nested steps, one chip holding 175
+    of them, and two messages sent minutes apart both recorded index 42. Counting
+    units, the coordinate advances with every step a delegate takes."""
+    n = 0
+    for seg in segments:
+        n += 1
+        if seg.get("t") == "agent":
+            n += len(seg.get("steps") or ())
+    return n
+
+
+def seal_open_text(turn: "Turn") -> None:
+    """Close every open text run, so nothing written from here on merges
+    BACKWARDS into text that was already on screen.
+
+    The counter alone does not fix the placement. Streamed text is appended to
+    the trailing text segment rather than starting a new one, so a message that
+    landed after "A" and before "B" still rendered below "AB": the two are one
+    segment by the time the reply is cut. Sealing makes the boundary real. Every
+    open subagent gets the same treatment, because a chip cut in half has a text
+    step on each side of the cut."""
+    if turn.segments and turn.segments[-1].get("t") == "text":
+        turn.segments[-1]["sealed"] = True
+    for host in turn.agent_segs.values():
+        steps = host.get("steps") or ()
+        if steps and steps[-1].get("t") == "text":
+            steps[-1]["sealed"] = True
+
+
+def cut_here(turn: "Turn") -> int:
+    """Record where a mid-turn message landed, and make the boundary hold.
+
+    One call, because the two halves are one fact: this is the point in the
+    reply the operator's message arrived at, and nothing produced after it may
+    drift above it."""
+    at = unit_count(turn.segments)
+    seal_open_text(turn)
+    return at
+
+
 def _seg_text(turn: "Turn", s: str) -> None:
     if not s:
         return
-    if turn.segments and turn.segments[-1].get("t") == "text":
+    if turn.segments and turn.segments[-1].get("t") == "text" \
+            and not turn.segments[-1].get("sealed"):
         turn.segments[-1]["text"] += s
     else:
         turn.segments.append({"t": "text", "text": s})
@@ -578,7 +648,8 @@ def _agent_step(turn: "Turn", parent: str, seg: dict) -> bool:
     if host is None:
         return False
     steps = host.setdefault("steps", [])
-    if seg.get("t") == "text" and steps and steps[-1].get("t") == "text":
+    if seg.get("t") == "text" and steps and steps[-1].get("t") == "text" \
+            and not steps[-1].get("sealed"):
         steps[-1]["text"] += seg.get("text") or ""
     else:
         steps.append(seg)
@@ -1737,6 +1808,9 @@ def reattach_running_turns() -> None:
                 continue
             turn = Turn(id=tid, thread_id=meta["thread_id"], agent_slug=meta.get("agent_slug", ""))
             turn.started = meta.get("started", time.time())
+            # Re-derived from the journal, not carried in memory: a run adopted
+            # after a restart must still refuse messages it will never read.
+            turn.is_command = (meta.get("prompt") or "").strip().startswith("/")
             # This process did not spawn it, but the process it belongs to did:
             # its input channel is either on disk or gone for good, which is the
             # distinction `run_is_ending` needs to make. The pid comes off the
@@ -1883,6 +1957,13 @@ def inject(turn_id: str, text: str) -> bool:
     dropped either way."""
     text = (text or "").strip()
     if not text:
+        return False
+    # A COMMAND TURN NEVER READS ITS INPUT. `/compact` summarizes and exits; the
+    # bytes would reach a process that has already stopped listening, and the
+    # write would SUCCEED, which is what made this invisible. Refusing here is
+    # what turns a swallowed message into a queued one.
+    t = TURNS.get(turn_id)
+    if t is not None and t.is_command:
         return False
     return write_to_turn(turn_id, text)
 

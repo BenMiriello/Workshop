@@ -273,3 +273,52 @@ describe("re-attaching to a run already on screen", () => {
     expect(after.activeRun?.segments).toEqual([]);
   });
 });
+
+describe("a mid-run message closes the live block it landed in", () => {
+  // The live half of the placement fix. The server seals the turn it drives;
+  // this seals what the tab is rendering, on the same trigger — a mid-run
+  // message appearing in the log — so a message typed in ANOTHER tab still cuts
+  // the block here. Without it, text streamed after the message merges into the
+  // segment above it and the message renders below words written after it.
+  const start = () =>
+    apply(initialThreadState("t"),
+      { type: "runStarted", runId: "r1" },
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: "before" } });
+
+  it("seals the open text, so later text starts a new segment", () => {
+    const s = apply(start(),
+      { type: "eventsReceived", lastSeq: 2, activeRun: { run_id: "r1" },
+        events: [ev(2, { meta: { during_run: "r1", at_unit: 1 } })] },
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: "after" } });
+    expect(s.activeRun?.segments.map((x) => (x.t === "text" ? x.text : x.t)))
+      .toEqual(["before", "after"]);
+  });
+
+  it("does not cut again when the same event is replayed", () => {
+    // A replayed cursor is free everywhere else and must be free here too: a
+    // second seal would cut at a point no message ever arrived at.
+    const midRun = ev(2, { meta: { during_run: "r1", at_unit: 1 } });
+    const s = apply(start(),
+      { type: "eventsReceived", lastSeq: 2, activeRun: { run_id: "r1" }, events: [midRun] },
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: "after" } },
+      { type: "eventsReceived", lastSeq: 2, activeRun: { run_id: "r1" }, events: [midRun] },
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: " more" } });
+    expect(s.activeRun?.segments.map((x) => (x.t === "text" ? x.text : x.t)))
+      .toEqual(["before", "after more"]);
+  });
+
+  it("leaves an uninterrupted turn as one text segment", () => {
+    const s = apply(start(),
+      { type: "eventsReceived", lastSeq: 2, activeRun: { run_id: "r1" }, events: [ev(2)] },
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: " and more" } });
+    expect(s.activeRun?.segments).toHaveLength(1);
+  });
+
+  it("ignores a message that interrupted a DIFFERENT run", () => {
+    const s = apply(start(),
+      { type: "eventsReceived", lastSeq: 2, activeRun: { run_id: "r1" },
+        events: [ev(2, { meta: { during_run: "r0", at_unit: 1 } })] },
+      { type: "runDelta", runId: "r1", event: { kind: "text", content: " and more" } });
+    expect(s.activeRun?.segments).toHaveLength(1);
+  });
+});

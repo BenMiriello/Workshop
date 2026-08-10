@@ -3,6 +3,7 @@ import {
   committedEvents, pendingSends,
   type LogEvent, type PendingStatus, type ThreadState,
 } from "./threadStore";
+import { cutPointOf, splitAtUnits } from "./transcriptUnits";
 
 // The transcript, DERIVED. Committed events in seq order, then the live run,
 // then pending sends. Nothing is stored in this shape; it is recomputed from the
@@ -22,11 +23,16 @@ import {
 // that interrupted it. Five messages sent during a long turn produce up to six
 // assistant blocks, each sitting where its work actually happened.
 //
-// `meta.at_segment` — recorded by the server when the message was filed, read
-// off the LIVE run rather than its throttled snapshot — is the cut point: the
-// index into the reply's segment stream at which the message arrived. Splitting
-// there puts the message AFTER work already emitted and BEFORE work not yet
-// emitted, which is the only placement that is true.
+// `meta.at_unit` — recorded by the server when the message was filed, read off
+// the LIVE run rather than its throttled snapshot — is the cut point: the index
+// into the reply's stream of RENDERED UNITS at which the message arrived.
+// Splitting there puts the message AFTER work already emitted and BEFORE work
+// not yet emitted, which is the only placement that is true.
+//
+// It counts units and not top-level segments because a subagent's steps nest
+// inside one segment, so a segment count stands still for the whole of a
+// delegation — the operator reported the resulting misplacement three times
+// before it was measured. See transcriptUnits.ts for the numbers.
 //
 // WHY THE OLD RULE SAID THE OPPOSITE. An earlier scheme also cut the reply open,
 // and it was wrong: it placed the message ABOVE work that had already begun (in
@@ -55,19 +61,12 @@ export type TranscriptBlock =
   // The context boundary a /compact or /clear left behind.
   | { kind: "cut"; key: string; count: number; cleared: boolean };
 
-/** Split a segment list at the given indices. Cuts are clamped into range and
- *  forced non-decreasing, so a stale or out-of-order `at_segment` can only make
- *  a block empty, never reorder one. Returns cuts.length + 1 slices. */
-export function splitSegments(segments: ChatSegment[], cuts: number[]): ChatSegment[][] {
-  const out: ChatSegment[][] = [];
-  let prev = 0;
-  for (const raw of cuts) {
-    const at = Math.max(prev, Math.min(Number.isFinite(raw) ? raw : segments.length, segments.length));
-    out.push(segments.slice(prev, at));
-    prev = at;
-  }
-  out.push(segments.slice(prev));
-  return out;
+/** Split a segment list at the cut points of the messages that interrupted it.
+ *  The coordinate is a UNIT index, not a segment index — see transcriptUnits.ts
+ *  for why counting top-level segments alone froze the coordinate for the whole
+ *  of a subagent delegation. */
+function cutReply(segments: ChatSegment[], interrupts: LogEvent[]): ChatSegment[][] {
+  return splitAtUnits(segments, interrupts.map((m) => cutPointOf(m.meta, segments)));
 }
 
 function msgFromEvent(ev: LogEvent): ChatMsg {
@@ -94,7 +93,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
     return [{ kind: "message", key: ev.id, seq: ev.seq, msg }];
   }
   const segments = msg.meta?.segments || [];
-  const parts = splitSegments(segments, interrupts.map((m) => m.meta?.at_segment ?? segments.length));
+  const parts = cutReply(segments, interrupts);
   const out: TranscriptBlock[] = [];
   let emitted = 0;
   const lastPart = parts.length - 1;
@@ -145,7 +144,7 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
 function liveBlocks(
   runId: string, segments: ChatSegment[], interrupts: LogEvent[],
 ): TranscriptBlock[] {
-  const parts = splitSegments(segments, interrupts.map((m) => m.meta?.at_segment ?? segments.length));
+  const parts = cutReply(segments, interrupts);
   const out: TranscriptBlock[] = [];
   const lastPart = parts.length - 1;
   for (let i = 0; i < parts.length; i++) {

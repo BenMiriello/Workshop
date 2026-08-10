@@ -43,7 +43,7 @@ function intoAgent(segs: ChatSegment[], parent: string, step: ChatSegment): Chat
   const steps = host.steps;
   const last = steps[steps.length - 1];
   const nextSteps =
-    step.t === "text" && last && last.t === "text"
+    step.t === "text" && last && last.t === "text" && !last.sealed
       ? [...steps.slice(0, -1), { t: "text" as const, text: last.text + step.text }]
       : [...steps, step];
   const copy = segs.slice();
@@ -54,12 +54,42 @@ function intoAgent(segs: ChatSegment[], parent: string, step: ChatSegment): Chat
 function pushText(segs: ChatSegment[], content: string): ChatSegment[] {
   if (!content) return segs;
   const last = segs[segs.length - 1];
-  if (last && last.t === "text") {
+  if (last && last.t === "text" && !last.sealed) {
     const copy = segs.slice();
     copy[copy.length - 1] = { t: "text", text: last.text + content };
     return copy;
   }
   return [...segs, { t: "text", text: content }];
+}
+
+/** Close every open text run, because a message just landed here.
+ *
+ *  THE COUNTER IS NOT ENOUGH ON ITS OWN. Text streams into the trailing text
+ *  segment rather than starting a new one, so "A", a message, then "B" is a
+ *  single segment "AB" by the time the reply is cut, and the message renders
+ *  below text written after it — the same misplacement the cut point exists to
+ *  fix, arriving by a different route.
+ *
+ *  Mirrors the backend's build_streaming.seal_open_text, and the two run
+ *  independently on the same trigger: the server seals the turn it is driving,
+ *  every open tab seals when it sees the message land in the log. Neither needs
+ *  to tell the other, which is what makes it work in a tab that did not type it. */
+export function sealTrailingText(segs: ChatSegment[]): ChatSegment[] {
+  const last = segs[segs.length - 1];
+  if (!last) return segs;
+  if (last.t === "text") {
+    if (last.sealed) return segs;
+    return [...segs.slice(0, -1), { ...last, sealed: true }];
+  }
+  if (last.t === "agent") {
+    const step = last.steps[last.steps.length - 1];
+    if (!step || step.t !== "text" || step.sealed) return segs;
+    return [...segs.slice(0, -1), {
+      ...last,
+      steps: [...last.steps.slice(0, -1), { ...step, sealed: true }],
+    }];
+  }
+  return segs;
 }
 
 /** Fold one stream event into the turn's segments. */
