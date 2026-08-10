@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
-import { Stepper, Tabs } from "../../../ui";
+import { ConfirmDialog, Stepper, Tabs } from "../../../ui";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -365,6 +365,7 @@ function ScheduleTab() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [removingIdx, setRemovingIdx] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -434,10 +435,10 @@ function ScheduleTab() {
     setDoc({ ...doc, schedules: [...doc.schedules, newEntry] });
   };
 
-  const removeSchedule = (idx: number) => {
-    if (!doc) return;
-    if (!confirm(`Remove schedule "${doc.schedules[idx].id}"?`)) return;
-    setDoc({ ...doc, schedules: doc.schedules.filter((_, i) => i !== idx) });
+  const removeSchedule = () => {
+    if (!doc || removingIdx == null) return;
+    setDoc({ ...doc, schedules: doc.schedules.filter((_, i) => i !== removingIdx) });
+    setRemovingIdx(null);
   };
 
   if (loading) return <p>Loading schedule…</p>;
@@ -499,7 +500,7 @@ function ScheduleTab() {
                 style={{ ...inputStyle, fontSize: "0.78rem", fontFamily: "ui-monospace, monospace", width: "auto", padding: "0.25rem 0.4rem" }}
                 title="schedule id"
               />
-              <button onClick={() => removeSchedule(i)} style={{ fontSize: "0.78rem", padding: "0.25rem 0.55rem", color: "var(--err)" }}>
+              <button onClick={() => setRemovingIdx(i)} style={{ fontSize: "0.78rem", padding: "0.25rem 0.55rem", color: "var(--err)" }}>
                 remove
               </button>
             </div>
@@ -612,6 +613,15 @@ function ScheduleTab() {
         <button onClick={() => addSchedule("to-work")}>+ AM (to-work)</button>
         <button onClick={() => addSchedule("to-home")}>+ PM (to-home)</button>
       </div>
+
+      <ConfirmDialog
+        open={removingIdx != null}
+        onCancel={() => setRemovingIdx(null)}
+        onConfirm={removeSchedule}
+        title="Remove this schedule?"
+        body={`Removes "${removingIdx != null ? doc.schedules[removingIdx]?.id ?? "" : ""}" and its departure times from your commute. Once you save, this can't be undone.`}
+        confirmLabel="Remove schedule"
+      />
     </div>
   );
 }

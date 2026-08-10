@@ -4,7 +4,7 @@ import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
 import { AppSettings } from "../../components/AppSettings";
 import LocationSettings from "../../components/appSettings/LocationSettings";
-import { Button, PageHeader, StatusDot } from "../../ui";
+import { Button, ConfirmDialog, PageHeader, StatusDot } from "../../ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
 import { Map, type LngLat } from "../../ui/Map";
@@ -162,6 +162,8 @@ export default function Location() {
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [, setTick] = useState(0);
 
   const loadLatest = useCallback(async () => {
@@ -229,13 +231,16 @@ export default function Location() {
   }, [loadLatest, loadFirstPage, loadTrack]);
 
   const onClear = async () => {
-    if (!confirm("Erase all stored location history? This can't be undone.")) return;
+    setClearing(true);
     try {
       const r = await fetch("/api/location/history", { method: "DELETE" });
       if (!r.ok) throw new Error(await r.text());
       await Promise.all([loadLatest(), loadFirstPage(), loadTrack()]);
+      setConfirmClear(false);
     } catch (e) {
       setErr(String(e));
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -320,9 +325,9 @@ export default function Location() {
       <div className="card">
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "0.5rem" }}>
           <strong>History {total != null ? `(${records.length} of ${total})` : `(${records.length})`}</strong>
-          <button onClick={onClear} style={{ background: "var(--err)", color: "white", borderColor: "transparent" }}>
+          <Button variant="danger" onClick={() => setConfirmClear(true)}>
             Clear all
-          </button>
+          </Button>
         </div>
         {records.length === 0 ? (
           <p className="muted" style={{ marginTop: "0.5rem" }}>No history.</p>
@@ -367,6 +372,16 @@ export default function Location() {
       <AppSettings>
         <LocationSettings />
       </AppSettings>
+
+      <ConfirmDialog
+        open={confirmClear}
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={onClear}
+        title="Erase all stored location history?"
+        body="Deletes every position ping Workshop has stored, including the map track. This can't be undone."
+        confirmLabel="Erase history"
+        busy={clearing}
+      />
 
       {/* In-app assistant — defaults to location scope (knows last ping + age);
           operator can swap providers from the picker inside the dock. */}

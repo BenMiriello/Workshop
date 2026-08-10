@@ -96,6 +96,7 @@ export default function AutonomyControls() {
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmStopAll, setConfirmStopAll] = useState(false);
   const [confirmUnload, setConfirmUnload] = useState(false);
+  const [confirmReserve, setConfirmReserve] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -160,6 +161,21 @@ export default function AutonomyControls() {
     } finally {
       setBusy(null);
       setConfirmUnload(false);
+    }
+  };
+
+  const onReserve = async () => {
+    setBusy("reserve");
+    try {
+      await fetch("/api/gpu/broker/reserve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration_s: 1800, reason: "operator hold via UI" }),
+      });
+      await load();
+    } finally {
+      setBusy(null);
+      setConfirmReserve(false);
     }
   };
 
@@ -285,6 +301,16 @@ export default function AutonomyControls() {
         confirmLabel="Free GPU"
         busy={busy === "unload"}
       />
+      <ConfirmDialog
+        open={confirmReserve}
+        onCancel={() => setConfirmReserve(false)}
+        onConfirm={onReserve}
+        danger={false}
+        title="Reserve the GPU for yourself?"
+        body="Holds the GPU for you for 30 minutes. Workshop and other apps lose it until the hold expires."
+        confirmLabel="Reserve for 30m"
+        busy={busy === "reserve"}
+      />
 
       {bro?.available && (
         <Row label="my leases">
@@ -321,18 +347,7 @@ export default function AutonomyControls() {
       {bro?.available && (
         <Row label="operator hold">
           <button
-            onClick={async () => {
-              if (!confirm("Reserve the GPU for yourself for 30 minutes? Workshop and other apps lose it.")) return;
-              setBusy("reserve");
-              try {
-                await fetch("/api/gpu/broker/reserve", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ duration_s: 1800, reason: "operator hold via UI" }),
-                });
-                await load();
-              } finally { setBusy(null); }
-            }}
+            onClick={() => setConfirmReserve(true)}
             disabled={busy != null}
             style={{ padding: "0.2rem 0.6rem", fontSize: "0.78rem" }}
           >

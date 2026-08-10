@@ -522,6 +522,8 @@ function ChatSection() {
 // ----------------------------------------------------------------------------
 function HealthSection() {
   const [metrics, setMetrics] = useState<Record<string, { ts?: string; date?: string; qty?: unknown; units?: string }> | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [, setTick] = useState(0);
 
   const load = useCallback(async () => {
@@ -542,9 +544,14 @@ function HealthSection() {
   }, [load]);
 
   const onClear = async () => {
-    if (!confirm("Erase ALL stored Apple Health data?")) return;
-    await fetch("/api/health/history", { method: "DELETE" });
-    await load();
+    setClearing(true);
+    try {
+      await fetch("/api/health/history", { method: "DELETE" });
+      await load();
+    } finally {
+      setClearing(false);
+      setConfirmClear(false);
+    }
   };
 
   const entries = metrics ? Object.entries(metrics) : [];
@@ -583,10 +590,19 @@ function HealthSection() {
         </Row>
       ))}
       <Row label="history">
-        <button onClick={onClear} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
+        <button onClick={() => setConfirmClear(true)} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
           clear all data
         </button>
       </Row>
+      <ConfirmDialog
+        open={confirmClear}
+        onCancel={() => setConfirmClear(false)}
+        onConfirm={onClear}
+        title="Erase all stored Apple Health data?"
+        body="Deletes every Apple Health metric Workshop has stored. This can't be undone, and the data only comes back if Health Auto Export pushes it again."
+        confirmLabel="Erase health data"
+        busy={clearing}
+      />
     </Section>
   );
 }
