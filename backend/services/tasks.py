@@ -728,6 +728,16 @@ def _normalize(task: dict) -> dict:
         # by the ticket-maker, and when a run fails on a bad spec that difference is
         # the whole question. Defaults from source.kind for records written before it.
         "scoped_by": str(task.get("scoped_by") or _scoped_by_from_source(src)),
+        # sync: present only while this ticket is LINKED to an external tracker.
+        # `None` means local-only, which is most tickets and the default. The
+        # shadow inside it is the last-synced value of each field, which is what
+        # makes a three-way merge possible instead of a last-writer-wins clobber.
+        "sync": task.get("sync") if isinstance(task.get("sync"), dict) else None,
+        # external_refs: links from PAST bindings, frozen. A disconnect collapses
+        # `sync` into an entry here rather than erasing it, so a ticket can always
+        # say "this was BM-17 in Jira" long after that integration is gone.
+        "external_refs": [r for r in (task.get("external_refs") or [])
+                          if isinstance(r, dict)],
         "created": str(task.get("created") or now),
         "updated": str(task.get("updated") or now),
     }
@@ -1400,6 +1410,7 @@ def add(
     source: dict | None = None,
     provenance: str | None = None,
     scoped_by: str | None = None,
+    sync: dict | None = None,
 ) -> dict:
     # Two ways in, one shape out. A caller with a real title/body pair (the API,
     # the ticket-maker, an import) passes them; a caller holding one blob (the
@@ -1448,7 +1459,7 @@ def add(
             "discovered_from": discovered_from, "effort": effort,
             "latitude": latitude,
             "source": source or {"kind": "operator", "ref": None},
-            "scoped_by": scoped_by,
+            "scoped_by": scoped_by, "sync": sync,
             "provenance": provenance, "created": now, "updated": now,
         })
         tasks.append(task)
@@ -1470,6 +1481,8 @@ def update(
     depends_on: list[str] | None = None,
     relates_to: list[str] | None = None,
     labels: list[str] | None = None,
+    sync: dict | None = None,
+    unlink: bool = False,
     touches: list[str] | None = None,
     blocked_reason: str | None = None,
     acceptance: dict | None = None,
@@ -1567,6 +1580,21 @@ def update(
             found["text"] = join_text(found["title"], found["body"])
         if labels is not None:
             found["labels"] = _norm_labels(labels)
+        if sync is not None:
+            # An empty dict clears the link WITHOUT recording an archive entry;
+            # `unlink` is the path that keeps the history. Both exist because
+            # clearing a half-written link is not the same act as disconnecting.
+            found["sync"] = sync or None
+        if unlink and found.get("sync"):
+            # Collapse the live link into a frozen reference. Never delete it: a
+            # ticket has to be able to say what it used to be, permanently.
+            old = found["sync"]
+            found["external_refs"] = list(found.get("external_refs") or []) + [{
+                "provider": old.get("provider"), "key": old.get("remote_key"),
+                "url": old.get("url"), "remote_id": old.get("remote_id"),
+                "unlinked_at": _now(),
+            }]
+            found["sync"] = None
         if assignee is not None:
             found["assignee"] = assignee
             found["owner"] = assignee
