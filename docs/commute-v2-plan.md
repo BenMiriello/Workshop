@@ -118,7 +118,7 @@ becomes a subset; migrate dispatch to write the canonical object.
 ## Surfaces
 
 ### Discord (keep current cadence + delivery)
-`commute_tick.sh` unchanged in spirit: poll → reason → render the message object → send /queue
+`apps/commute/scripts/tick.sh` unchanged in spirit: poll → reason → render the message object → send /queue
 to `the notify queue`. Reports keep coming through Discord as they do now.
 
 ### App "Now / Suggestions" feed — `frontend/src/pages/apps/commute/*`

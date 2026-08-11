@@ -36,7 +36,7 @@ tsc, `scripts/check_design.sh`) and is committed on `mobile-app-rebuild`. Read
   finance/budget/location/commute/health/birds/chat; no client param widens scope.
 
 ## Phase 3 — Internal callers + remove the IP-trust/fail-open
-- Give cron, `commute_tick.sh`, backend self-calls, and the Letta tool sandbox scoped
+- Give cron, `apps/commute/scripts/tick.sh`, backend self-calls, and the Letta tool sandbox scoped
   service tokens (operator-owned); wire ingest tokens for `/location/update`, `/push/register`,
   `/birds/webhook`; bind owntracks/health Basic creds to the owner; scope `/tools/*`.
 - Delete loopback + CGNAT trust and the fail-open branch from `deps_auth.py`; move every

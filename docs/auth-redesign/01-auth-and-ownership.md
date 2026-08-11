@@ -93,7 +93,7 @@ multi-tenant story for the platform is future work; until then, admin-only and f
 
 ## 4. Internal / machine callers (least privilege)
 
-Today every internal caller rides loopback with no credential (cron, `commute_tick.sh`,
+Today every internal caller rides loopback with no credential (cron, `apps/commute/scripts/tick.sh`,
 backend self-calls, the Letta tool sandbox via `host.docker.internal`, `/birds/webhook`),
 and two ingest paths use their own HTTP Basic (`owntracks`, `health/ingest`). Redesign:
 

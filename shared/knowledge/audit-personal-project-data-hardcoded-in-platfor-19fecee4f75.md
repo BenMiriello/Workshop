@@ -28,7 +28,7 @@ routes/events.py:35 KNOWN_SOURCES; services/stores.py:279-301 register_builtin_s
 App.tsx statically imports 16 app modules + hardcodes all routes; Birds RecorderProvider wraps the app root at App.tsx:97; appNav.tsx:35,318 breadcrumbs + app menu; Apps.tsx:524 switch over five apps; Settings.tsx:704 embeds the health app panel
 
 **App content in platform dirs**
-birdnet/ (40 tracked files, 2.2GB on disk, fits neither app contract); backend/springer_app.py + services/springer_auth.py; backend/mcp/plaid/ ("for the bridge agent (the service user tenant)"); backend/store-policies.json (tracked, personal account rules); shared/relay-corpus.jsonl (tracked runtime telemetry); frontend/src/components/PlaidLink.tsx + appSettings/*; ~180 lines of birds/budget CSS in src/styles.css; scripts/commute_tick.sh, commute_notes.sh (:87 puts the operator's name in a model prompt)
+birdnet/ (40 tracked files, 2.2GB on disk, fits neither app contract); backend/springer_app.py + services/springer_auth.py; backend/mcp/plaid/ ("for the bridge agent (the service user tenant)"); backend/store-policies.json (tracked, personal account rules); shared/relay-corpus.jsonl (tracked runtime telemetry); frontend/src/components/PlaidLink.tsx + appSettings/*; ~180 lines of birds/budget CSS in src/styles.css; apps/commute/scripts/tick.sh, apps/commute/scripts/notes.sh (:87 puts the operator's name in a model prompt)
 
 ## Mechanisms that already exist for the fix
 - AppSpec catalog (backend/services/app_registry.py) + install list (.runtime/installed-apps.json, WORKSHOP_INSTALLED_APPS)

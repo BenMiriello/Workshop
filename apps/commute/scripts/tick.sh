@@ -1,5 +1,5 @@
 #!/bin/bash
-# commute_tick.sh — single-poll + LLM-decision tick for the commute service.
+# apps/commute/scripts/tick.sh — single-poll + LLM-decision tick for the commute service.
 #
 # Pattern:
 #   1. POST /commute/poll        — refresh GTFS-RT state from 511.org
@@ -21,7 +21,7 @@ BACKEND=${WORKSHOP_BACKEND:-http://127.0.0.1:8000}
 SECRETS_ENV="${WORKSHOP_SECRETS_ENV:-$HOME/.config/workshop/secrets.env}"
 [ -f "$SECRETS_ENV" ] && { set -a; . "$SECRETS_ENV"; set +a; }
 COMMUTE_AUTH=(-H "Authorization: Bearer ${WORKSHOP_SVC_COMMUTE:-}")
-WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 LOG="$WORKSHOP/.runtime/commute/tick.log"
 LOCK=/tmp/workshop-commute-tick.lock
 CHECKPOINT="${1:-during}"  # pre-1h | pre-30m | during | post (default: during)

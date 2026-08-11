@@ -1,5 +1,5 @@
 #!/bin/bash
-# commute_notes.sh — post-commute pattern-learning note writer.
+# apps/commute/scripts/notes.sh — post-commute pattern-learning note writer.
 #
 # Run once per weekday at 19:30 PT (after the PM commute window closes).
 # Steps:
@@ -16,7 +16,7 @@ BACKEND=${WORKSHOP_BACKEND:-http://127.0.0.1:8000}
 SECRETS_ENV="${WORKSHOP_SECRETS_ENV:-$HOME/.config/workshop/secrets.env}"
 [ -f "$SECRETS_ENV" ] && { set -a; . "$SECRETS_ENV"; set +a; }
 COMMUTE_AUTH=(-H "Authorization: Bearer ${WORKSHOP_SVC_COMMUTE:-}")
-WORKSHOP_DIR="${WORKSHOP_DIR:-$HOME/workshop}"
+WORKSHOP_DIR="${WORKSHOP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 NOTES_DIR="${WORKSHOP_COMMUTE_NOTES_DIR:-$WORKSHOP_DIR/.runtime/commute-notes}"
 LOG="$WORKSHOP_DIR/.runtime/commute/tick.log"
 TODAY=$(date +%Y-%m-%d)
@@ -133,7 +133,7 @@ if [[ "$PROMPT" == "__NO_COMMUTE_DATA__" ]]; then
     {
         printf "# Commute note — %s\n\n" "$TODAY"
         printf "No commute data recorded today — the monitor logged no checkpoints and dispatched no alerts, so there is nothing to summarise (schedule inactive or data unavailable). On-time status is unknown, not assumed.\n\n"
-        printf -- "---\n_Generated %s by commute_notes.sh (no-data path)_\n" "$TS"
+        printf -- "---\n_Generated %s by apps/commute/scripts/notes.sh (no-data path)_\n" "$TS"
     } > "$OUTFILE"
     echo "[$TS] commute-notes: wrote $OUTFILE (no-data)" >> "$LOG"
     exit 0
@@ -166,7 +166,7 @@ echo "[$TS] commute-notes: summary (${#SUMMARY} chars)" >> "$LOG"
 {
     printf "# Commute note — %s\n\n" "$TODAY"
     printf "%s\n\n" "$SUMMARY"
-    printf -- "---\n_Generated %s by commute_notes.sh_\n" "$TS"
+    printf -- "---\n_Generated %s by apps/commute/scripts/notes.sh_\n" "$TS"
 } > "$OUTFILE"
 
 echo "[$TS] commute-notes: wrote $OUTFILE" >> "$LOG"

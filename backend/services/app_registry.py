@@ -111,6 +111,10 @@ class AppSpec:
     # Env vars to strip from a spawned agent turn because they are this app's
     # secrets and nothing downstream should inherit them (llm_router).
     secret_env: tuple[str, ...] = ()
+    # Processes this app expects to be running, probed by routes/services.py.
+    # Each entry: (name, category, url, probe_path, expect_status). An app that
+    # runs out of process is the only thing that knows what "up" means for it.
+    service_probes: tuple[tuple[str, str, str, str, tuple[int, ...]], ...] = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -447,6 +451,19 @@ def _wearables_spec() -> AppSpec:
             "provides": [],
             "needs": [],
         },
+        # This app IS three external processes; the probes are its whole
+        # backend presence, which is why the platform used to carry them.
+        service_probes=(
+            ("open-wearables-backend", "wearables",
+             os.environ.get("WORKSHOP_WEARABLES_BACKEND", "http://127.0.0.1:8100"),
+             "/", (200, 301, 302, 404)),
+            ("open-wearables-frontend", "wearables",
+             os.environ.get("WORKSHOP_WEARABLES_FRONTEND", "http://127.0.0.1:3100"),
+             "/", (200, 301, 302)),
+            ("open-wearables-flower", "wearables",
+             os.environ.get("WORKSHOP_WEARABLES_FLOWER", "http://127.0.0.1:5556"),
+             "/", (200, 401)),
+        ),
     )
 
 
@@ -567,6 +584,11 @@ def _owner_file(name: str):
 
     base = _stores._operator_runtime_dir()
     return None if base is None else base / name
+
+
+def installed_service_probes() -> list[tuple[str, str, str, str, tuple[int, ...]]]:
+    """Every installed app's expected processes, for the service probe route."""
+    return [pr for spec in installed_specs() for pr in spec.service_probes]
 
 
 def installed_app_ids() -> list[str]:

@@ -1,8 +1,14 @@
-"""Service registry. Probes the health of known Workshop services.
+"""Service registry. Probes the health of the processes this install expects.
 
-The list is static (defined here); each probe is a HEAD/GET against a known
-health path with a tight timeout. No background polling — checks run on
-request so the response reflects the current state, not stale cache.
+Each probe is a HEAD/GET against a known health path with a tight timeout. No
+background polling — checks run on request so the response reflects the current
+state, not a stale cache.
+
+Two sources, because there are two kinds of process. The PLATFORM's own are
+listed here. An app that runs out of process (a separate backend, a worker, a
+dashboard) declares its own on its AppSpec, so its probes exist exactly while it
+is installed and a fresh instance does not report three wearables services down
+because it inherited someone else's roster.
 """
 from __future__ import annotations
 
@@ -29,15 +35,27 @@ class Service:
     notes: str = ""
 
 
-SERVICES: list[Service] = [
-    Service("workshop-backend", "core", "http://127.0.0.1:8000", "/healthz"),
-    Service("workshop-frontend", "core", "http://127.0.0.1:5173", "/"),
-    Service("letta", "memory", "http://127.0.0.1:8283", "/v1/health/", expect_status=(200, 404)),
-    Service("ollama", "models", "http://127.0.0.1:11434", "/api/tags"),
-    Service("open-wearables-backend", "wearables", "http://127.0.0.1:8100", "/", expect_status=(200, 301, 302, 404)),
-    Service("open-wearables-frontend", "wearables", "http://127.0.0.1:3100", "/", expect_status=(200, 301, 302)),
-    Service("open-wearables-flower", "wearables", "http://127.0.0.1:5556", "/", expect_status=(200, 401)),
+PLATFORM_SERVICES: list[Service] = [
+    Service("workshop-backend", "core",
+            os.environ.get("WORKSHOP_BACKEND_URL", "http://127.0.0.1:8000"), "/healthz"),
+    Service("workshop-frontend", "core",
+            os.environ.get("WORKSHOP_FRONTEND_URL", "http://127.0.0.1:5173"), "/"),
+    Service("letta", "memory",
+            os.environ.get("LETTA_URL", "http://127.0.0.1:8283"), "/v1/health/",
+            expect_status=(200, 404)),
+    Service("ollama", "models",
+            os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434"), "/api/tags"),
 ]
+
+
+def services() -> list[Service]:
+    """Platform processes plus whatever the installed apps expect."""
+    from services import app_registry
+
+    out = list(PLATFORM_SERVICES)
+    for name, category, url, probe_path, expect in app_registry.installed_service_probes():
+        out.append(Service(name, category, url, probe_path, expect_status=expect))
+    return out
 
 
 async def _probe(client: httpx.AsyncClient, s: Service) -> dict:
@@ -73,7 +91,7 @@ async def _probe(client: httpx.AsyncClient, s: Service) -> dict:
 @router.get("/")
 async def list_services():
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(*(_probe(client, s) for s in SERVICES))
+        results = await asyncio.gather(*(_probe(client, s) for s in services()))
     return {
         "services": results,
         "summary": {

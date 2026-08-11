@@ -110,7 +110,7 @@ reader. Grep first; the audit found only a self-reference. Remove it.
 ## R9 — Migration ordering inside Phase 3 (do not break the running system)
 
 Order strictly: (1) mint + write all caller tokens to `secrets.env` and update every caller
-(cron `commute_tick.sh`/`commute_notes.sh`, the backend self-calls in `commute/reason.py` and
+(cron `apps/commute/scripts/tick.sh`/`apps/commute/scripts/notes.sh`, the backend self-calls in `commute/reason.py` and
 `commute/llm.py` to `/relay/*`, the Letta `sandbox_wrappers.py` → `/tools/*`, BirdNET-Go →
 `/birds/webhook`, OwnTracks/Health Basic → owner), (2) verify a real commute tick + a real
 BirdNET detection + a relay call still land WITH the tokens and loopback-trust still present,
