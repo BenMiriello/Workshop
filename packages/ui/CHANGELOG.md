@@ -12,6 +12,31 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.2.1 — 2026-08-11 — `Markdown` is memoized
+
+Compatible. Same export, same props, no call-site changes required.
+
+`Markdown` is now wrapped in `React.memo`, and its `remarkPlugins` array is
+hoisted to a module constant instead of being allocated inline on every render.
+
+Why it matters to a consumer: markdown parsing is the most expensive thing this
+kit does, and the component is typically rendered once per item in a list that
+re-renders for reasons that have nothing to do with the markdown. In the
+Workshop chat the composer's draft text is state on the component that also owns
+the transcript, so every keystroke re-rendered every message. Measured against a
+real 67-message / 310 KB thread, one pass of remark parse + mdast->hast is about
+150 ms on a desktop core, which is 600-900 ms on a phone, per keystroke, scaling
+linearly with thread length. Typing was unusable on mobile.
+
+Both props are strings, and a given message's text is stable between renders, so
+the shallow compare skips the parse entirely. The inline `[remarkGfm]` literal
+mattered too: a new array identity every render defeats both this memo and
+react-markdown's own internal caching.
+
+If you were relying on `Markdown` being a plain function component (calling it
+directly rather than rendering it, or attaching properties to it), it is now a
+`MemoExoticComponent`. Rendering it as JSX is unchanged.
+
 ## 0.2.0 — 2026-08-10 — the kit becomes a real package
 
 **Renumbered from 1.x to 0.x.** The 1.0.0 / 1.1.0 / 1.1.1 sections below describe
