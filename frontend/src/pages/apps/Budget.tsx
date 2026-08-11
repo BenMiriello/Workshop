@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import "./budget/budget.css";
 import { Check, TriangleAlert, Pencil, Trash2, Plus, RefreshCw } from "lucide-react";
 import { AppGroupNav } from "../../components/appNav";
 import { Button, Field, Input, PageHeader, Select, Tabs } from "@workshop/ui";

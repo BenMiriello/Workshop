@@ -1,4 +1,5 @@
 import { useState } from "react";
+import "./birds.css";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { MapPin, Smartphone, Clock, RotateCcw, MoreHorizontal, X } from "lucide-react";
 import { PRIMARY_NAV, MANAGE_NAV, InlineSelect } from "./BirdsHeader";
