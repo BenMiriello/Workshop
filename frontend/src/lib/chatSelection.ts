@@ -135,8 +135,14 @@ export const QUEUE_PREFIX = "ws-chat-queue:";
 // enter on and has not got back, and it used to live only in the reducer — so a
 // reload or a thread switch erased it with no trace. A failed entry never drains
 // on its own (the queue holds beside it); it waits for Retry.
+//
+// `error` is WHY it failed, and it is durable for exactly the same reason. The
+// diagnosis lived only in the reducer, so a reload turned "the server refused
+// this message (403: developer mode is off)" into UnsentNote's default line,
+// "this message never reached the server" — which points at the network no
+// matter what actually happened.
 export type QueuedMessage = {
-  text: string; sentAt: string; clientId: string; failed?: boolean;
+  text: string; sentAt: string; clientId: string; failed?: boolean; error?: string;
 };
 
 export function readQueue(threadKey: string): QueuedMessage[] {
@@ -162,6 +168,7 @@ export function readQueue(threadKey: string): QueuedMessage[] {
           text: x.text,
           sentAt: typeof x.sentAt === "string" ? x.sentAt : "",
           ...(x.failed ? { failed: true as const } : {}),
+          ...(typeof x.error === "string" && x.error ? { error: x.error } : {}),
           // A queue written by an older build has no id. Minting one here is
           // right: it has not been sent, so no committed event can be carrying
           // an id it would need to match.
@@ -257,14 +264,22 @@ export function withoutIds(queue: QueuedMessage[], ids: Set<string>): QueuedMess
 // Mark a batch the server refused, so it says so instead of sitting there
 // claiming it will send when the current turn finishes. It will not: the queue
 // holds after a refusal, by design, and only Retry releases it.
-export function markFailed(batch: QueuedMessage[]): QueuedMessage[] {
-  return batch.map((m) => (m.failed ? m : { ...m, failed: true }));
+export function markFailed(batch: QueuedMessage[], error?: string): QueuedMessage[] {
+  return batch.map((m) => {
+    // Nothing to say that is not already said. Returning the entry itself keeps
+    // its identity, which is what stops a re-mark from churning storage and the
+    // list that renders from it.
+    if (m.failed && (!error || m.error === error)) return m;
+    return { ...m, failed: true as const, ...(error ? { error } : {}) };
+  });
 }
 
 export function clearFailedFlag(queue: QueuedMessage[], clientId: string): QueuedMessage[] {
   return queue.map((m) => {
     if (m.clientId !== clientId || !m.failed) return m;
-    const { failed: _dropped, ...rest } = m;
+    // The diagnosis goes with the flag. It described the attempt that failed,
+    // and a retry is a new attempt: leaving it would explain the wrong one.
+    const { failed: _dropped, error: _why, ...rest } = m;
     return rest;
   });
 }

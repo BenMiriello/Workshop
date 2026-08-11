@@ -291,6 +291,90 @@ describe("withStaleFailures", () => {
     ]);
     expect(shape(out)).toEqual(["user:newer", "pending:first", "pending:second", "live:*"]);
   });
+
+  // The diagnosis is durable now, so the bubble that comes back after a reload
+  // says the same thing it said before it. Dropping it here is what made every
+  // reloaded failure read "this message never reached the server" (UnsentNote's
+  // default) regardless of what the server had actually answered.
+  it("carries the reason across the reload", () => {
+    const blocks = selectTranscript(stateOf([user("newer")]));
+    const out = withStaleFailures(blocks, [
+      { clientId: "s1", text: "first", error: "Not sent: the server refused this message (403)." },
+    ]);
+    const p = out.find((b) => b.kind === "pending");
+    expect(p && p.kind === "pending" && p.error)
+      .toBe("Not sent: the server refused this message (403).");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WHERE A FAILED SEND SITS.
+// ---------------------------------------------------------------------------
+// Reported 2026-08-11: "it just sort of sits there, and then I send new
+// messages, and my new messages show above this old message, and then
+// subsequent chat messages show above these messages."
+//
+// A failed send never leaves `pending` (nothing commits it, nothing retracts
+// it), and every pending send used to be appended after the whole committed
+// log, so it stayed nailed to the bottom while the conversation grew above it.
+describe("a pending send's place in the log", () => {
+  const failed = (s: ThreadState, clientId: string, text: string): ThreadState =>
+    threadReducer(
+      threadReducer(s, { type: "sendStarted", clientId, text, ts: "2026-08-11T00:00:00Z" }),
+      { type: "sendFailed", clientId, error: "Not sent." },
+    );
+
+  it("renders last while it is still in flight, which is where it belongs", () => {
+    const s = threadReducer(stateOf([user("a")]),
+      { type: "sendStarted", clientId: "c1", text: "b", ts: "2026-08-11T00:00:00Z" });
+    expect(shape(selectTranscript(s))).toEqual(["user:a", "pending:b"]);
+  });
+
+  it("stays where it was sent once the log has moved past it", () => {
+    const s0 = stateOf([user("a")]);
+    const withFailure = failed(s0, "c1", "lost");
+    // Two more messages land, committed, after the failure.
+    const later = threadReducer(withFailure, {
+      type: "eventsReceived",
+      events: [user("b"), reply("c", { turn_id: "r9", segments: [text("c")] })],
+      lastSeq: 99, activeRun: null,
+    });
+    expect(shape(selectTranscript(later)))
+      .toEqual(["user:a", "pending:lost", "user:b", "assistant:c"]);
+  });
+
+  it("sinks below nothing, including a run that started after it", () => {
+    const s0 = stateOf([user("a")]);
+    const withFailure = failed(s0, "c1", "lost");
+    const later = threadReducer(withFailure, {
+      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeRun: null,
+    });
+    const live = threadReducer(later, { type: "runStarted", runId: "r1" });
+    expect(shape(selectTranscript(live)))
+      .toEqual(["user:a", "pending:lost", "user:b", "live:*"]);
+  });
+
+  it("keeps two failures in the order they were made", () => {
+    let s = failed(stateOf([user("a")]), "c1", "first");
+    s = threadReducer(s, {
+      type: "eventsReceived", events: [user("b")], lastSeq: 98, activeRun: null,
+    });
+    s = failed(s, "c2", "second");
+    s = threadReducer(s, {
+      type: "eventsReceived", events: [user("c")], lastSeq: 99, activeRun: null,
+    });
+    expect(shape(selectTranscript(s)))
+      .toEqual(["user:a", "pending:first", "user:b", "pending:second", "user:c"]);
+  });
+
+  it("goes to the very top when it failed on an empty thread", () => {
+    const empty = initialThreadState("t");
+    const withFailure = failed(empty, "c1", "lost");
+    const later = threadReducer(withFailure, {
+      type: "eventsReceived", events: [user("b")], lastSeq: 99, activeRun: null,
+    });
+    expect(shape(selectTranscript(later))).toEqual(["pending:lost", "user:b"]);
+  });
 });
 
 // The split that keeps a streamed frame cheap. These are not style assertions:

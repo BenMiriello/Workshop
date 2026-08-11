@@ -2,12 +2,12 @@ import { useCallback, useRef, useState } from "react";
 import { chatApi, newClientId, shortHttpError, type ThreadSummary } from "../../lib/chat";
 import type { QueuedMessage } from "../../lib/chatSelection";
 import type { ChatModeId } from "./chatModes";
-import { sendFailureText } from "./sendFailure";
+import { isTransientSendFailure, sendFailureText } from "./sendFailure";
 import { planSend } from "./sendPlan";
 import { retiredCommand, typedCommand } from "./typedCommands";
 import type { ThreadAction, ThreadState } from "./threadStore";
 import { committedMessages } from "./transcriptBlocks";
-import type { MessageQueue } from "./useMessageQueue";
+import type { MessageQueue, SendOutcome } from "./useMessageQueue";
 import type { ChatProblem } from "./chatProblem";
 
 // SENDING, as one decision.
@@ -30,6 +30,14 @@ import type { ChatProblem } from "./chatProblem";
 // arrives, and it is what makes a retry after a dropped response land as the
 // same message rather than a second one (the log dedupes on it).
 
+// How long to wait before the one silent retry of a transient failure. Long
+// enough to clear a backend restart (the unit is back inside a second) and short
+// enough that the operator reads it as the send being slow, not as a send that
+// failed. See isTransientSendFailure.
+const RETRY_DELAY_MS = 900;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export type SendPipeline = {
   /** A turn has been requested and not confirmed yet. */
   starting: boolean;
@@ -39,12 +47,12 @@ export type SendPipeline = {
   submitText: (raw: string) => void;
   /** Re-send a message that never reached the server, under its own id. */
   retry: (clientId: string) => void;
-  /** What the queue calls when it drains. Resolves true once the server has the
+  /** What the queue calls when it drains. Resolves ok once the server has the
    *  batch; `fromQueue` says the caller will take it back on a refusal, so the
    *  bubbles are retracted rather than left on screen as N failed sends. */
   sendBatch: (
     text: string, parts: QueuedMessage[], opts?: { fromQueue?: boolean },
-  ) => Promise<boolean>;
+  ) => Promise<SendOutcome>;
 };
 
 export function useSendPipeline({
@@ -90,7 +98,7 @@ export function useSendPipeline({
   const sendTurn = useCallback(async (
     text: string, clientId: string, parts?: QueuedMessage[],
     opts?: { fromQueue?: boolean },
-  ): Promise<boolean> => {
+  ): Promise<SendOutcome> => {
     setStartingBoth(true);
     setTurnIsCompact(text.trim() === "/compact");
     try {
@@ -104,7 +112,7 @@ export function useSendPipeline({
         // just started used to be unreachable the moment you navigated away.
         adoptThread(t);
       }
-      const r = await fetch(`/api/chat/threads/${id}/turns`, {
+      const post = () => fetch(`/api/chat/threads/${id}/turns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -129,15 +137,38 @@ export function useSendPipeline({
             : {}),
         }),
       });
-      if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
-      const res = await r.json();
+      const attempt = async () => {
+        const r = await post();
+        if (!r.ok) {
+          throw new Error(shortHttpError(r.status, r.statusText, await r.text().catch(() => "")));
+        }
+        return r.json();
+      };
+      // ONE SILENT RETRY FOR A FAULT THAT IS ALREADY OVER.
+      //
+      // The deployment produces two of these on its own — the edge's pooled
+      // connection to the backend expiring on the same 5s clock the backend
+      // closes it on, and the ~1s window of a backend restart — and both are
+      // finished by the time the operator could read about them. Retrying under
+      // THE SAME CLIENT ID is not a second message: the log dedupes on it
+      // (chat_log.find_message_by_client_id), which is the property the retry
+      // button already relies on. See isTransientSendFailure for what does not
+      // qualify.
+      let res;
+      try {
+        res = await attempt();
+      } catch (first) {
+        if (!isTransientSendFailure(first)) throw first;
+        await sleep(RETRY_DELAY_MS);
+        res = await attempt();
+      }
       dispatch({ type: "sendAcked", clientId });
       for (const p of parts || []) dispatch({ type: "sendAcked", clientId: p.clientId });
       // Show the run as in flight in the same commit that stops "starting".
       // The re-attach effect opens the socket; nothing here needs to know how.
       if (res.turn_id) dispatch({ type: "runStarted", runId: res.turn_id });
       void sync();
-      return true;
+      return { ok: true };
     } catch (e) {
       const ids = parts?.length ? parts.map((p) => p.clientId) : [clientId];
       // The turn never started, so the server has no copy. Mark the bubble
@@ -170,8 +201,8 @@ export function useSendPipeline({
       // outright, text and all. The durable queue holds it, marked and held, so
       // Retry is still there afterwards. A batch from the queue is skipped
       // because the queue already holds those and is putting them back itself.
-      if (!opts?.fromQueue) queue.pushFailed(text, clientId);
-      return false;
+      if (!opts?.fromQueue) queue.pushFailed(text, clientId, undefined, reason);
+      return { ok: false, error: reason };
     } finally {
       setStartingBoth(false);
     }

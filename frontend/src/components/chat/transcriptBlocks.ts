@@ -1,7 +1,7 @@
 import type { ChatMsg, ChatSegment } from "../../lib/chat";
 import {
-  committedEvents, pendingSends,
-  type LogEvent, type PendingStatus, type ThreadState,
+  committedEvents, lastSeq, pendingSends,
+  type LogEvent, type PendingSend, type PendingStatus, type ThreadState,
 } from "./threadStore";
 import { cutPointOf, splitAtUnits } from "./transcriptUnits";
 
@@ -266,29 +266,65 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
   };
 }
 
+/** Where a pending send sits in the committed blocks: immediately after the last
+ *  block the log had when that send was made. */
+function anchorIndex(blocks: TranscriptBlock[], afterSeq: number): number {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const b = blocks[i];
+    if (b.kind === "message" && b.seq <= afterSeq) return i + 1;
+  }
+  return 0;
+}
+
 /** The committed blocks, then the live run, then pending sends.
  *
  *  Cheap by construction: one array copy of the committed block REFERENCES
  *  (nothing is re-derived), plus work proportional to the live run's own
- *  segments and the handful of pending sends. This is what runs per SSE frame. */
+ *  segments and the handful of pending sends. This is what runs per SSE frame.
+ *
+ *  A PENDING SEND THE LOG HAS MOVED PAST GOES WHERE IT WAS MADE.
+ *
+ *  Every pending send used to be appended here, unconditionally, which is right
+ *  for the ordinary one: it is the newest thing in the chat and belongs last.
+ *  It is wrong the moment a send FAILS, because a failed send never leaves
+ *  `pending` — nothing commits it and nothing retracts it — while the log goes
+ *  on growing underneath. So the failed bubble stayed nailed to the bottom of
+ *  the transcript and every message sent afterwards was drawn above it, along
+ *  with every reply to those. Reported 2026-08-11, in those words. Anchoring on
+ *  `afterSeq` puts it back among the messages it was actually typed between, and
+ *  costs the common case nothing: a send in flight was made at the tail, so its
+ *  anchor IS the end. */
 export function composeTranscript(
   committed: CommittedTranscript,
   state: ThreadState,
 ): TranscriptBlock[] {
   const out = committed.blocks.slice();
+  const tail = lastSeq(state);
+  const pending = pendingSends(state);
+
+  const toBlock = (p: PendingSend): TranscriptBlock => ({
+    kind: "pending", key: `p:${p.clientId}`, clientId: p.clientId, text: p.text,
+    status: p.status, ...(p.error ? { error: p.error } : {}),
+  });
+
+  // Anchored back-to-front so an index computed against `out` is still valid
+  // when its turn comes: `pendingSends` is in send order and the log only grows,
+  // so walking it backwards gives non-increasing indices, and two sends landing
+  // on the same index keep their order (the later one is inserted first and the
+  // earlier one pushes it right).
+  const atTail: TranscriptBlock[] = [];
+  for (let i = pending.length - 1; i >= 0; i--) {
+    const p = pending[i];
+    if (p.afterSeq >= tail) atTail.unshift(toBlock(p));
+    else out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
+  }
 
   if (state.activeRun) {
     out.push(...liveBlocks(
       state.activeRun.runId, state.activeRun.segments, committed.heldForActiveRun,
     ));
   }
-
-  for (const p of pendingSends(state)) {
-    out.push({
-      kind: "pending", key: `p:${p.clientId}`, clientId: p.clientId, text: p.text,
-      status: p.status, ...(p.error ? { error: p.error } : {}),
-    });
-  }
+  out.push(...atTail);
 
   return out;
 }
@@ -306,7 +342,7 @@ export function composeTranscript(
  *  sit at without claiming to be part of what is running now. */
 export function withStaleFailures(
   blocks: TranscriptBlock[],
-  staleFailed: { clientId: string; text: string }[],
+  staleFailed: { clientId: string; text: string; error?: string }[],
 ): TranscriptBlock[] {
   if (!staleFailed.length) return blocks;
   const liveAt = blocks.findIndex((b) => b.kind === "live");
@@ -314,6 +350,11 @@ export function withStaleFailures(
   const extra: TranscriptBlock[] = staleFailed.map((q) => ({
     kind: "pending", key: `stale:${q.clientId}`, clientId: q.clientId,
     text: q.text, status: "failed",
+    // WHY IT FAILED, carried across the reload with the text. It used to be
+    // dropped here, so a 403 or a 500 came back after a refresh reading "this
+    // message never reached the server" (UnsentNote's default) — the one
+    // sentence that is true of no diagnosed failure at all.
+    ...(q.error ? { error: q.error } : {}),
   }));
   return [...blocks.slice(0, insertAt), ...extra, ...blocks.slice(insertAt)];
 }

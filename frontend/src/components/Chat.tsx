@@ -20,7 +20,7 @@ import {
   deriveMode, buildSlug, taskScopeFor, composerPlaceholder,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
-import { useMessageQueue } from "./chat/useMessageQueue";
+import { useMessageQueue, type SendOutcome } from "./chat/useMessageQueue";
 import { useLogScroll } from "./chat/useLogScroll";
 import { useVoiceSettle } from "./chat/useVoiceSettle";
 import { useTurnStream } from "./chat/useTurnStream";
@@ -145,8 +145,8 @@ export default function Chat({
       text: string,
       parts: { text: string; sentAt: string; clientId: string }[],
       opts?: { fromQueue?: boolean },
-    ) => Promise<boolean>
-  >(async () => false);
+    ) => Promise<SendOutcome>
+  >(async () => ({ ok: false, error: "The chat is still starting up." }));
   const [compacting, setCompacting] = useState(false);
   // "May the queue send now" is computed near the bottom of this component, from
   // state that is only available once the store and the send pipeline exist. The

@@ -89,6 +89,15 @@ import { splitFirstTurn } from "./turnBatching";
 //     queued elsewhere — and the tab that DID hold it might not be the one that
 //     notices the turn end. A `storage` listener adopts another tab's write.
 
+/** How a send ended.
+ *
+ *  THE REASON TRAVELS WITH THE REFUSAL. A drained batch is settled by the queue,
+ *  not by the sender that knows what went wrong, and this used to be a bare
+ *  boolean — so the queue wrote the batch back marked `failed` with nothing to
+ *  say about why, and the operator got UnsentNote's default line ("this message
+ *  never reached the server") for a 403 that had named its own cause. */
+export type SendOutcome = { ok: true } | { ok: false; error: string };
+
 export type MessageQueue = {
   items: QueuedMessage[];
   set: (next: QueuedMessage[]) => void;
@@ -106,9 +115,9 @@ export type MessageQueue = {
   // turns out not to be needed — a no-op if the queue already drained, which is
   // the right answer: it was sent, so there is nothing to retract.
   drop: (clientId: string) => void;
-  // A send the server refused (invariant 10). Held durably, marked, and the
-  // queue holds so nothing sends it unattended.
-  pushFailed: (text: string, clientId: string, sentAt?: string) => void;
+  // A send the server refused (invariant 10). Held durably, marked, WITH THE
+  // REASON, and the queue holds so nothing sends it unattended.
+  pushFailed: (text: string, clientId: string, sentAt?: string, error?: string) => void;
   // Retry: unmark it and hand the wheel back, so the ordinary self-drain sends
   // it as the turn it always was. Nothing bespoke re-sends a failed entry.
   retryFailed: (clientId: string) => void;
@@ -152,9 +161,10 @@ export function useMessageQueue({
   // see the previous render's `true` and fire a second turn alongside the first.
   canDrain: boolean;
   canDrainNow: () => boolean;
-  // Hand the batch to the send path. Resolves TRUE only once the server has
+  // Hand the batch to the send path. Resolves ok only once the server has
   // accepted it; until then the batch stays in durable storage (invariant 8).
-  send: (text: string, parts: QueuedMessage[]) => Promise<boolean>;
+  // A refusal carries the reason, which is written down with the batch.
+  send: (text: string, parts: QueuedMessage[]) => Promise<SendOutcome>;
 }): MessageQueue {
   const [items, setItems] = useState<QueuedMessage[]>([]);
   const itemsRef = useRef<QueuedMessage[]>([]);
@@ -284,7 +294,10 @@ export function useMessageQueue({
   }, [blankKey]);
 
   // The end of a drain (invariant 8): the server took the batch, or it did not.
-  const settleDrain = useCallback((key: string, batch: QueuedMessage[], ok: boolean) => {
+  const settleDrain = useCallback((
+    key: string, batch: QueuedMessage[], outcome: SendOutcome,
+  ) => {
+    const ok = outcome.ok;
     const ids = new Set(batch.map((m) => m.clientId));
     if (!inFlightRef.current.some((m) => ids.has(m.clientId))) {
       // The queue has moved to another thread and left this batch behind in
@@ -305,15 +318,20 @@ export function useMessageQueue({
     // ordinary queued message — "sends when the current turn finishes" — which
     // is precisely what a held entry does not do, so a refused batch looked like
     // a patient one for as long as the operator left it alone.
-    set(restoreBatch(markFailed(batch), itemsRef.current));
+    set(restoreBatch(markFailed(batch, outcome.ok ? undefined : outcome.error), itemsRef.current));
     setHeldBoth(true);
   }, [set, setHeldBoth]);
 
-  const pushFailed = useCallback((text: string, clientId: string, sentAt?: string) => {
+  const pushFailed = useCallback((
+    text: string, clientId: string, sentAt?: string, error?: string,
+  ) => {
     seenRef.current.add(clientId);
     set([
       ...itemsRef.current.filter((m) => m.clientId !== clientId),
-      { text, sentAt: sentAt || new Date().toISOString(), clientId, failed: true },
+      {
+        text, sentAt: sentAt || new Date().toISOString(), clientId, failed: true,
+        ...(error ? { error } : {}),
+      },
     ]);
     setHeldBoth(true);
   }, [set, setHeldBoth]);
@@ -336,11 +354,23 @@ export function useMessageQueue({
     // One batch at a time. A second would race the first's settlement over the
     // same storage key.
     if (inFlightRef.current.length) return;
+    // A FAILED ENTRY IS NOT DRAINABLE (invariant 10). It waits for Retry, and
+    // that is what the bubble beside it says. The hold alone did not enforce
+    // this: `onSend` releases the queue on the operator's next send, so a
+    // failure could go out on its own after the following turn ended — as a
+    // turn nobody asked for, and, since a re-send re-stamps where it sits, one
+    // that jumped from where it failed to the bottom of the chat.
+    const drainable = q.filter((m) => !m.failed);
+    if (!drainable.length) return;
     // Invariant 4: consecutive messages go as ONE turn, not N — but a command
     // breaks the batch, because a command joined to anything else is no longer
     // a command. Whatever is left stays queued in order and the self-drain
     // (invariant 3) sends it when this turn ends.
-    const [now, rest] = splitFirstTurn(q);
+    const [now] = splitFirstTurn(drainable);
+    // Taken out BY ID rather than by taking `splitFirstTurn`'s tail, so the
+    // failed entries it never saw keep their places instead of being dropped.
+    const drained = new Set(now.map((m) => m.clientId));
+    const rest = q.filter((m) => !drained.has(m.clientId));
     // Out of the queue, into the in-flight list — which `set` keeps writing to
     // storage, so a tab closed mid-POST still has them (invariant 8).
     const key = keyRef.current;
@@ -350,8 +380,8 @@ export function useMessageQueue({
     // ids alongside it so the server can record each message at the moment it
     // was actually typed, instead of collapsing a burst into one timestamp.
     void Promise.resolve(sendRef.current(now.map((m) => m.text).join("\n\n"), now))
-      .then((ok) => settleDrain(key, now, ok !== false))
-      .catch(() => settleDrain(key, now, false));
+      .then((outcome) => settleDrain(key, now, outcome))
+      .catch((e) => settleDrain(key, now, { ok: false, error: String(e?.message || e) }));
   }, [set, settleDrain]);
 
   // Invariant 3: whenever there is something queued and nothing is running, send

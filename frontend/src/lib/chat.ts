@@ -276,11 +276,27 @@ async function j<T>(r: Response): Promise<T> {
 // a Cloudflare 502 while the origin restarts) returns a full HTML page as the
 // body; never surface that — it renders as a giant red wall taking over the UI.
 export function shortHttpError(status: number, statusText: string, body: string): string {
-  const b = (body || "").trim();
+  const b = unwrapDetail((body || "").trim());
   const looksHtml = b.startsWith("<") || b.toLowerCase().includes("<!doctype");
   if (status >= 502 && status <= 504) return `Server unavailable (${status}). Retrying.`;
   const detail = !looksHtml && b && b.length <= 200 ? b : "";
   return detail ? `${status} ${detail}` : (`${status} ${statusText || "request failed"}`).trim();
+}
+
+// FastAPI raises as `{"detail": "..."}`, so the sentence the backend wrote for
+// the operator arrived wrapped in its own JSON and was shown that way. The
+// refusal a chat gets for a developer-mode scope is a written sentence naming
+// the flag; on screen it read `403 {"detail":"developer mode is off, ..."}`.
+function unwrapDetail(body: string): string {
+  if (!body.startsWith("{")) return body;
+  try {
+    const parsed = JSON.parse(body);
+    const d = parsed?.detail;
+    if (typeof d === "string" && d.trim()) return d.trim();
+  } catch {
+    /* not JSON, or not ours: the raw body is still the best thing to show */
+  }
+  return body;
 }
 
 export type ProviderRole = "assistant" | "builder";

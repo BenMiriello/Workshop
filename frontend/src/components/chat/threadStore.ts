@@ -59,6 +59,17 @@ export type PendingSend = {
   // Monotonic counter, not a timestamp: two sends in the same millisecond still
   // render in the order they were made.
   at: number;
+  /** The last committed seq at the moment this send was made: WHERE IN THE LOG
+   *  IT BELONGS.
+   *
+   *  A send that is still in flight is at the tail, so this is the tail and it
+   *  renders last, as it always did. A FAILED one is not: the log keeps growing
+   *  underneath it, and without an anchor it stayed pinned below everything,
+   *  so every message sent afterwards drew ABOVE it and the conversation read
+   *  backwards from there down. Reported 2026-08-11: "my new messages show
+   *  above this old message, and then subsequent chat messages show above these
+   *  messages". See transcriptBlocks.composeTranscript. */
+  afterSeq: number;
 };
 
 export type ThreadState = {
@@ -319,6 +330,10 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             ts: action.ts,
             status: "sending",
             at: clock,
+            // Read here rather than passed in: the store is the only thing that
+            // knows the log's tail, and a caller computing it would be reading
+            // the same state one render late.
+            afterSeq: lastSeq(state),
           },
         },
       };
@@ -397,6 +412,11 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
     default:
       return state;
   }
+}
+
+/** The highest committed seq, or 0 on an empty thread. */
+export function lastSeq(state: ThreadState): number {
+  return state.order.length ? state.order[state.order.length - 1] : 0;
 }
 
 /** The committed events, in seq order. */

@@ -101,7 +101,41 @@ app = FastAPI(
 # httpx.AsyncHTTPTransport has no cookie jar and no per-caller state: each proxied
 # request carries ONLY the cookies the visitor themselves forwarded. NEVER
 # reintroduce a shared AsyncClient here. (Incident 2026-07-12.)
-_transport = httpx.AsyncHTTPTransport()
+#
+# THE POOL'S IDLE TIMEOUT MUST BE SHORTER THAN THE BACKEND'S, or the proxy hands
+# out sockets the backend is closing at that same moment.
+#
+# httpx defaults `keepalive_expiry` to 5.0s and uvicorn defaults
+# `timeout_keep_alive` to 5s. With both ends expiring an idle connection at the
+# same instant, a request that arrives on the boundary gets written to a socket
+# the backend has already closed, and httpx (`retries=0` by default) surfaces
+# `RemoteProtocolError: Server disconnected without sending a response`. The
+# backend logs NOTHING, because it never saw the request — which is literally
+# what the chat then told the operator: "this message never reached the server".
+# Observed on the chat send path and on GET /queue/runner (2026-08-02, 2026-08-09,
+# neither near a restart).
+#
+# Halving the expiry means this proxy never reuses a connection the backend
+# could be about to reap. `retries` covers the other end of it: a connection that
+# cannot be ESTABLISHED at all, which is the one-second window a backend restart
+# opens (32 restarts in the 7 days to 2026-08-11).
+_KEEPALIVE_EXPIRY = 2.5
+_transport = httpx.AsyncHTTPTransport(
+    retries=2,
+    limits=httpx.Limits(max_keepalive_connections=20, keepalive_expiry=_KEEPALIVE_EXPIRY),
+)
+
+# Transport failures that mean THE BACKEND NEVER PROCESSED THIS REQUEST, so
+# sending it again is not sending it twice.
+#
+#   ConnectError         no connection was established at all.
+#   RemoteProtocolError  the connection closed before a single response byte.
+#
+# Both are the stale-socket and restart races above, and both are what every
+# HTTP client (browsers, Go, curl) already retries on a REUSED connection. A
+# ReadError or ReadTimeout is deliberately NOT here: those can mean the backend
+# read the request and was working on it, and this proxy carries writes.
+_RETRYABLE = (httpx.ConnectError, httpx.ConnectTimeout, httpx.RemoteProtocolError)
 
 
 def _build_upstream_request(
@@ -144,6 +178,38 @@ def _is_blocked(stripped_path: str) -> bool:
     return False
 
 
+async def _send_upstream(
+    request: Request, backend_path: str, headers: dict, body: bytes, *, stream: bool
+) -> httpx.Response:
+    """Send one proxied request upstream, retrying once when the failure proves
+    the backend never saw it (see `_RETRYABLE`).
+
+    The request is REBUILT for the retry rather than replayed: an httpx.Request
+    whose content stream has been consumed cannot be handed to the transport a
+    second time."""
+    try:
+        req = _build_upstream_request(request, backend_path, headers, body, stream=stream)
+        return await _transport.handle_async_request(req)
+    except _RETRYABLE as e:
+        log.info("edge: %s %s failed on a dead connection (%s); retrying once",
+                 request.method, backend_path, type(e).__name__)
+    req = _build_upstream_request(request, backend_path, headers, body, stream=stream)
+    return await _transport.handle_async_request(req)
+
+
+def _unreachable(method: str, backend_path: str, e: Exception) -> Response:
+    """The backend could not be reached. 502, NOT the 500 an uncaught httpx error
+    used to produce.
+
+    The status is the whole message here: the client maps 502/503/504 to "the
+    server is restarting or unreachable, press Retry in a moment" and a 500 to
+    "the server failed to start this turn", which sent the operator looking for a
+    bug in a turn that was never begun."""
+    log.warning("edge: %s %s could not reach the backend: %s: %s",
+                method, backend_path, type(e).__name__, e)
+    return JSONResponse({"detail": "the workshop backend is unreachable"}, status_code=502)
+
+
 async def _proxy(request: Request, backend_path: str) -> Response:
     # backend_path is the full path the backend expects, e.g. "/api/finance/cache".
     stripped = backend_path[4:] if backend_path.startswith("/api") else backend_path
@@ -162,8 +228,10 @@ async def _proxy(request: Request, backend_path: str) -> Response:
     if backend_path.endswith("/stream") or "text/event-stream" in request.headers.get("accept", ""):
         return await _proxy_stream(request, backend_path, headers, body)
 
-    req = _build_upstream_request(request, backend_path, headers, body, stream=False)
-    upstream = await _transport.handle_async_request(req)
+    try:
+        upstream = await _send_upstream(request, backend_path, headers, body, stream=False)
+    except httpx.HTTPError as e:
+        return _unreachable(request.method, backend_path, e)
     try:
         content = await upstream.aread()
     finally:
@@ -175,8 +243,14 @@ async def _proxy(request: Request, backend_path: str) -> Response:
 async def _proxy_stream(request: Request, backend_path: str, headers: dict, body: bytes) -> Response:
     """Reverse-proxy a streaming (SSE) response chunk-by-chunk, keeping the
     upstream connection open for the life of the turn (no read timeout)."""
-    req = _build_upstream_request(request, backend_path, headers, body, stream=True)
-    upstream = await _transport.handle_async_request(req)  # unread stream; no read-timeout
+    try:
+        # unread stream; no read-timeout
+        upstream = await _send_upstream(request, backend_path, headers, body, stream=True)
+    except httpx.HTTPError as e:
+        # The turn stream is re-opened by the client on any failure (its own
+        # reconnect budget), so this only has to be honest and finite. Uncaught,
+        # it was a 500 that the EventSource treated as a dead endpoint.
+        return _unreachable(request.method, backend_path, e)
     resp_headers = {k: v for k, v in upstream.headers.items() if k.lower() not in _DROP_RESP}
     resp_headers["cache-control"] = "no-cache, no-transform"
     resp_headers["x-accel-buffering"] = "no"  # defeat any buffering proxy in front
