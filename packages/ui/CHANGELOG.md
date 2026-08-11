@@ -12,6 +12,30 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.2.3 — 2026-08-11 — full-width shell, content at an intermediate measure, apps own their width
+
+Compatible. No export or prop change. `--page-max` changes value, `--chat-max`
+now tracks it, and two classes are added (`.ws-app--appfull`, `.ws-page`); no
+token or class is removed or renamed.
+
+What changed and why it matters to a consumer:
+
+- `--page-max` is now `1200px` (was `1680px`), and it caps the CONTENT, not the
+  shell. `.ws-app` and the `.ws-topnav` inside it span the full viewport; the cap
+  moved onto `.ws-app__body > main`, centred via a `max(base, (100% - --page-max)/2)`
+  inline padding. Net effect: the global toolbar is full-bleed, regular pages read
+  in a centred column at the new measure.
+- `--chat-max` is now `var(--page-max)` (was `900px`): the focused chat reads at
+  the standard page width, and its shell is full-width like every other route
+  (the chat's own toolbar+log+composer stay capped together on `.chat-panel--full`).
+- `.ws-app--appfull` (new): put on the shell for an app route so its `<main>`
+  drops the centred cap and the app fills the viewport. An app owns its own width.
+- `.ws-page` (new): the opt-in container an app built on the kit wraps its content
+  in to match the standard page measure, rather than the width being imposed.
+
+Operator directive, 2026-08-11: one intermediate width for pages and chat, apps
+uncapped and self-managed, the top toolbar full-bleed.
+
 ## 0.2.2 — 2026-08-11 — focus ring is keyboard-only on touch devices
 
 Compatible. No export, prop, token, or class change; a CSS behaviour fix.

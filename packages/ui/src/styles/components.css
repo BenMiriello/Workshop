@@ -890,8 +890,12 @@ a.ws-btn { text-decoration: none; }
    be kept in sync with the app's padding. Content scrolls inside <main>, not the
    body, so the nav stays visible without sticking. */
 .ws-app {
-  max-width: var(--page-max);
-  margin: 0 auto;
+  /* FULL-WIDTH SHELL. The shell and the top nav inside it span the whole
+     viewport; the CONTENT is capped one level in, on <main> below. This is what
+     lets the global toolbar be full-bleed while pages sit in a centred column
+     (operator, 2026-08-11). It used to cap the whole shell at --page-max, which
+     also narrowed the toolbar. */
+  width: 100%;
   height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -899,9 +903,9 @@ a.ws-btn { text-decoration: none; }
      Resolves to 0 in a normal browser, so it changes nothing there. */
   padding-top: env(safe-area-inset-top);
 }
-/* There is deliberately no --wide and no --measure modifier here. Every route is
-   .ws-app at --page-max. A modifier is just a per-page width wearing a class
-   name, and the whole point is that pages don't vary. */
+/* Still no --wide / --measure per-page modifier: a regular page does not pick
+   its own width. The only width modifier is --appfull, and it is not "a wider
+   page" — it hands width to an APP, which owns its own layout (see below). */
 
 .ws-topnav {
   flex: 0 0 auto;
@@ -935,7 +939,30 @@ a.ws-btn { text-decoration: none; }
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-6) var(--page-pad-x) var(--space-8);
+  /* CONTENT CAP lives here, not on the shell, so <main> stays the full-width
+     scroller (its scrollbar rides the viewport edge) while the CONTENT is
+     centred at --page-max. The horizontal padding is max(base inset, half the
+     leftover space): on a wide screen that half-leftover centres the column at
+     --page-max; once the viewport is narrower than --page-max the term goes
+     negative and the base inset wins, so nothing special happens on mobile. One
+     rule, no wrapper element, no per-page class. */
+  padding: var(--space-6) max(var(--page-pad-x), (100% - var(--page-max)) / 2) var(--space-8);
+}
+/* APPS own their width. A route under /apps/<name> gets --appfull on the shell,
+   which drops the centred cap so the app fills the viewport (minus the standard
+   edge inset) and lays itself out however it likes. An app built on the kit can
+   opt BACK into the page measure by wrapping its content in `.ws-page`. */
+.ws-app--appfull .ws-app__body > main {
+  padding-inline: var(--page-pad-x);
+}
+/* The opt-in page container for apps that want the standard Workshop measure.
+   Not applied to regular pages (they are already capped by <main> above) — it is
+   the tool an app reaches for when it does want to match, rather than the width
+   being imposed on it. */
+.ws-page {
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
 }
 .ws-brand { font-size: var(--fs-md); font-weight: var(--fw-bold); letter-spacing: -0.01em; color: var(--fg); text-decoration: none; }
 .ws-nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
@@ -1420,15 +1447,14 @@ a.ws-btn { text-decoration: none; }
   left: 0; right: 0; width: 100%;
   top: var(--app-top, 0px);
   height: var(--app-vh, 100dvh);
-  /* The chat is a page like any other: same --page-max container, centred. Only
-     the SCROLL behaviour is special (fixed + viewport-tall so the composer rides
-     above the mobile keyboard) — that is not a licence to run full-bleed. It used
-     to be `max-width: none`, which let the topnav and chat toolbar span the whole
-     monitor while the log sat in a narrow column inside them.
-     left/right:0 + width:100% + max-width + auto margins centres a fixed box
-     (CSS 2.1 §10.3.7: the over-constrained case splits the slack evenly). */
-  margin: 0 auto;
-  max-width: var(--page-max);
+  /* FULL-WIDTH SHELL, like every other route now: the top nav spans the whole
+     viewport. The chat's OWN toolbar+log+composer are capped together one level
+     in, on .chat-panel--full (--chat-max), so only the global nav is full-bleed —
+     which is the point. (The old "two different widths in the same chat" bug was
+     a cap on the LOG alone; capping .chat-panel--full keeps all three the same.) */
+  margin: 0;
+  max-width: none;
+  width: 100%;
   padding: 0;
   display: flex; flex-direction: column;
   overflow: hidden;

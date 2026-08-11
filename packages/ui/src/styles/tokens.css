@@ -95,22 +95,24 @@
   --pad-x-lg:      1.125rem;  /* 18px                                 */
   --field-pad-x:   0.75rem;   /* 12px — inputs sit slightly tighter   */
 
-  /* ---- Page width — ONE number, for every page, with NO exceptions ---------
-     This is the whole width system. There is no second tier, no narrow variant,
-     and no per-page cap; a page does not get to pick its own width. That is how
-     the app ended up with 720 / 760 / 820 / 880 / 980 / 1040 / 1280 / 1680 at
-     once, and every one of them had a reason at the time.
-     If a screen seems to want a different width, it doesn't — change this one
-     number and every page moves together. */
-  --page-max: 1680px;
-  /* The ONE deliberate exception, and it is scoped to a single element: the
-     focused chat's own toolbar+log+composer column (.chat-panel--full), which
-     reads better as a centred conversation column than stretched to the full
-     page. It does NOT touch --page-max, .ws-app, or the global top nav above
-     it — those stay identical to every other page, which is the whole point of
-     --page-max existing. See frontend/CLAUDE.md "Page width" for the one rule
-     that governs when a SECOND number like this is allowed to exist at all. */
-  --chat-max: 900px;
+  /* ---- Content width — ONE number, for every Workshop page ----------------
+     The measure for regular Workshop pages (Home, Work, Agents, Projects,
+     Settings, the chat, and so on). It caps the CONTENT, centred, while the
+     shell and the global top nav above it span the full viewport — the toolbar
+     is full-bleed, the content is a comfortable column. There is still no
+     per-page variant: a page does not get to pick its own width; change this one
+     number and every Workshop page moves together. (2026-08-11, operator: this
+     replaced a 1680 shell-wide cap that made reading pages too wide and, after a
+     later narrowing, made the chat too narrow. One intermediate width for all.)
+     APPS are the deliberate exception: a route under /apps/<name> is NOT capped
+     here — the app owns its own width (see .ws-app--appfull in components.css).
+     An app built on the kit opts back into this measure with `.ws-page`. */
+  --page-max: 1200px;
+  /* The focused chat's own toolbar+log+composer column (.chat-panel--full) uses
+     the same measure, so the chat reads at the standard page width. It is its own
+     token only so the chat could be tuned apart from pages if ever needed; today
+     it tracks --page-max on purpose. */
+  --chat-max: var(--page-max);
   /* The matching horizontal inset. Width alone does not make two pages look
      alike: the chat sat in the right container but inset its content by 12px
      while every other page used 24px, so it still read as a different page.

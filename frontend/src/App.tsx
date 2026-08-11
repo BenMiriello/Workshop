@@ -67,16 +67,20 @@ function VoiceRedirect() {
 }
 
 export default function App() {
-  // Page width is NOT decided here, for any route. Every page is .ws-app at
-  // --page-max; the route-by-route width list that used to live here is what
-  // made the app look like six different apps.
-  // The one class below is not a width — .ws-app--chatfull keeps --page-max and
-  // changes only SCROLLING: the focused chat becomes a viewport-tall column that
-  // never scrolls, so the log is the only scroller and the composer stays above
-  // the mobile keyboard. Do not add a width modifier next to it.
+  // Two shell modifiers, and they are the ONLY per-route width logic there is.
+  // Regular pages need no class: <main> caps their content at --page-max on its
+  // own. Do not reintroduce the route-by-route width list that used to live here.
+  //   - ws-app--chatfull: the focused chat. A viewport-tall column that never
+  //     scrolls (the log is the only scroller, composer above the mobile
+  //     keyboard). Width is handled inside, on .chat-panel--full.
+  //   - ws-app--appfull: an APP route (/apps/<name>, or an app running in
+  //     preview). Drops the content cap so the app owns its own width; the app
+  //     opts back into the page measure with `.ws-page` if it wants it.
   const { pathname } = useLocation();
   const chatFull = pathname.startsWith("/chat/");
-  const widthClass = chatFull ? " ws-app--chatfull" : "";
+  const appFull = !chatFull &&
+    (/^\/apps\/[^/]/.test(pathname) || /^\/projects\/[^/]+\/run/.test(pathname));
+  const widthClass = chatFull ? " ws-app--chatfull" : appFull ? " ws-app--appfull" : "";
   return (
     <AppProviders>
     <BreadcrumbProvider>

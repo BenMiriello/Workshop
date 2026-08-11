@@ -334,7 +334,12 @@ export default function Chat({
 
   // Following the conversation, composer sizing, and jump-to-latest are one
   // behaviour — see useLogScroll for the rules and the bugs each prevents.
-  const [input, setInput, clearInput] = useDraft(contextKey);
+  // Draft is stored PER CONVERSATION, not per scope. Keyed by the open thread so
+  // switching chats never shows one chat's unsent text in another; a blank chat
+  // that has no thread yet keeps its own "new" draft under the scope, which the
+  // send-clear (clearInput below) wipes before the thread it creates is adopted.
+  const draftKey = activeId ? `${contextKey}::${activeId}` : `${contextKey}::new`;
+  const [input, setInput, clearInput] = useDraft(draftKey);
   const [inputFocused, setInputFocused] = useState(false);
   // The voice snapshot is in `followDeps` because ChatLog renders the spoken
   // turn from it directly, not from the transcript — without it the log stops

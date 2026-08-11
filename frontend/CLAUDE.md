@@ -44,21 +44,26 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
 | **change** (immediately) | theme, filters, reveal/hide, source `<select>`, segmented view switches | view preferences — cheap, reversible, no write |
 | **submit** (explicit Save) | budget, coords, configs, prompts, cron, secrets | writes config or money — deliberate, not accidental |
 
-## Page width — the shell owns it, a page never sets it
+## Page width — the shell is full-bleed, the content is capped, apps own their own
 
-**Every page is the same width. There are no exceptions, and adding one is not a judgement call you get to make.**
+**Every regular Workshop page is the same width, and a page does not get to pick its own.** What changed on 2026-08-11 (operator-directed) is WHERE the cap sits and WHO is exempt.
 
-There is exactly one token, `--page-max: 1680px` in `tokens.css`, applied by `.ws-app` to every route. No wide variant, no narrow variant, no per-page cap.
+There is one content token, `--page-max: 1200px` in `tokens.css`. It caps the **content**, not the shell:
 
-- **Never add a `maxWidth` to a page wrapper.** `check_design.sh` fails on `maxWidth: >= 600` in `.tsx`, which is container territory. Small element caps (a 150px number input, a 420px filter column) are fine and sit below the threshold.
-- **Never add a width modifier class** (`--wide`, `--narrow`, `--measure`). A modifier is a per-page width wearing a class name.
-- To change the app's width, change the one number. Every page moves together.
+- `.ws-app` (the shell) and the `.ws-topnav` inside it span the **full viewport**. The global toolbar is full-bleed on purpose.
+- The cap lives on `.ws-app__body > main`, which stays the full-width scroller while its content is centred at `--page-max` via `padding-inline: max(--page-pad-x, (100% - --page-max)/2)`. Regular pages need no class and no wrapper; they are centred by that rule alone.
+- The focused chat reads at the same measure: `--chat-max` is `var(--page-max)`, applied to `.chat-panel--full` (the chat's toolbar+log+composer as one column). Its shell is full-width like every other route; only that inner column is capped.
 
-If a screen looks like it wants to be narrower, it doesn't. That instinct is what produced 720/760/820/880/980/1040/1280/1680 in one app, each with a sensible-sounding local reason: this form's inputs are too wide, this page is mostly prose, this one is a dashboard. The variance was worse than any of the individual problems it solved.
+**Apps are the deliberate exception.** A route under `/apps/<name>` (and an app running in preview at `/projects/<slug>/run`) gets `.ws-app--appfull` on the shell, which drops the content cap: the app fills the viewport and **owns its own width and layout**. This is set in `App.tsx` from the pathname, next to `ws-app--chatfull`; those two are the only per-route width logic there is.
 
-The focused chat's SHELL is a page like any other. `.ws-app--chatfull` is **not** a width modifier — it keeps `--page-max` and changes only scrolling (fixed + viewport-tall so the composer rides above the mobile keyboard), and the global top nav above it (`.ws-topnav`) is never touched.
+- An app built on the kit **opts back into** the standard measure by wrapping its content in **`.ws-page`** (`max-width: --page-max; margin-inline: auto`). The width is offered, not imposed.
+- A custom app that styles itself (with the kit, partly, or not at all) keeps its own internal width logic. Nothing here constrains it.
 
-**The one sanctioned exception, and it is exactly one element.** `.chat-panel--full` — the conversation column itself: the chat's own toolbar, log, and composer, which are its direct children and so automatically share whatever it is capped to — is narrower, at `--chat-max: 900px` (`tokens.css`), operator-directed. This is not "a screen that wants to be narrower" (the instinct the rule above forbids acting on unilaterally); it is a standing, explicit operator decision, and it is deliberately scoped to ONE inner element so the chat's outer shell and the global top nav stay identical to every other page — the earlier mistake this replaced had the chat's *toolbar* at `--page-max` and only the *log* narrower, which read as two different widths in the same chat. Do not extend `--chat-max` to any other page, and do not read this exception as license to add another one elsewhere: that judgment call still isn't yours to make. If the operator wants a DIFFERENT page narrower, that is a new instruction, not a precedent this paragraph already grants.
+Rules that still hold:
+
+- **Do not reintroduce a per-page width list or a `--wide`/`--narrow`/`--measure` modifier for regular pages.** That is what produced 720/760/820/880/980/1040/1280/1680 at once. To change the page measure, change the one number.
+- **Never add a `maxWidth` to a regular page wrapper.** `check_design.sh` fails on `maxWidth: >= 600` in `.tsx`. Small element caps (a 150px input, a 420px filter column) sit below the threshold and are fine. An app that owns its width does its capping through `.ws-page` or its own container, not an inline `maxWidth` on a Workshop page.
+- **`.ws-app--appfull` is not "a wider page".** It is the absence of the page cap, handed to an app. Do not put it on a regular Workshop page to make that page wider; that is the per-page-width instinct wearing a new name.
 
 ## Theming — two axes, one generated color layer
 

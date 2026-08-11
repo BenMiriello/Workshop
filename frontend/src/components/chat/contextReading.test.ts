@@ -10,14 +10,14 @@ describe("contextReading", () => {
     expect(contextReading(5_000, 0)).toBeNull();
   });
 
-  it("never says 0% about a chat that is using context", () => {
-    // The exact case the operator hit: a real count, a 1M window, rounds to 0.
-    const r = contextReading(1_200, 1_000_000);
-    expect(r?.label).toBe("<1%");
+  it("rounds a tiny real reading to the nearest whole percent", () => {
+    // Operator directive: round, do not floor to "<1%". A real count on a 1M
+    // window that rounds to zero simply reads "0%".
+    expect(contextReading(1_200, 1_000_000)?.label).toBe("0%");
   });
 
-  it("floors at the boundary, so nothing between nothing and one percent is 0%", () => {
-    expect(contextReading(4_999, 1_000_000)?.label).toBe("<1%");
+  it("rounds at the boundary the way nearest-integer rounding does", () => {
+    expect(contextReading(4_999, 1_000_000)?.label).toBe("0%");
     expect(contextReading(5_000, 1_000_000)?.label).toBe("1%");
   });
 
@@ -32,7 +32,7 @@ describe("contextReading", () => {
   });
 
   it("draws the arc from the true ratio, not the rounded percent", () => {
-    // "<1%" still shows a sliver; a rounded 0 would show nothing.
+    // A reading that displays "0%" still shows a sliver from the true fraction.
     expect(contextReading(1_200, 1_000_000)?.fraction).toBeCloseTo(0.0012, 6);
   });
 });
@@ -48,9 +48,9 @@ describe("where the number came from", () => {
     expect(contextLabel(r, "unavailable")).toBe("~12%");
   });
 
-  it("marks a floored reading too, so <1% cannot pass as measured", () => {
+  it("marks a rounded-to-zero reading too, so a 0% estimate cannot pass as measured", () => {
     const tiny = contextReading(10, 1_000_000)!;
-    expect(contextLabel(tiny, "unavailable")).toBe("~<1%");
+    expect(contextLabel(tiny, "unavailable")).toBe("~0%");
   });
 
   it("says the server counted it only when the server did", () => {

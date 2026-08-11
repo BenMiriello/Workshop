@@ -10,8 +10,11 @@
 //     0.5% and rounds to zero. The number is honest and still reads as broken,
 //     because "0%" is what a broken meter says.
 //
-// So: no reading renders nothing (`null`), and a reading that rounds to zero
-// floors to "<1%". The meter never claims a chat is empty.
+// So: no reading renders nothing (`null`). A real reading shows the percent
+// ROUNDED to the nearest whole number, which on a fresh 1M-window thread is
+// simply "0%" or "1%". Operator directive 2026-08-11: the earlier "<1%" floor
+// read as clutter; a plain rounded percent is what the meter shows. (Case 1
+// above stays fixed by returning null, not by dressing up the zero.)
 export type ContextReading = { label: string; fraction: number };
 
 export function contextReading(used: number, win: number): ContextReading | null {
@@ -19,9 +22,9 @@ export function contextReading(used: number, win: number): ContextReading | null
   if (used <= 0 || win <= 0) return null;
   const pct = Math.min(100, Math.round((used / win) * 100));
   return {
-    label: pct < 1 ? "<1%" : `${pct}%`,
+    label: `${pct}%`,
     // The arc is drawn from the true ratio, not the rounded percent, so a
-    // sliver still shows for a reading that displays as "<1%".
+    // sliver still shows for a reading that displays as "0%".
     fraction: Math.min(1, used / win),
   };
 }
