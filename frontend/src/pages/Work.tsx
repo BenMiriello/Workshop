@@ -30,6 +30,7 @@ import {
 } from "@workshop/ui";
 import JobsFeed from "../components/JobsFeed";
 import QueueRunner from "../components/QueueRunner";
+import AutonomyPanel from "../components/AutonomyPanel";
 import {
   type BlockRequest,
   type Task,
@@ -191,6 +192,31 @@ function TicketsTab() {
     </Card>
   ) : null;
 
+  // Scope-level autonomy, parked where the scope's tickets already are.
+  //
+  // DELIBERATELY MINIMAL, AND NOT A DESIGN. `development` reached its sweep
+  // config through the Projects page, and the platform repo is no longer
+  // offered as a project (ADR 0014 §4), so the preset, cron, latitude, limits
+  // and the whole-queue Run now became unreachable: still served, still
+  // working, linked from nowhere. This puts them back next to the queue they
+  // govern so the capability is not silently missing.
+  //
+  // Only `development`, because it is the only scope whose panel has no other
+  // home. A project's lives on its detail page, an agent's on its own. Showing
+  // it for those too would be a second copy of a control that already exists,
+  // which is the duplication this app keeps having to undo.
+  //
+  // The seam that a proper design has to settle later: this reads and writes
+  // through `/api/projects/development/autonomy`, so a scope we deliberately
+  // stopped calling a project still configures itself through the projects
+  // API. That is incoherent, and it is why this is wiring rather than design.
+  const scopeAutonomy = scope === "development" ? (
+    <div style={{ marginBottom: "var(--space-4)" }}>
+      <SectionLabel>Autonomy for this scope</SectionLabel>
+      <AutonomyPanel slug="development" />
+    </div>
+  ) : null;
+
   const filterBar = (
     <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
       <Field label="Status" inline>
@@ -298,6 +324,7 @@ function TicketsTab() {
           </StatusDot>
         </div>
       )}
+      {scopeAutonomy}
       {body}
       {open?.mode === "create" && (
         <CreateTicket
