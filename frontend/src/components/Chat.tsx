@@ -31,10 +31,12 @@ import { useSendPipeline, wasFirstExchange } from "./chat/useSendPipeline";
 import { canDrainQueue } from "./chat/sendPlan";
 import { logPlaceholder } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
+import { scopeSwitch } from "./chat/scopeSwitch";
 import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import { committedMessages, withStaleFailures } from "./chat/transcriptBlocks";
 import { chatApi, type CardState } from "../lib/chat";
+import { writeSelection } from "../lib/chatSelection";
 import { useDraft } from "../lib/draftSync";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -196,6 +198,63 @@ export default function Chat({
   runActiveRef.current = runActive;
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
+
+  // Changing the scope MOVES this conversation. It does not walk away from it.
+  //
+  // The picker used to only set `activeProvider`, and the thread list is
+  // fetched per scope (`/api/chat/threads?context=<scope>`), so switching
+  // re-listed a different scope's threads, found none in a fresh scope, and
+  // selected a blank chat. From the operator's side the conversation he was
+  // having vanished. He reported it as a design flaw twice, most recently on
+  // first opening the `development` scope, and he is right: the scope is a
+  // property OF the chat, so changing it should re-bind the chat, not navigate
+  // away from it. chat-scope-design-2026-07-18.md §397 says the same thing, and
+  // POST /threads/:id/rescope already does exactly the right work (keeps the id
+  // and the transcript, moves context_key, drops the live session so the next
+  // turn re-assembles with the new persona). Nothing called it.
+  //
+  // An empty chat has nothing to move, so it just switches. A chat with a run
+  // in flight refuses: rescope clears the session the run is speaking through,
+  // and doing that underneath a live turn breaks it. Saying so is better than
+  // either corrupting the run or silently ignoring the click.
+  const chooseScope = useCallback(async (key: string) => {
+    const id = activeIdRef.current;
+    const plan = scopeSwitch({
+      target: key,
+      current: scopeState.scope,
+      hasHistory: !!id && stateRef.current.order.length > 0,
+      runActive: runActiveRef.current,
+    });
+    if (plan.action === "noop") return;
+    if (plan.action === "switch") {
+      scopeState.chooseProvider(key);
+      return;
+    }
+    if (plan.action === "refuse") {
+      setErr({ text: plan.reason });
+      return;
+    }
+    // `rescope` is only planned when the thread exists; this narrows the type
+    // and is the one place that could go stale if the rule ever changes.
+    if (!id) return;
+    try {
+      await chatApi.rescopeThread(id, key);
+      // Claim the selection under the NEW scope before switching, or the
+      // thread loader reads that scope's remembered selection and opens
+      // something else.
+      writeSelection(key, id);
+      scopeState.chooseProvider(key);
+      void thread.refreshThreads();
+      void sync();
+    } catch (e) {
+      setErr({
+        text: `Couldn't move this chat to ${key}: ${e}`,
+        endpoint: `/api/chat/threads/${id}/rescope`,
+      });
+    }
+    // scopeState and thread are stable hook objects; the refs are refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scopeState.scope, scopeState.chooseProvider, activeIdRef, stateRef, runActiveRef, sync]);
 
   const stream = useTurnStream({
     dispatch, stateRef, sync,
@@ -660,7 +719,7 @@ export default function Chat({
       showProviderPicker={variant === "full" || effectiveMode === "data"}
       providers={scopeState.providers}
       activeProvider={scopeState.activeProvider}
-      onChooseProvider={scopeState.chooseProvider}
+      onChooseProvider={chooseScope}
       chatMode={thread.chatMode}
       onChooseChatMode={thread.chooseChatMode}
       drawer={drawer}
