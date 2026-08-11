@@ -20,6 +20,13 @@ _MODEL_OPUS = "claude-opus-4-7"
 # is on PATH.
 _WORKSHOP_ROOT = str(_os.environ.get("WORKSHOP_ROOT") or (_Path.home() / "workshop"))
 _CLAUDE_CLI = _os.environ.get("WORKSHOP_CLAUDE_CLI") or _shutil.which("claude") or "claude"
+# DELIBERATELY DUPLICATED from services.auth_env, which is the one loader
+# everywhere else. This module is copied into the Letta sandbox and executed
+# there with no access to the `services` package (the same reason the model IDs
+# above are inlined), so importing the shared loader would break the tool at
+# runtime rather than at import in a test. The env var name and the default
+# directory must stay in step with services/auth_env.py; nothing enforces that
+# automatically, which is why it is written down here.
 _AUTH_ENV = str(
     _os.environ.get("WORKSHOP_AUTH_ENV")
     or (_Path.home() / ".config" / "workshop" / "auth.env")

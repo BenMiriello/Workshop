@@ -16,9 +16,17 @@
 #   WORKSHOP_OPERATOR_NAME   how agents should address the operator
 #   WORKSHOP_MOBILE_BUNDLE   iOS bundle identifier for the mobile build
 #   WORKSHOP_MOBILE_SCHEME   URL scheme for the mobile build
+#   WORKSHOP_AUTH_ENV        the secret env file; defaults under the config dir
+#                            and is exported below so every script agrees
 
 WORKSHOP_CONFIG_DIR="${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}"
 _INSTANCE_ENV="$WORKSHOP_CONFIG_DIR/instance.env"
+
+# The secret env file (OAuth token, app API keys), for the shell half of the
+# system. Its Python counterpart is services/auth_env.py and the two must agree:
+# one file was previously reached under two variable names and two default
+# directories, and only a symlink between them kept the system working.
+export WORKSHOP_AUTH_ENV="${WORKSHOP_AUTH_ENV:-$WORKSHOP_CONFIG_DIR/auth.env}"
 
 if [ -f "$_INSTANCE_ENV" ]; then
   # Existing environment wins: only set what is still unset.

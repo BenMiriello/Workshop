@@ -18,16 +18,21 @@ import json
 import os
 from pathlib import Path
 
-_ROOT = Path(os.environ.get(
-    "WORKSHOP_SECRETS_ROOT",
-    str(Path.home() / "workshop" / ".runtime" / "secrets"),
-))
+def _root() -> Path:
+    """Where the values live. Derived from the runtime dir, not from a home path.
+
+    This used to assume the repository sits at `~/workshop`, which is true of the
+    machine it was written on and of nothing else. Resolved per call so an
+    override set after import (tests, a relocated instance) is honoured.
+    """
+    from services import paths
+    return paths.env_path("WORKSHOP_SECRETS_ROOT", "secrets", base="runtime")
 
 
 def _path(slug: str) -> Path:
     # slug is a registered project slug (no path separators); guard anyway.
     safe = slug.replace("/", "_").replace("..", "_")
-    return _ROOT / f"{safe}.json"
+    return _root() / f"{safe}.json"
 
 
 # Workspace-scope secrets — shared across projects. Deploy provider credentials
@@ -51,9 +56,10 @@ def load(slug: str) -> dict[str, str]:
 
 
 def _write(slug: str, values: dict[str, str]) -> None:
-    _ROOT.mkdir(parents=True, exist_ok=True)
+    root = _root()
+    root.mkdir(parents=True, exist_ok=True)
     try:
-        os.chmod(_ROOT, 0o700)
+        os.chmod(root, 0o700)
     except OSError:
         pass
     p = _path(slug)

@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from services import auth_env
+
 from . import config
 
 # Lazy import — protobuf is optional at startup; only the pollers need it.
@@ -41,7 +43,14 @@ except ImportError:  # pragma: no cover
 TRANSIT_511_BASE = "https://api.511.org/transit"
 CALTRAIN_AGENCY = "CT"
 SFMTA_AGENCY = "SF"
-AUTH_ENV = os.path.expanduser("~/.config/clawdbot/auth.env")
+# One address for the secret file, resolved by services.auth_env. This module
+# used to hardcode a different directory than the rest of the platform read, and
+# only a symlink between the two kept it working.
+#
+# None means "resolve at call time", which is the point: a constant captured at
+# import is the same mistake in a new place, and this module is where it already
+# cost a whole commute of dark realtime. A test overrides it with a fixture path.
+AUTH_ENV: str | None = None
 
 POLL_HTTP_TIMEOUT = 8.0
 
@@ -53,17 +62,7 @@ def _key_511() -> str:
     import-time constant stayed empty and every poll returned `needs_key` with
     realtime dark for the whole commute. Read at call time (not import) so a key
     present on disk is always picked up. Mirrors reason._oauth_token."""
-    key = os.environ.get("WORKSHOP_511_API_KEY", "")
-    if key:
-        return key
-    try:
-        for ln in open(AUTH_ENV):
-            ln = ln.strip()
-            if ln.startswith("WORKSHOP_511_API_KEY="):
-                return ln.split("=", 1)[1].strip().strip('"')
-    except OSError:
-        pass
-    return ""
+    return auth_env.value("WORKSHOP_511_API_KEY", path=AUTH_ENV)
 
 
 def _now_iso() -> str:

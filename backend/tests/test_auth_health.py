@@ -20,7 +20,7 @@ from services.mcp_health import KIND_DANGER, KIND_OK, KIND_STOPPED, KIND_WARN
 
 
 GH_OK = """github.com
-  ✓ Logged in to github.com as octocat (/home/u/.config/gh/hosts.yml)
+  ✓ Logged in to github.com as octocat (~/.config/gh/hosts.yml)
   ✓ Git operations for github.com configured to use https protocol.
   ✓ Token: ghp_************************************
   ✓ Token scopes: read:org, repo

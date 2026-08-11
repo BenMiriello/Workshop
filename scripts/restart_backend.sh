@@ -176,7 +176,7 @@ if [ -n "${pid:-}" ]; then
 fi
 
 # Overlay auth/secrets files LAST so their values win over any stale snapshot.
-for f in "${WORKSHOP_AUTH_ENV:-$HOME/.config/clawdbot/auth.env}" "$HOME/.config/workshop/secrets.env"; do
+for f in "${WORKSHOP_AUTH_ENV:-$HOME/.config/workshop/auth.env}" "${WORKSHOP_CONFIG_DIR:-$HOME/.config/workshop}/secrets.env"; do
   [ -f "$f" ] || continue
   while IFS= read -r line; do
     line="${line#export }"

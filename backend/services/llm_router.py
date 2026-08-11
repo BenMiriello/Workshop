@@ -47,7 +47,13 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:32b")
 CLAUDE_CLI = os.environ.get("CLAUDE_CLI") or shutil.which("claude") or "claude"
 # Optional extra env for the subprocess (e.g. an API key). Missing file is fine —
 # a CLI already logged in (its own ~/.claude creds) needs nothing here.
-AUTH_ENV = os.environ.get("CLAUDE_AUTH_ENV", str(Path.home() / ".config" / "workshop" / "auth.env"))
+#
+# Resolved through `auth_env` rather than held here: this module used to reach
+# the file under its own second name (CLAUDE_AUTH_ENV) and its own default
+# directory, which is how one file came to have two addresses.
+def auth_env_path() -> str:
+    from services import auth_env
+    return str(auth_env.auth_env_path())
 
 # Tier model handles (claude -p --model arg)
 TIER_HAIKU = "claude-haiku-4-5-20251001"
@@ -262,8 +268,9 @@ def call_local(
 
 def _claude_env() -> dict:
     """Build the env for subprocess `claude -p` — subscription auth only."""
+    from services import auth_env
+
     env = os.environ.copy()
-    env.pop("ANTHROPIC_API_KEY", None)
     # An MCP server that loads its own credentials from a file is shadowed by
     # whatever the parent process already has set for the same names: dotenv
     # will not override an existing env var, so an empty or stale value in
@@ -275,18 +282,12 @@ def _claude_env() -> dict:
 
     for _k in app_registry.installed_secret_env():
         env.pop(_k, None)
-    # Source auth.env into env
-    if Path(AUTH_ENV).is_file():
-        try:
-            with open(AUTH_ENV, "r") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    k, v = line.split("=", 1)
-                    env[k.strip()] = v.strip().strip('"').strip("'")
-        except OSError:
-            pass
+    auth_env.apply_to(env)
+    # AFTER the overlay, not before. This install is subscription-only, and the
+    # strip used to run first — so an ANTHROPIC_API_KEY sitting in the auth file
+    # would have been put straight back and every spawned turn would have billed
+    # against it. Nothing else here can undo this line.
+    env.pop("ANTHROPIC_API_KEY", None)
     return env
 
 
@@ -391,7 +392,7 @@ def _extract_segments_from_stream_json(stdout: str) -> list[dict]:
 _EMPTY_MCP_CONFIG_JSON = '{"mcpServers":{}}'
 _TOOLS_OFF_SYSTEM_NUDGE = (
     "You have no tools available in this session. "
-    "Answer in pure text only — do not attempt to call any tool."
+    "Answer in pure text only. Do not attempt to call any tool."
 )
 # Surfaced at the write boundary (when Write or Edit is in the allowed toolset).
 # Reminder only — never blocks. Complements the work-placement rule in the
@@ -403,7 +404,7 @@ _WRITE_BOUNDARY_NUDGE = (
     "If you are about to touch multiple files, that usually wants the queue's "
     "review gate: emit a task-proposal card instead, which adds touches "
     "enforcement, a reviewer pass, and a receipt. "
-    "Your call — this is a reminder, not a restriction."
+    "Your call. This is a reminder, not a restriction."
 )
 
 # MCP-startup race fix. By default the `claude -p` CLI starts --mcp-config
@@ -831,7 +832,7 @@ def status() -> dict:
             "haiku_model_id": TIER_HAIKU,
             "sonnet_model_id": TIER_SONNET,
             "opus_model_id": TIER_OPUS,
-            "auth_env": AUTH_ENV,
+            "auth_env": auth_env_path(),
             "subscription_auth": "ANTHROPIC_API_KEY" not in os.environ,
         },
     }
