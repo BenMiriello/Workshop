@@ -12,9 +12,13 @@ Personal-ops monorepo: `backend/` (FastAPI + Letta), `frontend/` (Vite + React +
 
 ### A UI change is not delivered until the operator's origin serves it
 
-Two origins serve this UI and they update differently. **Ask which one the
-operator is on before saying a frontend change is done, and rebuild the built
-one regardless:**
+**The operator uses `$WORKSHOP_PUBLIC_ORIGIN`, the BUILT one.** Settled
+2026-08-11: he said so directly and added that keeping it in sync is expected
+during this pre-launch phase. Do not ask which origin he is on; asking reads as
+not knowing the deployment. Rebuild the built origin after every frontend
+change and prove it with `bash scripts/ui_sync.sh`.
+
+Two origins serve this UI and they update differently:
 
 | origin | serves | updates by |
 |---|---|---|
@@ -27,6 +31,15 @@ loads them. They are this deployment's, so they are not written down here.)
 Default to running the build after any change under `frontend/`. It takes
 seconds, the edge serves `dist` from disk so nothing restarts, and skipping it
 is invisible to you and total to the operator.
+
+**A rebuild is not a restart, and two other things need one.** The build covers
+`frontend/` only. A change under `backend/` is not live until
+`bash scripts/restart_backend.sh --deferred` (it waits for the current turn to
+finish, then fires, so it cannot eat the reply). And the Vite dev server reads
+`frontend/.env` only at service start, so a new build-time flag needs
+`systemctl --user restart workshop-frontend` before `:5173` sees it. Developer
+mode was set, built and committed on 2026-08-11 and still invisible for hours,
+twice, because these two were assumed to follow from the build. They do not.
 
 **`check_design.sh` printing "the public bundle is STALE" means the operator may
 be looking at old code. It is not noise. Never report a UI task complete over
