@@ -69,15 +69,25 @@ export default function ContextMeter({
   // against another's transcript.
   useEffect(() => { setServer(null); setReadFailed(false); }, [activeId]);
 
+  // THE DRAFT IS DELIBERATELY NOT A DEP OF THIS ONE. estimateContextTokens walks
+  // every message AND every segment of the entire log, and `draft` changes on
+  // every keystroke, so folding the two together re-scanned the whole thread
+  // each time a key was pressed — on any thread without a server count (a new
+  // chat, one whose first context read has not landed, or one whose read
+  // failed), which is exactly when the meter falls back to the estimate.
+  const baseUsed = useMemo(() => estimateContextTokens(messages, ""), [messages]);
+
   const ctx = useMemo(() => {
+    // The draft is a plain char count either way, so it is added on top rather
+    // than scanned in. This is how the server branch always worked; the estimate
+    // branch now agrees with it, at a rounding cost of at most one token.
+    const draftTokens = Math.ceil(draft.length / 4);
     if (server) {
       // Real assembled-context count plus the live (unsent) draft.
-      const used = server.used + Math.ceil(draft.length / 4);
-      return { used, win: server.window };
+      return { used: server.used + draftTokens, win: server.window };
     }
-    const used = estimateContextTokens(messages, draft);
-    return { used, win: contextWindowFor(model) };
-  }, [server, messages, draft, model]);
+    return { used: baseUsed + draftTokens, win: contextWindowFor(model) };
+  }, [server, baseUsed, draft, model]);
 
   // No reading, or a reading too small to round to a whole percent. See
   // contextReading: neither may render as "0%".

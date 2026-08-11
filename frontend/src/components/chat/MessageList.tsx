@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, memo } from "react";
 import { Bot, Clock, Eraser, FoldVertical } from "lucide-react";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
@@ -86,7 +86,14 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
-function MessageBubble({
+// Memoized per message. The list memo above already covers typing; this one
+// covers a LIVE turn, where `elapsed` ticks once a second and re-renders the
+// list by design — without it, every historical message re-rendered on every
+// tick of the clock for the one turn at the bottom.
+//
+// All five props are stable per message: `msg` comes from the memoized blocks
+// array, and the other four are shared and stable.
+const MessageBubble = memo(function MessageBubble({
   msg, isLatest, selectedModel, cardCtx, answerPermission,
 }: {
   msg: ChatMsg;
@@ -139,7 +146,7 @@ function MessageBubble({
       {msg.meta?.status && <StatusNote status={msg.meta.status} />}
     </div>
   );
-}
+});
 
 // A message this browser has sent that the log does not carry yet.
 //
@@ -181,7 +188,18 @@ export type AnswerPermissionFor = (
   a: { requestId: string; allow: boolean; message?: string; applySuggestion?: boolean },
 ) => Promise<void>;
 
-export default function MessageList({
+// Memoized, and the reason is the composer. The chat's draft text is state on
+// the same component that owns this transcript, so every keystroke re-renders
+// the whole log; on a long thread that made typing on mobile unusable. Every
+// prop below is already stable across a keystroke — `blocks`, `cardCtx`,
+// `onRetry` and `answerPermission` are useMemo/useCallback in Chat.tsx and none
+// of their deps involve the draft — so the shallow compare holds and the
+// transcript is skipped entirely. `elapsed` and `workingLabel` do change once a
+// second, but only while a run is live.
+//
+// Keep the props stable if you add one. An inline object or arrow here silently
+// turns this memo off and nothing fails visibly; it just gets slow again.
+function MessageList({
   blocks, selectedModel, cardCtx, workingLabel, elapsed, onRetry,
   answerPermission, liveTurnId,
 }: {
@@ -242,3 +260,5 @@ export default function MessageList({
     </>
   );
 }
+
+export default memo(MessageList);

@@ -92,12 +92,22 @@ export function useTurnStream({
   const reconnectsRef = useRef(0);
   const detachedRef = useRef<Set<string>>(new Set());
   const attachRef = useRef<(turnId: string) => void>(() => {});
+  // The pending reconnect, held so teardown can cancel it. Without this handle
+  // the timer fired after the hook was torn down and opened a socket nothing
+  // owned: `closeStream` and the unmount cleanup both run BEFORE the delay
+  // elapses and neither set `finishingRef`, so the callback's guard passed and
+  // it attached into a dead store. The server heartbeat then kept that orphan
+  // open for the life of the page, once per dropped stream, which in a PWA that
+  // is never closed is a socket and a parse-per-second accumulating for days.
+  const reconnectTimerRef = useRef<number | undefined>(undefined);
 
   // Callers pass inline lambdas; refs keep `attach` referentially stable.
   const cb = useRef({ dispatch, sync, onTurnEnd, onError, onDrainQueue });
   cb.current = { dispatch, sync, onTurnEnd, onError, onDrainQueue };
 
   const closeStream = useCallback(() => {
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = undefined;
     sseRef.current?.close();
     sseRef.current = null;
     setAttached(false);
@@ -108,6 +118,10 @@ export function useTurnStream({
   const isDetached = useCallback((runId: string) => detachedRef.current.has(runId), []);
 
   const attach = useCallback((turnId: string) => {
+    // A reconnect that is already scheduled would open a SECOND socket behind
+    // this one, so it is cancelled here as well as on teardown.
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = undefined;
     sseRef.current?.close();
     finishingRef.current = false;
     detachedRef.current.delete(turnId);
@@ -286,7 +300,8 @@ export function useTurnStream({
       }
       reconnectsRef.current += 1;
       setReconnecting(true);
-      window.setTimeout(() => {
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = undefined;
         if (!finishingRef.current) attachRef.current(turnId);
       }, RECONNECT_DELAY_MS);
     };
@@ -319,7 +334,12 @@ export function useTurnStream({
     // messages stay queued until they send them.
   }, [beginStop, closeStream]);
 
-  useEffect(() => () => { sseRef.current?.close(); sseRef.current = null; }, []);
+  useEffect(() => () => {
+    window.clearTimeout(reconnectTimerRef.current);
+    reconnectTimerRef.current = undefined;
+    sseRef.current?.close();
+    sseRef.current = null;
+  }, []);
 
   return { attached, reconnecting, attach, beginStop, stopWatching, closeStream,
            hasOpenStream, isDetached };

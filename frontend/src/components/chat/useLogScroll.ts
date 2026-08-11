@@ -245,11 +245,21 @@ export function useLogScroll({
   // Auto-grow the composer: ~2.5 lines by default, grows with content, capped at
   // the CSS max-height (read from the element so the JS cap cannot drift from
   // the stylesheet); beyond that it scrolls.
+  // The CSS cap is a constant, so it is read once per element instead of once
+  // per keystroke. `getComputedStyle` forces a style recalc, and this one sat
+  // directly in the typing path purely to re-learn the same number every time.
+  // It is re-read if the textarea element itself is replaced.
+  const maxHeightRef = useRef<{ el: HTMLTextAreaElement; max: number } | null>(null);
   const autosize = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
+    if (maxHeightRef.current?.el !== el) {
+      maxHeightRef.current = { el, max: parseFloat(getComputedStyle(el).maxHeight) || 96 };
+    }
+    const { max } = maxHeightRef.current;
+    // The write-to-auto has to stay: it is what lets the box SHRINK, because
+    // scrollHeight never reports less than the current fixed height.
     el.style.height = "auto";
-    const max = parseFloat(getComputedStyle(el).maxHeight) || 96;
     el.style.height = `${Math.min(el.scrollHeight, max)}px`;
   }, []);
   useLayoutEffect(() => { autosize(); }, [input, autosize]);

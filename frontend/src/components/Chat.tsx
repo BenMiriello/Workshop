@@ -507,12 +507,29 @@ export default function Chat({
   // SERVER says it is running — not for as long as this tab holds a socket. The
   // elapsed clock is anchored to the run's real start, so a reload mid-turn
   // shows the true duration and a reconnect does not restart it.
+  //
+  // It does not tick while the app is HIDDEN. The clock is derived from the
+  // run's start time, so it does not need to be running to be right — it only
+  // needs to be re-read when the app comes back, which is what the
+  // visibilitychange handler does. Left ungated, this re-rendered the entire
+  // chat once a second for the whole length of every turn, including with the
+  // PWA in the background, which is where a phone pays for it most.
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!runActive) return;
-    const id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    let id: number | undefined;
+    const start = () => {
+      if (id === undefined) id = window.setInterval(() => setNowMs(Date.now()), 1000);
+    };
+    const stop = () => { window.clearInterval(id); id = undefined; };
+    const onVisibility = () => {
+      setNowMs(Date.now());
+      if (document.hidden) stop(); else start();
+    };
     setNowMs(Date.now());
-    return () => window.clearInterval(id);
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { stop(); document.removeEventListener("visibilitychange", onVisibility); };
   }, [runActive]);
   const elapsed = elapsedSeconds(state.activeRun?.startedMs ?? null, nowMs);
   const workingLabel = turnLabel({
@@ -724,10 +741,24 @@ export default function Chat({
   // A merged-in stale failure has no `pending` entry for `pipeline.retry` to
   // find (that is exactly why it fell to the durable queue) — route it to the
   // queue's own retry instead of failing silently.
+  //
+  // THIS CALLBACK'S IDENTITY IS LOAD-BEARING. It is passed down to MessageList,
+  // which is memoized so a keystroke does not re-render the transcript; every
+  // other prop it gets is already stable, so if this one churns the memo is off
+  // and the whole optimization silently does nothing.
+  //
+  // It used to depend on `[state.pending, pipeline, queue]`, and two of those
+  // change constantly: `state.pending` on every streamed token, and `pipeline`
+  // because useSendPipeline returns a bare object literal built from option
+  // lambdas that Chat re-creates each render. Reading both through refs is what
+  // makes this stable. `pipeline.retry` is itself a stable useCallback, but the
+  // ref means this does not depend on that staying true.
+  const retryRef = useRef(pipeline.retry);
+  retryRef.current = pipeline.retry;
   const onRetryAny = useCallback((clientId: string) => {
-    if (state.pending[clientId]) pipeline.retry(clientId);
+    if (stateRef.current.pending[clientId]) retryRef.current(clientId);
     else queue.retryFailed(clientId);
-  }, [state.pending, pipeline, queue]);
+  }, [stateRef, queue]);
 
   const logLoading = thread.loadingThreads || !hydrated;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
