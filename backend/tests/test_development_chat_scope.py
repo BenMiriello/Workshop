@@ -77,3 +77,58 @@ class TestDeveloperModeOff:
         for value in ("0", "false", "", "yes"):
             monkeypatch.setenv("WORKSHOP_DEV_MODE", value)
             assert "development" not in _keys(ctx), f"{value!r} read as on"
+
+
+class TestExactlyOneNameForTheRepo:
+    """ADR 0014 §4: one key resolves to the platform repo, and it is
+    `development`.
+
+    The registry row is ALSO named `development`, so `project:development`
+    resolved to the repo too and it had two working addresses again. Only the
+    dev-mode-OFF case was tested, which is why it survived the audit that added
+    the gate.
+    """
+
+    def test_the_alias_does_not_resolve_even_in_dev_mode(self, monkeypatch):
+        monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
+        from services import task_scope
+        assert task_scope.root_for_context("project:development") is None
+
+    def test_the_real_key_still_resolves_in_dev_mode(self, monkeypatch):
+        monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
+        from services import task_scope
+        assert task_scope.root_for_context("development") == task_scope.WORKSHOP_ROOT
+
+    def test_neither_resolves_with_dev_mode_off(self, monkeypatch):
+        monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
+        from services import task_scope
+        assert task_scope.root_for_context("development") is None
+        assert task_scope.root_for_context("project:development") is None
+
+    def test_an_ordinary_project_is_unaffected(self, monkeypatch):
+        """The gate must not swallow real projects."""
+        monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
+        from services import task_scope
+        root = task_scope.root_for_context("project:birds")
+        assert root is not None and root.name == "birds"
+
+
+class TestTheDowngradeIsNotSilent:
+    """`get_provider` degrades `development` to `general` when the flag is off,
+    because it is total by contract and 24 call sites rely on that. The
+    honesty is therefore owed at the seam: `dev_scope_refused` is what the
+    turn path asks before answering, so a chat bound to the platform repo
+    cannot quietly become a tool-less general chat and reply anyway."""
+
+    def test_it_reports_a_refusal_when_the_flag_is_off(self, ctx, monkeypatch):
+        monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
+        assert ctx.dev_scope_refused("development") is True
+
+    def test_it_reports_nothing_when_the_flag_is_on(self, ctx, monkeypatch):
+        monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
+        assert ctx.dev_scope_refused("development") is False
+
+    def test_an_ordinary_scope_is_never_refused(self, ctx, monkeypatch):
+        monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
+        for key in ("general", "project:birds", "budget", None):
+            assert ctx.dev_scope_refused(key) is False

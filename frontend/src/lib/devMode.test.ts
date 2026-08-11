@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { DEVELOPMENT_SCOPE, devScopes, orderScopes } from "./devMode";
-import { scopeGroups, scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
+import { taskScopeFor, scopeGroups, scopeKind, scopeLabel, scopeName } from "../components/chat/chatScope";
 import { scopeLabel as taskScopeLabel, scopeHref, runTicketScope } from "./tasks";
 
 // ADR 0014, phase 6: prove the claim rather than assert it.
@@ -87,5 +87,26 @@ describe("a run against the platform repo still finds its ticket", () => {
 
   it("leaves project runs alone", () => {
     expect(runTicketScope({ project_slug: "birds" })).toBe("project:birds");
+  });
+});
+
+describe("the development scope owns a queue like any other work scope", () => {
+  it("maps to a task scope, so its chat gets the ticket panel", () => {
+    // It was omitted when the scope was added, so the scope holding the
+    // platform's own 93 tickets (16 open) was the ONE work scope whose chat
+    // showed none of them: no panel, no Tickets button. That single omission is
+    // most of what made developer mode read as superficial on first use.
+    expect(taskScopeFor("development")).toBe("development");
+  });
+
+  it("still maps the other work scopes", () => {
+    expect(taskScopeFor("project:birds")).toBe("project:birds");
+    expect(taskScopeFor("agent:triager")).toBe("agent:triager");
+    expect(taskScopeFor("build:x")).toBe("build:x");
+  });
+
+  it("still returns null for a chat with no queue", () => {
+    expect(taskScopeFor("general")).toBeNull();
+    expect(taskScopeFor("budget")).toBeNull();
   });
 });

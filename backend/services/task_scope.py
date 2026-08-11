@@ -60,6 +60,11 @@ WORKSHOP_ROOT = Path(os.environ.get(
 WORKSHOP_SCOPE_DIR = Path(os.environ.get(
     "WORKSHOP_SCOPE_DIR", str(WORKSHOP_ROOT / "shared" / "queue")))
 
+# The ONE key that resolves to the platform repo (ADR 0014 §4). Named rather
+# than spelled inline, because the point of the constant is that there is
+# exactly one of it.
+DEVELOPMENT_SCOPE = "development"
+
 
 def _raw_root_for_context(context_key: str | None) -> Path | None:
     """Where a scope's task store WOULD be, before the developer-mode gate.
@@ -120,8 +125,17 @@ def root_for_context(context_key: str | None) -> Path | None:
     if root is None:
         return None
     from services import app_runner
-    if app_runner.is_self_dir(root) and not app_runner.dev_mode_on():
-        return None
+    if app_runner.is_self_dir(root):
+        # ONE NAME, even with the flag on. §4: exactly one key resolves to the
+        # platform repo, and it is `development`. The registry row is named
+        # `development` too, so `project:development` also resolved here and the
+        # repo had two working addresses again, which is the alias
+        # multiplication this design exists to end. Only the OFF case was
+        # tested, so it survived the audit that added the gate.
+        if context_key != DEVELOPMENT_SCOPE:
+            return None
+        if not app_runner.dev_mode_on():
+            return None
     return root
 
 

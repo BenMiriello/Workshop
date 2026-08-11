@@ -134,8 +134,16 @@ export const SCOPE_GROUPS = scopeGroups();
 // The task-store scope a chat maps to, or null when the chat has no task queue
 // (general chat, app docks). build/project/agent chats all get the shared
 // TaskPanel; the contextKey IS the scope key for those.
+//
+// `development` is in the list because it owns a queue like any other work
+// scope: the platform repo's own 93 tickets, 16 of them open. It was omitted
+// when the scope was added, so the ONE scope with the most work was the only
+// work scope whose chat could not see its own tickets. No panel, no Tickets
+// button in the toolbar, nothing. That single omission is most of what made
+// developer mode read as superficial on first use.
 export function taskScopeFor(contextKey: string): string | null {
   if (
+    contextKey === "development" ||
     contextKey.startsWith("build:") ||
     contextKey.startsWith("project:") ||
     contextKey.startsWith("agent:")

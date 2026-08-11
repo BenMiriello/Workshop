@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from services import chat_store, chat_context, chat_log
 from services import tasks
+from services import task_scope
 from services import context_report
 from services import mcp_health
 from services import mcp_registry
@@ -2311,6 +2312,16 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
+    # A chat bound to a developer-mode scope, on an installation where the flag
+    # is off, must not just answer as if it were an ordinary chat. get_provider
+    # degrades to `general` there (it is total by contract and cannot raise), so
+    # without this the thread keeps its `development` badge, silently loses its
+    # cwd and its tools, and replies anyway. Refuse at the one moment the
+    # operator is present, with the sentence that explains the flag.
+    if chat_context.dev_scope_refused(t.get("context_key")):
+        raise HTTPException(403, task_scope.dev_mode_refusal(t.get("context_key"))
+                            or "developer mode is off, so this scope cannot run here")
+
     try:
         model = chat_context.normalize_model(model_in)
     except ValueError as e:

@@ -1622,14 +1622,35 @@ def capability_for(
     return False, ""
 
 
+def dev_scope_refused(context_key: str | None) -> bool:
+    """Is this a developer-mode scope asked for while the flag is off?
+
+    Exists because `get_provider` below CANNOT refuse. It is total by contract:
+    24 call sites treat it as always returning something, and several are on
+    paths where an exception would be a 500 rather than a refusal. So the
+    honest split is that get_provider degrades and this predicate lets the
+    operator-facing seams say so out loud."""
+    if context_key != "development":
+        return False
+    from services import app_runner
+    return not app_runner.dev_mode_on()
+
+
 def get_provider(context_key: str | None) -> ContextProvider:
     if context_key == "development":
-        # Refused rather than silently downgraded to `general`: a chat bound to
-        # the platform repo must not quietly become a chat with no tools when
-        # the flag is off. provider_map() is the gate, and this asks it.
         from services import app_runner
         if app_runner.dev_mode_on():
             return DevelopmentContextProvider()
+        # FALLS THROUGH TO `general` when the flag is off, and that is a
+        # DOWNGRADE, not a refusal. This comment used to claim the opposite,
+        # which was worse than the behaviour: a chat bound to the platform repo
+        # quietly became a tool-less general chat and nothing said so.
+        #
+        # Degrading here is deliberate (see dev_scope_refused above for why it
+        # cannot raise), so the refusal belongs at the seams the operator can
+        # actually see. `routes/chat.py` checks dev_scope_refused before
+        # starting a turn, which is the moment the downgrade would otherwise
+        # become invisible.
     if context_key and context_key.startswith("project:"):
         slug = context_key.split(":", 1)[1]
         return ProjectContextProvider(slug)
