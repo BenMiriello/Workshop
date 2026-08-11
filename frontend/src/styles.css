@@ -1034,7 +1034,13 @@ input[type="range"].grad::-moz-range-thumb {
    longer takes flow space at all. The shadow reads as "floating above",
    which is genuinely what it's doing now. */
 .chat-inbox {
-  position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-dropdown);
+  /* Floats above the log but BELOW the toolbar's dropdowns. It used to sit at
+     --z-dropdown, the same layer the scope/tickets/actions menus use, so with
+     equal z-index the later sibling won and this panel covered any menu opened
+     while it was showing. It is in-chat overlay content, not a top-level popover:
+     --z-sticky keeps it over the transcript (base) and lets those menus open on
+     top of it. */
+  position: absolute; top: 0; left: 0; right: 0; z-index: var(--z-sticky);
   display: flex; flex-direction: column;
   max-height: 40vh;
   overflow-y: auto; overscroll-behavior: contain;
