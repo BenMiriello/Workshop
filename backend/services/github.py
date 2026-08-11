@@ -226,9 +226,9 @@ def bind_repo(dir: str, remote_url: str) -> dict:
     if head.returncode == 0:
         default_branch = (head.stdout or "").strip().rsplit("/", 1)[-1]
     if not default_branch:
-        default_branch = _default_branch(owner, name)
+        default_branch = _default_branch(configured, name)
     return {
-        "owner": owner,
+        "owner": configured,
         "name": name,
         "remote_url": remote_url,
         "default_branch": default_branch or "main",

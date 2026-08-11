@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { usePoll } from "../lib/usePoll";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { ExternalLink, KeyRound, RefreshCw } from "lucide-react";
 import {
   Button,
   Card,
@@ -26,9 +26,30 @@ type ServiceStatus = {
   notes?: string;
 };
 
+// A credential is not a service, which is why it has its own shape and its own
+// section. A service is up or down at a URL. A credential is present, proven
+// working, or merely configured, and `verified` is which of those the backend
+// actually established. See backend/services/auth_health.py.
+type CredentialRow = {
+  name: string;
+  label: string;
+  kind: StatusKind;
+  state: string;
+  detail?: string;
+  verified: boolean;
+  unverified_because?: string;
+  checks?: string;
+  account?: string;
+  scopes?: string[];
+  method?: string;
+  plan?: string;
+};
+
 type ServicesResp = {
   services: ServiceStatus[];
   summary: { up: number; degraded: number; down: number };
+  credentials?: CredentialRow[];
+  credentials_summary?: { ok: number; warn: number; danger: number; stopped: number; total: number };
 };
 
 const statusKind = (s: ServiceStatus["status"]): StatusKind =>
@@ -48,6 +69,50 @@ const externalUrl = (url: string, probe: string) => {
     return url + probe;
   }
 };
+
+/** One credential, with an honest account of how much the check proved.
+ *
+ * The `verified` line is the point of this card. The GitHub check reaches
+ * GitHub, so a pass there is evidence. The Claude check reads local config and
+ * cannot detect an expired token, so a pass there is not. Rendering both as the
+ * same green pill with no caveat would recreate the silent failure this whole
+ * change exists to fix.
+ */
+function CredentialCard({ c }: { c: CredentialRow }) {
+  const facts = [
+    c.account,
+    c.plan ? `${c.plan} plan` : "",
+    c.method,
+    c.scopes?.length ? `scopes: ${c.scopes.join(", ")}` : "",
+  ].filter(Boolean);
+
+  return (
+    <li>
+      <Card>
+        <Row between style={{ alignItems: "baseline" }}>
+          <h3 className="ws-card__title">{c.label}</h3>
+          <StatusPill status={c.kind}>{c.state}</StatusPill>
+        </Row>
+        {facts.length > 0 && <p className="ws-card__meta">{facts.join(" · ")}</p>}
+        {c.detail && (
+          <p
+            className="ws-card__meta"
+            style={{ color: c.kind === "ok" ? undefined : "var(--danger)" }}
+          >
+            {c.detail}
+          </p>
+        )}
+        <p className="ws-card__meta">
+          {c.verified ? "Checked against the provider." : "Not verified."}
+          {c.checks ? ` Via ${c.checks}.` : ""}
+        </p>
+        {!c.verified && c.unverified_because && (
+          <p className="ws-card__meta">{c.unverified_because}</p>
+        )}
+      </Card>
+    </li>
+  );
+}
 
 export default function Services() {
   const [data, setData] = useState<ServicesResp | null>(null);
@@ -111,6 +176,10 @@ export default function Services() {
     return acc;
   }, {});
 
+  const creds = data.credentials ?? [];
+  const credsBad = creds.filter((c) => c.kind === "danger").length;
+  const credsWarn = creds.filter((c) => c.kind === "warn").length;
+
   return (
     <div>
       <PageHeader
@@ -120,10 +189,25 @@ export default function Services() {
             <StatusDot status="ok">{data.summary.up} up</StatusDot>
             {data.summary.degraded > 0 && <StatusDot status="warn">{data.summary.degraded} degraded</StatusDot>}
             {data.summary.down > 0 && <StatusDot status="danger">{data.summary.down} down</StatusDot>}
+            {credsBad > 0 && <StatusDot status="danger">{credsBad} credential{credsBad === 1 ? "" : "s"} failing</StatusDot>}
+            {credsWarn > 0 && <StatusDot status="warn">{credsWarn} credential{credsWarn === 1 ? "" : "s"} to check</StatusDot>}
           </Row>
         }
         actions={refreshBtn}
       />
+
+      {creds.length > 0 && (
+        <section style={{ marginBottom: "var(--space-6)" }}>
+          <SectionLabel>
+            <KeyRound size={14} strokeWidth={1.8} aria-hidden /> credentials
+          </SectionLabel>
+          <CardGrid>
+            {creds.map((c) => (
+              <CredentialCard key={c.name} c={c} />
+            ))}
+          </CardGrid>
+        </section>
+      )}
 
       {Object.entries(byCat).map(([cat, items]) => (
         <section key={cat} style={{ marginBottom: "var(--space-6)" }}>

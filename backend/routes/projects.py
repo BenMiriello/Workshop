@@ -404,16 +404,53 @@ async def create_project(body: CreateProjectIn) -> Project:
     want_repo = body.create_repo if body.create_repo is not None else (not scratch)
     if want_repo:
         from services import github
-        github.reject_blocked(slug, title)
-        base = github.repo_base_name(slug, scratch)
-        name = github.unique_repo_name(base)
-        info = github.create_repo(str(target), name)
+        # An install with no GitHub owner configured, or no `gh` login, used to
+        # take the whole scaffold down with a 500 AFTER the directory had been
+        # written. The local project is real either way, so a repo failure is
+        # reported as a failure to connect one — not as a failure to create the
+        # project the operator can already see on disk.
+        try:
+            github.reject_blocked(slug, title)
+            base = github.repo_base_name(slug, scratch)
+            name = github.unique_repo_name(base)
+            info = github.create_repo(str(target), name)
+        except _GITHUB_ERRORS as e:
+            raise _github_http_error(e)
         record["repo"] = _repo_field(info)
         _assert_project_ignored(slug)
 
     data.setdefault("projects", {})[slug] = record
     _save_registry(data)
     return Project(slug=slug, **record)
+
+
+def _github_http_error(e: Exception) -> HTTPException:
+    """Turn a `gh`/`git` failure into a response that says what to do about it.
+
+    Every one of these used to escape as an unhandled 500 with the traceback in
+    the backend log and nothing in the UI. They are all ordinary operational
+    states — not signed in, `gh` not installed, GitHub slow, no owner configured
+    — so they are 400s that name the fix.
+
+    `ValueError` is what `services.github` raises deliberately; the subprocess
+    and OS errors are the ones nobody had claimed.
+    """
+    if isinstance(e, subprocess.TimeoutExpired):
+        return HTTPException(400, f"GitHub did not respond in time (`{e.cmd[0]}` timed out).")
+    if isinstance(e, FileNotFoundError):
+        return HTTPException(400, "The `gh` CLI is not installed or not on PATH, "
+                                  "so this project cannot reach GitHub.")
+    if isinstance(e, subprocess.CalledProcessError):
+        err = ((e.stderr or "") + (e.stdout or "")).strip()[:300] if e.stderr or e.stdout else ""
+        return HTTPException(400, f"`gh` failed: {err or f'exit {e.returncode}'}. "
+                                  "Settings → System shows whether the GitHub "
+                                  "credential is still good.")
+    return HTTPException(400, str(e))
+
+
+# The failures `gh`/`git` can hand back. TimeoutExpired and CalledProcessError
+# are both SubprocessError; FileNotFoundError is an OSError.
+_GITHUB_ERRORS = (ValueError, subprocess.SubprocessError, OSError)
 
 
 @router.post("/{slug}/connect-github")
@@ -441,8 +478,8 @@ async def connect_github(slug: str, body: ConnectGithubIn) -> Project:
             info = github.bind_repo(str(proj_dir), body.remote_url.strip())
         else:  # pragma: no cover - pydantic Literal blocks this
             raise HTTPException(400, f"unknown mode: {body.mode}")
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    except _GITHUB_ERRORS as e:
+        raise _github_http_error(e)
 
     raw["repo"] = _repo_field(info)
     raw["last_touched"] = _now()

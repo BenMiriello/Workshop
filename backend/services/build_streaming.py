@@ -946,6 +946,114 @@ def _journal_dir(turn_id: str) -> Path:
     return TURNS_DIR / turn_id
 
 
+# Lines the CLI's runtime writes that say nothing about why a turn failed.
+# Matched at the START of a stripped line so a real message that happens to
+# mention "warning" is never dropped.
+_STDERR_NOISE = (
+    "(node:",
+    "warning:",
+    "experimentalwarning",
+    "deprecationwarning",
+    "(use `node ",
+    "debugger attached",
+    "waiting for the debugger",
+)
+
+# How much of the tail to show. Long enough for a stack-ish message, short
+# enough that it stays a chat message rather than becoming a log dump.
+_STDERR_TAIL_CHARS = 600
+
+
+def _stderr_tail(turn_id: str, limit: int = _STDERR_TAIL_CHARS) -> str:
+    """The last useful thing the CLI wrote to stderr for this turn, or "".
+
+    WHY THIS IS READ AT ALL. The child's stderr has always been captured to
+    `stream.err` and nothing ever opened it. So when the CLI failed — an expired
+    token being the case that actually bit — the operator got
+    "Ended unexpectedly (exit 1)" while the sentence explaining it sat on disk,
+    unread, three directories down. The turn knew; the chat did not.
+
+    WHY THE TEXT IS PASSED THROUGH RATHER THAN CLASSIFIED. The obvious design is
+    a table mapping known CLI phrasings to friendly messages. That table cannot
+    be written honestly here: reproducing an auth failure on this host is not
+    possible without logging the operator out of the CLI their system runs on,
+    so every entry in it would be a guess at a vendor string. A guessed mapping
+    fails in the worst direction — it either matches nothing (and adds nothing)
+    or matches wrongly (and replaces the real reason with a confident wrong
+    one). The CLI's own words are the thing that has actual information in it,
+    so they are shown, and the only interpretation applied is dropping runtime
+    noise and marking whether the message looks credential-related.
+
+    Reads the tail only: a turn that spewed megabytes of stderr must not be read
+    into memory to render one line.
+    """
+    p = _journal_dir(turn_id) / "stream.err"
+    try:
+        size = p.stat().st_size
+        if not size:
+            return ""
+        with open(p, "rb") as fh:
+            # 4x the display budget so there is room to drop noise lines and
+            # still have something left.
+            if size > limit * 4:
+                fh.seek(size - limit * 4)
+            raw = fh.read()
+    except OSError:
+        return ""
+    text = raw.decode("utf-8", errors="replace")
+    lines = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s:
+            continue
+        low = s.lower()
+        if any(low.startswith(n) for n in _STDERR_NOISE):
+            continue
+        lines.append(s)
+    if not lines:
+        return ""
+    out = " ".join(lines)
+    if len(out) > limit:
+        # Keep the END: a failure message is written after whatever preceded it.
+        out = "…" + out[-limit:]
+    return out
+
+
+# Words that make a failure look like a credential problem rather than a crash.
+# Used ONLY to add a pointer to the settings screen, never to replace the CLI's
+# own text, so a false positive costs one extra sentence and a false negative
+# costs nothing.
+_AUTH_HINTS = ("authentication", "unauthorized", "401", "403", "invalid api key",
+               "invalid_api_key", "oauth", "credential", "not logged in",
+               "log in", "login", "expired token", "token has expired",
+               "permission_error", "authentication_error")
+
+
+def _looks_like_auth_failure(text: str) -> bool:
+    low = (text or "").lower()
+    return any(h in low for h in _AUTH_HINTS)
+
+
+def _failure_text(rc: int, turn_error: str, stderr_tail: str) -> str:
+    """The message shown for a turn that produced nothing and failed.
+
+    `turn_error` wins over `stderr_tail` because this module only sets it when
+    THIS process is what failed (journal open, input channel, missing binary) —
+    in those cases it knows the cause exactly and the child either never ran or
+    never got to say anything. Whenever the CLI itself is what broke, this
+    module has nothing to add and the child's stderr is the only real
+    information available.
+    """
+    detail = (turn_error or "").strip() or (stderr_tail or "").strip()
+    if not detail:
+        return f"Ended unexpectedly (exit {rc})."
+    if _looks_like_auth_failure(detail):
+        return (f"Ended unexpectedly (exit {rc}): {detail}\n\n"
+                "That reads like a credentials problem. Settings → System shows "
+                "whether the Claude and GitHub credentials are still good.")
+    return f"Ended unexpectedly (exit {rc}): {detail}"
+
+
 def _write_meta(meta: dict) -> None:
     d = _journal_dir(meta["turn_id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -1723,8 +1831,10 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         text = chat_store.LOST_RUN_TEXT
         is_error = False
     else:
-        detail = f": {turn.error}" if turn.error else ""
-        text = f"Ended unexpectedly (exit {rc}){detail}."
+        # The CLI's own stderr, which until now was captured and never read: a
+        # turn that died of a bad credential said so on disk while the chat said
+        # "exit 1". See `_stderr_tail`.
+        text = _failure_text(rc, turn.error or "", _stderr_tail(turn.id))
         is_error = True
     # Provider actions (e.g. an app persona applying a plan-patch to budget.json).
     # Only providers that actually override apply_actions run here, so the general

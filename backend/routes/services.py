@@ -9,6 +9,12 @@ listed here. An app that runs out of process (a separate backend, a worker, a
 dashboard) declares its own on its AppSpec, so its probes exist exactly while it
 is installed and a fresh instance does not report three wearables services down
 because it inherited someone else's roster.
+
+This route also carries `credentials`, which are NOT services and are kept in
+their own key rather than folded into the list. A process is up or down at a
+URL; a credential is present, valid, or unprovable, and `auth_health` reports
+which of those it actually established. Flattening the two would mean inventing
+a URL for a token and a confidence level for a port.
 """
 from __future__ import annotations
 
@@ -89,9 +95,14 @@ async def _probe(client: httpx.AsyncClient, s: Service) -> dict:
 
 
 @router.get("/")
-async def list_services():
+async def list_services(refresh: bool = False):
+    from services import auth_health
+
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(*(_probe(client, s) for s in services()))
+        results, (creds, checked_at, cached) = await asyncio.gather(
+            asyncio.gather(*(_probe(client, s) for s in services())),
+            auth_health.cached_check_all(force=refresh),
+        )
     return {
         "services": results,
         "summary": {
@@ -99,4 +110,8 @@ async def list_services():
             "degraded": sum(1 for r in results if r["status"] == "degraded"),
             "down": sum(1 for r in results if r["status"] == "down"),
         },
+        "credentials": creds,
+        "credentials_summary": auth_health.summarize(creds),
+        "credentials_checked_at": checked_at,
+        "credentials_cached": cached,
     }
