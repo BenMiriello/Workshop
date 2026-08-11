@@ -287,6 +287,8 @@ export default function Chat({
     inputFocused,
     followDeps: [transcript, queue.items, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
+    // Restore the scroll position per thread when returning to it.
+    restoreKey: activeId,
   });
 
   const pipeline = useSendPipeline({
