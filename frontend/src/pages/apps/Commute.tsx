@@ -3,8 +3,8 @@ import { PageHeader } from "@workshop/ui";
 import CommutePages from "./commute/CommutePages";
 import AppChatDock from "../../components/AppChatDock";
 import { AppSettings } from "../../components/AppSettings";
-import CommuteSettings from "../../components/appSettings/CommuteSettings";
-import { useCommuteNative } from "../../native/commute";
+import CommuteSettings from "./commute/CommuteSettings";
+import { useCommuteNative } from "./commute/useCommuteNative";
 
 // Commute is a first-class Workshop app (like Finance / Budget / Location /
 // Birds) — its source lives here under pages/apps/commute. The page header +

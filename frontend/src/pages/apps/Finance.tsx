@@ -3,8 +3,8 @@ import { RefreshCw } from "lucide-react";
 import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
 import { AppSettings } from "../../components/AppSettings";
-import FinanceSettings from "../../components/appSettings/FinanceSettings";
-import { ConnectBankButton } from "../../components/PlaidLink";
+import FinanceSettings from "./finance/FinanceSettings";
+import { ConnectBankButton } from "./finance/PlaidLink";
 import {
   Button,
   Card,

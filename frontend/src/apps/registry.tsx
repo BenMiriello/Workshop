@@ -44,6 +44,8 @@ export type AppModule = {
   /** Live state for the launcher card. The launcher used to switch on app ids
    *  and fetch each app's endpoint itself; an app knows its own summary. */
   status?: () => Promise<AppStatus>;
+  /** A panel this app contributes to the Settings screen, if any. */
+  Settings?: ComponentType;
   /** The <Route> elements this app contributes under /apps. */
   routes: () => ReactNode;
 };
@@ -63,6 +65,7 @@ const BirdSettings = lazy(() => import("../pages/apps/birds/BirdSettings"));
 const Recordings = lazy(() => import("../pages/apps/birds/RecordingsPage"));
 const Atlas = lazy(() => import("../pages/apps/birds/Atlas"));
 const ForecastWeek = lazy(() => import("../pages/apps/birds/ForecastWeek"));
+const HealthSettings = lazy(() => import("../pages/apps/health/HealthSettings"));
 
 import { BirdsScopeProvider } from "../pages/apps/birds/scope";
 import BirdsShell from "../pages/apps/birds/BirdsShell";
@@ -145,6 +148,14 @@ async function locationStatus(): Promise<AppStatus> {
 }
 
 export const APPS: AppModule[] = [
+  {
+    // Health has no page of its own: a settings panel is its entire frontend.
+    // An app contributing no routes is a normal case, not a special one.
+    id: "health",
+    Settings: HealthSettings,
+    crumbs: {},
+    routes: () => null,
+  },
   {
     id: "finance",
     Icon: Banknote,
@@ -252,6 +263,14 @@ export function AppProviders({ children }: { children: ReactNode }) {
 /** Wraps lazily-loaded app pages. The shell renders instantly either way. */
 export function AppSuspense({ children }: { children: ReactNode }) {
   return <Suspense fallback={null}>{children}</Suspense>;
+}
+
+/** Every installed app's Settings panel, in catalog order. */
+export function appSettingsPanels(): ReactNode[] {
+  return APPS.filter((a) => a.Settings).map((a) => {
+    const Panel = a.Settings!;
+    return <Panel key={a.id} />;
+  });
 }
 
 /** The glyph an app declared, if it declared one. */

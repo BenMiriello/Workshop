@@ -3,11 +3,6 @@ import { Link } from "react-router-dom";
 import {
   Bot,
   Server,
-  Heart,
-  Eye,
-  EyeOff,
-  Copy,
-  Check,
   Palette,
   Sun,
   Moon,
@@ -58,6 +53,7 @@ import { native } from "../native/bridge";
 import { useNative, useTrackingStatus } from "../native/useNative";
 import { startDeviceTracking, stopDeviceTracking } from "../native/location";
 import type { PermissionState } from "@shared/native-bridge";
+import { AppSuspense, appSettingsPanels } from "../apps/registry";
 
 // Settings page. Logical groupings, no over-engineering. Sections in order
 // of how often the operator actually touches them.
@@ -98,7 +94,9 @@ export default function Settings() {
       <BaseAppsSection />
       <PlatformSection />
       <TrackersSection />
-      <HealthSection />
+      {/* Panels contributed by installed apps. Settings does not know which
+          apps exist or what they need configured. */}
+      <AppSuspense>{appSettingsPanels()}</AppSuspense>
       <AgentsSection />
       <AutonomyControls />
       <SystemSection />
@@ -709,132 +707,6 @@ function ChatSection() {
 }
 
 // ----------------------------------------------------------------------------
-// Health section — Apple Health data via Health Auto Export iOS app
-// ----------------------------------------------------------------------------
-function HealthSection() {
-  const [metrics, setMetrics] = useState<Record<string, { ts?: string; date?: string; qty?: unknown; units?: string }> | null>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [clearing, setClearing] = useState(false);
-  const [, setTick] = useState(0);
-
-  const load = useCallback(async () => {
-    try {
-      const r = await fetch("/api/health/latest");
-      const j = r.ok ? await r.json() : { metrics: {} };
-      setMetrics(j.metrics || {});
-    } catch {
-      setMetrics({});
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 60_000);
-    const tick = setInterval(() => setTick((x) => x + 1), 15_000);
-    return () => { clearInterval(t); clearInterval(tick); };
-  }, [load]);
-
-  const onClear = async () => {
-    setClearing(true);
-    try {
-      await fetch("/api/health/history", { method: "DELETE" });
-      await load();
-    } finally {
-      setClearing(false);
-      setConfirmClear(false);
-    }
-  };
-
-  const entries = metrics ? Object.entries(metrics) : [];
-  // Latest ts across all metrics → top-line status
-  const latestTs = entries.reduce<string | null>((acc, [, v]) => {
-    if (!v?.ts) return acc;
-    if (!acc) return v.ts;
-    return v.ts > acc ? v.ts : acc;
-  }, null);
-  const ageS = latestTs ? Math.max(0, Math.round((Date.now() - Date.parse(latestTs)) / 1000)) : null;
-  const stale = ageS != null && ageS > 24 * 3600; // > 24h with no push → likely a problem
-
-  return (
-    <Section icon={Heart} title="Health (Apple Health)">
-      <Row label="status">
-        {!latestTs ? (
-          <StatusDot status="danger">no data, install Health Auto Export</StatusDot>
-        ) : stale ? (
-          <StatusDot status="warn">stale ({fmtAge(latestTs)}), check Health Auto Export</StatusDot>
-        ) : (
-          <StatusDot status="ok">{entries.length} metric{entries.length === 1 ? "" : "s"} · last push {fmtAge(latestTs)}</StatusDot>
-        )}
-      </Row>
-      <Row label="iOS app">
-        <a href="https://apps.apple.com/us/app/health-auto-export/id1115567069" target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)" }}>
-          Health Auto Export
-        </a>{" · "}~$5 · config walkthrough at <code style={{ fontSize: "0.8rem" }}>docs/health-auto-export-ios.md</code>
-      </Row>
-      <HealthCredentials />
-      {entries.slice(0, 8).map(([name, v]) => (
-        <Row key={name} label={name}>
-          <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem" }}>
-            {String(v.qty ?? "–")}{v.units ? ` ${v.units}` : ""}
-            {v.date && <span className="muted" style={{ marginLeft: "0.5rem", fontSize: "0.78rem" }}>{v.date}</span>}
-          </span>
-        </Row>
-      ))}
-      <Row label="history">
-        <button onClick={() => setConfirmClear(true)} style={{ padding: "0.2rem 0.6rem", fontSize: "0.8rem", color: "var(--err)" }}>
-          clear all data
-        </button>
-      </Row>
-      <ConfirmDialog
-        open={confirmClear}
-        onCancel={() => setConfirmClear(false)}
-        onConfirm={onClear}
-        title="Erase all stored Apple Health data?"
-        body="Deletes every Apple Health metric Workshop has stored. This can't be undone, and the data only comes back if Health Auto Export pushes it again."
-        confirmLabel="Erase health data"
-        busy={clearing}
-      />
-    </Section>
-  );
-}
-
-function HealthCredentials() {
-  const [revealed, setRevealed] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
-  const url = `${window.location.origin}/api/health/ingest`;
-
-  const copy = async (label: string, value: string) => {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(label);
-      setTimeout(() => setCopied(null), 1200);
-    } catch { /* ignore */ }
-  };
-
-  return (
-    <>
-      <Row label="endpoint URL">
-        <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.78rem", wordBreak: "break-all" }}>{url}</span>
-        <button onClick={() => copy("health-url", url)} style={{ marginLeft: "0.4rem", padding: "0.2rem 0.4rem", fontSize: "0.75rem" }}>
-          {copied === "health-url" ? <Check size={12} strokeWidth={2} /> : <Copy size={12} strokeWidth={1.8} />}
-        </button>
-      </Row>
-      <Row label="auth">
-        Basic · user <code style={{ fontSize: "0.8rem" }}>workshop</code> · pass{" "}
-        <button onClick={() => setRevealed((v) => !v)} style={{ marginLeft: "0.3rem", padding: "0.2rem 0.4rem", fontSize: "0.75rem" }}>
-          {revealed ? <EyeOff size={12} strokeWidth={1.8} /> : <Eye size={12} strokeWidth={1.8} />}
-        </button>
-        {revealed && (
-          <span style={{ marginLeft: "0.4rem", fontSize: "0.75rem", color: "var(--muted)" }}>
-            from Workshop's saved credentials
-          </span>
-        )}
-      </Row>
-    </>
-  );
-}
-
-// ----------------------------------------------------------------------------
 // Agents section — fleet overview, defaults
 // ----------------------------------------------------------------------------
 function AgentsSection() {
@@ -894,11 +766,6 @@ function SystemSection() {
               {down > 0 && <StatusDot status="danger">{down} down</StatusDot>}
             </span>
           )}
-        </Row>
-        <Row label="URLs">
-          <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)", display: "block" }}>
-            :8443 workshop · :8444 commute · :8445 wearables
-          </span>
         </Row>
       </Section>
 

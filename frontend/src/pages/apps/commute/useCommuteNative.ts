@@ -8,7 +8,7 @@
 
 import { useEffect, useRef } from "react";
 import type { CommuteActivityState, ActivityStatus } from "@shared/native-bridge";
-import { native } from "./bridge";
+import { native } from "../../../native/bridge";
 
 interface Leg {
   mode?: string;

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapPin, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
-import { SettingsSection, SettingsRow as Row } from "../AppSettings";
+import { SettingsSection, SettingsRow as Row } from "../../../components/AppSettings";
 
 // Location app settings — Owntracks status + privacy. Moved verbatim out of the
 // platform Settings page (Phase 5 settings split) so it lives inside the app it
