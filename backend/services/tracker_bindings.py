@@ -141,6 +141,26 @@ def set_mode(mode: str) -> dict:
 
 
 @_locked
+def set_credential_source(source: str) -> dict:
+    """Change WHERE the token comes from without dropping the connection.
+
+    Switching from the local `gh` login to a pasted token, or back, changes
+    nothing about the binding except which credential the adapter picks up. It
+    used to require disconnecting, which unlinks every ticket in the scope, to
+    change a setting that is not about tickets at all.
+    """
+    from services import tracker_credentials
+    if source not in tracker_credentials.SOURCES:
+        raise ValueError(f"credential source must be one of "
+                         f"{', '.join(tracker_credentials.SOURCES)}")
+    rec = load()
+    if not rec["provider"]:
+        raise ValueError("no tracker is connected")
+    rec["credential_source"] = source
+    return _write(rec)
+
+
+@_locked
 def set_filter(*, kind: str, label: str = "workshop", query: str = "") -> dict:
     if kind not in ("label", "query", "all"):
         raise ValueError("filter kind must be label, query or all")

@@ -60,6 +60,50 @@ def clear(provider: str) -> None:
     secrets_store.delete_key(_slug(provider), "token")
 
 
+def verify(provider: str, token: str) -> dict:
+    """Does this token actually work? `{ok, login, detail}`. Never raises.
+
+    Checked BEFORE the token is stored, so a typo is a message on the form
+    rather than a connection that fails later for reasons that look unrelated.
+    A token is not a setting whose effect you find out about at the next poll.
+
+    The token is passed in the child's environment and never appears in argv,
+    which is world-readable through /proc.
+    """
+    token = (token or "").strip()
+    if not token:
+        return {"ok": False, "login": "", "detail": "No token was given."}
+    if provider != "github":
+        # Honest rather than optimistic: nothing here can check a Linear or Jira
+        # token yet, so it is stored unverified and says so.
+        return {"ok": True, "login": "",
+                "detail": f"Stored without checking; no verifier for {provider} yet."}
+
+    import subprocess
+    env = dict(os.environ)
+    env["GH_TOKEN"] = token
+    env.pop("GITHUB_TOKEN", None)
+    try:
+        res = subprocess.run(["gh", "api", "user", "-q", ".login"],
+                             capture_output=True, text=True, timeout=30, env=env)
+    except FileNotFoundError:
+        return {"ok": False, "login": "",
+                "detail": "The `gh` CLI is not installed, so the token cannot be checked."}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "login": "", "detail": "GitHub did not respond in time."}
+    if res.returncode != 0:
+        # `gh` prints its one-line complaint ("gh: Bad credentials (HTTP 401)")
+        # and then the API's raw JSON body, which repeats it at length. The
+        # first line is the whole message; the blob is noise on a form.
+        raw = ((res.stderr or "") + "\n" + (res.stdout or "")).strip()
+        first = next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")
+        return {"ok": False, "login": "",
+                "detail": first[:300] or f"`gh api user` exited {res.returncode}."}
+    login = (res.stdout or "").strip()
+    return {"ok": True, "login": login,
+            "detail": f"Verified as {login}." if login else "Verified."}
+
+
 def env_for(binding: dict) -> dict[str, str]:
     """Environment for a `gh` invocation that must use OUR token rather than the
     CLI's own login. `GH_TOKEN` is what `gh` reads, so a device-flow or pasted

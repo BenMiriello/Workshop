@@ -36,6 +36,15 @@ type Credential = {
   scopes: string[];
 };
 
+// How the credential is obtained. The storage for a pasted token existed from
+// the start and nothing could reach it: the connect form never sent
+// `credential_source`, so every binding quietly used the local `gh` login.
+const SOURCE_LABEL: Record<string, string> = {
+  gh: "Local gh CLI login",
+  pat: "Personal access token",
+  device_flow: "Sign in with GitHub",
+};
+
 type Candidate = {
   id: string;
   scope: string;
@@ -53,6 +62,7 @@ type Payload = {
   credential: Credential | null;
   providers_built: string[];
   modes: string[];
+  credential_sources: Credential[];
   triage: Record<string, number>;
 };
 
@@ -77,6 +87,11 @@ export default function Trackers() {
   const [scope, setScope] = useState("workshop");
   const [mode, setMode] = useState("import");
   const [scopes, setScopes] = useState<string[]>([]);
+  const [credSource, setCredSource] = useState("gh");
+  // Write only. Held just long enough to submit, then dropped: this value never
+  // comes back from the server, and nothing here should keep a copy of it.
+  const [token, setToken] = useState("");
+  const [confirmForget, setConfirmForget] = useState(false);
 
   const load = useCallback(async () => {
     setErr(null);
@@ -96,12 +111,13 @@ export default function Trackers() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const act = useCallback(async (key: string, url: string, body?: unknown) => {
+  const act = useCallback(async (key: string, url: string, body?: unknown,
+                                 method: "POST" | "PUT" | "DELETE" = "POST") => {
     setBusy(key);
     setNote(null);
     try {
       const r = await fetch(url, {
-        method: "POST",
+        method,
         headers: { "content-type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
@@ -174,11 +190,37 @@ export default function Trackers() {
                         ))}
                       </Select>
                     </Field>
+                    <Field label="Credential" inline>
+                      <Select value={credSource} onChange={(e) => setCredSource(e.target.value)}>
+                        {data.credential_sources.map((s) => (
+                          <option key={s.source} value={s.source}>
+                            {SOURCE_LABEL[s.source] ?? s.source}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    {credSource === "pat" && (
+                      <Field label="Token" inline help="Stored write only. It is never shown again.">
+                        <Input type="password" value={token} placeholder="ghp_..."
+                               autoComplete="off"
+                               onChange={(e) => setToken(e.target.value)} />
+                      </Field>
+                    )}
                     <Button size="sm" variant="primary" loading={busy === "connect"}
-                            disabled={!target.trim() || busy === "connect"}
+                            disabled={!target.trim() || busy === "connect"
+                                      || (credSource === "pat" && !token.trim())}
                             onClick={async () => {
+                              // The token has to be stored BEFORE connect, because
+                              // connect proves the credential works by using it.
+                              if (credSource === "pat") {
+                                const saved = await act("connect", "/api/trackers/credentials",
+                                  { provider, token: token.trim() }, "PUT");
+                                if (!saved) return;
+                                setToken("");
+                              }
                               const j = await act("connect", "/api/trackers/connect",
-                                { provider, target: target.trim(), scope, mode });
+                                { provider, target: target.trim(), scope, mode,
+                                  credential_source: credSource });
                               if (j) setNote(`Connected as ${j.account?.login}. Issues arrive in triage; nothing runs without your approval.`);
                             }}>
                       Connect
@@ -186,6 +228,9 @@ export default function Trackers() {
                   </Row>
                   <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
                     {MODE_HELP[mode]}
+                  </span>
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
+                    {data.credential_sources.find((s) => s.source === credSource)?.detail}
                   </span>
                 </Stack>
               ) : (
@@ -213,6 +258,48 @@ export default function Trackers() {
                       </Row>
                     ))}
                   </Stack>
+
+                  {/* Credential. Changing where the token comes from used to
+                      require a disconnect, which unlinks every ticket in the
+                      scope, to change something that is not about tickets. */}
+                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+                    <Field label="Credential" inline>
+                      <Select value={conn.credential_source}
+                              onChange={(e) => act("credsource", "/api/trackers/credential-source",
+                                { source: e.target.value })}>
+                        {data.credential_sources.map((s) => (
+                          <option key={s.source} value={s.source}>
+                            {SOURCE_LABEL[s.source] ?? s.source}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    {conn.credential_source === "pat" && (
+                      <>
+                        <Field label={data.credential?.ready ? "Replace token" : "Token"} inline
+                               help="Stored write only. It is never shown again.">
+                          <Input type="password" value={token} placeholder="ghp_..."
+                                 autoComplete="off"
+                                 onChange={(e) => setToken(e.target.value)} />
+                        </Field>
+                        <Button size="sm" loading={busy === "token"}
+                                disabled={!token.trim() || busy === "token"}
+                                onClick={async () => {
+                                  const j = await act("token", "/api/trackers/credentials",
+                                    { provider: conn.provider, token: token.trim() }, "PUT");
+                                  if (j) { setToken(""); setNote(j.detail); }
+                                }}>
+                          Save token
+                        </Button>
+                        {data.credential?.ready && (
+                          <Button size="sm" variant="danger-ghost"
+                                  onClick={() => setConfirmForget(true)}>
+                            Forget token
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </Row>
 
                   <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
                     <Field label="Mode" inline>
@@ -293,6 +380,27 @@ export default function Trackers() {
           )}
         </Stack>
       )}
+
+      <ConfirmDialog
+        open={confirmForget}
+        title="Forget the stored token?"
+        body={
+          <span>
+            The token is deleted from this machine and cannot be shown again. The
+            connection stays, but it stops working until you paste a new token or
+            switch to a different credential.
+          </span>
+        }
+        confirmLabel="Forget token"
+        onConfirm={async () => {
+          setConfirmForget(false);
+          const j = await act("forget",
+            `/api/trackers/credentials?provider=${encodeURIComponent(conn?.provider ?? "")}`,
+            undefined, "DELETE");
+          if (j) setNote("Token deleted.");
+        }}
+        onCancel={() => setConfirmForget(false)}
+      />
 
       <ConfirmDialog
         open={confirmOff}

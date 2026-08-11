@@ -30,6 +30,12 @@ async def get_connection() -> dict:
         "credential": cred,
         "providers_built": list(trackers.PROVIDERS),
         "modes": list(trackers.MODES),
+        # So the form builds its choices from the seam rather than repeating the
+        # list, and a source added here appears in the UI without a second edit.
+        "credential_sources": [
+            dict(tracker_credentials.status(provider or "github", s), source=s)
+            for s in tracker_credentials.SOURCES
+        ],
         "triage": triage_inbox.counts(),
     }
 
@@ -72,6 +78,72 @@ async def connect(body: ConnectIn) -> dict:
     except ValueError as e:
         raise HTTPException(409, str(e))
     return {"connection": rec, "account": account.__dict__}
+
+
+# ---- credentials -----------------------------------------------------------
+#
+# The storage for a pasted token has existed since the tracker work landed
+# (`tracker_credentials.set_token` / `clear`) and had ZERO callers: nothing in
+# the API could reach it and the connect form never sent `credential_source`, so
+# every binding silently used the local `gh` login. These three routes are what
+# make the seam reachable.
+#
+# WRITE ONLY, like every other credential surface here. A token goes in; only
+# presence and whether it works ever come back out.
+
+
+class CredentialIn(BaseModel):
+    provider: str = Field(min_length=1)
+    token: str = Field(min_length=1)
+
+
+def _credential_status(rec: dict | None = None) -> dict | None:
+    rec = rec if rec is not None else tracker_bindings.load()
+    provider = rec.get("provider")
+    if not provider:
+        return None
+    return tracker_credentials.status(provider, rec.get("credential_source") or "gh")
+
+
+@router.put("/credentials")
+async def set_credential(body: CredentialIn) -> dict:
+    """Store a personal access token, after checking that it works.
+
+    Verified first so a mistyped token is an error on the form, not a connection
+    that fails at the next poll for reasons that look unrelated.
+    """
+    check = tracker_credentials.verify(body.provider, body.token)
+    if not check["ok"]:
+        raise HTTPException(400, check["detail"])
+    tracker_credentials.set_token(body.provider, body.token)
+    return {"stored": True, "account": check["login"], "detail": check["detail"],
+            "credential": _credential_status()}
+
+
+@router.delete("/credentials")
+async def clear_credential(provider: str) -> dict:
+    """Forget the stored token. The connection stays; its credential source does
+    not change, so a binding still set to `pat` will report that it needs one."""
+    tracker_credentials.clear(provider)
+    return {"stored": False, "credential": _credential_status()}
+
+
+class CredentialSourceIn(BaseModel):
+    source: str
+
+
+@router.post("/credential-source")
+async def set_credential_source(body: CredentialSourceIn) -> dict:
+    """Switch where the token comes from without dropping the connection.
+
+    This used to require a disconnect, which unlinks every ticket in the scope,
+    to change something that has nothing to do with tickets.
+    """
+    try:
+        rec = tracker_bindings.set_credential_source(body.source)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"connection": rec, "credential": _credential_status(rec)}
 
 
 class ModeIn(BaseModel):
