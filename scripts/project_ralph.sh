@@ -102,33 +102,48 @@ trap revoke_grant EXIT
 # A run-now targets exactly one task; never let it drain the queue.
 [[ -n "$TASK_ID_ARG" ]] && MAX_TASKS=1
 
-# Job store shim (services.jobs). Run from the repo root so `backend.services`
-# is importable regardless of this script's caller cwd. The run-state of a sweep
-# is a Job in `running` status; we finish() it on exit. Replaces the old
-# per-project .runtime/ralph-run.json.
+# Job store shim (services.jobs). The run-state of a sweep is a Job in `running`
+# status; we finish() it on exit. Replaces the old per-project
+# .runtime/ralph-run.json.
 # --pid $$ records the sweep pid so the liveness watchdog can tell a crashed
 # sweep (dead pid, Job still `running`) from one genuinely in flight (2d).
+#
+# IMPORT PATH: `PYTHONPATH=$WORKSHOP/backend` + `-m services.jobs`, the same way
+# this file already calls services.usage_ledger and services.latitude. It used to
+# be `-m backend.services.jobs`, which stopped working the moment jobs.py grew a
+# top-level `from services import paths` — that import only resolves with
+# backend/ ON the path, not with the repo root as the package parent. Every call
+# below then died on ModuleNotFoundError.
+#
+# And nothing said so, because all four call sites end in `2>/dev/null || true`.
+# So a sweep ran, worked tasks, and never recorded a Job: the Jobs feed and the
+# chat card had nothing to show, which reads as "the run vanished". The silencing
+# is deliberate — a bookkeeping write must never fail a sweep — but it must not
+# be silent to the LOG too, so the failure now lands in $LOG where the next
+# person looking at a missing run will actually find it.
+_job_py() {  # "$@" = args after `python3 -m services.jobs`
+  (cd "$WORKSHOP" && PYTHONPATH="$WORKSHOP/backend" python3 -m services.jobs "$@") \
+    2>>"${LOG:-/dev/stderr}"
+}
 job_start() {  # $1 = trigger kind ; echoes the new job id (coordinator sweep Job)
-  (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
-    --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger "$1" --status running --pid $$ 2>/dev/null) || true
+  _job_py start --project-slug "$SLUG" --agent-id "$ASSIGNEE" \
+    --trigger "$1" --status running --pid $$ || true
 }
 job_start_child() {  # $1=task_id $2=parent_job ; echoes the child Job id
-  (cd "$WORKSHOP" && python3 -m backend.services.jobs start \
-    --project-slug "$SLUG" --agent-id "$ASSIGNEE" --trigger loop --status running \
-    --task-id "$1" --parent-id "$2" --pid $$ 2>/dev/null) || true
+  _job_py start --project-slug "$SLUG" --agent-id "$ASSIGNEE" \
+    --trigger loop --status running --task-id "$1" --parent-id "$2" --pid $$ || true
 }
 job_finish() {  # $1=job_id $2=status $3=tasks_done $4=tasks_failed [$5=evidence-json]
   [[ -z "$1" ]] && return 0
   local ev=(); [[ -n "${5:-}" ]] && ev=(--evidence "$5")
-  (cd "$WORKSHOP" && python3 -m backend.services.jobs finish \
-    --id "$1" --status "$2" --tasks-done "${3:-0}" --tasks-failed "${4:-0}" "${ev[@]}" \
-    >/dev/null 2>&1) || true
+  _job_py finish --id "$1" --status "$2" --tasks-done "${3:-0}" \
+    --tasks-failed "${4:-0}" "${ev[@]}" >/dev/null || true
 }
 job_finish_child() {  # $1=child_job $2=status $3=exit_code [$4=evidence-json]
   [[ -z "$1" ]] && return 0
   local ev=(); [[ -n "${4:-}" ]] && ev=(--evidence "$4")
-  (cd "$WORKSHOP" && python3 -m backend.services.jobs finish \
-    --id "$1" --status "$2" --exit-code "${3:-0}" "${ev[@]}" >/dev/null 2>&1) || true
+  _job_py finish --id "$1" --status "$2" --exit-code "${3:-0}" "${ev[@]}" \
+    >/dev/null || true
 }
 
 # Build the structured receipt (D3 shape) for a child Job's evidence by merging
@@ -1090,7 +1105,7 @@ DURATION=$(( $(date +%s) - START_EPOCH ))
 # the operator: finish awaiting_input with evidence. Home's AttentionStrip + Job
 # detail surface it; the dispatcher skips an unchanged awaiting scope next tick.
 OUT=$(cd "$WORKSHOP" && python3 - "$DIR" "$ASSIGNEE" "${SLUG:-$DIR}" <<'PYEOF'
-import json, sys
+import json, os, sys
 from pathlib import Path
 sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
 from services import tasks
