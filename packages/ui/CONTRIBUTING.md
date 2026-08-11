@@ -18,10 +18,33 @@ made of structure, and it holds in three places:
    requires a ticket that names `packages/ui/**` explicitly, which is by
    definition a platform ticket, reviewed as one.
 3. **Consumers resolve a package, not a path.** There is no relative import that
-   reaches into this directory from an app. `check_design.sh` fails on one.
+   reaches into this directory from an app, and no bundler alias either: the
+   web app resolves `@workshop/ui` through the workspace link in
+   `node_modules`, so the `exports` map is what decides which subpaths exist.
+   `@workshop/ui/controls` does not resolve, and `check_design.sh` fails on a
+   relative import back into the kit.
+
+   The mobile app is narrower still: React Native cannot render the react-dom
+   primitives, so `mobile/metro.config.js` permits `@workshop/ui/tokens.js` and
+   throws on every other `@workshop/ui` import.
 
 Apps restyle by **setting tokens**, never by editing primitives. That is the
 supported extension point and it needs no changes here.
+
+## Versioning: this package is 0.x
+
+The major is zero, and npm gives that a specific meaning: `^0.2.0` resolves to
+`>=0.2.0 <0.3.0`. **The minor is the breaking position.** So:
+
+| | 1.x-style | here, at 0.x |
+|---|---|---|
+| breaking change | major | **minor** (0.2.0 → 0.3.0) |
+| additive change | minor | **patch** (0.2.0 → 0.2.1) |
+| fix | patch | patch |
+
+Consumers pin `^0.2`, which locks them out of the next breaking release exactly
+the way `^1` would. When the API is settled enough to promise stability, go to
+1.0.0 and the normal rules resume.
 
 ## The rules for a change
 
@@ -29,14 +52,15 @@ supported extension point and it needs no changes here.
 
 1. Make the change.
 2. `npm run api:snapshot` and commit `api/ui.api.md`.
-3. Bump the MINOR version in `package.json`.
+3. Bump the PATCH version in `package.json` (0.x rule above).
 4. Add a CHANGELOG entry.
 
 **Breaking change** (an export removed or renamed, a required prop added, a prop
 whose shape changes, a token deleted, a `.ws-*` class renamed):
 
 1. Make the change.
-2. Bump the MAJOR version.
+2. Bump the MINOR version (0.x rule above), and the `kit:` pin in
+   `backend/apps.json` plus `DEFAULT_KIT` in `backend/services/manifests.py`.
 3. Write a CHANGELOG entry **with migration notes** — what moved, what it is
    called now, and what a consumer has to do. Someone else's build is broken
    until they read this; it is the whole artifact they get.
@@ -57,17 +81,17 @@ repo ever gets.
 
 Not obvious in every case, so:
 
-| Change | Breaking? |
-|---|---|
-| Remove or rename an export | yes, major |
-| Add a required prop | yes, major |
-| Change a prop's type (narrow it) | yes, major |
-| Rename a `.ws-*` class | yes, major (consumers style against these) |
-| Remove or rename a CSS token | yes, major |
-| Change a token's VALUE | no, minor (that is the point of tokens) |
-| Add an optional prop | no, minor |
-| Add a primitive or a token | no, minor |
-| Move an export to a subpath | yes, major |
+| Change | Breaking? | Bump (0.x) |
+|---|---|---|
+| Remove or rename an export | yes | minor |
+| Add a required prop | yes | minor |
+| Change a prop's type (narrow it) | yes | minor |
+| Rename a `.ws-*` class | yes (consumers style against these) | minor |
+| Remove or rename a CSS token | yes | minor |
+| Move an export to a subpath | yes | minor |
+| Change a token's VALUE | no (that is the point of tokens) | patch |
+| Add an optional prop | no | patch |
+| Add a primitive or a token | no | patch |
 
 ## Commands
 

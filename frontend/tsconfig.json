@@ -16,16 +16,16 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
+    // No "@workshop/ui" entry: node_modules/@workshop/ui is a workspace link to
+    // packages/ui, so tsc reads that package's own "exports" map and only the
+    // declared subpaths resolve. A paths entry here would shadow the exports map
+    // and quietly re-open the kit's internals.
     "paths": {
-      "@shared/*": ["../shared/*"],
-      // One entry per subpath in packages/ui/package.json "exports" — no
-      // wildcard, so tsc rejects a reach into the kit's internals exactly the
-      // way the Vite alias and a published package both would.
-      "@workshop/ui": ["../packages/ui/src/index.ts"],
-      "@workshop/ui/map": ["../packages/ui/src/Map.tsx"],
-      "@workshop/ui/markdown": ["../packages/ui/src/Markdown.tsx"],
-      "@workshop/ui/tokens.js": ["../packages/ui/src/styles/tokens.js"]
+      "@shared/*": ["../shared/*"]
     }
   },
+  // packages/ui/src is included so ONE tsc run covers the kit and every call
+  // site in the app: a kit change that breaks a consumer fails here, which is
+  // what reviewer.sh relies on.
   "include": ["src", "../shared", "../packages/ui/src"]
 }

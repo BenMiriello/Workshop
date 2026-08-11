@@ -5,19 +5,30 @@ AI-assisted kit migration reads (docs/workshop-v1/03-ui-kit-and-marketplace.md
 section 3): each major records what moved, was renamed, or was removed, so a
 breaking upgrade is migrated against real notes, not guesswork.
 
-Format: per-version sections. Compatible upgrades (same major) just bump the
-version. Breaking upgrades start a new major and list the migration notes here.
-Newest first from 2.0.0 on; the 1.x sections below remain in the order they were
-written.
+Format: per-version sections, newest first from 0.2.0 on; the 1.x sections below
+remain in the order they were written.
 
-## 2.0.0 — 2026-08-10 — the kit becomes a real package
+**Versioning is 0.x.** While the major is zero, npm treats the MINOR as the
+breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
+the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
+
+## 0.2.0 — 2026-08-10 — the kit becomes a real package
+
+**Renumbered from 1.x to 0.x.** The 1.0.0 / 1.1.0 / 1.1.1 sections below describe
+a package that was never built and never published, and whose version field said
+`1.0.0` the whole time the changelog was moving. A 1.x line advertises a
+stability guarantee this kit has not earned yet. It restarts at 0.2.0, which is
+lower than the numbers below on purpose: nothing ever consumed those, so there is
+no upgrade path being broken, and 0.x tells a future consumer the truth about how
+settled the API is. The 1.x history stays in this file because the migration
+notes in it are real.
 
 Until now `@workshop/ui` was a `package.json` sitting in `frontend/src/ui` with
 no build, no artifact and no consumer that resolved it by name. This release
 makes it an actual package. **The API of the primitives themselves is unchanged
 except for `Markdown` (below); the breaking part is how you get at them.**
 
-### Why this is a major
+### Why this is a breaking release
 
 Three things were true at once, and together they meant the version number said
 nothing:
@@ -143,7 +154,7 @@ foundation as a versioned package without changing any runtime behavior or token
 values.
 
 - Declared `@workshop/ui` as version 1.0.0. App manifests pin it as
-  `kit: "@workshop/ui@^1"`.
+  `kit: "@workshop/ui@^1"`. (Now `@workshop/ui@^0.2` — see 0.2.0 above.)
 - Export surface is `src/ui/index.ts` (unchanged): the primitives plus `cx`,
   theme helpers, status/category helpers, chart helpers, and `useEditMode`. See
   that file for the full list.

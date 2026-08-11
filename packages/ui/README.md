@@ -8,12 +8,20 @@ app out of it. The default is that you don't redesign anything.
 
 ## Install
 
-Not published yet. In this repo it resolves as a workspace package. Elsewhere,
-until it is on npm:
+Not published yet.
+
+Inside this repo it resolves as a real npm workspace package: `npm install` at
+the repo root links `node_modules/@workshop/ui` to `packages/ui`, and the
+`exports` map below decides which subpaths exist. There is deliberately no
+bundler alias for it — an alias resolves before the exports map and would let
+consumers reach the kit's internals. If imports fail with "cannot find module
+@workshop/ui", run `npm install` at the root.
+
+Elsewhere, until it is on npm:
 
 ```bash
 npm pack --workspace @workshop/ui   # produces workshop-ui-<version>.tgz
-npm install /path/to/workshop-ui-2.0.0.tgz
+npm install /path/to/workshop-ui-0.2.0.tgz
 ```
 
 ## Use

@@ -25,7 +25,7 @@ MANIFESTS_PATH = Path(os.environ.get(
     str(Path(__file__).resolve().parent.parent / "apps.json"),
 ))
 
-DEFAULT_KIT = "@workshop/ui@^1"
+DEFAULT_KIT = "@workshop/ui@^0.2"
 
 # apps.json is instance state, not platform code: a fresh clone ships NO apps, so
 # the seed is empty. Identity manifests for installed apps are created on demand

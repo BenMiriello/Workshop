@@ -12,3 +12,4 @@
 - [Prior art survey: build/run/use in one system, and what it says about the app-vs-project split](prior-art-survey-build-run-use-in-one-system-and-19fd048d601.md)
 - [Skill proposal: proposed-failure-pattern-liveness-watchdog-launching](skill-proposal-cc2e61fcd30f.md) - proposed skill (recurred 3x), operator-confirmed
 - [Ticket dependencies: first-class edge model (addendum to T0)](ticket-dependencies-first-class-edge-model-adden-19f7440aaf0.md)
+- [@workshop/ui is a real package at packages/ui (0.2.0)](workshop-ui-is-a-real-package-at-packages-ui-2-0-19feea2363f.md)

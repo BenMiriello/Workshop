@@ -4,8 +4,18 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../shared/*"]
-    }
+      "@shared/*": [
+        "../shared/*"
+      ],
+      "@workshop/ui/tokens.js": [
+        "../packages/ui/src/styles/tokens.js"
+      ]
+    },
+    "allowJs": true
   },
-  "include": ["**/*.ts", "**/*.tsx", "../shared/**/*.ts"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../shared/**/*.ts"
+  ]
 }

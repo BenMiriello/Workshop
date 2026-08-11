@@ -74,6 +74,11 @@ if [[ "$MODE" == "full" ]]; then
   grep -q 'palettes.css' "$KIT/src/styles/tokens.css" || miss+=("tokens.css no longer imports palettes.css — color layer detached")
   [[ -f "$FE/CLAUDE.md" ]]                            || miss+=("frontend/CLAUDE.md missing")
   [[ -f "$KIT/package.json" ]]                        || miss+=("packages/ui/package.json missing")
+  # The kit resolves as a real package through the workspace link that a root
+  # `npm install` creates. Without it every @workshop/ui import fails with a
+  # bare "cannot find module", which reads like a broken import rather than a
+  # missing install step.
+  [[ -e "$WORKSHOP/node_modules/@workshop/ui" ]]      || miss+=("node_modules/@workshop/ui missing — run 'npm install' at the repo root")
   # The kit is consumed by package name, never by reaching into its source. A
   # relative import back into the kit means the boundary has been re-crossed
   # and out-of-repo consumers are silently diverging again.

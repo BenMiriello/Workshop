@@ -14,7 +14,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@workshop/ui": "^2.0.0",
+    "@workshop/ui": "^0.2.0",
     "lucide-react": "^1.16.0",
     "maplibre-gl": "^5.24.0",
     "pmtiles": "^4.4.1",

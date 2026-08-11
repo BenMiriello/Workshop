@@ -77,9 +77,11 @@ Wrap in `ChartFrame` (applies `.ws-chart`; the bundled `.recharts-*` rules resty
 
 ## Mobile (Expo)
 
-The `mobile/` app is meant to mirror the same hierarchy and tokens via `@workshop/ui/tokens.js` (`makeTheme(scheme)`, `categorical`, `chartSeries`) — CSS variables don't reach RN, so import the object and build the same primitives in `StyleSheet`. Tabs become the bottom tab bar.
+The `mobile/` app mirrors the same hierarchy and tokens via `@workshop/ui/tokens.js` (`makeTheme(scheme)`, `tokens`, `categorical`, `chartSeries`) — CSS variables don't reach RN, so import the object and build the same primitives in `StyleSheet`. Tabs become the bottom tab bar.
 
-**As of 2026-08-10 it does not.** `mobile/` has no reference to the token module at all; `mobile/lib/api.ts` hardcodes eight hex colors from the pre-palette era (`bg: "#0b0f17"`, a `#60a5fa` accent that is in no current palette). The JS token layer is generated and correct but has zero consumers. Wire mobile to `@workshop/ui/tokens.js` before building anything new there, rather than adding a ninth hardcoded color.
+Wired 2026-08-11: `mobile/lib/api.ts` derives its `colors` from `makeTheme("dark")` and re-exports `tokens` for the scales. It previously hardcoded eight hexes from a theme that no longer exists (`#0b0f17`, a `#60a5fa` accent in none of the five palettes) — all eight values changed when it was connected, which is how far it had drifted. **Never add a literal hex to `mobile/`; import from `@workshop/ui/tokens.js`.**
+
+Only the token subpath is importable there. The React primitives are react-dom and cannot render in RN, so `mobile/metro.config.js` maps `@workshop/ui/tokens.js` explicitly and throws a pointed error on any other `@workshop/ui` import rather than letting it fail as a confusing missing module.
 
 ## Before you commit UI
 
