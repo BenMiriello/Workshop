@@ -1,6 +1,6 @@
 import { useState, type ComponentType, type ReactNode } from "react";
 import { SlidersHorizontal, ChevronDown, type LucideProps } from "lucide-react";
-import { Card, SectionLabel } from "../ui";
+import { Card, SectionLabel } from "@workshop/ui";
 
 // The standard app-settings slot. An app page renders <AppSettings> near the
 // bottom of its single page to host its own user-facing config, without adding

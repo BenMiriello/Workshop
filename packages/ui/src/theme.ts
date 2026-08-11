@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_PALETTE, isPaletteId, type PaletteId } from "../styles/palettes.gen";
+import { DEFAULT_PALETTE, isPaletteId, type PaletteId } from "./styles/palettes.gen";
 
 // Appearance has two independent axes, both attributes on <html>:
 //

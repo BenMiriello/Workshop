@@ -1,5 +1,5 @@
 import { AlertTriangle } from "lucide-react";
-import { Button } from "../../ui";
+import { Button } from "@workshop/ui";
 
 // A MESSAGE THAT DID NOT SEND, SAID UNDER THAT MESSAGE.
 //

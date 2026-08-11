@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Smartphone, Radio, MapPin, Trash2, X, Check, Pencil, RotateCcw, Users } from "lucide-react";
 import { useRecorder, type DeviceMode } from "./recorder";
-import { StatusPill } from "../../../ui";
+import { StatusPill } from "@workshop/ui";
 import { API, jget, isRecording } from "./ui";
 
 // Devices that listen. Each is adaptive (follows its current GPS) or fixed

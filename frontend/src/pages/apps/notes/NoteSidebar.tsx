@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Search, Folder, FileText, ChevronRight, ChevronDown } from "lucide-react";
-import { Input, Stack, StateBlock, Skeleton, Button } from "../../../ui";
+import { Input, Stack, StateBlock, Skeleton, Button } from "@workshop/ui";
 import { notesApi, type NoteMeta, type SearchHit } from "./api";
 
 type TreeNode = { name: string; path: string; dir: boolean; children: TreeNode[] };

@@ -7,7 +7,7 @@
 // projection of the two, so the accessors below prefer the real fields and fall
 // back to splitting `text` for a payload cached before the change. Backed by GET
 // /api/tasks and /api/tasks/{scope}/{id}.
-import type { StatusKind } from "../ui";
+import type { StatusKind } from "@workshop/ui";
 import { DEVELOPMENT_SCOPE } from "./devMode";
 
 // All eight shipped statuses (backend services/tasks.py STATUSES). ProjectDetail

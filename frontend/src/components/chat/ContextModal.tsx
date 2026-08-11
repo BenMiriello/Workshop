@@ -4,7 +4,7 @@ import { Check, ChevronRight, Pencil, RefreshCw } from "lucide-react";
 import {
   ActionBar, Button, Modal, SectionLabel, Skeleton, StackedBar, StateBlock,
   StatusDot, StatusPill, Toggle, catFor, useEditMode,
-} from "../../ui";
+} from "@workshop/ui";
 import {
   contextHeadline, contextSlices, formatPct, formatTokens, refreshedLabel,
   type ContextDetail,

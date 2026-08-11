@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Play, Pause, AlertTriangle, AlertCircle } from "lucide-react";
-import { StatusPill } from "../../../ui";
+import { StatusPill } from "@workshop/ui";
 import { API, jget } from "./ui";
 
 // Shared pieces for the recordings system: the storage-status hook, a homepage

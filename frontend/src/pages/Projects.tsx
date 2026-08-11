@@ -16,7 +16,7 @@ import {
   StatusPill,
   type SegmentedOption,
   type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 const SENS_OPTIONS: SegmentedOption<ProjectSensitivity>[] = [
   { value: "private", label: "Private" },

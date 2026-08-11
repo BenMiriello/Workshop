@@ -1,6 +1,6 @@
 /* =============================================================================
    Workshop Design System — PALETTE LIST (GENERATED — do not edit by hand)
-   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
+   Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
    The colors themselves are in palettes.css; this is just the menu.
    ========================================================================== */
 

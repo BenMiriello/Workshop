@@ -5,7 +5,7 @@ import {
   Area, Bar, CartesianGrid, ComposedChart, ErrorBar, LabelList, Line,
   ReferenceArea, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET } from "../../../ui";
+import { Skeleton, StateBlock, ChartTooltip, CHART_TARGET } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { API, hh, CHART_SERIES } from "./ui";
 import { wx, OUTLOOK, localTime, dayLen, type Level } from "./forecastUtil";

@@ -33,7 +33,7 @@ import {
   NumCell,
   useEditMode,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import {
   usageApi,
   fmtTokens,

@@ -1,4 +1,4 @@
-import { ConfirmDialog } from "../../ui";
+import { ConfirmDialog } from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
 import TicketDraftsDialog from "./TicketDraftsDialog";
 import RenameChatDialog from "./RenameChatDialog";

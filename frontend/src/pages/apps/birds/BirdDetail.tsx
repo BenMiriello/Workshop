@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { useCrumbTrail, type Crumb } from "../../../components/appNav";
 import { useBirdInfo } from "./birdinfo";
-import { ConfirmDialog, Segmented } from "../../../ui";
+import { ConfirmDialog, Segmented } from "@workshop/ui";
 import { pct, conf, jget, apost, API, Stat, StatGrid } from "./ui";
 import ActivityCard from "./ActivityCard";
 import BirdsHeader from "./BirdsHeader";

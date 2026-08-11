@@ -15,7 +15,7 @@ import {
   Skeleton,
   Tag,
   catFor,
-} from "../../ui";
+} from "@workshop/ui";
 import GrantPicker from "../../components/GrantPicker";
 
 // Platform / Grants: operator-facing access-control editor.

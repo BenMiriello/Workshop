@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { TrainFront } from "lucide-react";
-import { StatusDot } from "../../ui";
+import { StatusDot } from "@workshop/ui";
 import { SettingsSection, SettingsRow as Row } from "../AppSettings";
 
 // Commute app settings — 511 key status + home/work coordinates. Moved verbatim

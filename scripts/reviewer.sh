@@ -188,15 +188,21 @@ if [[ -n "$TS_FILES" ]]; then
   if [[ -x "$TSC" ]]; then
     # Run tsc against the whole frontend project (incremental, fast). This catches
     # cross-file errors that per-file checks miss. If no changed file is in
-    # frontend/, skip — the change was in a different ts project (apps/, mobile/).
-    if echo "$TS_FILES" | grep -q '^frontend/'; then
+    # frontend/ or packages/ui/, skip — the change was in a different ts project
+    # (apps/, mobile/).
+    #
+    # packages/ui counts as frontend for this purpose: frontend/tsconfig.json
+    # includes ../packages/ui/src, so one tsc run covers the kit AND every call
+    # site in the app. A kit change that breaks a consumer must fail HERE, which
+    # is the whole point of hoisting the kit out of the app.
+    if echo "$TS_FILES" | grep -qE '^(frontend|packages/ui)/'; then
       if (cd "$WORKSHOP/frontend" && timeout 90 "$TSC" -b --noEmit) >/dev/null 2>&1; then
         TS_CHECK="ok"
       else
         TS_CHECK="fail"
       fi
     fi
-  elif echo "$TS_FILES" | grep -q '^frontend/'; then
+  elif echo "$TS_FILES" | grep -qE '^(frontend|packages/ui)/'; then
     AMBIGUOUS+=("ts_typecheck_unavailable")
   fi
 fi
@@ -206,7 +212,7 @@ fi
 #     "added lines only" mirrors the stub check — pre-existing legacy styling in
 #     unmigrated pages never blocks; you just can't introduce new violations.
 DESIGN_CHECK="skipped"
-if printf '%s\n' "$CHANGED_ALL" | grep -qE '^frontend/src/.*\.tsx$'; then
+if printf '%s\n' "$CHANGED_ALL" | grep -qE '^(frontend|packages/ui)/src/.*\.tsx$'; then
   if [[ -x "$WORKSHOP/scripts/check_design.sh" ]]; then
     if bash "$WORKSHOP/scripts/check_design.sh" --added "$BASELINE" >/dev/null 2>&1; then
       DESIGN_CHECK="ok"

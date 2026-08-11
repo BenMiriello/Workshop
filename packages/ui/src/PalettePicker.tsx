@@ -1,6 +1,6 @@
 import { Check } from "lucide-react";
 import { cx } from "./cx";
-import { PALETTE_META, type PaletteId } from "../styles/palettes.gen";
+import { PALETTE_META, type PaletteId } from "./styles/palettes.gen";
 
 // Picks one of the five color schemes. A view preference: commits on change,
 // no Save step (DS rule 7).

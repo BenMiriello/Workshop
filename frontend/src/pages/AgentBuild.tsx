@@ -23,7 +23,7 @@ import {
   Textarea,
   type SegmentedOption,
   type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 import Chat from "../components/Chat";
 import { useCrumbLabel } from "../components/appNav";
 

@@ -29,7 +29,7 @@ import {
   StatusPill,
   Textarea,
   type SegmentedOption,
-} from "../../ui";
+} from "@workshop/ui";
 import { scopeLabel, ticketHref } from "../../lib/tasks";
 import { type Job, jobStatusKind } from "../../lib/jobs";
 import { pickupFor, pickupNote, type PickupMap } from "../../lib/scopePickup";

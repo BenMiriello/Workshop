@@ -13,7 +13,7 @@ import {
   Tag,
   catFor,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import { chatApi, type ThreadSummary } from "../lib/chat";
 import { newChatHref } from "../lib/chatSelection";
 import { scopeKind, scopeLabel } from "../components/chat/chatScope";

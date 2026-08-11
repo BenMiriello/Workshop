@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Workflow } from "lucide-react";
 import {
   Badge, Card, CardGrid, Row, SectionLabel, Skeleton, Stack, StateBlock, Tag, catFor,
-} from "../ui";
+} from "@workshop/ui";
 
 // Who can be CALLED, as opposed to who runs.
 //

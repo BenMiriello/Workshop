@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus } from "lucide-react";
-import { PageHeader, Button, Modal, Field, Input } from "../../../ui";
+import { PageHeader, Button, Modal, Field, Input } from "@workshop/ui";
 import { notesApi, type NoteMeta, type Note } from "./api";
 import { makeResolver } from "./wikilinks";
 import NoteSidebar from "./NoteSidebar";

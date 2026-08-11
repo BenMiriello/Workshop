@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Banknote } from "lucide-react";
-import { ConfirmDialog, SectionLabel } from "../../ui";
+import { ConfirmDialog, SectionLabel } from "@workshop/ui";
 import { BankConnections } from "../PlaidLink";
 import { SettingsSection, SettingsRow as Row } from "../AppSettings";
 

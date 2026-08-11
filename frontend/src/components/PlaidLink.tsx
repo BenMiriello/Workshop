@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Landmark, Plus, Trash2, RefreshCw } from "lucide-react";
 
-import { Button, Card, ConfirmDialog, SectionLabel, StateBlock, StatusDot } from "../ui";
+import { Button, Card, ConfirmDialog, SectionLabel, StateBlock, StatusDot } from "@workshop/ui";
 
 const PLAID_SRC = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
 

@@ -24,7 +24,7 @@ import {
   StateBlock,
   StatusPill,
   type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 // Home — three bands per operator direction 2026-07-18: Apps + Chats +
 // Projects, each capped to the four most-recently-active items. No

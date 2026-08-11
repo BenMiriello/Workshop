@@ -25,7 +25,7 @@ import {
   Textarea,
   catFor,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import { type Job, jobStatusKind } from "../lib/jobs";
 import GrantPicker from "../components/GrantPicker";
 import TaskPanel from "../components/TaskPanel";

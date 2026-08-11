@@ -2,9 +2,9 @@
    Workshop Design System — COLOR MODEL (canonical)
    -----------------------------------------------------------------------------
    This module is the single source of truth for every color in the system.
-   `scripts/gen-tokens.mjs` reads it and emits BOTH:
-     • frontend/src/styles/palettes.css   (the CSS custom properties)
-     • frontend/src/styles/tokens.generated.js (the same values for Expo/RN)
+   `packages/ui/scripts/gen-tokens.mjs` reads it and emits BOTH:
+     • packages/ui/src/styles/palettes.css      (the CSS custom properties)
+     • packages/ui/src/styles/tokens.generated.js (the same values for Expo/RN)
    Nothing else may define a color. Edit here, then `npm run gen:tokens`.
 
    ---------------------------------------------------------------------------

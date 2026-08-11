@@ -8,7 +8,7 @@ import AddressPicker from "./birds/AddressPicker";
 import type { Place } from "./birds/geocode";
 import { useShowNonBird } from "./birds/settings";
 import { useBirdsScope, type Source } from "./birds/scope";
-import { Segmented } from "../../ui";
+import { Segmented } from "@workshop/ui";
 import { API, pct, jget, Stat, StatGrid, SpeciesLink, BirdThumb } from "./birds/ui";
 import { RecordingsBanner } from "./birds/recordings";
 import ActivityCard from "./birds/ActivityCard";

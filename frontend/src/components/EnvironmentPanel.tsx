@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { KeyRound, ExternalLink, RefreshCw, Pencil, X } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, Badge, Skeleton, Field, Input,
-} from "../ui";
+} from "@workshop/ui";
 
 // Environment / secrets panel for a project. The app manifest declares env
 // REQUIREMENTS (key + metadata, no values); the operator fills VALUES here; the

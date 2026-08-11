@@ -4,9 +4,9 @@ import { ChevronRight, Plug, RefreshCw } from "lucide-react";
 import {
   Button, Card, PageHeader, Row, SectionLabel, Skeleton, Stack, StateBlock,
   StatusDot, StatusPill, Table, TableScroll, Tag, catFor,
-} from "../../ui";
+} from "@workshop/ui";
 import { formatTokens, refreshedLabel } from "../../components/chat/contextBreakdown";
-import type { StatusKind } from "../../ui";
+import type { StatusKind } from "@workshop/ui";
 
 // Settings -> MCP. Which servers this machine has, whether they work, what they
 // expose, and what they cost every turn.

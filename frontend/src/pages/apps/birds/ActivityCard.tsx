@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sunrise, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
-import { Segmented, Toggle } from "../../../ui";
+import { Segmented, Toggle } from "@workshop/ui";
 import { hh, Chart, CHART_SERIES } from "./ui";
 
 // One Activity card with two views you switch between (not two separate cards):

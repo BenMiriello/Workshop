@@ -1,7 +1,15 @@
 // Workshop Design System — React primitives.
-// Single import surface: `import { Button, Card, StatusPill, ... } from "../ui"`.
+// Single import surface: `import { Button, Card, StatusPill, ... } from "@workshop/ui"`.
 // Every primitive is a thin className wrapper over components.css — no inline
 // styles, no CSS-in-JS. See frontend/CLAUDE.md for the rules that govern these.
+//
+// This is the CORE entry: its only runtime dependencies are react, react-dom
+// and lucide-react. The two primitives that need heavy third-party libraries
+// are deliberately NOT re-exported here, so importing a Button never pulls a
+// map engine or a markdown parser into the bundle:
+//   @workshop/ui/map        Map        (maplibre-gl, pmtiles, protomaps)
+//   @workshop/ui/markdown   Markdown   (react-markdown, remark-gfm)
+// Both are optional peer dependencies. See CHANGELOG 2.0.0.
 export { cx } from "./cx";
 export {
   useTheme, applyTheme, getStoredTheme,
@@ -9,7 +17,7 @@ export {
   type ThemeMode, type PaletteId,
 } from "./theme";
 export { PalettePicker } from "./PalettePicker";
-export { PALETTE_META, DEFAULT_PALETTE, type PaletteMeta } from "../styles/palettes.gen";
+export { PALETTE_META, DEFAULT_PALETTE, type PaletteMeta } from "./styles/palettes.gen";
 export { statusClass, catClass, catFor, type StatusKind, type CatHue } from "./status";
 
 export { Stack, Row, Spacer, SectionLabel, PageHeader, Toolbar, Card, CardGrid, Stat, Divider, ProgressBar, StackedBar } from "./layout";
@@ -38,4 +46,3 @@ export { StateBlock, Skeleton, ActionBar, CopyButton, RevealField } from "./feed
 export { TableScroll, Table, NumCell, TimeCell } from "./Table";
 export { ChartFrame, ChartTooltip, CHART_SERIES, CHART_TARGET } from "./chart";
 export { useEditMode, type EditMode } from "./useEditMode";
-export { Markdown } from "./Markdown";

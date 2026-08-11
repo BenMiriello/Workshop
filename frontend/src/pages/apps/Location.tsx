@@ -4,10 +4,10 @@ import AppChatDock from "../../components/AppChatDock";
 import { AppGroupNav } from "../../components/appNav";
 import { AppSettings } from "../../components/AppSettings";
 import LocationSettings from "../../components/appSettings/LocationSettings";
-import { Button, ConfirmDialog, PageHeader, StatusDot } from "../../ui";
+import { Button, ConfirmDialog, PageHeader, StatusDot } from "@workshop/ui";
 // Direct import (not via the ui barrel) so maplibre/pmtiles aren't pulled into
 // every page that touches the design system.
-import { Map, type LngLat } from "../../ui/Map";
+import { Map, type LngLat } from "@workshop/ui/map";
 import { isNativeShell } from "../../native/bridge";
 import {
   backgroundTrackingSupported,

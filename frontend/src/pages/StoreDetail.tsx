@@ -6,7 +6,7 @@ import {
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot,
   Badge, Tag, Skeleton, Field, Input, Textarea,
-} from "../ui";
+} from "@workshop/ui";
 
 
 type Store = {

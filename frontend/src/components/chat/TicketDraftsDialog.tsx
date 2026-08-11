@@ -3,7 +3,7 @@ import { ChevronRight, RefreshCw, Trash2, Check } from "lucide-react";
 import {
   Modal, Button, Stack, Row, Tag, Badge, Field, Input, Textarea,
   StateBlock, Skeleton, catFor,
-} from "../../ui";
+} from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
 
 // Turning a conversation into tickets, as a review step.

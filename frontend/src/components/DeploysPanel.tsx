@@ -7,7 +7,7 @@ import {
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Tag, Skeleton, Field, Input, Select, Modal, ConfirmDialog, type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 // Deploys panel — per-project target bindings.
 //

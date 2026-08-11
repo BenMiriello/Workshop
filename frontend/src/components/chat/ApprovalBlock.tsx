@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, ShieldAlert, X } from "lucide-react";
-import { Button, Markdown, Textarea } from "../../ui";
+import { Button, Textarea } from "@workshop/ui";
+import { Markdown } from "@workshop/ui/markdown";
 import type { ChatSegment } from "../../lib/chat";
 
 // The turn has stopped and is asking. Rendered INLINE in the log, under the

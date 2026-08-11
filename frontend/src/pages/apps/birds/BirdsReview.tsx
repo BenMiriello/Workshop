@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Segmented } from "../../../ui";
+import { Segmented } from "@workshop/ui";
 import BirdsHeader from "./BirdsHeader";
 import { useBirdsScope } from "./scope";
 import { jget, pct, SpeciesLink, BirdThumb } from "./ui";

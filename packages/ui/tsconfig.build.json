@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationMap": true,
+    // `allowImportingTsExtensions` is only legal alongside noEmit, and nothing
+    // in src imports a .ts extension anyway.
+    "allowImportingTsExtensions": false,
+    "outDir": "dist"
+  },
+  "include": ["src"],
+  "exclude": ["src/styles/palette.test.ts"]
+}

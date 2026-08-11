@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Play, Square, RefreshCw, CircleAlert } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton,
-} from "../ui";
+} from "@workshop/ui";
 import { autonomyIsLive, describeAutonomy } from "../lib/autonomy";
 
 // QueueRunner: the visible, discoverable control for the worker loop that drains

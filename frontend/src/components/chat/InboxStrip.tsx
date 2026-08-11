@@ -4,7 +4,7 @@ import {
   Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight,
   ListTodo, Play,
 } from "lucide-react";
-import { Button, Input } from "../../ui";
+import { Button, Input } from "@workshop/ui";
 import { ticketHref } from "../../lib/tasks";
 import ChatProblemBlock from "./ChatProblemBlock";
 

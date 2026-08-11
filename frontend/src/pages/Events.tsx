@@ -13,7 +13,7 @@ import {
   Table,
   TableScroll,
   TimeCell,
-} from "../ui";
+} from "@workshop/ui";
 
 type EventRec = {
   ts: string;

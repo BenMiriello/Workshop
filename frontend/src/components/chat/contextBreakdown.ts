@@ -1,4 +1,4 @@
-import type { CatHue } from "../../ui";
+import type { CatHue } from "@workshop/ui";
 
 // Turning the server's context report into something a bar and a table can
 // render. Pure, so the rules below are executable rather than only observable by

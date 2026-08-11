@@ -1,4 +1,4 @@
-import type { StatusKind } from "../../ui";
+import type { StatusKind } from "@workshop/ui";
 import type { McpServer } from "./contextBreakdown";
 
 // MCP servers: what they COST, and whether they WORK.

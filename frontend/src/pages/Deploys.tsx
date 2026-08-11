@@ -4,8 +4,8 @@ import { Rocket, RefreshCw, ExternalLink, Ban, Power } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Tag, Skeleton, Field, Input, Modal, ConfirmDialog, type StatusKind,
-} from "../ui";
-import { TableScroll, Table } from "../ui";
+} from "@workshop/ui";
+import { TableScroll, Table } from "@workshop/ui";
 
 // /deploys — cross-project index of every hosted target across the workshop.
 // Each row is a Deploy: which project, which target, which branch, what's

@@ -1,8 +1,8 @@
 /* =============================================================================
    Workshop Design System — PALETTES  (GENERATED — do not edit by hand)
    -----------------------------------------------------------------------------
-   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
-   Edit palette.mjs, then run `npm run gen:tokens` from frontend/.
+   Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
+   Edit palette.mjs, then run `npm run gen:tokens` from packages/ui/.
 
    5 palettes x { light, dark }. `data-palette` and `data-theme` both live on
    <html>; the pre-React bootstrap in index.html sets them before first paint.

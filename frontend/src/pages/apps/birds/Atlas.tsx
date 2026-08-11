@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Waypoints, Tag as TagIcon, Volume2, Info, Map as MapIcon, ZoomIn, ZoomOut, Maximize2, X, ScatterChart, Grid3x3, Sparkles } from "lucide-react";
-import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue } from "../../../ui";
+import { Button, Segmented, StateBlock, Skeleton, StatusPill, catFor, type CatHue } from "@workshop/ui";
 import BirdsHeader, { InlineSelect } from "./BirdsHeader";
 import { ClipPlayButton } from "./recordings";
 import { jget, apost, API, conf } from "./ui";

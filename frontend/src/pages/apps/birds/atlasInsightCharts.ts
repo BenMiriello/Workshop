@@ -3,7 +3,7 @@
 // renderNovelty), adapted to real data and design tokens. They build SVG strings
 // the React components inject; recharts handles scatter/heatmap/novelty poorly,
 // so these stay hand-built SVG per the spec.
-import { catFor } from "../../../ui";
+import { catFor } from "@workshop/ui";
 import { hh } from "./ui";
 
 function niceMax(v: number): number {

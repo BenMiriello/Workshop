@@ -1,5 +1,5 @@
 import { AppGroupNav } from "../../components/appNav";
-import { PageHeader } from "../../ui";
+import { PageHeader } from "@workshop/ui";
 import CommutePages from "./commute/CommutePages";
 import AppChatDock from "../../components/AppChatDock";
 import { AppSettings } from "../../components/AppSettings";

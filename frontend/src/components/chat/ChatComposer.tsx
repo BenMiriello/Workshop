@@ -1,6 +1,6 @@
 import type { RefObject } from "react";
 import { AudioLines, ChevronDown, CornerDownLeft, PhoneOff, Square } from "lucide-react";
-import { Menu, MenuItem } from "../../ui";
+import { Menu, MenuItem } from "@workshop/ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
 import CommandPicker, { type PickerOption } from "./CommandPicker";

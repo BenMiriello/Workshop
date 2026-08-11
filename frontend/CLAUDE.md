@@ -2,17 +2,19 @@
 
 **This file is binding for every change under `frontend/` (and the `mobile/` Expo app). Any UI work — by a human, by the cron/supervisor agents, or by an interactive Claude session — MUST follow it. New screens are designed this way from the start; they do not get a "we'll systematize it later" pass.**
 
-The system is the Workshop Design System (handoff: `design_handoff_workshop_ds`). It is already implemented:
+The system is the Workshop Design System, packaged as **`@workshop/ui`**. It lives at **`packages/ui/`**, OUTSIDE this app: `frontend/` is one consumer of the kit, not its owner. It is already implemented:
 
-- **Tokens** — `src/styles/tokens.css` (CSS custom properties: color, space, type, radii, shadow, z, motion) and `src/styles/tokens.js` (the same values as a JS object for the Expo app).
-- **Primitives (CSS)** — `src/styles/components.css`: every component as a plain, className-based rule (`.ws-*`). Zero inline styles, no Tailwind, no CSS-in-JS, no component library.
-- **Primitives (React)** — `src/ui/`: thin className wrappers over `components.css`, exported from `src/ui/index.ts`. **Import from `../ui` — do not hand-write `.ws-*` markup when a primitive exists.**
+- **Tokens** — `@workshop/ui/tokens.css` (CSS custom properties: color, space, type, radii, shadow, z, motion) and `@workshop/ui/tokens.js` (the same values as a JS object for the Expo app).
+- **Primitives (CSS)** — `@workshop/ui/styles.css` (source: `packages/ui/src/styles/components.css`): every component as a plain, className-based rule (`.ws-*`). Zero inline styles, no Tailwind, no CSS-in-JS, no component library.
+- **Primitives (React)** — `packages/ui/src/`: thin className wrappers over the component rules. **Import from `@workshop/ui` — never by relative path, and do not hand-write `.ws-*` markup when a primitive exists.** Two primitives with heavy dependencies sit behind their own subpaths: `@workshop/ui/map` and `@workshop/ui/markdown`.
 
-Both CSS files are imported in `src/main.tsx` **before** `styles.css`. `styles.css` is the shrinking legacy sheet; never add palette/theme variables to it.
+Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles.css` is the shrinking legacy sheet; never add palette/theme variables to it.
+
+**Editing the kit is a platform change, not an app change.** Read `packages/ui/CONTRIBUTING.md` first: the public surface is snapshotted in `packages/ui/api/ui.api.md`, a removed or renamed export is a MAJOR version bump plus a CHANGELOG migration note, and `check_design.sh` fails if the surface moved and the snapshot didn't. Out-of-repo apps consume this package and nothing here compiles them, so the version number and the changelog are the only warning they ever get. App-level work restyles by setting tokens; it does not edit primitives.
 
 ## The ten rules (non-negotiable)
 
-1. **Use the primitives.** `Button, Field, Input, Select, Textarea, Card, PageHeader, SectionLabel, Stack, Row, Badge, StatusPill, StatusDot, Tag, Tabs, Toggle, Checkbox, Segmented, Modal, ConfirmDialog, Table/TableScroll, CopyButton, RevealField, StateBlock, Skeleton, ActionBar, Stat, ChartFrame, ChartTooltip` — all from `src/ui`. If you need something not covered, add a primitive to `src/ui` + a `.ws-` rule to `components.css`; don't one-off it inline.
+1. **Use the primitives.** `Button, Field, Input, Select, Textarea, Card, PageHeader, SectionLabel, Stack, Row, Badge, StatusPill, StatusDot, Tag, Tabs, Toggle, Checkbox, Segmented, Modal, ConfirmDialog, Table/TableScroll, CopyButton, RevealField, StateBlock, Skeleton, ActionBar, Stat, ChartFrame, ChartTooltip` — all from `@workshop/ui` (the full list is `packages/ui/api/ui.api.md`). If you need something not covered, add a primitive to `packages/ui/src` + a `.ws-` rule to `components.css`, bump the kit's MINOR version and re-run `npm run api:snapshot`; don't one-off it inline.
 2. **No inline hex colors. Ever.** No `color:"#16a34a"`, no `#ef4444`, no `background:"#fff"`. Color comes from tokens (`var(--accent)`, `var(--muted)`, …) or, far better, from a primitive. `scripts/check_design.sh` fails the build on raw hex in `.tsx`.
 3. **Status = meaning, mapped to five kinds.** `ok | running | stopped | warn | danger` via `StatusPill` (standalone) or `StatusDot` (dense table rows). Never invent a status color. `running` is the only thing that animates. Most of a screen is neutral — color is a signal, not decoration.
 4. **Categorical ≠ status.** To tell apart agents / sources / repos / chart series, use `Tag` with a `--cat-*` hue (`catFor(key)` gives a stable hue). Cool tones that can't be misread as ok/warn/danger.
@@ -55,9 +57,9 @@ Appearance is `data-theme` × `data-palette`, both on `<html>`, both applied by 
 | `data-theme` | `light \| dark \| system` | `localStorage["ws-theme"]` | `dark` | Settings → Appearance (`useTheme()`) |
 | `data-palette` | `violet \| cobalt \| teal \| plum \| sandstone` | `localStorage["ws-palette"]` | `violet` | Settings → Appearance (`usePalette()`) |
 
-**Color is generated, not hand-written.** The model lives in `src/styles/palette.mjs` (OKLCh tonal ramp + five palette seeds + the pinned status tone table). `scripts/gen-tokens.mjs` emits three files from it — `palettes.css` (all ten schemes), `palettes.gen.ts` (the typed menu), `tokens.generated.js` (the same hexes for Expo). To change a color: **edit `palette.mjs`, then `npm run gen:tokens`.** Editing a generated file is wasted work; `check_design.sh` fails on a stale one. `tokens.css` `@import`s `palettes.css`, so every entry point picks it up.
+**Color is generated, not hand-written.** The model lives in `packages/ui/src/styles/palette.mjs` (OKLCh tonal ramp + five palette seeds + the pinned status tone table). `packages/ui/scripts/gen-tokens.mjs` emits three files from it — `palettes.css` (all ten schemes), `palettes.gen.ts` (the typed menu), `tokens.generated.js` (the same hexes for Expo). To change a color: **edit `palette.mjs`, then `npm run gen:tokens` from `packages/ui/`** (or `npm run gen:tokens` from the repo root). Editing a generated file is wasted work; `check_design.sh` fails on a stale one. `tokens.css` `@import`s `palettes.css`, so every entry point picks it up.
 
-Rules the model enforces, checked by `src/styles/palette.test.ts` (53 assertions across all ten schemes):
+Rules the model enforces, checked by `packages/ui/src/styles/palette.test.ts` (54 assertions across all ten schemes, run by `npm test` in `packages/ui/` — NOT by the frontend's vitest run):
 
 - **One brand accent per scheme**, and it is not separately selectable — picking a palette picks the accent. (Multiple simultaneous accents were tried and dropped.)
 - **`ok` / `warn` / `danger` are byte-identical in all five palettes.** Status is meaning; meaning does not move when someone restyles. Only `running` (the accent) and `stopped` (the neutral) follow the palette.
@@ -75,13 +77,15 @@ Wrap in `ChartFrame` (applies `.ws-chart`; the bundled `.recharts-*` rules resty
 
 ## Mobile (Expo)
 
-The `mobile/` app mirrors the same hierarchy and tokens via `src/styles/tokens.js` (`makeTheme(scheme)`, `categorical`, `chartSeries`) — CSS variables don't reach RN, so import the object and build the same primitives in `StyleSheet`. Tabs become the bottom tab bar.
+The `mobile/` app is meant to mirror the same hierarchy and tokens via `@workshop/ui/tokens.js` (`makeTheme(scheme)`, `categorical`, `chartSeries`) — CSS variables don't reach RN, so import the object and build the same primitives in `StyleSheet`. Tabs become the bottom tab bar.
+
+**As of 2026-08-10 it does not.** `mobile/` has no reference to the token module at all; `mobile/lib/api.ts` hardcodes eight hex colors from the pre-palette era (`bg: "#0b0f17"`, a `#60a5fa` accent that is in no current palette). The JS token layer is generated and correct but has zero consumers. Wire mobile to `@workshop/ui/tokens.js` before building anything new there, rather than adding a ninth hardcoded color.
 
 ## Before you commit UI
 
 Run `bash scripts/check_design.sh` (from repo root) — it flags raw hex, emoji, and `not-allowed` cursors in `.tsx`, and confirms the foundation imports are intact. It is part of the completion gate; a UI change that fails it is **not** done. Also run `cd frontend && npx tsc --noEmit`.
 
-**Tests: `cd frontend && npm test`** (vitest, `*.test.ts` beside the module). There is no DOM/render harness and none is planned — the target is the PURE RULE behind a behaviour, extracted into its own module so it can be executed. `turnBatching` (when a queue of typed-ahead messages becomes a turn) is the pattern.
+**Tests: `cd frontend && npm test`** (vitest, `*.test.ts` beside the module). If you touched `packages/ui/`, also run `npm test --workspace @workshop/ui` — the palette contract tests live with the kit and the frontend run does not pick them up. `npm test` from the repo root runs both. There is no DOM/render harness and none is planned — the target is the PURE RULE behind a behaviour, extracted into its own module so it can be executed. `turnBatching` (when a queue of typed-ahead messages becomes a turn) is the pattern.
 
 ### Chat log order: a mid-turn message CLOSES the assistant's block
 

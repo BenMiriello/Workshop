@@ -1,5 +1,5 @@
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
-import { OverlayHost } from "./ui/OverlayHost";
+import { OverlayHost } from "@workshop/ui";
 import Agents from "./pages/Agents";
 import AgentDetail from "./pages/AgentDetail";
 import AgentBuild from "./pages/AgentBuild";

@@ -18,9 +18,14 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["../shared/*"],
-      "@workshop/ui/*": ["src/ui/*"],
-      "@workshop/styles/*": ["src/styles/*"]
+      // One entry per subpath in packages/ui/package.json "exports" — no
+      // wildcard, so tsc rejects a reach into the kit's internals exactly the
+      // way the Vite alias and a published package both would.
+      "@workshop/ui": ["../packages/ui/src/index.ts"],
+      "@workshop/ui/map": ["../packages/ui/src/Map.tsx"],
+      "@workshop/ui/markdown": ["../packages/ui/src/Markdown.tsx"],
+      "@workshop/ui/tokens.js": ["../packages/ui/src/styles/tokens.js"]
     }
   },
-  "include": ["src", "../shared"]
+  "include": ["src", "../shared", "../packages/ui/src"]
 }

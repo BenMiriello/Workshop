@@ -16,7 +16,7 @@ import {
   Segmented,
   catFor,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
 import { DEVELOPMENT_SCOPE } from "../lib/devMode";
 

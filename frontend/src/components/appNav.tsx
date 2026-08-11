@@ -10,7 +10,7 @@ import {
 } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Menu as MenuIcon, Home as HomeIcon, Bot, FolderGit2, LayoutGrid, ListChecks, Brain, MessagesSquare, Gauge, Rocket, Settings as SettingsIcon } from "lucide-react";
-import { Menu, MenuItem } from "../ui";
+import { Menu, MenuItem } from "@workshop/ui";
 import { appCrumbs, appGroups } from "../apps/registry";
 
 // Single source of truth for in-app navigation chrome:

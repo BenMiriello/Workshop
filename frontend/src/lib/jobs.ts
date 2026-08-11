@@ -3,7 +3,7 @@
 // event reaction, a manual "run now"). It was independently re-declared in
 // Jobs.tsx, JobDetail.tsx, Home.tsx, and AgentDetail.tsx; those drift. Import
 // from here instead. Backed by GET /api/jobs and /api/jobs/{id}.
-import type { StatusKind } from "../ui";
+import type { StatusKind } from "@workshop/ui";
 
 export type Job = {
   id: string;

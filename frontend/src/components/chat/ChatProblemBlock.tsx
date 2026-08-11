@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Button, StateBlock } from "../../ui";
+import { Button, StateBlock } from "@workshop/ui";
 import { problemBlock, type ChatProblem } from "./chatProblem";
 
 // A FAILURE OF THE WHOLE CHAT, said one way.

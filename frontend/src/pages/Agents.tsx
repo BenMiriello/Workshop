@@ -23,7 +23,7 @@ import {
   Tag,
   catFor,
   type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 import DelegatesSection from "../components/DelegatesSection";
 import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";

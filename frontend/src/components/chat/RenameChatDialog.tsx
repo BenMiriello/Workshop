@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Modal, Button, Field, Input } from "../../ui";
+import { Modal, Button, Field, Input } from "@workshop/ui";
 
 // A chat names itself once it has enough to go on (chat_naming.generate_title,
 // server-side) — this is the operator overriding that. Renaming is permanent

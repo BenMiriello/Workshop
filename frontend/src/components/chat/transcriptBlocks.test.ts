@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
-import { selectTranscript, type TranscriptBlock } from "./transcriptBlocks";
+import { selectTranscript, withStaleFailures, type TranscriptBlock } from "./transcriptBlocks";
 import { splitAtUnits } from "./transcriptUnits";
 
 const text = (s: string): ChatSegment => ({ t: "text", text: s });
@@ -249,5 +249,43 @@ describe("nothing is lost or duplicated by a cut", () => {
     const rebuilt: ChatSegment[] = [];
     for (const b of selectTranscript(s)) if (b.kind === "live") rebuilt.push(...b.segments);
     expect(rebuilt).toEqual(many);
+  });
+});
+
+describe("withStaleFailures", () => {
+  // Reported 2026-08-10: a send refused earlier (durable in the queue, no
+  // longer in `pending` after a reload) rendered below a LATER message and
+  // below that later message's live run — reading as the chat ignoring
+  // everything sent since. A stale failure must land before whatever is
+  // live, not after it.
+  it("inserts before the live run, not after it", () => {
+    const s = stateOf([user("newer")]);
+    const withLive = threadReducer(s, { type: "runStarted", runId: "r1" });
+    const blocks = selectTranscript(withLive);
+    const out = withStaleFailures(blocks, [{ clientId: "stale-1", text: "Hello" }]);
+    expect(shape(out)).toEqual(["user:newer", "pending:Hello", "live:*"]);
+  });
+
+  it("appends at the end when nothing is live", () => {
+    const s = stateOf([user("newer")]);
+    const blocks = selectTranscript(s);
+    const out = withStaleFailures(blocks, [{ clientId: "stale-1", text: "Hello" }]);
+    expect(shape(out)).toEqual(["user:newer", "pending:Hello"]);
+  });
+
+  it("is a no-op with nothing stale to insert", () => {
+    const s = stateOf([user("a")]);
+    const blocks = selectTranscript(s);
+    expect(withStaleFailures(blocks, [])).toBe(blocks);
+  });
+
+  it("keeps several stale failures together, in order", () => {
+    const s = stateOf([user("newer")]);
+    const withLive = threadReducer(s, { type: "runStarted", runId: "r1" });
+    const blocks = selectTranscript(withLive);
+    const out = withStaleFailures(blocks, [
+      { clientId: "s1", text: "first" }, { clientId: "s2", text: "second" },
+    ]);
+    expect(shape(out)).toEqual(["user:newer", "pending:first", "pending:second", "live:*"]);
   });
 });

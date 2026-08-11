@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Power, Cpu } from "lucide-react";
-import { Button, ConfirmDialog, StatusDot } from "../ui";
+import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
 import { autonomyIsLive, describeAutonomy } from "../lib/autonomy";
 import { SettingsSection, SettingsRow as Row } from "./AppSettings";
 

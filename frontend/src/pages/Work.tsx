@@ -27,7 +27,7 @@ import {
   Tag,
   catFor,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import JobsFeed from "../components/JobsFeed";
 import QueueRunner from "../components/QueueRunner";
 import {

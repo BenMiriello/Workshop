@@ -1,4 +1,4 @@
-import type { StatusKind } from "../ui";
+import type { StatusKind } from "@workshop/ui";
 
 // The ONE rule for turning the autonomy pair into something the operator reads.
 //

@@ -2,6 +2,10 @@ import { defineConfig, type PluginOption } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
+// The Workshop Design System kit lives OUTSIDE this app, at packages/ui. The
+// web app is one consumer of it, not its owner: see packages/ui/CONTRIBUTING.md.
+const KIT = (p: string) => path.resolve(__dirname, "../packages/ui", p);
+
 // iOS Safari refuses navigator.geolocation with "Origin does not have permission
 // to use Geolocation service" unless the document/origin has been granted the
 // `geolocation` Permissions-Policy. The default policy in WebKit treats
@@ -152,13 +156,36 @@ export default defineConfig({
     react(),
   ],
   resolve: {
-    alias: {
-      "@shared": path.resolve(__dirname, "../shared"),
-      // Commute is a native Workshop page (src/pages/apps/commute) — no separate
-      // project. The @workshop/* aliases remain for any package-name imports.
-      "@workshop/ui": path.resolve(__dirname, "src/ui"),
-      "@workshop/styles": path.resolve(__dirname, "src/styles"),
-    },
+    // NOTE on resolve.conditions: packages/ui's exports map carries a
+    // `workshop-source` condition that points each subpath at its TypeScript
+    // source, and the obvious move is to add it here. Don't. `conditions` is
+    // global — it applies to every dependency, not just ours — and adding it
+    // (with "browser" alongside) made recharts resolve a DOM-only build that
+    // throws at import time under vitest's node environment. The aliases below
+    // resolve @workshop/ui before the exports map is ever consulted, so the
+    // condition buys nothing today. It becomes the mechanism when a root
+    // `npm install` links the workspace and these aliases are deleted; at that
+    // point set it under `ssr.resolve.conditions` too, and re-run the tests.
+    alias: [
+      { find: /^@shared\//, replacement: path.resolve(__dirname, "../shared") + "/" },
+      { find: /^@shared$/, replacement: path.resolve(__dirname, "../shared") },
+      // Explicit, exact-match entries for @workshop/ui — one per subpath in the
+      // kit's exports map, and NOTHING else. The old alias was a prefix mapping
+      // onto the directory, so any file in the kit was importable as
+      // `@workshop/ui/<internal>`; app code could reach past the public API and
+      // nothing would complain. These anchored patterns make the alias enforce
+      // the same surface a published package would.
+      //
+      // Needed until a root `npm install` links the workspace into node_modules;
+      // after that npm resolves the package by name and these become redundant.
+      // Keep them in step with packages/ui/package.json "exports".
+      { find: /^@workshop\/ui$/, replacement: KIT("src/index.ts") },
+      { find: /^@workshop\/ui\/map$/, replacement: KIT("src/Map.tsx") },
+      { find: /^@workshop\/ui\/markdown$/, replacement: KIT("src/Markdown.tsx") },
+      { find: /^@workshop\/ui\/tokens\.css$/, replacement: KIT("src/styles/tokens.css") },
+      { find: /^@workshop\/ui\/styles\.css$/, replacement: KIT("src/styles/components.css") },
+      { find: /^@workshop\/ui\/tokens\.js$/, replacement: KIT("src/styles/tokens.js") },
+    ],
   },
   server: {
     // Bound to loopback, NOT 0.0.0.0: this dev server proxies /api to the

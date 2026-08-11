@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { MapPin, Trash2, Eye, EyeOff, Copy, Check } from "lucide-react";
-import { Button, ConfirmDialog, StatusDot } from "../../ui";
+import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
 import { SettingsSection, SettingsRow as Row } from "../AppSettings";
 
 // Location app settings — Owntracks status + privacy. Moved verbatim out of the

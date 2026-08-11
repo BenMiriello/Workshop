@@ -6,9 +6,10 @@ import {
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
-  Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Textarea, Markdown,
+  Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Modal, Textarea,
   catFor,
-} from "../ui";
+} from "@workshop/ui";
+import { Markdown } from "@workshop/ui/markdown";
 import {
   type Task, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,

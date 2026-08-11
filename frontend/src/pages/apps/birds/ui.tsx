@@ -3,7 +3,7 @@ import {
   Bar, ComposedChart, Line, ReferenceLine, ReferenceArea, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { Bird } from "lucide-react";
-import { CHART_SERIES, CHART_TARGET, ChartTooltip } from "../../../ui";
+import { CHART_SERIES, CHART_TARGET, ChartTooltip } from "@workshop/ui";
 
 // Re-exported so the bird pages get their chart colors from the design-system
 // categorical suite (brand violet first) via the shared birds ui module.

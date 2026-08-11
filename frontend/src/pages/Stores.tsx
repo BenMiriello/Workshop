@@ -4,8 +4,8 @@ import { Database, RefreshCw } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, StateBlock, StatusDot, Badge, Tag,
   Skeleton, Field, Input, Select, catFor,
-} from "../ui";
-import { TableScroll, Table } from "../ui";
+} from "@workshop/ui";
+import { TableScroll, Table } from "@workshop/ui";
 
 
 type Store = {

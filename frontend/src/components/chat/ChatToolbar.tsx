@@ -2,7 +2,7 @@ import {
   Bell, Blocks, Bot, ChevronLeft, CodeXml, FolderGit2, Home, ListPlus, ListTodo,
   Maximize2, MessagesSquare, MoreVertical, PanelsTopLeft, Plus, Ticket, Trash2,
 } from "lucide-react";
-import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "../../ui";
+import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "@workshop/ui";
 import type { Provider } from "../../lib/chat";
 import {
   SCOPE_GROUPS, scopeKind, scopeLabel, scopeName,

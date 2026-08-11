@@ -4,7 +4,7 @@ import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Modal, Skeleton, type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 // Run: the single place a project becomes a running thing on this host. Drives
 // the backend app_runner — one app made of N services (each its own process +

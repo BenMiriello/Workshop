@@ -11,7 +11,7 @@ import {
   StatusDot,
   StatusPill,
   type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 type ServiceStatus = {
   name: string;

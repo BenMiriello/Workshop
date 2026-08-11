@@ -1,4 +1,4 @@
-import { Card, PageHeader, StateBlock } from "../../../frontend/src/ui";
+import { Card, PageHeader, StateBlock } from "@workshop/ui";
 
 // Entry component for the {{title}} sub-app. Replace this scaffold with
 // real content. Mount via:

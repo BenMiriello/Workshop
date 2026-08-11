@@ -3,7 +3,7 @@
 This sub-app mounts inside the Workshop. Design system is mandatory.
 
 In short:
-- Build from `frontend/src/ui` primitives + `src/styles/tokens.css`.
+- Build from the `@workshop/ui` kit (`packages/ui`): import primitives from `@workshop/ui`, tokens from `@workshop/ui/tokens.css`.
 - No inline hex colors. Lucide icons only. No emoji.
 - Five status kinds. Edit-mode for config/money writes. ConfirmDialog
   for destructive actions. All four list states.

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, TriangleAlert, Pencil, Trash2, Plus, RefreshCw } from "lucide-react";
 import { AppGroupNav } from "../../components/appNav";
-import { Button, Field, Input, PageHeader, Select, Tabs } from "../../ui";
+import { Button, Field, Input, PageHeader, Select, Tabs } from "@workshop/ui";
 import Projection from "./budget/Projection";
 import AppChatDock from "../../components/AppChatDock";
 

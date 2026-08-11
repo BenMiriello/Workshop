@@ -11,7 +11,7 @@ import {
   Tag,
   StatusDot,
   catFor,
-} from "../ui";
+} from "@workshop/ui";
 
 // GrantPicker — the Store broker (Phase 4).
 //

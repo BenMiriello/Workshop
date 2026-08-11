@@ -14,9 +14,9 @@ import {
   StateBlock,
   Skeleton,
   ActionBar,
-  Markdown,
   useEditMode,
-} from "../../../ui";
+} from "@workshop/ui";
+import { Markdown } from "@workshop/ui/markdown";
 import { notesApi, type Note, type Backlink } from "./api";
 import {
   transformForPreview,

@@ -31,7 +31,7 @@ import {
   Toggle,
   type SegmentedOption,
   type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 // Apps page: a uniform grid of cards. Every app — internal or external — looks
 // the same here. Tap a card to enter the app. Privacy-on-glance: cards show

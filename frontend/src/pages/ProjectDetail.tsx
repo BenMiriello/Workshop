@@ -42,12 +42,12 @@ import {
   Select,
   Field,
   ActionBar,
-  Markdown,
   Segmented,
   catFor,
   type StatusKind,
-} from "../ui";
-import { useEditMode } from "../ui";
+} from "@workshop/ui";
+import { Markdown } from "@workshop/ui/markdown";
+import { useEditMode } from "@workshop/ui";
 import {
   type TaskStatus,
   TASK_STATUSES,

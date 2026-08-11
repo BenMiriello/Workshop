@@ -12,7 +12,7 @@ import {
   Tag,
   Skeleton,
   StateBlock,
-} from "../ui";
+} from "@workshop/ui";
 import { marketplaceApi, type RegistryItem } from "../lib/marketplace";
 
 // Marketplace: the local app + kit registry (docs/workshop-v1/03 §4). A uniform

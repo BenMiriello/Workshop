@@ -44,7 +44,7 @@ import {
   StateBlock,
   type SegmentedOption,
   type ThemeMode,
-} from "../ui";
+} from "@workshop/ui";
 import { chatApi, type ChatPrefs } from "../lib/chat";
 import { CHAT_MODES, chatModeDef, type ChatModeId } from "../components/chat/chatModes";
 import { effortLabel } from "../components/chat/effort";

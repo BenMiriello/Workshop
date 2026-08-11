@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Toggle } from "../../../ui";
+import { Toggle } from "@workshop/ui";
 import { jget } from "./ui";
 import { createAviary, type AviaryApi } from "./aviary/aviary-engine.js";
 import { AviaryVoxel } from "./aviary/aviary-voxel.js";

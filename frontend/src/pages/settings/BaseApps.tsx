@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { BaseApp } from "@shared/types";
-import { Card, CardGrid, PageHeader, StateBlock } from "../../ui";
+import { Card, CardGrid, PageHeader, StateBlock } from "@workshop/ui";
 
 // Base Apps — the foundational tooling and services that make up the tenant
 // (workshop itself, clawdbot, openclaw, infra repos). Tenant-level diagnostic

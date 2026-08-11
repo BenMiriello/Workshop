@@ -13,8 +13,8 @@ import {
   StatusPill,
   Tag,
   catFor,
-} from "../ui";
-import type { StatusKind } from "../ui";
+} from "@workshop/ui";
+import type { StatusKind } from "@workshop/ui";
 import { type Job, jobIsLive, jobStatusKind } from "../lib/jobs";
 import { ticketHref, runTicketScope } from "../lib/tasks";
 import { DEVELOPMENT_SCOPE } from "../lib/devMode";

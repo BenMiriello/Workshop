@@ -19,7 +19,7 @@ import {
   Table,
   TableScroll,
   TimeCell,
-} from "../../ui";
+} from "@workshop/ui";
 
 // Finance app — shows Plaid-linked accounts and recent transactions.
 // Data layer: backend cache (finance-cache.json, 10min TTL) + localStorage

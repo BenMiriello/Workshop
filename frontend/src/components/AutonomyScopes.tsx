@@ -4,7 +4,7 @@ import { RefreshCw, Play, ArrowUpRight, HelpCircle } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, StatusDot,
   Skeleton, Segmented, Tag, catFor, type StatusKind, type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import { scopeLabel, scopeHref } from "../lib/tasks";
 
 // AutonomyScopes: the central "manage scope per project" list. One row per

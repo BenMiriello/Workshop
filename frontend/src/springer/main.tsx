@@ -6,8 +6,8 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import "../styles/tokens.css";
-import "../styles/components.css";
+import "@workshop/ui/tokens.css";
+import "@workshop/ui/styles.css";
 import "../styles.css";
 import { RecorderProvider } from "../pages/apps/birds/recorder";
 import { BreadcrumbProvider } from "../components/appNav";

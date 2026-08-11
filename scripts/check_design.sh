@@ -3,8 +3,11 @@
 #
 # Enforces frontend/CLAUDE.md mechanically. Two modes:
 #
-#   check_design.sh                  # full scan: every frontend/src/**/*.tsx
+#   check_design.sh                  # full scan: frontend/src + packages/ui/src
 #   check_design.sh --added <rev>    # gate mode: only lines ADDED vs <rev>
+#
+# Covers BOTH the app and the design system it consumes. The kit lives at
+# packages/ui (the @workshop/ui package); frontend/ is one of its consumers.
 #
 # Gate mode mirrors reviewer.sh's stub check — it flags only NEW violations, so
 # the large pre-existing inline-styled pages don't retroactively block an
@@ -18,9 +21,9 @@
 #   • confirm() / alert()   — use <ConfirmDialog> / the app's own surfaces
 #
 # Exempt paths (concrete colors legitimately live here):
-#   src/styles/**                       (tokens.css / components.css / tokens.js)
-#   src/ui/chart.tsx                    (CHART_SERIES — recharts needs literal colors)
-#   src/ui/Map.tsx                      (maplibre StyleSpecification; token() reads CSS vars w/ hex fallback)
+#   packages/ui/src/styles/**           (tokens.css / components.css / tokens.js)
+#   packages/ui/src/chart.tsx           (CHART_SERIES — recharts needs literal colors)
+#   packages/ui/src/Map.tsx             (maplibre StyleSpecification; token() reads CSS vars w/ hex fallback)
 #   birds/recorder.tsx, birds/Spectrogram.tsx
 #       (the spectrogram is a deliberate theme-independent near-black; a canvas
 #        2D fillStyle cannot read CSS custom properties, and the wrapper matches it)
@@ -31,6 +34,8 @@ set -u
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export WORKSHOP
 FE="$WORKSHOP/frontend"
+# The design system itself lives outside the web app: the app is a consumer.
+KIT="$WORKSHOP/packages/ui"
 MODE="full"
 REV="HEAD"
 if [[ "${1:-}" == "--added" ]]; then MODE="added"; REV="${2:-HEAD}"; fi
@@ -61,13 +66,20 @@ fi
 # --- Foundation integrity (full mode only) ---------------------------------
 if [[ "$MODE" == "full" ]]; then
   miss=()
-  grep -q 'styles/tokens.css' "$FE/src/main.tsx"      || miss+=("main.tsx missing tokens.css import")
-  grep -q 'styles/components.css' "$FE/src/main.tsx"  || miss+=("main.tsx missing components.css import")
-  [[ -f "$FE/src/styles/tokens.css" ]]                || miss+=("src/styles/tokens.css missing")
-  [[ -f "$FE/src/styles/components.css" ]]            || miss+=("src/styles/components.css missing")
-  [[ -f "$FE/src/styles/palette.mjs" ]]               || miss+=("src/styles/palette.mjs (color model) missing")
-  grep -q 'palettes.css' "$FE/src/styles/tokens.css"  || miss+=("tokens.css no longer imports palettes.css — color layer detached")
+  grep -q '@workshop/ui/tokens.css' "$FE/src/main.tsx" || miss+=("main.tsx missing @workshop/ui/tokens.css import")
+  grep -q '@workshop/ui/styles.css' "$FE/src/main.tsx" || miss+=("main.tsx missing @workshop/ui/styles.css import")
+  [[ -f "$KIT/src/styles/tokens.css" ]]               || miss+=("packages/ui/src/styles/tokens.css missing")
+  [[ -f "$KIT/src/styles/components.css" ]]           || miss+=("packages/ui/src/styles/components.css missing")
+  [[ -f "$KIT/src/styles/palette.mjs" ]]              || miss+=("packages/ui/src/styles/palette.mjs (color model) missing")
+  grep -q 'palettes.css' "$KIT/src/styles/tokens.css" || miss+=("tokens.css no longer imports palettes.css — color layer detached")
   [[ -f "$FE/CLAUDE.md" ]]                            || miss+=("frontend/CLAUDE.md missing")
+  [[ -f "$KIT/package.json" ]]                        || miss+=("packages/ui/package.json missing")
+  # The kit is consumed by package name, never by reaching into its source. A
+  # relative import back into the kit means the boundary has been re-crossed
+  # and out-of-repo consumers are silently diverging again.
+  if grep -rqE 'from "(\.\./)+(packages/)?ui"' "$FE/src" --include=*.tsx --include=*.ts 2>/dev/null; then
+    miss+=("frontend imports the kit by relative path — use the @workshop/ui package name")
+  fi
   if [[ ${#miss[@]} -gt 0 ]]; then
     printf 'FOUNDATION BROKEN:\n'; printf '  - %s\n' "${miss[@]}"; exit 2
   fi
@@ -75,8 +87,17 @@ if [[ "$MODE" == "full" ]]; then
   # palettes.css / palettes.gen.ts / tokens.generated.js are GENERATED from
   # palette.mjs. Editing the model and forgetting to regenerate is invisible
   # until the app paints the old colors, so fail here instead.
-  if ! node "$WORKSHOP/scripts/gen-tokens.mjs" --check; then
-    echo "COLOR TOKENS STALE — run 'npm run gen:tokens' from frontend/"
+  if ! node "$KIT/scripts/gen-tokens.mjs" --check; then
+    echo "COLOR TOKENS STALE — run 'npm run gen:tokens' from packages/ui/"
+    exit 2
+  fi
+
+  # The kit's public API is a contract other apps compile against, and out-of-
+  # repo consumers are NOT compiled by anything here. An export that vanishes
+  # without a version bump is exactly how Menu's items -> MenuItem change broke
+  # them silently, so the snapshot is foundation, not advisory.
+  if ! node "$KIT/scripts/api-snapshot.mjs" --check; then
+    echo "KIT API DRIFTED — see packages/ui/CONTRIBUTING.md"
     exit 2
   fi
 fi
@@ -86,11 +107,12 @@ import os, re, subprocess, sys
 
 mode, rev = sys.argv[1], sys.argv[2]
 FE = os.environ["WORKSHOP"] + "/frontend"
+KIT = os.environ["WORKSHOP"] + "/packages/ui"
 
 EXEMPT = (
-    "frontend/src/styles/",
-    "frontend/src/ui/chart.tsx",
-    "frontend/src/ui/Map.tsx",  # maplibre StyleSpecification needs literal colors; token() reads CSS vars w/ hex fallback
+    "packages/ui/src/styles/",
+    "packages/ui/src/chart.tsx",
+    "packages/ui/src/Map.tsx",  # maplibre StyleSpecification needs literal colors; token() reads CSS vars w/ hex fallback
     "frontend/src/pages/apps/birds/recorder.tsx",
     "frontend/src/pages/apps/birds/Spectrogram.tsx",
     "frontend/src/pages/apps/birds/LiveFeed.tsx",  # remote spectrogram canvas; literal colors like Spectrogram.tsx
@@ -139,21 +161,26 @@ def scan_line(path, lineno, text, out):
 violations = []
 
 if mode == "full":
-    for root, _, files in os.walk(os.path.join(FE, "src")):
-        for f in files:
-            if not f.endswith(".tsx"):
-                continue
-            abs_p = os.path.join(root, f)
-            rel = os.path.relpath(abs_p, os.environ["WORKSHOP"])
-            if exempt(rel):
-                continue
-            with open(abs_p, encoding="utf-8", errors="replace") as fh:
-                for i, line in enumerate(fh, 1):
-                    scan_line(rel, i, line, violations)
+    # Both the app AND the kit. The kit's primitives used to sit under
+    # frontend/src/ui and were scanned by walking one tree; now that they live
+    # in packages/ui they need their own root, or the design system would be the
+    # one place the design rules stopped applying.
+    for scan_root in (os.path.join(FE, "src"), os.path.join(KIT, "src")):
+        for root, _, files in os.walk(scan_root):
+            for f in files:
+                if not f.endswith(".tsx"):
+                    continue
+                abs_p = os.path.join(root, f)
+                rel = os.path.relpath(abs_p, os.environ["WORKSHOP"])
+                if exempt(rel):
+                    continue
+                with open(abs_p, encoding="utf-8", errors="replace") as fh:
+                    for i, line in enumerate(fh, 1):
+                        scan_line(rel, i, line, violations)
 else:
     # Added lines only. Parse unified diff; track new-file line numbers.
     diff = subprocess.run(
-        ["git", "diff", "--unified=0", rev, "--", "frontend/src/**/*.tsx", "frontend/src"],
+        ["git", "diff", "--unified=0", rev, "--", "frontend/src", "packages/ui/src"],
         capture_output=True, text=True, cwd=os.environ["WORKSHOP"],
     ).stdout
     cur_file = None

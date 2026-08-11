@@ -4,7 +4,7 @@
 - Update `TODO.md` as work progresses.
 - Edit only within this directory unless the operator explicitly asks for
   workshop-wide wiring (then stop and surface what files outside need to change).
-- Workshop design system is mandatory. Build from `frontend/src/ui` primitives.
+- Workshop design system is mandatory. Build from the `@workshop/ui` kit.
   Lucide icons only; no emoji. Five status kinds. ConfirmDialog for destructive.
 - Before claiming a UI task done: run `scripts/check_design.sh` and `npx tsc --noEmit`
   from the workshop root.

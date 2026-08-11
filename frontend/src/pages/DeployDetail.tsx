@@ -7,7 +7,7 @@ import {
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
   Badge, Tag, Skeleton, Field, Input, Select, ConfirmDialog, Modal, type StatusKind,
-} from "../ui";
+} from "@workshop/ui";
 
 
 type Deploy = {

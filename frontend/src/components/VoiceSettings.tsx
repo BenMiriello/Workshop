@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Mic } from "lucide-react";
-import { Modal, SectionLabel, Select, Toggle, Segmented, Button, ProgressBar, StatusPill } from "../ui";
+import { Modal, SectionLabel, Select, Toggle, Segmented, Button, ProgressBar, StatusPill } from "@workshop/ui";
 import { voiceApi } from "../lib/voiceApi";
 import type { EngineCaps } from "../lib/voice";
 import type {

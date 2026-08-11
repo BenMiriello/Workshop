@@ -21,7 +21,7 @@ import {
   Tag,
   catFor,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import { scopeLabel, scopeHref } from "../lib/tasks";
 
 // The Notes surface (notes-system plan Phase N1): one /notes page over the

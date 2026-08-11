@@ -3,7 +3,7 @@ import { Link2, Link2Off, RefreshCw, Check, X, Clock, Inbox } from "lucide-react
 import {
   Button, Card, ConfirmDialog, Field, Input, PageHeader, Row, SectionLabel,
   Select, Skeleton, Stack, StateBlock, StatusDot, StatusPill, Tag, catFor,
-} from "../../ui";
+} from "@workshop/ui";
 import { scopeLabel } from "../../lib/tasks";
 
 // Settings -> Trackers: the one external ticket integration, and its triage.

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 /* =============================================================================
-   gen-tokens.mjs — emit the color layer from frontend/src/styles/palette.mjs.
+   gen-tokens.mjs — emit the color layer from packages/ui/src/styles/palette.mjs.
    -----------------------------------------------------------------------------
      node scripts/gen-tokens.mjs            # write the generated files
      node scripts/gen-tokens.mjs --check    # exit 1 if they are stale
 
    Outputs (all GENERATED — never hand-edit):
-     frontend/src/styles/palettes.css        every [data-palette][data-theme] block
-     frontend/src/styles/palettes.gen.ts     the typed menu the picker renders
-     frontend/src/styles/tokens.generated.js the same values for Expo/React Native
+     packages/ui/src/styles/palettes.css        every [data-palette][data-theme] block
+     packages/ui/src/styles/palettes.gen.ts     the typed menu the picker renders
+     packages/ui/src/styles/tokens.generated.js the same values for Expo/React Native
 
    palette.mjs is canonical; this file only serializes it. It also verifies the
    NON-color scales, which are still hand-written in both tokens.css and
@@ -21,11 +21,11 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { PALETTES, MODES, DEFAULT_PALETTE, buildScheme, CATEGORICAL, identitySwatch } from "../frontend/src/styles/palette.mjs";
-import { tokens } from "../frontend/src/styles/tokens.js";
+import { PALETTES, MODES, DEFAULT_PALETTE, buildScheme, CATEGORICAL, identitySwatch } from "../src/styles/palette.mjs";
+import { tokens } from "../src/styles/tokens.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const STYLES = resolve(HERE, "../frontend/src/styles");
+const STYLES = resolve(HERE, "../src/styles");
 
 const kebab = (k) => k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
 
@@ -89,8 +89,8 @@ function buildCss() {
   return `/* =============================================================================
    Workshop Design System — PALETTES  (GENERATED — do not edit by hand)
    -----------------------------------------------------------------------------
-   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
-   Edit palette.mjs, then run \`npm run gen:tokens\` from frontend/.
+   Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
+   Edit palette.mjs, then run \`npm run gen:tokens\` from packages/ui/.
 
    ${PALETTES.length} palettes x { light, dark }. \`data-palette\` and \`data-theme\` both live on
    <html>; the pre-React bootstrap in index.html sets them before first paint.
@@ -115,10 +115,10 @@ function buildJs() {
   ).join("\n");
   return `/* =============================================================================
    Workshop Design System — MOBILE COLOR TOKENS (GENERATED — do not edit by hand)
-   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
+   Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
    CSS custom properties don't reach React Native, so the Expo app imports these
    hexes instead. Same model, same numbers as palettes.css.
-   Run \`npm run gen:tokens\` (from frontend/) to refresh.
+   Run \`npm run gen:tokens\` (from packages/ui/) to refresh.
    ========================================================================== */
 
 export const palettes = {
@@ -146,7 +146,7 @@ function buildTs() {
   ).join("\n");
   return `/* =============================================================================
    Workshop Design System — PALETTE LIST (GENERATED — do not edit by hand)
-   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
+   Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
    The colors themselves are in palettes.css; this is just the menu.
    ========================================================================== */
 
@@ -235,7 +235,7 @@ for (const [path, content] of targets) {
   const current = existsSync(path) ? readFileSync(path, "utf8") : null;
   if (current === content) continue;
   if (check) {
-    console.error(`stale: ${path} — run \`npm run gen:tokens\` (from frontend/)`);
+    console.error(`stale: ${path} — run \`npm run gen:tokens\` (from packages/ui/)`);
     stale++;
   } else {
     writeFileSync(path, content, "utf8");

@@ -1,9 +1,9 @@
 /* =============================================================================
    Workshop Design System — MOBILE COLOR TOKENS (GENERATED — do not edit by hand)
-   Emitted by scripts/gen-tokens.mjs from frontend/src/styles/palette.mjs.
+   Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
    CSS custom properties don't reach React Native, so the Expo app imports these
    hexes instead. Same model, same numbers as palettes.css.
-   Run `npm run gen:tokens` (from frontend/) to refresh.
+   Run `npm run gen:tokens` (from packages/ui/) to refresh.
    ========================================================================== */
 
 export const palettes = {

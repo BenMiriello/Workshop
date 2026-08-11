@@ -11,7 +11,7 @@ plan.
 
 ## Constraints
 
-- Build from `frontend/src/ui` primitives only. No inline hex; no emoji.
+- Build from the `@workshop/ui` kit only (import from `@workshop/ui`). No inline hex; no emoji.
 - Five status kinds. Edit-mode for writes. ConfirmDialog for destructive.
 - All four list states (loading/empty/error/overflow).
 - Reviewer gate (`scripts/reviewer.sh`) must pass before any TODO `[x]`.

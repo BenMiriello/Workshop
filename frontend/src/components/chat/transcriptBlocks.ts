@@ -249,6 +249,31 @@ export function selectTranscript(state: ThreadState): TranscriptBlock[] {
   return out;
 }
 
+/** A durable-queue entry the server already refused, from a PAST attempt this
+ *  tab no longer remembers as pending (the reducer's copy does not survive a
+ *  reload — see useSendPipeline's queue.pushFailed).
+ *
+ *  It is stale, not upcoming, so it must not land where `selectTranscript`
+ *  puts genuinely-queued text: after the live run. A failure from before
+ *  "now" sinking below a turn that started after it read as the chat ignoring
+ *  whatever came next — reported 2026-08-10 ("it's BELOW my more recent
+ *  message and below the typing indicator"). It goes immediately before
+ *  whatever is happening live instead — the newest point it can truthfully
+ *  sit at without claiming to be part of what is running now. */
+export function withStaleFailures(
+  blocks: TranscriptBlock[],
+  staleFailed: { clientId: string; text: string }[],
+): TranscriptBlock[] {
+  if (!staleFailed.length) return blocks;
+  const liveAt = blocks.findIndex((b) => b.kind === "live");
+  const insertAt = liveAt === -1 ? blocks.length : liveAt;
+  const extra: TranscriptBlock[] = staleFailed.map((q) => ({
+    kind: "pending", key: `stale:${q.clientId}`, clientId: q.clientId,
+    text: q.text, status: "failed",
+  }));
+  return [...blocks.slice(0, insertAt), ...extra, ...blocks.slice(insertAt)];
+}
+
 /** Every committed message, flat, in log order. The context meter's local
  *  estimate and the "was this the first exchange" check read this; nothing
  *  renders from it. */

@@ -1,5 +1,9 @@
 # Build artifacts
 node_modules/
+# ...including when it is a symlink, which the trailing-slash form above misses.
+# packages/ui/node_modules is a link to frontend/node_modules so the kit can be
+# built offline before a root `npm install` has hoisted the workspace deps.
+node_modules
 .venv/
 backend/.venv/
 __pycache__/

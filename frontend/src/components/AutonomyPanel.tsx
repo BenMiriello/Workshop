@@ -7,7 +7,7 @@ import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill,
   Skeleton, Input, Field, ActionBar, Tag, Segmented, catFor,
   useEditMode, type StatusKind, type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
 import { LATITUDES, DEFAULT_LATITUDE, latitudeDesc, type Latitude } from "../lib/tasks";
 
 // Autonomy = how a scope (a project OR an agent) decides when to work its own

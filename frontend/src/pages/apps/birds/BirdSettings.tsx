@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Bird, Filter, Target, Check, History, Mic, HardDrive, Waypoints, User, LogOut, RefreshCw } from "lucide-react";
 import { useShowNonBird } from "./settings";
 import BirdsHeader from "./BirdsHeader";
-import { Toggle, Button, Segmented } from "../../../ui";
+import { Toggle, Button, Segmented } from "@workshop/ui";
 import { API, pct } from "./ui";
 
 // Settings for the Birds app. The non-bird filter is display-only: BirdNET keeps

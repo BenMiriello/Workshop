@@ -4,7 +4,7 @@ import {
   ReferenceArea, ReferenceLine, ResponsiveContainer,
 } from "recharts";
 import type { Budget } from "../Budget";
-import { CHART_SERIES, ChartFrame, ChartTooltip } from "../../../ui";
+import { CHART_SERIES, ChartFrame, ChartTooltip } from "@workshop/ui";
 
 // Chart series colors — the categorical suite (brand violet first), never the
 // status hues, so a trending line is never misread as good/bad. See ui/chart.

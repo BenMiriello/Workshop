@@ -15,7 +15,7 @@ import {
   Row,
   Textarea,
   Toggle,
-} from "../ui";
+} from "@workshop/ui";
 import {
   type Task,
   type TaskStatus,

@@ -1,4 +1,4 @@
-import { Menu, MenuItem } from "../../ui";
+import { Menu, MenuItem } from "@workshop/ui";
 import { effortHint, effortLabel, orderEfforts } from "./effort";
 
 // How hard the model works on this turn, as a ladder you can read without

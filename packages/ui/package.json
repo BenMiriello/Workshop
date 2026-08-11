@@ -1,0 +1,71 @@
+{
+  "name": "@workshop/ui",
+  "version": "2.0.0",
+  "type": "module",
+  "description": "Workshop Design System: React primitives over a token layer. The tokens are usable on their own, with no React, by any consumer that can load a stylesheet.",
+  "license": "MIT",
+  "sideEffects": [
+    "*.css"
+  ],
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "workshop-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./map": {
+      "workshop-source": "./src/Map.tsx",
+      "types": "./dist/Map.d.ts",
+      "default": "./dist/Map.js"
+    },
+    "./markdown": {
+      "workshop-source": "./src/Markdown.tsx",
+      "types": "./dist/Markdown.d.ts",
+      "default": "./dist/Markdown.js"
+    },
+    "./tokens.css": {
+      "workshop-source": "./src/styles/tokens.css",
+      "default": "./dist/tokens.css"
+    },
+    "./styles.css": {
+      "workshop-source": "./src/styles/components.css",
+      "default": "./dist/styles.css"
+    },
+    "./tokens.js": {
+      "workshop-source": "./src/styles/tokens.js",
+      "default": "./dist/tokens.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json && node scripts/build-css.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "gen:tokens": "node scripts/gen-tokens.mjs",
+    "check:tokens": "node scripts/gen-tokens.mjs --check",
+    "api:snapshot": "node scripts/api-snapshot.mjs",
+    "api:check": "node scripts/api-snapshot.mjs --check",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "lucide-react": ">=1",
+    "maplibre-gl": ">=5",
+    "pmtiles": ">=4",
+    "protomaps-themes-base": ">=4",
+    "react": ">=18",
+    "react-dom": ">=18",
+    "react-markdown": ">=10",
+    "remark-gfm": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "maplibre-gl": { "optional": true },
+    "pmtiles": { "optional": true },
+    "protomaps-themes-base": { "optional": true },
+    "react-markdown": { "optional": true },
+    "remark-gfm": { "optional": true }
+  }
+}

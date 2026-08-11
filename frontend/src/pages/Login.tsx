@@ -5,7 +5,7 @@
 import { useState, type FormEvent } from "react";
 import { Hexagon } from "lucide-react";
 
-import { Button, Card, Field, Input, PageHeader, Stack, StateBlock } from "../ui";
+import { Button, Card, Field, Input, PageHeader, Stack, StateBlock } from "@workshop/ui";
 import { useAuth } from "../auth/AuthProvider";
 import { AuthError } from "../lib/auth";
 

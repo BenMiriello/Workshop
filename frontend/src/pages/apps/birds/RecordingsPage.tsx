@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Pin, PinOff, Trash2, Save, MapPin } from "lucide-react";
 import { useCrumbTrail, type Crumb } from "../../../components/appNav";
-import { Segmented, Stepper, ConfirmDialog } from "../../../ui";
+import { Segmented, Stepper, ConfirmDialog } from "@workshop/ui";
 import { API, jget, pct, SpeciesLink, BirdThumb } from "./ui";
 import { useRecStatus, fmtBytes, PlayButton } from "./recordings";
 import BirdsHeader from "./BirdsHeader";

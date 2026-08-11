@@ -5,7 +5,6 @@ import {
   Card,
   Field,
   Input,
-  Markdown,
   PageHeader,
   SectionLabel,
   Segmented,
@@ -14,7 +13,8 @@ import {
   StateBlock,
   Textarea,
   type SegmentedOption,
-} from "../ui";
+} from "@workshop/ui";
+import { Markdown } from "@workshop/ui/markdown";
 import type { ProjectSensitivity } from "@shared/types";
 import { slugify } from "../components/chat/uiCardActions";
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertTriangle, Circle, RefreshCw, CalendarClock, Check, Play, Dot,
   ChevronDown, ChevronRight, Inbox, Sparkles } from "lucide-react";
-import { ConfirmDialog, Stepper, Tabs } from "../../../ui";
+import { ConfirmDialog, Stepper, Tabs } from "@workshop/ui";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

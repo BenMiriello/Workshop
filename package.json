@@ -1,0 +1,19 @@
+{
+  "name": "workshop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Workshop monorepo root. Exists to declare the npm workspaces so @workshop/ui resolves by package name rather than by reaching into another workspace's source tree.",
+  "workspaces": [
+    "packages/*",
+    "frontend"
+  ],
+  "scripts": {
+    "test": "npm test --workspace @workshop/ui && npm test --workspace workshop-frontend",
+    "typecheck": "npm run typecheck --workspace @workshop/ui && cd frontend && ./node_modules/.bin/tsc -b --noEmit",
+    "build:ui": "npm run build --workspace @workshop/ui",
+    "build:web": "npm run build --workspace workshop-frontend",
+    "gen:tokens": "npm run gen:tokens --workspace @workshop/ui",
+    "check:tokens": "npm run check:tokens --workspace @workshop/ui",
+    "api:check": "npm run api:check --workspace @workshop/ui"
+  }
+}

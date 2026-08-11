@@ -1,6 +1,6 @@
 import type { ReactNode, RefObject } from "react";
 import { AlertTriangle, Mic, MicOff, Settings2 } from "lucide-react";
-import { Button } from "../../ui";
+import { Button } from "@workshop/ui";
 
 // Voice mode's two pieces of composer chrome: the status strip above the input,
 // and the control cluster beside Send.

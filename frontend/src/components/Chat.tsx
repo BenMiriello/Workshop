@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Unplug } from "lucide-react";
-import { StateBlock } from "../ui";
+import { StateBlock } from "@workshop/ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
 import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
@@ -32,7 +32,7 @@ import { logPlaceholder } from "./chat/chatLogState";
 import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
-import { committedMessages } from "./chat/transcriptBlocks";
+import { committedMessages, withStaleFailures } from "./chat/transcriptBlocks";
 import { chatApi, type CardState } from "../lib/chat";
 import { useDraft } from "../lib/draftSync";
 import VoiceSettings from "./VoiceSettings";
@@ -700,6 +700,32 @@ export default function Chat({
     () => queue.items.filter((q) => !state.pending[q.clientId]),
     [queue.items, state.pending],
   );
+  // `queuedForDisplay` mixes two different things the queue holds: text typed
+  // ahead that has not been sent AT ALL (genuinely belongs after everything,
+  // including a live run), and a PAST send the server refused, durable only
+  // because this tab's `pending` copy did not survive whatever happened since
+  // (a reload, a thread switch). The second kind is stale, not upcoming — see
+  // withStaleFailures for why it cannot render after a run that started later
+  // than it did.
+  const queuedWaiting = useMemo(
+    () => queuedForDisplay.filter((q) => !q.failed),
+    [queuedForDisplay],
+  );
+  const queuedStaleFailed = useMemo(
+    () => queuedForDisplay.filter((q) => q.failed),
+    [queuedForDisplay],
+  );
+  const blocksWithStaleFailures = useMemo(
+    () => withStaleFailures(transcript, queuedStaleFailed),
+    [transcript, queuedStaleFailed],
+  );
+  // A merged-in stale failure has no `pending` entry for `pipeline.retry` to
+  // find (that is exactly why it fell to the durable queue) — route it to the
+  // queue's own retry instead of failing silently.
+  const onRetryAny = useCallback((clientId: string) => {
+    if (state.pending[clientId]) pipeline.retry(clientId);
+    else queue.retryFailed(clientId);
+  }, [state.pending, pipeline, queue]);
 
   const logLoading = thread.loadingThreads || !hydrated;
   // EXACTLY ONE OF THE TWO renders a given failure. The log owns the error one
@@ -708,7 +734,7 @@ export default function Chat({
   // not the place for it, and the slot above the composer takes it instead.
   // Both draw the same component — see ChatProblemBlock.
   const logShowsProblem = logPlaceholder({
-    empty: transcript.length === 0,
+    empty: blocksWithStaleFailures.length === 0,
     loading: logLoading,
     error: !!chatProblem,
     inFlight: runActive || pipeline.starting,
@@ -720,18 +746,18 @@ export default function Chat({
       onScroll={onLogScroll}
       loading={logLoading}
       error={chatProblem}
-      blocks={transcript}
+      blocks={blocksWithStaleFailures}
       isBuild={build}
       inFlight={runActive || pipeline.starting}
       selectedModel={selectedModel}
       cardCtx={cardCtx}
-      onRetry={pipeline.retry}
+      onRetry={onRetryAny}
       onRetryQueued={queue.retryFailed}
       workingLabel={workingLabel}
       elapsed={elapsed}
       answerPermission={answerPermission}
       liveTurnId={runId}
-      queued={queuedForDisplay}
+      queued={queuedWaiting}
       queuedStatus={queuedStatus}
       voiceOn={voiceOn}
       settling={settling}
