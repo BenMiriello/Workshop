@@ -417,22 +417,27 @@ function AccountSection() {
 // Backend: GET/DELETE /auth/devices (backend/routes/auth.py).
 type DeviceToken = { id: string; label?: string | null; created_at?: string; last_seen?: string | null };
 
+const DEVICES_PAGE_SIZE = 10;
+
 function DeviceTokens() {
   const [devices, setDevices] = useState<DeviceToken[] | null>(null);
+  const [total, setTotal] = useState(0);
   const [revoking, setRevoking] = useState<DeviceToken | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (limit: number) => {
     try {
-      const r = await fetch("/api/auth/devices");
-      const j = r.ok ? await r.json() : { devices: [] };
+      const r = await fetch(`/api/auth/devices?limit=${limit}&offset=0`);
+      const j = r.ok ? await r.json() : { devices: [], total: 0 };
       setDevices(Array.isArray(j.devices) ? j.devices : []);
+      setTotal(typeof j.total === "number" ? j.total : 0);
     } catch {
       setDevices([]);
+      setTotal(0);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(DEVICES_PAGE_SIZE); }, [load]);
 
   // No-cruft: render nothing until at least one device exists.
   if (!devices || devices.length === 0) return null;
@@ -442,7 +447,7 @@ function DeviceTokens() {
     setBusy(true);
     try {
       await fetch(`/api/auth/devices/${revoking.id}`, { method: "DELETE" });
-      await load();
+      await load(Math.max(DEVICES_PAGE_SIZE, devices.length));
     } finally {
       setBusy(false);
       setRevoking(null);
@@ -450,7 +455,7 @@ function DeviceTokens() {
   };
 
   return (
-    <Row label="devices">
+    <Row label={`devices${total > devices.length ? ` (${devices.length} of ${total})` : ""}`}>
       <span style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
         {devices.map((d) => (
           <span key={d.id} style={{ display: "inline-flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
@@ -464,6 +469,11 @@ function DeviceTokens() {
             </Button>
           </span>
         ))}
+        {total > devices.length && (
+          <Button size="sm" variant="ghost" onClick={() => load(devices.length + DEVICES_PAGE_SIZE)}>
+            Show more ({total - devices.length} more)
+          </Button>
+        )}
       </span>
       <ConfirmDialog
         open={!!revoking}

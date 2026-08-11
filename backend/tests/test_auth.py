@@ -114,10 +114,19 @@ def test_device_token_roundtrip_and_revoke(db):
     u = auth_store.create_user("d@example.com", "password1")
     raw = auth_store.create_device_token(u["id"], "iphone")
     assert auth_store.device_user(raw)["id"] == u["id"]
-    devs = auth_store.list_devices(u["id"])
+    devs = auth_store.list_devices(u["id"])["devices"]
     assert len(devs) == 1 and devs[0]["label"] == "iphone"
     auth_store.revoke_device_by_prefix(u["id"], devs[0]["id"])
     assert auth_store.device_user(raw) is None
+
+    # re-provisioning the same label reuses the row instead of piling up a new one
+    raw2 = auth_store.create_device_token(u["id"], "iphone")
+    assert auth_store.device_user(raw2)["id"] == u["id"]
+    raw3 = auth_store.create_device_token(u["id"], "iphone")
+    result = auth_store.list_devices(u["id"])
+    assert result["total"] == 1 and len(result["devices"]) == 1
+    assert auth_store.device_user(raw2) is None  # rotated out by raw3
+    assert auth_store.device_user(raw3)["id"] == u["id"]
 
 
 def test_service_token_carries_scope(db):

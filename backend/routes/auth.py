@@ -169,8 +169,12 @@ async def issue_device_token(body: DeviceTokenBody, user: dict = Depends(current
 
 
 @router.get("/devices")
-async def list_devices(user: dict = Depends(current_user)) -> dict:
-    return {"devices": auth_store.list_devices(user["id"])}
+async def list_devices(
+    limit: int = 10, offset: int = 0, user: dict = Depends(current_user)
+) -> dict:
+    limit = max(1, min(limit, 50))
+    offset = max(0, offset)
+    return auth_store.list_devices(user["id"], limit=limit, offset=offset)
 
 
 @router.delete("/devices/{device_id}")

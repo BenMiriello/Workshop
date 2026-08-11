@@ -374,15 +374,35 @@ def revoke_session(raw_token: Optional[str]) -> None:
 
 
 def create_device_token(user_id: int, label: Optional[str] = None) -> str:
-    """Mint an opaque per-device bearer token for native background producers."""
+    """Mint an opaque per-device bearer token for native background producers.
+
+    Idempotent per (user_id, label): the web shell calls this on every login,
+    but the client can't tell us whether it already holds a live token (the
+    Keychain-backed secureStore is write-only from page JS by design — see
+    shared/native-bridge.ts). Without a check here, every re-login minted a
+    fresh row and the same physical device piled up as N "ios" entries. If an
+    active token already exists for this label, touch it and hand back a new
+    secret bound to the same row instead of inserting another one.
+    """
     init_db()
+    lbl = (label or "device")[:120]
     raw = secrets.token_urlsafe(32)
     with _connect() as conn:
-        conn.execute(
-            "INSERT INTO device_tokens (token_hash, user_id, label, created_at, last_seen, revoked) "
-            "VALUES (?, ?, ?, ?, ?, 0)",
-            (_hash_token(raw), user_id, (label or "device")[:120], _now(), _now()),
-        )
+        existing = conn.execute(
+            "SELECT token_hash FROM device_tokens WHERE user_id = ? AND label = ? AND revoked = 0",
+            (user_id, lbl),
+        ).fetchone()
+        if existing is not None:
+            conn.execute(
+                "UPDATE device_tokens SET token_hash = ?, last_seen = ? WHERE token_hash = ?",
+                (_hash_token(raw), _now(), existing["token_hash"]),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO device_tokens (token_hash, user_id, label, created_at, last_seen, revoked) "
+                "VALUES (?, ?, ?, ?, ?, 0)",
+                (_hash_token(raw), user_id, lbl, _now(), _now()),
+            )
     return raw
 
 
@@ -403,19 +423,25 @@ def device_user(raw_token: Optional[str]) -> Optional[dict[str, Any]]:
     return _row_to_user(urow)
 
 
-def list_devices(user_id: int) -> list[dict[str, Any]]:
+def list_devices(user_id: int, limit: int = 10, offset: int = 0) -> dict[str, Any]:
     init_db()
     with _connect() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM device_tokens WHERE user_id = ? AND revoked = 0", (user_id,)
+        ).fetchone()["n"]
         rows = conn.execute(
             "SELECT token_hash, label, created_at, last_seen FROM device_tokens "
-            "WHERE user_id = ? AND revoked = 0 ORDER BY created_at",
-            (user_id,),
+            "WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            (user_id, limit, offset),
         ).fetchall()
-    return [
-        {"id": r["token_hash"][:12], "label": r["label"], "created_at": r["created_at"],
-         "last_seen": r["last_seen"]}
-        for r in rows
-    ]
+    return {
+        "devices": [
+            {"id": r["token_hash"][:12], "label": r["label"], "created_at": r["created_at"],
+             "last_seen": r["last_seen"]}
+            for r in rows
+        ],
+        "total": total,
+    }
 
 
 def revoke_device_by_prefix(user_id: int, id_prefix: str) -> int:
