@@ -6,8 +6,8 @@ This is the invite mechanism: you make your friend's account, set a password, an
 share it with them out of band (they can be given a way to change it later).
 
 Run from the backend dir with its venv:
-    .venv/bin/python scripts/springer_account.py set <email> <password> [--name N] [--role admin|member]
-    .venv/bin/python scripts/springer_account.py list
+    .venv/bin/python apps/birds/springer/account.py set <email> <password> [--name N] [--role admin|member]
+    .venv/bin/python apps/birds/springer/account.py list
 
 The account is keyed by email, so setting a password for a given address
 attaches a login to the SAME user 1 that already owns all the Workshop history.
@@ -21,7 +21,9 @@ from pathlib import Path
 # Make `services` importable when run from backend/.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from services import birds_analyze, springer_auth  # noqa: E402
+from services import birds_analyze
+
+import auth as springer_auth  # noqa: E402
 
 
 def main() -> int:

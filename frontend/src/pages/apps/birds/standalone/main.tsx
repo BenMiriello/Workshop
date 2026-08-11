@@ -1,28 +1,28 @@
 // Springer Birds — standalone entry. This is the REAL birds app (the same React
 // pages as /apps/birds) with the Workshop cross-app wrapper removed, behind a
-// login gate. Served as a built bundle by backend/springer_app.py at
-// its own public hostname. The pages call /api/birds/* which springer_app serves,
-// scoped to the logged-in user.
+// login gate. Served as a built bundle by apps/birds/springer/app.py at the
+// app's own public hostname. The pages call /api/birds/* which that process
+// serves, scoped to the logged-in user.
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import "@workshop/ui/tokens.css";
 import "@workshop/ui/styles.css";
-import "../styles.css";
-import { RecorderProvider } from "../pages/apps/birds/recorder";
-import { BreadcrumbProvider } from "../components/appNav";
-import { BirdsScopeProvider } from "../pages/apps/birds/scope";
-import BirdsShell from "../pages/apps/birds/BirdsShell";
-import Birds from "../pages/apps/Birds";
-import Locations from "../pages/apps/birds/Locations";
-import LocationDetail from "../pages/apps/birds/LocationDetail";
-import Devices from "../pages/apps/birds/Devices";
-import BirdDetail from "../pages/apps/birds/BirdDetail";
-import BirdsReview from "../pages/apps/birds/BirdsReview";
-import BirdSettings from "../pages/apps/birds/BirdSettings";
-import Recordings from "../pages/apps/birds/RecordingsPage";
-import Atlas from "../pages/apps/birds/Atlas";
-import ForecastWeek from "../pages/apps/birds/ForecastWeek";
+import "../../../../styles.css";
+import { RecorderProvider } from "../recorder";
+import { BreadcrumbProvider } from "../../../../components/appNav";
+import { BirdsScopeProvider } from "../scope";
+import BirdsShell from "../BirdsShell";
+import Birds from "../../Birds";
+import Locations from "../Locations";
+import LocationDetail from "../LocationDetail";
+import Devices from "../Devices";
+import BirdDetail from "../BirdDetail";
+import BirdsReview from "../BirdsReview";
+import BirdSettings from "../BirdSettings";
+import Recordings from "../RecordingsPage";
+import Atlas from "../Atlas";
+import ForecastWeek from "../ForecastWeek";
 
 // The birds app, no Workshop top-nav. Each page renders its own BirdsHeader.
 function BirdsApp() {

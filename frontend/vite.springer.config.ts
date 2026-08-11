@@ -24,7 +24,7 @@ const rewriteBirdsPaths = (): PluginOption => ({
   },
 });
 
-// Standalone birds-only build → dist-springer/, served by backend/springer_app.py.
+// Standalone birds-only build → dist-springer/, served by apps/birds/springer/app.py.
 export default defineConfig({
   plugins: [rewriteBirdsPaths(), react()],
   build: {

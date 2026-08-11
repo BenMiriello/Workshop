@@ -52,10 +52,10 @@ What is BUILT and verified (backend live; frontend on Vite HMR):
   `springer_app` binds 127.0.0.1 only, imports birds+auth only, serves the
   birds-only build itself (NOT public Pages, so the JS isn't downloadable
   anonymously).
-- **BUILT + tested this round**: `services/springer_auth.py` (stdlib scrypt
+- **BUILT + tested this round**: `apps/birds/springer/auth.py` (stdlib scrypt
   passwords, `sessions` table, login/session_user/logout, no pip dep — egress
   guard blocks pip), `users.password_hash` + `sessions` schema (migrated),
-  `backend/scripts/springer_account.py` admin CLI (`set <email> <pw>` / `list`;
+  `apps/birds/springer/account.py` admin CLI (`set <email> <pw>` / `list`;
   accounts are admin-created, no open signup). Verified: wrong pw rejected, valid
   pw → session → resolve → logout invalidates. Operator/friend passwords set via
   the CLI (keyed by email → same account as Workshop user 1).
@@ -66,7 +66,7 @@ Remaining work (the parts that genuinely need the operator / are not yet wired):
   `location/summary|species|activity`, `bird`, `suggestions`, `stations`, atlas,
   recordings still return unscoped data — fine while there is no session user,
   MUST be done as part of standalone bring-up below or it is a data-leak).
-- **Standalone hardened app + Cloudflare Access** (§2-3 below) — `springer_app.py`,
+- **Standalone hardened app + Cloudflare Access** (§2-3 below) — `apps/birds/springer/app.py`,
   the auth dependency, tunnel + Access policy, the 2 emails. Operator dashboard +
   interactive auth; not startable by me. Decisions §10 #1-#5 still stand.
 - Optional: off-tab **Live panel** on the Location page (poll `/analyze/recent`)
@@ -170,7 +170,7 @@ process, importing only the birds code, exposed only via an outbound tunnel.**
   bank balance or drive an agent, because that code and those creds are not in the
   process.
 
-Backend shape: `backend/springer_app.py` (new) builds a small FastAPI app that
+Backend shape: `apps/birds/springer/app.py` (new) builds a small FastAPI app that
 mounts the auth router + the birds router behind a `require_session` dependency.
 Run as its own systemd user unit on :8001. Do **not** add it to `backend/main.py`.
 
@@ -315,7 +315,7 @@ side-channel into other capabilities).
    owner/shared columns, detection owner denorm, legacy backfill to operator).
    Thread an optional `user_id`/`scope` arg through the read functions. Private app
    behavior unchanged.
-2. **Standalone backend** `springer_app.py`: auth layer (Bundle A or B) +
+2. **Standalone backend** `apps/birds/springer/app.py`: auth layer (Bundle A or B) +
    `require_session` + birds router + device-ownership enforcement on writes. Runs
    on :8001 under a systemd user unit. Local-only first (no tunnel yet).
 3. **Standalone frontend mount**: birds-only build with a login/landing screen and

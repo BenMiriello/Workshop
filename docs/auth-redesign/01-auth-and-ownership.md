@@ -10,7 +10,7 @@ Two credential types, both resolving to a `current_user` server-side, both fail-
 - On login/register, the server creates a session row (`auth.db`: `sessions(id, user_id,
   created_at, expires_at, revoked, user_agent)`) and sets an opaque token in an
   **HttpOnly, Secure, SameSite=Strict** cookie scoped to the origin. This mirrors the proven
-  `services/springer_auth.py` model and is XSS-safe (JS cannot read it, so a script injection
+  `apps/birds/springer/auth.py` model and is XSS-safe (JS cannot read it, so a script injection
   cannot exfiltrate the session).
 - Replaces the current localStorage access/refresh JWT for the web surface. localStorage
   tokens are readable by any injected script; for a publicly-exposed app holding bank data,

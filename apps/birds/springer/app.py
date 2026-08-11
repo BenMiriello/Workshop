@@ -17,7 +17,7 @@ Security model:
     endpoint runs — a client cannot widen it with a query arg.
   - /webhook (loopback ingestion) is blocked here.
   - Session cookie is HttpOnly + SameSite=Strict (+ Secure in production).
-  - Accounts are admin-provisioned (scripts/springer_account.py); no open signup.
+  - Accounts are admin-provisioned (apps/birds/springer/account.py); no open signup.
 
 NOTE (pre-friend gate): per-endpoint read-scoping + per-device write-authorization
 must be completed before a SECOND account is provisioned. Today only the operator
@@ -30,6 +30,20 @@ Run:
 """
 from __future__ import annotations
 
+# This process lives with the birds app (apps/birds/springer/) rather than in
+# backend/, because it is the app's public face, not platform code — the same
+# reason the analyzer and the Pi capture live here. It still runs against the
+# platform's own modules, so the backend package root goes on sys.path first.
+import sys as _sys
+from pathlib import Path as _Path
+
+_BACKEND = _Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND) not in _sys.path:
+    _sys.path.insert(0, str(_BACKEND))
+_HERE = str(_Path(__file__).resolve().parent)
+if _HERE not in _sys.path:
+    _sys.path.insert(0, _HERE)
+
 import os
 from pathlib import Path
 
@@ -38,7 +52,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from routes import birds as birds_routes
-from services import birds_analyze, paths, springer_auth
+from services import birds_analyze, paths
+
+import auth as springer_auth
 
 COOKIE = "springer_session"
 SECURE_COOKIES = os.environ.get("SPRINGER_SECURE_COOKIES", "1") != "0"

@@ -1,7 +1,7 @@
 # Critique + refinements (pre-build review)
 
 Written 2026-06-25 after reading the actual code (`deps_auth.py`, `deps_user.py`,
-`auth_store.py`, `jwt_tokens.py`, `routes/auth.py`, `springer_auth.py`, `main.py`, and the
+`auth_store.py`, `jwt_tokens.py`, `routes/auth.py`, `apps/birds/springer/auth.py`, `main.py`, and the
 full personal-router inventory). The four design docs are directionally correct; these are the
 concrete corrections that make the build match reality. Where this doc and the earlier docs
 disagree, **this doc wins** (the earlier docs were written before the code audit).

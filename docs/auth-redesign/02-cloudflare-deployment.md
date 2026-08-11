@@ -9,7 +9,7 @@ backend would publish the operator's financial data; do not reorder.
   `~/.cloudflared/cert.pem` (authorized for the <your-domain> zone) and ingress in
   `~/.cloudflared/config.yml` currently routing `birds.<your-domain> -> 127.0.0.1:8001`.
   The tunnel and the springer app are NOT running right now (start them as part of this).
-- The model to copy is `backend/springer_app.py`: a small process that serves a built SPA
+- The model to copy is `apps/birds/springer/app.py`: a small process that serves a built SPA
   bundle and gates the API.
 - Cloudflare terminates TLS at the edge; the tunnel carries it encrypted to localhost, so
   `Secure` cookies work and nothing on this box needs a cert.

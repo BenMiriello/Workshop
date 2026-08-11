@@ -2,7 +2,7 @@
 
 The private Workshop app at /apps/birds is tailnet-gated and uses NONE of this:
 it has no login, the operator just reaches it over Tailscale. This module backs
-the SEPARATE hardened process (springer_app.py on :8001, behind the Cloudflare
+the SEPARATE hardened process (apps/birds/springer/app.py on :8001, behind the Cloudflare
 tunnel at the app's own public hostname) where a real second person logs in.
 
 Design (stdlib only — the box's egress guard blocks pip, and we don't need it):
@@ -11,7 +11,7 @@ Design (stdlib only — the box's egress guard blocks pip, and we don't need it)
   - Sessions: a 256-bit secrets token in the `sessions` table, bounded by
     expires_at. The cookie that carries it is set HttpOnly+Secure+SameSite=Strict
     by springer_app, so it never reaches JS and never rides a cross-site request.
-  - Accounts are admin-created (scripts/springer_account.py) — there is no open
+  - Accounts are admin-created (apps/birds/springer/account.py) — there is no open
     signup endpoint to attack. This is the genuinely-shared carve-out to the
     no-multi-tenant-cruft rule, not single-user cruft.
 
@@ -19,6 +19,17 @@ Everything lives in the SAME browser-stations.db as the rest of the bird data, s
 a login here is the same account (matched by email) as user 1 in the Workshop app.
 """
 from __future__ import annotations
+
+# This process lives with the birds app (apps/birds/springer/) rather than in
+# backend/, because it is the app's public face, not platform code — the same
+# reason the analyzer and the Pi capture live here. It still runs against the
+# platform's own modules, so the backend package root goes on sys.path first.
+import sys as _sys
+from pathlib import Path as _Path
+
+_BACKEND = _Path(__file__).resolve().parents[3] / "backend"
+if str(_BACKEND) not in _sys.path:
+    _sys.path.insert(0, str(_BACKEND))
 
 import hashlib
 import hmac
