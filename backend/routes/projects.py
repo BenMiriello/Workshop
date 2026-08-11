@@ -850,13 +850,20 @@ async def run_autonomy(slug: str) -> dict:
     log_dir = _project_dir(slug) / ".runtime"
     log_dir.mkdir(parents=True, exist_ok=True)
     logf = open(log_dir / "ralph.log", "a")  # noqa: SIM115 (handed to child)
-    proc = subprocess.Popen(
-        ["bash", str(script), slug, "--force", "--job-id", job["id"]],
-        cwd=str(PROJECTS_ROOT.parent),
-        stdout=logf,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            ["bash", str(script), slug, "--force", "--job-id", job["id"]],
+            cwd=str(PROJECTS_ROOT.parent),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        # THE PARENT'S COPY IS THE PARENT'S TO RELEASE. Popen dups this fd into
+        # the child, so closing here does not disturb the sweep's logging. Left
+        # open, every sweep ever launched cost this process one descriptor, for
+        # as long as it runs, until it hit the open-file limit.
+        logf.close()
     _touch(slug)
     return {"started": True, "pid": proc.pid, "slug": slug, "job_id": job["id"]}
 

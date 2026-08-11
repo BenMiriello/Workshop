@@ -104,6 +104,10 @@ def find_clusters(scopes: list[str], roles: dict[str, str | None] | None = None)
     return out
 
 
+# In-flight promotion writes, held so nothing is collected mid-flight.
+_PROMOTION_TASKS: set = set()
+
+
 def _title_for(note_id: str, scopes: list[str]) -> str:
     for sk in scopes:
         try:
@@ -193,7 +197,11 @@ def apply(note_id: str, target_scope: str, source_scopes: list[str]) -> bool:
     except RuntimeError:
         asyncio.run(coro)
         return True
-    loop.create_task(coro)
+    # HELD: asyncio keeps only a weak reference to a task, so an unheld one can
+    # be collected before it finishes and the note is silently never written.
+    task = loop.create_task(coro)
+    _PROMOTION_TASKS.add(task)
+    task.add_done_callback(_PROMOTION_TASKS.discard)
     return True
 
 

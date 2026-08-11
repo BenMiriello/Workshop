@@ -45,11 +45,18 @@ export type Budget = {
   cache?: { stale: boolean; age_s: number };
 };
 
+// HOISTED. Constructing an Intl.NumberFormat is expensive (it resolves a
+// locale), and this is called ~25 times per render of this page. There are only
+// two shapes, so there only need to be two formatters, built once.
+const USD_0 = new Intl.NumberFormat("en-US", {
+  style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0,
+});
+const USD_2 = new Intl.NumberFormat("en-US", {
+  style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2,
+});
+
 const usd = (n: number | null | undefined, cents = false) =>
-  n == null ? "–" : new Intl.NumberFormat("en-US", {
-    style: "currency", currency: "USD",
-    minimumFractionDigits: cents ? 2 : 0, maximumFractionDigits: cents ? 2 : 0,
-  }).format(n);
+  n == null ? "–" : (cents ? USD_2 : USD_0).format(n);
 
 // Stable hues per waterfall segment, deliberately ordered necessities->leftover.
 // Categorical suite (--cat-*) — differentiation, not status (these are CSS

@@ -1,33 +1,44 @@
+import { lazy } from "react";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { OverlayHost } from "@workshop/ui";
 import Agents from "./pages/Agents";
-import AgentDetail from "./pages/AgentDetail";
-import AgentBuild from "./pages/AgentBuild";
 import Chats from "./pages/Chats";
 import Projects from "./pages/Projects";
-import ProjectNew from "./pages/ProjectNew";
-import ProjectDetail from "./pages/ProjectDetail";
-import AppPreview from "./pages/AppPreview";
-import BaseApps from "./pages/settings/BaseApps";
-import Grants from "./pages/settings/Grants";
-import Trackers from "./pages/settings/Trackers";
-import McpServers from "./pages/settings/McpServers";
 import Apps from "./pages/Apps";
-import Marketplace from "./pages/Marketplace";
 import Home from "./pages/Home";
 import Work from "./pages/Work";
 import Deploys from "./pages/Deploys";
 import TicketDetail from "./pages/TicketDetail";
-import DeployDetail from "./pages/DeployDetail";
-import StoreDetail from "./pages/StoreDetail";
-import Stores from "./pages/Stores";
-import MemoryPage from "./pages/Memory";
-import RunDetail from "./pages/RunDetail";
-import Usage from "./pages/Usage";
-import Settings from "./pages/Settings";
 import FocusedChat from "./pages/FocusedChat";
 import { BreadcrumbBar, BreadcrumbProvider, SectionNav } from "./components/appNav";
 import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
+
+// LAZY BY ROUTE. Each of these is a page the app does not need to render its
+// first screen, and several drag heavy libraries behind them (Usage pulls
+// recharts). Eager imports put all of it in the main chunk, which every
+// visitor downloads before anything appears. Every route below already
+// renders inside <AppSuspense>, so this needs no new boundary.
+//
+// Keep Home, Work, Agents, Apps, Chats and FocusedChat EAGER: those are the
+// landing surfaces, and a suspense flash on the way into the chat is worse
+// than the bytes.
+const AgentDetail = lazy(() => import("./pages/AgentDetail"));
+const AgentBuild = lazy(() => import("./pages/AgentBuild"));
+const ProjectNew = lazy(() => import("./pages/ProjectNew"));
+const ProjectDetail = lazy(() => import("./pages/ProjectDetail"));
+const AppPreview = lazy(() => import("./pages/AppPreview"));
+const BaseApps = lazy(() => import("./pages/settings/BaseApps"));
+const Grants = lazy(() => import("./pages/settings/Grants"));
+const Trackers = lazy(() => import("./pages/settings/Trackers"));
+const McpServers = lazy(() => import("./pages/settings/McpServers"));
+const Marketplace = lazy(() => import("./pages/Marketplace"));
+const DeployDetail = lazy(() => import("./pages/DeployDetail"));
+const StoreDetail = lazy(() => import("./pages/StoreDetail"));
+const Stores = lazy(() => import("./pages/Stores"));
+const MemoryPage = lazy(() => import("./pages/Memory"));
+const RunDetail = lazy(() => import("./pages/RunDetail"));
+const Usage = lazy(() => import("./pages/Usage"));
+const Settings = lazy(() => import("./pages/Settings"));
 
 // Workshop IS the homepage. Apps live INSIDE Workshop — the Apps tab lists
 // them. No peer-app nav strip; the Apps tab is the discovery surface. Which

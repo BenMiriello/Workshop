@@ -36,8 +36,7 @@ export default function Spectrogram({ height = 160 }: { height?: number }) {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const blit = () => {
-      rafRef.current = requestAnimationFrame(blit);
+    const draw = () => {
       const src = specCanvasRef.current;
       if (src) ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
       // Glue every marker's dot + chip to its scrolling column. Position is a
@@ -52,9 +51,23 @@ export default function Spectrogram({ height = 160 }: { height?: number }) {
         if (lab) lab.style.left = leftPct;
       }
     };
+
+    // ONLY ANIMATE WHILE LISTENING. The offscreen canvas is written by the
+    // recorder, so when the mic is off the image is not changing and the
+    // columns are not scrolling: one paint shows the retained history and is
+    // the whole job. This loop used to run unconditionally, so simply having
+    // the Birds page mounted repainted a 600x160 canvas at 60fps forever,
+    // idle, which on a phone is the difference between warm and not.
+    //
+    // Freezing is also the more correct rendering: marker positions are a
+    // function of wall-clock time, so continuing to advance them against a
+    // stopped image walked them away from the columns they belong to.
+    if (!recording) { draw(); return; }
+
+    const blit = () => { rafRef.current = requestAnimationFrame(blit); draw(); };
     blit();
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [specCanvasRef, specMarkersRef]);
+  }, [specCanvasRef, specMarkersRef, recording, markerEpoch]);
 
   // Initial left for freshly-rendered markers; the blit loop refines it every
   // frame. Same time-based formula, so there's no flash.

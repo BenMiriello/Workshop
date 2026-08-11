@@ -108,8 +108,12 @@ function simulate(p: Params, annualReturn: number, startDate: Date) {
   return rows;
 }
 
-const usd0 = (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
-const compact = (n: number) => new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+// Hoisted: these are recharts tickFormatters, so they run once per axis tick
+// per render, and the projection re-renders on every drag of a slider.
+const _USD0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const _COMPACT = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+const usd0 = (n: number) => _USD0.format(n);
+const compact = (n: number) => _COMPACT.format(n);
 const pct = (f: number) => `${(f * 100).toFixed(1)}%`;
 
 const TIMESCALES = [

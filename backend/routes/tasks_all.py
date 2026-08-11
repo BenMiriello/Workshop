@@ -1090,13 +1090,20 @@ def launch_task_run(scope: str, task_id: str) -> dict:
     except OSError:
         logf = subprocess.DEVNULL
     cmd = ["bash", str(script), *cmd_tail, "--force", "--job-id", job["id"], "--task-id", task_id]
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(_WORKSHOP_ROOT),
-        stdout=logf,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(_WORKSHOP_ROOT),
+            stdout=logf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        # Popen dups the fd into the child, so the parent's copy is ours to
+        # release. Without this, every run launched here leaked one descriptor
+        # for the life of the backend. DEVNULL is a sentinel int, not a file.
+        if hasattr(logf, "close"):
+            logf.close()
     # The Job record has to exist before the child can write to it (the id is on
     # its command line), so the pid can only be attached after the Popen. Attach
     # it: without a pid, reconcile_stuck cannot probe the process and degrades to

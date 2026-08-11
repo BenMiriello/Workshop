@@ -113,6 +113,11 @@ type Task = {
   updated?: string;
 };
 
+// One shared empty array, so a childless row does not allocate a new one on
+// every render (and does not break memoization downstream by identity).
+const EMPTY_TASKS: Task[] = [];
+
+
 // A note in the project's knowledge scope (project:<slug>). The Notes section
 // reads and writes this scope so operator notes and agent notes share the one
 // substrate that IS injected into chat context. The list carries title/hook/
@@ -859,10 +864,26 @@ export default function ProjectDetail() {
     return ordered;
   }, [visibleTasks, agents]);
 
+  // INDEXED, because this is called once per rendered row and recursively for
+  // that row's children. As a `filter` it was a full scan of every visible task
+  // per row, so drawing the tree cost O(tasks^2) on every poll tick, and the
+  // only thing standing between that and a locked-up page was the `> 400` bail
+  // out at the render site. Building the index once is one pass.
+  const childIndex = useMemo(() => {
+    const m = new Map<string, Task[]>();
+    for (const t of visibleTasks) {
+      const key = `${t.owner} ${t.parent ?? ""}`;
+      const list = m.get(key);
+      if (list) list.push(t);
+      else m.set(key, [t]);
+    }
+    return m;
+  }, [visibleTasks]);
+
   const childrenOf = useCallback(
     (parent: string | null, owner: string) =>
-      visibleTasks.filter((t) => t.owner === owner && (t.parent ?? null) === parent),
-    [visibleTasks],
+      childIndex.get(`${owner} ${parent ?? ""}`) ?? EMPTY_TASKS,
+    [childIndex],
   );
 
   const agentName = useCallback(

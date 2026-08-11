@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { jget } from "./ui";
+import { jget } from "./api";
 import { useShowNonBird, nonBirdQuery } from "./settings";
 
 // The Birds app's single persistent scope: Location · Device · Time, applied on

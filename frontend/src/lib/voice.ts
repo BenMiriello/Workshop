@@ -718,6 +718,23 @@ export class ServerSpeaker implements Speaker {
     } catch { /* noop — outputLevel just returns 0 */ }
   }
 
+  // The source node for the sentence currently routed into the analyser.
+  //
+  // IT HAS TO BE RELEASED, and that is not optional bookkeeping. The
+  // AudioContext is static and lives for the whole app; a
+  // MediaElementAudioSourceNode connected to it is retained by the graph, and
+  // it retains its HTMLAudioElement and that element's decoded audio. One is
+  // created per SENTENCE, so a long voice session was accumulating an audio
+  // element and a graph node per sentence spoken, permanently, with nothing
+  // ever disconnecting them.
+  private srcNode: MediaElementAudioSourceNode | null = null;
+
+  private unwireGraph() {
+    if (!this.srcNode) return;
+    try { this.srcNode.disconnect(); } catch { /* already torn down */ }
+    this.srcNode = null;
+  }
+
   private wireGraph(a: HTMLAudioElement) {
     try {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -729,8 +746,12 @@ export class ServerSpeaker implements Speaker {
         this.analyser.fftSize = 512;
         this.analyser.connect(ctx.destination);
       }
+      // Release the previous sentence's node before taking another. The
+      // analyser and its connection to the destination are shared and stay.
+      this.unwireGraph();
       const src = ctx.createMediaElementSource(a);
       src.connect(this.analyser);
+      this.srcNode = src;
     } catch {
       // createMediaElementSource unavailable → element still plays natively;
       // outputLevel() just returns 0 and we lean on echoCancellation.
@@ -833,6 +854,7 @@ export class ServerSpeaker implements Speaker {
     this.ev.onSentenceStart?.(i);
     const advance = () => {
       URL.revokeObjectURL(url);
+      this.unwireGraph();
       this.playing = false;
       this.idx = i + 1;
       void this.pump();
@@ -867,6 +889,17 @@ export class ServerSpeaker implements Speaker {
   stop() {
     this.stopped = true;
     if (this.audio) { try { this.audio.pause(); } catch { /* noop */ } this.audio = null; }
+    // Barge-in takes the same teardown as a natural end. `advance` is what
+    // normally releases these, and stopping is precisely the path where it
+    // never runs: the element is paused, so `onended` does not fire.
+    this.unwireGraph();
+    // Every blob this turn rendered, including ones still resolving. Only the
+    // sentence that finished playing was ever revoked, so a barge-in stranded
+    // the one in flight plus everything already synthesized ahead of it.
+    // Revoking twice is a no-op, so overlapping with `advance` is harmless.
+    for (const p of this.renders) {
+      void p.then((u) => { if (u) URL.revokeObjectURL(u); }).catch(() => { /* never rendered */ });
+    }
     // Cancel the synthesis too, not just the playback.
     if (this.renderAbort) { try { this.renderAbort.abort(); } catch { /* noop */ } this.renderAbort = null; }
     this.finish(this.idx);

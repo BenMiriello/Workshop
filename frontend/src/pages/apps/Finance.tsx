@@ -79,9 +79,19 @@ type CacheMeta = { cached: boolean; stale?: boolean; ts: number; age_s: number; 
 type BalancesResp = { items: Item[]; _cache?: CacheMeta };
 type TransactionsResp = { transactions: Transaction[]; _cache?: CacheMeta };
 
+// One formatter per currency, built on first use. The currency varies by
+// account, so this cannot be a single constant, but it also should not be
+// rebuilt four times per account row on every render.
+const _ccyFmts = new Map<string, Intl.NumberFormat>();
 const fmt = (n: number | null, ccy: string | null) => {
   if (n == null) return "–";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: ccy || "USD" }).format(n);
+  const code = ccy || "USD";
+  let f = _ccyFmts.get(code);
+  if (!f) {
+    f = new Intl.NumberFormat("en-US", { style: "currency", currency: code });
+    _ccyFmts.set(code, f);
+  }
+  return f.format(n);
 };
 
 const fmtAge = (ms: number) => {

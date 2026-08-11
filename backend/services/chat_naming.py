@@ -185,6 +185,10 @@ async def name_thread(thread_id: str) -> None:
         _count_rejection(thread_id)
 
 
+# In-flight auto-naming tasks, held so nothing is collected mid-flight.
+_NAMING_TASKS: set = set()
+
+
 def schedule(thread_id: str) -> None:
     """Fire-and-forget auto-naming. Safe to call from an async handler (the
     common case) or a plain function; never delays the caller."""
@@ -193,6 +197,12 @@ def schedule(thread_id: str) -> None:
     except RuntimeError:
         loop = None
     if loop is not None:
-        loop.create_task(name_thread(thread_id))
+        # HELD, so the loop cannot garbage-collect a task nothing else
+        # references. asyncio keeps only a weak reference: an unheld task can be
+        # collected mid-flight, and a thread simply never gets its name, with no
+        # error anywhere. Same pattern as routes/chat.py's _DISTILL_TASKS.
+        task = loop.create_task(name_thread(thread_id))
+        _NAMING_TASKS.add(task)
+        task.add_done_callback(_NAMING_TASKS.discard)
     else:  # pragma: no cover — no running loop (rare): just do it inline.
         generate_title(thread_id)

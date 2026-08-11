@@ -206,9 +206,43 @@ def _collapse(lines: Iterable[dict]) -> dict[str, dict]:
     return by_id
 
 
+# The collapsed log, memoized on the FILE'S IDENTITY (size + mtime to the
+# nanosecond). Not a TTL cache: the log is append-only and several processes
+# write it (the queue runner, sweeps, this API), so a time-based cache would
+# serve a stale answer for its whole window. Keying on the file means any write
+# by anyone invalidates it on the very next read, which is the property a cache
+# here has to have to be safe at all.
+#
+# Why it is worth having: `_read_all` parsed EVERY line of jobs.jsonl on every
+# call, and the file is append-only, so that cost only ever grows. At 5.5k lines
+# it is ~8ms per call, and /api/jobs is polled while the Work page is open. The
+# work was also entirely repeated, since the file usually has not changed
+# between two polls.
+#
+# The cost is holding the collapsed records resident (2.7k of them, well under
+# the 5.5k raw lines they came from). Callers get COPIES, below, so nothing can
+# mutate the cache out from under another reader.
+# The key carries the PATH as well as size and mtime. `JOBS_LOG` is a module
+# constant in production but it is rebound (tests, any future per-root log), and
+# without the path two different files that happen to share a size and an mtime
+# resolve to the same entry. That is not hypothetical: timestamp granularity is
+# coarser than a nanosecond on several filesystems, so small files written in
+# the same instant collide readily, which is exactly what a fast test suite
+# produces.
+_collapsed_cache: tuple[tuple[str, int, int], dict[str, dict]] | None = None
+
+
 def _read_all() -> dict[str, dict]:
-    if not JOBS_LOG.exists():
+    """The collapsed log. SHARED AND CACHED: do not mutate what this returns."""
+    global _collapsed_cache
+    try:
+        st = JOBS_LOG.stat()
+    except OSError:
         return {}
+    key = (str(JOBS_LOG), st.st_size, st.st_mtime_ns)
+    cached = _collapsed_cache
+    if cached is not None and cached[0] == key:
+        return cached[1]
     parsed: list[dict] = []
     for line in JOBS_LOG.read_text(errors="replace").splitlines():
         line = line.strip()
@@ -218,7 +252,9 @@ def _read_all() -> dict[str, dict]:
             parsed.append(json.loads(line))
         except json.JSONDecodeError:
             continue
-    return _collapse(parsed)
+    collapsed = _collapse(parsed)
+    _collapsed_cache = (key, collapsed)
+    return collapsed
 
 
 def read(
@@ -260,11 +296,14 @@ def read(
 
     records = [r for r in records if keep(r)]
     records.sort(key=lambda r: r.get("started_at") or "", reverse=True)
-    return records[:limit]
+    # Copies: `_read_all` is cached and shared, so handing out its records
+    # directly would let any caller's edit become every later reader's truth.
+    return [dict(r) for r in records[:limit]]
 
 
 def get(job_id: str) -> dict | None:
-    return _read_all().get(job_id)
+    rec = _read_all().get(job_id)
+    return dict(rec) if rec is not None else None
 
 
 # ---------------------------------------------------------------------------
