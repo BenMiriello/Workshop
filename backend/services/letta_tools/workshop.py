@@ -203,7 +203,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         todo_path.write_text("\n".join(lines).rstrip() + "\n")
         # Wake the queue runner so newly filed tasks start in seconds.
         try:
-            _root / ".runtime" / "queue-runner.wake".touch()
+            (_root / ".runtime" / "queue-runner.wake").touch()
         except OSError:
             pass
     return f"added: {line}"
