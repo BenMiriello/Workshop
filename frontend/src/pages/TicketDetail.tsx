@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, Rocket, ExternalLink,
@@ -359,11 +360,7 @@ export default function TicketDetail() {
   // nothing happened. Say that a run is in flight, and poll until it is not.
   const liveRun = (runs || []).find((r) => jobIsLive(r.status)) || null;
   const liveRunId = liveRun?.id ?? null;
-  useEffect(() => {
-    if (!liveRunId) return;
-    const t = setInterval(() => { void load(); }, 5000);
-    return () => clearInterval(t);
-  }, [liveRunId, load]);
+  usePoll(load, 5000, { enabled: !!liveRunId, immediate: false });
 
   const pickup = pickupFor(pickupMap, scope);
   const pickupWarning = pickupNote(pickup);
@@ -551,7 +548,7 @@ export default function TicketDetail() {
                       <StatusDot status={scopeCheck.verdict === "ok" ? "ok" : "warn"}>
                         <strong>{scopeCheck.verdict === "ok" ? "One piece of work"
                           : scopeCheck.verdict === "split" ? "Should be split" : "Underspecified"}</strong>
-                        {scopeCheck.reason ? <span className="ws-muted"> — {scopeCheck.reason}</span> : null}
+                        {scopeCheck.reason ? <span className="ws-muted">: {scopeCheck.reason}</span> : null}
                       </StatusDot>
                       {scopeCheck.blockers.length > 0 && (
                         <Stack gap="sm">

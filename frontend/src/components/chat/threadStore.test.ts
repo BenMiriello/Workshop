@@ -322,3 +322,35 @@ describe("a mid-run message closes the live block it landed in", () => {
     expect(s.activeRun?.segments).toHaveLength(1);
   });
 });
+
+// The committed log's identity is load-bearing: useThreadLog memoizes the
+// expensive half of the transcript on exactly these three references, so a poll
+// that changes nothing must not replace them. If it does, every message in the
+// thread is re-derived every 10 seconds and nothing anywhere fails visibly.
+describe("eventsReceived does not churn the committed log", () => {
+  const seeded = apply(initialThreadState("t"),
+    { type: "eventsReceived", events: [ev(1), ev(2)], lastSeq: 2, activeRun: null });
+
+  it("keeps byId/order/idBySeq identical when a poll brings nothing", () => {
+    const s = threadReducer(seeded,
+      { type: "eventsReceived", events: [], lastSeq: 2, activeRun: null });
+    expect(s.byId).toBe(seeded.byId);
+    expect(s.order).toBe(seeded.order);
+    expect(s.idBySeq).toBe(seeded.idBySeq);
+  });
+
+  it("keeps them identical when a poll replays events already held", () => {
+    const s = threadReducer(seeded,
+      { type: "eventsReceived", events: [ev(1), ev(2)], lastSeq: 2, activeRun: null });
+    expect(s.byId).toBe(seeded.byId);
+    expect(s.order).toBe(seeded.order);
+  });
+
+  it("copies, and only copies, when something is genuinely new", () => {
+    const s = threadReducer(seeded,
+      { type: "eventsReceived", events: [ev(2), ev(3)], lastSeq: 3, activeRun: null });
+    expect(s.order).not.toBe(seeded.order);
+    expect(seeded.order).toEqual([1, 2]);          // the old array is untouched
+    expect(committedEvents(s).map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+});

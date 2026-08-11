@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
+import { usePoll } from "../lib/usePoll";
 import { ExternalLink, RefreshCw } from "lucide-react";
 import {
   Button,
@@ -67,11 +68,7 @@ export default function Services() {
     }
   }, []);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 10_000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  usePoll(refresh, 10_000);
 
   const refreshBtn = (
     <Button size="sm" onClick={refresh} loading={loading}>

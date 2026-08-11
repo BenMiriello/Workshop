@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { Power, Cpu } from "lucide-react";
 import { Button, ConfirmDialog, StatusDot } from "@workshop/ui";
 import { autonomyIsLive, describeAutonomy } from "../lib/autonomy";
@@ -114,11 +115,7 @@ export default function AutonomyControls() {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const t = setInterval(load, 15_000);
-    return () => clearInterval(t);
-  }, [load]);
+  usePoll(load, 15_000);
 
   const cronDisabled = !!auto?.cron_autonomy.disabled;
   const runnerRunning = !!auto?.queue_runner?.running;

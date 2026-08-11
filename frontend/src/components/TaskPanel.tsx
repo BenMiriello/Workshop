@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { RefreshCw, Plus, Pencil, Trash2, Check, X, CornerDownLeft, Compass } from "lucide-react";
 import {
   Button,
@@ -172,13 +173,10 @@ export default function TaskPanel({
   // panel reflects a running run without the operator refreshing. Idle scopes do
   // no polling. Refetch-on-demand (load) stays the primary path.
   const anyDoing = (tasks ?? []).some((t) => t.status === "doing");
-  const loadRef = useRef(load);
-  loadRef.current = load;
-  useEffect(() => {
-    if (!open || !anyDoing) return;
-    const id = window.setInterval(() => void loadRef.current(), POLL_MS);
-    return () => window.clearInterval(id);
-  }, [open, anyDoing]);
+  // `immediate: false` because `load` has already run for this scope via the
+  // effect above; re-running it the moment a task enters `doing` would be a
+  // duplicate fetch, not a catch-up.
+  usePoll(load, POLL_MS, { enabled: open && anyDoing, immediate: false });
 
   const scoped = assignee != null ? (tasks ?? []).filter((t) => (t.assignee ?? "") === assignee) : (tasks ?? []);
   const openCount = scoped.filter((t) => isOpenStatus(t.status)).length;

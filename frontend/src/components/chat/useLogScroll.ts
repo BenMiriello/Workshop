@@ -57,9 +57,36 @@ function loadScrollPos(key: string): ScrollPos | null {
   return null;
 }
 
-function saveScrollPos(key: string, pos: ScrollPos): void {
+// COALESCED TO ONE WRITE PER FRAME. `scroll` fires continuously while a finger
+// is moving, and `sessionStorage.setItem` is synchronous main-thread I/O plus a
+// `JSON.stringify` — so the act of scrolling a long transcript on a phone was
+// paying for a serialize-and-store on every event it emitted. Only the last
+// position in a burst is worth keeping, so the rest is dropped rather than
+// written and immediately overwritten.
+//
+// The deferral is safe because it is bounded by a frame AND explicitly flushed
+// before the page can go away: requestAnimationFrame does not run while the
+// document is hidden, so a position saved just before backgrounding would
+// otherwise sit in memory and be lost.
+let pendingScroll: { key: string; pos: ScrollPos } | null = null;
+let scrollFrame = 0;
+
+function writeScrollPos(key: string, pos: ScrollPos): void {
   try { sessionStorage.setItem(SCROLL_STORE_PREFIX + key, JSON.stringify(pos)); }
   catch { /* storage full or blocked — position memory is best-effort */ }
+}
+
+function flushScrollPos(): void {
+  if (scrollFrame) { cancelAnimationFrame(scrollFrame); scrollFrame = 0; }
+  const p = pendingScroll;
+  pendingScroll = null;
+  if (p) writeScrollPos(p.key, p.pos);
+}
+
+function saveScrollPos(key: string, pos: ScrollPos): void {
+  pendingScroll = { key, pos };
+  if (scrollFrame) return;
+  scrollFrame = requestAnimationFrame(() => { scrollFrame = 0; flushScrollPos(); });
 }
 
 export type LogScroll = {
@@ -116,6 +143,19 @@ export function useLogScroll({
   const scrollToBottom = useCallback((smooth = false) => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+  }, []);
+
+  // Land the last coalesced position before the page can stop running frames,
+  // and on the way out of this thread.
+  useEffect(() => {
+    const flush = () => flushScrollPos();
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", flush);
+    return () => {
+      flush();
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", flush);
+    };
   }, []);
 
   // The ONLY writer of atBottomRef.

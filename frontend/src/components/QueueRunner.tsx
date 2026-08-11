@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { Play, Square, RefreshCw, CircleAlert } from "lucide-react";
 import {
   Button, Card, Row, Stack, SectionLabel, StateBlock, StatusPill, Skeleton,
@@ -53,13 +54,11 @@ export default function QueueRunner({ onChange }: { onChange?: () => void }) {
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    // The loop is a background process, so its state changes without us acting.
-    // Poll while mounted so the pill can never sit stale on a lie.
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [load]);
+  // The loop is a background process, so its state changes without us acting.
+  // Poll while visible so the pill can never sit stale on a lie. This only
+  // READS the runner's state for display, so pausing while hidden costs
+  // nothing: usePoll re-reads on the way back before anything is shown.
+  usePoll(load, 5000);
 
   const act = useCallback(
     async (which: "start" | "stop") => {

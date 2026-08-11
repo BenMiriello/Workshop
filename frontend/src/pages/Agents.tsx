@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, Bot, Brain, Clock, SlidersHorizontal, ListChecks, Play, RotateCw, Power, Compass, FileStack } from "lucide-react";
 import type { ReactNode } from "react";
@@ -284,12 +285,8 @@ export default function Agents() {
       .catch(() => setSup(null));
   }, []);
 
-  useEffect(() => {
-    loadAll();
-    loadSup();
-    const t = setInterval(loadSup, 15_000);
-    return () => clearInterval(t);
-  }, [loadAll, loadSup]);
+  useEffect(() => { loadAll(); }, [loadAll]);
+  usePoll(loadSup, 15_000);
 
   // Last Job per agent id, from a single jobs feed (most recent first already).
   const lastJobByAgent = useMemo(() => {

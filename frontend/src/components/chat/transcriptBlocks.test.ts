@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
-import { selectTranscript, withStaleFailures, type TranscriptBlock } from "./transcriptBlocks";
+import {
+  selectTranscript, selectCommitted, composeTranscript, withStaleFailures,
+  type TranscriptBlock,
+} from "./transcriptBlocks";
 import { splitAtUnits } from "./transcriptUnits";
 
 const text = (s: string): ChatSegment => ({ t: "text", text: s });
@@ -287,5 +290,61 @@ describe("withStaleFailures", () => {
       { clientId: "s1", text: "first" }, { clientId: "s2", text: "second" },
     ]);
     expect(shape(out)).toEqual(["user:newer", "pending:first", "pending:second", "live:*"]);
+  });
+});
+
+// The split that keeps a streamed frame cheap. These are not style assertions:
+// if the committed half is re-derived per frame, the chat re-renders every
+// message in the thread dozens of times a second, which is what made typing on
+// a phone unusable. See selectCommitted's comment.
+describe("selectCommitted / composeTranscript", () => {
+  const withRun = (events: LogEvent[]): ThreadState =>
+    threadReducer(initialThreadState("t"), {
+      type: "eventsReceived",
+      events,
+      lastSeq: events.length,
+      activeRun: { run_id: "r-live" },
+    });
+
+  it("composes to exactly what selectTranscript produces", () => {
+    const s = withRun([user("hello"), reply("hi", { turn_id: "r-old" })]);
+    expect(shape(composeTranscript(selectCommitted(s), s))).toEqual(shape(selectTranscript(s)));
+  });
+
+  it("keeps the committed half IDENTICAL across a streamed frame", () => {
+    const s0 = withRun([user("hello"), reply("hi", { turn_id: "r-old" })]);
+    const before = selectCommitted(s0);
+
+    // One token arrives on the live run, the way runDelta delivers it.
+    const s1 = threadReducer(s0, {
+      type: "runDelta", runId: "r-live", event: { kind: "text", content: "wor" },
+    });
+    const s2 = threadReducer(s1, {
+      type: "runDelta", runId: "r-live", event: { kind: "text", content: "king" },
+    });
+
+    // The store must not have touched the committed log at all: these identity
+    // checks are what the memo in useThreadLog keys on, so if they ever stop
+    // holding, the memo silently stops working and nothing else fails.
+    expect(s2.byId).toBe(s0.byId);
+    expect(s2.order).toBe(s0.order);
+    expect(s2.idBySeq).toBe(s0.idBySeq);
+    expect(s2.activeRun?.runId).toBe(s0.activeRun?.runId);
+
+    // And the derivation over them is stable, so re-running it is pure waste.
+    expect(shape(selectCommitted(s2).blocks)).toEqual(shape(before.blocks));
+
+    // Meanwhile the live half did move, which is the whole point.
+    expect(shape(composeTranscript(before, s2)).join("|")).toContain("live:working");
+  });
+
+  it("still hands the live run the messages held back for it", () => {
+    const s = withRun([user("first"), user("mid-run", { during_run: "r-live" })]);
+    const committed = selectCommitted(s);
+    // The mid-run message is NOT in the committed blocks; it belongs inside the
+    // live block, which is where composing puts it.
+    expect(shape(committed.blocks)).toEqual(["user:first"]);
+    expect(committed.heldForActiveRun).toHaveLength(1);
+    expect(shape(composeTranscript(committed, s))).toContain("user:mid-run");
   });
 });

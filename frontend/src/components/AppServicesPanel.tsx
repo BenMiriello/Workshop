@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { Link } from "react-router-dom";
 import { Boxes, ExternalLink, RefreshCw, Play, Square, ScrollText, RotateCw, Eye, TriangleAlert } from "lucide-react";
 import {
@@ -92,7 +93,6 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logText, setLogText] = useState("");
-  const timer = useRef<number | null>(null);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -124,11 +124,7 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
       (status?.services || []).some((s) => s.status === "building" || s.status === "starting"),
     [status],
   );
-  useEffect(() => {
-    if (timer.current) window.clearInterval(timer.current);
-    timer.current = window.setInterval(loadStatus, inFlight ? 2000 : 6000) as unknown as number;
-    return () => { if (timer.current) window.clearInterval(timer.current); };
-  }, [inFlight, loadStatus]);
+  usePoll(loadStatus, inFlight ? 2000 : 6000);
 
   const act = useCallback(async (path: string) => {
     setBusy(true);

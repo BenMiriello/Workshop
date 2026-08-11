@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate } from "react-router-dom";
 import { RefreshCw, Gauge, SlidersHorizontal, FolderCog } from "lucide-react";
 import {
@@ -123,11 +124,7 @@ export default function Usage() {
     }
   }, [win]);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 30_000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  usePoll(refresh, 30_000);
 
   const rows = useMemo<Row[]>(() => {
     if (!data) return [];
@@ -397,10 +394,10 @@ export default function Usage() {
                         {data.capped && (
                           <>
                             <NumCell className="ws-col-optional">
-                              {r.allowance != null ? fmtTokens(r.allowance) : "—"}
+                              {r.allowance != null ? fmtTokens(r.allowance) : "–"}
                             </NumCell>
                             <NumCell className="ws-col-optional">
-                              {r.remaining != null ? fmtTokens(r.remaining) : "—"}
+                              {r.remaining != null ? fmtTokens(r.remaining) : "–"}
                             </NumCell>
                           </>
                         )}

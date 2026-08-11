@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { RefreshCw } from "lucide-react";
 import {
   Button,
@@ -60,11 +61,7 @@ export default function Events() {
     }
   }, [filter]);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 15_000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  usePoll(refresh, 15_000);
 
   const sources = useMemo(() => {
     if (!data) return [];

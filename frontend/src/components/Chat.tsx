@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Unplug } from "lucide-react";
 import { StateBlock } from "@workshop/ui";
@@ -393,22 +394,34 @@ export default function Chat({
   // poll), and whenever the answer is yes and this tab holds no socket, this
   // re-attaches. Reading the store through the ref means the interval does not
   // re-render the chat while a turn streams.
-  useEffect(() => {
-    if (!runId || !activeId) return;
-    const t = window.setInterval(() => {
+  //
+  // Paused while hidden, and it runs on the way back: a backgrounded tab has no
+  // reason to hold a socket open for a turn nobody is watching, and the run
+  // keeps going on the server either way. Returning re-attaches immediately,
+  // which is the moment the transcript has to be right.
+  usePoll(
+    () => {
       const live = stateRef.current.activeRun?.runId;
       if (!live || hasOpenStream() || isDetached(live)) return;
       attach(live);
-    }, LIVENESS_MS);
-    return () => window.clearInterval(t);
-  }, [runId, activeId, attach, hasOpenStream, isDetached, stateRef]);
+    },
+    LIVENESS_MS,
+    { enabled: !!runId && !!activeId, immediate: false },
+  );
 
   // Leaving a thread closes its socket. The store is reset by useThreadLog.
   useEffect(() => () => closeStream(), [activeId, closeStream]);
 
   // The committed messages, flat. Read by the context meter's local estimate and
   // by the egress banner; nothing renders from it (the transcript is `blocks`).
-  const messages = useMemo(() => committedMessages(state), [state]);
+  // Keyed on the COMMITTED log, not on `state`. This walks and maps every
+  // message in the thread, and on `[state]` it did so on every streamed frame,
+  // for a list whose contents a frame cannot change.
+  const messages = useMemo(
+    () => committedMessages(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.byId, state.order, state.idBySeq],
+  );
 
   // ---- Drawers, pickers, mentions ------------------------------------------
   const [drawer, setDrawer] = useState<ChatDrawer>(null);

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { usePoll } from "../../lib/usePoll";
 import { chatApi } from "../../lib/chat";
 import {
   initialThreadState, threadReducer, type ThreadAction, type ThreadState,
 } from "./threadStore";
-import { selectTranscript, type TranscriptBlock } from "./transcriptBlocks";
+import { selectCommitted, composeTranscript, type TranscriptBlock } from "./transcriptBlocks";
 import type { ChatProblem } from "./chatProblem";
 
 // The client's copy of one thread's log, kept current from ONE endpoint.
@@ -179,21 +180,30 @@ export function useThreadLog({
   // have moved on while this tab was hidden, and showing a stale log as though
   // it were current is the same "the browser does not reflect the backend"
   // problem in another place.
-  useEffect(() => {
-    if (!threadId) return;
-    const tick = () => { if (!document.hidden) void sync(); };
-    const onVis = () => { if (!document.hidden) void sync(); };
-    window.addEventListener("focus", onVis);
-    document.addEventListener("visibilitychange", onVis);
-    const timer = window.setInterval(tick, POLL_MS);
-    return () => {
-      window.removeEventListener("focus", onVis);
-      document.removeEventListener("visibilitychange", onVis);
-      window.clearInterval(timer);
-    };
-  }, [threadId, sync]);
+  // `immediate: false` because the load effect above already fetched this
+  // thread; the catch-up sync on the way back from hidden is what matters here,
+  // and usePoll does that one unconditionally.
+  usePoll(sync, POLL_MS, { enabled: !!threadId, immediate: false });
 
-  const transcript = useMemo(() => selectTranscript(state), [state]);
+  // TWO BOUNDARIES, because the transcript has two halves that move at very
+  // different rates. The committed half is keyed on the committed log itself
+  // (and the active run's ID, which decides which mid-run messages are held
+  // back) — none of which a streamed frame touches. The live half is keyed on
+  // the run and the pending sends, and is cheap.
+  //
+  // Before this, one memo on `[state]` rebuilt everything on every SSE frame:
+  // `runDelta` produces a new state per token, so appending one token re-derived
+  // every message in the thread, dozens of times a second, for the whole turn.
+  const committed = useMemo(
+    () => selectCommitted(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.byId, state.order, state.idBySeq, state.activeRun?.runId],
+  );
+  const transcript = useMemo(
+    () => composeTranscript(committed, state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [committed, state.activeRun, state.pending],
+  );
 
   return { state, stateRef, dispatch, transcript, sync, runActive: !!state.activeRun,
            hydrated, staleSince };

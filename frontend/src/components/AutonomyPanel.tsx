@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import {
   Repeat, Play, RefreshCw, X, Clock, Zap, RotateCw,
   ChevronDown, ChevronRight, HelpCircle, SlidersHorizontal, Compass,
@@ -250,7 +251,6 @@ export default function AutonomyPanel({
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const timer = useRef<number | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -279,14 +279,8 @@ export default function AutonomyPanel({
     }
   }, [getUrl]);
 
-  useEffect(() => { load(); }, [load]);
-
   const running = cfg?.running ?? false;
-  useEffect(() => {
-    if (timer.current) window.clearInterval(timer.current);
-    timer.current = window.setInterval(load, running ? 2500 : 15000) as unknown as number;
-    return () => { if (timer.current) window.clearInterval(timer.current); };
-  }, [running, load]);
+  usePoll(load, running ? 2500 : 15000);
 
   // Primary preset config: the main control. Edit-mode + explicit Save.
   const primaryModel = useMemo<PrimaryDraft>(() => ({

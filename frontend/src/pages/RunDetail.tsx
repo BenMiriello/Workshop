@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { useParams, useNavigate } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronLeft, HelpCircle, ListTodo, ListChecks, ArrowUpRight } from "lucide-react";
 import {
@@ -275,11 +276,7 @@ export default function JobDetail() {
   // actually finished. Poll while it can still move, and stop the moment it
   // cannot (jobIsLive), so a finished run costs nothing.
   const live = jobIsLive(job?.status);
-  useEffect(() => {
-    if (!live) return;
-    const t = setInterval(() => { void refresh(true); }, 5000);
-    return () => clearInterval(t);
-  }, [live, refresh]);
+  usePoll(() => { void refresh(true); }, 5000, { enabled: live, immediate: false });
 
   const act = useCallback(
     async (taskId: string, action: string) => {

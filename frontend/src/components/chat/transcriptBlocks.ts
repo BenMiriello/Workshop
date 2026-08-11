@@ -165,6 +165,15 @@ function liveBlocks(
   return out;
 }
 
+/** The committed transcript, and the mid-run messages it is deliberately NOT
+ *  rendering yet because they belong inside the run still in flight. Splitting
+ *  these out is what lets a streamed frame skip re-deriving the committed half;
+ *  see `selectCommitted`. */
+export type CommittedTranscript = {
+  blocks: TranscriptBlock[];
+  heldForActiveRun: LogEvent[];
+};
+
 /**
  * The whole transcript: committed log, the live run, then pending sends.
  *
@@ -174,6 +183,24 @@ function liveBlocks(
  * yet sent.
  */
 export function selectTranscript(state: ThreadState): TranscriptBlock[] {
+  return composeTranscript(selectCommitted(state), state);
+}
+
+/** The committed half of the transcript, plus whatever it is holding back for
+ *  the run in flight.
+ *
+ *  THE SPLIT IS ABOUT WHEN THINGS CHANGE, not about tidiness. The committed log
+ *  moves when a poll brings events; the live run's segments move on every SSE
+ *  frame, many times a second. Deriving both from one function meant every
+ *  frame rebuilt the whole committed transcript — two Maps and a `msgFromEvent`
+ *  for every message in the thread — to append one token to the end of it.
+ *
+ *  So the expensive half is computed from inputs that a frame does not touch
+ *  (`byId`, `order`, `idBySeq`, and the active run's ID but NOT its segments),
+ *  and `composeTranscript` bolts the cheap, live half on. useThreadLog is where
+ *  the two memo boundaries are drawn; the arrangement itself stays here, which
+ *  is the rule this module exists to hold. */
+export function selectCommitted(state: ThreadState): CommittedTranscript {
   const events = committedEvents(state);
   const activeRunId = state.activeRun?.runId ?? null;
 
@@ -233,9 +260,26 @@ export function selectTranscript(state: ThreadState): TranscriptBlock[] {
     });
   }
 
+  return {
+    blocks: out,
+    heldForActiveRun: activeRunId ? held.get(activeRunId) || [] : [],
+  };
+}
+
+/** The committed blocks, then the live run, then pending sends.
+ *
+ *  Cheap by construction: one array copy of the committed block REFERENCES
+ *  (nothing is re-derived), plus work proportional to the live run's own
+ *  segments and the handful of pending sends. This is what runs per SSE frame. */
+export function composeTranscript(
+  committed: CommittedTranscript,
+  state: ThreadState,
+): TranscriptBlock[] {
+  const out = committed.blocks.slice();
+
   if (state.activeRun) {
     out.push(...liveBlocks(
-      state.activeRun.runId, state.activeRun.segments, held.get(state.activeRun.runId) || [],
+      state.activeRun.runId, state.activeRun.segments, committed.heldForActiveRun,
     ));
   }
 

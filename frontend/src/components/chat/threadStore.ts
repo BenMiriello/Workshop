@@ -240,10 +240,27 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
     }
 
     case "eventsReceived": {
-      const byId = { ...state.byId };
-      const idBySeq = { ...state.idBySeq };
+      // NOTHING IS COPIED UNTIL SOMETHING IS ACTUALLY NEW.
+      //
+      // A poll that returns no events is the COMMON case: the chat polls every
+      // 10s whether or not anything happened, and a re-fetch is deliberately
+      // cheap and idempotent, so replayed pages are normal too. This used to
+      // spread both maps and re-sort `order` on every one of those, which is
+      // O(thread) of pure waste per poll, forever, on a thread that only grows.
+      //
+      // Holding the original references when nothing was added also keeps their
+      // IDENTITY stable, which is what the committed-transcript memo in
+      // useThreadLog keys on: an empty poll now costs the render path nothing
+      // at all instead of re-deriving every message in the thread.
+      let byId = state.byId;
+      let idBySeq = state.idBySeq;
       let order = state.order;
       let added = false;
+      // Whether anything arrived before an event already held. The log is
+      // append-only and the server sends it in seq order, so this is normally
+      // false and the sort can be skipped: checking is O(new), sorting is
+      // O(n log n) over the whole thread.
+      let outOfOrder = false;
       // Runs a message just landed in the middle of. Collected from events this
       // batch is seeing for the FIRST time: sealing is a cut at "here, now", so
       // doing it again for a replayed cursor would cut a second time, further
@@ -252,15 +269,21 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
       for (const ev of action.events) {
         if (!ev || typeof ev.seq !== "number" || !ev.id) continue;
         if (byId[ev.id]) continue;   // dedupe by id: a replayed cursor is free
+        if (!added) {
+          byId = { ...state.byId };
+          idBySeq = { ...state.idBySeq };
+          order = state.order.slice();
+          added = true;
+        }
         byId[ev.id] = ev;
         idBySeq[ev.seq] = ev.id;
-        if (!added) { order = state.order.slice(); added = true; }
+        if (order.length && ev.seq < order[order.length - 1]) outOfOrder = true;
         order.push(ev.seq);
         if (ev.kind === "message" && ev.role === "user" && ev.meta?.during_run) {
           interrupted.push(ev.meta.during_run);
         }
       }
-      if (added) order.sort((a, b) => a - b);
+      if (outOfOrder) order.sort((a, b) => a - b);
       // No `requestedAt` means the caller cannot date its response, so it is
       // treated as current — the guard only ever suppresses a demonstrably
       // older answer.

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
+import { usePoll } from "../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import { RefreshCw, Bot, FolderGit2, MessageSquare, ChevronRight, ChevronDown, ListTodo } from "lucide-react";
 import {
@@ -131,11 +132,7 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
     }
   }, [filter]);
 
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 30_000);
-    return () => clearInterval(t);
-  }, [refresh]);
+  usePoll(refresh, 30_000);
 
   const jobs = data?.jobs ?? [];
 

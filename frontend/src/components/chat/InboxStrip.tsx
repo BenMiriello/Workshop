@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { usePoll } from "../../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import {
   Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight,
@@ -98,15 +99,10 @@ export default function InboxStrip({
     }
   }, [chatId]);
 
-  useEffect(() => {
-    void load();
-    // Agents act on their own schedule, so this polls. 20s is under the point
-    // where the operator would notice a lag; it pauses while the tab is hidden.
-    const t = window.setInterval(() => { if (!document.hidden) void load(); }, 20000);
-    const onVis = () => { if (!document.hidden) void load(); };
-    document.addEventListener("visibilitychange", onVis);
-    return () => { window.clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
-  }, [load]);
+  // Agents act on their own schedule, so this polls. 20s is under the point
+  // where the operator would notice a lag; usePoll supplies the pause-while-
+  // hidden and the catch-up read on return that this hand-rolled twice.
+  usePoll(load, 20000);
 
   useEffect(() => { onCountChange(items ? items.length : 0); }, [items, onCountChange]);
 
