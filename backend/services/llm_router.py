@@ -270,6 +270,30 @@ def _claude_env() -> dict:
     """Build the env for subprocess `claude -p` — subscription auth only."""
     from services import auth_env
 
+    # THE LICENSING BOUNDARY, enforced where the credential is actually spent.
+    #
+    # Every turn in this process shares one subscription token read from one
+    # file. That is correct for one person on their own machine and is the
+    # violation itself in a hosted deployment: the second user's turn would run
+    # on the first user's subscription, which Anthropic prohibits and blocks
+    # server side. This path has no notion of WHOSE turn it is, so it cannot be
+    # made safe for multiple users; it can only refuse.
+    #
+    # The refusal lives here rather than only in the new seam
+    # (services/model_credentials) because this is the function that hands the
+    # token to a child TODAY. Until stage 4 moves the call sites, flipping the
+    # deployment mode without this check would leave the old path quietly
+    # serving everyone from the operator's account.
+    from services import model_credentials
+
+    if model_credentials.is_multi_user():
+        raise RuntimeError(
+            "the `claude -p` subscription path cannot serve a multi-user "
+            "deployment: a Claude subscription may only be used by the person "
+            "who bought it. Resolve a per-user credential through "
+            "services.model_credentials instead. See "
+            "docs/platform-redesign/model-access-and-byok-2026-08-11.md")
+
     env = os.environ.copy()
     # An MCP server that loads its own credentials from a file is shadowed by
     # whatever the parent process already has set for the same names: dotenv

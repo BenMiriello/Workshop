@@ -44,14 +44,29 @@ WORKSPACE_SLUG = "_workspace"
 
 def load(slug: str) -> dict[str, str]:
     """All stored values for a project. Empty dict if none. Internal/runner use
-    only — do NOT return this through an API."""
+    only — do NOT return this through an API.
+
+    Reads plaintext and encrypted files alike, so turning encryption on does not
+    strand what is already stored. An encrypted file that CANNOT be decrypted
+    raises rather than reading as empty: "no secrets here" and "this deployment
+    cannot read its own store" are different answers, and returning the first
+    for the second would tell the operator to paste their credentials again.
+    """
+    from services import secrets_crypto
+
     p = _path(slug)
     if not p.exists():
         return {}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        blob = p.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    if secrets_crypto.is_encrypted(blob):
+        return secrets_crypto.decrypt(blob, slug)
+    try:
+        data = json.loads(blob)
         return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
+    except json.JSONDecodeError:
         return {}
 
 
@@ -62,12 +77,22 @@ def _write(slug: str, values: dict[str, str]) -> None:
         os.chmod(root, 0o700)
     except OSError:
         pass
+    from services import secrets_crypto
+
     p = _path(slug)
     tmp = p.with_suffix(".json.tmp")
+    # Encrypted when a key encryption key is configured, plaintext otherwise.
+    # A plaintext file therefore becomes encrypted on its next write, with no
+    # migration step to run. 0600 either way: encryption is a second layer over
+    # the file mode, not a replacement for it.
+    if secrets_crypto.enabled():
+        blob = secrets_crypto.encrypt(values, slug)
+    else:
+        blob = json.dumps(values, separators=(",", ":"))
     # Create the file 0600 from the start so the value never sits world-readable.
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(values, fh, separators=(",", ":"))
+        fh.write(blob)
     os.replace(tmp, p)
     try:
         os.chmod(p, 0o600)
