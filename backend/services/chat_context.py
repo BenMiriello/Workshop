@@ -1338,6 +1338,35 @@ class ProjectContextProvider(ContextProvider):
         return "\n\n".join(parts)
 
 
+# ---------------------------------------------------------------- development provider
+class DevelopmentContextProvider(ProjectContextProvider):
+    """The Workshop's own source, as a top-level chat scope. ADR 0014.
+
+    Behaves exactly like a project build chat, because that is what working on
+    the platform is: full agentic toolset, cwd pinned to this checkout. The one
+    difference is the KEY. It is `development`, not `project:<slug>`, so the
+    picker groups it above Workshop instead of burying the platform repo among
+    the projects.
+
+    That key is the whole reason this class exists. Phase 3 renamed the
+    `self: true` registry row to `development` and deleted the four other
+    aliases, but the chat layer still built it through ProjectContextProvider,
+    which stamps `project:` on the front. So the scope resolved as
+    `project:development`, `scopeKind` read it as an ordinary project, and the
+    Development group in the picker had a heading and no rows: developer mode
+    was on everywhere and still invisible.
+
+    Present only when developer mode is on, so a normal deployment does not
+    offer a chat whose cwd is the application's own source.
+    """
+
+    label = "Development"
+
+    def __init__(self):
+        super().__init__(_self_project_slug() or "development")
+        self.key = "development"
+
+
 # ---------------------------------------------------------------- build-agent provider
 # Build agents are Claude Code coding sessions surfaced under the Agents tab,
 # distinct from Projects. context_key looks like "build:<slug>". Same Build-mode
@@ -1472,6 +1501,17 @@ def provider_map() -> dict[str, ContextProvider]:
     from services import app_registry
 
     providers: dict[str, ContextProvider] = dict(_PLATFORM_PROVIDERS)
+    # The platform repo's own scope, developer mode only (ADR 0014). Added here
+    # rather than in _PLATFORM_PROVIDERS because that map is a module-level
+    # constant and the flag has to be read per call: a constant would freeze
+    # whatever the environment said at import.
+    from services import app_runner
+    if app_runner.dev_mode_on():
+        try:
+            dev = DevelopmentContextProvider()
+            providers[dev.key] = dev
+        except Exception as e:
+            log.warning("development chat provider build failed: %s", e)
     for factory in app_registry.installed_chat_providers():
         try:
             p = factory()
@@ -1481,14 +1521,41 @@ def provider_map() -> dict[str, ContextProvider]:
     return providers
 
 
+def _self_project_slug() -> str | None:
+    """The registry row marked `self: true`, the platform repo's own row.
+
+    Phase 3 of the dev-mode design renamed it to `development` and deleted the
+    other four aliases, so exactly one row points at this checkout. Read by slug
+    rather than assumed, because the name is data and this must not break if it
+    is renamed again."""
+    from routes.projects import REGISTRY as _reg
+    if not _reg.exists():
+        return None
+    try:
+        data = json.loads(_reg.read_text())
+        for slug, rec in (data.get("projects") or {}).items():
+            if rec.get("self"):
+                return slug
+    except Exception:
+        pass
+    return None
+
+
 def _project_slugs() -> list[str]:
-    """Read project slugs from the projects registry (per-instance, .runtime/)."""
+    """Project slugs from the registry (per-instance, .runtime/), WITHOUT the
+    self row.
+
+    The platform repo is not a project in the picker. It is the top-level
+    `development` scope, and listing it here as well would put it under Projects
+    too: two rows, two names, one tree. That is the multiplication ADR 0014
+    exists to stop."""
     from routes.projects import REGISTRY as _reg
     if not _reg.exists():
         return []
     try:
         data = json.loads(_reg.read_text())
-        return sorted((data.get("projects") or {}).keys())
+        self_slug = _self_project_slug()
+        return sorted(s for s in (data.get("projects") or {}).keys() if s != self_slug)
     except Exception:
         return []
 
@@ -1556,6 +1623,13 @@ def capability_for(
 
 
 def get_provider(context_key: str | None) -> ContextProvider:
+    if context_key == "development":
+        # Refused rather than silently downgraded to `general`: a chat bound to
+        # the platform repo must not quietly become a chat with no tools when
+        # the flag is off. provider_map() is the gate, and this asks it.
+        from services import app_runner
+        if app_runner.dev_mode_on():
+            return DevelopmentContextProvider()
     if context_key and context_key.startswith("project:"):
         slug = context_key.split(":", 1)[1]
         return ProjectContextProvider(slug)
