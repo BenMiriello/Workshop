@@ -1590,7 +1590,13 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     while True:
         saw_tool = _drain()
         now = time.time()
-        if saw_tool or (turn.segments and now - last_persist > 0.4):
+        # A tool event still gets a fast snapshot, because a tool chip appearing
+        # is the most visible sign a turn is moving. It just gets a FLOOR now:
+        # `saw_tool` alone was unthrottled, so a burst of tool events wrote the
+        # draft on every pass of this loop. The floor is under the drain
+        # interval, so a tool lands in the very next snapshot either way.
+        gap = now - last_persist
+        if (saw_tool and gap > 0.1) or (turn.segments and gap > 0.4):
             _persist(); last_persist = now
         if state["saw_result"]:
             await _retire_turn_proc(meta.get("pid"), proc)

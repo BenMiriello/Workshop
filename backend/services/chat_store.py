@@ -270,6 +270,15 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int]] | None:
     meta = chat_log.read_meta(thread_id)
     if meta is None:
         return None
+    # THE DRAFT IS MERGED IN HERE, once, so everything downstream keeps reading
+    # `meta["live_message"]` exactly as it always did. The running turn's draft
+    # moved out of meta.json into live.json (chat_log.write_live_sync explains
+    # why); this is the one seam that has to know, and `_live_view`, `_document`
+    # and every caller of `get_thread` are unchanged because of it.
+    if meta.get("active_run_id"):
+        merged = chat_log.merge_live(meta.get("live_message"), chat_log.read_live(thread_id))
+        if merged is not None:
+            meta = {**meta, "live_message": merged}
     messages: list[dict] = []
     seqs: list[int] = []
     for ev in chat_log.read_events(thread_id):
@@ -995,6 +1004,11 @@ def begin_run(thread_id: str, run_id: str, model: str | None = None,
     once it lands."""
     if chat_log.read_meta(thread_id) is None:
         raise KeyError(thread_id)
+    # Any draft still on disk belongs to a run that never committed (a backend
+    # killed mid-turn). It is not this run's, so it goes before this one claims
+    # the thread. `active_run` also refuses a draft naming another run, so this
+    # is tidiness rather than the guarantee.
+    chat_log.clear_live(thread_id)
     meta: dict = {"turn_id": run_id, "segments": []}
     if model:
         meta["model"] = model
@@ -1019,19 +1033,30 @@ def update_run(thread_id: str, run_id: str, segments: list[dict], content: str) 
     """Overwrite the running turn's live snapshot. No-op if it is not the active
     run any more (it finished, or something took the thread over).
 
-    Writes meta, never the log: this fires every ~0.4s for the length of a turn,
-    and the record should carry the reply, not every draft of it."""
-    stored = chat_log.read_meta(thread_id)
+    Writes the DRAFT FILE, never meta.json and never the log. This fires every
+    ~0.4s and on every tool event for the whole length of a turn, so what it
+    costs is not a detail: it used to read meta.json twice, read the log's tail
+    twice, and rewrite-and-fsync the thread's durable record, whose size grows
+    with the reply. See chat_log.write_live_sync for the measurements and why
+    the draft is allowed to skip the fsync.
+
+    What is left is one small read (the ownership guard, which has to be exact:
+    a run that lost the thread must not keep writing over its successor's
+    draft) and one atomic, unsynced write.
+    """
+    # `_read_meta_raw`, not `read_meta`: the guard needs `active_run_id`, which
+    # does not depend on the `last_seq` reconciliation that `read_meta` pays a
+    # log-tail read for.
+    stored = chat_log._read_meta_raw(thread_id)
     if stored is None or stored.get("active_run_id") != run_id:
         return
-    live = stored.get("live_message")
-    live = dict(live) if isinstance(live, dict) else {"run_id": run_id, "ts": _now_iso()}
-    meta = dict(live.get("meta") or {})
-    meta["segments"] = segments
-    meta["turn_id"] = run_id
-    live["meta"] = meta
-    live["content"] = content
-    chat_log.patch_meta_sync(thread_id, live_message=live)
+    chat_log.write_live_sync(thread_id, {
+        "run_id": run_id,
+        "content": content,
+        # `turn_id` rides inside `meta` because that is the shape `_live_view`
+        # renders and the client already reads.
+        "meta": {"segments": segments, "turn_id": run_id},
+    })
 
 
 def commit_run(
@@ -1099,9 +1124,15 @@ def commit_run(
     if stored.get("active_run_id") == run_id:
         clear["active_run_id"] = None
         clear["active_run_seq"] = None
+        # The legacy field, cleared for a thread whose run began before the
+        # draft moved to its own file.
         clear["live_message"] = None
     if clear:
         chat_log.patch_meta_sync(thread_id, **clear)
+        # The reply is in the log now, so the draft of it is finished business.
+        # Left behind, `active_run` would merge a dead turn's text into the next
+        # one that claims this thread.
+        chat_log.clear_live(thread_id)
     return _msg_from_event(ev)
 
 
@@ -1150,6 +1181,7 @@ def release_run(thread_id: str, run_id: str) -> None:
     chat_log.append_sync(thread_id, {"kind": "run", "run_id": run_id, "state": "finished"})
     chat_log.patch_meta_sync(thread_id, active_run_id=None, active_run_seq=None,
                              live_message=None)
+    chat_log.clear_live(thread_id)
 
 
 def previous_run_id(thread_id: str) -> str | None:

@@ -87,6 +87,9 @@ log = logging.getLogger("workshop.chat_log")
 LOG_NAME = "log.jsonl"
 ARCHIVE_NAME = "log.1.jsonl"
 META_NAME = "meta.json"
+# The turn in flight's draft. A SEPARATE FILE from meta.json on purpose; see
+# write_live_sync for why that separation is the whole point.
+LIVE_NAME = "live.json"
 
 # Files that live alongside thread directories and are not threads.
 NON_THREAD_FILES = ("drafts.json", "prefs.json")
@@ -175,6 +178,11 @@ def archive_path(thread_id: str) -> Path:
 
 def meta_path(thread_id: str) -> Path:
     return thread_dir(thread_id) / META_NAME
+
+
+def live_path(thread_id: str) -> Path:
+    """The running turn's draft. Absent whenever no turn is in flight."""
+    return thread_dir(thread_id) / LIVE_NAME
 
 
 def legacy_path(thread_id: str) -> Path:
@@ -270,6 +278,21 @@ def _write_json_atomic(path: Path, data: dict) -> None:
         f.write(json.dumps(data, indent=2) + "\n")
         f.flush()
         os.fsync(f.fileno())
+    tmp.replace(path)
+
+
+def _write_json_fast(path: Path, data: dict) -> None:
+    """Whole-file JSON, atomic but NOT durable: temp file, rename, no fsync.
+
+    The rename still means a reader sees either the old file or the new one and
+    never a half-written one. What is deliberately given up is surviving a power
+    cut, and see `write_live_sync` for why that is the correct trade for this
+    one file and would be wrong for any other.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w") as f:
+        f.write(json.dumps(data, separators=(",", ":")))
     tmp.replace(path)
 
 
@@ -490,11 +513,29 @@ def active_run(thread_id: str, events: list[dict] | None = None,
              and e.get("state") == "started"),
             None,
         )
-    live = m.get("live_message")
+    # The draft: live.json when the running turn has written one, else the copy
+    # in meta.json. The fallback is not dead code — it covers a turn that was
+    # already in flight when this build deployed, and any thread whose run began
+    # before live.json existed. Both resolve themselves when that run commits.
+    #
+    # meta.json still holds the run's IMMUTABLE facts (model, agent, the start
+    # timestamp), written once at claim time, so the draft file carries only
+    # what actually changes and the two are merged here.
+    base = m.get("live_message")
+    base = dict(base) if isinstance(base, dict) else None
+    # THE DRAFT MUST NAME THIS RUN. A backend killed mid-turn leaves live.json
+    # behind with no commit to clear it; without this check the next run to
+    # claim the thread would show the dead turn's text as its own. The claim
+    # clears the file too, but the guard is what makes that cleanup an
+    # optimization rather than the thing correctness rests on.
+    draft = read_live(thread_id)
+    if draft is not None and draft.get("run_id") != run_id:
+        draft = None
+    live = merge_live(base, draft)
     return {
         "run_id": run_id,
         "started_seq": started,
-        "live": dict(live) if isinstance(live, dict) else None,
+        "live": live,
     }
 
 
@@ -820,6 +861,89 @@ def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:
 async def patch_meta(thread_id: str, **fields: object) -> dict | None:
     async with lock_for(thread_id):
         return patch_meta_sync(thread_id, **fields)
+
+
+# ---- the running turn's draft ----------------------------------------------
+#
+# THE DRAFT IS NOT THE RECORD, AND IT DOES NOT LIVE IN THE RECORD'S FILE.
+#
+# While a turn runs, the reply so far is rewritten a few hundred to a few
+# thousand times: every ~0.4s and on every tool event. It used to be a field
+# inside meta.json, which made every one of those rewrites a whole-document
+# write of the thread's DURABLE record, with an fsync, of a document that grows
+# with the reply. Measured on a 120-segment / 23 KB reply that is 3.6ms a time
+# and a 55 KB meta.json, so a ten-minute turn spent about five seconds of the
+# event loop rewriting and syncing the same record, and the cost rose as the
+# reply got longer. That is the "everything got slow while a turn was running"
+# report.
+#
+# So the draft has its own file, and it is written differently:
+#
+#   meta.json   durable, small, fsynced. Written twice per turn (claim, commit).
+#   live.json   disposable, rewritten constantly, atomic but NOT fsynced.
+#
+# Why no fsync is correct here and nowhere else: this file is DERIVED. The
+# journal at .runtime/turns/<id>/stream.jsonl is the buffer of record while a
+# turn runs, and `commit_run` appends the real message to the log at the end. A
+# power cut loses the process that was writing the turn, so a durably-synced
+# copy of its half-finished draft buys nothing: there is nothing to resume. The
+# atomic rename is still required, because a reader must never see half a file.
+#
+# If you are tempted to fold this back into meta.json, read the numbers above.
+
+
+def write_live_sync(thread_id: str, live: dict) -> None:
+    """Overwrite the running turn's draft. Cheap by construction; see above."""
+    _assert_on_loop()
+    _write_json_fast(live_path(thread_id), live)
+
+
+def read_live(thread_id: str) -> dict | None:
+    """The running turn's draft, or None when there is no live.json.
+
+    None is normal and not an error: no turn is running, the turn predates this
+    file (see `active_run`, which falls back to the copy in meta.json), or the
+    draft was cleared at commit.
+    """
+    try:
+        data = json.loads(live_path(thread_id).read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def clear_live(thread_id: str) -> None:
+    """Drop the draft. Called when a run ends, however it ends."""
+    try:
+        live_path(thread_id).unlink()
+    except OSError:
+        pass
+
+
+def merge_live(base: dict | None, draft: dict | None) -> dict | None:
+    """The run's immutable facts, overlaid with the draft.
+
+    `base` is what the claim wrote into meta.json once (model, agent, the start
+    `ts`); `draft` is what the turn rewrites constantly (content, segments).
+    The nested `meta` is merged rather than replaced, because each side owns
+    different keys of it: a plain `{**base, **draft}` would drop the model and
+    agent from every live view, which is exactly the byline the transcript
+    renders for an agent's reply.
+
+    Either side may be missing. No draft means the turn predates live.json (or
+    has not written one yet) and `base` stands alone, which is what the previous
+    arrangement always returned.
+    """
+    if draft is None:
+        return base
+    if not base:
+        return dict(draft)
+    out = dict(base)
+    meta = dict(out.get("meta") or {})
+    meta.update(draft.get("meta") or {})
+    out.update(draft)
+    out["meta"] = meta
+    return out
 
 
 # ---- migration -------------------------------------------------------------
