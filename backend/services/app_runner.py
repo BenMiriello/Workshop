@@ -129,7 +129,7 @@ def self_dir_refusal(target: str | Path, who: str) -> str:
         f"{who} cannot run against {target}: that is the Workshop's own source "
         f"tree, and developer mode is off. Set {DEV_MODE_ENV}=1 for this "
         f"installation to allow it. This is a safety interlock, not a security "
-        f"boundary — see ADR 0014."
+        f"boundary. See ADR 0014."
     )
 
 

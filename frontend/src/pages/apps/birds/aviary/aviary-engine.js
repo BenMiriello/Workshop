@@ -298,7 +298,7 @@ export function createAviary(opts) {
     if(opts.onState) opts.onState({ count: ground.length, species: ids.length });
     const list=$('presentlist');
     if(!list) return;
-    if(!ids.length){ list.innerHTML=`<div class="emptyp">Quiet right now — watch for the next arrival.</div>`; return; }
+    if(!ids.length){ list.innerHTML=`<div class="emptyp">Quiet right now. Watch for the next arrival.</div>`; return; }
     list.innerHTML = ids.map(id=>{ const sp=SPECIES[id], m=model(id);
       const sv=`<svg width="${m.w*0.42}" height="${m.h*0.42}" viewBox="${m.viewBox}">${renderBird(m,null)}</svg>`;
       return `<div class="prow" data-sp="${id}"><div class="pchip">${sv}</div>

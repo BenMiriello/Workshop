@@ -109,8 +109,8 @@ def compute_title(thread_id: str) -> tuple[str | None, bool]:
     prompt = (
         "Generate a concise chat title (at most 6 words, Title Case, no quotes, "
         "no trailing punctuation, no emoji) describing what this conversation "
-        "is ABOUT. If the exchange has no clear subject yet — a greeting, an "
-        "acknowledgement, a bare command, small talk — output exactly NONE "
+        "is ABOUT. If the exchange has no clear subject yet (a greeting, an "
+        "acknowledgement, a bare command, small talk), output exactly NONE "
         "instead. Output only the title, or NONE.\n\n"
         f"User: {last_user[:600]}\n\n"
         f"Assistant: {last_assistant[:600]}"

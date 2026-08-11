@@ -95,7 +95,7 @@ def _prepare_workdir(deploy_id: str, run_id: str, project_dir: Path, ref: str | 
         shutil.rmtree(workdir)
     dot_git = project_dir / ".git"
     if not dot_git.exists():
-        log.append(f"[prepare] project dir has no .git — copying tree wholesale from {project_dir}")
+        log.append(f"[prepare] project dir has no .git. Copying the tree wholesale from {project_dir}")
         try:
             shutil.copytree(project_dir, workdir, symlinks=True,
                             ignore=shutil.ignore_patterns("node_modules", ".venv", "__pycache__"))

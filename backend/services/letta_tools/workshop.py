@@ -66,7 +66,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         return "ERROR: task_text too short"
     if not todo_path.exists():
         return "ERROR: TODO.md does not exist"
-    line = f"[ ] {task_text.strip()} — proposed by overseer ({urgency})"
+    line = f"[ ] {task_text.strip()} (proposed by overseer, {urgency})"
 
     # Topic signature = the significant words of a task, so two reworded versions
     # of the same task ("Onboard new bank for Plaid MCP as per project_plaid_mcp.md"
@@ -118,7 +118,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
                 "prioritize the top", "from the todo list",
             )
         if any(m in norm for m in vacuous_markers):
-            return ("skipped (vacuous self-referential task — just do the work, "
+            return ("skipped (vacuous self-referential task. Just do the work, "
                     f"don't propose reviewing the list): {task_text.strip()}")
         # Backstop for the reworded-meta spam the marker list keeps missing
         # ("Reduce todo backlog by …", "Review and unblock todos", "Review and
@@ -165,8 +165,8 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
             if w not in _stop and len(w) > 1
         ]
         if _content and all(_stem(w) in _meta_vocab or w in _meta_vocab for w in _content):
-            return ("skipped (vacuous meta-task — pure list-management vocabulary "
-                    "with no concrete referent; just do the work): "
+            return ("skipped (vacuous meta-task: pure list-management vocabulary "
+                    "with no concrete referent. Just do the work): "
                     f"{task_text.strip()}")
         # Near-duplicate dedupe: skip if an open task shares most of its topic
         # signature with this one (containment ≥ 0.7 of the smaller set, ≥ 2 words
@@ -175,7 +175,7 @@ def wkshp_propose_task(task_text: str, urgency: str = "normal") -> str:
         for l in content.splitlines():
             if not l.startswith("[ ] "):
                 continue
-            ex = _sig(l[4:].split(" — proposed by")[0])
+            ex = _sig(re.split(r"\s+(?:\(|— )proposed by", l[4:])[0])
             inter = len(new_sig & ex)
             if inter >= 2 and inter / min(len(new_sig), len(ex)) >= 0.6:
                 return f"skipped (near-duplicate of an existing open task): {task_text.strip()}"
@@ -276,7 +276,7 @@ def wkshp_mark_blocked(task_substring: str, reason: str) -> str:
             return f"ERROR: substring {task_substring!r} matched {len(matches)} tasks; be more specific"
         i, l = matches[0]
         body = l[4:]
-        new_line = f"[~] {body} — BLOCKED: {reason}"
+        new_line = f"[~] {body} · BLOCKED: {reason}"
         lines[i] = new_line
         todo_path.write_text("\n".join(lines) + "\n")
     return f"marked blocked: {new_line}"

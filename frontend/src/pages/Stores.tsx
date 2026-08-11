@@ -132,11 +132,11 @@ export default function Stores() {
                     </Link>
                   </td>
                   <td><Badge>{s.owner_app}</Badge></td>
-                  <td>{s.type ? <Tag hue={catFor(s.type)}>{s.type}</Tag> : <span className="ws-muted">—</span>}</td>
+                  <td>{s.type ? <Tag hue={catFor(s.type)}>{s.type}</Tag> : <span className="ws-muted">–</span>}</td>
                   <td>
                     {s.host_project ? (
                       <Link to={`/projects/${encodeURIComponent(s.host_project)}`}>{s.host_project}</Link>
-                    ) : <span className="ws-muted">—</span>}
+                    ) : <span className="ws-muted">–</span>}
                   </td>
                   <td><StatusDot status={tierKind(s.tier)}>{s.tier}</StatusDot></td>
                   <td><code style={{ fontSize: "var(--fs-xs)" }}>{s.uri}</code></td>

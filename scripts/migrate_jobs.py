@@ -129,7 +129,7 @@ def migrate_aggregate(apply: bool) -> None:
     if not AGGREGATE.exists():
         print(f"  aggregate: {AGGREGATE.name} absent, skip")
         return
-    print(f"  aggregate: {AGGREGATE.name} is a per-tick aggregate (no agent_id) — "
+    print(f"  aggregate: {AGGREGATE.name} is a per-tick aggregate (no agent_id), "
           f"not imported, {'renamed .migrated' if apply else 'would rename .migrated'}")
     if apply:
         AGGREGATE.rename(AGGREGATE.with_suffix(AGGREGATE.suffix + ".migrated"))
@@ -158,10 +158,10 @@ def migrate_ralph_runs(apply: bool) -> int:
             if apply:
                 _append_job(job)
             n += 1
-            print(f"  ralph-run: {slug} is live (pid {rec.get('pid')}) — "
+            print(f"  ralph-run: {slug} is live (pid {rec.get('pid')}), "
                   f"{'imported' if apply else 'would import'} as running loop Job")
         else:
-            print(f"  ralph-run: {d.name} not live — skip import")
+            print(f"  ralph-run: {d.name} not live, skipping import")
         if apply:
             f.unlink()
     if not n:
@@ -180,7 +180,7 @@ def main(argv: list[str]) -> int:
     migrate_completed(args.apply)
     migrate_aggregate(args.apply)
     migrate_ralph_runs(args.apply)
-    print("done" + ("" if args.apply else " (dry run — re-run with --apply to write)"))
+    print("done" + ("" if args.apply else " (dry run. Re-run with --apply to write)"))
     return 0
 
 

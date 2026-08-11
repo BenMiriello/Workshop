@@ -428,7 +428,7 @@ export default function ContextModal({
           {edit.editing && (
             <>
               <p className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                Applies from the next turn — a run already in flight had its tools fixed when it
+                Applies from the next turn. A run already in flight had its tools fixed when it
                 started. Every server is on until you turn one off.{" "}
                 <Link to="/settings/mcp" style={{ color: "var(--accent)" }}>
                   Settings → MCP

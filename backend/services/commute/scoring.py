@@ -81,7 +81,7 @@ def _location_status(sch: dict[str, Any], now: datetime) -> dict[str, Any]:
         return {"available": False, "reason": "location record has no parseable ts"}
     age_s = int((now - ping_at).total_seconds())
     if age_s > LOCATION_STALE_AFTER_S:
-        return {"available": False, "reason": f"last ping {age_s // 60}m ago — too stale to trust"}
+        return {"available": False, "reason": f"last ping {age_s // 60}m ago, too stale to trust"}
     try:
         dist = _haversine_m(float(rec["lat"]), float(rec["lng"]), dest[0], dest[1])
     except (KeyError, TypeError, ValueError):
@@ -541,7 +541,7 @@ def evaluate(now: datetime | None = None) -> dict[str, Any]:
             "ts": now.isoformat(),
             "ts_local": timefmt.local_iso(now),
             "active": False,
-            "reason": f"already at {dest} — {sch['direction']} commute complete or not started today",
+            "reason": f"already at {dest}. The {sch['direction']} commute is complete or has not started today",
             "schedule_id": sch["id"],
             "direction": sch["direction"],
             "alerts": poller.read_alerts(),

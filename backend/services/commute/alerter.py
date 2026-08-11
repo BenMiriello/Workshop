@@ -254,7 +254,7 @@ def render_message(msg: dict[str, Any]) -> str:
     if action:
         lines.append(f"→ {action}")
     if msg.get("confidence") == "low":
-        lines.append("_(low confidence — data is thin/stale)_")
+        lines.append("_(low confidence: data is thin/stale)_")
     return "\n".join(lines)
 
 
@@ -390,7 +390,7 @@ async def maybe_alert(brief: dict[str, Any] | None = None, *, force: bool = Fals
     if not force and not loc.get("available"):
         return {
             "sent": False,
-            "reason": f"location-stale gate: {loc.get('reason', 'no location signal')} — suppressing late-risk alert (use force=True to bypass)",
+            "reason": f"location-stale gate: {loc.get('reason', 'no location signal')}. Suppressing late-risk alert (use force=True to bypass)",
         }
     sid = brief.get("schedule_id", "?")
     day = timefmt.day_key()
@@ -497,7 +497,7 @@ def _action_hint(brief: dict[str, Any], checkpoint: str) -> str:
     if checkpoint == "pre-1h":
         msg = f"action: nothing yet"
         if leave_by:
-            msg += f" — plan to leave by **{leave_by}**"
+            msg += f". Plan to leave by **{leave_by}**"
         return msg
     if checkpoint == "pre-30m":
         msg = "action: get ready to leave"
@@ -510,12 +510,12 @@ def _action_hint(brief: dict[str, Any], checkpoint: str) -> str:
         next_leg = brief.get("next_leg") or {}
         if next_leg:
             depart = next_leg.get("depart_local")
-            msg = f"action: next leg ({next_leg.get('mode')}) departs **{depart}** — {next_leg.get('from')} → {next_leg.get('to')}"
+            msg = f"action: next leg ({next_leg.get('mode')}) departs **{depart}**, {next_leg.get('from')} → {next_leg.get('to')}"
             if not rt_available:
-                msg += "  _(static schedule — confirm at station/app)_"
+                msg += "  _(static schedule: confirm at station/app)_"
             return msg
         if mode:
-            return f"action: continue {mode} leg — arrives {leg.get('arrive_local','?')}"
+            return f"action: continue {mode} leg, arrives {leg.get('arrive_local','?')}"
         return "action: continue"
     return "action: see timeline above"
 
@@ -531,14 +531,14 @@ def _fmt_rt_marker(rt: dict[str, Any] | None) -> str:
         return "realtime on-time"
     reason = rt.get("reason", "no data")
     if reason == "needs_511_key":
-        return "(static — no 511 key)"
+        return "(static: no 511 key)"
     if reason == "no_source_keys":
-        return "(static — no live source)"
+        return "(static: no live source)"
     if reason == "no_match":
-        return "(static — no matching trip in feed)"
+        return "(static: no matching trip in feed)"
     if reason == "stale":
-        return "(static — last poll stale)"
-    return f"(static — {reason})"
+        return "(static: last poll stale)"
+    return f"(static: {reason})"
 
 
 def _fmt_timeline_block(brief: dict[str, Any]) -> list[str]:
@@ -561,7 +561,7 @@ def _fmt_timeline_block(brief: dict[str, Any]) -> list[str]:
         timing = f"{leg.get('depart_local')} → {leg.get('arrive_local')}"
         dur = leg.get("default_minutes", 0)
         rt_tag = _fmt_rt_marker(leg.get("realtime"))
-        line = f"  {prefix} `{leg.get('step')}` {timing}  ({dur}m, {mode}) — {from_to}"
+        line = f"  {prefix} `{leg.get('step')}` {timing}  ({dur}m, {mode}) · {from_to}"
         if route and route != mode:
             line += f"  · _{route}_"
         line += f"  · {rt_tag}"
@@ -579,7 +579,7 @@ def _fmt_timeline_block(brief: dict[str, Any]) -> list[str]:
                 # zero. Surface honestly so operator knows this gap is a guess.
                 lines.append(
                     f"    ↳ transfer: arrives {leg.get('arrive_local')}, "
-                    f"next leg departs {nxt.get('depart_local')} (gap not modeled — assumes immediate)"
+                    f"next leg departs {nxt.get('depart_local')} (gap not modeled, assumes immediate)"
                 )
     return lines
 

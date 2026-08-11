@@ -86,7 +86,7 @@ def _build_prompt(options: list[dict], candidates: list[dict]) -> str:
         "You are categorizing personal bank transactions that automated rules "
         "could not confidently classify. Most are either uncategorized purchases "
         "or money transfers (Venmo/Zelle/bank) that might actually be a recurring "
-        "obligation paid after the fact — rent, a utility bill, or repaying a "
+        "obligation paid after the fact: rent, a utility bill, or repaying a "
         "family member.\n\n"
         "Assign each transaction to exactly ONE bucket id from this list:\n"
         f"{opts_lines}\n"

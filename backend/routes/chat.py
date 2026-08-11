@@ -931,7 +931,7 @@ def _build_prompt(
         "=== NOW REPLY ===\n"
         f"Operator: {user_msg}\n\n"
         "Reply as the assistant. Output only your reply text (plus a plan-patch block if a "
-        "change was requested) — no 'You:' prefix."
+        "change was requested). No 'You:' prefix."
     )
     return "\n\n".join(parts)
 
@@ -1718,7 +1718,7 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
                 parts.append(
                     "=== LIVE CONTEXT (current app state) ===\n"
                     "This REPLACES every earlier LIVE CONTEXT block in this "
-                    "conversation. Older copies are stale — ignore them.\n\n" + live
+                    "conversation. Older copies are stale, so ignore them.\n\n" + live
                 )
                 new_marks["live_hash"] = digest
 

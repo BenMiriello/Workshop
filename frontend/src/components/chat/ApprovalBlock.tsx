@@ -102,7 +102,7 @@ export default function ApprovalBlock({
           autoFocus
           // The model READS this. "Not that file, use the other one" steers the
           // next attempt; a bare refusal leaves it guessing what went wrong.
-          placeholder="Why not? (optional — the model reads this)"
+          placeholder="Why not? Optional. The model reads this."
           onChange={(e) => setReason(e.target.value)}
         />
       )}

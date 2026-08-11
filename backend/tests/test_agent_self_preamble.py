@@ -66,7 +66,7 @@ def test_capabilities_are_never_asserted_to_the_agent():
 
 
 def test_delegate_bound_only_when_it_holds():
-    assert "you are not a delegate" in _preamble(delegatable=False)
+    assert "You are not a delegate" in _preamble(delegatable=False)
     assert "not a delegate" not in _preamble(delegatable=True)
 
 

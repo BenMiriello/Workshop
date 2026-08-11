@@ -34,8 +34,8 @@ async function main() {
   const cards = [
     ["Species", data.totals.species],
     ["Detections", (data.totals.detections || 0).toLocaleString()],
-    ["First logged", (data.range && data.range.first_date) || "—"],
-    ["Latest", (data.range && data.range.last_date) || "—"],
+    ["First logged", (data.range && data.range.first_date) || "–"],
+    ["Latest", (data.range && data.range.last_date) || "–"],
   ];
   for (const [label, value] of cards) {
     const c = el("div", "stat");
@@ -52,7 +52,7 @@ async function main() {
     const wrap = el("div", "bar-wrap");
     const bar = el("div", "bar");
     bar.style.height = `${Math.round((row.count / max) * 100)}%`;
-    bar.title = `${String(h).padStart(2, "0")}:00 — ${row.count}`;
+    bar.title = `${String(h).padStart(2, "0")}:00 · ${row.count}`;
     wrap.append(bar, el("div", "bar-label", h % 6 === 0 ? String(h) : ""));
     bars.append(wrap);
   }
@@ -67,8 +67,8 @@ async function main() {
     name.append(el("div", "sci", s.scientific_name));
     tr.append(name);
     tr.append(el("td", "num", String(s.count)));
-    tr.append(el("td", null, s.first_seen || "—"));
-    tr.append(el("td", null, s.last_seen || "—"));
+    tr.append(el("td", null, s.first_seen || "–"));
+    tr.append(el("td", null, s.last_seen || "–"));
     tr.append(el("td", "num", pct(s.max_conf)));
     tb.append(tr);
   }

@@ -47,7 +47,7 @@ Answer three questions.
    finished and judged on its own. If it names several independent deliverables,
    it must be split. Do NOT split work that is genuinely one deliverable just
    because it touches several files, and do NOT split along the lines of "write
-   the code" / "write the test" / "update the docs" — those are steps in one
+   the code" / "write the test" / "update the docs". Those are steps in one
    ticket, not separate tickets.
 
 2. WHAT BLOCKS IT? Anything the ticket depends on that is not established: a

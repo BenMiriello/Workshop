@@ -25,7 +25,7 @@ answering on the operator's behalf.
 ## Why this is a triager and not a "watcher"
 
 There is no `watcher` role, and adding one would be duplicating a field as a type.
-A watcher and a note triager have *identical output authority* — both read
+A watcher and a note triager have *identical output authority*. Both read
 something and route it into the queue. The only differences are the trigger kind
 (`event` here, `cron` on the note triager) and the input source (a feed rather
 than a scope's notes), and both of those are already fields on the definition. So

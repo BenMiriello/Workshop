@@ -18,7 +18,7 @@ const ENGINE_LABEL: Record<string, string> = {
 // can never render a thumb off-track (clamp on READ, not just on change).
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-const ms = (v: number | null) => (v == null ? "—" : `${v} ms`);
+const ms = (v: number | null) => (v == null ? "–" : `${v} ms`);
 
 // Voice settings sheet. Lives in the shared Modal (size="lg" so the control list
 // fits on desktop and scrolls its body rather than overflowing the viewport).
@@ -252,7 +252,7 @@ export default function VoiceSettings({
                     ? diag.calibrated
                       ? `floor ${diag.noiseFloor.toFixed(3)} · speech above ${diag.threshold.toFixed(3)} · now ${diag.rawLevel.toFixed(3)}`
                       : "calibrating the room's noise floor…"
-                    : "—"}
+                    : "–"}
                 </span>
               </div>
               <dl className="ws-voice-diag">
@@ -263,16 +263,16 @@ export default function VoiceSettings({
                   </StatusPill>
                 </dd>
                 <dt>Device</dt>
-                <dd>{diag?.deviceLabel || "—"}</dd>
+                <dd>{diag?.deviceLabel || "–"}</dd>
                 <dt>Secure origin</dt>
                 <dd>{diag?.secureContext ? "yes" : "no, voice input needs https"}</dd>
                 <dt>Hearing</dt>
                 <dd>
-                  {caps?.stt ? ENGINE_LABEL[caps.stt] ?? caps.stt : "—"}
+                  {caps?.stt ? ENGINE_LABEL[caps.stt] ?? caps.stt : "–"}
                   {caps?.server?.stt.model ? ` · ${caps.server.stt.model}` : ""}
                 </dd>
                 <dt>Speech</dt>
-                <dd>{caps?.tts ? ENGINE_LABEL[caps.tts] ?? caps.tts : "—"}</dd>
+                <dd>{caps?.tts ? ENGINE_LABEL[caps.tts] ?? caps.tts : "–"}</dd>
                 <dt>Last transcription</dt>
                 <dd>{ms(diag?.lastSttMs ?? null)}</dd>
                 <dt>Last reply latency</dt>

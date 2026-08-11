@@ -83,7 +83,7 @@ def main() -> int:
     print(f"titles repaired {repaired}")
     print(f"exports changed {len(export_changed)}"
           + (f" ({', '.join(export_changed)})" if export_changed else ""))
-    print("WROTE" if args.write else "dry run — pass --write to persist")
+    print("WROTE" if args.write else "dry run. Pass --write to persist")
     return 0
 
 

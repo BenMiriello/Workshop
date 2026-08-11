@@ -212,7 +212,7 @@ def coerce_policy(row: Any) -> StorePolicy:
     # There is no filtered view of a secret; any release is total release.
     if tier == "mediated" and _store_type(uri) == "Secret":
         raise PolicyError(
-            f"{uri}: tier 'mediated' is refused on a Store of type Secret — a secret "
+            f"{uri}: tier 'mediated' is refused on a Store of type Secret. A secret "
             "is atomic, so there is no 'relevant part' for a broker to release. Use "
             "tier 'gated'."
         )

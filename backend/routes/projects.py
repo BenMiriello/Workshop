@@ -251,7 +251,7 @@ def _scaffold_blank(target: Path, slug: str, title: str, purpose: str, brief: st
     _write_text(rules_dir / "CLAUDE.md",
         f"# {title}: house rules\n\n"
         "This project lives inside the workshop. The workshop design system\n"
-        "applies: build from the `@workshop/ui` kit (packages/ui) — import primitives\n"
+        "applies: build from the `@workshop/ui` kit (packages/ui). Import primitives\n"
         "from `@workshop/ui` and its tokens from `@workshop/ui/tokens.css`;\n"
         "no inline hex; lucide icons only; five status kinds; Edit-mode for\n"
         "config/money writes; `ConfirmDialog` for destructive actions; all four\n"

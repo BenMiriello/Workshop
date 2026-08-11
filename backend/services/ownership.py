@@ -59,7 +59,7 @@ def current_owner() -> int:
     uid = _owner_ctx.get()
     if uid is None:
         raise OwnerUnset(
-            "no data owner is pinned for this call — a request must authenticate "
+            "no data owner is pinned for this call. A request must authenticate "
             "(current_user) and an automation pass must set_current_owner() first"
         )
     return uid

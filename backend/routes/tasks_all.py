@@ -726,8 +726,8 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
             # loop needs to know.
             tasks.update(root, task_id, evidence={
                 "kind": "grant",
-                "ref": f"{grant['id']} — {', '.join(grant['verbs'])} on {store_uri}"
-                       + (f" — {note}" if note else ""),
+                "ref": f"{grant['id']}: {', '.join(grant['verbs'])} on {store_uri}"
+                       + (f". {note}" if note else ""),
             })
 
         elif action == "mint-rule":
@@ -762,7 +762,7 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
         if action == "grant-and-continue" and out.get("grant"):
             g = out["grant"]
             granted = f"granted {', '.join(g['verbs'])} on {g['store_uri']}"
-            answer = f"{granted} — {note}" if note else granted
+            answer = f"{granted}. {note}" if note else granted
         elif action == "mint-rule":
             answer = (body.rule or note).strip()
         if answer:

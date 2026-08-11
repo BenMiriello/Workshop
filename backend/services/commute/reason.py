@@ -22,6 +22,8 @@ from typing import Any
 
 import httpx
 
+from services import auth_env
+
 from . import config, messages, patterns
 
 log = logging.getLogger("commute.reason")
@@ -30,7 +32,9 @@ log = logging.getLogger("commute.reason")
 REASONER = os.environ.get("COMMUTE_REASONER", "claude")          # claude | qwen | deterministic
 CLAUDE_MODEL = os.environ.get("COMMUTE_REASONER_MODEL", "claude-sonnet-4-6")
 CLAUDE_TIMEOUT_S = float(os.environ.get("COMMUTE_REASONER_TIMEOUT", "75"))
-AUTH_ENV = os.path.expanduser("~/.config/clawdbot/auth.env")
+# One address for the secret file, resolved by services.auth_env. None means
+# "resolve at call time"; see the longer note in poller.
+AUTH_ENV: str | None = None
 RELAY_LOCAL_URL = os.environ.get("WORKSHOP_RELAY_LOCAL_URL", "http://127.0.0.1:8000/relay/local")
 
 SYSTEM = (
@@ -39,14 +43,14 @@ SYSTEM = (
     "and 'data_quality'. Produce ONE message as STRICT JSON, no prose around it:\n"
     '{"kind":"brief|alert|insight|nudge","severity":"ok|info|caution|urgent",'
     '"headline":"<=1 line, the single most important thing","detail":"1-2 lines: '
-    'concrete times/route","reasoning":"why — cite the signal you used","confidence":'
+    'concrete times/route","reasoning":"why; cite the signal you used","confidence":'
     '"high|medium|low","action":"optional imperative or null"}\n\n'
     "Rules:\n"
     "- Be concise and concrete. The headline is the one thing he should know.\n"
     "- data_quality.location fields, read them EXACTLY: 'meters_from_destination' "
     "is DISTANCE to the destination (not a time and not staleness); "
     "'fix_age_seconds' is how old the GPS fix is. Never describe a distance in "
-    "meters as 'stale' — staleness is fix_age_seconds. If available is false, the "
+    "meters as 'stale'. Staleness is fix_age_seconds. If available is false, the "
     "location is simply unknown; say that, don't invent a number.\n"
     "- Confidence MUST reflect data_quality: thin/stale/low-coverage data => low, and "
     "say so in reasoning rather than inventing a conclusion.\n"
@@ -55,7 +59,7 @@ SYSTEM = (
     "misses a connection), name it. Do NOT use a fixed checklist.\n"
     "- Only escalate severity for genuine LATE risk; never nag when he's on-time/early.\n"
     "- FREQUENT service (Muni Metro, headway ~5-15 min): a single late vehicle is "
-    "NOT a late risk — he simply boards the next one. Only flag a transit delay if "
+    "NOT a late risk; he simply boards the next one. Only flag a transit delay if "
     "it is SYSTEMIC (most upcoming trains late) or it makes him miss an INFREQUENT "
     "connection (e.g. a specific Caltrain, every 30-60 min). Never harp about one "
     "delayed train on a high-frequency line.\n"
@@ -108,17 +112,7 @@ def _evidence(brief: dict[str, Any]) -> dict[str, Any]:
 
 # --- Claude (subscription CLI) ----------------------------------------------
 def _oauth_token() -> str | None:
-    tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
-    if tok:
-        return tok
-    try:
-        for ln in open(AUTH_ENV):
-            ln = ln.strip()
-            if ln.startswith("CLAUDE_CODE_OAUTH_TOKEN="):
-                return ln.split("=", 1)[1].strip().strip('"')
-    except OSError:
-        pass
-    return None
+    return auth_env.value("CLAUDE_CODE_OAUTH_TOKEN", path=AUTH_ENV) or None
 
 
 def _claude_bin() -> str | None:
@@ -208,7 +202,7 @@ def _deterministic(brief: dict[str, Any], evidence: dict[str, Any]) -> dict[str,
         nxt = brief.get("next_schedule")
         if nxt:
             return {"kind": "brief", "severity": "ok", "confidence": "high",
-                    "headline": f"Next commute {nxt.get('date_local')} — leave by {nxt.get('leave_by_local')}",
+                    "headline": f"Next commute {nxt.get('date_local')}, leave by {nxt.get('leave_by_local')}",
                     "detail": f"Target arrive {nxt.get('target_arrive_local')}.",
                     "reasoning": "No commute active now; showing the next scheduled one."}
         return {"kind": "brief", "severity": "ok", "confidence": "high",
@@ -229,7 +223,7 @@ def _deterministic(brief: dict[str, Any], evidence: dict[str, Any]) -> dict[str,
             why = "Live transit delay pushes projected arrival past the flex deadline."
         elif brief.get("arrival_overdue"):
             why = ("The clock is already past your scheduled arrival and nothing "
-                   "confirms you're there — so you're running late.")
+                   "confirms you're there, so you're running late.")
         else:
             why = "Projected arrival exceeds the flex deadline."
         caveats = []
@@ -248,7 +242,7 @@ def _deterministic(brief: dict[str, Any], evidence: dict[str, Any]) -> dict[str,
                 # Location-aware action: never assume he's still at the origin
                 # when we can't see him. Only suggest "earlier train" when a
                 # fresh fix confirms he hasn't departed.
-                "action": ("If you've already boarded you may be fine — I can't confirm your location "
+                "action": ("If you've already boarded you may be fine. I can't confirm your location "
                            f"({loc.get('reason', 'unavailable')})."
                            if not loc_ok else "Consider an earlier train or trimming the first leg.")}
 
@@ -257,13 +251,13 @@ def _deterministic(brief: dict[str, Any], evidence: dict[str, Any]) -> dict[str,
     # evidence of being on time. Say plainly that we can't see.
     if blind:
         return {"kind": "brief", "severity": "caution", "confidence": "low",
-                "headline": f"Can't confirm your {dirn} commute — flying blind",
+                "headline": f"Can't confirm your {dirn} commute, flying blind",
                 "detail": f"No live transit data and {loc.get('reason', 'no location fix')}.",
                 "reasoning": ("Both the realtime feed and your location are unavailable, so this is "
-                              "the static timetable only — treat the times as a guess, not a status."),
+                              "the static timetable only. Treat the times as a guess, not a status."),
                 "action": "Open the app for a fresh read if you're mid-commute."}
 
-    leave_by = "" if underway else f" — leave by {brief.get('leave_by_local')}"
+    leave_by = "" if underway else f", leave by {brief.get('leave_by_local')}"
     return {"kind": "brief", "severity": "ok", "confidence": conf,
             "headline": f"On track → {dirn}{leave_by}",
             "detail": f"Target {brief.get('target_arrive_local')}, projected {brief.get('projected_arrive_local')}.",

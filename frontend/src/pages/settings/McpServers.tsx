@@ -68,8 +68,8 @@ const ENDPOINT = "/api/mcp/servers";
 // which config file actually holds the spec — two different questions, and the
 // second is the one that says where to go and edit it.
 const SCOPE_HELP: Record<string, string> = {
-  user: "~/.claude.json — available in every directory",
-  local: "~/.claude.json — this directory only",
+  user: "~/.claude.json, available in every directory",
+  local: "~/.claude.json, this directory only",
   project: ".mcp.json in the project",
   plugin: "declared by an installed plugin",
 };
@@ -217,11 +217,11 @@ export default function McpServers() {
                           <td><StatusDot status={s.kind}>{s.state}</StatusDot></td>
                           <td>
                             <span className="ws-muted">
-                              {priced ? `${s.tools.length}` : "—"}
+                              {priced ? `${s.tools.length}` : "–"}
                             </span>
                           </td>
                           <td className="ws-td-num">
-                            {s.tokens === null ? "—" : formatTokens(s.tokens)}
+                            {s.tokens === null ? "–" : formatTokens(s.tokens)}
                           </td>
                         </tr>,
                         // Why it is broken, in the CLI's own words. Always
@@ -244,7 +244,7 @@ export default function McpServers() {
                                   <span className="ws-muted">defined in </span>
                                   <span className="ws-mono">{s.source || "not found"}</span>
                                   {s.scope && (
-                                    <span className="ws-muted"> — {SCOPE_HELP[s.scope] ?? s.scope}</span>
+                                    <span className="ws-muted">: {SCOPE_HELP[s.scope] ?? s.scope}</span>
                                   )}
                                 </div>
                                 {s.shadowed && (
@@ -257,15 +257,15 @@ export default function McpServers() {
                                 {!s.spec_available && (
                                   <StatusDot status="warn">
                                     <span className="ws-muted">
-                                      no launch spec found, so this server cannot be turned off for a
-                                      single chat — only globally, with `claude mcp remove`
+                                      No launch spec found. This server can only be turned off
+                                      globally, with `claude mcp remove`.
                                     </span>
                                   </StatusDot>
                                 )}
                                 {priced && s.tools.length === 0 && (
                                   <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
                                     Contributed no tools to the reading. A server that fails to connect
-                                    loads none — it costs a startup attempt every turn and returns nothing.
+                                    loads none. It costs a startup attempt every turn and returns nothing.
                                   </span>
                                 )}
                                 <ToolList tools={s.tools} />
@@ -301,7 +301,7 @@ export default function McpServers() {
                 conversation rather than of this machine.
               </span>
               <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                To remove a server everywhere instead, use `claude mcp remove &lt;name&gt;` — this
+                To remove a server everywhere instead, use `claude mcp remove &lt;name&gt;`. This
                 page reports the CLI's configuration, it does not hold its own.
               </span>
               <div>

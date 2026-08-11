@@ -72,7 +72,7 @@ def finance_snapshot() -> str:
     roundtrip — only reads the already-warm cache file."""
     cache_file = _finance_cache_path()
     if not cache_file.exists():
-        return "LIVE BALANCES: (no finance cache — Plaid likely not warmed up yet)"
+        return "LIVE BALANCES: (no finance cache; Plaid likely not warmed up yet)"
     try:
         state = json.loads(cache_file.read_text())
     except (json.JSONDecodeError, OSError):
@@ -236,7 +236,7 @@ def location_snapshot() -> str:
     except Exception:  # noqa: BLE001 — no owner pinned / unreadable => unknown
         d = None
     if not d:
-        return ("LOCATION: unknown — no recent location ping available. Do NOT "
+        return ("LOCATION: unknown. No recent location ping available. Do NOT "
                 "guess or imply where the operator is.")
 
     ts = d.get("ts")
@@ -249,7 +249,7 @@ def location_snapshot() -> str:
             age_min = None
 
     if age_min is None:
-        return (f"LOCATION: last ping at {ts}, age unknown — treat as possibly "
+        return (f"LOCATION: last ping at {ts}, age unknown. Treat it as possibly "
                 f"stale; do not assume it is the operator's current location.")
 
     if age_min < 60:
@@ -262,10 +262,10 @@ def location_snapshot() -> str:
     coords = f"lat {d.get('lat')}, lng {d.get('lng')}, src={d.get('source','?')}"
     if age_min > STALE_AFTER_MIN:
         return (
-            f"LOCATION (STALE — last KNOWN position from {age}, NOT necessarily "
+            f"LOCATION (STALE. Last KNOWN position from {age}, NOT necessarily "
             f"where the operator is now): {coords}. The phone tracker may have "
             f"stopped updating. Do NOT state or imply this is his current "
-            f"location — call it the last known fix from {age} and say live "
+            f"location. Call it the last known fix from {age} and say live "
             f"location is unavailable."
         )
     return f"LOCATION (live, {age}): {coords}."
