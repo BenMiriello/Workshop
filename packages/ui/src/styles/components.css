@@ -95,6 +95,20 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Touch taps must not leave a ring stuck on a control. iOS Safari matches
+   :focus-visible after a plain finger tap on a <button> (Chrome and Android do
+   not), so the accent ring this system means as a KEYBOARD-navigation cue sits
+   on whatever was last tapped until focus moves. That is the "sometimes it
+   sticks" the ring is reported as. Where the primary pointer is coarse there is
+   no keyboard to navigate with, so neutralise the ring token for that whole
+   subtree — one override, every :focus-visible / :focus-within consumer at once,
+   no per-control specificity fight. Fine-pointer devices (desktop, where the
+   keyboard ring earns its keep) are untouched, and text inputs keep their
+   indicator because that is driven by :focus, not this token. */
+@media (pointer: coarse) {
+  .ws-root { --focus-ring: none; }
+}
+
 /* ---- LAYOUT: Stack / Row ------------------------------------------------- */
 .ws-stack { display: flex; flex-direction: column; gap: var(--space-4); }
 .ws-stack--sm { gap: var(--space-2); }

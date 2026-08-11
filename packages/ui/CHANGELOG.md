@@ -12,6 +12,23 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.2.2 — 2026-08-11 — focus ring is keyboard-only on touch devices
+
+Compatible. No export, prop, token, or class change; a CSS behaviour fix.
+
+The `:focus-visible` accent ring is now suppressed where the primary pointer is
+coarse (touch), via `@media (pointer: coarse) { .ws-root { --focus-ring: none } }`
+next to the universal focus rule in `components.css`.
+
+Why it matters to a consumer: iOS Safari matches `:focus-visible` after a plain
+tap on a `<button>`, so the ring meant for keyboard navigation stuck on the last
+control tapped (a menu trigger, most visibly) until focus moved, and did not on
+Chrome/Android, which read as an inconsistent stuck "active" border on mobile.
+Neutralising the `--focus-ring` token for the coarse-pointer subtree clears every
+`:focus-visible` / `:focus-within` consumer at once. Desktop (fine pointer) keeps
+the keyboard ring; text inputs are unaffected because their indicator uses
+`:focus`, not this token.
+
 ## 0.2.1 — 2026-08-11 — `Markdown` is memoized
 
 Compatible. Same export, same props, no call-site changes required.
