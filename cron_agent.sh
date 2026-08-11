@@ -27,6 +27,21 @@
 set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+
+# Deployment config, WORKSHOP_DEV_MODE among it (ADR 0014).
+#
+# THE TWO HALVES MUST AGREE. The backend and the frontend read this flag from
+# ~/.config/workshop/instance.env through systemd `EnvironmentFile=`; cron has no
+# EnvironmentFile, so before this line dev mode was ON for the API and OFF for
+# everything this tick starts, including scripts/dispatch_triggers.sh below. A
+# flag that answers differently depending on who asks is not a gate. Every cron
+# entrypoint that can reach a run target sources this same loader.
+#
+# lib/instance.sh only fills what is still unset, so an explicit
+# WORKSHOP_DEV_MODE=1 in the environment still wins. It also exports
+# WORKSHOP_AUTH_ENV, which is why it comes before AUTH_ENV is read below.
+source "$WORKSHOP/scripts/lib/instance.sh"
+
 TODO=$WORKSHOP/TODO.md
 LOG=$WORKSHOP/cron_agent.log
 LOCK=/tmp/workshop-cron-agent.lock

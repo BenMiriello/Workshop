@@ -300,3 +300,21 @@ must not be cited as one.
 
 Phases 3–5 must not ship separately from 4. Between them the system would claim
 a boundary it does not have, which is worse than the honest status quo.
+
+### Where phase 6 lives
+
+- **Backend, one test per door**: `backend/tests/test_dev_mode_gate.py`.
+- **Cron half of the flag, and door 7**: `backend/tests/test_dev_mode_cron_and_notes.py`.
+  Door 7 was closed only by the self row's stored `autonomy.mode`, and
+  `WORKSHOP_DEV_MODE` reached the API through a systemd `EnvironmentFile=` that
+  cron does not have, so the flag read ON for the backend and OFF for every
+  sweep cron started.
+- **Bundle**: `bash scripts/check_dev_bundle.sh`. Not in `npm test`, because it
+  has to strip `VITE_DEV_MODE` from `frontend/.env` and a suite that rewrites
+  deployment config is one nobody can run twice. It builds
+  `frontend/src/lib/devMode.bundleProbe.ts` through the real Vite pipeline with
+  the flag absent, runs the emitted module, and asserts every gate reads off at
+  its DEFAULT argument, then repeats with the flag set as a positive control.
+  Grepping the built bundle for `development` cannot work and is not what this
+  does: the string is present either way, because `orderScopes` has to compare
+  against it in order to filter it out.

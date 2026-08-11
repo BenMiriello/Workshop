@@ -25,6 +25,13 @@ DIR="${1:-}"
 
 ts() { date -Iseconds; }
 
+# Deployment config, WORKSHOP_DEV_MODE among it. Cron has no systemd
+# EnvironmentFile, so without this the flag the backend reads as ON is unset
+# here and the gate below refuses a tree the operator has explicitly permitted.
+# THE TWO HALVES MUST AGREE: every cron entrypoint that can reach a run target
+# loads the same file the units do. Existing environment wins.
+source "$WORKSHOP/scripts/lib/instance.sh"
+
 # Same gate the runner applies, checked here too so cron logs the refusal once
 # rather than spawning a runner every five minutes that exits immediately.
 source "$WORKSHOP/scripts/dev_mode_gate.sh"

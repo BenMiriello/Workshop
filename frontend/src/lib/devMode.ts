@@ -21,6 +21,13 @@
 // Every rule below takes `devMode` as an argument defaulting to DEV_MODE. That
 // is what makes the absence testable: a module-level constant is frozen at
 // import, so a test could never exercise the off case that matters most.
+//
+// The DEFAULTS, which are the thing an actual build freezes, are checked by
+// `bash scripts/check_dev_bundle.sh` (ADR 0014 phase 6). It compiles
+// devMode.bundleProbe.ts with VITE_DEV_MODE stripped from frontend/.env and runs
+// what comes out. It is not in `npm test`: it has to write frontend/.env, and a
+// suite that mutates deployment config is one nobody can run twice. Run it after
+// changing anything here or in chatScope.ts.
 
 export const DEV_MODE = import.meta.env.VITE_DEV_MODE === "1";
 

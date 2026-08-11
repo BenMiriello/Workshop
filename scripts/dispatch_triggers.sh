@@ -27,6 +27,26 @@ set -u
 
 WORKSHOP="${WORKSHOP:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export WORKSHOP
+
+# Deployment config, WORKSHOP_DEV_MODE among it (ADR 0014).
+#
+# THE TWO HALVES MUST AGREE. The backend and the frontend get this flag from
+# systemd `EnvironmentFile=` lines on workshop-backend.service; cron gets no
+# EnvironmentFile at all, so before this line dev mode was ON for the API and
+# OFF for everything cron started. One flag that answers differently depending
+# on who asks is worse than no flag: it makes the gate unauditable. Any cron
+# entrypoint that can reach a run target must source this loader, and today that
+# means cron_agent.sh, queue_runner_watchdog.sh and this file.
+#
+# lib/instance.sh is the existing loader and only fills what is still unset, so
+# an explicit `WORKSHOP_DEV_MODE=1 dispatch_triggers.sh` still wins.
+source "$WORKSHOP/scripts/lib/instance.sh"
+
+# The shell half of developer mode: dev_mode_on / is_self_dir /
+# assert_run_target. Same rule as backend/services/app_runner.py and
+# frontend/src/lib/devMode.ts; do not restate the rule anywhere else.
+source "$WORKSHOP/scripts/dev_mode_gate.sh"
+
 # One switch, read through services/autonomy_override. Fails closed.
 source "$WORKSHOP/scripts/autonomy_gate.sh"
 PROJECT_RALPH=$WORKSHOP/scripts/project_ralph.sh
@@ -58,6 +78,11 @@ from pathlib import Path
 sys.path.insert(0, os.environ["WORKSHOP"] + "/backend")
 from services import tasks, jobs, triggers, agents_registry, usage_ledger  # noqa: E402
 from services import dispatch_grants  # noqa: E402
+# Developer mode (ADR 0014). `is_self_dir` / `dev_mode_on` here are the SAME two
+# predicates the enclosing shell sourced from scripts/dev_mode_gate.sh; that file
+# names this module as its other half. Called from Python because the loop that
+# needs them is Python, not because there is a second rule.
+from services import app_runner  # noqa: E402
 
 WORKSHOP = Path(os.environ["WORKSHOP"])
 STATE_PATH = WORKSHOP / ".runtime" / "trigger-state.json"
@@ -297,9 +322,38 @@ except Exception:
     projects = {}
 
 proj_started = 0
+DEV_MODE = app_runner.dev_mode_on()
 for slug, p in sorted(projects.items()):
     if proj_started >= MAX_PROJECT_SWEEPS:
         break
+
+    # DOOR 7 (design §2). The `self: true` registry row — slug `development`,
+    # dir = the platform repo — reaches this loop as an ordinary candidate, and
+    # until this branch existed nothing here told it apart from `birds`. It was
+    # closed only by DATA: that row's autonomy mode happens to be `manual`, so
+    # the mode test below skipped it. A stored value someone can change from the
+    # UI is not a gate. §8 decision 2: the dispatcher iterates projects always,
+    # `development` only when dev mode is on.
+    #
+    # Gated on the resolved DIRECTORY, not the slug, because the platform repo is
+    # reachable under at least five names and a name closes one door. Any future
+    # registry row pointing at the repo root is caught by the same line.
+    #
+    # A safety interlock, not a security boundary: anyone with a shell here edits
+    # the source directly. See ADR 0014.
+    #
+    # `p.get("dir") and` matters: is_self_dir("") resolves to the cwd, and this
+    # block runs with cwd = the repo root, so a row with no dir would read as
+    # self. The `self` flag is honored too, the same pair app_runner.is_self_project
+    # uses, read off the row already in hand instead of re-opening the registry.
+    _pdir = p.get("dir")
+    if not DEV_MODE and (p.get("self") or (_pdir and app_runner.is_self_dir(_pdir))):
+        print(f"skip-dev-mode\tproject:{slug}\t"
+              f"{p.get('dir')} is the Workshop's own source tree; "
+              f"set WORKSHOP_DEV_MODE=1 to dispatch against it (ADR 0014)",
+              file=sys.stderr)
+        continue
+
     autonomy = p.get("autonomy") or {}
 
     # --- Preset-aware dispatch (O6/O7-config) ---------------------------------
@@ -633,6 +687,14 @@ while IFS=$'\t' read -r TYPE SCOPE ASSIGNEE TOKEN; do
     log "launch project sweep: $SCOPE"
     setsid nohup "$PROJECT_RALPH" "$SCOPE" >/dev/null 2>&1 &
   elif [[ "$TYPE" == "agent" ]]; then
+    # Door 5 (design §2): an agent dispatch names a DIRECTORY, so the shell gate
+    # applies verbatim here. `_dispatch_maker` takes the dir from the agent's
+    # build-agent record, and four retired `workshop-builder*` records carry the
+    # repo root. This is the last point before a real sweep starts.
+    if ! assert_run_target "$SCOPE" "dispatch/agent:${ASSIGNEE#agent:}" 2>>"$LOG"; then
+      log "refused agent sweep: dir=$SCOPE assignee=$ASSIGNEE (developer mode off; ADR 0014)"
+      continue
+    fi
     log "launch agent sweep: dir=$SCOPE assignee=$ASSIGNEE grant=${TOKEN:0:8}"
     setsid nohup "$PROJECT_RALPH" --dir "$SCOPE" --assignee "$ASSIGNEE" --grant-token "${TOKEN:-}" >/dev/null 2>&1 &
   elif [[ "$TYPE" == "memory" ]]; then

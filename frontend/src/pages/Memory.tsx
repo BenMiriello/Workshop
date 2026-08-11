@@ -23,6 +23,7 @@ import {
   type SegmentedOption,
 } from "@workshop/ui";
 import { scopeLabel, scopeHref } from "../lib/tasks";
+import { orderScopes } from "../lib/devMode";
 
 // The Notes surface (notes-system plan Phase N1): one /notes page over the
 // EXISTING scoped knowledge store. A note IS a knowledge note; the per-note CRUD
@@ -143,9 +144,13 @@ export default function Notes() {
   }, [refresh]);
 
   useEffect(() => {
+    // `orderScopes` puts Development above Workshop and drops it entirely from
+    // a non-dev bundle, so a bundle built without VITE_DEV_MODE never offers the
+    // scope even when the API it is talking to is a developer install. Same call
+    // Work.tsx makes on its own scope list. ADR 0014.
     fetch("/api/notes/scopes")
       .then((r) => (r.ok ? r.json() : { scopes: [] }))
-      .then((j) => setScopes(j.scopes ?? []))
+      .then((j) => setScopes(orderScopes(j.scopes ?? [])))
       .catch(() => setScopes([]));
   }, []);
 
