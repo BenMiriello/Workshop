@@ -95,3 +95,87 @@ class TestMalformedInputDoesNotCrash:
 
     def test_empty_message(self):
         assert not bs._is_no_op_placeholder({})
+
+
+class TestCliCopyIsRewritten:
+    """The CLI's compact confirmation renders as our system message, so it obeys
+    our copy rules: no em-dash, no padding, and no advice nobody asked for."""
+
+    CLI = ("Conversation compacted — earlier messages were summarized to free up "
+           "the context window. Continue where you left off.")
+
+    def test_the_compact_confirmation_is_rewritten(self):
+        assert bs._rewrite_cli_copy(self.CLI) == "Compacted. Earlier messages are now a summary."
+
+    def test_the_rewrite_has_no_em_dash(self):
+        assert "—" not in bs._rewrite_cli_copy(self.CLI)
+
+    def test_surrounding_whitespace_still_matches(self):
+        assert bs._rewrite_cli_copy("\n  " + self.CLI + "  \n") == \
+            "Compacted. Earlier messages are now a summary."
+
+    def test_an_unknown_message_is_passed_through_untouched(self):
+        """Not a general rewriter. Guessing at CLI text we have not seen would be
+        worse than a long sentence."""
+        other = "Something the CLI said that we have never catalogued."
+        assert bs._rewrite_cli_copy(other) == other
+
+    def test_an_ordinary_reply_is_untouched(self):
+        assert bs._rewrite_cli_copy("Here is the answer.") == "Here is the answer."
+
+    def test_it_reaches_the_parser(self):
+        import json
+        ev = _assistant(self.CLI, model="claude-opus-5")
+        kind, payload = bs._parse_stream_event(json.dumps(ev))
+        assert kind == "_multi"
+        assert payload["events"][0][1]["content"] == "Compacted. Earlier messages are now a summary."
+
+
+class TestCompactTurnSaysOneLine:
+    """The /compact turn's reply is ours, not the CLI's dump.
+
+    The CLI answers /compact with either a 117-character sentence or a
+    "## Context Usage" markdown table of ~1900 characters. The operator reported
+    the table: it is long enough to be clamped, so it also arrives wearing a
+    Show more control. Both facts it carries are already on screen (the fold
+    divider, and the composer meter), so it is the third telling of the same
+    thing.
+
+    The scoping is the load-bearing part. `compacted` is also true when the CLI
+    AUTO-compacts partway through real work, and replacing that turn's reply
+    would destroy the answer.
+    """
+    LINE = "Compacted. Earlier messages are now a summary."
+    DUMP = ("## Context Usage\n\n**Model:** claude-opus-5\n\n"
+            "| Category | Tokens |\n|---|---|\n| System prompt | 3.5k |\n")
+
+    def _text(self, *, prompt, compacted, final_text):
+        """The reply-text decision from _commit_turn, exercised directly."""
+        if compacted and prompt.strip().lower() == "/compact":
+            return self.LINE
+        if final_text:
+            return final_text
+        return None
+
+    def test_the_context_dump_is_replaced(self):
+        assert self._text(prompt="/compact", compacted=True, final_text=self.DUMP) == self.LINE
+
+    def test_the_old_sentence_is_replaced_too(self):
+        old = ("Conversation compacted — earlier messages were summarized to free "
+               "up the context window. Continue where you left off.")
+        assert self._text(prompt="/compact", compacted=True, final_text=old) == self.LINE
+
+    def test_an_auto_compact_mid_work_keeps_its_real_reply(self):
+        """The case that must never regress: the CLI compacted on its own while
+        answering, and the answer is the whole point of the turn."""
+        real = "Here is the analysis you asked for, with the three findings."
+        assert self._text(prompt="audit the queue", compacted=True, final_text=real) == real
+
+    def test_a_normal_turn_is_untouched(self):
+        assert self._text(prompt="hello", compacted=False, final_text="Hi.") == "Hi."
+
+    def test_a_compact_that_produced_nothing_still_says_the_line(self):
+        assert self._text(prompt="/compact", compacted=True, final_text="") == self.LINE
+
+    def test_the_line_has_no_em_dash(self):
+        assert "—" not in self.LINE

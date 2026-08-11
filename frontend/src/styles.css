@@ -601,7 +601,19 @@ input[type="range"].grad::-moz-range-thumb {
   -webkit-line-clamp: var(--clamp-lines, 10);
   line-clamp: var(--clamp-lines, 10);
   overflow: hidden;
+  /* Line-clamp counts LINE BOXES, and a block child generates none, so a reply
+     containing a table, a code block or an image was not clamped at all: the
+     control appeared (JS measures scrollHeight, which was genuinely over), and
+     toggling it added and removed a class that changed nothing on screen. The
+     operator reported exactly that, on a markdown table. This height cap is the
+     floor under it, so every kind of content actually collapses. Prose still
+     ends on a whole line via line-clamp above; only block content falls through
+     to this, where a cut at N line heights is far better than no cut. */
+  max-height: calc(var(--clamp-lines, 10) * 1lh);
 }
+/* No cap once opened, or a long table would stay stuck at the clamp height with
+   the control claiming it had expanded. */
+.chat-clamp:not(.is-clamped) { max-height: none; }
 /* Legible on the accent-filled user bubble. */
 .chat-msg.user .chat-more { color: color-mix(in srgb, var(--accent-fg) 90%, transparent); }
 /* Deterministic spacing for the work section (the "Show N earlier steps" toggle

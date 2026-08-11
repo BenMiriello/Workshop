@@ -485,6 +485,29 @@ def _is_no_op_placeholder(msg: dict) -> bool:
     return others == 0 and texts == [_NO_OP_PLACEHOLDER]
 
 
+# CLI system confirmations rewritten into this app's own copy.
+#
+# These are fixed strings the CLI emits for an action the operator took HERE, so
+# they render as our system messages and are held to our copy rules: no
+# em-dashes, no padding, say what happened and stop. The CLI's compact line is
+# 117 characters to say one thing, and it ends by telling the operator to
+# "continue where you left off", which is advice nobody asked for.
+#
+# Keyed on the exact string. An unrecognised message is passed through
+# unchanged: guessing at CLI text we have not seen would be worse than a
+# slightly long sentence. Not a general rewriter, and it must not become one.
+_CLI_COPY: dict[str, str] = {
+    "Conversation compacted — earlier messages were summarized to free up the "
+    "context window. Continue where you left off.":
+        "Compacted. Earlier messages are now a summary.",
+}
+
+
+def _rewrite_cli_copy(text: str) -> str:
+    """Our wording for a known CLI confirmation, else the text unchanged."""
+    return _CLI_COPY.get(text.strip(), text)
+
+
 def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     """Map a single stream-json line into (kind, payload) for the SSE channel.
 
@@ -545,7 +568,10 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         for block in msg.get("content", []) or []:
             if isinstance(block, dict):
                 if block.get("type") == "text":
-                    out.append(("text", {"content": block.get("text", ""), "parent": parent}))
+                    out.append(("text", {
+                        "content": _rewrite_cli_copy(block.get("text", "")),
+                        "parent": parent,
+                    }))
                 elif block.get("type") == "tool_use":
                     out.append(("tool", {
                         "name": block.get("name"),
@@ -1644,7 +1670,27 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # took "too many" steps or "too long". Autonomous work is the point of this
     # platform; spend is bounded by the usage cap. The timeout branch below only
     # runs for a caller that deliberately asked for a budget.
-    if turn.final_text:
+    # A /compact turn says one line, whatever the CLI wrote.
+    #
+    # The CLI's answer to /compact is not an answer, it is a dump. Depending on
+    # version it is either a 117-character sentence ending in advice nobody asked
+    # for, or a "## Context Usage" markdown table of ~1900 characters listing
+    # every token category. The operator reported the table twice; it is long
+    # enough to be clamped, so it also arrives wearing a Show more control.
+    #
+    # None of it is wanted, because both facts it carries are already on screen
+    # and in better places: the fold divider MessageList draws from the boundary
+    # says how many messages folded, and the composer meter shows the window,
+    # re-derived right here when a compact clears the stale reading. Printing a
+    # table as well is the third telling of the same thing.
+    #
+    # ONLY the explicit command turn. `compacted` alone is not enough: the CLI
+    # also auto-compacts mid-turn when the window fills, and that turn is real
+    # work whose reply must never be replaced by this line.
+    if compacted and prompt.strip().lower() == "/compact":
+        text = "Compacted. Earlier messages are now a summary."
+        is_error = False
+    elif turn.final_text:
         text = turn.final_text
         is_error = False
     elif stopped:

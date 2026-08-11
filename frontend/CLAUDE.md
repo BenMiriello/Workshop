@@ -25,6 +25,18 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
 9. **Every list/page ships four states.** loading (`Skeleton`), empty (`StateBlock` — always with an instructional hint, e.g. "POST to `/api/events/<source>` to populate"), error (`StateBlock variant="error"` with the failing endpoint + retry), overflow (paginate / `TableScroll`).
 10. **Accessibility + motion.** WCAG AA contrast both themes; visible focus ring via `:focus-visible` (handled by `components.css`); dialogs trap focus + Esc + restore (handled by `Modal`); cursors are `default`/`pointer`/`text` only — never `not-allowed`/`wait`; everything respects `prefers-reduced-motion`.
 
+11. **Copy: no em-dashes, ever. Direct, clear, concise.** No `—` in any string a
+    user can read: labels, buttons, hints, empty and error states, tooltips,
+    aria-labels, and any backend message that reaches the screen. Use a period,
+    a comma, a colon, or parentheses; two short sentences beat one long one.
+    Never substitute a hyphen or an en-dash. Then cut the padding: no cute or
+    self-referential phrasing, no advice nobody asked for. Say what happened and
+    what to do. Operator instruction, 2026-08-11, after the compact
+    confirmation spent 117 characters saying one thing and closed by telling him
+    to "continue where you left off". `check_design.sh` fails on an em-dash in a
+    changed `.tsx` string, the same as it does on inline hex and emoji. Code
+    comments are exempt; they are not copy.
+
 ## When does a control commit?
 
 | Commit on… | Controls | Why |
