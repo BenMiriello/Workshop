@@ -28,7 +28,12 @@ type Service = {
   expose: boolean;
   healthy: boolean | null;
   error: string | null;
+  // Crash restarts only, counted by docker. An operator pressing Restart never
+  // moves this, which is the whole point of it.
   restarts: number;
+  oom_killed?: boolean;
+  exit_code?: number | null;
+  started_at?: string | null;
 };
 type Dep = { name: string; ok: boolean; error?: string | null };
 type AppStatus = {
@@ -287,7 +292,12 @@ export default function AppServicesPanel({ slug }: { slug: string }) {
                       {s?.port && <span className="ws-muted ws-mono" style={{ fontSize: "var(--fs-xs)" }}>:{s.port}</span>}
                       {s?.healthy === true && <StatusDot status="ok">healthy</StatusDot>}
                       {s?.healthy === false && running && <StatusDot status="warn">no health</StatusDot>}
-                      {(s?.restarts ?? 0) > 0 && <Badge>{s!.restarts} restarts</Badge>}
+                      {(s?.restarts ?? 0) > 0 && (
+                        <StatusDot status="warn">
+                          {s!.restarts} crash {s!.restarts === 1 ? "restart" : "restarts"}
+                        </StatusDot>
+                      )}
+                      {s?.oom_killed && <StatusDot status="danger">out of memory</StatusDot>}
                       <span style={{ flex: "1 1 2rem" }} />
                       {running && (ms.expose || s?.healthy) && (
                         <>

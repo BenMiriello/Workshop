@@ -170,6 +170,7 @@ def ps(slug: str, compose_file: Path, cwd: Path | None = None) -> list[dict]:
             for p in publishers if (p.get("PublishedPort") or p.get("HostPort"))
         ]
         out.append({
+            "id": row.get("ID") or "",
             "service": row.get("Service") or row.get("Name"),
             "state": (row.get("State") or "").lower(),          # running | exited | created | ...
             "health": (row.get("Health") or "").lower() or None,  # healthy | unhealthy | starting | ""
@@ -177,4 +178,62 @@ def ps(slug: str, compose_file: Path, cwd: Path | None = None) -> list[dict]:
             "exit_code": row.get("ExitCode"),
             "ports": ports,
         })
+    return out
+
+
+def health(ids: list[str]) -> dict[str, dict]:
+    """Restart/exit history for containers, keyed by the id that was passed in.
+
+    `compose ps` reports the CURRENT state but not the history, so a service that has
+    been crash-looping all night still reads `running` the moment you look at it.
+    Docker itself keeps the history, and its RestartCount counts only restart-policy
+    restarts — crashes, never an operator's deliberate restart — which is exactly the
+    distinction a hand-rolled counter in this codebase kept getting wrong.
+
+    Each entry: {restarts, oom_killed, exit_code, started_at}. Best-effort: an id that
+    no longer exists is simply absent, and a docker failure yields {} rather than
+    raising, because health detail must never break a status read.
+    """
+    ids = [i for i in ids if i]
+    if not ids:
+        return {}
+    docker = _docker()
+    if not docker:
+        return {}
+    fmt = "{{.Id}}\t{{.RestartCount}}\t{{.State.OOMKilled}}\t{{.State.ExitCode}}\t{{.State.StartedAt}}"
+    try:
+        r = subprocess.run([docker, "inspect", "--format", fmt, *ids],
+                           capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warning("container health probe failed: %s", e)
+        return {}
+    # A missing id makes docker exit non-zero while still printing every id it DID
+    # find, so parse stdout regardless of the return code.
+    found: dict[str, dict] = {}
+    for line in (r.stdout or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) != 5:
+            continue
+        full_id, restarts, oom, exit_code, started = parts
+        try:
+            restart_n = int(restarts)
+        except ValueError:
+            restart_n = 0
+        try:
+            exit_n = int(exit_code)
+        except ValueError:
+            exit_n = None
+        found[full_id] = {
+            "restarts": restart_n,
+            "oom_killed": oom.strip().lower() == "true",
+            "exit_code": exit_n,
+            "started_at": started.strip() or None,
+        }
+    # Callers hold the short id from `ps`; docker answers with the full one.
+    out: dict[str, dict] = {}
+    for want in ids:
+        for full_id, info in found.items():
+            if full_id == want or full_id.startswith(want):
+                out[want] = info
+                break
     return out

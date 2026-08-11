@@ -26,12 +26,18 @@ is all the concurrency control this needs.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import socket
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger("workshop.port_registry")
+
+RECONCILE_INTERVAL = 15.0  # seconds between reconcile passes
 
 # Per-kind allocation windows. Distinct ranges so a preview, a single-process
 # deploy, and a multi-service app of the same project never fight for a port even
@@ -163,6 +169,28 @@ def reconcile() -> dict:
             _save(data)
         after = set(data["allocations"].keys())
     return {"released": sorted(before - after)}
+
+
+async def reconcile_loop(interval: float = RECONCILE_INTERVAL) -> None:
+    """Run reconcile() forever on `interval`. Started from the backend lifespan.
+
+    This is all that remains of the old app_monitor: it used to also re-spawn crashed
+    subprocess services with exponential backoff, but the container backend retired
+    that in favour of docker's own restart policy, and the re-spawn path had been
+    unreachable ever since. Freeing the ports of dead processes is still ours.
+
+    A failed pass is logged and the loop continues — reconciliation must not die
+    quietly, or ports leak until the next backend restart.
+    """
+    log.info("port reconcile loop started (interval=%ss)", interval)
+    while True:
+        try:
+            await asyncio.to_thread(reconcile)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("port reconcile pass failed")
+        await asyncio.sleep(interval)
 
 
 def allocate(owner: str, kind: str = "app", *, pid: int | None = None,

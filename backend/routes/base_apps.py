@@ -269,9 +269,10 @@ async def deploy_status(slug: str):
 # Start/stop/status an app made of SEVERAL cooperating services (e.g. a backend
 # API + a frontend + a worker, plus docker deps). Each service is a scoped
 # subprocess on a centrally-allocated port; build + spawn run on a background
-# thread (status reflects a live state machine). app_monitor restarts a service
-# that crashes while the app is desired-running. This supersedes single-process
-# /deploy for multi-service apps; /deploy stays for trivial one-process projects.
+# thread (status reflects a live state machine). A service that crashes is brought
+# back by docker's restart policy, and its restart count comes from docker. This
+# supersedes single-process /deploy for multi-service apps; /deploy stays for
+# trivial one-process projects.
 
 
 @router.get("/run/{slug}/manifest")

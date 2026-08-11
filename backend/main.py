@@ -39,10 +39,10 @@ async def lifespan(app: FastAPI):
                 log.warning("app %s startup hook failed: %s", spec.id, e)
         for loop in spec.background:
             app.state._app_bg.append(asyncio.create_task(loop()))
-    # App platform: keep desired-running multi-service apps alive (restart crashed
-    # services with backoff) and reconcile the port registry each pass.
-    from services import app_monitor
-    app.state._bg_app_monitor = asyncio.create_task(app_monitor.monitor_loop())
+    # App platform: free the ports of processes that have died. Apps themselves are
+    # kept alive by docker's restart policy, not by us.
+    from services import port_registry
+    app.state._bg_port_reconcile = asyncio.create_task(port_registry.reconcile_loop())
     # Deploy watcher: auto-deploy autonomous Deploys when their source branch
     # moves forward at the git remote. Respects both autonomy overrides.
     from services import deploy_watcher
@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
         pass
     yield
     for t in [*getattr(app.state, "_app_bg", []),
-              getattr(app.state, "_bg_app_monitor", None),
+              getattr(app.state, "_bg_port_reconcile", None),
               getattr(app.state, "_bg_deploy_watcher", None),
               getattr(app.state, "_bg_job_reconcile", None)]:
         if t:

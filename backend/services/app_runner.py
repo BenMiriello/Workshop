@@ -14,9 +14,9 @@ several cooperating servers (gengui = a Bun API `core` + a Vite `frontend` + a P
   - Build + spawn happen on a background thread (installs take minutes), so the HTTP
     call returns immediately and status reflects a live state machine
     (pending → building → starting → running / failed).
-  - A **desired state** (running/stopped) is persisted so app_monitor can restart a
-    service that crashed while the app is meant to be up — the "autonomously monitor
-    and fix" requirement.
+  - A **desired state** (running/stopped) is persisted so an app comes back after a
+    backend restart. Keeping a crashed service up is docker's job, via the
+    `restart: unless-stopped` policy compose_gen writes into every generated file.
 
 This is the LocalRunner of docs/workshop-v1/05 generalized to multiple services. The
 manifest is the contract a future RemoteRunner reads unchanged; only the spawn backend
@@ -921,6 +921,9 @@ def _container_services(slug: str, manifest: AppManifest, project_dir: Path) -> 
                     rows[r["service"]] = r
         except container_runtime.ComposeError:
             pass
+    # Restart history, which `ps` does not carry. Docker counts only restart-policy
+    # restarts here, so this is crashes and never a deliberate restart.
+    chealth = container_runtime.health([r.get("id", "") for r in rows.values()])
     persisted = _STATE.get(slug, {}).get("services", {})
     exposed = next((s for s in manifest.services if s.expose and s.enabled), None)
     services: list[dict] = []
@@ -940,6 +943,7 @@ def _container_services(slug: str, manifest: AppManifest, project_dir: Path) -> 
         if status == "running":
             healthy = True if health in ("healthy", None, "") else False
         port = persisted.get(spec.name, {}).get("port") if spec is exposed else None
+        h = chealth.get((ps or {}).get("id", ""), {})
         services.append({
             "name": spec.name,
             "status": status,
@@ -949,7 +953,10 @@ def _container_services(slug: str, manifest: AppManifest, project_dir: Path) -> 
             "expose": spec.expose,
             "healthy": healthy,
             "error": persisted.get(spec.name, {}).get("error"),
-            "restarts": 0,
+            "restarts": h.get("restarts", 0),
+            "oom_killed": h.get("oom_killed", False),
+            "exit_code": h.get("exit_code"),
+            "started_at": h.get("started_at"),
         })
     deps: list[dict] = []
     for dep in manifest.deps:
@@ -1184,7 +1191,10 @@ def restart_service(slug: str, svc_name: str) -> dict:
     sstate["status"] = "running"
     sstate["started_at"] = time.time()
     sstate["error"] = None
-    sstate["restarts"] = sstate.get("restarts", 0) + 1
+    # `restarts` deliberately does NOT count this. Every call here is somebody
+    # pressing Restart, and a tally of operator restarts is not health: it read as a
+    # crashloop on a service that had simply been redeployed 425 times. The number
+    # only means crash restarts now, and only docker is in a position to count those.
     port_registry.set_pid(_app_owner(slug, svc_name), pid)
     _reflect_primary_surface(slug, manifest)
     _persist_state()
@@ -1226,7 +1236,8 @@ def app_status(slug: str) -> dict:
         status = s.get("status")
         healthy = None
         if status == "running" and not alive:
-            # Crashed since last touch — reflect it (monitor decides on restart).
+            # Crashed since last touch. Nothing restarts it: the subprocess backend is
+            # the fallback for a host without docker and has no supervisor.
             status = "failed"
             s["status"] = "failed"
             s["error"] = s.get("error") or "process exited"
@@ -1242,7 +1253,13 @@ def app_status(slug: str) -> dict:
             "expose": s.get("expose", False),
             "healthy": healthy,
             "error": s.get("error"),
+            # Always 0 on this path: nothing observes crashes for a bare subprocess,
+            # so there is no honest number to report. The container backend fills
+            # these from docker's own history.
             "restarts": s.get("restarts", 0),
+            "oom_killed": False,
+            "exit_code": None,
+            "started_at": None,
         })
     running = sum(1 for s in services if s["status"] == "running")
     total = sum(1 for s in services if s["status"] != "disabled")
