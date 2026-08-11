@@ -125,9 +125,52 @@ EXEMPT = (
 HEX = re.compile(r"#[0-9a-fA-F]{3}(?:[0-9a-fA-F]{3})?\b")
 NOT_ALLOWED = re.compile(r"not-allowed")
 # Emoji = decorative pictographs (📝 🛠 🔍 …), all in the astral planes + flags.
-# Deliberately NOT typographic marks (→ ✓ ≈ · —) which are legitimate in labels
+# Deliberately NOT typographic marks (→ ✓ ≈ ·) which are legitimate in labels
 # and the design system itself uses ("Saved ✓", "View → Edit → Save").
+# The em-dash used to be on that allowed list. It is now its own rule below.
 EMOJI = re.compile("[" "\U0001F000-\U0001FAFF" "\U0001F1E6-\U0001F1FF" "]")
+# CLAUDE.md rule 11: no em-dash in anything a user reads. Operator instruction,
+# 2026-08-11. A sweep removed 144 of them; this is what stops the 145th, because
+# a rule nobody checks is a rule that decays.
+#
+# It looks only INSIDE double-quoted and backtick string literals, and that
+# precision is the point. The obvious version — flag the character anywhere on
+# the line — fires on every comment in the app, and rule 11 exempts comments
+# because they are not copy. A check that cries wolf gets switched off, so this
+# one only speaks when it is right.
+#
+# Single-quoted strings are deliberately NOT scanned. Prose is full of
+# apostrophes, so a naive single-quote matcher reads "can't show — built so the
+# loudest birds don't dominate" as a string literal running from `can'` to
+# `don'`, and reports a comment as copy. Double quotes and backticks are what
+# this codebase writes copy in anyway.
+#
+# Known limit, stated so nobody assumes more than it does: bare JSX prose
+# (<p>text — more</p>) is not caught, because telling it from a comment
+# continuation line needs parser state this scanner does not carry. Rule 11
+# still applies there; this catches the common case, not every case.
+#
+# Exempt: code that MATCHES or STRIPS an em-dash rather than displaying one, a
+# regex character class or a .replace() removing it from model output. Those are
+# the enforcement, and flagging them would mean deleting the fix.
+_DQ_OR_BACKTICK = re.compile(r'"([^"\\]*(?:\\.[^"\\]*)*)"|`([^`\\]*(?:\\.[^`\\]*)*)`')
+_HANDLES_DASH = re.compile(r"replace\s*\(|RegExp|re\.compile|\[\^?[^\]]*—")
+
+
+_COMMENT_LINE = re.compile(r"^\s*(//|\{\s*/\*|/\*|\*)")
+
+
+def em_dash_in_copy(text):
+    if "—" not in text or _HANDLES_DASH.search(text):
+        return False
+    # A whole-line comment is never copy, even when it quotes a string to
+    # describe a data format ("steps — url"). Only the leading-marker case is
+    # skipped, which is unambiguous; a trailing comment after code still gets
+    # scanned, and that has been harmless.
+    if _COMMENT_LINE.match(text):
+        return False
+    return any("—" in (m.group(1) or m.group(2) or "")
+               for m in _DQ_OR_BACKTICK.finditer(text))
 # Page width belongs to the shell (--page-max / --page-max-wide / --measure), not
 # to a page. Small element caps are fine (a 150px number input, a 420px filter
 # column), so this only fires at >=600px, which is container territory: nothing
@@ -155,6 +198,8 @@ def scan_line(path, lineno, text, out):
         out.append((path, lineno, "raw-hex", text.strip()[:80]))
     if EMOJI.search(text):
         out.append((path, lineno, "emoji", text.strip()[:80]))
+    if em_dash_in_copy(text):
+        out.append((path, lineno, "em-dash", text.strip()[:80]))
     if NOT_ALLOWED.search(text):
         out.append((path, lineno, "not-allowed", text.strip()[:80]))
     if BROWSER_DIALOG.search(text):
