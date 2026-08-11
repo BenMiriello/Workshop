@@ -52,6 +52,15 @@ def dev_mode_on(monkeypatch):
     assert app_runner.dev_mode_on()
 
 
+@pytest.fixture
+def projects_client() -> TestClient:
+    """The projects router at the prefix main.py mounts it at, so the paths under
+    test are the paths in the §2 table."""
+    app = FastAPI()
+    app.include_router(projects_route.router, prefix="/projects")
+    return TestClient(app, raise_server_exceptions=False)
+
+
 def _self_project_slug() -> str:
     """Whatever the self registry row is called today. Asked of the predicate
     rather than hardcoded, because the whole point of the gate is that renaming
@@ -165,6 +174,41 @@ class TestDoor3SelfProjectRow:
             tasks_all.launch_task_run(f"project:{_self_project_slug()}", "any-id")
         assert e.value.status_code == 403
 
+    def test_it_is_not_listed_as_a_project(self, projects_client):
+        # §4: exactly one name resolves to the platform repo, and it is the
+        # top-level `development` scope. `GET /api/projects/` used to return the
+        # self row, so the Projects page rendered a project card for the
+        # platform repo and Home listed it among recent projects.
+        r = projects_client.get("/projects/")
+        assert r.status_code == 200, r.text
+        slugs = [p["slug"] for p in r.json()]
+        assert _self_project_slug() not in slugs
+        assert slugs, "the filter must not empty the whole projects list"
+
+    def test_no_listed_project_resolves_to_the_platform_repo(self, projects_client):
+        # The strong form: whatever a row is called, none of the listed dirs is
+        # the Workshop's own tree.
+        for p in projects_client.get("/projects/").json():
+            assert not app_runner.is_self_dir(p["dir"]), \
+                f"project {p['slug']} is the platform repo"
+
+    def test_it_is_still_absent_with_developer_mode_on(self, projects_client, dev_mode_on):
+        # Not a dev-mode gate. The self row is not an ordinary project on a
+        # developer's box either; there it is reached as the `development`
+        # scope, which is a different surface with a different name.
+        slugs = [p["slug"] for p in projects_client.get("/projects/").json()]
+        assert _self_project_slug() not in slugs
+
+    def test_it_is_still_addressable_by_slug(self, projects_client):
+        # Deliberate (see routes/projects.get_project): the listing stops
+        # OFFERING the platform repo as a project; the per-project routes stay
+        # resolvable, because ADR 0014 gates the run path with a 403 that says
+        # why, and a 404 from `_ensure_project` would replace that with "not
+        # found" and take the autonomy config down with it.
+        r = projects_client.get(f"/projects/{_self_project_slug()}")
+        assert r.status_code == 200, r.text
+        assert app_runner.is_self_dir(r.json()["dir"])
+
     def test_renaming_the_row_would_not_reopen_it(self, monkeypatch, tmp_path):
         # The gate is the directory, so a row called anything at all is refused
         # while it points at the platform repo. This is the property that makes
@@ -227,12 +271,8 @@ class TestDoor5AgentScope:
 
 class TestDoor6AutonomyRunEndpoint:
     @pytest.fixture
-    def client(self):
-        app = FastAPI()
-        # Same prefix main.py mounts it at, so the path under test is the path
-        # in the §2 table.
-        app.include_router(projects_route.router, prefix="/projects")
-        return TestClient(app, raise_server_exceptions=False)
+    def client(self, projects_client):
+        return projects_client
 
     def test_the_endpoint_refuses_with_a_reason_the_ui_can_show(self, client):
         r = client.post(f"/projects/{_self_project_slug()}/autonomy/run")

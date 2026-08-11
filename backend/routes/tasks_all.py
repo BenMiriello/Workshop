@@ -213,111 +213,16 @@ async def list_scopes() -> dict:
     return {"scopes": keys, "pickup": {k: scope_pickup(k) for k in keys}}
 
 
-# ---- Autonomy scopes (central management surface) --------------------------
-# One row per manageable autonomy scope: every project + every registry agent.
-# The per-scope autonomy endpoints (routes.projects.get_autonomy and the agent
-# detail endpoint) own the preset/queue/run summaries; this route reuses those
-# exact helpers so the central Autonomy surface can never disagree with the
-# per-scope panels. Lives under this router (prefix /tasks) at
-# GET /api/tasks/autonomy-scopes, since tasks_all is the mounted router here.
-
-
-def _last_run_summary(last: dict | None) -> dict | None:
-    """A run down to the three fields the central list shows (id/status/ended)."""
-    if not last:
-        return None
-    return {
-        "id": last.get("id"),
-        "status": last.get("status"),
-        "ended_at": last.get("ended_at"),
-    }
-
-
-def _agent_run_state(agent_id: str) -> tuple[bool, dict | None]:
-    """(running, last_job) for an agent scope, derived from the Job store the
-    same way the project run-state is."""
-    recs = jobs.read(agent_id=agent_id, limit=1)
-    last = recs[0] if recs else None
-    running = bool(last and last.get("status") == "running")
-    return running, last
-
-
-@router.get("/autonomy-scopes")
-async def autonomy_scopes() -> dict:
-    """Every manageable autonomy scope, summarized consistently with the
-    per-scope autonomy endpoints. Each row:
-      {scope_key, kind, title, preset, running,
-       queue:{ready,doing,in_review,blocked}, awaiting_count,
-       last_run:{id,status,ended_at}|null}
-
-    No `depth`: it was reported here and rendered in two places, and read by
-    nothing that runs (docs/system-honesty-plan-2026-08-10.md item 19).
-    Bounded: one pass over the projects registry + the agents roster.
-
-    The platform repo appears here exactly once, as `development`, and only in
-    developer mode (ADR 0014). Its registry row carries the `self` flag, so it is
-    recognised by what it resolves to rather than by its key: renaming the row
-    cannot smuggle it back in as an ordinary project."""
-    # Lazy imports keep this route free of any module-load ordering concern with
-    # the project/agent routers (neither imports tasks_all, so there is no cycle).
-    from routes import projects as projects_route
-    from routes import agents as agents_route
-    from services import agents_registry, app_runner, triggers
-
-    rows: list[dict] = []
-
-    # ---- Projects (+ the self row, surfaced as `development`) ----
-    reg = projects_route._load_registry()
-    dev_on = app_runner.dev_mode_on()
-    for slug, raw in (reg.get("projects") or {}).items():
-        if raw.get("state") == "retired":
-            continue
-        is_self = app_runner.is_self_project(slug)
-        if is_self and not dev_on:
-            continue
-        autonomy = raw.get("autonomy") or {}
-        trigs = projects_route._stored_triggers(autonomy)
-        preset = autonomy.get("preset") or triggers.triggers_to_preset(trigs)
-        running, last = projects_route._run_state(slug)
-        snap = projects_route._queue_snapshot(projects_route._project_dir(slug))
-        q = snap["queue"]
-        rows.append({
-            "scope_key": "development" if is_self else f"project:{slug}",
-            "kind": "development" if is_self else "project",
-            "title": raw.get("title") or slug,
-            "preset": preset,
-            "running": running,
-            "queue": {"ready": q["ready"], "doing": q["doing"],
-                      "in_review": q["in_review"], "blocked": q["blocked"]},
-            "awaiting_count": len(snap["awaiting"]),
-            "last_run": _last_run_summary(last),
-        })
-    # Development sorts above everything else: it is the narrowest scope and the
-    # one a developer is usually in, and the picker orderings elsewhere agree.
-    rows.sort(key=lambda r: 0 if r["kind"] == "development" else 1)
-
-    # ---- Agents (assistant + builder registry agents, incl. memory-keeper) ----
-    for rec in agents_registry.list_agents():
-        slug = rec.get("slug")
-        if not slug:
-            continue
-        preset = triggers.triggers_to_preset(rec.get("triggers") or [])
-        snap = agents_route._agent_queue_snapshot(rec)
-        q = snap["queue"]
-        running, last = _agent_run_state(rec.get("id") or slug)
-        rows.append({
-            "scope_key": f"agent:{slug}",
-            "kind": "agent",
-            "title": rec.get("name") or slug,
-            "preset": preset,
-            "running": running,
-            "queue": {"ready": q["ready"], "doing": q["doing"],
-                      "in_review": q["in_review"], "blocked": q["blocked"]},
-            "awaiting_count": len(snap["awaiting"]),
-            "last_run": _last_run_summary(last),
-        })
-
-    return {"scopes": rows, "count": len(rows)}
+# ---- Autonomy scopes: REMOVED ----------------------------------------------
+# `GET /api/tasks/autonomy-scopes` and its only consumer,
+# frontend/src/components/AutonomyScopes.tsx, are both deleted (2026-08-11).
+# The component was never imported by any route or page, so the endpoint had
+# zero live callers, and the component's row type predated the `development`
+# kind this endpoint had learned to emit: a `development` row would have taken
+# its agent branch and PUT an autonomy preset to `/api/agents/` with an empty
+# slug. A control that is wired wrong and waiting to be switched on is worse
+# than no control. Per-scope autonomy still lives where it is edited:
+# `GET/PUT /api/projects/{slug}/autonomy` and the agent detail endpoint.
 
 
 # ---- Create ----------------------------------------------------------------

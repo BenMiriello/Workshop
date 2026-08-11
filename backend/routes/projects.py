@@ -191,17 +191,71 @@ async def list_templates() -> list[dict]:
 
 # ---- List / get -------------------------------------------------------------
 
+def _is_self_row(raw: dict) -> bool:
+    """Is this registry row the platform repo (the Workshop's own source)?
+
+    The same rule as `app_runner.is_self_project` — the `self` flag, or a dir
+    that resolves to the repo root — asked of a row already in hand, so listing
+    N projects does not re-read and re-parse the registry N times. The directory
+    half delegates to `app_runner.is_self_dir`, the one predicate ADR 0014 gates
+    on, so a renamed row cannot slip back in as an ordinary project."""
+    from services import app_runner
+
+    if raw.get("self"):
+        return True
+    d = raw.get("dir")
+    return bool(d) and app_runner.is_self_dir(d)
+
+
 @router.get("/")
 async def list_projects() -> list[Project]:
+    """Every registered project EXCEPT the platform repo.
+
+    The `self: true` row is the Workshop's own source tree. It lives in this
+    registry because that is where its directory and its autonomy config are
+    stored, but it is not a project: §4 of
+    `docs/platform-redesign/dev-mode-and-development-scope-2026-08-09.md` says
+    exactly one name resolves to the platform repo and that name is the
+    top-level `development` scope. Listing the row here put a project card for
+    the platform on the Projects page and in Home's recents, and offered it in
+    the agent-scope pickers, which is precisely the alias the redesign removes.
+
+    Filtered in BOTH modes, not only when developer mode is off. The row is not
+    an ordinary project on a developer's box either; there it is reached as the
+    `development` scope, which is a different surface with a different name.
+
+    `GET /api/projects/{slug}` for the self row deliberately KEEPS WORKING — see
+    the note on `get_project`."""
     data = _load_registry()
     items = []
     for slug, raw in (data.get("projects") or {}).items():
+        if _is_self_row(raw):
+            continue
         items.append(Project(slug=slug, **raw))
     return sorted(items, key=lambda p: p.last_touched, reverse=True)
 
 
 @router.get("/{slug}")
 async def get_project(slug: str) -> Project:
+    """One project by slug, INCLUDING the self row. Deliberate, not an oversight.
+
+    The choice was 404 the platform repo here too, or keep it addressable and
+    gate only the listing. Kept addressable, for two reasons:
+
+    1. ADR 0014 decided to GATE the self row's run path, not to remove it:
+       `POST /{slug}/autonomy/run` calls `assert_run_target` and answers 403
+       when developer mode is off. That is the sanctioned door, and it resolves
+       through `_ensure_project` like every other per-project route. A 404 here
+       would have to come from `_ensure_project` to be consistent, which would
+       take the gated run path, the autonomy config and the queue readout down
+       with it and replace a specific refusal with a misleading "not found".
+    2. The gate is on the working tree, not on reads (ADR 0014: "a scope's store
+       location and a run's working tree are different things, and only the
+       second is gated"). Refusing to describe a row the API demonstrably has
+       would be the kind of boundary-that-is-not-one that ADR unwinds.
+
+    So the platform repo is no longer OFFERED as a project anywhere; a direct
+    link to it still resolves."""
     raw = _ensure_project(slug)
     return Project(slug=slug, **raw)
 
@@ -660,7 +714,8 @@ class TriggersIn(BaseModel):
     # is gone rather than kept as a setting that does nothing
     # (docs/system-honesty-plan-2026-08-10.md, item 19). `depth` went with it for
     # the same reason: no sweep ever consulted it either, and the one readout
-    # that reported it (/api/tasks/autonomy-scopes) no longer does.
+    # that reported it (GET /api/tasks/autonomy-scopes) has since been deleted
+    # outright along with its unmounted component.
     preset: str | None = None
     cron: str | None = None
     # Decision rights for work in this tree: strict | standard | open. Null (or
