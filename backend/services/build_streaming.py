@@ -446,6 +446,45 @@ def _tool_result_text(content: object) -> str:
     return s if len(s) <= 600 else s[:597] + "…"
 
 
+# The CLI's own no-op placeholder, and the ONLY synthetic message we drop.
+#
+# `model: "<synthetic>"` marks a message the CLI wrote itself: the model was
+# never called (zero tokens, stop_reason "stop_sequence"). The CLI emits one to
+# close a turn it decided needs no reply, which happens when a `queue-operation`
+# is followed by the meta prompt "Continue from where you left off." — i.e.
+# after an interrupt, or after a queued message that turned out to be empty.
+# The operator sees a reply that says nothing, in a turn they did not start.
+# Measured 2026-08-11: 106 of these across the session logs, on CLI 2.1.207
+# through 2.1.227.
+#
+# DO NOT widen this to "drop synthetic messages". The same channel carries the
+# things the operator most needs: "You've hit your session limit · resets
+# 9:40pm" (260+ occurrences), "OAuth access token has been revoked",
+# "API Error: 529 Overloaded", "Not logged in · Please run /login". Dropping
+# those would turn a rate limit into a chat that silently stops answering,
+# which is the exact failure the honesty work exists to remove. Match the one
+# dead string, let every other synthetic message through untouched.
+_NO_OP_PLACEHOLDER = "No response requested."
+
+
+def _is_no_op_placeholder(msg: dict) -> bool:
+    """True only for the CLI's empty-turn filler described above."""
+    if msg.get("model") != "<synthetic>":
+        return False
+    blocks = msg.get("content") or []
+    if not isinstance(blocks, list):
+        return False
+    texts, others = [], 0
+    for b in blocks:
+        if isinstance(b, dict) and b.get("type") == "text":
+            texts.append((b.get("text") or "").strip())
+        else:
+            others += 1
+    # A placeholder carries exactly the one string and nothing else. Anything
+    # with a tool call, or any other prose, is a real message.
+    return others == 0 and texts == [_NO_OP_PLACEHOLDER]
+
+
 def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     """Map a single stream-json line into (kind, payload) for the SSE channel.
 
@@ -489,6 +528,7 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
     # the answer was written.
     if t == "control_response":
         return ("meta", ev)
+    # (see _is_no_op_placeholder, applied to `assistant` below)
     # A SIDECHAIN event: emitted by a subagent the turn launched, not by the
     # turn's own model. The CLI marks every one with the id of the Agent tool_use
     # that started it, which is the only way to tell "my subagent ran ls" from "I
@@ -499,6 +539,8 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
         # An assistant message containing content blocks. Forward text blocks
         # as "text" events; tool_use blocks as "tool".
         msg = ev.get("message", {})
+        if _is_no_op_placeholder(msg):
+            return ("meta", ev)
         out: list[tuple[str, dict]] = []
         for block in msg.get("content", []) or []:
             if isinstance(block, dict):
