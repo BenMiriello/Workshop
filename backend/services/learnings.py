@@ -579,8 +579,11 @@ def _block_line(entry: dict) -> str:
     says nothing is worse than no label at a per-turn token cost.
     See docs/decisions/0015-transcript-structure-and-content-provenance.md §8.
     """
+    from services import origin
     src = (entry.get("source") or "").strip()
-    text = entry.get("text", "")
+    # Escaped here rather than at the injection site: this block carries its own
+    # `=== LEARNINGS ===` heading, so escaping it whole would indent that too.
+    text = origin.escape_markers(entry.get("text", ""))
     return f"- {text} [{src}]" if src and src != "anon" else f"- {text}"
 
 

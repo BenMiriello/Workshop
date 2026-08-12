@@ -237,8 +237,9 @@ position already answers the question. Three cases get tagged:
 
 **Blocks are never closed.** Adding `=== END X ===` to some blocks and not others
 is worse than adding it to none: a marker that appears sometimes cannot be relied
-on. Every block uses one shape, `origin.heading()`, with the origin on the
-heading line when there is one.
+on. Every block is `=== NAME ===` on one line, and `origin.heading()` is the
+constructor for the ones that carry an origin; the rest stay literal and produce
+the identical shape.
 
 **Injected bodies are escaped** against both structural conventions: a leading
 `=== ` and the `Operator:` / `Assistant:` / `You:` speaker labels, each escaped
@@ -318,3 +319,7 @@ Deferred, explicitly, with nothing half-built:
   assembled string.
 - **Receipts across compaction.** `_fmt_turns` reads `content` only, so receipts
   in a folded range do not survive `/compact`.
+- **`receipts[].href`.** Every producer knows the id of the thing it wrote
+  (`apply_note_block` has the note id, `apply_learning_note` the hash) and none
+  of them return it, so a receipt cannot yet link to what it created. The field
+  is not declared until something writes it.

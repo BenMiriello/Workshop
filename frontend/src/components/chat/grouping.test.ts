@@ -250,3 +250,17 @@ describe("turnDuration", () => {
     expect(turnDuration(-5000)).toBe("");
   });
 });
+
+describe("turnWorkSummary counts approvals", () => {
+  // A settled turn shows ONLY this line, so a shape that summarises to nothing
+  // is a shape that disappears. A turn whose whole body is a note to the
+  // operator and a permission it was refused has no tool call in it.
+  it("a denied approval is still a step", () => {
+    const denied: ChatSegment = {
+      t: "approval", id: "r1", tool: "Bash", label: "Bash", detail: "", input: {},
+      suggestions: [], state: "denied",
+    };
+    expect(turnWorkSummary([text("I will run the build."), denied]))
+      .toBe("1 step · 1 approval");
+  });
+});

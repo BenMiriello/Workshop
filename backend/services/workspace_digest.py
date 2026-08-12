@@ -90,7 +90,10 @@ def _open_task_lines(root: Path, cap: int, *, label: str | None = None) -> tuple
     def _by(t: dict) -> str:
         kind = ((t.get("source") or {}).get("kind") or "").strip()
         return f" [filed by {kind}]" if kind and kind != "chat" else ""
-    lines = [f"- {prefix}{_clip(t.get('text') or '')}{_by(t)}" for t in top]
+    from services import origin
+    # Same reason as learnings._block_line: the digest carries its own heading.
+    lines = [f"- {prefix}{origin.escape_markers(_clip(t.get('text') or ''))}{_by(t)}"
+             for t in top]
     return lines, total
 
 

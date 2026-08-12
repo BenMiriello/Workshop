@@ -149,19 +149,29 @@ export function turnWorkSummary(work: ChatSegment[]): string {
   let ran = 0;
   let failed = 0;
   let agents = 0;
+  let asked = 0;
   for (const s of work) {
     if (s.t === "agent") { agents++; steps++; continue; }
+    // An APPROVAL is a step. Counting only tools is what made a turn whose
+    // whole body was a note to the operator and a permission it was refused
+    // summarise to nothing, and a settled turn shows only this line.
+    if (s.t === "approval") { asked++; steps++; continue; }
     if (s.t !== "tool") continue;
     steps++;
     if (isFailed(s)) failed++;
     if (s.name === "Edit" || s.name === "Write" || s.name === "NotebookEdit") wrote++;
     else if (s.name === "Bash") ran++;
   }
+  // "" only when there is genuinely nothing to count. A turn's work never
+  // consists of prose alone (the trailing text run is split off as the answer
+  // before this is called), and SettledWork carries its own fallback label
+  // rather than trusting that to stay true.
   if (!steps) return "";
   const parts = [`${steps} step${steps === 1 ? "" : "s"}`];
   if (wrote) parts.push(`${wrote} edit${wrote === 1 ? "" : "s"}`);
   if (ran) parts.push(`${ran} command${ran === 1 ? "" : "s"}`);
   if (agents) parts.push(`${agents} agent${agents === 1 ? "" : "s"}`);
+  if (asked) parts.push(`${asked} approval${asked === 1 ? "" : "s"}`);
   // Failures are named in the collapsed line, because the whole reason to open
   // a settled turn is usually that something in it went wrong.
   if (failed) parts.push(`${failed} failed`);

@@ -48,11 +48,10 @@ export type ModelDisplay = {
   // ended with a Show more (see ElidedContent). A block at or under this is
   // never clamped, so it doubles as the "long enough to elide" threshold.
   previewLines: number;
-  recentSteps: number;     // work steps shown inline on the most recent turn
 };
 
 const MODEL_DISPLAY: Record<string, ModelDisplay> = {
-  default: { previewLines: 10, recentSteps: 2 },
+  default: { previewLines: 10 },
 };
 
 export function modelDisplay(model?: string | null): ModelDisplay {

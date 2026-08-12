@@ -404,11 +404,19 @@ def index_block(scope_key: str) -> str:
 
 
 def get_note(scope_key: str, note_id: str) -> str | None:
-    """The body of `<note-id>.md`, or None if absent."""
+    """The body of `<note-id>.md`, or None if absent.
+
+    The author marker is STRIPPED. It is background structure, not content: it
+    was rendering as the literal first line of every note on the Memory page and
+    landing in the edit textarea. `put_note` re-reads the stored author when a
+    caller supplies none, so a round-trip through the editor cannot lose it."""
     _parse_scope(scope_key)
     _valid_note_id(note_id)
     f = scope_dir(scope_key) / f"{note_id}.md"
-    return f.read_text() if f.exists() else None
+    if not f.exists():
+        return None
+    _, body = split_author(f.read_text())
+    return body
 
 
 # --- authorship --------------------------------------------------------------
@@ -432,13 +440,25 @@ def split_author(body: str) -> tuple[str, str]:
     return m.group("author").strip(), (body or "")[m.end():]
 
 
-def _with_author(body: str, author: str) -> str:
-    """Stamp `author` onto a body, PRESERVING an existing stamp when none is
-    given. An edit that passes no author is an edit, not a claim of anonymity:
-    round-tripping a note through the editor must not silently erase who wrote
-    it."""
+def _stored_author(scope_key: str, note_id: str) -> str:
+    """The author already on disk for this note, or ""."""
+    f = scope_dir(scope_key) / f"{note_id}.md"
+    if not f.exists():
+        return ""
+    try:
+        return split_author(f.read_text())[0]
+    except OSError:
+        return ""
+
+
+def _with_author(body: str, author: str, fallback: str = "") -> str:
+    """Stamp `author` onto a body, PRESERVING what is already recorded when none
+    is given. An edit that passes no author is an edit, not a claim of
+    anonymity: round-tripping a note through the editor must not silently erase
+    who wrote it. The fallback comes from disk rather than from the passed body,
+    because `get_note` strips the marker before anything else sees it."""
     existing, clean = split_author(body)
-    a = (author or "").strip() or existing
+    a = (author or "").strip() or existing or fallback
     return f"<!-- author: {a} -->\n{clean}" if a else clean
 
 
@@ -459,7 +479,8 @@ async def put_note(scope_key: str, note_id: str, title: str, content: str, hook:
     _valid_note_id(note_id)
     d = scope_dir(scope_key)
 
-    _atomic_write(d / f"{note_id}.md", _with_author(content, author))
+    _atomic_write(d / f"{note_id}.md",
+                  _with_author(content, author, _stored_author(scope_key, note_id)))
 
     idx = _read_index(scope_key)
     idx[note_id] = {"title": (title or note_id).strip(), "hook": (hook or "").strip()}

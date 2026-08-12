@@ -897,7 +897,7 @@ def _build_prompt(
     if kindex:
         parts.append(
             "=== KNOWLEDGE (layers, narrowest last - a narrower note wins) ===\n"
-            f"{kindex}"
+            f"{origin.escape_markers(kindex)}"
         )
         log.debug("chat knowledge layers for %s: %s", provider.key, kused)
     # Ambient skills (Phase 5): available skill names + descriptions in the stable
@@ -922,7 +922,7 @@ def _build_prompt(
         log.warning("chat custom_prompt failed for %s: %s", provider.key, e)
         custom = ""
     if custom:
-        parts.append("=== CUSTOM INSTRUCTIONS (operator-set) ===\n" + custom)
+        parts.append("=== CUSTOM INSTRUCTIONS (operator-set) ===\n" + origin.escape_markers(custom))
     # A prior-conversation summary (Phase 3 compaction) is comparatively stable: it
     # only changes when a compaction runs, not every turn, so it sits just before
     # the recent verbatim turns.
@@ -955,7 +955,7 @@ def _build_prompt(
         log.warning("chat context build failed for %s: %s", provider.key, e)
         ctx = ""
     if ctx:
-        parts.append("=== LIVE CONTEXT (current app state) ===\n" + ctx)
+        parts.append("=== LIVE CONTEXT (current app state) ===\n" + origin.escape_markers(ctx))
     if recalled:
         parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append(
@@ -1761,7 +1761,8 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
                 parts.append(
                     "=== LIVE CONTEXT (current app state) ===\n"
                     "This REPLACES every earlier LIVE CONTEXT block in this "
-                    "conversation. Older copies are stale, so ignore them.\n\n" + live
+                    "conversation. Older copies are stale, so ignore them.\n\n"
+                    + origin.escape_markers(live)
                 )
                 new_marks["live_hash"] = digest
 
@@ -1795,7 +1796,7 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
             recalled = ""
         if recalled:
             parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
-    parts.append("=== OPERATOR MESSAGE ===\n" + content)
+    parts.append("=== OPERATOR MESSAGE ===\n" + origin.escape_markers(content))
     # Immediately after the message, because it is a fact ABOUT that message:
     # whether it was typed while the previous turn was still running, and whether
     # others were typed alongside it before any had been answered. Placed last so
@@ -2008,7 +2009,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         if not body:
             continue
         who = "Operator" if m.get("role") == "user" else ((m.get("meta") or {}).get("agent") or "Assistant")
-        recent.append(f"{who}: {body[:1500]}")
+        recent.append(f"{who}: {origin.escape_markers(body[:1500])}")
     convo = "\n\n".join(recent[:-1]) if len(recent) > 1 else ""
 
     definition = (rec.get("definition") or "").strip()
@@ -2085,7 +2086,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         resumed: list[str] = []
         if convo:
             resumed.append("=== RECENT CONVERSATION (context; do not reply to it) ===\n" + convo)
-        resumed.append("=== THE OPERATOR ASKS YOU ===\n" + (question or content))
+        resumed.append("=== THE OPERATOR ASKS YOU ===\n" + origin.escape_markers(question or content))
         turn = await build_streaming.start_turn(
             thread_id=thread_id, agent_slug=slug, prompt="\n\n".join(resumed), model=model,
             cwd=cwd, session_id=sid, resume=True, timeout_s=CHAT_TIMEOUT_S,
@@ -2112,7 +2113,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         "greet, do not introduce yourself, and do not restate the question.",
     ]
     if definition:
-        parts.append("=== YOUR DEFINITION ===\n" + definition)
+        parts.append("=== YOUR DEFINITION ===\n" + origin.escape_markers(definition))
 
     # An agent reads the union of the layers it learns from, exactly as a chat
     # does: workshop (house style) + role:<role> (how this KIND of work is done
@@ -2135,7 +2136,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
 
     if convo:
         parts.append("=== RECENT CONVERSATION (context; do not reply to it) ===\n" + convo)
-    parts.append("=== THE OPERATOR ASKS YOU ===\n" + (question or content))
+    parts.append("=== THE OPERATOR ASKS YOU ===\n" + origin.escape_markers(question or content))
     prompt = "\n\n".join(parts)
 
     turn = await build_streaming.start_turn(

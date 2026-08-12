@@ -211,18 +211,15 @@ export function AnswerBody({
 
 // An interim text block inside the work section.
 //
-// THE THREE LEVELS OF DISCLOSURE, and which control owns which:
-//   1. the whole work block   — one toggle at the TOP of the bubble (WorkSteps)
-//   2. one item inside it     — each tool, subagent, and text block opens itself
-//   3. one message's length   — Show more/less at the BOTTOM of that message
-// Level 1 sits at the top rather than the bottom because the work is ABOVE the
-// answer: a bottom control that expanded it would insert content above itself,
-// pushing the button and the whole answer down and losing the reader's place.
+// TWO LEVELS OF DISCLOSURE, which is the limit worth spending:
+//   1. a group or a run  — one toggle, opening onto the steps it counted
+//   2. one item          — each step, subagent and approval opens itself
+// A message's length clamp is not a third level; it is the same level applied
+// to text, with Show more/less at the BOTTOM of that message.
 //
-// This component is level 3 applied where it was missing. Interim text rendered
-// in full however long it was — the one place in the transcript where "a message
-// shortens itself" was not true, which is what made levels 1 and 3 look like
-// overlapping versions of the same control instead of different scopes.
+// This component is that clamp applied where it was missing. Interim text
+// rendered in full however long it was, the one place in the transcript where
+// "a message shortens itself" was not true.
 function WorkText({ text, cfg, expanded }: { text: string; cfg: ModelDisplay; expanded?: boolean }) {
   return (
     <div className="chat-work__text">
@@ -370,12 +367,16 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
   // work, rather than in a footer row of its own. A turn nobody waited on does
   // not mention its duration at all: a number under every reply is noise, and
   // the question a total answers ("was that slow?") only exists past a wait.
-  const summary = [turnWorkSummary(work), turnDuration(tookMs)].filter(Boolean).join(" · ");
+  //
+  // The work summary comes FIRST and is never omitted. A duration on its own
+  // would label the control "45s", which says nothing about what opening it
+  // shows.
+  const summary = [turnWorkSummary(work) || "Steps", turnDuration(tookMs)]
+    .filter(Boolean).join(" · ");
   // A turn blocked on a decision is never summarised away, even when it is no
   // longer the latest: the buttons are the only thing that can restart it.
   const pending = work.some((s) => s.t === "approval" && s.state === "pending");
   if (pending) return <TurnWork work={work} cfg={cfg} nowMs={nowMs} onAnswerPermission={onAnswerPermission} />;
-  if (!summary) return null;
   return (
     <div className="chat-work">
       <button
@@ -399,8 +400,12 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
 // them. There is no wrapper around the whole thing, because there never was one
 // worth naming: the old `.chat-work` div was whatever remained after the answer
 // was taken off the end. See ADR 0015 §1.
-function TurnWork({ work, cfg, nowMs, onAnswerPermission }: {
+function TurnWork({ work, cfg, nowMs, expanded, onAnswerPermission }: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number;
+  // The most recent turn reads in full, the same rule the answer already uses.
+  // Narration on a live turn is there precisely so progress is legible as it
+  // happens, so it must not arrive pre-clamped.
+  expanded?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
   return (
@@ -411,7 +416,7 @@ function TurnWork({ work, cfg, nowMs, onAnswerPermission }: {
           // through WorkText, not AnswerBody, deliberately: a ```ui-card``` the
           // model wrote halfway through a turn and then talked itself out of
           // must not be a live control, and card outcomes persist server-side.
-          ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} />
+          ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
           : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs}
                      onAnswerPermission={onAnswerPermission} />)}
     </>
@@ -448,7 +453,7 @@ export function AssistantTurn({
   return (
     <>
       {work.length > 0 && (isLatest
-        ? <TurnWork work={work} cfg={cfg} nowMs={clock} onAnswerPermission={onAnswerPermission} />
+        ? <TurnWork work={work} cfg={cfg} nowMs={clock} expanded onAnswerPermission={onAnswerPermission} />
         : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
                        onAnswerPermission={onAnswerPermission} />)}
       {answer.map((s, i) =>

@@ -240,36 +240,3 @@ export function agentSummary(seg: AgentSegment): string {
   }
   return steps || "done";
 }
-
-/** How many of a turn's trailing work segments stay inline (unfolded) on the
- *  most recent turn; the rest go behind "Show N earlier steps".
- *
- *  A fixed trailing count folds TEXT the same as a tool chip: an operator
- *  message arriving mid-turn gets acknowledged inline ("Noted, I'll fold that
- *  in after..."), and on any turn with more than a couple of further tool
- *  calls, that acknowledgment folds away with everything else — the one
- *  segment that answers "did you see what I just said" is the one hidden by
- *  default. A tool call is mechanical detail; interim TEXT is the assistant's
- *  own narration, and it reads differently.
- *
- *  So the trailing window EXTENDS backward past its default size to sweep in
- *  the nearest text checkpoint, bounded by `maxRecent` so a chatty turn still
- *  folds something — this is a widened window, not "never fold text": a
- *  narration segment far enough back still folds with the rest of that
- *  stretch of history. Pure and total; work.length === 0 returns 0. */
-export function recentWorkStepCount(
-  work: ChatSegment[], isLatest: boolean, minRecent: number, maxRecent: number,
-): number {
-  if (!isLatest || work.length === 0) return 0;
-  const minN = Math.min(minRecent, work.length);
-  const searchFrom = work.length - Math.min(maxRecent, work.length);
-  // Earliest text checkpoint within the search range but outside the plain
-  // trailing window — the furthest back worth reaching for. Found: pull in
-  // everything from there on. Nothing found within the cap (no checkpoint, or
-  // one too far back to be worth it): fall back to the plain window rather
-  // than growing to the cap for no reason.
-  for (let i = searchFrom; i < work.length - minN; i++) {
-    if (work[i].t === "text") return work.length - i;
-  }
-  return minN;
-}

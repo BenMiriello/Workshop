@@ -78,7 +78,12 @@ function Receipts({ msg }: { msg: ChatMsg }) {
   const typed = msg.meta?.receipts;
   const items = typed?.length
     ? typed
-    : (msg.meta?.notes || []).map((label) => ({ kind: "note", label, href: undefined }));
+    // The same parenthesis rule the write side uses (build_streaming._receipt).
+    // Without it a stored refusal, "(a triager agent may not file tickets)",
+    // reads back as a green tick saying it succeeded.
+    : (msg.meta?.notes || []).map((label) => ({
+        kind: label.trim().startsWith("(") ? "warn" : "note", label,
+      }));
   if (!items.length) return null;
   return (
     <div className="chat-receipts">
