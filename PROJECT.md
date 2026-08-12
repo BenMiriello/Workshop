@@ -67,3 +67,11 @@ so no broad orchestration lock was added (avoids cruft per CLAUDE.md).
   not yet built.
 - 2026-06-22 — Operator: handle interrupted/derailed turns gracefully (don't "fall flat").
   Captured as a TODO to design checkpoint/resume from PROJECT.md + in-progress notes.
+- 2026-08-12 — Operator: the Tickets surface is over-built, and past passes added
+  rather than refined. Direction: make it a normal ticket manager and delete the
+  leftovers, not just hide them. Shipped: four tabs collapsed to one list (Runs
+  moved to /runs, Review and Inbox deleted as surfaces), controls cut 9 to 4,
+  ticket page cut from ten sections to the standard main-column-plus-rail, and
+  every field with no data in the live store removed along with its backend
+  route. Deletions were chosen by measuring field occupancy across all 179
+  tickets, not by judgement. Net -2431 lines.
