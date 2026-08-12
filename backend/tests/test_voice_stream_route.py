@@ -31,10 +31,20 @@ def quiet(ms: int) -> np.ndarray:
 
 
 @pytest.fixture
-def app(monkeypatch):
+def app(monkeypatch, tmp_path):
     import main
+    from services import ownership
     from routes import voice_stream
 
+    # THE RUNTIME ROOT IS REDIRECTED BEFORE ANY OF THIS RUNS, and that is not
+    # hygiene. The stub below authenticates as owner 6, which on this box is a
+    # REAL operator, so without this every run of this file wrote real chats
+    # into their real chat list: three per run, indistinguishable from the ones
+    # a live socket used to leave behind. That is most of what made the empty-
+    # "Voice"-chat report so hard to read, because the flood appeared to
+    # continue after the bug behind it was fixed. A test that authenticates as
+    # a real owner must never share that owner's storage.
+    monkeypatch.setattr(ownership, "_RUNTIME", tmp_path)
     monkeypatch.setattr(
         voice_stream, "_user", lambda ws: {"id": 6, "email": "test@example.com"}
     )
