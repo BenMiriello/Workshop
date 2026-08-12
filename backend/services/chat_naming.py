@@ -3,11 +3,23 @@
 Shared by the data chat path (POST /messages) and the build streaming path
 (/turns). A new thread shows a first-message snippet as a placeholder; once an
 exchange lands that has a discernible subject we replace it with a concise
-model-generated title. The namer reads the LATEST exchange and may answer NONE
-when there is no topic yet (a greeting, a bare command), so a thin opener no
-longer locks in a meaningless name — it waits for real content, up to a small
-attempt cap. Best-effort: any failure leaves the existing title untouched, and
-we never clobber a title the operator set in the meantime.
+model-generated title.
+
+The namer reads the conversation FROM THE START, one exchange at a time. It may
+answer NONE when an exchange has no topic (a greeting, a bare command), and the
+next attempt moves to the NEXT exchange, so a thin opener never locks in a
+meaningless name and the title still describes what the chat is ABOUT.
+
+It used to read the LATEST exchange instead, which is what made a name land on a
+tangent: turns 1-2 answer NONE, turn 7 goes off on a side question, and the chat
+is permanently named after the side question. Worse, that rename is VISIBLE as a
+change, because the list shows the first-message seed until a real title lands
+(chat_store.list_threads), so the operator watches the name flip mid-conversation
+from "what I opened with" to "some tangent". Naming from the front cannot do
+that: whatever it picks comes from the opening of the conversation.
+
+Best-effort: any failure leaves the existing title untouched, and we never
+clobber a title the operator set in the meantime.
 """
 from __future__ import annotations
 
@@ -26,17 +38,27 @@ def is_blank_title(title: str | None) -> bool:
     return (title or "").strip() in ("", "New chat")
 
 
-def _last_content(messages: list[dict], role: str) -> str:
-    """The MOST RECENT non-empty message from a role. Naming reads the latest
-    exchange, not a frozen first one: a thin opener (a greeting, a bare command)
-    yields no topic, we skip it, and the next turn names from real content
-    instead of locking onto the fragment that happened to be first. Because a
-    title locks the moment one lands, reading the latest never makes it wander —
-    it only lets it start from something worth naming."""
-    for m in reversed(messages):
-        if m.get("role") == role and (m.get("content") or "").strip():
-            return m["content"]
-    return ""
+def _exchanges(messages: list[dict]) -> list[tuple[str, str]]:
+    """Every (user, assistant) pair in the thread, IN ORDER.
+
+    Naming walks this list from the front, so exchange 0 is the conversation's
+    opening and is tried first. Consecutive user messages (the operator typing
+    twice before a reply) collapse onto the first of them: the reply answers the
+    run, and the opener is the part that says what the chat is about."""
+    out: list[tuple[str, str]] = []
+    pending_user: str | None = None
+    for m in messages:
+        content = (m.get("content") or "").strip()
+        if not content:
+            continue
+        role = m.get("role")
+        if role == "user":
+            if pending_user is None:
+                pending_user = content
+        elif role == "assistant" and pending_user is not None:
+            out.append((pending_user, content))
+            pending_user = None
+    return out
 
 
 # A model asked for "output ONLY the title" occasionally breaks character and
@@ -58,13 +80,22 @@ _NON_TITLE_STARTS = (
 # and we treat it exactly like a rejection: skip now, try again next turn.
 _NO_TOPIC = "NONE"
 
-# How many times a chat may return "nothing nameable" before we stop asking.
-# This bounds the ONE cost of the retry loop — an undeterminable chat would
-# otherwise pay a naming call every turn forever. After this it keeps its seed
-# / "New chat" fallback. Only CONTENT rejections count; a transient call
-# failure (rate limit, restart) does not, so the original "name eventually
-# even if the first attempt was unlucky" property still holds.
-_MAX_NAME_ATTEMPTS = 3
+# How many exchanges from the START of the chat may be tried before we stop
+# asking. This doubles as the INDEX of the exchange each attempt reads (attempt
+# N reads exchange N), which is what keeps naming anchored to the opening of the
+# conversation instead of wherever it happens to be now.
+#
+# It bounds the ONE cost of the retry loop: an unnameable chat would otherwise
+# pay a naming call every turn forever. After this it keeps its seed / "New chat"
+# fallback. Only CONTENT rejections count; a transient call failure (rate limit,
+# restart) does not, so "name eventually even if one attempt was unlucky" holds.
+#
+# 5, not 3: each rejection now burns a specific early exchange rather than
+# retrying the same latest one, so the budget is spent walking past greetings and
+# acknowledgements. Three was enough to give up on a chat that opened with a
+# couple of pleasantries, which is one half of "sometimes the name never gets
+# set" — the other half being that an errored turn never schedules a naming pass.
+_MAX_NAME_ATTEMPTS = 5
 
 
 def _looks_like_a_title(title: str) -> bool:
@@ -88,23 +119,26 @@ def compute_title(thread_id: str) -> tuple[str | None, bool]:
     ~2s model call between a read and an off-loop write of the thread dropped
     everything the operator sent in that window.
 
-    Reads the LATEST exchange and retries each turn while the chat is unnamed.
-    A thin opener (a greeting, a bare command) yields NONE and is skipped; the
-    next turn names from real content. A title locks the moment one lands
-    (`is_blank_title`), so reading the latest never makes the name wander — it
-    only lets naming start from something worth naming, and the attempt cap
-    stops it asking forever when nothing ever is.
+    Reads the chat FROM THE FRONT: attempt N names from exchange N. A thin opener
+    (a greeting, a bare command) yields NONE, which counts, so the next attempt
+    reads the next exchange. The title therefore always describes the beginning
+    of the conversation and can never be taken from a later tangent, which is the
+    "the name changed to something irrelevant mid-chat" bug. The attempt cap stops
+    it asking forever when nothing near the start is ever nameable.
     """
     t = chat_store.get_thread(thread_id)
     if t is None or not is_blank_title(t.get("title")):
         return None, False
-    if int(t.get("_name_attempts", 0) or 0) >= _MAX_NAME_ATTEMPTS:
+    attempt = int(t.get("_name_attempts", 0) or 0)
+    if attempt >= _MAX_NAME_ATTEMPTS:
         return None, False
-    msgs = t.get("messages", [])
-    last_user = _last_content(msgs, "user")
-    last_assistant = _last_content(msgs, "assistant")
-    if not last_user or not last_assistant:
-        return None, False   # no full exchange to name yet — transient, uncounted
+    exchanges = _exchanges(t.get("messages", []))
+    if attempt >= len(exchanges):
+        # The exchange this attempt is for has not happened yet. Transient and
+        # UNCOUNTED: waiting for the next reply is not a rejection, and counting
+        # it here would burn the budget on a chat that is simply still young.
+        return None, False
+    last_user, last_assistant = exchanges[attempt]
 
     prompt = (
         "Generate a concise chat title (at most 6 words, Title Case, no quotes, "

@@ -65,18 +65,41 @@ class TestNaming:
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "Subagent Delegation In Chat"
 
-    def test_the_title_describes_the_latest_exchange(self, store, named):
-        """Naming reads the LATEST exchange, so a chat that opened with a thin,
-        unnameable turn is named from the real content that came after rather
-        than frozen on whatever happened to be first. It still names only once
-        (is_blank_title locks it), so this never makes the title wander."""
+    def test_the_title_describes_the_OPENING_exchange(self, store, named):
+        """Naming reads the chat FROM THE FRONT, so the title says what the chat
+        is about rather than what it drifted onto.
+
+        This is the operator's "the name changed to something irrelevant or
+        tangential" bug. It used to read the LATEST exchange: a chat that opened
+        on subagents and later touched the palette generator got permanently
+        named after the palette generator."""
         tid = chat_store.create_thread("general")["id"]
         _exchange(tid, "How do subagents work here?", "They run in an isolated context.")
         _exchange(tid, "Now fix the palette generator", "Regenerated the tokens.")
         chat_naming.generate_title(tid)
         prompt = named["prompt"]
-        assert "palette generator" in prompt
-        assert "How do subagents work here?" not in prompt
+        assert "How do subagents work here?" in prompt
+        assert "palette generator" not in prompt
+
+    def test_a_late_tangent_can_never_become_the_title(self, store, monkeypatch):
+        """Even after many turns, naming is anchored to the start. A chat that
+        goes twenty turns deep and ends on a side question is still named from
+        its opening."""
+        tid = chat_store.create_thread("general")["id"]
+        _exchange(tid, "Design the ticket dependency model", "Here is the edge model.")
+        for _ in range(20):
+            _exchange(tid, "quick aside about the bird mic buzz", "It is a ground loop.")
+        seen = {}
+
+        def capture(prompt, **kw):
+            seen["prompt"] = prompt
+            return {"text": "Ticket Dependency Model"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", capture)
+        chat_naming.generate_title(tid)
+        assert "ticket dependency model" in seen["prompt"].lower()
+        assert "bird mic buzz" not in seen["prompt"]
+        assert chat_store.get_thread(tid)["title"] == "Ticket Dependency Model"
 
     def test_a_named_chat_is_left_alone(self, store, named):
         tid = chat_store.create_thread("general")["id"]
@@ -128,6 +151,7 @@ class TestRejectsNonTitleOutput:
         assert chat_store.get_thread(tid)["title"] == "New chat"
 
     def test_a_later_retry_can_still_succeed(self, store, monkeypatch):
+        """A rejection burns that exchange, so the retry reads the NEXT one."""
         tid = chat_store.create_thread("general")["id"]
         _exchange(tid)
         monkeypatch.setattr(
@@ -136,6 +160,7 @@ class TestRejectsNonTitleOutput:
         )
         chat_naming.generate_title(tid)
         assert chat_store.get_thread(tid)["title"] == "New chat"
+        _exchange(tid, "Split /clear from /new", "Done.")
         monkeypatch.setattr(
             chat_naming.llm_router, "call_cloud",
             lambda *a, **k: {"text": "Subagent Delegation In Chat"},
@@ -174,6 +199,26 @@ class TestNoTopicAndTheAttemptCap:
         assert chat_store.get_thread(tid)["title"] == "Clear Command Split"
 
     def test_it_gives_up_after_the_cap_and_makes_no_more_calls(self, store, monkeypatch):
+        """One call per early exchange, then it stops asking forever."""
+        tid = chat_store.create_thread("general")["id"]
+        for _ in range(chat_naming._MAX_NAME_ATTEMPTS + 4):
+            _exchange(tid, "ok", "Ready.")
+        calls = {"n": 0}
+
+        def none_call(*a, **k):
+            calls["n"] += 1
+            return {"text": "NONE"}
+
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud", none_call)
+        for _ in range(chat_naming._MAX_NAME_ATTEMPTS + 4):
+            chat_naming.generate_title(tid)
+        assert calls["n"] == chat_naming._MAX_NAME_ATTEMPTS
+        assert chat_store.get_thread(tid)["title"] == "New chat"
+
+    def test_waiting_for_the_next_exchange_does_not_burn_the_budget(self, store, monkeypatch):
+        """A young chat whose next exchange has not happened yet must not spend
+        an attempt on it. Otherwise a chat that opens with one thin turn would
+        exhaust the cap while sitting idle and could never be named."""
         tid = chat_store.create_thread("general")["id"]
         _exchange(tid, "ok", "Ready.")
         calls = {"n": 0}
@@ -185,8 +230,12 @@ class TestNoTopicAndTheAttemptCap:
         monkeypatch.setattr(chat_naming.llm_router, "call_cloud", none_call)
         for _ in range(5):
             chat_naming.generate_title(tid)
-        assert calls["n"] == chat_naming._MAX_NAME_ATTEMPTS   # 3 calls, not 5
-        assert chat_store.get_thread(tid)["title"] == "New chat"
+        assert calls["n"] == 1   # only exchange 0 existed to try
+        _exchange(tid, "Design the latitude model", "Here it is.")
+        monkeypatch.setattr(chat_naming.llm_router, "call_cloud",
+                            lambda *a, **k: {"text": "Latitude Model Design"})
+        chat_naming.generate_title(tid)
+        assert chat_store.get_thread(tid)["title"] == "Latitude Model Design"
 
     def test_transient_failures_do_not_count_toward_the_cap(self, store, monkeypatch):
         """A rate limit is not a verdict that a chat is unnameable. Five failed
