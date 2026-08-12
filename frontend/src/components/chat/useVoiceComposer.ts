@@ -71,8 +71,9 @@ export function useVoiceComposer(
   // THE STRIP NO LONGER CARRIES THE TRANSCRIPT. It is one line inside the
   // composer, so anything that grows in it pushes the action row down, and it
   // clipped a long utterance to its first few words anyway. What you are saying
-  // renders as a prospective bubble at the foot of the log (VoicePendingTurn);
-  // the strip is left with the one thing that is genuinely a fixed-size status.
+  // goes into the message box itself, as a draft (see voiceDictation.ts), which
+  // is both where unsent text belongs and the only place it survives the session
+  // ending. The strip keeps the one thing that is genuinely a fixed-size status.
   //
   // A capture problem is a NOTICE, not an error. "You didn't allow the
   // microphone" is a state with a recovery step, and showing it in the red

@@ -1,84 +1,52 @@
 import type { VoiceSnapshot } from "../../lib/voice/client";
 import WorkingIndicator from "./WorkingIndicator";
 
-// A spoken exchange in the log, as ordinary bubbles.
+// The reply being spoken, and nothing else.
 //
-// Voice is a MODE of this chat, not a separate screen: the same thread, the same
-// message log. So a spoken turn renders as normal bubbles, and the only
-// voice-specific touch is the caption cue (heard / speaking / pending) INSIDE a
-// standard assistant bubble.
+// THIS FILE USED TO HOLD THREE COMPONENTS AND THEY ALL DREW THE OPERATOR'S OWN
+// WORDS. A pending bubble from `partial`/`pendingUser`, a committed bubble from
+// `lastUser`, and a held copy of the finished exchange, each mounted on a
+// different phase check and handed off to the next by timing. Four copies of one
+// string, counting the real message, with no identity tying them together:
 //
-// ORDER MATTERS HERE. The settling exchange — the turn that just finished, held
-// until its persisted messages land — renders ABOVE the live overlay, so a fast
-// follow-up turn never hides it. Turn N stays put as plain bubbles until it
-// swaps into the log, which is what removes the vanish-then-pop.
+//   - the handoff blinked, because the next slot mounted on a later commit than
+//     the previous one unmounted (the flicker),
+//   - `lastUser` sat directly above the assistant bubble, so a new utterance
+//     appeared attached to the previous exchange (words moving into an earlier
+//     message),
+//   - the held copy could be on screen at the same time as the live one and as
+//     the real persisted message (the duplication),
+//   - and all of it was socket state, so turning voice off deleted every copy.
+//
+// There is one rule now and it removes the whole class: THE OPERATOR'S WORDS ARE
+// NEVER RENDERED FROM VOICE STATE. Before they are sent they are a draft in the
+// composer; after they are sent they are an ordinary message in the log, written
+// at capture. Voice draws only the half the log does not have yet, which is the
+// reply as it is being spoken.
 
-export function SettlingTurn({ settling }: { settling: { user: string; assistant: string } }) {
+export function VoiceReply({ vsnap }: { vsnap: VoiceSnapshot }) {
   return (
-    <>
-      {settling.user && (
-        <div className="chat-msg user"><div className="chat-bubble">{settling.user}</div></div>
-      )}
-      {settling.assistant && (
-        <div className="chat-msg assistant"><div className="chat-bubble">{settling.assistant}</div></div>
-      )}
-    </>
-  );
-}
-
-// What you are saying RIGHT NOW, as the message it is about to become.
-//
-// This used to be one clipped line in the strip above the composer: nowrap plus
-// an ellipsis, so it showed the first few words of an utterance and never the
-// latest ones — the part you actually want to check. And because the strip sits
-// inside the composer, growing it pushed the whole action row down.
-//
-// A bubble at the foot of the log fixes both by construction. It wraps to as
-// many lines as the speech needs, the log is already pinned to the bottom so the
-// newest words are the visible ones, and it takes its space from the transcript
-// (which scrolls) rather than from the composer (which does not).
-export function VoicePendingTurn({ text, previewing }: { text: string; previewing: boolean }) {
-  return (
-    <div className="chat-msg user">
-      <div className="chat-bubble chat-bubble--speaking" aria-live="polite">
-        {text}
-        {previewing && <span className="chat-voice-catchup" aria-hidden />}
+    <div className="chat-msg assistant">
+      <div className="chat-bubble">
+        {vsnap.sentences.length > 0 ? (
+          <span className="chat-voice-live">
+            {vsnap.sentences.map((s, i) => (
+              <span
+                key={i}
+                className={
+                  s.status === "heard" ? "chat-voice-heard"
+                  : s.status === "speaking" ? "chat-voice-now"
+                  : "chat-voice-pending"
+                }
+              >
+                {s.text}{" "}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <WorkingIndicator label="Thinking" />
+        )}
       </div>
     </div>
-  );
-}
-
-// Muted (captions-only) replies stay in `thinking` the whole time and stream
-// their captions here too, which is why this is keyed on thinking OR speaking
-// rather than on whether audio is playing.
-export function VoiceLiveTurn({ vsnap }: { vsnap: VoiceSnapshot }) {
-  return (
-    <>
-      {vsnap.lastUser && (
-        <div className="chat-msg user"><div className="chat-bubble">{vsnap.lastUser}</div></div>
-      )}
-      <div className="chat-msg assistant">
-        <div className="chat-bubble">
-          {vsnap.sentences.length > 0 ? (
-            <span className="chat-voice-live">
-              {vsnap.sentences.map((s, i) => (
-                <span
-                  key={i}
-                  className={
-                    s.status === "heard" ? "chat-voice-heard"
-                    : s.status === "speaking" ? "chat-voice-now"
-                    : "chat-voice-pending"
-                  }
-                >
-                  {s.text}{" "}
-                </span>
-              ))}
-            </span>
-          ) : (
-            <WorkingIndicator label="Thinking" />
-          )}
-        </div>
-      </div>
-    </>
   );
 }

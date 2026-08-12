@@ -10,7 +10,7 @@ import FoldingNote from "./FoldingNote";
 import type { FoldMode } from "./useCompaction";
 import CopyMessage from "./CopyMessage";
 import QueueNote from "./QueueNote";
-import { SettlingTurn, VoiceLiveTurn, VoicePendingTurn } from "./VoiceTurn";
+import { VoiceReply } from "./VoiceTurn";
 
 // The scrolling transcript. It renders BLOCKS the selector produced, in the
 // order it produced them, and arranges nothing itself.
@@ -45,8 +45,10 @@ import { SettlingTurn, VoiceLiveTurn, VoicePendingTurn } from "./VoiceTurn";
 // had not. The rule now lives in transcriptBlocks.ts, where it is tested.
 //
 // Queued bubbles sit below everything because they have not been sent at all
-// yet; the settling voice exchange sits above the live voice overlay so a fast
-// follow-up never hides the turn that just finished.
+// yet, and the voice overlay sits below them. That overlay is now the REPLY
+// only: a spoken message is written to the thread when it is captured, so it is
+// an ordinary message in the list above, and what is still being said is a draft
+// in the composer. Nothing here renders the operator's own words.
 //
 // Scroll behaviour is not here — it belongs to useLogScroll, which owns the one
 // writer of "am I at the bottom" and every rule that depends on it.
@@ -65,7 +67,7 @@ export default function ChatLog({
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId,
   queued, folding,
-  voiceOn, settling, vsnap,
+  voiceOn, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
   onScroll: () => void;
@@ -107,14 +109,9 @@ export default function ChatLog({
    *  log, where its divider lands, and nowhere else. */
   folding: FoldMode | null;
   voiceOn: boolean;
-  settling: { user: string; assistant: string } | null;
   vsnap: VoiceSnapshot;
 }) {
   const voiceLive = voiceOn && (vsnap.state === "thinking" || vsnap.state === "speaking");
-  // The utterance being spoken right now, as a prospective bubble at the foot of
-  // the log. Only while listening: once the turn commits, `lastUser` in
-  // VoiceLiveTurn owns it and rendering both would print it twice.
-  const voicePending = voiceOn && vsnap.state === "listening" && !!(vsnap.partial || vsnap.pendingUser);
   // `loading` covers the thread list AND this thread's first page, so the empty
   // state cannot be reached before the log has actually arrived. The rule is in
   // chatLogState.ts, where it is tested.
@@ -184,9 +181,15 @@ export default function ChatLog({
           asked for, and the boundary lands after everything above it. */}
       {folding && <FoldingNote mode={folding} />}
 
-      {voiceOn && settling && <SettlingTurn settling={settling} />}
-      {voiceLive && <VoiceLiveTurn vsnap={vsnap} />}
-      {voicePending && <VoicePendingTurn text={vsnap.partial || vsnap.pendingUser} previewing={vsnap.previewing} />}
+      {/* ONE voice element, and it renders the REPLY only.
+          What the operator is saying is in the composer, as a draft (see
+          voiceDictation.ts); what he has said is an ordinary message in the log
+          above, written when it was captured. There used to be three siblings
+          here, each drawing his words from a different field on a different
+          phase check, plus a held copy of the last exchange. Three handoffs a
+          turn, by timing rather than identity, is where the flicker, the
+          duplication and the words landing in the previous bubble came from. */}
+      {voiceLive && <VoiceReply vsnap={vsnap} />}
     </div>
   );
 }

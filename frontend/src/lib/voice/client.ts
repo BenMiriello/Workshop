@@ -35,8 +35,6 @@ export type VoiceSnapshot = {
   interruptRate: number;
   pendingUser: string;
   micFail: MicFailKind | null;
-  /** A live caption is catching up. */
-  previewing: boolean;
   connected: boolean;
   /** False when the loopback echo canceller could not be established. */
   echoCancelled: boolean;
@@ -47,7 +45,7 @@ export type VoiceSnapshot = {
 const EMPTY: VoiceSnapshot = {
   state: "idle", partial: "", lastUser: "", sentences: [], spokenCount: 0,
   error: null, fatal: false, interruptRate: 0, pendingUser: "", micFail: null,
-  previewing: false, connected: false, echoCancelled: false,
+  connected: false, echoCancelled: false,
   tiers: { vad: "", turnEnd: "" },
   engines: { stt: false, tts: false, sttModel: "", ttsVoice: "" },
 };
@@ -301,7 +299,6 @@ export class VoiceClient {
       interruptRate: s.interruptRate,
       // The server is listening but the device says it stopped. Keep the
       // standing device reason visible without turning it into a turn error.
-      previewing: !!s.partial && s.userSpeaking,
       tiers: s.tiers,
     });
   }

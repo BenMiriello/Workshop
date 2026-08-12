@@ -25,7 +25,7 @@ import {
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { useLogScroll } from "./chat/useLogScroll";
-import { useVoiceSettle } from "./chat/useVoiceSettle";
+import { spliceDictation, dictationLost, typedPortion } from "./chat/voiceDictation";
 import { useTurnStream } from "./chat/useTurnStream";
 import { useThreadLog } from "./chat/useThreadLog";
 import { useSendOutbox, type SendOutbox } from "./chat/useSendOutbox";
@@ -323,14 +323,23 @@ export default function Chat({
     onFatal: setErr,
   });
 
-  // A finished spoken exchange stays on screen until its persisted messages
-  // land — see useVoiceSettle.
-  const { settling } = useVoiceSettle({
-    voiceOn, activeId, vsnap,
-    committedCount: () => committedMessages(stateRef.current).length,
-    sync,
-    refreshThreads: () => { void thread.refreshThreads(); },
-  });
+  // A SPOKEN MESSAGE IS A MESSAGE. The server now writes it to the thread the
+  // moment it is captured, before a word of reply exists, exactly as typing
+  // does. So there is nothing to hold on screen and nothing to reconcile: it
+  // arrives through the ordinary log like every other message. Pull it in as
+  // soon as the server says a turn was taken, rather than waiting out a poll.
+  //
+  // This replaces useVoiceSettle, which held a COPY of the finished exchange
+  // and swapped it for the real messages on a timer. It existed only because
+  // voice persisted late, and a copy on screen beside the real thing is what
+  // showed the same words twice.
+  const lastUserSeen = useRef("");
+  useEffect(() => {
+    if (!voiceOn || !vsnap.lastUser || vsnap.lastUser === lastUserSeen.current) return;
+    lastUserSeen.current = vsnap.lastUser;
+    void sync();
+    void thread.refreshThreads();
+  }, [voiceOn, vsnap.lastUser, sync, thread]);
 
   // Following the conversation, composer sizing, and jump-to-latest are one
   // behaviour — see useLogScroll for the rules and the bugs each prevents.
@@ -343,6 +352,35 @@ export default function Chat({
     draft: input, setDraft: setInput, clearForSend: clearInput,
     attachments: draftAttachments, setAttachments: setDraftAttachments,
   } = useDraft(draftKey);
+  // WHAT YOU ARE SAYING GOES IN THE MESSAGE BOX, because that is where unsent
+  // text lives in this app and the box is already mirrored to the server. It
+  // used to be a bubble at the foot of the log drawn from socket state, which
+  // looked exactly like a saved message and was not one: turning voice off
+  // cleared the snapshot and deleted the only copy. Now the words are a draft,
+  // so a dropped socket, a closed tab or a turn that never ends leaves them
+  // sitting in the composer instead of destroying them.
+  //
+  // Voice owns a prefix of the box and nothing else. See voiceDictation.ts.
+  const dictatedRef = useRef("");
+  useEffect(() => {
+    if (!voiceOn) { dictatedRef.current = ""; return; }
+    const owned = dictatedRef.current;
+    const next = vsnap.pendingUser;
+    if (owned === next) return;
+    if (dictationLost(input, owned)) { dictatedRef.current = ""; return; }
+    // TEARDOWN IS NOT A COMMIT. Stopping the session empties the snapshot, which
+    // is indistinguishable here from an utterance being taken -- and acting on it
+    // would splice the dictated words back out of the box and delete them, which
+    // is the exact bug this whole change exists to remove. A session that is not
+    // live relinquishes its prefix and leaves the text where it is.
+    if (!next && (vsnap.state === "idle" || !vsnap.connected)) {
+      dictatedRef.current = "";
+      return;
+    }
+    setInput(spliceDictation(input, owned, next));
+    dictatedRef.current = next;
+  }, [voiceOn, vsnap.pendingUser, input, setInput]);
+
   const [inputFocused, setInputFocused] = useState(false);
   // Whether the operator has held the message box open at its tall size. Plain
   // component state on purpose: it is a view preference for the session, not
@@ -965,7 +1003,6 @@ export default function Chat({
       queued={queuedWaiting}
       folding={folding}
       voiceOn={voiceOn}
-      settling={settling}
       vsnap={vsnap}
     />
   );
@@ -989,7 +1026,7 @@ export default function Chat({
         setInput(v);
         // In voice mode, keep the engine's typing-hold aware of whether the
         // composer currently holds text (so it defers taking its turn).
-        if (voiceOn) vsession.setTyping(v.trim().length > 0);
+        if (voiceOn) vsession.setTyping(typedPortion(v, dictatedRef.current).length > 0);
       }}
       onKeyDown={onKey}
       placeholder={
