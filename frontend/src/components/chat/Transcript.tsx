@@ -5,8 +5,8 @@ import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
-  buildTurnBlocks, groupDetail, groupSummary, isFailed, isRunning, runningSeconds,
-  splitRun, stepDuration, turnDuration, turnWorkSummary, type TurnItem,
+  buildTurnBlocks, groupIsRunning, groupSummary, groupTools, isFailed, isRunning,
+  runningSeconds, stepDuration, turnDuration, turnWorkSummary, type TurnItem,
 } from "./grouping";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
@@ -20,19 +20,24 @@ import { modelDisplay, type ModelDisplay } from "./models";
 // so "change how a tool call looks" meant opening the file that owns the SSE
 // reconnect budget.
 
-// ---- Tool call: compact by default, tap to expand -------------------------
+// ---- Tool call: one bare row, tap to expand -------------------------------
 // One dense row (icon · name · truncated input). Tapping reveals the full input
 // (a command / path / pattern). Mobile-first: the preview truncates with an
 // ellipsis so a tool call never blows out the bubble width.
-// A FAILURE IS MARKED, NOT EXPANDED. Operator instruction, 2026-08-12.
 //
+// THE LEAF HAS NO BOX. It is the same row whether it stands alone in a run or
+// sits inside an opened group, so a step does not change weight by being
+// grouped. The frame belongs to whatever CONTAINS steps: a group, a delegation.
+// See GroupChip.
+//
+// A FAILURE IS MARKED, NOT EXPANDED. Operator instruction, 2026-08-12.
 // This used to auto-open a failed step to show its error, which is the rule
 // GitHub Actions and VS Code both follow. In this transcript it is wrong: a
 // turn here routinely carries several failures that the assistant handled and
 // moved past, and each one unrolling its output mid-scroll is a page of noise
-// about something already dealt with. The failure still stands out and still
-// costs nothing to read: it is never merged into a group, never hidden behind
-// the row cap, and carries its own marker. Opening it is the reader's call.
+// about something already dealt with. The mark is enough, and the group holding
+// it counts its failures in its own header so one is never hidden by being
+// folded away. Opening it is the reader's call.
 //
 // A step still running says how long it has been going, but only past the 10s
 // attention limit, so a fast call never flickers a counter. See grouping.ts.
@@ -72,17 +77,35 @@ function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; no
   );
 }
 
-// A merged run of read-only steps: one row saying what it did and to what.
+// A run of adjacent tool calls, behind one count.
 //
-// The objects stay on the row. A collapsed summary that hides its object is the
-// documented failure mode (microsoft/vscode issue 292985: `rm -rf important_dir`
-// collapsed to "Executed command in terminal"), and the rule that keeps writes
-// and commands out of a group exists for the same reason.
-function GroupChip({ item, nowMs }: { item: Extract<TurnItem, { t: "group" }>; nowMs: number }) {
-  const [open, setOpen] = useState(false);
+// THE GROUP IS THE CONTAINER AND THE STEP IS THE LEAF. This used to be the
+// other way round: a step carried the border, the inset background and the
+// rounded box, and the group had none, on the reasoning that giving the group
+// one too would read as boxes inside boxes. That reasoning was backwards, and
+// the operator called it on 2026-08-12: the group is the thing that contains
+// steps, so the group is the thing that gets the frame, and a step inside it is
+// a bare row. There are no boxes inside boxes because only one of them is a box.
+// A lone step outside any group is the same bare row, so a step looks the same
+// wherever it sits. Same language as AgentChip, which is a container too.
+//
+// A COUNT, NOT A DESCRIPTION, plus the distinct tool names. See grouping.ts:
+// what the steps DID is never summarised, because a summary can be wrong about
+// what it hid. Opening the group shows every step, in order, individually.
+//
+// It opens itself while a step inside it is running (assistant-ui's auto-expand
+// during streaming), and when the reader has opened the settled turn it sits in.
+function GroupChip({ item, nowMs, defaultOpen }: {
+  item: Extract<TurnItem, { t: "group" }>; nowMs: number; defaultOpen?: boolean;
+}) {
+  const live = groupIsRunning(item);
+  const [open, setOpen] = useState(!!defaultOpen || live);
   const id = useId();
+  // A group that starts running after it was drawn opens itself; one the reader
+  // has since closed by hand stays closed, because setOpen is not called again.
+  useEffect(() => { if (live) setOpen(true); }, [live]);
   return (
-    <div className={`chat-group${open ? " is-open" : ""}`}>
+    <div className={`chat-group${open ? " is-open" : ""}${live ? " is-running" : ""}`}>
       <button
         type="button"
         className="chat-group__head"
@@ -93,9 +116,9 @@ function GroupChip({ item, nowMs }: { item: Extract<TurnItem, { t: "group" }>; n
         <ChevronRight size={13} aria-hidden className="chat-group__chev" />
         <Wrench size={12} aria-hidden className="chat-group__icon" />
         <span className="chat-group__name">{groupSummary(item)}</span>
-        <span className="chat-group__preview ws-mono">{groupDetail(item)}</span>
+        <span className="chat-group__preview">{groupTools(item)}</span>
       </button>
-      <div id={id} hidden={!open}>
+      <div id={id} className="chat-group__body" hidden={!open}>
         {open && item.steps.map((s, i) => <ToolChip key={s.id || i} seg={s} nowMs={nowMs} />)}
       </div>
     </div>
@@ -313,26 +336,27 @@ export type AnswerPermission = (a: {
 
 // One contiguous stretch of machine work, between two things the model said.
 //
-// The cap is PER RUN, not per prose block: a turn that wrote no prose at all is
-// common (one that ends on a write, one the operator stopped), and pegging
-// density to how chatty the model was would show more rows for the same work
-// when narrated than when not.
-function StepRun({ items, cfg, nowMs, onAnswerPermission }: {
-  items: TurnItem[]; cfg: ModelDisplay; nowMs: number;
+// NO ROW CAP. There used to be one (keep the last 8 items, hide the rest behind
+// "N earlier steps", with pinning rules so a failure or a pending approval could
+// never be the thing hidden). It existed because every tool call was its own
+// top-level row, so a long stretch of work ran off the screen. Now a stretch of
+// tool calls IS one row until it is opened, which is the same problem solved at
+// the right level: a run's length is the number of groups, subagents and
+// approvals in it, and those are the things the reader wants to see. A second
+// truncation on top of the grouping would hide work for no gain and bring back
+// the pinning rules to stop it hiding the wrong work.
+function StepRun({ items, cfg, nowMs, openGroups, onAnswerPermission }: {
+  items: TurnItem[]; cfg: ModelDisplay; nowMs: number; openGroups?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
-  const [open, setOpen] = useState(false);
-  const id = useId();
-  const { shown, hidden } = splitRun(items);
-  // KEY ON THE STEP, NOT ON ITS POSITION. `i` indexes the SHOWN window, and
-  // splitRun slides that window once a run passes RUN_ROW_CAP, so index k means
-  // a different item after every new step. A chip the operator had opened to
-  // read handed its open state to whatever slid into its slot. Tool and
-  // approval rows were already keyed by id; a group takes its first step's id
-  // (a group only ever grows at its tail) and a delegation has one of its own.
+  // KEY ON THE STEP, NOT ON ITS POSITION. A live run grows, so index k means a
+  // different item after every new step, and a chip the operator had opened to
+  // read would hand its open state to whatever took its slot. Tool and approval
+  // rows carry an id; a group takes its first step's id (a group only ever grows
+  // at its tail) and a delegation has one of its own.
   const renderItem = (item: TurnItem, i: number) =>
     item.t === "group"
-      ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs} />
+      ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs} defaultOpen={openGroups} />
       : item.seg.t === "tool"
         ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} />
         : item.seg.t === "agent"
@@ -343,24 +367,7 @@ function StepRun({ items, cfg, nowMs, onAnswerPermission }: {
             : null;
   return (
     <div className="chat-work">
-      {hidden.length > 0 && (
-        <>
-          <button
-            type="button"
-            className={`chat-work__toggle${open ? " is-open" : ""}`}
-            onClick={() => setOpen((o) => !o)}
-            aria-expanded={open}
-            aria-controls={id}
-          >
-            <ChevronRight size={13} aria-hidden className="chat-work__chev" />
-            {open ? "Hide earlier steps" : `${hidden.length} earlier step${hidden.length > 1 ? "s" : ""}`}
-          </button>
-          <div id={id} className="chat-work__list" hidden={!open}>
-            {open && hidden.map(renderItem)}
-          </div>
-        </>
-      )}
-      <div className="chat-work__list">{shown.map(renderItem)}</div>
+      <div className="chat-work__list">{items.map(renderItem)}</div>
     </div>
   );
 }
@@ -403,8 +410,14 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
         <ChevronRight size={13} aria-hidden className="chat-work__chev" />
         {open ? "Hide steps" : summary}
       </button>
+      {/* ONE CLICK, NOT TWO. Opening a settled turn opens its groups with it.
+          The turn line already says "12 steps"; a group inside it saying "6
+          steps" is the same disclosure twice, and the reader who opened the
+          turn has already asked for exactly what the group would be hiding.
+          Operator-agreed, 2026-08-12. */}
       <div id={id} hidden={!open}>
-        {open && <TurnWork work={work} cfg={cfg} nowMs={nowMs} onAnswerPermission={onAnswerPermission} />}
+        {open && <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups
+                           onAnswerPermission={onAnswerPermission} />}
       </div>
     </div>
   );
@@ -414,12 +427,15 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
 // them. There is no wrapper around the whole thing, because there never was one
 // worth naming: the old `.chat-work` div was whatever remained after the answer
 // was taken off the end. See ADR 0015 §1.
-function TurnWork({ work, cfg, nowMs, expanded, onAnswerPermission }: {
+function TurnWork({ work, cfg, nowMs, expanded, openGroups, onAnswerPermission }: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number;
   // The most recent turn reads in full, the same rule the answer already uses.
   // Narration on a live turn is there precisely so progress is legible as it
   // happens, so it must not arrive pre-clamped.
   expanded?: boolean;
+  // Draw the step groups already open. Set when the reader has opened a settled
+  // turn, so that one click reaches the steps rather than two.
+  openGroups?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
   return (
@@ -431,7 +447,7 @@ function TurnWork({ work, cfg, nowMs, expanded, onAnswerPermission }: {
           // model wrote halfway through a turn and then talked itself out of
           // must not be a live control, and card outcomes persist server-side.
           ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
-          : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs}
+          : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs} openGroups={openGroups}
                      onAnswerPermission={onAnswerPermission} />)}
     </>
   );

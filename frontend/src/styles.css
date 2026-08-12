@@ -811,42 +811,58 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--muted);
 }
 
-/* ---- Merged group: one row for a run of read-only steps ----
-   Same row language as .chat-tool because it IS a row of steps, but it has no
-   box of its own: a group is a summary of siblings, not a container beside
-   them, and giving it a second border made a turn read as boxes inside boxes.
-   Hierarchy comes from the inset body, not from a frame. */
-.chat-group { margin: 0.3rem 0; min-width: 0; }
+/* ---- Step group: a run of adjacent tool calls behind one count ----
+   THE GROUP IS THE CONTAINER, SO THE GROUP GETS THE FRAME. This is the exact
+   reverse of what it was, and the old comment here argued the wrong way round:
+   it said a group "has no box of its own" because giving it one on top of the
+   boxed steps inside would read as boxes inside boxes. True, but the fix was to
+   take the box off the STEP, not to leave the container looking lighter than
+   the things it contains. Operator called it on 2026-08-12. Now exactly one
+   level is a box, matching .chat-agent, which is the other container of steps. */
+.chat-group {
+  margin: 0.3rem 0; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--bg-inset); overflow: hidden;
+}
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
   width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
-  border-radius: var(--radius-md);
 }
-.chat-group__head:hover { color: var(--fg); background: var(--bg-inset); }
-.chat-group__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-group__head:hover { color: var(--fg); }
+/* Same chevron in all three disclosures (step, group, delegation). It means the
+   same thing in each, so it cannot look like three different controls: the step
+   used to take --sys here and the group inherited plain muted, which is the
+   inconsistency that made a group read as the lesser thing. */
+.chat-group__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
 .chat-group.is-open .chat-group__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-group__chev { transition: none; } }
-.chat-group__icon { flex: 0 0 auto; }
+.chat-group__icon { flex: 0 0 auto; color: var(--sys); }
 .chat-group__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
-/* The objects it acted on, clamped at the reader's real width. A collapsed
-   summary that hides its object is the failure this whole rule exists to
-   avoid, so the line is elided, never dropped. */
+/* The distinct tool names, elided at the reader's real width. Names, never a
+   description of what the steps did: see grouping.ts. */
 .chat-group__preview {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
 }
-.chat-group > div { padding-left: 0.6rem; border-left: 2px solid var(--border); }
+/* The steps, one level in. Same treatment as .chat-agent__body, because it is
+   the same relationship: a container opening onto what it contains. */
+.chat-group__body { border-top: 1px solid var(--border); padding: 0.2rem 0.35rem 0.3rem; }
+/* Still working: motion means in-flight and nothing else, matching the
+   `running` status kind. A group holding the live step opens itself, so this
+   marks the header the reader is already looking at. */
+.chat-group.is-running .chat-group__name { color: var(--sys-up); }
 
 /* How long a step took, or has been taking. Tabular so a ticking counter does
    not shift the row it sits on. */
 .chat-tool__time { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
 .chat-tool.is-running .chat-tool__time { color: var(--sys-up); }
-/* A failed step. Opened by default and marked, because a step that failed is
-   usually the reason the turn did what it did next. */
+/* A failed step. Marked, never auto-opened. The mark is the whole treatment now
+   that the row has no frame to tint: colour and weight, not a border, which is
+   design system rule 6 anyway. */
 .chat-tool__failed { flex: 0 0 auto; color: var(--danger); font-weight: var(--fw-semi); }
-.chat-tool.is-failed { border-color: var(--danger); }
+.chat-tool.is-failed .chat-tool__name { color: var(--danger); }
 
 /* ---- Receipts: what the turn changed outside the chat ----
    One row per turn, outside every fold. Quiet by default: a receipt records

@@ -1,5 +1,4 @@
 import type { ChatSegment } from "../../lib/chat";
-import { bashClass } from "./bashClass";
 
 // How a turn's work becomes the rows the transcript draws.
 //
@@ -9,9 +8,39 @@ import { bashClass } from "./bashClass";
 // all — it was whatever was left after the answer was taken off the end, so a
 // turn that narrated mid-flight buried its own narration inside a work box.
 //
-// Prose blocks are the landmarks and runs are the collapsible interstitial
-// between them. That is Linear's rule for issue activity, one level down, and
-// it means the structure comes from the content instead of from a wrapper.
+// GROUPING IS ADJACENT COALESCING BY PART TYPE, and nothing else. Walk the
+// segments in order; consecutive `tool` parts become one group; any other part
+// type ends it. This is the rule every reference implementation uses and it is
+// deliberately the whole rule:
+//
+//   assistant-ui  MessagePrimitive.GroupedParts / ToolGroup: "adjacent parts
+//                 that share a group key are coalesced", key derived from
+//                 part.type via groupPartByType. Trigger shows a count.
+//   AI Elements   <Tool>: one collapsible per call, header is name + status.
+//   VS Code       chat.agent.thinking.collapsedTools: none | always |
+//                 withThinking. Positional, not semantic.
+//
+// WHAT THIS REPLACED, AND WHY IT IS GONE. An earlier version of this file
+// classified each step ("is this shell command read-only?", `bashClass.ts`) and
+// merged by class through an interleave-tolerant window. Three things were
+// wrong with it, all measured over the operator's real logs (419 turns, 13,320
+// tool steps):
+//
+//   1. It REORDERED work. To make "consecutive same class" produce anything on
+//      alternating reads and greps, the window emitted one row per class in
+//      first-appearance order, so 282 of 4,296 runs (6.6%, 397 inversions)
+//      displayed steps out of the order they happened. No product does this and
+//      a transcript that lies about order is worse than a long one.
+//   2. It compressed LESS: 24.4% fewer rows against this rule's 68.0%.
+//   3. It PARAPHRASED. A group summarised as "Edited 5 files, ran 12 commands"
+//      is what drew anthropics/claude-code#46110, and the same instinct one
+//      step further is microsoft/vscode#292985, where `rm -rf important_dir`
+//      collapsed to "Executed command in terminal".
+//
+// (3) is why the group header here is a COUNT and not a description. A count
+// cannot misdescribe what it counted, so no merge allowlist is needed to keep a
+// destructive command out of a group: opening the group shows every step, in
+// order, individually, exactly as it happened.
 //
 // Pure and total: no React, no dates, no mutation of the input. That is what
 // makes the rule testable (grouping.test.ts) rather than only observable by
@@ -21,62 +50,9 @@ import { bashClass } from "./bashClass";
 
 type ToolSegment = Extract<ChatSegment, { t: "tool" }>;
 
-/** What a run of the same kind of step collapses to. The verb is what the
- *  summary line leads with; `noun` is counted after it. */
-type ToolClass = {
-  key: string; verb: string; noun: string;
-  /** A fixed object the whole group acted on, when the group is defined by that
-   *  object rather than by a kind of act. Set only for repeated writes to one
-   *  file, where "Edited MessageList.tsx" says more than "Edited 3 files". */
-  object?: string;
-};
-
-// THE MERGE ALLOWLIST, and it is closed on purpose.
-//
-// Only read-only calls merge. A write or a command is the thing the operator
-// most needs to see and is never folded into a count: microsoft/vscode issue 292985
-// is the cost of getting this wrong, where `rm -rf important_dir` collapsed to
-// "Executed command in terminal" and stayed that way.
-const MERGEABLE: Record<string, ToolClass> = {
-  Read: { key: "read", verb: "Read", noun: "file" },
-  NotebookRead: { key: "read", verb: "Read", noun: "file" },
-  Grep: { key: "grep", verb: "Searched", noun: "time" },
-  Glob: { key: "glob", verb: "Matched", noun: "pattern" },
-  WebFetch: { key: "fetch", verb: "Fetched", noun: "page" },
-  WebSearch: { key: "websearch", verb: "Searched the web", noun: "time" },
-};
-
-// A SHELL COMMAND IS NOT ONE THING, and treating it as one is what made this
-// transcript flat. Measured over 10,847 real steps: Bash is 64% of everything
-// the assistant does, it was excluded wholesale as "a command", and only 6.2%
-// of rows ever merged. But most of that Bash is reading (grep 16%, sed -n 11%,
-// plus ls / cat / wc / find), so it is classified by what it actually does and
-// the read-only ones merge into the SAME classes as the native tools: a shell
-// `grep` and a `Grep` call are the same act, and only the spelling differs.
-//
-// Only what `bashClass` can PROVE is read-only merges. See bashClass.ts; it is
-// conservative by construction, because a false negative costs one extra row
-// and a false positive hides a mutation inside a count.
-const BASH_CLASS: Record<string, ToolClass> = {
-  read: { key: "read", verb: "Read", noun: "file" },
-  grep: { key: "grep", verb: "Searched", noun: "time" },
-  list: { key: "list", verb: "Listed", noun: "path" },
-  inspect: { key: "inspect", verb: "Checked", noun: "thing" },
-};
-
-const WRITE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
-
-/** The file a write touched, as the step recorded it: the input's first token,
- *  because every write tool leads with its path. Empty for anything else. */
-export function writeTarget(seg: ChatSegment): string {
-  if (seg.t !== "tool" || !WRITE_TOOLS.has(seg.name)) return "";
-  return (seg.input || "").trim().split(/\s+/)[0] || "";
-}
-
 /** Is this step still going? A tool carries `at` (when it started) from the
  *  moment it is issued and loses it when its result lands, so "open" is a fact
- *  about the segment rather than a guess from its position. The running step is
- *  never merged and never collapsed: it is the one thing the turn is doing. */
+ *  about the segment rather than a guess from its position. */
 export function isRunning(seg: ChatSegment): boolean {
   return seg.t === "tool" && typeof seg.at === "number" && seg.ok === undefined;
 }
@@ -88,25 +64,10 @@ export function isFailed(seg: ChatSegment): boolean {
   return seg.t === "tool" && seg.ok === false;
 }
 
-/** The class a step merges under, or null when it must stand alone.
- *
- *  Standing alone: anything not on the allowlist (every write and every
- *  command), anything that failed, and anything still running. */
-export function mergeClass(seg: ChatSegment): ToolClass | null {
-  if (seg.t !== "tool") return null;
-  if (isFailed(seg) || isRunning(seg)) return null;
-  if (seg.name === "Bash") {
-    const kind = bashClass(seg.input);
-    return kind ? BASH_CLASS[kind] : null;
-  }
-  return MERGEABLE[seg.name] ?? null;
-}
-
 export type TurnItem =
-  // Two or more adjacent steps of one class, shown as a count and openable.
-  | { t: "group"; cls: ToolClass; steps: ToolSegment[] }
-  // One step on its own row: a write, a command, a failure, a subagent, an
-  // approval, or the step currently running.
+  // Two or more adjacent tool calls, behind one count.
+  | { t: "group"; steps: ToolSegment[] }
+  // One row on its own: a lone tool call, a subagent, or an approval.
   | { t: "step"; seg: ChatSegment };
 
 export type TurnBlock =
@@ -116,103 +77,76 @@ export type TurnBlock =
 
 /** Split a turn's work into prose blocks and the runs of steps between them.
  *
- *  GROUPING IS INTERLEAVE-TOLERANT, and it has to be. "Merge consecutive steps
- *  of the same class" is the rule every product states, and it collapses to
- *  nothing on the commonest exploration shape there is: forty reads alternating
- *  with forty greps has no two adjacent steps of one class, so a strict reading
- *  produces eighty rows and the rule buys exactly zero.
- *
- *  So a WINDOW of groupable steps accumulates until something ungroupable ends
- *  it (a write, a command, a failure, a subagent, an approval, the running
- *  step), and each class in that window emits one row, in the order that class
- *  first appeared. Within a window the display order is by class rather than by
- *  time; across windows, time is preserved exactly. Nothing groupable can hop
- *  over a write or a command, which is what makes the reordering safe.
- */
+ *  Adjacent `tool` segments coalesce. `text`, `agent` and `approval` each break
+ *  the group, because they are different part types: prose is the model
+ *  speaking and a landmark the reader navigates by, a subagent is the one step
+ *  that contains other steps, and an approval is a control the reader may need
+ *  to act on. None of the three may be folded into a count of tool calls. */
 export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
   const blocks: TurnBlock[] = [];
   let run: TurnItem[] = [];
-  // The open window: class key -> its steps, in first-appearance order.
-  let window: { cls: ToolClass; steps: ToolSegment[] }[] = [];
+  let open: ToolSegment[] = [];
 
-  const closeWindow = () => {
-    for (const g of window) {
-      // A group of one is not a group. "Read 1 file" hides the filename in
-      // order to say nothing the row could not have said outright.
-      run.push(g.steps.length === 1
-        ? { t: "step", seg: g.steps[0] }
-        : { t: "group", cls: g.cls, steps: g.steps });
-    }
-    window = [];
+  const closeGroup = () => {
+    if (!open.length) return;
+    // A group of one is not a group. One tool call renders as the row it
+    // already is, rather than as a count of itself that hides its own name.
+    run.push(open.length === 1 ? { t: "step", seg: open[0] } : { t: "group", steps: open });
+    open = [];
   };
   const closeRun = () => {
-    closeWindow();
+    closeGroup();
     if (run.length) blocks.push({ t: "run", items: run });
     run = [];
   };
 
-  // The previous work step, for the same-file write merge below. Null after
-  // prose, because prose closes the run and nothing may merge across it.
-  let prev: ChatSegment | null = null;
-
   for (const seg of work) {
     if (seg.t === "text") {
-      // Prose CLOSES a run, always. An acknowledgement written halfway through
-      // a turn is the model speaking, and a landmark the reader navigates by;
-      // merging steps across it would fold work from before and after one
-      // statement into a single count that describes neither.
       closeRun();
       if (seg.text.trim()) blocks.push({ t: "prose", text: seg.text });
-      prev = null;
       continue;
     }
-    const cls = mergeClass(seg);
-    if (!cls) {
-      closeWindow();
-      // REPEATED WRITES TO ONE FILE COLLAPSE, and only when strictly adjacent.
-      //
-      // Four edits to MessageList.tsx in a row are one act of editing that
-      // file, and Devin merges exactly this case. Adjacency is what keeps it
-      // honest: the window rule reorders groupable steps within a window, and
-      // if writes joined that window a read could hop over a write. So this
-      // looks only at the step immediately before, which a write has already
-      // flushed the window ahead of.
-      //
-      // Different files never merge. "Edited 3 files" hides which, and a write
-      // is the thing the operator most needs to see named.
-      // A failed or still-running write never merges, for the same reason a
-      // failed read does not: the outcome is the whole point of the row, and
-      // folding it into a neighbour's count hides that one of them went wrong.
-      const target = isFailed(seg) || isRunning(seg) ? "" : writeTarget(seg);
-      const last = run[run.length - 1];
-      if (target && prev && !isFailed(prev) && !isRunning(prev)
-          && writeTarget(prev) === target && last) {
-        if (last.t === "group" && last.cls.object === target) {
-          last.steps.push(seg as ToolSegment);
-          prev = seg;
-          continue;
-        }
-        if (last.t === "step" && writeTarget(last.seg) === target) {
-          run[run.length - 1] = {
-            t: "group",
-            cls: { key: `write:${target}`, verb: "Edited", noun: "change", object: target },
-            steps: [last.seg as ToolSegment, seg as ToolSegment],
-          };
-          prev = seg;
-          continue;
-        }
-      }
-      run.push({ t: "step", seg });
-      prev = seg;
+    if (seg.t === "tool") {
+      open.push(seg);
       continue;
     }
-    prev = seg;
-    const open = window.find((g) => g.cls.key === cls.key);
-    if (open) open.steps.push(seg as ToolSegment);
-    else window.push({ cls, steps: [seg as ToolSegment] });
+    closeGroup();
+    run.push({ t: "step", seg });
   }
   closeRun();
   return blocks;
+}
+
+/** The collapsed label for a group: how many steps, and how many went wrong.
+ *
+ *  A COUNT, NEVER A DESCRIPTION. See the header note: a paraphrase is the one
+ *  thing a collapsed group must not do, because it can be wrong about what it
+ *  hid. Failures are named because they are the usual reason to open it. */
+export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
+  const n = item.steps.length;
+  const failed = item.steps.filter(isFailed).length;
+  const base = `${n} step${n === 1 ? "" : "s"}`;
+  return failed ? `${base}, ${failed} failed` : base;
+}
+
+/** The distinct tool names in a group, in the order they first appear.
+ *
+ *  Names, not a summary of what they did. "Bash, Read, Grep" is a fact about
+ *  the group that stays true however the steps are read; "Explored the repo" is
+ *  a guess. This is the same thing AI Elements puts in a single Tool header,
+ *  applied to a group of them. */
+export function groupTools(item: Extract<TurnItem, { t: "group" }>): string {
+  const seen: string[] = [];
+  for (const s of item.steps) if (s.name && !seen.includes(s.name)) seen.push(s.name);
+  return seen.join(", ");
+}
+
+/** Is anything in this group still running? A group holding the step the turn
+ *  is on opens itself, which is assistant-ui's "auto-expand during streaming"
+ *  and the reason collapsing by default costs nothing: you always see the work
+ *  that is actually happening, and only settled work folds away. */
+export function groupIsRunning(item: Extract<TurnItem, { t: "group" }>): boolean {
+  return item.steps.some(isRunning);
 }
 
 /** One line for a whole turn's work, for a turn that is no longer the latest.
@@ -223,8 +157,6 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
  *  that is the right amount for something the reader has already read. */
 export function turnWorkSummary(work: ChatSegment[]): string {
   let steps = 0;
-  let wrote = 0;
-  let ran = 0;
   let failed = 0;
   let agents = 0;
   let asked = 0;
@@ -237,8 +169,6 @@ export function turnWorkSummary(work: ChatSegment[]): string {
     if (s.t !== "tool") continue;
     steps++;
     if (isFailed(s)) failed++;
-    if (s.name === "Edit" || s.name === "Write" || s.name === "NotebookEdit") wrote++;
-    else if (s.name === "Bash") ran++;
   }
   // "" only when there is genuinely nothing to count. A turn's work never
   // consists of prose alone (the trailing text run is split off as the answer
@@ -246,79 +176,12 @@ export function turnWorkSummary(work: ChatSegment[]): string {
   // rather than trusting that to stay true.
   if (!steps) return "";
   const parts = [`${steps} step${steps === 1 ? "" : "s"}`];
-  if (wrote) parts.push(`${wrote} edit${wrote === 1 ? "" : "s"}`);
-  if (ran) parts.push(`${ran} command${ran === 1 ? "" : "s"}`);
   if (agents) parts.push(`${agents} agent${agents === 1 ? "" : "s"}`);
   if (asked) parts.push(`${asked} approval${asked === 1 ? "" : "s"}`);
   // Failures are named in the collapsed line, because the whole reason to open
   // a settled turn is usually that something in it went wrong.
   if (failed) parts.push(`${failed} failed`);
   return parts.join(" · ");
-}
-
-/** The collapsed summary of a merged group: verb, count, noun.
- *
- *  Verb + object + count, and the objects stay visible beside it (see
- *  `groupDetail`). A generic verb with the object hidden is exactly the failure
- *  mode this rule exists to avoid. */
-export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
-  const n = item.steps.length;
-  // A group defined by its object names the object, not a count of them:
-  // "Edited MessageList.tsx" beats "Edited 3 changes", and the count moves to
-  // the detail line where it belongs.
-  if (item.cls.object) return `${item.cls.verb} ${item.cls.object}`;
-  return `${item.cls.verb} ${n} ${item.cls.noun}${n === 1 ? "" : "s"}`;
-}
-
-/** The objects a merged group acted on, as one line. Clamped by CSS at the
- *  reader's real width rather than at a guessed character count, the same way
- *  every other one-line preview in the transcript is. */
-export function groupDetail(item: Extract<TurnItem, { t: "group" }>): string {
-  // The object is already in the summary, so repeating the same path N times
-  // here would say nothing. How many times it was touched is the new fact.
-  if (item.cls.object) {
-    const n = item.steps.length;
-    return `${n} ${item.cls.noun}${n === 1 ? "" : "s"}`;
-  }
-  return item.steps
-    .map((s) => (s.input || "").replace(/\s+/g, " ").trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-// How many rows a single run shows before the rest go behind one control.
-//
-// ONE expander, never a batched loader. GitHub's "N hidden items" is the
-// documented counter-example: it reveals a few more per click and moves the
-// link each time, so reaching the start of a long history takes dozens of
-// clicks.
-export const RUN_ROW_CAP = 8;
-
-/** Rows kept inline, and how many are hidden behind the control.
- *
- *  THE CAP IS PER RUN, not per prose block. Per prose block is undefined for a
- *  turn that wrote no prose at all (common: one that ends on a write, or that
- *  the operator stopped), and it makes visible density a function of how chatty
- *  the model was, so the same work shows more rows when narrated than when not.
- *
- *  The tail is kept, not the head: the most recent work is what the reader is
- *  following. A run that is blocked or broken keeps the row that says so no
- *  matter where it sits, because hiding a pending approval hides the only
- *  control that can restart the turn, and hiding a failure hides why the turn
- *  did what it did next. */
-export function splitRun(items: TurnItem[], cap = RUN_ROW_CAP): {
-  shown: TurnItem[]; hidden: TurnItem[];
-} {
-  if (items.length <= cap) return { shown: items, hidden: [] };
-  const mustShow = (i: TurnItem) =>
-    i.t === "step" &&
-    ((i.seg.t === "approval" && i.seg.state === "pending") || isFailed(i.seg) || isRunning(i.seg));
-  const keep = new Set<number>();
-  for (let i = items.length - 1; i >= 0 && keep.size < cap; i--) keep.add(i);
-  items.forEach((i, k) => { if (mustShow(i)) keep.add(k); });
-  const shown = items.filter((_, k) => keep.has(k));
-  const hidden = items.filter((_, k) => !keep.has(k));
-  return { shown, hidden };
 }
 
 /** How long a finished step took, for its collapsed row. Sub-second steps show

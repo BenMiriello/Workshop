@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import {
-  buildTurnBlocks, groupSummary, groupDetail, splitRun, turnWorkSummary,
-  isRunning, isFailed, mergeClass, stepDuration, runningSeconds, turnDuration, RUN_ROW_CAP,
-  type TurnItem,
+  buildTurnBlocks, groupSummary, groupTools, groupIsRunning, turnWorkSummary,
+  isRunning, isFailed, stepDuration, runningSeconds, turnDuration,
+  type TurnItem, type TurnBlock,
 } from "./grouping";
 
 const read = (path: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> = {}): ChatSegment =>
@@ -11,163 +11,144 @@ const read = (path: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> 
 const grep = (q: string): ChatSegment => ({ t: "tool", name: "Grep", input: q, ok: true });
 const bash = (cmd: string, extra = {}): ChatSegment =>
   ({ t: "tool", name: "Bash", input: cmd, ok: true, ...extra });
+const edit = (path: string): ChatSegment => ({ t: "tool", name: "Edit", input: path, ok: true });
 const text = (s: string): ChatSegment => ({ t: "text", text: s });
+const agent = (name: string): ChatSegment =>
+  ({ t: "agent", name, input: "go", id: `a-${name}`, steps: [], done: true, result: "ok" });
+const approval = (state: "pending" | "denied"): ChatSegment =>
+  ({ t: "approval", id: "r1", tool: "Bash", label: "Bash", detail: "", input: {}, suggestions: [], state });
 
-describe("buildTurnBlocks", () => {
-  it("merges a consecutive run of one class into one group", () => {
-    const blocks = buildTurnBlocks([read("a.ts"), read("b.ts"), read("c.ts")]);
+/** The items of the nth run block. Every test here builds one on purpose, so a
+ *  missing or wrong block type throws rather than silently passing. */
+const items = (blocks: TurnBlock[], i = 0): TurnItem[] => {
+  const b = blocks[i];
+  if (!b || b.t !== "run") throw new Error(`expected a run block at ${i}, got ${b?.t}`);
+  return b.items;
+};
+
+describe("buildTurnBlocks: adjacent coalescing by part type", () => {
+  it("coalesces adjacent tool calls WHATEVER the tool is", () => {
+    // The rule is positional, not semantic. Nothing here asks what a Bash
+    // command did; that classifier existed, compressed less, and reordered.
+    const blocks = buildTurnBlocks([read("a.ts"), bash("ls"), grep("x"), edit("b.ts")]);
     expect(blocks).toHaveLength(1);
-    expect(blocks[0].t).toBe("run");
-    const items = (blocks[0] as { t: "run"; items: unknown[] }).items;
-    expect(items).toHaveLength(1);
-    expect(groupSummary(items[0] as never)).toBe("Read 3 files");
+    expect(items(blocks)).toHaveLength(1);
+    expect(groupSummary(items(blocks)[0] as never)).toBe("4 steps");
   });
 
-  it("merges INTERLEAVED classes, which is the shape a strict rule misses", () => {
-    // Forty reads alternating with forty greps has no two adjacent steps of one
-    // class. A "consecutive only" rule produces eighty rows and buys nothing.
-    const work: ChatSegment[] = [];
-    for (let i = 0; i < 40; i++) { work.push(read(`f${i}.ts`)); work.push(grep(`q${i}`)); }
-    const items = (buildTurnBlocks(work)[0] as { items: unknown[] }).items;
-    expect(items).toHaveLength(2);
-    expect(items.map((i) => groupSummary(i as never)))
-      .toEqual(["Read 40 files", "Searched 40 times"]);
-  });
-
-  it("keeps first-appearance order of classes within a window", () => {
-    const items = (buildTurnBlocks([grep("x"), read("a"), grep("y"), read("b")])[0] as { items: unknown[] }).items;
-    expect(items.map((i) => groupSummary(i as never)))
-      .toEqual(["Searched 2 times", "Read 2 files"]);
-  });
-
-  it("a command breaks the window and nothing groupable hops over it", () => {
-    const items = (buildTurnBlocks([read("a"), read("b"), bash("rm -rf build/"), read("c"), read("d")])[0] as { items: { t: string }[] }).items;
-    expect(items.map((i) => i.t)).toEqual(["group", "step", "group"]);
-    // The command keeps its object. A collapsed row that said "Ran a command"
-    // is the documented failure this rule exists to avoid.
-    expect((items[1] as unknown as { seg: ChatSegment }).seg).toMatchObject({ input: "rm -rf build/" });
-  });
-
-  it("never merges a MUTATING command", () => {
-    const items = (buildTurnBlocks([
-      bash("npm install"), bash("git commit -m x"), bash("systemctl restart api"),
-    ])[0] as { items: { t: string }[] }).items;
-    expect(items.map((i) => i.t)).toEqual(["step", "step", "step"]);
+  it("PRESERVES ORDER EXACTLY, which is the property the old window broke", () => {
+    // Measured on the real logs, the class-window rule displayed 282 of 4,296
+    // runs out of chronological order (397 inversions). A transcript that lies
+    // about what happened first is worse than a long one. This must never
+    // regress, so it is asserted on the steps themselves.
+    const work = [read("1"), grep("2"), bash("3"), read("4"), grep("5")];
+    const g = items(buildTurnBlocks(work))[0] as Extract<TurnItem, { t: "group" }>;
+    expect(g.steps.map((s) => s.input)).toEqual(["1", "2", "3", "4", "5"]);
   });
 
   it("a group of one collapses back to a plain step", () => {
-    const items = (buildTurnBlocks([read("only.ts")])[0] as { items: { t: string }[] }).items;
-    expect(items).toHaveLength(1);
-    expect(items[0].t).toBe("step");
-  });
-
-  it("prose closes the run and becomes its own block", () => {
-    const blocks = buildTurnBlocks([read("a"), text("Found it."), read("b"), read("c")]);
-    expect(blocks.map((b) => b.t)).toEqual(["run", "prose", "run"]);
-    expect((blocks[1] as { text: string }).text).toBe("Found it.");
-  });
-
-  it("drops whitespace-only prose without closing anything twice", () => {
-    const blocks = buildTurnBlocks([read("a"), text("   "), read("b")]);
-    // The empty prose still ends the run (it is a real segment boundary), but
-    // it does not draw a block of its own.
-    expect(blocks.map((b) => b.t)).toEqual(["run", "run"]);
-  });
-
-  it("handles a turn with no prose at all", () => {
-    const blocks = buildTurnBlocks([read("a"), read("b"), bash("make")]);
-    expect(blocks.map((b) => b.t)).toEqual(["run"]);
+    const got = items(buildTurnBlocks([read("only.ts")]));
+    expect(got).toHaveLength(1);
+    expect(got[0].t).toBe("step");
   });
 
   it("is total on empty input", () => {
     expect(buildTurnBlocks([])).toEqual([]);
   });
+});
 
-  it("a failed step stands alone and is never merged away", () => {
-    const items = (buildTurnBlocks([
-      read("a"), { t: "tool", name: "Read", input: "missing.ts", ok: false, error: "ENOENT" }, read("c"),
-    ])[0] as { items: { t: string }[] }).items;
-    expect(items.map((i) => i.t)).toEqual(["step", "step", "step"]);
+describe("what breaks a group", () => {
+  it("prose closes the run and becomes its own block", () => {
+    const blocks = buildTurnBlocks([read("a"), read("b"), text("Found it."), read("c"), read("d")]);
+    expect(blocks.map((b) => b.t)).toEqual(["run", "prose", "run"]);
+    expect((blocks[1] as { text: string }).text).toBe("Found it.");
   });
 
-  it("the running step stands alone", () => {
-    const items = (buildTurnBlocks([read("a"), { t: "tool", name: "Read", input: "b", at: 1000 }])[0] as { items: { t: string }[] }).items;
-    expect(items.map((i) => i.t)).toEqual(["step", "step"]);
+  it("drops whitespace-only prose without drawing a block for it", () => {
+    const blocks = buildTurnBlocks([read("a"), text("   "), read("b")]);
+    // It still ends the run: it is a real segment boundary either way.
+    expect(blocks.map((b) => b.t)).toEqual(["run", "run"]);
   });
 
-  it("LEGACY segments with no outcome still group", () => {
-    // Every stored turn predates the outcome fields. If "succeeded" were
-    // required, the whole redesign would be invisible on existing threads.
-    const items = (buildTurnBlocks([
+  it("a subagent breaks the group and stays its own row", () => {
+    // It is the one step that CONTAINS steps, so folding it into a count of
+    // sibling tool calls would hide a whole delegation inside a number.
+    const got = items(buildTurnBlocks([read("a"), read("b"), agent("Explore"), read("c"), read("d")]));
+    expect(got.map((i) => i.t)).toEqual(["group", "step", "group"]);
+  });
+
+  it("an approval breaks the group and stays its own row", () => {
+    // It is a control. A pending one is the only thing that can restart the
+    // turn, so it can never be behind a count.
+    const got = items(buildTurnBlocks([read("a"), read("b"), approval("pending"), read("c"), read("d")]));
+    expect(got.map((i) => i.t)).toEqual(["group", "step", "group"]);
+  });
+
+  it("nothing else breaks a group, including a failure or a running step", () => {
+    // Both used to stand alone under the allowlist rule. They no longer need
+    // to: the group names its failures in the header and opens onto every step
+    // in order, so neither is hidden by being inside one.
+    const got = items(buildTurnBlocks([
+      read("a"),
+      { t: "tool", name: "Read", input: "missing.ts", ok: false, error: "ENOENT" },
+      { t: "tool", name: "Bash", input: "slow", at: 1000 },
+    ]));
+    expect(got).toHaveLength(1);
+    expect(got[0].t).toBe("group");
+  });
+});
+
+describe("the group header is a count, never a description", () => {
+  it("counts, with the right plural", () => {
+    const g = items(buildTurnBlocks([read("a"), read("b")]))[0];
+    expect(groupSummary(g as never)).toBe("2 steps");
+  });
+
+  it("names failures, because that is the reason to open it", () => {
+    const g = items(buildTurnBlocks([
+      read("a"),
+      { t: "tool", name: "Bash", input: "make", ok: false },
+      { t: "tool", name: "Bash", input: "make", ok: false },
+    ]))[0];
+    expect(groupSummary(g as never)).toBe("3 steps, 2 failed");
+  });
+
+  it("NEVER paraphrases what a step did, not even a destructive one", () => {
+    // microsoft/vscode#292985: `rm -rf important_dir` collapsed to "Executed
+    // command in terminal". A count cannot make that mistake, which is why no
+    // merge allowlist is needed to keep a destructive command out of a group.
+    const g = items(buildTurnBlocks([read("a"), bash("rm -rf important_dir")]))[0] as
+      Extract<TurnItem, { t: "group" }>;
+    const line = `${groupSummary(g)} ${groupTools(g)}`;
+    expect(line).not.toMatch(/execut|ran|command|deleted|removed/i);
+    // And the command itself is still there, in full, on its own row inside.
+    expect(g.steps.map((s) => s.input)).toContain("rm -rf important_dir");
+  });
+
+  it("lists distinct tool names in first-appearance order", () => {
+    const g = items(buildTurnBlocks([bash("ls"), read("a"), bash("pwd"), grep("x")]))[0];
+    expect(groupTools(g as never)).toBe("Bash, Read, Grep");
+  });
+
+  it("opens itself while a step inside it is still running", () => {
+    // assistant-ui's "auto-expand during streaming". It is what makes
+    // collapsed-by-default cost nothing: work in flight is always visible.
+    const live = items(buildTurnBlocks([read("a"), { t: "tool", name: "Bash", input: "x", at: 1 }]))[0];
+    const done = items(buildTurnBlocks([read("a"), read("b")]))[0];
+    expect(groupIsRunning(live as never)).toBe(true);
+    expect(groupIsRunning(done as never)).toBe(false);
+  });
+});
+
+describe("legacy segments", () => {
+  it("groups turns stored before the outcome fields existed", () => {
+    // Every stored turn predates them. If an outcome were required, the whole
+    // rule would be invisible on existing threads.
+    const got = items(buildTurnBlocks([
       { t: "tool", name: "Read", input: "a" }, { t: "tool", name: "Read", input: "b" },
-    ])[0] as { items: unknown[] }).items;
-    expect(items).toHaveLength(1);
-    expect(groupSummary(items[0] as never)).toBe("Read 2 files");
-  });
-
-  it("a subagent is never merged into a group", () => {
-    const agent: ChatSegment = {
-      t: "agent", name: "Explore", input: "look", id: "a1", steps: [], done: true, result: "ok",
-    };
-    const items = (buildTurnBlocks([read("a"), agent, read("b")])[0] as { items: { t: string }[] }).items;
-    expect(items.map((i) => i.t)).toEqual(["step", "step", "step"]);
-  });
-});
-
-describe("group summary lines", () => {
-  it("counts with the right plural", () => {
-    const one = (buildTurnBlocks([read("a"), read("b")])[0] as { items: unknown[] }).items[0];
-    expect(groupSummary(one as never)).toBe("Read 2 files");
-  });
-
-  it("keeps the objects on the detail line", () => {
-    const g = (buildTurnBlocks([read("a.ts"), read("b.ts")])[0] as { items: unknown[] }).items[0];
-    expect(groupDetail(g as never)).toBe("a.ts, b.ts");
-  });
-
-  it("folds newlines out of the detail line so it cannot wrap", () => {
-    const g = (buildTurnBlocks([read("a\nb"), read("c")])[0] as { items: unknown[] }).items[0];
-    expect(groupDetail(g as never)).toBe("a b, c");
-  });
-});
-
-describe("splitRun", () => {
-  const items = Array.from({ length: 20 }, (_, i) => ({ t: "step" as const, seg: read(`f${i}`) }));
-
-  it("keeps everything under the cap", () => {
-    const { shown, hidden } = splitRun(items.slice(0, RUN_ROW_CAP));
-    expect(shown).toHaveLength(RUN_ROW_CAP);
-    expect(hidden).toHaveLength(0);
-  });
-
-  it("keeps the TAIL, because that is the work being followed", () => {
-    const { shown, hidden } = splitRun(items);
-    expect(shown).toHaveLength(RUN_ROW_CAP);
-    expect(hidden).toHaveLength(20 - RUN_ROW_CAP);
-    expect((shown[shown.length - 1] as { seg: { input: string } }).seg.input).toBe("f19");
-  });
-
-  it("never hides a pending approval, wherever it sits", () => {
-    const approval: ChatSegment = {
-      t: "approval", id: "r1", tool: "Bash", label: "Bash", detail: "", input: {},
-      suggestions: [], state: "pending",
-    };
-    const withApproval = [{ t: "step" as const, seg: approval }, ...items];
-    const { shown } = splitRun(withApproval);
-    expect(shown.some((i) => i.t === "step" && i.seg.t === "approval")).toBe(true);
-  });
-
-  it("never hides a failure", () => {
-    const failed: ChatSegment = { t: "tool", name: "Bash", input: "make", ok: false };
-    const { shown } = splitRun([{ t: "step" as const, seg: failed }, ...items]);
-    expect(shown.some((i) => i.t === "step" && isFailed(i.seg))).toBe(true);
-  });
-
-  it("preserves order in both halves", () => {
-    const { shown, hidden } = splitRun(items);
-    const idx = (i: unknown) => Number((i as { seg: { input: string } }).seg.input.slice(1));
-    expect(hidden.map(idx)).toEqual([...hidden.map(idx)].sort((a, b) => a - b));
-    expect(shown.map(idx)).toEqual([...shown.map(idx)].sort((a, b) => a - b));
+    ]));
+    expect(got).toHaveLength(1);
+    expect(groupSummary(got[0] as never)).toBe("2 steps");
   });
 });
 
@@ -183,30 +164,6 @@ describe("state predicates", () => {
     // as failure would paint every step of an interrupted turn red.
     expect(isFailed({ t: "tool", name: "Bash", input: "x" })).toBe(false);
     expect(isFailed({ t: "tool", name: "Bash", input: "x", ok: false })).toBe(true);
-  });
-
-  it("only read-only work has a merge class", () => {
-    expect(mergeClass(read("a"))).not.toBeNull();
-    expect(mergeClass({ t: "tool", name: "Write", input: "a", ok: true })).toBeNull();
-    expect(mergeClass({ t: "tool", name: "mcp__thing__do", input: "a", ok: true })).toBeNull();
-  });
-
-  it("classifies a shell command by what it does, not by being Bash", () => {
-    // Bash was excluded wholesale, and it is 64% of everything this assistant
-    // does, so the merge rule bought 6.2% and the transcript read as flat.
-    expect(mergeClass(bash("ls src/"))).not.toBeNull();
-    expect(mergeClass(bash("sed -n '1,50p' f.ts"))).not.toBeNull();
-    expect(mergeClass(bash("rm -rf build"))).toBeNull();
-    expect(mergeClass(bash("git commit -m x"))).toBeNull();
-  });
-
-  it("merges a shell grep into the same class as a native Grep", () => {
-    // They are the same act. Only the spelling differs, and splitting them
-    // would show "Searched 2 times" twice for one stretch of searching.
-    const shell = mergeClass(bash("grep -rn 'x' src/"));
-    const native = mergeClass({ t: "tool", name: "Grep", input: "x", ok: true });
-    expect(shell).not.toBeNull();
-    expect(shell?.key).toBe(native?.key);
   });
 });
 
@@ -232,17 +189,28 @@ describe("durations", () => {
 });
 
 describe("turnWorkSummary", () => {
-  it("counts steps and names what changed", () => {
-    expect(turnWorkSummary([
-      read("a"), read("b"), { t: "tool", name: "Edit", input: "x.ts", ok: true }, bash("make"),
-    ])).toBe("4 steps · 1 edit · 1 command");
+  // The turn line and the group line now speak the same vocabulary: counts of
+  // steps. What a turn CHANGED is answered by the receipts row, which is
+  // already outside every fold, rather than by a second summary dialect here.
+  it("counts steps", () => {
+    expect(turnWorkSummary([read("a"), read("b"), edit("x.ts"), bash("make")])).toBe("4 steps");
   });
 
   it("names failures, because that is why a settled turn gets opened", () => {
-    // The command is still counted: it was attempted, and "1 command · 1 failed"
-    // is the honest pair. Counting only the failure would hide what failed.
     expect(turnWorkSummary([read("a"), { t: "tool", name: "Bash", input: "make", ok: false }]))
-      .toBe("2 steps · 1 command · 1 failed");
+      .toBe("2 steps · 1 failed");
+  });
+
+  it("counts a subagent as a step and names it", () => {
+    expect(turnWorkSummary([read("a"), agent("Explore")])).toBe("2 steps · 1 agent");
+  });
+
+  it("a denied approval is still a step", () => {
+    // A settled turn shows ONLY this line, so a shape that summarises to
+    // nothing is a shape that disappears. A turn whose whole body was a note
+    // and a refused permission has no tool call in it at all.
+    expect(turnWorkSummary([text("I will run the build."), approval("denied")]))
+      .toBe("1 step · 1 approval");
   });
 
   it("is empty when the turn did no work", () => {
@@ -268,67 +236,5 @@ describe("turnDuration", () => {
     expect(turnDuration(undefined)).toBe("");
     expect(turnDuration(NaN)).toBe("");
     expect(turnDuration(-5000)).toBe("");
-  });
-});
-
-describe("turnWorkSummary counts approvals", () => {
-  // A settled turn shows ONLY this line, so a shape that summarises to nothing
-  // is a shape that disappears. A turn whose whole body is a note to the
-  // operator and a permission it was refused has no tool call in it.
-  it("a denied approval is still a step", () => {
-    const denied: ChatSegment = {
-      t: "approval", id: "r1", tool: "Bash", label: "Bash", detail: "", input: {},
-      suggestions: [], state: "denied",
-    };
-    expect(turnWorkSummary([text("I will run the build."), denied]))
-      .toBe("1 step · 1 approval");
-  });
-});
-
-describe("repeated writes to one file", () => {
-  const edit = (path: string): ChatSegment =>
-    ({ t: "tool", name: "Edit", input: path, ok: true });
-
-  it("collapses adjacent edits to the SAME file into one row", () => {
-    const blocks = buildTurnBlocks([edit("a.ts"), edit("a.ts"), edit("a.ts")]);
-    const items = (blocks[0] as { items: TurnItem[] }).items;
-    expect(items).toHaveLength(1);
-    const g = items[0] as Extract<TurnItem, { t: "group" }>;
-    expect(g.t).toBe("group");
-    expect(g.steps).toHaveLength(3);
-    // The object is named, and the count is the detail. "Edited 3 changes"
-    // would say less than the filename does.
-    expect(groupSummary(g)).toBe("Edited a.ts");
-    expect(groupDetail(g)).toBe("3 changes");
-  });
-
-  it("never merges edits to DIFFERENT files", () => {
-    // A write is the thing the operator most needs named. "Edited 2 files"
-    // hides which, which is the whole failure mode the allowlist exists for.
-    const blocks = buildTurnBlocks([edit("a.ts"), edit("b.ts")]);
-    expect((blocks[0] as { items: TurnItem[] }).items).toHaveLength(2);
-  });
-
-  it("requires strict adjacency, so nothing can hop over a write", () => {
-    // The window rule reorders groupable steps within a window. If writes
-    // joined that window, a read could be shown before a write that actually
-    // came first. Edits merge only with the step immediately before.
-    const blocks = buildTurnBlocks([edit("a.ts"), read("x.ts"), edit("a.ts")]);
-    const items = (blocks[0] as { items: TurnItem[] }).items;
-    expect(items).toHaveLength(3);
-    expect(items.every((i) => i.t === "step")).toBe(true);
-  });
-
-  it("does not merge across prose", () => {
-    const blocks = buildTurnBlocks([edit("a.ts"), text("Now the other half."), edit("a.ts")]);
-    expect(blocks.map((b) => b.t)).toEqual(["run", "prose", "run"]);
-  });
-
-  it("keeps a failed write on its own row", () => {
-    const blocks = buildTurnBlocks([
-      edit("a.ts"),
-      { t: "tool", name: "Edit", input: "a.ts", ok: false, error: "no match" },
-    ]);
-    expect((blocks[0] as { items: TurnItem[] }).items).toHaveLength(2);
   });
 });
