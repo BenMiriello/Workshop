@@ -59,6 +59,19 @@ body {
   /* inline-flex, not block: this is the Menu primitive's wrapper now. */
   .ws-sectionnav-menu { display: inline-flex; }
 }
+/* THIS MENU IS A NAV, SO IT MUST NOT SCROLL. The Menu primitive caps its list at
+   16rem, which is right for an open-ended list (a model picker, a scope list)
+   and wrong here: the sections are a fixed, known set, and at ten rows the list
+   needs ~21.6rem (each row is 0.5rem+0.5rem padding around a 1.3 line-height
+   --fs-sm, so ~2.06rem, plus --space-2 top and bottom on the list). The last two
+   rows, ending in Settings, sat below the fold and had to be scrolled to.
+   Raised past the content with room for a few more sections, and scoped to this
+   one menu so every other dropdown keeps the primitive's cap.
+   Still bounded: the viewport term wins on a short screen (a landscape phone),
+   so it can never grow taller than the window and become its own problem. */
+.ws-sectionnav-menu .ws-menu__list {
+  max-height: min(26rem, calc(100dvh - 5rem));
+}
 .ws-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 2.25rem; height: var(--control-h); padding: 0;
