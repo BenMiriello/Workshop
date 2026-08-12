@@ -637,6 +637,28 @@ def _norm_labels(raw) -> list[str]:
     return out
 
 
+# A comment is `{id, author, text, ts}`. `author` is free text on purpose: it is
+# "operator", "agent:<slug>", or a run id, and pinning it to an enum now would
+# just mean rewriting it the first time something new writes one. Order is
+# preserved (append-only); an entry with no text is dropped rather than rendered
+# as an empty bubble.
+def _norm_comments(raw) -> list[dict]:
+    out: list[dict] = []
+    for c in (raw or []):
+        if not isinstance(c, dict):
+            continue
+        text = str(c.get("text") or "").strip()
+        if not text:
+            continue
+        out.append({
+            "id": str(c.get("id") or _new_id()),
+            "author": str(c.get("author") or DEFAULT_OWNER),
+            "text": text,
+            "ts": str(c.get("ts") or _now()),
+        })
+    return out
+
+
 # A ticket whose scope nobody is accountable for is how a bad spec becomes a
 # mystery. Records written before `scoped_by` existed get the best available
 # answer from where the request came from, rather than a null that reads as "no
@@ -714,6 +736,17 @@ def _normalize(task: dict) -> dict:
         "claim_pid": _as_int_or_none(task.get("claim_pid")),
         "job_ids": [str(j) for j in (task.get("job_ids") or []) if j],
         "evidence": [e for e in (task.get("evidence") or []) if isinstance(e, dict)],
+        # comments: the human discussion channel, distinct from `evidence`.
+        # Evidence is what the SYSTEM recorded about a run (a receipt, a gate
+        # verdict, a dedup merge) and carries no author; a comment is something a
+        # person or an agent SAID about the ticket, and is attributed. Keeping
+        # them apart is what lets the detail page show one timeline without
+        # mixing "the reviewer rejected this" into "here is what I decided".
+        #
+        # NOT in SYNCABLE_FIELDS: a field is workshop-private unless it is named
+        # there, and a comment thread is not something we mirror to a tracker
+        # today (the sync boundary is title/body/status/labels/assignee/priority).
+        "comments": _norm_comments(task.get("comments")),
         "source": {"kind": str(src.get("kind") or "operator"), "ref": src.get("ref")},
         "provenance": task.get("provenance") or None,
         "touches": [str(t) for t in (task.get("touches") or []) if t],
@@ -1761,6 +1794,106 @@ def append_clarification(root: Path, task_id: str, *, question: str, answer: str
         body = f"{body.rstrip()}\n\n{CLARIFICATION_HEADING}\n{entry}" if body.strip() \
             else f"{CLARIFICATION_HEADING}\n{entry}"
     return update(root, task_id, body=body, assignee=assignee)
+
+
+def add_comment(root: Path, task_id: str, *, text: str, author: str = DEFAULT_OWNER,
+                assignee: str | None = None) -> dict | None:
+    """Append a comment to a ticket's discussion and return the updated task.
+
+    Deliberately NOT the same channel as `append_clarification`. That one writes
+    an ANSWER into the body, because a worker is handed the ticket text and
+    nothing else, so an answer that lives anywhere but the body is an answer the
+    next attempt never reads. A comment is discussion: it is for the operator
+    and the reader of the page, and it must not silently become part of the spec
+    a worker executes. Moving clarifications in here would re-open the exact gap
+    `append_clarification` exists to close.
+    """
+    body_text = str(text or "").strip()
+    if not body_text:
+        return None
+    with _locked(root):
+        items = _load(root)
+        found = None
+        for t in items:
+            if t["id"] == task_id and _match_assignee(t, assignee):
+                found = t
+                break
+        if found is None:
+            return None
+        entry = {"id": _new_id(), "author": str(author or DEFAULT_OWNER),
+                 "text": body_text, "ts": _now()}
+        found["comments"] = _norm_comments(found.get("comments")) + [entry]
+        # A comment is not a content edit to the spec, so it does not bump
+        # `updated` (which drives "last touched" sorting and the sync shadow).
+        # It would otherwise make every commented ticket look freshly edited.
+        _persist(root, items)
+        return _normalize(found)
+
+
+def delete_comment(root: Path, task_id: str, comment_id: str, *,
+                   assignee: str | None = None) -> dict | None:
+    """Remove one comment. Returns the updated task, or None if either the task
+    or the comment is not there."""
+    with _locked(root):
+        items = _load(root)
+        found = None
+        for t in items:
+            if t["id"] == task_id and _match_assignee(t, assignee):
+                found = t
+                break
+        if found is None:
+            return None
+        before = _norm_comments(found.get("comments"))
+        after = [c for c in before if c["id"] != comment_id]
+        if len(after) == len(before):
+            return None
+        found["comments"] = after
+        _persist(root, items)
+        return _normalize(found)
+
+
+# ---- Ordering --------------------------------------------------------------
+# `list_tasks` returns raw file order, which is insertion order. That is correct
+# for the store (TODO.md export depends on it) and useless for a list the
+# operator reads, so ordering is applied on the way OUT, here, where both the
+# cross-scope route and any single-scope caller can share one definition of what
+# "by priority" means.
+
+# Rank for status ordering: what is in front of you, then what is waiting, then
+# what is finished. Alphabetical would put `blocked` first and `todo` sixth.
+_STATUS_RANK = {"blocked": 0, "doing": 1, "in_review": 2, "todo": 3, "draft": 4,
+                "parked": 5, "done": 6, "cancelled": 7}
+
+SORT_KEYS = ("updated", "created", "priority", "title", "status")
+
+
+def sort_tasks(items: list[dict], key: str = "updated",
+               desc: bool | None = None) -> list[dict]:
+    """Order tasks by one of SORT_KEYS. Unknown key falls back to `updated`.
+
+    `desc` defaults per key to the direction that is useful rather than the one
+    that is alphabetical: newest first for dates, biggest first for priority,
+    A-Z for title, and most-urgent first for status.
+    """
+    if key not in SORT_KEYS:
+        key = "updated"
+    # `status` ranks ascending (0 = most urgent) so its useful default is
+    # ascending; the date and priority keys want biggest first; title wants A-Z.
+    reverse = (key in ("updated", "created", "priority")) if desc is None else bool(desc)
+    if key == "priority":
+        def rank(t: dict):
+            return (_as_int(t.get("priority"), 0), str(t.get("updated") or ""))
+    elif key == "title":
+        def rank(t: dict):
+            return (str(t.get("title") or "").casefold(), str(t.get("created") or ""))
+    elif key == "status":
+        def rank(t: dict):
+            return (_STATUS_RANK.get(str(t.get("status")), 99),
+                    str(t.get("updated") or ""))
+    else:
+        def rank(t: dict):
+            return (str(t.get(key) or ""), str(t.get("id") or ""))
+    return sorted(items, key=rank, reverse=reverse)
 
 
 def heartbeat(root: Path, task_id: str, claim_token: int | None, *,

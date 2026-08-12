@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
-  RefreshCw, Plus,
+  RefreshCw, Plus, Search,
   Check, X, KeyRound, BookOpen, EyeOff, ShieldCheck,
 } from "lucide-react";
 import {
@@ -23,7 +23,6 @@ import {
   Skeleton,
   StatusPill,
   StatusDot,
-  Checkbox,
   Tag,
   catFor,
   type SegmentedOption,
@@ -31,10 +30,13 @@ import {
 import JobsFeed from "../components/JobsFeed";
 import QueueRunner from "../components/QueueRunner";
 import AutonomyPanel from "../components/AutonomyPanel";
+import { GrantDialog, PromoteGrantDialog, RuleDialog } from "../components/ReviewDialogs";
 import {
   type BlockRequest,
   type Task,
+  type TaskSort,
   type TaskStatus,
+  TASK_SORTS,
   TASK_STATUSES,
   taskStatusKind,
   taskStatusLabel,
@@ -44,31 +46,55 @@ import {
   scopeLabel,
   ticketHref,
 } from "../lib/tasks";
+import { boardLanes, groupTickets, type GroupBy } from "../lib/ticketGroups";
 import { orderScopes } from "../lib/devMode";
 import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
 import { ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkTab } from "../lib/workParams";
 
-// The Work surface (plan D4 / sub-decision b): one nav item, three tabs.
-//   Tickets — the cross-scope task list + detail drawer (the primary surface).
-//   Runs    — the existing Jobs feed, rendered from the shared JobsFeed.
-//   Review  — work that stopped on its own, and the answers that release it.
-// A ticket IS a task; every identifier stays `task`. /jobs stays a route.
+// The Tickets surface: one nav item, three tabs.
+//   Open   — the cross-scope ticket list (the primary surface), as a list or a board.
+//   Runs   — the existing Jobs feed, rendered from the shared JobsFeed.
+//   Review — work that stopped on its own, and the answers that release it.
+//
+// A ticket IS a task; every identifier stays `task` (ADR 0001, and
+// entity-model-2026-07-18 §9.5 closes it). What changed on 2026-08-11 is the
+// SURFACE name only: the page was called "Work", which is a mass noun and so
+// could never name the individual item, while the item had been ratified as
+// "Ticket" since July. The route stays /work so every existing link, bookmark
+// and `?tab=` deep link keeps resolving.
+//
 // Review is a third TAB rather than a /review route: work state must not split
 // across two pages, and this is already the multi-tab home of work state.
-// Autonomy moved off Work (C6): the canonical toggle lives on /settings; a
+// Autonomy moved off here (C6): the canonical toggle lives on /settings; a
 // read-only pill on /agents shows current state.
 
 type Tab = "tickets" | "runs" | "review";
 
 const TABS: SegmentedOption<Tab>[] = [
-  { value: "tickets", label: "Tickets" },
+  { value: "tickets", label: "Open" },
   { value: "runs", label: "Runs" },
   { value: "review", label: "Review" },
 ];
 
-const OVERFLOW_AT = 100;
+type View = "list" | "board";
 
-type TasksResp = { tasks: Task[]; count: number; scopes?: number };
+const VIEWS: SegmentedOption<View>[] = [
+  { value: "list", label: "List" },
+  { value: "board", label: "Board" },
+];
+
+const GROUPS: { value: GroupBy; label: string }[] = [
+  { value: "none", label: "No grouping" },
+  { value: "status", label: "By status" },
+  { value: "scope", label: "By scope" },
+];
+
+// One page of tickets. The list used to slice an arbitrary first 100 out of
+// whatever order the store file happened to be in, with no way to reach the
+// rest; the endpoint now sorts and pages, so this is a real page size.
+const PAGE_SIZE = 60;
+
+type TasksResp = { tasks: Task[]; count: number; total: number };
 
 function fmtTs(ts?: string): string {
   if (!ts) return "";
@@ -90,6 +116,8 @@ function TicketCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
   const meta = [
     typeof task.priority === "number" && task.priority !== 0 ? `priority ${task.priority}` : null,
     task.effort ? `effort ${task.effort}` : null,
+    (task.comments?.length ?? 0) > 0
+      ? `${task.comments?.length} comment${task.comments?.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean).join(" · ");
 
   return (
@@ -123,18 +151,38 @@ function TicketsTab() {
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<TaskStatus | "all">("all");
+  // View preferences, so they commit on change (frontend/CLAUDE.md).
+  const [sort, setSort] = useState<TaskSort>("updated");
+  const [group, setGroup] = useState<GroupBy>("none");
+  const [view, setView] = useState<View>("list");
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const [open, setOpen] = useState<{ mode: "create" } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Typing must not fire a cross-scope scan per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // A new filter starts at the first page again. Without this, narrowing the
+  // list while paged in leaves an offset the new result set may not have.
+  useEffect(() => { setLimit(PAGE_SIZE); }, [status, scope, debouncedQuery, sort]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
-      const query = new URLSearchParams();
-      if (status !== "all") query.set("status", status);
-      if (scope !== ALL_SCOPES) query.set("scope", scope);
-      const q = query.toString();
-      const r = await fetch(`/api/tasks${q ? `?${q}` : ""}`);
+      const params = new URLSearchParams();
+      if (status !== "all") params.set("status", status);
+      if (scope !== ALL_SCOPES) params.set("scope", scope);
+      if (debouncedQuery) params.set("q", debouncedQuery);
+      params.set("sort", sort);
+      // The board needs every lane populated to be a board, so it is not paged.
+      if (view === "list") params.set("limit", String(limit));
+      const r = await fetch(`/api/tasks?${params.toString()}`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
     } catch (e) {
@@ -142,7 +190,7 @@ function TicketsTab() {
     } finally {
       setLoading(false);
     }
-  }, [status, scope]);
+  }, [status, scope, debouncedQuery, sort, limit, view]);
 
   useEffect(() => {
     refresh();
@@ -159,8 +207,8 @@ function TicketsTab() {
   }, []);
 
   const tasks = data?.tasks ?? [];
-  const overflow = tasks.length > OVERFLOW_AT;
-  const shown = overflow ? tasks.slice(0, OVERFLOW_AT) : tasks;
+  const total = data?.total ?? tasks.length;
+  const more = tasks.length < total;
   const scopeNote = scope !== ALL_SCOPES ? pickupNote(pickupFor(pickup, scope)) : null;
 
   const onChanged = useCallback(
@@ -170,6 +218,11 @@ function TicketsTab() {
     },
     [refresh],
   );
+
+  const openTicket = useCallback((t: Task) => {
+    setNotice(null);
+    nav(ticketHref(t.scope || "workshop", t.id));
+  }, [nav]);
 
   // Work the system proposed and nobody has agreed to yet. A draft is never
   // picked up by a sweep and cannot be run, so if it is not surfaced it is
@@ -210,38 +263,87 @@ function TicketsTab() {
   // through `/api/projects/development/autonomy`, so a scope we deliberately
   // stopped calling a project still configures itself through the projects
   // API. That is incoherent, and it is why this is wiring rather than design.
+  //
+  // AutonomyPanel renders its own SectionLabel, so this does not add a second
+  // one on top of it. It used to, and the panel arrived under two stacked
+  // headings that said nearly the same word.
   const scopeAutonomy = scope === "development" ? (
     <div style={{ marginBottom: "var(--space-4)" }}>
-      <SectionLabel>Autonomy for this scope</SectionLabel>
       <AutonomyPanel slug="development" />
     </div>
   ) : null;
 
   const filterBar = (
-    <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
-      <Field label="Status" inline>
-        <Select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus | "all")} aria-label="Filter by status">
-          <option value="all">All statuses</option>
-          {TASK_STATUSES.map((s) => (
-            <option key={s} value={s}>{taskStatusLabel(s)}</option>
-          ))}
-        </Select>
-      </Field>
-      <Field label="Scope" inline>
-        <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter by scope">
-          <option value="all">All scopes</option>
-          {scopes.map((s) => (
-            <option key={s} value={s}>{scopeLabel(s)}</option>
-          ))}
-        </Select>
-      </Field>
-      <Button size="sm" onClick={refresh} loading={loading}>
-        <RefreshCw aria-hidden /> Refresh
-      </Button>
-      <Button size="sm" variant="primary" onClick={() => { setNotice(null); setOpen({ mode: "create" }); }}>
-        <Plus aria-hidden /> New ticket
-      </Button>
-    </Row>
+    <Stack gap="sm">
+      <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+        <Field label="Find" inline>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Title or body"
+            aria-label="Search tickets"
+            style={{ maxWidth: "16rem" }}
+          />
+        </Field>
+        <Field label="Status" inline>
+          <Select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus | "all")} aria-label="Filter by status">
+            <option value="all">All statuses</option>
+            {TASK_STATUSES.map((s) => (
+              <option key={s} value={s}>{taskStatusLabel(s)}</option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Scope" inline>
+          <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter by scope">
+            <option value="all">All scopes</option>
+            {scopes.map((s) => (
+              <option key={s} value={s}>{scopeLabel(s)}</option>
+            ))}
+          </Select>
+        </Field>
+        <Button size="sm" onClick={refresh} loading={loading}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
+        <Button size="sm" variant="primary" onClick={() => { setNotice(null); setOpen({ mode: "create" }); }}>
+          <Plus aria-hidden /> New ticket
+        </Button>
+      </Row>
+      <Row wrap between style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+        <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+          {/* Sorting is done by the SERVER. The list used to come back in raw
+              store order (insertion order) with priority displayed and never
+              sorted on, so "higher runs first" was invisible in the one place
+              it should have been obvious. */}
+          <Field label="Sort" inline>
+            <Select value={sort} onChange={(e) => setSort(e.target.value as TaskSort)} aria-label="Sort tickets">
+              {TASK_SORTS.map((s) => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </Select>
+          </Field>
+          {view === "list" && (
+            <Field label="Group" inline>
+              <Select value={group} onChange={(e) => setGroup(e.target.value as GroupBy)} aria-label="Group tickets">
+                {GROUPS.map((g) => (
+                  <option key={g.value} value={g.value}>{g.label}</option>
+                ))}
+              </Select>
+            </Field>
+          )}
+        </Row>
+        <Segmented<View> ariaLabel="Ticket view" value={view} onChange={setView} options={VIEWS} />
+      </Row>
+    </Stack>
+  );
+
+  const grid = (items: Task[]) => (
+    <CardGrid className="ws-ticket-grid">
+      {items.map((t) => (
+        <li key={`${t.scope}:${t.id}`}>
+          <TicketCard task={t} onOpen={() => openTicket(t)} />
+        </li>
+      ))}
+    </CardGrid>
   );
 
   let body: JSX.Element;
@@ -269,41 +371,80 @@ function TicketsTab() {
       </CardGrid>
     );
   } else if (tasks.length === 0) {
+    const filtered = status !== "all" || scope !== ALL_SCOPES || !!debouncedQuery;
     body = (
       <StateBlock
-        title={status === "all" && scope === "all" ? "No tickets yet" : "No tickets match these filters"}
+        title={filtered ? "No tickets match these filters" : "No tickets yet"}
         hint={
-          status === "all" && scope === "all" ? (
-            <>Create one with <strong>New ticket</strong>, or file one from a chat.</>
+          filtered ? (
+            <>Nothing matches. Clear <strong>Find</strong>, or reset <strong>Status</strong> and <strong>Scope</strong> to <strong>All</strong>.</>
           ) : (
-            <>Nothing matches. Reset <strong>Status</strong> and <strong>Scope</strong> to <strong>All</strong> to see every ticket.</>
+            <>Create one with <strong>New ticket</strong>, or file one from a chat.</>
           )
         }
-        action={<Button size="sm" variant="primary" onClick={() => setOpen({ mode: "create" })}><Plus aria-hidden /> New ticket</Button>}
+        action={
+          filtered ? (
+            <Button size="sm" onClick={() => { setQuery(""); setStatus("all"); setScope(ALL_SCOPES); }}>
+              <Search aria-hidden /> Clear filters
+            </Button>
+          ) : (
+            <Button size="sm" variant="primary" onClick={() => setOpen({ mode: "create" })}><Plus aria-hidden /> New ticket</Button>
+          )
+        }
       />
     );
-  } else {
+  } else if (view === "board") {
     body = (
-      <>
-        {overflow && (
-          <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--space-3)" }}>
-            Showing the first {OVERFLOW_AT} of {tasks.length} tickets. Narrow by status or scope to see the rest.
-          </p>
+      <div className="ws-board">
+        {boardLanes(tasks).map((lane) => (
+          <div key={lane.id} className="ws-board__lane">
+            <div className="ws-board__head">
+              <SectionLabel>{lane.label}</SectionLabel>
+              <span className="ws-board__count">{lane.tasks.length}</span>
+            </div>
+            {lane.tasks.length === 0 ? (
+              <span className="ws-board__empty">{lane.hint}</span>
+            ) : (
+              <ul className="ws-board__items">
+                {lane.tasks.map((t) => (
+                  <li key={`${t.scope}:${t.id}`}>
+                    <TicketCard task={t} onOpen={() => openTicket(t)} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  } else {
+    const groups = groupTickets(tasks, group);
+    body = (
+      <Stack gap="lg">
+        {groups.map((g) => (
+          <div key={g.key}>
+            {g.label && (
+              <Row style={{ gap: "var(--space-2)", alignItems: "baseline", marginBottom: "var(--space-2)" }}>
+                <SectionLabel>{g.label}</SectionLabel>
+                <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{g.tasks.length}</span>
+              </Row>
+            )}
+            {grid(g.tasks)}
+          </div>
+        ))}
+        {/* Real paging, not a slice with a note. The endpoint returns the
+            filtered total, so this says how much is actually left. */}
+        {more && (
+          <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
+            <Button size="sm" onClick={() => setLimit((n) => n + PAGE_SIZE)} loading={loading}>
+              Show more
+            </Button>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+              Showing {tasks.length} of {total}.
+            </span>
+          </Row>
         )}
-        <CardGrid className="ws-ticket-grid">
-          {shown.map((t) => (
-            <li key={`${t.scope}:${t.id}`}>
-              <TicketCard
-                task={t}
-                onOpen={() => {
-                  setNotice(null);
-                  nav(ticketHref(t.scope || "workshop", t.id));
-                }}
-              />
-            </li>
-          ))}
-        </CardGrid>
-      </>
+      </Stack>
     );
   }
 
@@ -455,7 +596,6 @@ type Candidate = {
   scope: string;
   text: string;
   sources?: string[];
-  proposed_at?: string;
 };
 
 type BlockGroup = {
@@ -501,7 +641,7 @@ function ReviewTab() {
     setLoading(true);
     setErr(null);
     try {
-      const r = await fetch("/api/tasks?status=blocked&include_done=false");
+      const r = await fetch("/api/tasks?status=blocked");
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       const j: TasksResp = await r.json();
       setTasks(j.tasks ?? []);
@@ -521,8 +661,6 @@ function ReviewTab() {
   useEffect(() => { refresh(); }, [refresh]);
 
   const groups = groupBlocks(tasks ?? []);
-  const overflow = groups.length > OVERFLOW_AT;
-  const shown = overflow ? groups.slice(0, OVERFLOW_AT) : groups;
 
   const done = useCallback((msg: string) => { setNotice(msg); refresh(); }, [refresh]);
 
@@ -554,12 +692,7 @@ function ReviewTab() {
   } else {
     body = (
       <Stack>
-        {overflow && (
-          <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
-            Showing the first {OVERFLOW_AT} of {groups.length} blocks. Answering a block removes it from this list.
-          </p>
-        )}
-        {shown.map((g) => (
+        {groups.map((g) => (
           <BlockCard key={g.key} group={g} onDone={done} />
         ))}
       </Stack>
@@ -592,17 +725,36 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
 
   const n = tasks.length;
   const label = n === 1 ? "1 ticket" : `${n} tickets`;
+  const groupScopes = [...new Set(tasks.map((t) => t.scope ?? "workshop"))];
 
   // One gesture, N tickets: the decision was made once, so it is applied once.
+  //
+  // `mintOn` is the fix for a real defect. This used to `Promise.all` the SAME
+  // action across every ticket in the group, so answering a group of three with
+  // "mint rule" recorded the identical rule three times under three different
+  // provenance sources — which `promote_when_stable` then counted as three
+  // independent confirmations and could auto-promote off a single decision.
+  // Grant did the same, minting three grants. Those two actions now apply to ONE
+  // ticket and the rest are simply released, which is what "one decision" means.
   const run = useCallback(
-    async (action: ReviewAction, extra: Record<string, unknown> = {}, msg?: string) => {
+    async (action: ReviewAction, extra: Record<string, unknown> = {}, msg?: string,
+           mintOn: "all" | "first" = "all") => {
       setBusy(action);
       setErr(null);
       try {
-        await Promise.all(tasks.map((t) => postReview(t, { action, ...extra })));
+        if (mintOn === "first") {
+          await postReview(tasks[0], { action, ...extra });
+          await Promise.all(tasks.slice(1).map((t) => postReview(t, { action: "approve" })));
+        } else {
+          await Promise.all(tasks.map((t) => postReview(t, { action, ...extra })));
+        }
         onDone(msg ?? `${label} updated.`);
       } catch (e) {
         setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        // Cleared on BOTH paths. It used to be cleared only in `catch`, so a
+        // successful action left the button spinning until the refresh
+        // happened to unmount the card.
         setBusy(null);
       }
     },
@@ -614,7 +766,7 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
       <Stack>
         <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
           <Tag hue={catFor(request.kind || "other")}>{request.kind || "other"}</Tag>
-          {[...new Set(tasks.map((t) => t.scope ?? "workshop"))].map((s) => (
+          {groupScopes.map((s) => (
             <Tag key={s} hue={catFor(s)}>{scopeLabel(s)}</Tag>
           ))}
           <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{label}</span>
@@ -690,18 +842,21 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
           onClose={() => setOpen(null)}
           onSubmit={async (fields) => {
             setOpen(null);
-            await run("grant-and-continue", fields, `Granted, and ${label} released.`);
+            await run("grant-and-continue", fields, `Granted, and ${label} released.`, "first");
           }}
         />
       )}
       {open === "rule" && (
         <RuleDialog
+          // The rule is minted against the FIRST ticket, so it lands in that
+          // ticket's scope. When the group spans scopes that is a real choice,
+          // and the dialog names the scope it will land in.
           ask={request.ask || request.question || ""}
           scope={tasks[0].scope ?? "workshop"}
           onClose={() => setOpen(null)}
           onSubmit={async (fields) => {
             setOpen(null);
-            await run("mint-rule", fields, `Rule recorded, and ${label} released.`);
+            await run("mint-rule", fields, `Rule recorded, and ${label} released.`, "first");
           }}
         />
       )}
@@ -715,117 +870,6 @@ function BlockCard({ group, onDone }: { group: BlockGroup; onDone: (msg: string)
         confirmLabel="Deny and cancel"
       />
     </Card>
-  );
-}
-
-// Grant + continue: the durable answer to a block that named a resource and a
-// verb. Prefilled from the block's own proposal, because the thing that stopped
-// the job is the thing that becomes the rule that stops stopping it.
-function GrantDialog({
-  proposal,
-  count,
-  onClose,
-  onSubmit,
-}: {
-  proposal: { uri: string; verb: string };
-  count: number;
-  onClose: () => void;
-  onSubmit: (fields: Record<string, unknown>) => void;
-}) {
-  const [uri, setUri] = useState(proposal.uri);
-  const [verb, setVerb] = useState(proposal.verb);
-  const [subtree, setSubtree] = useState(false);
-  const [ttl, setTtl] = useState("");
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Grant standing access"
-      actions={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" onClick={() => onSubmit({
-            store_uri: uri.trim(),
-            verbs: [verb],
-            subtree,
-            ttl_hours: ttl.trim() ? Number(ttl) : null,
-          })}>Grant and release</Button>
-        </>
-      }
-    >
-      <Stack gap="lg">
-        <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
-          Mints an enforced grant and releases {count === 1 ? "the ticket" : `all ${count} tickets`}. Checked mechanically on every store call from then on, with no model in the loop.
-        </p>
-        <Field label="Store URI" htmlFor="grant-uri">
-          <Input id="grant-uri" value={uri} onChange={(e) => setUri(e.target.value)} data-autofocus />
-        </Field>
-        <Row wrap style={{ gap: "var(--space-4)", alignItems: "flex-end" }}>
-          <Field label="Verb" htmlFor="grant-verb">
-            <Select id="grant-verb" value={verb} onChange={(e) => setVerb(e.target.value)}>
-              <option value="read">read</option>
-              <option value="write">write</option>
-              <option value="append">append</option>
-            </Select>
-          </Field>
-          <Field label="Expires in" htmlFor="grant-ttl" help="Hours. Empty = standing.">
-            <Input id="grant-ttl" type="number" value={ttl} onChange={(e) => setTtl(e.target.value)} style={{ maxWidth: "7rem" }} />
-          </Field>
-        </Row>
-        <Checkbox checked={subtree} onChange={setSubtree}
-                  label="Cover everything underneath this, not just this one thing" />
-      </Stack>
-    </Modal>
-  );
-}
-
-// Mint rule: the durable answer to a block whose ask was a judgment. Scoped to
-// the ticket's own scope by default — `global` is injected into every agent's
-// context forever, so it stays a deliberate act, never a default.
-function RuleDialog({
-  ask,
-  scope,
-  onClose,
-  onSubmit,
-}: {
-  ask: string;
-  scope: string;
-  onClose: () => void;
-  onSubmit: (fields: Record<string, unknown>) => void;
-}) {
-  const [rule, setRule] = useState("");
-  const [ruleScope, setRuleScope] = useState("");
-
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      title="Mint a rule from this block"
-      actions={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" disabled={!rule.trim()} onClick={() => onSubmit({
-            rule: rule.trim(),
-            rule_scope: ruleScope || null,
-          })}>Record and release</Button>
-        </>
-      }
-    >
-      <Stack gap="lg">
-        <p className="ws-muted" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>Asked: {ask}</p>
-        <Field label="The standing answer" htmlFor="rule-text" help="Every future run in this scope reads this before it starts. It is guidance, not a hard limit.">
-          <Textarea id="rule-text" rows={4} value={rule} onChange={(e) => setRule(e.target.value)}
-                    placeholder="Prefer the existing UI primitive over a new one." data-autofocus />
-        </Field>
-        <Field label="Scope" htmlFor="rule-scope" help="Global rules are injected into every agent's context, forever.">
-          <Select id="rule-scope" value={ruleScope} onChange={(e) => setRuleScope(e.target.value)}>
-            <option value="">{scopeLabel(scope)} (this ticket's scope)</option>
-            <option value="global">global (every scope, every run)</option>
-          </Select>
-        </Field>
-      </Stack>
-    </Modal>
   );
 }
 
@@ -885,10 +929,11 @@ function PromotionCandidates({ rows, onDone }: { rows: Candidate[] | null; onDon
           ))}
         </Stack>
       )}
+      {/* Its own dialog, not the block one. Reusing GrantDialog here meant a
+          surface with no ticket at all was told it would "release the ticket",
+          and it was handed a stub proposal of `{uri: "", verb: "write"}`. */}
       {open && (
-        <GrantDialog
-          proposal={{ uri: "", verb: "write" }}
-          count={1}
+        <PromoteGrantDialog
           onClose={() => setOpen(null)}
           onSubmit={(fields) => promote(open, fields)}
         />
@@ -910,7 +955,7 @@ export default function Work() {
 
   return (
     <div>
-      <PageHeader title="Work" sub="Tickets, the runs they produce, and anything waiting on an answer." />
+      <PageHeader title="Tickets" sub="Work items, the runs they produce, and anything waiting on an answer." />
       {/* The worker loop's real state + its start/stop control, above the tabs:
           whether tickets are being drained is the first thing to know on this
           page, and it is true of every tab, not just one. */}
@@ -918,10 +963,10 @@ export default function Work() {
         <QueueRunner />
       </div>
       <div style={{ marginBottom: "var(--space-4)" }}>
-        <Segmented<Tab> ariaLabel="Work view" value={tab} onChange={setTab} options={TABS} />
+        <Segmented<Tab> ariaLabel="Ticket view" value={tab} onChange={setTab} options={TABS} />
       </div>
       {tab === "tickets" ? <TicketsTab />
-        : tab === "runs" ? <JobsFeed hideHeader />
+        : tab === "runs" ? <JobsFeed />
         : <ReviewTab />}
     </div>
   );

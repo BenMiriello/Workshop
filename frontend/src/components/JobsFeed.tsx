@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   CardGrid,
-  PageHeader,
   Row,
   Stack,
   Skeleton,
@@ -100,7 +99,11 @@ function bindingLabel(job: Job): { icon: JSX.Element; text: string } {
   return { icon: <Bot aria-hidden />, text: "unbound" };
 }
 
-export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean }) {
+// Always embedded, never a page of its own. `hideHeader` used to gate a
+// PageHeader branch that nothing could reach: the Runs tab is the only caller
+// and always passed it, and /jobs is a redirect to that tab. The prop and the
+// header went with it, along with the only read of `data.count`.
+export default function JobsFeed() {
   const nav = useNavigate();
   const [data, setData] = useState<JobsResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -319,16 +322,9 @@ export default function JobsFeed({ hideHeader = false }: { hideHeader?: boolean 
 
   return (
     <div>
-      {!hideHeader && (
-        <PageHeader
-          title="Jobs"
-          sub={data ? `${data.count} ${data.count === 1 ? "job" : "jobs"}` : undefined}
-          actions={refreshBtn}
-        />
-      )}
       <Row between wrap style={{ marginBottom: "var(--space-4)" }}>
         {filterBar}
-        {hideHeader && refreshBtn}
+        {refreshBtn}
       </Row>
       {body}
     </div>

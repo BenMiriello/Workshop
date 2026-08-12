@@ -41,6 +41,43 @@ export type TaskEvidence = {
   [k: string]: unknown;
 };
 
+// A comment is what a person or an agent SAID about the ticket; evidence is what
+// the system RECORDED about a run. They are different channels on purpose: a
+// comment is attributed and a piece of evidence is not, and mixing them turns
+// "the reviewer rejected this" into something that looks like an opinion.
+//
+// A comment is NOT part of the spec. An answer a worker must act on is written
+// into the ticket body by the question path, because a worker is handed the
+// ticket text and nothing else.
+export type TaskComment = {
+  id: string;
+  author: string;
+  text: string;
+  ts: string;
+};
+
+// A linked ticket, resolved server-side. The edge fields on the record
+// (`depends_on`, `relates_to`, `parent`) hold BARE ids with no scope, so a
+// client cannot build a working href from them: every screen that tried used
+// the CURRENT ticket's scope and produced a 404 for anything cross-scope. The
+// detail endpoint resolves them instead, which is the only place that can.
+export type TaskLink = {
+  id: string;
+  scope: string;
+  title: string;
+  status: TaskStatus;
+};
+
+export type TaskLinks = {
+  parent: TaskLink | null;
+  children: TaskLink[];
+  depends_on: TaskLink[];
+  relates_to: TaskLink[];
+  // Ids that resolved in no scope at all. Rendered as dead references rather
+  // than as links, so a dangling edge is visible instead of silent.
+  missing: string[];
+};
+
 // Acceptance gate the worker must clear before a task can finish. Matches the
 // store's shape (backend services/tasks.py): reviewer = a reviewer pass judges
 // it; command = `spec` is a shell command that must exit 0; operator = the human
@@ -176,7 +213,10 @@ export type Task = {
     context_key: string | null;
   } | null;
   evidence?: TaskEvidence[];
+  comments?: TaskComment[];
   source?: { kind?: string; ref?: string | null };
+  // How many times a worker has attempted this ticket, and the per-ticket cap.
+  attempts?: number;
   awaiting?: BlockRequest | null;
   // The SAME record as `awaiting`, under the name the Review surface uses for it
   // (the API projects it; the store keeps one record). Present whenever the task
@@ -190,7 +230,23 @@ export type Task = {
   // Attached by the ticket detail endpoint only (it needs the scope's id set to
   // resolve dependencies), so it is absent on list rows.
   readiness?: TicketReadiness;
+  // Also detail-only: the graph edges resolved to real, linkable tickets.
+  links?: TaskLinks;
 };
+
+// ---- ordering ---------------------------------------------------------------
+// Mirrors backend tasks.SORT_KEYS. The list endpoint sorts; the client only
+// names the key, so the two cannot drift into two different ideas of "priority".
+
+export type TaskSort = "updated" | "created" | "priority" | "title" | "status";
+
+export const TASK_SORTS: { value: TaskSort; label: string }[] = [
+  { value: "updated", label: "Last updated" },
+  { value: "created", label: "Newest" },
+  { value: "priority", label: "Priority" },
+  { value: "status", label: "Status" },
+  { value: "title", label: "Title" },
+];
 
 // The seven task statuses -> the five design status kinds. Meaning, never a new
 // color: todo/parked idle-ish, doing live, in_review needs the operator, blocked

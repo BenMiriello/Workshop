@@ -177,13 +177,27 @@ async def list_all(
     status: str | None = None,
     scope: str | None = None,
     include_done: bool = True,
+    q: str | None = None,
+    sort: str = "updated",
+    desc: bool | None = None,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> dict:
     """Tasks across every scope, each tagged with its resolved `scope` key.
-    Optional filters: `status` (one of the seven task statuses) and `scope`
-    (restrict to a single scope key)."""
+
+    Filters: `status` (one of the eight task statuses), `scope` (restrict to a
+    single scope key), `q` (case-insensitive substring of title or body).
+    Ordering: `sort` (one of tasks.SORT_KEYS) + `desc`. Paging: `limit`/`offset`.
+
+    `total` is the size of the filtered set BEFORE paging; `count` is how many
+    are in this page. The list used to return raw file order with no way to page,
+    so a caller that wanted the newest ticket got the oldest and a caller with
+    more than a screenful got an arbitrary slice.
+    """
     out: list[dict] = []
     scopes = 0
     lat_cache: dict[str, str | None] = {}
+    needle = (q or "").strip().casefold()
     for skey, root in _scope_roots():
         if scope and skey != scope:
             continue
@@ -195,10 +209,19 @@ async def list_all(
         for t in items:
             if status and t.get("status") != status:
                 continue
+            if needle:
+                hay = f"{t.get('title') or ''}\n{t.get('body') or ''}".casefold()
+                if needle not in hay:
+                    continue
             rec = dict(t)
             rec["scope"] = skey
             out.append(_with_latitude(rec, skey, lat_cache))
-    return {"tasks": out, "count": len(out), "scopes": scopes}
+    out = tasks.sort_tasks(out, sort, desc)
+    total = len(out)
+    start = max(0, int(offset or 0))
+    page = out[start:start + limit] if limit and limit > 0 else out[start:]
+    return {"tasks": page, "count": len(page), "total": total, "scopes": scopes,
+            "offset": start, "sort": sort}
 
 
 @router.get("/scopes")
@@ -344,9 +367,82 @@ async def get_one(scope: str, task_id: str) -> dict:
     # What this ticket does not yet say. Computed here rather than in the store so
     # the store stays free of policy (and so `tasks` and `ticket_readiness` do not
     # import each other). Advisory: only `blocking()` refuses a run.
+    siblings = tasks.list_tasks(root)
     rec["readiness"] = ticket_readiness.check(
-        t, known_ids={x["id"] for x in tasks.list_tasks(root)})
+        t, known_ids={x["id"] for x in siblings})
+    rec["links"] = _resolve_links(t, scope, siblings)
     return _with_latitude(rec, scope)
+
+
+def _link_stub(t: dict, skey: str) -> dict:
+    """The shape a linked ticket is rendered as: enough to show a row and build a
+    working href, and nothing else."""
+    return {"id": t["id"], "scope": skey, "title": t.get("title") or "",
+            "status": t.get("status") or "todo"}
+
+
+def _resolve_links(task: dict, scope: str, siblings: list[dict]) -> dict:
+    """Resolve this ticket's graph edges into renderable stubs.
+
+    Two things were broken without this. First, `depends_on` / `relates_to` hold
+    BARE task ids with no scope, and the frontend built every href from the
+    CURRENT ticket's scope, so a cross-scope dependency linked to a 404. Second,
+    `parent` is written by the split endpoint and `children` is derived, so
+    nothing rendered either: splitting a ticket produced a parent that showed no
+    children and children that showed no way home.
+
+    Same-scope ids resolve from `siblings` (already loaded). Anything still
+    unresolved is looked for across the other scopes, which is the only way a
+    bare id can be turned into a link at all. An id that resolves nowhere comes
+    back under `missing` so the page can say so instead of linking into space.
+    """
+    want = {str(d) for d in (task.get("depends_on") or [])}
+    want |= {str(r) for r in (task.get("relates_to") or [])}
+    if task.get("parent"):
+        want.add(str(task["parent"]))
+
+    found: dict[str, dict] = {}
+    children: list[dict] = []
+    for s in siblings:
+        if s["id"] in want:
+            found[s["id"]] = _link_stub(s, scope)
+        if s.get("parent") and str(s["parent"]) == task["id"]:
+            children.append(_link_stub(s, scope))
+
+    # Only pay for the cross-scope scan when something is still unaccounted for.
+    # Once inside it, do NOT stop early on `missing` emptying: the same pass is
+    # what finds a child filed into another scope, and short-circuiting on the
+    # dependency count would silently skip the rest of the scopes for children.
+    missing = want - set(found)
+    if missing:
+        for skey, root in _scope_roots():
+            if skey == scope:
+                continue
+            try:
+                others = tasks.list_tasks(root)
+            except Exception:
+                continue
+            for o in others:
+                if o["id"] in missing:
+                    found[o["id"]] = _link_stub(o, skey)
+                    missing.discard(o["id"])
+                # A child can be split into a different scope in principle; the
+                # split endpoint does not do that today, but resolving it costs
+                # nothing on a scan we are already making.
+                if o.get("parent") and str(o["parent"]) == task["id"]:
+                    children.append(_link_stub(o, skey))
+
+    def pick(ids) -> list[dict]:
+        return [found[str(i)] for i in (ids or []) if str(i) in found]
+
+    parent_id = str(task["parent"]) if task.get("parent") else None
+    return {
+        "parent": found.get(parent_id) if parent_id else None,
+        "children": children,
+        "depends_on": pick(task.get("depends_on")),
+        "relates_to": pick(task.get("relates_to")),
+        "missing": sorted(missing),
+    }
 
 
 def _origin_for(task: dict) -> dict | None:
@@ -493,6 +589,45 @@ async def delete_one(scope: str, task_id: str) -> dict:
     if not tasks.remove(root, task_id):
         raise HTTPException(404, f"task not found: {task_id}")
     return {"deleted": True}
+
+
+class TaskCommentIn(BaseModel):
+    text: str
+    # Who is speaking. Defaults to the operator because that is who is pressing
+    # the button; an agent posting here names itself.
+    author: str | None = None
+
+
+@router.post("/{scope}/{task_id}/comments")
+async def add_task_comment(scope: str, task_id: str, body: TaskCommentIn) -> dict:
+    """Append a comment to a ticket's discussion.
+
+    This is discussion, not spec. An answer a worker must ACT on goes into the
+    ticket body via the question path (`tasks.append_clarification`), because a
+    worker is handed the ticket text and nothing else.
+    """
+    root = _require_root(scope)
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "comment text required")
+    rec = tasks.add_comment(root, task_id, text=text,
+                            author=(body.author or "operator").strip() or "operator")
+    if rec is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    out = dict(rec)
+    out["scope"] = scope
+    return out
+
+
+@router.delete("/{scope}/{task_id}/comments/{comment_id}")
+async def delete_task_comment(scope: str, task_id: str, comment_id: str) -> dict:
+    root = _require_root(scope)
+    rec = tasks.delete_comment(root, task_id, comment_id)
+    if rec is None:
+        raise HTTPException(404, "comment not found")
+    out = dict(rec)
+    out["scope"] = scope
+    return out
 
 
 @router.get("/{scope}/{task_id}/jobs")

@@ -282,7 +282,7 @@ export default function Deploys() {
         <Card>
           <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
             Deploys are configured per project, in that project's Deploys panel.
-            Every attempt shows up as a job on the Work page.
+            Every attempt shows up as a run on the Tickets page.
             The freeze switch above only freezes deploys, not agents.
           </p>
         </Card>

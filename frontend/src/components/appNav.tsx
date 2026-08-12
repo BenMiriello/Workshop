@@ -38,7 +38,9 @@ const NODES: Record<string, RouteNode> = {
   "/": { label: "Home" },
   "/agents": { label: "Agents" },
   "/agents/new": { label: "New agent", parent: "/agents" },
-  "/work": { label: "Work" },
+  // Route stays /work so every existing link and bookmark resolves; the LABEL
+  // is the ticket, which is the ratified noun (entity-model-2026-07-18 §1).
+  "/work": { label: "Tickets" },
   "/memory": { label: "Memory" },
   "/runs": { label: "Runs" },
   "/usage": { label: "Usage" },
@@ -339,16 +341,18 @@ export function AppGroupNav() {
 // row — the current section is already named in the breadcrumb, so nothing is
 // lost. CSS toggles which of the two renders at the breakpoint.
 // Per ADR-008: use first, build second, workers third, config last. Matches
-// frequency of operator use. Work is the "workers" view: its Tickets tab is the
-// cross-scope task list (the queue every parked to-do lands in) and its Runs tab
-// is the Jobs feed (every autonomous sweep + manual run). /jobs stays reachable.
+// frequency of operator use. Tickets is the "workers" view: its Open tab is the
+// cross-scope ticket list (the queue every parked to-do lands in) and its Runs
+// tab is the Jobs feed (every autonomous sweep + manual run). /jobs stays
+// reachable. The route is /work; only the label says Tickets, because "Work" is
+// a mass noun and could never name the individual item.
 const SECTIONS = [
   { to: "/", label: "Home", icon: HomeIcon },
   { to: "/chats", label: "Chats", icon: MessagesSquare },
   { to: "/projects", label: "Projects", icon: FolderGit2 },
   { to: "/apps", label: "Apps", icon: LayoutGrid },
   { to: "/agents", label: "Agents", icon: Bot },
-  { to: "/work", label: "Work", icon: ListChecks },
+  { to: "/work", label: "Tickets", icon: ListChecks },
   { to: "/deploys", label: "Deploys", icon: Rocket },
   { to: "/memory", label: "Memory", icon: Brain },
   { to: "/usage", label: "Usage", icon: Gauge },

@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Ticket as TicketIcon, ArrowLeft, RefreshCw, Trash2, Rocket, ExternalLink,
   Play, CheckCheck, XCircle, KeyRound, ScrollText, Ban, ClipboardList, Scissors,
+  MessageSquare, History, GitBranch, Link2, Send,
 } from "lucide-react";
 import {
   Button, Card, Row, Stack, PageHeader, SectionLabel, StateBlock, StatusDot, StatusPill,
@@ -12,15 +13,16 @@ import {
 } from "@workshop/ui";
 import { Markdown } from "@workshop/ui/markdown";
 import {
-  type Task, TASK_STATUSES, taskStatusKind, taskStatusLabel,
+  type Task, type TaskLink, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
   cleanTitle, isBlockingCheck, readinessLabel,
-  ticketHref,
+  ticketHref, taskAcceptanceLabel,
   latitudeDesc, latitudeSourceLabel,
 } from "../lib/tasks";
 import { jobIsLive, jobStatusKind } from "../lib/jobs";
 import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
 import { nextWorkParams } from "../lib/workParams";
+import { GrantDialog, RuleDialog } from "../components/ReviewDialogs";
 
 // A ticket can only be launched from `todo`. This gate lived in Work.tsx's
 // unreachable Edit drawer and nowhere on the live path, so Run was offered on
@@ -49,13 +51,9 @@ type JobRec = {
 
 type Deploy = {
   id: string;
-  project_slug: string;
   name: string;
-  target: { kind: string; project_name?: string };
-  source: { branch?: string };
-  current?: { url?: string; commit_sha?: string; deployed_at?: string };
+  target: { kind: string };
 };
-
 
 function ago(iso?: string | null): string {
   if (!iso) return "";
@@ -71,12 +69,45 @@ function ago(iso?: string | null): string {
   return `${d}d ago`;
 }
 
+function fmtTs(iso?: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : d.toLocaleString();
+}
 
-// A ticket's detail: title/description, status control, latitude, blocks graph
-// (depends_on / relates_to), review verbs when the ticket is blocked, linked
-// runs, and Deploy affordance when the scope maps to a project with configured
-// deploy targets. The Runs tab of Work links here; the URL is stable so
-// bookmarks and chat mentions survive.
+// Same rule JobsFeed uses. A run row without a duration or an end time made this
+// page's run list strictly worse than the feed it links to.
+function runDuration(r: JobRec): string {
+  if (!r.started_at) return "";
+  const start = new Date(r.started_at).getTime();
+  const end = r.ended_at ? new Date(r.ended_at).getTime() : NaN;
+  if (isNaN(start) || isNaN(end)) return "";
+  const secs = Math.max(0, Math.round((end - start) / 1000));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+// One linked ticket, as a row that actually goes somewhere. The href is built
+// from the LINK's own scope, not the current ticket's: the two are often
+// different and the page used to send every cross-scope dependency to a 404.
+function LinkRow({ link }: { link: TaskLink }) {
+  return (
+    <Link to={ticketHref(link.scope, link.id)} className="ws-ticket-link">
+      <StatusDot status={taskStatusKind(link.status)}>{taskStatusLabel(link.status)}</StatusDot>
+      <span className="ws-truncate ws-ticket-link__title" title={link.title}>
+        {link.title || link.id}
+      </span>
+      <Tag hue={catFor(link.scope)}>{scopeLabel(link.scope)}</Tag>
+    </Link>
+  );
+}
+
+// A ticket's detail. Everything the record already knew and never showed: the
+// family it belongs to, the answers already given to it, what has been attempted
+// and what the gate is. The URL is stable, so bookmarks and chat mentions
+// survive.
 export default function TicketDetail() {
   const { scope: scopeRaw = "", id = "" } = useParams();
   const scope = decodeURIComponent(scopeRaw);
@@ -111,9 +142,13 @@ export default function TicketDetail() {
   const [bannerErr, setBannerErr] = useState(false);
   const [reviewNote, setReviewNote] = useState("");
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
+  const [reviewDialog, setReviewDialog] = useState<"grant" | "rule" | null>(null);
+  const [confirmDeny, setConfirmDeny] = useState(false);
   const [deployOpen, setDeployOpen] = useState(false);
   const [deployPick, setDeployPick] = useState<string>("");
   const [deployBusy, setDeployBusy] = useState(false);
+  const [commentDraft, setCommentDraft] = useState("");
+  const [commentBusy, setCommentBusy] = useState(false);
 
   const projectSlug = scope.startsWith("project:") ? scope.slice("project:".length) : null;
 
@@ -201,7 +236,7 @@ export default function TicketDetail() {
   }, [draftTitle, draftDesc, draftStatus, draftLatitude, patch]);
 
   // A draft is a suggestion the system made. Approving is the operator agreeing
-  // to it, and it is the only thing that makes a ticket eligible to run — the
+  // to it, and it is the only thing that makes a ticket eligible to run: the
   // sweep skips drafts and the run endpoint refuses them.
   const approve = useCallback(async () => {
     setApproving(true);
@@ -303,14 +338,17 @@ export default function TicketDetail() {
     }
   }, [scope, id, nav, fail]);
 
-  const review = useCallback(async (action: string) => {
+  // `extra` carries the fields an action requires: `rule` for mint-rule,
+  // `store_uri`/`verbs` for grant-and-continue. Both used to be sent empty from
+  // this page, so mint-rule hard-400'd every time it was pressed.
+  const review = useCallback(async (action: string, extra: Record<string, unknown> = {}) => {
     setReviewBusy(action);
     setBanner(null);
     try {
       const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/review`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, note: reviewNote || null }),
+        body: JSON.stringify({ action, note: reviewNote || null, ...extra }),
       });
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setReviewNote("");
@@ -321,6 +359,27 @@ export default function TicketDetail() {
       setReviewBusy(null);
     }
   }, [scope, id, reviewNote, load, fail]);
+
+  const postComment = useCallback(async () => {
+    const text = commentDraft.trim();
+    if (!text) return;
+    setCommentBusy(true);
+    setBanner(null);
+    try {
+      const r = await fetch(`/api/tasks/${encodeURIComponent(scope)}/${encodeURIComponent(id)}/comments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setTask(await r.json());
+      setCommentDraft("");
+    } catch (e) {
+      fail(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCommentBusy(false);
+    }
+  }, [scope, id, commentDraft, fail]);
 
   const kickDeploy = useCallback(async () => {
     if (!deployPick || !projectSlug) return;
@@ -345,13 +404,22 @@ export default function TicketDetail() {
     }
   }, [deployPick, projectSlug, id, load, say, fail]);
 
-  const blocked = task?.status === "blocked" && !!task?.awaiting;
+  // A block the operator already dismissed from the Review tab is answered. It
+  // used to keep showing the whole review panel here, because this page checked
+  // `awaiting` and the Review tab checked `awaiting && !dismissed`.
+  const awaiting = task?.awaiting ?? null;
+  const blocked = task?.status === "blocked" && !!awaiting && !awaiting.dismissed;
 
-  const dependsOn = task?.depends_on || [];
-  const relatesTo = task?.relates_to || [];
+  const links = task?.links;
+  const children = links?.children ?? [];
+  const dependsOn = links?.depends_on ?? [];
+  const relatesTo = links?.relates_to ?? [];
+  const missingLinks = links?.missing ?? [];
+  const hasLinks = dependsOn.length > 0 || relatesTo.length > 0 || missingLinks.length > 0;
+  const comments = task?.comments ?? [];
+  const evidence = task?.evidence ?? [];
 
   const scopeLink = scopeHref(scope);
-
   const workHref = `/work?${nextWorkParams(new URLSearchParams(), { tab: "tickets", scope })}`;
 
   // A run this ticket started is a background process. The ticket record itself
@@ -380,6 +448,11 @@ export default function TicketDetail() {
     || draftLatitude !== (task.latitude ?? "inherit")
   );
 
+  // Sub-ticket roll-up, derived and never stored. A parent is finished when its
+  // children are; showing the count is the whole point of splitting.
+  const childrenDone = children.filter(
+    (c) => c.status === "done" || c.status === "cancelled").length;
+
   return (
     <div>
       <PageHeader
@@ -396,6 +469,8 @@ export default function TicketDetail() {
           <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
             {task && (
               <>
+                {/* ONE status pill on this page. The State card below used to
+                    render the same fact again as a StatusDot two screens down. */}
                 <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
                 {/* The ticket record does not move when a run is launched, so
                     the two facts are shown as two pills rather than one lie. */}
@@ -424,6 +499,16 @@ export default function TicketDetail() {
                     from a chat that has since been deleted
                   </span>
                 ) : null}
+                {/* When it was filed and when it last moved. Both were on the
+                    record and neither was ever on the page. */}
+                {task.created && (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
+                        title={fmtTs(task.created)}>filed {ago(task.created)}</span>
+                )}
+                {task.updated && task.updated !== task.created && (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
+                        title={fmtTs(task.updated)}>updated {ago(task.updated)}</span>
+                )}
                 <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{id}</span>
               </>
             )}
@@ -452,7 +537,8 @@ export default function TicketDetail() {
                 <Rocket aria-hidden /> Deploy
               </Button>
             )}
-            <Button size="sm" variant="danger-ghost" onClick={() => setConfirmDelete(true)}>
+            <Button size="sm" variant="danger-ghost" onClick={() => setConfirmDelete(true)}
+                    aria-label="Delete ticket">
               <Trash2 aria-hidden />
             </Button>
           </Row>
@@ -508,9 +594,29 @@ export default function TicketDetail() {
                     <Input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="Ticket title" />
                   </Field>
                   <Field label="Description">
-                    <Textarea rows={6} value={draftDesc} onChange={(e) => setDraftDesc(e.target.value)}
+                    <Textarea rows={10} value={draftDesc} onChange={(e) => setDraftDesc(e.target.value)}
                               placeholder="What needs to happen, and why." />
                   </Field>
+                  {/* Status and latitude live in the same Save as the text, so
+                      they are edited here rather than in a second card that
+                      commits on a different gesture. */}
+                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+                    <Field label="Status">
+                      <Select value={draftStatus} onChange={(e) => setDraftStatus(e.target.value)} disabled={saving}>
+                        {TASK_STATUSES.map((s) => (
+                          <option key={s} value={s}>{taskStatusLabel(s)}</option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Latitude" help={latitudeDesc(draftLatitude) || "Inherited from the scope."}>
+                      <Select value={draftLatitude} onChange={(e) => setDraftLatitude(e.target.value)} disabled={saving}>
+                        <option value="inherit">inherit</option>
+                        <option value="strict">strict</option>
+                        <option value="standard">standard</option>
+                        <option value="open">open</option>
+                      </Select>
+                    </Field>
+                  </Row>
                 </Stack>
               ) : (
                 <Stack gap="sm">
@@ -518,7 +624,7 @@ export default function TicketDetail() {
                     <Markdown>{descriptionOf(task)}</Markdown>
                   ) : (
                     <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-                      No description. Click Edit to add one.
+                      No description. Press Edit to add one.
                     </span>
                   )}
                 </Stack>
@@ -618,24 +724,93 @@ export default function TicketDetail() {
             </section>
           )}
 
-          {/* Status + latitude + assignee ------------------------------ */}
+          {/* Family: parent + sub-tickets ------------------------------ */}
+          {/* `parent` has been written by the split endpoint since it shipped
+              and rendered ZERO times, so using this page's own Split button
+              produced a parent with no children and children with no way home. */}
+          {(links?.parent || children.length > 0) && (
+            <section>
+              <SectionLabel icon={<GitBranch aria-hidden />}>Sub-tickets</SectionLabel>
+              <Card>
+                <Stack gap="sm">
+                  {links?.parent && (
+                    <div>
+                      <span className="ws-card__meta">part of</span>
+                      <div style={{ marginTop: "var(--space-1)" }}>
+                        <LinkRow link={links.parent} />
+                      </div>
+                    </div>
+                  )}
+                  {children.length > 0 && (
+                    <div>
+                      <span className="ws-card__meta">
+                        {childrenDone} of {children.length} done
+                      </span>
+                      <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
+                        {children.map((c) => <LinkRow key={`${c.scope}:${c.id}`} link={c} />)}
+                      </Stack>
+                      {childrenDone < children.length && (
+                        <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0 0" }}>
+                          Only leaf tickets are run. This one finishes when its sub-tickets do.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </Stack>
+              </Card>
+            </section>
+          )}
+
+          {/* Depends on / relates to ---------------------------------- */}
+          {hasLinks && (
+            <section>
+              <SectionLabel icon={<Link2 aria-hidden />}>Links</SectionLabel>
+              <Card>
+                <Stack gap="sm">
+                  {dependsOn.length > 0 && (
+                    <div>
+                      <span className="ws-card__meta">blocked until these are done</span>
+                      <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
+                        {dependsOn.map((l) => <LinkRow key={`${l.scope}:${l.id}`} link={l} />)}
+                      </Stack>
+                    </div>
+                  )}
+                  {relatesTo.length > 0 && (
+                    <div>
+                      <span className="ws-card__meta">related</span>
+                      <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
+                        {relatesTo.map((l) => <LinkRow key={`${l.scope}:${l.id}`} link={l} />)}
+                      </Stack>
+                    </div>
+                  )}
+                  {/* An id that resolves in no scope. Shown as broken rather
+                      than linked, because a link to nothing is worse than a
+                      label that admits the reference is dead. */}
+                  {missingLinks.length > 0 && (
+                    <div>
+                      <span className="ws-card__meta">references that no longer resolve</span>
+                      <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
+                        {missingLinks.map((tid) => (
+                          <StatusDot key={tid} status="warn">
+                            <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{tid}</span>
+                          </StatusDot>
+                        ))}
+                      </Row>
+                    </div>
+                  )}
+                </Stack>
+              </Card>
+            </section>
+          )}
+
+          {/* State ---------------------------------------------------- */}
+          {/* Status is NOT repeated here. It is in the header, and the edit
+              control for it is in the Ticket card's edit mode, so this card is
+              only the facts that had no home at all. */}
           <section>
             <SectionLabel>State</SectionLabel>
             <Card>
-              <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
-                {/* Config, so it commits on the ticket's explicit Save, not the
-                    instant the select moves. Read-only until Edit is pressed. */}
-                <Field label="Status">
-                  {editing ? (
-                    <Select value={draftStatus} onChange={(e) => setDraftStatus(e.target.value)} disabled={saving}>
-                      {TASK_STATUSES.map((s) => (
-                        <option key={s} value={s}>{taskStatusLabel(s)}</option>
-                      ))}
-                    </Select>
-                  ) : (
-                    <StatusDot status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusDot>
-                  )}
-                </Field>
+              <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
                 <Field label="Latitude"
                   help={
                     <>
@@ -645,32 +820,60 @@ export default function TicketDetail() {
                         : ""}
                     </>
                   }>
-                  {editing ? (
-                    <Select value={draftLatitude} onChange={(e) => setDraftLatitude(e.target.value)} disabled={saving}>
-                      <option value="inherit">inherit</option>
-                      <option value="strict">strict</option>
-                      <option value="standard">standard</option>
-                      <option value="open">open</option>
-                    </Select>
-                  ) : (
-                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.latitude ?? "inherit"}</span>
-                  )}
+                  <span style={{ fontSize: "var(--fs-sm)" }}>
+                    {task.effective_latitude?.value ?? "standard"}
+                  </span>
                 </Field>
-                {task.assignee && (
-                  <Field label="Assignee">
-                    <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{task.assignee}</span>
-                  </Field>
-                )}
-                {task.priority != null && (
+                {/* Every ticket defaults to priority 0, so rendering it always
+                    put the word "Priority 0" on every ticket in the system.
+                    Work's card already hid it; the two now agree. */}
+                {typeof task.priority === "number" && task.priority !== 0 && (
                   <Field label="Priority">
                     <span style={{ fontSize: "var(--fs-sm)" }}>{task.priority}</span>
                   </Field>
                 )}
+                {task.effort && (
+                  <Field label="Effort">
+                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.effort}</span>
+                  </Field>
+                )}
+                {/* The completion gate. This is what decides whether the work is
+                    accepted, and it was rendered nowhere. */}
+                {task.acceptance?.kind && (
+                  <Field label="Done when" help={task.acceptance.spec || undefined}>
+                    <span style={{ fontSize: "var(--fs-sm)" }}>
+                      {taskAcceptanceLabel(task.acceptance.kind)}
+                    </span>
+                  </Field>
+                )}
+                {typeof task.attempts === "number" && task.attempts > 0 && (
+                  <Field label="Attempts"
+                         help={task.max_attempts ? `Cap ${task.max_attempts}.` : undefined}>
+                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.attempts}</span>
+                  </Field>
+                )}
+                {task.assignee && task.assignee !== "operator" && (
+                  <Field label="Assignee">
+                    <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{task.assignee}</span>
+                  </Field>
+                )}
+                {task.scoped_by && (
+                  <Field label="Scoped by" help="Who wrote this spec.">
+                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.scoped_by}</span>
+                  </Field>
+                )}
               </Row>
-              {!editing && (
-                <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0 0" }}>
-                  Press Edit above to change the status or latitude.
-                </p>
+              {(task.labels?.length ?? 0) > 0 && (
+                <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
+                  {(task.labels ?? []).map((l) => <Tag key={l} hue={catFor(l)}>{l}</Tag>)}
+                </Row>
+              )}
+              {task.blocked_reason && (
+                <div style={{ marginTop: "var(--space-2)" }}>
+                  <StatusDot status="danger">
+                    <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{task.blocked_reason}</span>
+                  </StatusDot>
+                </div>
               )}
               {/* What will actually happen to this ticket if nobody presses
                   Run. For a project scope today, the answer is nothing. */}
@@ -685,25 +888,25 @@ export default function TicketDetail() {
           </section>
 
           {/* Review (block loop) --------------------------------------- */}
-          {blocked && task.awaiting && (
+          {blocked && awaiting && (
             <section>
               <SectionLabel icon={<KeyRound aria-hidden />}>Awaiting an answer</SectionLabel>
               <Card>
                 <Stack gap="sm">
                   <div>
                     <span style={{ fontWeight: "var(--fw-semi)" }}>
-                      {task.awaiting.ask || task.awaiting.question || "This ticket blocked and needs a review."}
+                      {awaiting.ask || awaiting.question || "This ticket blocked and needs a review."}
                     </span>
-                    {task.awaiting.why && (
+                    {awaiting.why && (
                       <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: "var(--space-1) 0 0" }}>
-                        {task.awaiting.why}
+                        {awaiting.why}
                       </p>
                     )}
                   </div>
-                  {task.awaiting.proposal?.uri && (
+                  {awaiting.proposal?.uri && (
                     <div style={{ fontSize: "var(--fs-xs)" }}>
-                      Proposed grant: <code>{task.awaiting.proposal.verb}</code> on{" "}
-                      <code>{task.awaiting.proposal.uri}</code>
+                      Proposed grant: <code>{awaiting.proposal.verb}</code> on{" "}
+                      <code>{awaiting.proposal.uri}</code>
                     </div>
                   )}
                   <Field label="Your note" help="The next attempt reads this.">
@@ -715,23 +918,28 @@ export default function TicketDetail() {
                             onClick={() => review("approve")}>
                       <CheckCheck aria-hidden /> Release
                     </Button>
-                    {task.awaiting.proposal && (
+                    {awaiting.proposal && (
                       <Button size="sm" variant="ghost" loading={reviewBusy === "grant-and-continue"}
-                              onClick={() => review("grant-and-continue")}>
-                        Grant & release
+                              onClick={() => setReviewDialog("grant")}>
+                        <KeyRound aria-hidden /> Grant and release
                       </Button>
                     )}
+                    {/* Opens the dialog that carries the rule text. It used to
+                        post the action with no rule and take a 400 every time. */}
                     <Button size="sm" variant="ghost" loading={reviewBusy === "mint-rule"}
-                            onClick={() => review("mint-rule")}>
-                      Mint rule & release
+                            onClick={() => setReviewDialog("rule")}>
+                      Mint rule and release
                     </Button>
                     <Button size="sm" variant="ghost" loading={reviewBusy === "dismiss"}
                             onClick={() => review("dismiss")}>
                       <Ban aria-hidden /> Dismiss
                     </Button>
+                    {/* Cancelling a ticket is destructive and gets a dialog,
+                        the same as it does on the Review tab. This was a
+                        one-click cancel. */}
                     <Button size="sm" variant="danger-ghost" loading={reviewBusy === "deny"}
-                            onClick={() => review("deny")}>
-                      <XCircle aria-hidden /> Deny (cancel ticket)
+                            onClick={() => setConfirmDeny(true)}>
+                      <XCircle aria-hidden /> Deny
                     </Button>
                   </Row>
                 </Stack>
@@ -739,42 +947,45 @@ export default function TicketDetail() {
             </section>
           )}
 
-          {/* Depends on / relates to ---------------------------------- */}
-          {(dependsOn.length > 0 || relatesTo.length > 0) && (
-            <section>
-              <SectionLabel>Links</SectionLabel>
-              <Card>
-                <Stack gap="sm">
-                  {dependsOn.length > 0 && (
-                    <div>
-                      <span className="ws-card__meta">depends on</span>
-                      <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
-                        {dependsOn.map((tid) => (
-                          <Link key={tid} to={ticketHref(scope, tid)}
-                                style={{ fontSize: "var(--fs-sm)" }}>
-                            <Tag hue="orchid">{tid}</Tag>
-                          </Link>
-                        ))}
+          {/* Discussion ------------------------------------------------ */}
+          <section>
+            <SectionLabel icon={<MessageSquare aria-hidden />}>Discussion</SectionLabel>
+            <Card>
+              <Stack gap="sm">
+                {comments.length === 0 ? (
+                  <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+                    Nothing yet. Notes here are for you and anyone reading the ticket later.
+                    An answer a worker must act on belongs in the description instead.
+                  </span>
+                ) : (
+                  comments.map((c) => (
+                    <div key={c.id} className="ws-comment">
+                      <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                        <span style={{ fontWeight: "var(--fw-semi)", fontSize: "var(--fs-sm)" }}>{c.author}</span>
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }} title={fmtTs(c.ts)}>
+                          {ago(c.ts)}
+                        </span>
                       </Row>
+                      <p className="ws-wrap" style={{ margin: "var(--space-1) 0 0", fontSize: "var(--fs-sm)" }}>
+                        {c.text}
+                      </p>
                     </div>
-                  )}
-                  {relatesTo.length > 0 && (
-                    <div>
-                      <span className="ws-card__meta">relates to</span>
-                      <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-1)" }}>
-                        {relatesTo.map((tid) => (
-                          <Link key={tid} to={ticketHref(scope, tid)}
-                                style={{ fontSize: "var(--fs-sm)" }}>
-                            <Tag hue="turquoise">{tid}</Tag>
-                          </Link>
-                        ))}
-                      </Row>
-                    </div>
-                  )}
-                </Stack>
-              </Card>
-            </section>
-          )}
+                  ))
+                )}
+                <Field label="Add a comment">
+                  <Textarea rows={3} value={commentDraft}
+                            onChange={(e) => setCommentDraft(e.target.value)}
+                            placeholder="Context, a decision, something the next reader needs." />
+                </Field>
+                <Row>
+                  <Button size="sm" variant="primary" onClick={postComment}
+                          loading={commentBusy} disabled={commentBusy || !commentDraft.trim()}>
+                    <Send aria-hidden /> Comment
+                  </Button>
+                </Row>
+              </Stack>
+            </Card>
+          </section>
 
           {/* Runs ------------------------------------------------------ */}
           <section>
@@ -785,48 +996,61 @@ export default function TicketDetail() {
                   hint="Runs appear here every time this ticket is attempted (manually or by an agent sweep)." />
               ) : (
                 <Stack gap="sm">
-                  {(runs || []).map((r) => (
-                    <Row key={r.id} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                      {/* jobStatusKind, not a local ternary. The inlined one
-                          here had no awaiting_input case, so a run waiting on
-                          the operator rendered grey on this page and amber on
-                          every other one. */}
-                      <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
-                      {r.kind && <Badge>{r.kind}</Badge>}
-                      {r.trigger && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{r.trigger}</span>}
-                      <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{ago(r.started_at)}</span>
-                      {r.evidence?.summary && (
-                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {r.evidence.summary}
+                  {(runs || []).map((r) => {
+                    const dur = runDuration(r);
+                    return (
+                      <Row key={r.id} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+                        {/* jobStatusKind, not a local ternary. The inlined one
+                            here had no awaiting_input case, so a run waiting on
+                            the operator rendered grey on this page and amber on
+                            every other one. */}
+                        <StatusDot status={jobStatusKind(r.status)}>{r.status}</StatusDot>
+                        {r.kind && <Badge>{r.kind}</Badge>}
+                        {r.trigger && <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{r.trigger}</span>}
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
+                              title={fmtTs(r.started_at)}>
+                          {[ago(r.started_at), dur].filter(Boolean).join(" · ")}
                         </span>
-                      )}
-                      <Link to={`/runs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
-                        <Button size="sm" variant="ghost">Open</Button>
-                      </Link>
-                    </Row>
-                  ))}
+                        {r.evidence?.summary && (
+                          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {r.evidence.summary}
+                          </span>
+                        )}
+                        <Link to={`/runs/${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
+                          <Button size="sm" variant="ghost">Open</Button>
+                        </Link>
+                      </Row>
+                    );
+                  })}
                 </Stack>
               )}
             </Card>
           </section>
 
-          {/* Deploys (project-scoped tickets only) --------------------- */}
-          {projectSlug && (deploys?.length ?? 0) > 0 && (
+          {/* Activity -------------------------------------------------- */}
+          {/* `evidence` is where every review note, grant, split record, gate
+              verdict and denial reason has always been written, and it was
+              rendered nowhere: every answer the operator had ever given a
+              ticket was invisible on the ticket. */}
+          {evidence.length > 0 && (
             <section>
-              <SectionLabel icon={<Rocket aria-hidden />}>Deploy from this ticket</SectionLabel>
+              <SectionLabel icon={<History aria-hidden />}>Activity</SectionLabel>
               <Card>
-                <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
-                  <Button size="sm" variant="primary" disabled={deployBusy}
-                          onClick={() => setDeployOpen(true)}>
-                    <Rocket aria-hidden /> Choose a target
-                  </Button>
-                  <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>
-                    {(deploys?.length ?? 0)} target{(deploys?.length ?? 0) === 1 ? "" : "s"} configured for {projectSlug}
-                  </span>
-                </Row>
-                <p className="ws-muted" style={{ fontSize: "var(--fs-xs)", margin: "var(--space-2) 0 0" }}>
-                  This kicks a deploy tied to this ticket (the resulting Run appears above and in the project's Deploys panel).
-                </p>
+                <Stack gap="sm">
+                  {evidence.map((e, i) => (
+                    <Row key={`${e.ts ?? ""}:${i}`} wrap
+                         style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+                      {e.kind && <Badge>{String(e.kind)}</Badge>}
+                      <span className="ws-wrap" style={{ flex: "1 1 16rem", minWidth: 0, fontSize: "var(--fs-sm)" }}>
+                        {String(e.ref ?? "")}
+                      </span>
+                      {e.ts && (
+                        <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}
+                              title={fmtTs(String(e.ts))}>{ago(String(e.ts))}</span>
+                      )}
+                    </Row>
+                  ))}
+                </Stack>
               </Card>
             </section>
           )}
@@ -862,10 +1086,37 @@ export default function TicketDetail() {
         />
       )}
 
+      <ConfirmDialog
+        open={confirmDeny}
+        onCancel={() => setConfirmDeny(false)}
+        onConfirm={() => { setConfirmDeny(false); review("deny"); }}
+        title="Deny this ticket?"
+        body={<>This cancels the ticket. It can't be undone; the work will not happen. Run history and evidence are kept.</>}
+        confirmLabel="Deny and cancel"
+      />
+
+      {reviewDialog === "grant" && awaiting?.proposal && (
+        <GrantDialog
+          proposal={awaiting.proposal}
+          count={1}
+          onClose={() => setReviewDialog(null)}
+          onSubmit={(fields) => { setReviewDialog(null); review("grant-and-continue", fields); }}
+        />
+      )}
+      {reviewDialog === "rule" && (
+        <RuleDialog
+          ask={awaiting?.ask || awaiting?.question || ""}
+          scope={scope}
+          onClose={() => setReviewDialog(null)}
+          onSubmit={(fields) => { setReviewDialog(null); review("mint-rule", fields); }}
+        />
+      )}
+
       {/* The dialog CARRIES the target picker. It used to be gated on
           `deployOpen && deployPick`, with deployPick set only by a Select
           further down the page, so the header's Deploy button opened nothing at
-          all until the operator had already chosen a target somewhere else. */}
+          all until the operator had already chosen a target somewhere else.
+          That second Select is gone: it was a duplicate of this button. */}
       {deployOpen && (
         <Modal
           open
