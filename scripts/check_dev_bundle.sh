@@ -60,8 +60,11 @@ restore_env() {
 }
 
 cd "$FRONTEND" || { echo "check_dev_bundle: no $FRONTEND" >&2; exit 2; }
-if [[ ! -x node_modules/.bin/vite ]]; then
-  echo "check_dev_bundle: frontend deps are not installed (run npm install)" >&2
+# Either layout: a root workspace install hoists vite to the repo root and
+# leaves frontend/node_modules/.bin empty, so checking only the local path
+# reports "deps are not installed" on a fully installed checkout.
+if [[ ! -x node_modules/.bin/vite && ! -x "$WORKSHOP/node_modules/.bin/vite" ]]; then
+  echo "check_dev_bundle: frontend deps are not installed (run npm install at the REPO ROOT)" >&2
   exit 2
 fi
 
