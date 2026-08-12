@@ -1019,6 +1019,101 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-stop { background: var(--bg-inset); color: var(--fg); border: 1px solid var(--border); }
 .chat-stop:hover { background: var(--card-hover); }
 
+/* ---- Attachments: chips above the input, and the chat-wide drop target ----
+   A chip is one object, so removing it is one click. That is the whole reason
+   an attached file is rendered beside the draft instead of being spliced into
+   it as text. */
+.chat-attach-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+}
+.chat-attach {
+  position: relative;
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  max-width: 16rem;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--fs-sm); color: var(--fg);
+  background: var(--bg-inset); border-radius: var(--radius-md);
+  text-decoration: none;
+}
+.chat-attach:hover { background: var(--card-hover); }
+.chat-attach.is-uploading { color: var(--muted); }
+.chat-attach.is-failed { background: var(--danger-soft); color: var(--danger); }
+.chat-attach__mark {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.4rem; height: 1.4rem; color: var(--muted);
+}
+.chat-attach.is-failed .chat-attach__mark { color: var(--danger); }
+.chat-attach__thumb {
+  width: 1.4rem; height: 1.4rem; object-fit: cover;
+  border-radius: var(--radius-sm); display: block;
+}
+/* Truncates rather than wrapping: a chip is one row, and a long name must not
+   turn the composer into two. */
+.chat-attach__name {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-attach__meta { flex: 0 0 auto; color: var(--muted); font-size: var(--fs-xs); }
+
+/* The remove control sits on the LEFT of the chip, overlapping its corner, and
+   is painted on hover or focus. It is ALWAYS in the DOM (never display:none),
+   so it is always reachable by keyboard: a control that exists only under a
+   mouse is not a control. */
+.chat-attach__remove {
+  position: absolute; left: calc(var(--space-1) * -1); top: calc(var(--space-1) * -1);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.1rem; height: 1.1rem; padding: 0;
+  border: none; border-radius: var(--radius-pill); cursor: pointer;
+  background: var(--fg); color: var(--bg);
+  opacity: 0; transition: opacity var(--motion-fast) ease;
+}
+.chat-attach:hover .chat-attach__remove,
+.chat-attach:focus-within .chat-attach__remove,
+.chat-attach__remove:focus-visible { opacity: 1; }
+/* Touch has no hover, so the control would otherwise never appear. */
+@media (hover: none) {
+  .chat-attach__remove { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-attach__remove { transition: none; }
+}
+
+.chat-attach-notice {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  font: inherit; font-size: var(--fs-xs); text-align: left;
+  color: var(--warn); background: var(--warn-soft);
+  border: none; border-radius: var(--radius-md); cursor: pointer;
+}
+
+/* The hidden input the attach button drives. Not display:none: a hidden-by-
+   display input cannot be clicked programmatically in every browser. */
+.chat-attach-input {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
+/* Sent attachments sit above the message text, inside the bubble. */
+.chat-attach-row--sent { margin-bottom: var(--space-2); }
+.chat-attach.is-sent { max-width: 14rem; color: inherit; }
+
+/* Drop target: the WHOLE chat, not a small zone you have to aim at. The overlay
+   is pointer-events:none so it can never eat the drop it is advertising. */
+.chat-panel { position: relative; }
+.chat-dropzone {
+  position: absolute; inset: 0; z-index: 6; pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft);
+  border-radius: var(--radius-md);
+}
+.chat-dropzone__card {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  color: var(--accent); background: var(--card);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-md);
+  font-size: var(--fs-sm);
+}
+
 /* ---- Slash commands: composer button + autocomplete popover ---- */
 .chat-slash-btn {
   flex: 0 0 auto;

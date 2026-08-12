@@ -56,6 +56,10 @@ export type PendingSend = {
    *  next send, so the explanation for a bubble outlived the bubble by about a
    *  keystroke. See sendFailure.ts. */
   error?: string;
+  /** Files this send carries, kept so a RETRY re-sends them. Without it a failed
+   *  message retried as bare text and the operator had no way to see that the
+   *  files had gone. */
+  attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
   // Monotonic counter, not a timestamp: two sends in the same millisecond still
   // render in the order they were made.
   at: number;
@@ -101,7 +105,12 @@ export type ThreadAction =
        *  computed before a run started could land after it and blank the run. */
       requestedAt?: number;
     }
-  | { type: "sendStarted"; clientId: string; text: string; ts: string }
+  | {
+      type: "sendStarted"; clientId: string; text: string; ts: string;
+      /** Files this send carries, so a retry re-sends them instead of turning
+       *  into the same message with its attachments quietly gone. */
+      attachments?: PendingSend["attachments"];
+    }
   | { type: "sendAcked"; clientId: string }
   | { type: "sendFailed"; clientId: string; error?: string }
   | { type: "sendRetracted"; clientId: string }
@@ -328,6 +337,7 @@ export function threadReducer(state: ThreadState, action: ThreadAction): ThreadS
             clientId: action.clientId,
             text: action.text,
             ts: action.ts,
+            ...(action.attachments?.length ? { attachments: action.attachments } : {}),
             status: "sending",
             at: clock,
             // Read here rather than passed in: the store is the only thing that

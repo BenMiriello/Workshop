@@ -104,11 +104,12 @@ export type MessageQueue = {
   // Append one message. This is what every caller actually does, and spelling it
   // out stops each of them reaching into the live ref to do it by hand. Returns
   // the id it will be sent with, so the caller can track it (invariant 6).
-  push: (text: string, clientId?: string) => string;
+  push: (text: string, clientId?: string, attachments?: QueuedMessage["attachments"]) => string;
   // Append at a position captured EARLIER (invariant 5). The index is where the
   // queue ended when the request was made, so a request that has been waiting on
   // a round trip rejoins ahead of anything typed while it waited.
-  insertAt: (index: number, text: string, clientId?: string) => string;
+  insertAt: (index: number, text: string, clientId?: string,
+             attachments?: QueuedMessage["attachments"]) => string;
   // How long the queue is right now — the position a request made NOW would take.
   length: number;
   // Take one entry back out, BY ID. Used when something queued optimistically
@@ -117,7 +118,8 @@ export type MessageQueue = {
   drop: (clientId: string) => void;
   // A send the server refused (invariant 10). Held durably, marked, WITH THE
   // REASON, and the queue holds so nothing sends it unattended.
-  pushFailed: (text: string, clientId: string, sentAt?: string, error?: string) => void;
+  pushFailed: (text: string, clientId: string, sentAt?: string, error?: string,
+               attachments?: QueuedMessage["attachments"]) => void;
   // Retry: unmark it and hand the wheel back, so the ordinary self-drain sends
   // it as the turn it always was. Nothing bespoke re-sends a failed entry.
   retryFailed: (clientId: string) => void;
@@ -216,20 +218,28 @@ export function useMessageQueue({
     writeQueue(key, durableQueue(inFlightRef.current, merged));
   }, []);
 
-  const push = useCallback((text: string, clientId?: string) => {
+  const push = useCallback((text: string, clientId?: string,
+                            attachments?: QueuedMessage["attachments"]) => {
     // Stamped at the moment the operator hit enter, which is the only moment
     // that can be observed later. Anything derived at dispatch time would record
     // when the queue drained instead — the very confusion this is here to end.
     const id = clientId || newClientId();
-    set([...itemsRef.current, { text, sentAt: new Date().toISOString(), clientId: id }]);
+    set([...itemsRef.current, {
+      text, sentAt: new Date().toISOString(), clientId: id,
+      ...(attachments?.length ? { attachments } : {}),
+    }]);
     return id;
   }, [set]);
 
-  const insertAt = useCallback((index: number, text: string, clientId?: string) => {
+  const insertAt = useCallback((index: number, text: string, clientId?: string,
+                                attachments?: QueuedMessage["attachments"]) => {
     const q = itemsRef.current;
     const i = Math.max(0, Math.min(index, q.length));
     const id = clientId || newClientId();
-    set([...q.slice(0, i), { text, sentAt: new Date().toISOString(), clientId: id }, ...q.slice(i)]);
+    set([...q.slice(0, i), {
+      text, sentAt: new Date().toISOString(), clientId: id,
+      ...(attachments?.length ? { attachments } : {}),
+    }, ...q.slice(i)]);
     return id;
   }, [set]);
 
@@ -324,6 +334,7 @@ export function useMessageQueue({
 
   const pushFailed = useCallback((
     text: string, clientId: string, sentAt?: string, error?: string,
+    attachments?: QueuedMessage["attachments"],
   ) => {
     seenRef.current.add(clientId);
     set([
@@ -331,6 +342,7 @@ export function useMessageQueue({
       {
         text, sentAt: sentAt || new Date().toISOString(), clientId, failed: true,
         ...(error ? { error } : {}),
+        ...(attachments?.length ? { attachments } : {}),
       },
     ]);
     setHeldBoth(true);

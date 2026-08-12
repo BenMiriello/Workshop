@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { chatApi, newClientId, shortHttpError, type ThreadSummary } from "../../lib/chat";
 import type { QueuedMessage } from "../../lib/chatSelection";
+import type { AttachmentRef } from "./attachments";
 import type { ChatModeId } from "./chatModes";
 import { isTransientSendFailure, sendFailureText } from "./sendFailure";
 import { planSend } from "./sendPlan";
@@ -43,8 +44,9 @@ export type SendPipeline = {
   starting: boolean;
   /** The running turn IS the CLI's own /compact — the indicator says so. */
   turnIsCompact: boolean;
-  /** Send one composed message. THE entry point for the composer. */
-  submitText: (raw: string) => void;
+  /** Send one composed message. THE entry point for the composer.
+   *  `attachments` are already uploaded; only their ids travel. */
+  submitText: (raw: string, attachments?: AttachmentRef[]) => void;
   /** Re-send a message that never reached the server, under its own id. */
   retry: (clientId: string) => void;
   /** What the queue calls when it drains. Resolves ok once the server has the
@@ -97,7 +99,7 @@ export function useSendPipeline({
   // optimistic copy is reconciled away by the sync rather than popped by hand.
   const sendTurn = useCallback(async (
     text: string, clientId: string, parts?: QueuedMessage[],
-    opts?: { fromQueue?: boolean },
+    opts?: { fromQueue?: boolean }, attachments?: AttachmentRef[],
   ): Promise<SendOutcome> => {
     setStartingBoth(true);
     setTurnIsCompact(text.trim() === "/compact");
@@ -135,6 +137,9 @@ export function useSendPipeline({
           ...(parts && parts.length > 1
             ? { parts: parts.map((m) => ({ text: m.text, sent_at: m.sentAt, client_id: m.clientId })) }
             : {}),
+          // Ids only. The bytes went up on drop, so this stays a small JSON body
+          // however large the screenshot was.
+          ...(attachments?.length ? { attachments } : {}),
         }),
       });
       const attempt = async () => {
@@ -201,7 +206,7 @@ export function useSendPipeline({
       // outright, text and all. The durable queue holds it, marked and held, so
       // Retry is still there afterwards. A batch from the queue is skipped
       // because the queue already holds those and is putting them back itself.
-      if (!opts?.fromQueue) queue.pushFailed(text, clientId, undefined, reason);
+      if (!opts?.fromQueue) queue.pushFailed(text, clientId, undefined, reason, attachments);
       return { ok: false, error: reason };
     } finally {
       setStartingBoth(false);
@@ -213,10 +218,10 @@ export function useSendPipeline({
   // not the running turn took it; `delivered: false` means the endpoint did not
   // take the message at all and it must go out as a turn.
   const injectIntoRun = useCallback(async (
-    threadId: string, text: string, clientId: string,
+    threadId: string, text: string, clientId: string, attachments?: AttachmentRef[],
   ) => {
     try {
-      const r = await chatApi.injectIntoThread(threadId, text, clientId);
+      const r = await chatApi.injectIntoThread(threadId, text, clientId, attachments);
       // The chat is running a command, which reads nothing. The server did NOT
       // record this message, so there is nothing to reconcile and nothing to
       // re-send now: it goes back on the queue and leaves as its own turn when
@@ -224,10 +229,10 @@ export function useSendPipeline({
       // again, by the run the command still holds.
       if (r.deferred) {
         dispatch({ type: "sendRetracted", clientId });
-        queue.push(text, clientId);
+        queue.push(text, clientId, attachments);
         return;
       }
-      if (!r.delivered) { void sendTurn(text, clientId); return; }
+      if (!r.delivered) { void sendTurn(text, clientId, undefined, undefined, attachments); return; }
       dispatch({ type: "sendAcked", clientId });
       // Pull the log immediately: the server recorded the message with the
       // `at_segment` that decides which block it closes, and that is the only
@@ -237,7 +242,7 @@ export function useSendPipeline({
       // The request never landed, so nothing was recorded. Queue it rather than
       // dropping it: the operator hit enter, delivery is owed.
       dispatch({ type: "sendRetracted", clientId });
-      queue.push(text, clientId);
+      queue.push(text, clientId, attachments);
     }
   }, [dispatch, sync, sendTurn, queue]);
 
@@ -248,18 +253,27 @@ export function useSendPipeline({
     // as its own pending bubble under the id it will be committed with.
     const ts = new Date().toISOString();
     for (const p of parts) {
-      dispatch({ type: "sendStarted", clientId: p.clientId, text: p.text, ts: p.sentAt || ts });
+      dispatch({
+        type: "sendStarted", clientId: p.clientId, text: p.text, ts: p.sentAt || ts,
+        ...(p.attachments?.length ? { attachments: p.attachments } : {}),
+      });
     }
+    // Every part's files, in the order they were attached. A queue that drained
+    // three messages, one of them carrying a screenshot, must still send it.
+    const batchAtts = parts.flatMap((p) => p.attachments || []);
     // `parts` rides in the POST only when there are several: the server needs it
     // to record them as the separate messages they were. A batch of one is
     // already fully described by its client id.
     return sendTurn(
       text, parts[0]?.clientId || newClientId(),
       parts.length > 1 ? parts : undefined, opts,
+      batchAtts.length ? batchAtts : undefined,
     );
   }, [dispatch, sendTurn]);
 
-  const dispatchSend = useCallback((text: string, clientId: string) => {
+  const dispatchSend = useCallback((
+    text: string, clientId: string, attachments?: AttachmentRef[],
+  ) => {
     const plan = planSend(text, {
       compacting: compactingRef.current,
       starting: startingRef.current,
@@ -267,24 +281,29 @@ export function useSendPipeline({
       runAcceptsInput: stateRef.current.activeRun?.acceptsInput,
     });
     if (plan === "queue") {
-      queue.push(text, clientId);
+      queue.push(text, clientId, attachments);
       return;
     }
-    dispatch({ type: "sendStarted", clientId, text, ts: new Date().toISOString() });
+    dispatch({
+      type: "sendStarted", clientId, text, ts: new Date().toISOString(),
+      ...(attachments?.length ? { attachments } : {}),
+    });
     if (plan === "inject") {
       const threadId = activeIdRef.current;
       // Addressed by CHAT, not by run id. A client only knows about runs IT
       // started; a second tab, another device, or a run adopted after a restart
       // has no id to send, and every one of those used to fall back to queueing
       // and wait out the whole turn.
-      if (threadId) { void injectIntoRun(threadId, text, clientId); return; }
+      if (threadId) { void injectIntoRun(threadId, text, clientId, attachments); return; }
     }
-    void sendTurn(text, clientId);
+    void sendTurn(text, clientId, undefined, undefined, attachments);
   }, [queue, dispatch, stateRef, activeIdRef, injectIntoRun, sendTurn]);
 
-  const submitText = useCallback((raw: string) => {
+  const submitText = useCallback((raw: string, attachments?: AttachmentRef[]) => {
     const text = raw.trim();
-    if (!text) return;
+    // Files with nothing typed is a complete message; the server stands the
+    // filenames in for the text. Only a send with NEITHER is a no-op.
+    if (!text && !attachments?.length) return;
     setErr(null);
     onSend();
     // /compact and /clear are Workshop actions, not messages. Intercepted here
@@ -306,7 +325,7 @@ export function useSendPipeline({
     // Not a failure of anything, so it names no endpoint: the command was
     // answered here, locally, and the sentence is the whole answer.
     if (retired) { setErr({ text: retired, endpoint: null }); return; }
-    dispatchSend(text, newClientId());
+    dispatchSend(text, newClientId(), attachments);
   }, [setErr, onSend, compact, clear, dispatchSend]);
 
   const retry = useCallback((clientId: string) => {
@@ -321,7 +340,7 @@ export function useSendPipeline({
     // THE SAME ID. The log dedupes on it, so if the first attempt did reach the
     // server after all, this re-send appends nothing and reconciles against the
     // event that is already there.
-    dispatchSend(pending.text, clientId);
+    dispatchSend(pending.text, clientId, pending.attachments);
   }, [stateRef, setErr, dispatchSend, queue]);
 
   return { starting, turnIsCompact, submitText, retry, sendBatch };

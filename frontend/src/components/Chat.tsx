@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePoll } from "../lib/usePoll";
 import { useNavigate } from "react-router-dom";
-import { WifiOff, ArrowDown, Unplug } from "lucide-react";
+import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import { StateBlock } from "@workshop/ui";
 import TaskPanel from "./TaskPanel";
 import InboxStrip from "./chat/InboxStrip";
 import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
 import ChatComposer from "./chat/ChatComposer";
+import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
+import { canSendWith } from "./chat/attachments";
 import ChatToolbar from "./chat/ChatToolbar";
 import ChatLog from "./chat/ChatLog";
 import ChatProblemBlock from "./chat/ChatProblemBlock";
@@ -343,6 +345,11 @@ export default function Chat({
   const draftKey = activeId ? `${contextKey}::${activeId}` : `${contextKey}::new`;
   const [input, setInput, clearInput] = useDraft(draftKey);
   const [inputFocused, setInputFocused] = useState(false);
+  // Attached files sit BESIDE the draft, never inside it, which is what makes
+  // removing one a single click instead of a run of backspaces. Not keyed per
+  // thread like the draft: an upload is already on the server and the list is
+  // cleared on send, so there is nothing to restore.
+  const files = useAttachments({ scope, threadId: activeId });
   // The voice snapshot is in `followDeps` because ChatLog renders the spoken
   // turn from it directly, not from the transcript — without it the log stops
   // following mid-utterance, which is the one time the operator is not touching
@@ -525,7 +532,10 @@ export default function Chat({
 
   const send = useCallback(() => {
     const text = input.trim();
-    if (!text) return;
+    // Files with no text is a complete message. `take` hands over what is
+    // attached and clears it in the same step, so "sent" and "cleared" can never
+    // disagree.
+    if (!text && !files.items.some((a) => a.status === "ready")) return;
     // clearInput, not setInput(""): a send-clear must be written through to
     // every synced surface immediately and then defended, or a stale copy from
     // another tab/device can restore the text you just sent.
@@ -540,8 +550,8 @@ export default function Chat({
     // reached the usage ledger. Voice INPUT still goes the voice path — that is
     // what the mode is for.
     if (voiceOn) vsession.setTyping(false);
-    pipeline.submitText(text);
-  }, [input, clearInput, voiceOn, vsession, pipeline]);
+    pipeline.submitText(text, files.take());
+  }, [input, clearInput, voiceOn, vsession, pipeline, files]);
 
   // ---- Composer helpers ----------------------------------------------------
   // There is no slash catalogue and no picker any more. Three commands are
@@ -952,7 +962,15 @@ export default function Chat({
       streaming={runActive}
       onSend={send}
       onStop={() => { void onStopTurn(); }}
-      canSend={!!input.trim()}
+      // One rule for "is there anything to send", shared with the Enter key:
+      // text, or a finished upload, and never while one is still going up.
+      canSend={canSendWith(input, files.items)}
+      attachments={files.items}
+      attachNotice={files.notice}
+      onAttachFiles={files.add}
+      onRemoveAttachment={files.remove}
+      onDismissAttachNotice={files.dismissNotice}
+      onPasteFiles={files.add}
       modelOptions={scopeState.modelOptions}
       selectedModel={selectedModel}
       onSelectModel={setSelectedModel}
@@ -978,8 +996,52 @@ export default function Chat({
     />
   );
 
+  // THE WHOLE CHAT IS THE DROP TARGET, transcript and composer alike: the
+  // operator asked to drop anywhere in the chat, and a small target you have to
+  // aim at is the thing every drag-and-drop implementation gets wrong.
+  //
+  // dragenter/dragleave fire for every child element crossed, so a naive
+  // handler flickers the overlay as the pointer moves over the transcript. The
+  // depth counter is what makes it stable: leave only counts as leaving when it
+  // balances every enter.
+  const dragDepth = useRef(0);
   const panelInner = (
-    <div className={`chat-panel chat-panel--${variant}`}>
+    <div
+      className={`chat-panel chat-panel--${variant}${files.dragging ? " is-dropping" : ""}`}
+      onDragEnter={(e) => {
+        if (!dragHasFiles(e.dataTransfer)) return;
+        dragDepth.current += 1;
+        files.setDragging(true);
+      }}
+      onDragOver={(e) => {
+        // Both are required, and for different reasons: preventDefault is what
+        // stops the browser navigating to the dropped file, and dropEffect is
+        // what makes the cursor say "copy" rather than "no".
+        if (!dragHasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!dragHasFiles(e.dataTransfer)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) files.setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!dragHasFiles(e.dataTransfer)) return;
+        e.preventDefault();
+        dragDepth.current = 0;
+        files.setDragging(false);
+        files.add(filesFromTransfer(e.dataTransfer));
+      }}
+    >
+      {files.dragging && (
+        <div className="chat-dropzone" aria-hidden>
+          <div className="chat-dropzone__card">
+            <Paperclip size={20} strokeWidth={1.8} aria-hidden />
+            <span>Drop to attach</span>
+          </div>
+        </div>
+      )}
       {toolbar}
       {notice && <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />}
       {taskPanel}

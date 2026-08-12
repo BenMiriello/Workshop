@@ -77,6 +77,15 @@ export type ChatSegment =
 // what earns the animated dots.
 export type MsgStatus = { text: string; busy?: boolean };
 
+/** A file the server has stored, as it comes back from the upload. */
+export type StoredAttachment = {
+  id: string;
+  name: string;
+  kind: "image" | "pdf" | "text";
+  size: number;
+  created_at?: string;
+};
+
 export type ChatMsg = {
   role: "user" | "assistant";
   content: string;
@@ -101,6 +110,11 @@ export type ChatMsg = {
       ref?: { scope: string; id: string; title?: string };
     }[];
     error?: boolean;
+    // FILES THE OPERATOR ATTACHED to this message. Recorded on the message that
+    // carried them, so reopening the thread shows the same chips it showed when
+    // it was sent rather than a bare line of text about files that are no longer
+    // visible anywhere.
+    attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.
     timeout?: boolean;
@@ -395,6 +409,26 @@ export type AgentTask = {
 };
 
 export const chatApi = {
+  // ONE FILE PER REQUEST, and the request happens on drop rather than on send.
+  // A 12MB screenshot uploading inside the send would make Send feel broken for
+  // as long as it took, with nothing to look at; uploading on drop means the
+  // chip carries the progress and Send is instant. No Content-Type header: the
+  // browser has to set the multipart boundary itself.
+  uploadAttachment: async (
+    file: File, opts?: { scope?: string; threadId?: string | null },
+  ): Promise<StoredAttachment> => {
+    const form = new FormData();
+    form.append("file", file);
+    if (opts?.scope) form.append("scope", opts.scope);
+    if (opts?.threadId) form.append("thread_id", opts.threadId);
+    const r = await fetch(`/api/chat/attachments`, { method: "POST", body: form });
+    if (!r.ok) throw new Error(shortHttpError(r.status, r.statusText, await r.text()));
+    return r.json();
+  },
+
+  /** Where the stored bytes are served: the chip's and the transcript's preview. */
+  attachmentUrl: (id: string) => `/api/chat/attachments/${encodeURIComponent(id)}`,
+
   // With `scope` set to a contextKey the backend returns ONLY the relevant
   // provider(s) (used by an in-app dock); without scope it returns the FULL list
   // (used by the Agents page / focused chat so the operator can pick any).
@@ -554,11 +588,18 @@ export const chatApi = {
   // means the chat has it whether or not the running turn took it. Only
   // `delivered: false` (no run was going) means the endpoint did not take the
   // message and the caller must send it as a turn.
-  injectIntoThread: (threadId: string, content: string, clientId?: string) =>
+  injectIntoThread: (threadId: string, content: string, clientId?: string,
+                     attachments?: { id: string; name: string; kind: string }[]) =>
     fetch(`/api/chat/threads/${threadId}/inject`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(clientId ? { content, client_id: clientId } : { content }),
+      body: JSON.stringify({
+        content,
+        ...(clientId ? { client_id: clientId } : {}),
+        // A file attached to a message typed DURING a turn reaches the running
+        // model the same way it would have at the start of one.
+        ...(attachments?.length ? { attachments } : {}),
+      }),
     }).then(j<{
       delivered: boolean; injected?: boolean; queued_for_turn?: boolean;
       // The chat is running a slash command, which reads no input. NOT recorded

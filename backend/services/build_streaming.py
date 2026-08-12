@@ -25,8 +25,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import (agent_slots, build_agents, chat_log, chat_store, llm_router,
-                      model_caps, ownership)
+from services import (agent_slots, build_agents, chat_attachments, chat_log,
+                      chat_store, llm_router, model_caps, ownership)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -53,11 +53,18 @@ def _stdin_fifo(turn_id: str) -> Path:
     return _journal_dir(turn_id) / "stdin.fifo"
 
 
-def _user_message_line(text: str) -> str:
-    """One stream-json user message, as the CLI expects it on stdin."""
+def _user_message_line(text: str, blocks: list[dict] | None = None) -> str:
+    """One stream-json user message, as the CLI expects it on stdin.
+
+    `blocks` are attachment content blocks (image / document / text) and go
+    BEFORE the operator's text, the same order as attaching a file above what
+    you wrote about it. Verified against the CLI on 2026-08-11: it accepts and
+    replays native image and document blocks on this channel, and the model
+    reads them with no tool call. See services/chat_attachments."""
+    content: list[dict] = [*(blocks or []), {"type": "text", "text": text}]
     return json.dumps({
         "type": "user",
-        "message": {"role": "user", "content": [{"type": "text", "text": text}]},
+        "message": {"role": "user", "content": content},
     }) + "\n"
 
 
@@ -154,7 +161,7 @@ def answer_permission(turn_id: str, request_id: str, allow: bool,
     return _write_line(turn_id, line)
 
 
-def write_to_turn(turn_id: str, text: str) -> bool:
+def write_to_turn(turn_id: str, text: str, blocks: list[dict] | None = None) -> bool:
     """Hand a message to a RUNNING turn. True if it was written.
 
     Non-blocking on purpose: opening a FIFO for writing blocks until a reader is
@@ -169,7 +176,7 @@ def write_to_turn(turn_id: str, text: str) -> bool:
     # carries a frame past PIPE_BUF. Same whole-frame, serialised write as every
     # other frame (see _write_all): a truncated user message was the "Expected
     # '}'" crash the operator hit on a long paste.
-    data = _user_message_line(text).encode()
+    data = _user_message_line(text, blocks).encode()
     with _FIFO_WRITE_LOCK:
         fd = None
         try:
@@ -1401,7 +1408,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      speaker: str | None = None,
                      run_id: str | None = None,
                      effort: str | None = None,
-                     permission_mode: str | None = None) -> Turn:
+                     permission_mode: str | None = None,
+                     attachments: list[dict] | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -1455,6 +1463,10 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
         "speaker": speaker,
         "owner_id": owner_id, "prompt": prompt,
+        # REFS, not bytes. The journal is written to disk and read back on every
+        # restart-recovery pass, so a 12MB base64 image in here would be paid for
+        # on each one. The blocks are built from the store at delivery instead.
+        "attachments": list(attachments or []),
         "timeout_s": timeout_s, "pid": None, "status": "running", "started": turn.started,
         "allowed_tools": allowed_tools, "disallowed_tools": disallowed_tools,
         "mcp_servers": mcp_servers,
@@ -1711,7 +1723,16 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # showed a turn running forever over a prompt the model never received, and
     # the only record was one log line. Treated like the spawn failures above it
     # instead: kill what we started, say so, and finalize.
-    if not write_to_turn(turn.id, meta["prompt"]):
+    # Blocks are built HERE and not at start_turn, so the base64 never enters the
+    # journal (see meta["attachments"]). The filename line is appended to the
+    # prompt rather than to the stored message: an image block carries no name,
+    # so without it the model cannot tell which of three files is meant, but the
+    # transcript renders chips and must not also show the sentence.
+    _atts = meta.get("attachments") or []
+    att_blocks = chat_attachments.content_blocks(_atts, meta.get("owner_id"))
+    _named = chat_attachments.describe(_atts)
+    _prompt = f"{meta['prompt']}\n\n{_named}" if _named else meta["prompt"]
+    if not write_to_turn(turn.id, _prompt, att_blocks):
         turn.error = "could not deliver the prompt to the turn's input channel"
         _push(turn, "error", {"detail": turn.error})
         await _retire_turn_proc(proc.pid, proc)
@@ -2573,7 +2594,7 @@ async def stop_turn(turn_id: str) -> dict:
             "committed": turn.committed is not None, "reason": ""}
 
 
-def inject(turn_id: str, text: str) -> bool:
+def inject(turn_id: str, text: str, attachments: list[dict] | None = None) -> bool:
     """Deliver a message into a turn that is currently running.
 
     A new message must not abort the work in flight. Writing it to the turn's
@@ -2591,7 +2612,7 @@ def inject(turn_id: str, text: str) -> bool:
     caller's cue to queue it as the next turn instead. The message is never
     dropped either way."""
     text = (text or "").strip()
-    if not text:
+    if not text and not attachments:
         return False
     # A COMMAND TURN NEVER READS ITS INPUT. `/compact` summarizes and exits; the
     # bytes would reach a process that has already stopped listening, and the
@@ -2600,7 +2621,9 @@ def inject(turn_id: str, text: str) -> bool:
     t = TURNS.get(turn_id)
     if t is not None and not t.accepts_input:
         return False
-    ok = write_to_turn(turn_id, text)
+    blocks = chat_attachments.content_blocks(attachments or [])
+    named = chat_attachments.describe(attachments or [])
+    ok = write_to_turn(turn_id, f"{text}\n\n{named}".strip() if named else text, blocks)
     # Remember that a command went in, so a turn whose only work was a locally
     # run slash command is not reported as having done nothing. Only on a
     # successful write: a refused injection never reached the CLI.

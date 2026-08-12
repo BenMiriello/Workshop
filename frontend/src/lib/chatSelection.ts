@@ -143,6 +143,12 @@ export const QUEUE_PREFIX = "ws-chat-queue:";
 // matter what actually happened.
 export type QueuedMessage = {
   text: string; sentAt: string; clientId: string; failed?: boolean; error?: string;
+  // Files attached to this message, as server ids. They are already uploaded by
+  // the time anything is queued, so a queued message survives a reload with its
+  // attachments intact rather than being sent later as bare text. Carried here
+  // and not just on the in-memory pending record because the queue is the copy
+  // that outlives the tab.
+  attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
 };
 
 export function readQueue(threadKey: string): QueuedMessage[] {
@@ -169,6 +175,11 @@ export function readQueue(threadKey: string): QueuedMessage[] {
           sentAt: typeof x.sentAt === "string" ? x.sentAt : "",
           ...(x.failed ? { failed: true as const } : {}),
           ...(typeof x.error === "string" && x.error ? { error: x.error } : {}),
+          // Field-by-field on purpose (see the migration above), so this has to
+          // be named or a queued message loses its files on the next read.
+          ...(Array.isArray(x.attachments) && x.attachments.length
+            ? { attachments: x.attachments as QueuedMessage["attachments"] }
+            : {}),
           // A queue written by an older build has no id. Minting one here is
           // right: it has not been sent, so no committed event can be carrying
           // an id it would need to match.

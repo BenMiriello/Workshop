@@ -3,6 +3,9 @@ import { AudioLines, ChevronDown, CornerDownLeft, PhoneOff, Square } from "lucid
 import { Menu, MenuItem } from "@workshop/ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
+import AttachmentChips, { AttachButton } from "./AttachmentChips";
+import type { Attachment } from "./attachments";
+import { filesFromTransfer } from "./useAttachments";
 import CommandPicker, { type PickerOption } from "./CommandPicker";
 import ContextMeter from "./ContextMeter";
 import { VoiceStrip, VoiceCluster } from "./VoiceControls";
@@ -39,6 +42,9 @@ export default function ChatComposer({
   modeOptions, effectivePermissionMode, onSelectPermissionMode,
   // Context meter
   activeId, messages, ctxNonce,
+  // Attachments
+  attachments, attachNotice, onAttachFiles, onRemoveAttachment, onDismissAttachNotice,
+  onPasteFiles,
   // Voice
   voiceOn, onToggleVoice, isBuild,
   vsnap, vprefs, vsession, orbRef, onUpdatePrefs, onOpenVoiceSettings, onOpenContext,
@@ -72,6 +78,13 @@ export default function ChatComposer({
   activeId: string | null;
   messages: ChatMsg[];
   ctxNonce: number;
+  attachments: Attachment[];
+  attachNotice: string | null;
+  onAttachFiles: (files: File[]) => void;
+  onRemoveAttachment: (localId: string) => void;
+  onDismissAttachNotice: () => void;
+  /** Files pasted into the textarea (a screenshot from the clipboard). */
+  onPasteFiles: (files: File[]) => void;
   voiceOn: boolean;
   onToggleVoice: () => void;
   isBuild: boolean;
@@ -105,6 +118,15 @@ export default function ChatComposer({
       )}
       {voiceOn && <VoiceStrip status={voice.status} onRetry={() => vsession.retry()} />}
 
+      {/* ABOVE the textarea, inside the composer's surface, so the files read as
+          part of the message being written rather than as a separate tray. */}
+      <AttachmentChips
+        items={attachments}
+        notice={attachNotice}
+        onRemove={onRemoveAttachment}
+        onDismissNotice={onDismissAttachNotice}
+      />
+
       <textarea
         ref={inputRef}
         className="chat-input"
@@ -115,6 +137,16 @@ export default function ChatComposer({
         onKeyDown={onKeyDown}
         onFocus={() => onFocusChange(true)}
         onBlur={() => onFocusChange(false)}
+        // A pasted screenshot attaches instead of pasting its filename as text.
+        // Only when the clipboard actually carries a file: ordinary text paste
+        // must fall through untouched, which is why this does not preventDefault
+        // unconditionally.
+        onPaste={(e) => {
+          const files = filesFromTransfer(e.clipboardData);
+          if (!files.length) return;
+          e.preventDefault();
+          onPasteFiles(files);
+        }}
       />
 
       {/* One handler for the whole row: a tap here never steals focus from the
@@ -221,6 +253,11 @@ export default function ChatComposer({
             errored={voice.errored}
           />
         )}
+
+        {/* Attach sits immediately LEFT of voice, where the operator asked for
+            it: the two are the same class of control, things you add to a
+            message that are not the message. */}
+        <AttachButton onFiles={onAttachFiles} />
 
         {/* Distinct glyph on/off so the exit toggle never reads as a twin of the
             listening orb's AudioLines: AudioLines invites voice, PhoneOff leaves it. */}

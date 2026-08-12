@@ -19,10 +19,11 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+from services import chat_attachments
 from services import chat_store, chat_context, chat_log
 from services import tasks
 from services import task_scope
@@ -1882,6 +1883,16 @@ class TurnPart(BaseModel):
     client_id: str | None = None
 
 
+class AttachmentRefIn(BaseModel):
+    """A file the client already uploaded. `name` and `kind` are carried for the
+    transcript to render without a second lookup; the server re-reads both from
+    its own index before handing anything to a model, so a wrong one here can
+    only mislabel a chip, never change what is sent."""
+    id: str
+    name: str = ""
+    kind: str = ""
+
+
 class StartTurnIn(BaseModel):
     content: str
     # Optional per-turn model override (short tier name or full id); same
@@ -1909,17 +1920,29 @@ class StartTurnIn(BaseModel):
     # its optimistic bubble against the committed event by id instead of by
     # matching the tail of the transcript against the text it just sent.
     client_id: str | None = None
+    # Files already uploaded via POST /attachments. Ids only: the bytes are on
+    # the server before Send is pressed, so a turn body stays small and a slow
+    # upload is not paid for inside the send.
+    attachments: list[AttachmentRefIn] | None = None
 
 
 def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None,
-                      client_id: str | None = None) -> None:
+                      client_id: str | None = None,
+                      attachments: list[dict] | None = None) -> None:
     """Persist what the operator actually sent for this turn.
 
     One message normally. When a queue drained into this turn, the separate
     messages it held, each at its own send time and marked `queued` so the next
-    prompt can say they were written before any had been answered."""
+    prompt can say they were written before any had been answered.
+
+    Attachments are recorded on the message that carried them, so reopening the
+    thread shows the same chips it showed when it was sent. They ride on the
+    FIRST part of a drained queue rather than being copied onto each: they were
+    attached once."""
     if not parts or len(parts) < 2:
-        chat_store.append_message(thread_id, "user", content, client_id=client_id)
+        meta = {"attachments": attachments} if attachments else None
+        chat_store.append_message(thread_id, "user", content, meta=meta,
+                                  client_id=client_id)
         return
     # Each part at the time it was actually typed, not the instant the queue
     # drained. Without that the model cannot tell a burst typed in one minute
@@ -1932,12 +1955,17 @@ def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None
         text = (p.text or "").strip()
         if not text:
             continue
+        meta = {"queued": True}
+        if attachments and added == 0:
+            meta["attachments"] = attachments
         chat_store.append_message_during_turn(
-            thread_id, "user", text, meta={"queued": True}, ts=p.sent_at,
+            thread_id, "user", text, meta=meta, ts=p.sent_at,
             client_id=p.client_id)
         added += 1
     if not added:
-        chat_store.append_message(thread_id, "user", content, client_id=client_id)
+        meta = {"attachments": attachments} if attachments else None
+        chat_store.append_message(thread_id, "user", content, meta=meta,
+                                  client_id=client_id)
 
 
 def _agent_effort(rec: dict, slug: str, model: str, chat_effort: str | None) -> str | None:
@@ -1966,7 +1994,8 @@ def _agent_effort(rec: dict, slug: str, model: str, chat_effort: str | None) -> 
 async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict,
                                     content: str, model: str, run_id: str,
                                     effort: str | None = None,
-                                    permission_mode: str | None = None):
+                                    permission_mode: str | None = None,
+                                    attachments: list[dict] | None = None):
     """Run one turn AS the mentioned agent, inside the chat.
 
     The agent answers with its own definition, its own memory scope and its own
@@ -2142,10 +2171,51 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug, run_id=run_id, effort=effort,
-        permission_mode=permission_mode,
+        permission_mode=permission_mode, attachments=attachments,
     )
     _ = kscope  # the CHAT's scope; the agent reads its own layers above
     return turn
+
+
+# ---- Attachments ------------------------------------------------------------
+# Upload is its OWN request, not part of the turn: the file is on the server
+# before Send is pressed, so a 12MB screenshot is not spent while the operator
+# waits for a reply, and the chip can say "ready" or "failed" while there is
+# still something to do about it. The turn then carries only ids.
+
+@router.post("/attachments")
+async def upload_attachment(file: UploadFile, scope: str = Form(""),
+                            thread_id: str = Form("")):
+    data = await file.read()
+    kind = chat_attachments.kind_for(file.content_type or "", file.filename or "")
+    if kind is None:
+        raise HTTPException(415, f"{file.filename or 'that file'} is not a type a chat can read")
+    try:
+        rec = chat_attachments.save(data, file.filename or "file", kind,
+                                    scope=scope, thread_id=thread_id)
+    except ValueError as e:
+        raise HTTPException(413 if "larger than" in str(e) else 400, str(e))
+    return {"id": rec["id"], "name": rec["name"], "kind": rec["kind"],
+            "size": rec["size"], "created_at": rec["created_at"]}
+
+
+@router.get("/attachments/{att_id}")
+async def get_attachment(att_id: str):
+    """The stored bytes, for the composer's thumbnail and the transcript's.
+
+    Inline rather than an attachment disposition: this is a preview of something
+    the operator just attached, not a download they asked for. The name is
+    re-derived from the record, never from the URL."""
+    rec = chat_attachments.get(att_id)
+    path = chat_attachments.blob_for(rec) if rec else None
+    if not rec or not path:
+        raise HTTPException(404, "attachment not found")
+    media = rec.get("media_type") or "application/octet-stream"
+    if rec.get("kind") == "text":
+        media = "text/plain; charset=utf-8"
+    return FileResponse(path, media_type=media,
+                        headers={"Content-Disposition":
+                                 f'inline; filename="{rec["name"]}"'})
 
 
 @router.get("/threads/{thread_id}/mentionable")
@@ -2170,7 +2240,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
                            already_recorded: bool = False,
                            client_id: str | None = None,
                            effort_in: str | None = None,
-                           mode_in: str | None = None) -> "build_streaming.Turn":
+                           mode_in: str | None = None,
+                           attachments: list[dict] | None = None) -> "build_streaming.Turn":
     """Claim a run for this message and start it. THE send path.
 
     The claim is taken FIRST, before a single await, and held until the
@@ -2209,7 +2280,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 
     try:
         if not already_recorded:
-            _record_user_turn(thread_id, content, parts, client_id=client_id)
+            _record_user_turn(thread_id, content, parts, client_id=client_id,
+                              attachments=attachments)
         # ---- @mention: this message is addressed to an AGENT, not the assistant.
         # The agent answers in the chat, attributed to it, and the ordinary
         # assistant stays out of it. Resolution is scope-bounded and opt-in
@@ -2219,11 +2291,11 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
             return await _start_agent_mention_turn(
                 thread_id=thread_id, thread=t, agent=_mentioned, content=content,
                 model=model, run_id=run_id, effort=effort,
-                permission_mode=permission_mode)
+                permission_mode=permission_mode, attachments=attachments)
         return await _start_assistant_turn(
             thread_id=thread_id, t=t, provider=provider, content=content,
             model=model, run_id=run_id, effort=effort,
-            permission_mode=permission_mode)
+            permission_mode=permission_mode, attachments=attachments)
     except Exception:
         # The claim outlives nothing. Give the thread back so the next message is
         # not told a run is in flight that never spawned.
@@ -2233,7 +2305,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 
 async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
                                 model: str, run_id: str, effort: str | None = None,
-                                permission_mode: str | None = None):
+                                permission_mode: str | None = None,
+                                attachments: list[dict] | None = None):
     """Spawn the turn for an ordinary (non-mention) message.
 
     Build-agent chats carry the AGENT's persistent Claude Code session; every
@@ -2320,7 +2393,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         prompt=prompt, model=model, cwd=cwd,
         session_id=sid, resume=resume_flag,
         timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
-        permission_mode=permission_mode,
+        permission_mode=permission_mode, attachments=attachments,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
     )
 
@@ -2329,7 +2402,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                 parts: list[TurnPart] | None = None,
                 client_id: str | None = None,
                 effort_in: str | None = None,
-                mode_in: str | None = None) -> dict:
+                mode_in: str | None = None,
+                attachments: list[dict] | None = None) -> dict:
     """Send one message into a chat: deliver it to the run in flight, or start
     one for it. Returns `{turn_id, injected, at_segment}`.
 
@@ -2400,8 +2474,9 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         return {"turn_id": run_id, "injected": False, "deferred": True,
                 "at_segment": None}
     if run_id:
-        at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id)
-        if build_streaming.inject(run_id, content):
+        at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id,
+                                      attachments=attachments)
+        if build_streaming.inject(run_id, content, attachments):
             return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
         if not build_streaming.run_is_ending(run_id):
             # Claimed but not spawned yet: it is about to start and will read
@@ -2421,13 +2496,15 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
                                       already_recorded=already_recorded,
                                       client_id=client_id,
                                       effort_in=effort_in,
-                                      mode_in=mode_in)
+                                      mode_in=mode_in,
+                                      attachments=attachments)
     except build_streaming.RunInFlight as e:
         # Another POST won the same event-loop tick. Join its run rather than
         # starting a rival, which is the whole reason the claim is atomic.
-        at_segment = (_file_during_run(thread_id, e.run_id, content, client_id=client_id)
+        at_segment = (_file_during_run(thread_id, e.run_id, content, client_id=client_id,
+                                       attachments=attachments)
                       if not already_recorded else _at_segment(e.run_id, thread_id))
-        build_streaming.inject(e.run_id, content)
+        build_streaming.inject(e.run_id, content, attachments)
         return {"turn_id": e.run_id, "injected": True, "at_segment": at_segment}
     return {"turn_id": turn.id, "injected": False, "at_segment": None}
 
@@ -2435,11 +2512,17 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
 @router.post("/threads/{thread_id}/turns")
 async def start_streaming_turn(thread_id: str, body: StartTurnIn):
     content = (body.content or "").strip()
+    atts = [a.model_dump() for a in (body.attachments or [])]
+    # A turn may be files with nothing typed: dropping a screenshot and pressing
+    # Send is a complete message. It still needs SOMETHING as the text block, so
+    # the filenames stand in for it rather than sending an empty string.
+    if not content and atts:
+        content = chat_attachments.describe(atts)
     if not content:
         raise HTTPException(400, "empty message")
     out = await _send(thread_id, content, body.model, body.parts,
                       client_id=body.client_id, effort_in=body.effort,
-                      mode_in=body.permission_mode)
+                      mode_in=body.permission_mode, attachments=atts)
     if out.get("deferred"):
         # Not taken, not recorded, not lost: the chat is running a command turn
         # that cannot read it. The client keeps it queued and sends it next.
@@ -2569,6 +2652,9 @@ class InjectMessage(BaseModel):
     # request whose response was lost land as the same message rather than a
     # second one.
     client_id: str | None = None
+    # Same as StartTurnIn.attachments: files already uploaded, ids only. A file
+    # attached to a message typed DURING a turn reaches the running model too.
+    attachments: list[AttachmentRefIn] | None = None
 
 
 def _live_run_id(thread_id: str) -> str | None:
@@ -2629,7 +2715,8 @@ def _cut_point(run_id: str, thread_id: str) -> tuple[int, int]:
 
 
 def _file_during_run(thread_id: str, run_id: str, content: str,
-                     client_id: str | None = None) -> int:
+                     client_id: str | None = None,
+                     attachments: list[dict] | None = None) -> int:
     """Persist a message arriving mid-run, BEFORE anyone tries to deliver it.
 
     Order matters and it used to be the other way round: the bytes went to the
@@ -2642,11 +2729,12 @@ def _file_during_run(thread_id: str, run_id: str, content: str,
     saw, which is the recoverable direction. Returns `at_segment`, which the
     caller also reports to the client."""
     at_segment, at_unit = _cut_point(run_id, thread_id)
+    meta = {"injected": True, "during_run": run_id,
+            "at_segment": at_segment, "at_unit": at_unit}
+    if attachments:
+        meta["attachments"] = attachments
     chat_store.append_message_during_turn(
-        thread_id, "user", content,
-        meta={"injected": True, "during_run": run_id,
-              "at_segment": at_segment, "at_unit": at_unit},
-        client_id=client_id,
+        thread_id, "user", content, meta=meta, client_id=client_id,
     )
     return at_segment
 
@@ -2678,6 +2766,9 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
     The message is PERSISTED before delivery is attempted, so `delivered: false`
     means "it is in the transcript and no run has it", never "it is gone"."""
     content = (body.content or "").strip()
+    atts = [a.model_dump() for a in (body.attachments or [])]
+    if not content and atts:
+        content = chat_attachments.describe(atts)
     if not content:
         raise HTTPException(400, "empty message")
     if not chat_log.exists(thread_id):
@@ -2689,7 +2780,7 @@ async def inject_into_thread(thread_id: str, body: InjectMessage):
         return {"delivered": False, "queued_for_turn": False, "turn_id": None,
                 "at_segment": None,
                 "reason": "no turn is running on this chat"}
-    out = await _send(thread_id, content, client_id=body.client_id)
+    out = await _send(thread_id, content, client_id=body.client_id, attachments=atts)
     if out.get("deferred"):
         # The one other case where re-sending is correct, and for the same
         # reason: this endpoint has NOT taken the message. A command turn owns
