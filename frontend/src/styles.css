@@ -1246,42 +1246,30 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 
 /* Drop target: the WHOLE chat, not a small zone you have to aim at. The overlay
    is pointer-events:none so it can never eat the drop it is advertising. */
-.chat-panel { position: relative; }
+/* THE DROP AREA IS A SWAP, NOT AN OVERLAY, so this is an ordinary flex child of
+   the panel rather than an absolutely positioned sheet. It takes the room the
+   transcript and composer were using, because while a drag is in flight those
+   two are not rendered at all (see Chat.tsx). An overlay left them sitting
+   underneath it, visible through the fill, which is what this replaces.
+
+   That is also why there is no z-index and no pointer-events here any more:
+   nothing is behind it to be covered or to be clicked through to. The panel's
+   `position: relative`, which existed only to anchor the old sheet, went with
+   them; the inbox and the jump pill anchor to .chat-log-wrap, not to this.
+
+   The margin, not an inset, now carries the gap. Bigger above and below than at
+   the sides, because the ask was that it stop running from the top of the area
+   to the bottom, so the vertical gap is the one that has to read. */
 .chat-dropzone {
-  /* ABOVE the floating jump-to-latest pill, which is `--z-dropdown` and was
-     punching through the overlay. A raw `6` could never have won that; the
-     scale is the whole reason the tokens exist. `--z-dock` is the tier for
-     something floating over the chat, and stays under the modal layer so the
-     attachment viewer still opens on top. */
-  /* A CONTAINED REGION, not a wash over the whole panel. It was `inset: 0`, so
-     it ran edge to edge and top to bottom: the radius was always flush against
-     the panel's own edges and never actually drew.
-
-     THE VERTICAL INSET IS THE POINT, and it is bigger than the horizontal one
-     on purpose. The ask was that it stop running from the top of the area to
-     the bottom, so the gap that has to be unmistakable is the one above and
-     below. A uniform 12px was too small to read as anything at all: it left the
-     top and bottom looking flush, which is the exact thing it was meant to fix.
-
-     No border. The fill against the chat behind it draws the edge, and the
-     radius rounds it, which is this system's way (see the hierarchy rule: not
-     borders). A dashed outline was tried here and was never asked for.
-
-     THE INSET IS COSMETIC ONLY. The drop handlers are on `.chat-panel` and this
-     overlay is `pointer-events: none`, so the whole panel still accepts the
-     drop, including the margin outside this box. What moved is where the edge
-     is drawn, not where a file may be let go. */
-  position: absolute; inset: var(--space-6) var(--space-4);
-  z-index: var(--z-dock);
-  pointer-events: none;
+  flex: 1 1 auto; min-height: 0;
+  margin: var(--space-6) var(--space-4);
   display: flex; align-items: center; justify-content: center;
   background: var(--accent-soft);
   border-radius: var(--radius-lg);
 }
-/* A phone has far less height to give away, so the top and bottom gaps shrink
-   to a step that still reads as a gap without eating the message it covers. */
+/* A phone has far less height to give away, so the gaps shrink a step. */
 @media (max-width: 640px) {
-  .chat-dropzone { inset: var(--space-5) var(--space-3); }
+  .chat-dropzone { margin: var(--space-5) var(--space-3); }
 }
 .chat-dropzone__card {
   display: inline-flex; align-items: center; gap: var(--space-2);

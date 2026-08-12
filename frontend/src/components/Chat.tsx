@@ -364,7 +364,17 @@ export default function Chat({
     followDeps: [transcript, queue.items, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
     // Restore the scroll position per thread when returning to it.
-    restoreKey: activeId,
+    //
+    // AND WHEN THE DROP AREA HANDS THE LOG BACK. A drag unmounts the transcript
+    // (the drop area REPLACES it rather than covering it), so the element that
+    // comes back afterwards is a new one, scrolled to the top. This hook only
+    // restores once per key and its own state survives, since it lives on this
+    // component rather than on the log, so nothing would have repositioned it.
+    // Dropping the key for the length of the drag makes the return count as
+    // re-opening the thread, which is what it now is, and the position saved
+    // before the drag is reapplied. Nothing is saved under the null key: the
+    // save is guarded on a non-null key, and an unmounted log fires no scroll.
+    restoreKey: files.dragging ? null : activeId,
   });
 
   const pipeline = useSendPipeline({
@@ -1023,18 +1033,11 @@ export default function Chat({
   // THE WHOLE CHAT IS THE DROP TARGET, transcript and composer alike: the
   // operator asked to drop anywhere in the chat, and a small target you have to
   // aim at is the thing every drag-and-drop implementation gets wrong.
-  //
-  // dragenter/dragleave fire for every child element crossed, so a naive
-  // handler flickers the overlay as the pointer moves over the transcript. The
-  // depth counter is what makes it stable: leave only counts as leaving when it
-  // balances every enter.
-  const dragDepth = useRef(0);
   const panelInner = (
     <div
       className={`chat-panel chat-panel--${variant}${files.dragging ? " is-dropping" : ""}`}
       onDragEnter={(e) => {
         if (!dragHasFiles(e.dataTransfer)) return;
-        dragDepth.current += 1;
         files.setDragging(true);
       }}
       onDragOver={(e) => {
@@ -1047,26 +1050,46 @@ export default function Chat({
       }}
       onDragLeave={(e) => {
         if (!dragHasFiles(e.dataTransfer)) return;
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) files.setDragging(false);
+        // WHERE THE POINTER IS GOING, not how many enters have been counted.
+        // This was a depth counter, which cannot survive the swap below: the
+        // transcript and composer are REMOVED from the DOM the moment the drag
+        // starts, and a removed element's dragleave is not something the spec
+        // guarantees, so the count drifted and the zone flickered or stuck.
+        // `relatedTarget` is the node being entered; if it is still inside the
+        // panel this is a move between children, not a leave. It is null when
+        // the pointer leaves the window entirely, which IS a leave.
+        const next = e.relatedTarget as Node | null;
+        if (next && e.currentTarget.contains(next)) return;
+        files.setDragging(false);
       }}
       onDrop={(e) => {
         if (!dragHasFiles(e.dataTransfer)) return;
         e.preventDefault();
-        dragDepth.current = 0;
         files.setDragging(false);
         files.add(filesFromTransfer(e.dataTransfer));
       }}
     >
-      {files.dragging && (
-        <div className="chat-dropzone" aria-hidden>
+      {toolbar}
+      {/* A SWAP, NOT AN OVERLAY. The drop area REPLACES the transcript and the
+          composer rather than being laid on top of them, so there is nothing
+          showing through behind it (operator, 2026-08-12: an overlay left all
+          of it sitting there underneath, which is the wrong thing to build).
+
+          The toolbar stays. It is the chat's chrome rather than its content,
+          and dropping a file should not make you lose track of which chat you
+          are in. Everything below it is what gets replaced.
+
+          The panel keeps the handlers, so the whole area still takes the drop,
+          including the toolbar and the margin around the zone. */}
+      {files.dragging ? (
+        <div className="chat-dropzone" role="status">
           <div className="chat-dropzone__card">
             <Paperclip size={20} strokeWidth={1.8} aria-hidden />
             <span>Drop to attach</span>
           </div>
         </div>
-      )}
-      {toolbar}
+      ) : (
+      <>
       {notice && <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />}
       {taskPanel}
       <div className="chat-log-wrap">
@@ -1112,6 +1135,8 @@ export default function Chat({
           the one thing the operator can usefully do here is ask again. */}
       {staleProblem && <ChatProblemBlock problem={staleProblem} icon={<Unplug aria-hidden />} />}
       {composer}
+      </>
+      )}
       {dialogs}
       <ContextModal
         open={contextOpen}
