@@ -340,6 +340,41 @@ export function composeTranscript(
  *  message and below the typing indicator"). It goes immediately before
  *  whatever is happening live instead — the newest point it can truthfully
  *  sit at without claiming to be part of what is running now. */
+/** The client ids the LOG already carries.
+ *
+ *  A send that fails is written to the durable queue so its text survives a
+ *  reload (useMessageQueue invariant 1). A retry then reuses THE SAME client id
+ *  on purpose, so if it lands, the server dedupes and the message is committed
+ *  under the id the durable entry is still holding. From then on the durable
+ *  entry is a GHOST: the message it stands for is in the transcript.
+ *
+ *  Nothing used to notice. `reconcilePending` drops the in-memory optimistic
+ *  copy when the log carries its id, but the durable copy was only ever
+ *  filtered against that same in-memory map — so the moment reconciliation
+ *  removed the pending entry, the durable one started rendering and the message
+ *  drew TWICE: once committed, once as a failed bubble with a Retry under it.
+ *  The ghost appeared *because* the send had succeeded, and a reload could not
+ *  clear it (localStorage holds it, and the message is permanently in the log).
+ *  Reported 2026-08-11: "it printed it once and then it printed it again with
+ *  the error message on the second one." */
+export function committedClientIds(state: ThreadState): Set<string> {
+  const ids = new Set<string>();
+  for (const ev of committedEvents(state)) {
+    if (ev.kind === "message" && ev.client_id) ids.add(ev.client_id);
+  }
+  return ids;
+}
+
+/** Drop queue entries the log already carries. See `committedClientIds`. */
+export function withoutCommitted<T extends { clientId: string }>(
+  items: T[], committed: Set<string>,
+): T[] {
+  if (!committed.size) return items;
+  return items.some((i) => committed.has(i.clientId))
+    ? items.filter((i) => !committed.has(i.clientId))
+    : items;
+}
+
 export function withStaleFailures(
   blocks: TranscriptBlock[],
   staleFailed: { clientId: string; text: string; error?: string }[],

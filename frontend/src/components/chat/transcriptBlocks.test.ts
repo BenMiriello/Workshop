@@ -3,6 +3,7 @@ import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
 import {
   selectTranscript, selectCommitted, composeTranscript, withStaleFailures,
+  committedClientIds, withoutCommitted,
   type TranscriptBlock,
 } from "./transcriptBlocks";
 import { splitAtUnits } from "./transcriptUnits";
@@ -430,5 +431,58 @@ describe("selectCommitted / composeTranscript", () => {
     expect(shape(committed.blocks)).toEqual(["user:first"]);
     expect(committed.heldForActiveRun).toHaveLength(1);
     expect(shape(composeTranscript(committed, s))).toContain("user:mid-run");
+  });
+});
+
+// THE GHOST BUBBLE. A failed send is kept in the durable queue so its text
+// survives a reload. A retry reuses THE SAME client id on purpose, so when it
+// lands the server dedupes and commits the message under the id the durable
+// entry still holds. Nothing dropped that entry, and it was only ever filtered
+// against the in-memory `pending` map — so the instant reconciliation removed
+// the pending copy, the durable one surfaced and the message drew TWICE: once
+// committed, once as a failed bubble with a Retry under it.
+//
+// Reported 2026-08-11: "it printed it once and then it printed it again with
+// the error message on the second one." The second bubble appeared BECAUSE the
+// send had succeeded, and no reload could clear it.
+describe("a durable failure whose message actually landed", () => {
+  const committedWith = (cid: string) => stateOf([
+    { seq: ++seq, id: `e${seq}`, ts: "2026-08-09T12:00:00Z", kind: "message",
+      role: "user", content: "do it", client_id: cid } as LogEvent,
+  ]);
+
+  it("collects the client ids the log carries", () => {
+    expect(committedClientIds(committedWith("cid-1")).has("cid-1")).toBe(true);
+  });
+
+  it("ignores committed messages that carry no client id", () => {
+    expect(committedClientIds(stateOf([user("typed elsewhere")])).size).toBe(0);
+  });
+
+  it("drops the queue entry the log already carries", () => {
+    const items = [{ clientId: "cid-1", text: "do it", failed: true }];
+    expect(withoutCommitted(items, committedClientIds(committedWith("cid-1")))).toEqual([]);
+  });
+
+  it("keeps a queued message the log does NOT carry", () => {
+    const items = [{ clientId: "other", text: "still waiting" }];
+    expect(withoutCommitted(items, committedClientIds(committedWith("cid-1")))).toEqual(items);
+  });
+
+  it("does not rebuild the array when nothing is committed", () => {
+    const items = [{ clientId: "a", text: "x" }];
+    // Identity matters: this feeds a memo whose churn turns off the transcript's
+    // memoization, which is the thing that keeps typing from re-rendering it.
+    expect(withoutCommitted(items, new Set())).toBe(items);
+    expect(withoutCommitted(items, new Set(["nope"]))).toBe(items);
+  });
+
+  it("removes only the landed one from a mixed queue", () => {
+    const items = [
+      { clientId: "cid-1", text: "landed", failed: true },
+      { clientId: "cid-2", text: "genuinely waiting" },
+    ];
+    const out = withoutCommitted(items, committedClientIds(committedWith("cid-1")));
+    expect(out.map((i) => i.clientId)).toEqual(["cid-2"]);
   });
 });

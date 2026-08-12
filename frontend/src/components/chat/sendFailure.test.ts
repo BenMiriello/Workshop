@@ -69,8 +69,28 @@ describe("a message that did not send", () => {
     expect(s).not.toMatch(/signed in/);
   });
 
-  it("still blames the session for a bare 401 or 403", () => {
+  it("still blames the session for a bare 401, which is the one that means it", () => {
     expect(sendFailureText(new Error("401 Unauthorized"))).toMatch(/not signed in/);
+    expect(sendFailureText(new Error("401"))).toMatch(/not signed in/);
+  });
+
+  // A bare 403 used to say the same thing as a bare 401, and for 403 it is
+  // false: the request WAS authenticated and was refused anyway. The operator
+  // hit one on 2026-08-11, reloaded because the sentence told him to, came
+  // straight back into a working session, and concluded the app was lying.
+  // A Cloudflare-style HTML refusal in front of the origin arrives exactly this
+  // way, because shortHttpError drops HTML bodies and leaves no detail.
+  it("does not claim a bare 403 signed you out", () => {
+    for (const raw of ["403", "403 Forbidden", "403 Access denied"]) {
+      const s = sendFailureText(new Error(raw));
+      expect(s).not.toMatch(/not signed in/);
+      expect(s).toMatch(/still signed in/);
+      expect(s).toMatch(/refused/);
+    }
+  });
+
+  it("does not send you to reload for a 403, since that cannot help", () => {
+    expect(sendFailureText(new Error("403 Forbidden"))).not.toMatch(/Reload the page/);
   });
 });
 

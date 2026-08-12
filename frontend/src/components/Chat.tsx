@@ -34,7 +34,9 @@ import { placementFor, type ChatProblem } from "./chat/chatProblem";
 import { scopeSwitch } from "./chat/scopeSwitch";
 import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
-import { committedMessages, withStaleFailures } from "./chat/transcriptBlocks";
+import {
+  committedClientIds, committedMessages, withStaleFailures, withoutCommitted,
+} from "./chat/transcriptBlocks";
 import { chatApi, type CardState } from "../lib/chat";
 import { writeSelection } from "../lib/chatSelection";
 import { useDraft } from "../lib/draftSync";
@@ -792,9 +794,30 @@ export default function Chat({
   // THIS tab still holds the optimistic copy both would draw — the same text,
   // twice, each with its own Retry. The store's copy wins for as long as it
   // exists; the queue's copy is what is left afterwards.
+  //
+  // ...AND NOT AT ALL once the log carries it. A retry reuses the same client
+  // id, so a failed send that later lands is committed under the id the durable
+  // entry still holds — and dropping the optimistic copy (which reconciliation
+  // does the moment the log arrives) is what USED to reveal the durable one. See
+  // committedClientIds: the second bubble appeared because the send succeeded.
+  //
+  // Keyed on the log's own maps, NOT on `state`. `runDelta` builds a new state
+  // per streamed token, so `[state]` would rebuild this set dozens of times a
+  // second and churn every memo below it — including the transcript one that
+  // exists to keep typing from re-rendering the log. Those three references are
+  // held stable by the reducer when no event is new; same deps as the committed
+  // memo in useThreadLog, for the same reason.
+  const committedIds = useMemo(
+    () => committedClientIds(state),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [state.byId, state.order, state.idBySeq],
+  );
   const queuedForDisplay = useMemo(
-    () => queue.items.filter((q) => !state.pending[q.clientId]),
-    [queue.items, state.pending],
+    () => withoutCommitted(
+      queue.items.filter((q) => !state.pending[q.clientId]),
+      committedIds,
+    ),
+    [queue.items, state.pending, committedIds],
   );
   // `queuedForDisplay` mixes two different things the queue holds: text typed
   // ahead that has not been sent AT ALL (genuinely belongs after everything,
@@ -815,6 +838,16 @@ export default function Chat({
     () => withStaleFailures(transcript, queuedStaleFailed),
     [transcript, queuedStaleFailed],
   );
+  // Filtering the ghost out of the render is not enough: the entry is in
+  // localStorage, so every future load would rebuild it and it would outlive
+  // the tab, the thread switch and the reload. Once the log carries the id, the
+  // durable copy has no job left — drop it for real.
+  useEffect(() => {
+    if (!committedIds.size) return;
+    for (const q of queue.items) {
+      if (committedIds.has(q.clientId)) queue.drop(q.clientId);
+    }
+  }, [committedIds, queue]);
   // A merged-in stale failure has no `pending` entry for `pipeline.retry` to
   // find (that is exactly why it fell to the durable queue) — route it to the
   // queue's own retry instead of failing silently.

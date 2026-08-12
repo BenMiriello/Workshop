@@ -105,6 +105,23 @@ export function sendFailureText(e: unknown): string {
       // protocol already said, and showing it instead of the guidance below
       // trades a useful sentence for a worse one.
       if (detail && !BARE_AUTH_REASON.test(detail)) return `Not sent: ${detail}`;
+      // A BARE REFUSAL STILL IS NOT A BARE SIGN-OUT. Keeping the reason fixed
+      // the 403s that carry one, but the ones that carry nothing kept claiming
+      // the session was gone, and that claim is only true for 401:
+      //
+      //   401 — there is no valid session. Reloading and signing in IS the fix.
+      //   403 — the request was authenticated and refused anyway. Reloading
+      //         cannot change the answer.
+      //
+      // A bare 403 is the shape an edge in front of the origin produces: the
+      // Cloudflare tunnel fronting this deployment answers with an HTML page,
+      // `shortHttpError` drops HTML bodies on purpose, and what reaches here is
+      // a 403 with no detail at all. On 2026-08-11 one of those told the
+      // operator he was not signed in; he reloaded, came straight back into a
+      // working session, and reasonably concluded the app was lying about it.
+      if (status === 403) {
+        return "Not sent: the server refused this message. You are still signed in, so reloading will not help — this was refused upstream or by a rule, not by your session.";
+      }
       return "Not sent: this browser is not signed in to the workshop. Reload the page, then press Retry.";
     }
     if (status >= 500) {
