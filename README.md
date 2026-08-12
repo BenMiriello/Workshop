@@ -18,36 +18,30 @@ workshop/
 ├── mobile/                # Expo + React Native scaffold
 ├── shared/types.ts        # Agent + Project types shared with frontend & mobile
 ├── scripts/
-└── vault/                 # Obsidian-style markdown notes (Phase 1+)
 ```
 
-## Bring-up (operator runs these — classifier blocks the bot from doing them itself)
+## Bring-up
 
 ```bash
-# 1. Deploy Letta
-cd ~/workshop/infra/letta && docker compose up -d
-docker ps --format '{{.Names}}\t{{.Status}}' | grep letta
-
-# 2. Seed the bridge agent agent
-cd ~/workshop/backend
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-LETTA_URL=http://127.0.0.1:8283 LETTA_SERVER_PASS=workshop-local \
-
-# 3. Install + start backend as a systemd --user service.
-# Renders infra/systemd/workshop-backend.service for THIS checkout, enables
-# linger (so it auto-starts on boot without a login session), and starts it.
-# Idempotent — safe to re-run after a pull. Restart with: scripts/restart_backend.sh
-bash scripts/install_service.sh
-journalctl --user -u workshop-backend -f
-
-# 4. Start frontend (dev)
-cd ~/workshop/frontend && npm install && npm run dev
-# → http://127.0.0.1:5173
-
-# 5. (Optional) Mobile dev
-cd ~/workshop/mobile && npm install && npm run start
+git clone <repo> workshop && cd workshop
+bash scripts/bootstrap.sh      # first run creates config templates, then stops
+# fill in ~/.config/workshop/auth.env (CLAUDE_CODE_OAUTH_TOKEN) and instance.env
+bash scripts/bootstrap.sh      # second run installs, builds and starts
 ```
+
+`bash scripts/preflight.sh` checks whether a machine is ready and lists
+everything missing at once. It changes nothing.
+
+Full deployment notes, including what each service is, how to update an existing
+install, and why this is systemd rather than a container:
+**[docs/deploying.md](docs/deploying.md)**.
+
+Two things that catch everyone:
+
+- `npm install` at the **repo root**, never inside `frontend/`. This is an npm
+  workspace, and installing in `frontend/` leaves `@workshop/ui` unresolvable.
+- `npm run build:ui` before any typecheck. vite reads the kit's sources, tsc
+  reads its built `dist`, so a missing `dist` builds fine and fails typecheck.
 
 ## Endpoints
 

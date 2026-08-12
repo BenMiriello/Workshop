@@ -1,0 +1,19 @@
+# Optional voice stack: speech-to-text (faster-whisper) and text-to-speech
+# (kokoro-onnx). Install with:
+#
+#   backend/.venv/bin/pip install -r backend/requirements-voice.txt
+#
+# Deliberately NOT in requirements.txt. These pull onnxruntime, ctranslate2, av
+# and a phonemizer, several hundred megabytes for a feature most deployments do
+# not use. services/voice_engine.py imports them lazily and reports voice as
+# unavailable when they are absent, so a bring-up without them is a supported
+# state rather than a broken one.
+#
+# The model FILES are a separate matter and are not pip-installable: voice_engine
+# expects them already present under .runtime/voice/models/. A deployment that
+# wants voice needs both these packages and those files.
+-r requirements.txt
+
+numpy==2.5.1
+faster-whisper==1.2.1
+kokoro-onnx==0.5.0

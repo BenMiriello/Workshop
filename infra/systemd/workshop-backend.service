@@ -40,10 +40,26 @@ WorkingDirectory=@WORKSHOP_ROOT@/backend
 EnvironmentFile=-%h/.config/workshop/secrets.env
 EnvironmentFile=-%h/.config/workshop/instance.env
 Environment=WORKSHOP_ROOT=@WORKSHOP_ROOT@
-Environment=WORKSHOP_PROJECTS_ROOT=%h
 Environment=LETTA_URL=http://127.0.0.1:8283
 Environment=LETTA_SERVER_PASS=workshop-local
-ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+# Rootless docker, so the app runner can manage container apps. %t is the user's
+# runtime dir, which is how this stays correct for any uid instead of pinning
+# one. Harmless when docker is absent: container_runtime falls back.
+Environment=DOCKER_HOST=unix://%t/docker.sock
+# LOOPBACK ONLY, deliberately.
+#
+# This served 0.0.0.0 for months. Nothing sits in front of the backend enforcing
+# a boundary: the public edge is a separate process on :8002 that proxies here,
+# not a gateway this hides behind. So a non-loopback bind puts the finance,
+# health, location and chat APIs on every interface the host has, reachable by
+# anything on the LAN. The same mistake was made once on the vite dev server and
+# is recorded in frontend/vite.config.ts.
+#
+# Remote access is loopback-originating by design: tailscale serve and
+# cloudflared both connect to 127.0.0.1. If a deployment genuinely needs another
+# bind address, change it here deliberately rather than shipping it as a default
+# nobody chose.
+ExecStart=@WORKSHOP_ROOT@/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 

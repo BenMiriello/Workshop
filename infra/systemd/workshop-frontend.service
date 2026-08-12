@@ -1,0 +1,35 @@
+# Workshop Vite dev server — systemd --user unit.
+#
+# Serves frontend/ on 127.0.0.1:5173 (vite.config.ts binds loopback). This is
+# the SOURCE origin: it reflects edits instantly and needs no build. The BUILT
+# origin is a different service (workshop-public.service) serving frontend/dist,
+# and the two do not update together.
+#
+# @WORKSHOP_ROOT@ and @NODE_BIN@ are substituted by
+# scripts/install_frontend_service.sh. Do not fill them in by hand.
+#
+# Both env files are loaded, and instance.env is not optional decoration:
+# vite.config.ts reads WORKSHOP_CANONICAL_ORIGIN and WORKSHOP_TAILNET_HOST from
+# the process environment to decide which Host headers to accept. Without them a
+# request through the tunnel or the tailnet is rejected as an invalid host, which
+# looks like a network fault rather than a missing variable.
+#
+# Vite reads its env ONCE at process start, so a new build-time flag needs a
+# restart of this unit and not just a rebuild.
+[Unit]
+Description=Workshop Vite dev server (loopback source origin)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@WORKSHOP_ROOT@/frontend
+EnvironmentFile=-%h/.config/workshop/secrets.env
+EnvironmentFile=-%h/.config/workshop/instance.env
+Environment=PATH=@NODE_BIN@:/usr/local/bin:/usr/bin:/bin
+ExecStart=@NODE_BIN@/npm run dev
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

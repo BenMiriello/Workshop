@@ -15,5 +15,9 @@
     "gen:tokens": "npm run gen:tokens --workspace @workshop/ui",
     "check:tokens": "npm run check:tokens --workspace @workshop/ui",
     "api:check": "npm run api:check --workspace @workshop/ui"
+  },
+  "engines": {
+    "node": ">=18",
+    "npm": ">=9"
   }
 }

@@ -7,3 +7,13 @@ pyyaml==6.0.2
 gtfs-realtime-bindings==2.0.0
 protobuf>=4.25,<8
 PyJWT[crypto]==2.9.0
+
+# Multipart form parsing. NOT imported by our code: FastAPI raises at APP IMPORT
+# when a route declares Form/UploadFile, which routes/birds.py and routes/voice.py
+# both do. Without it the backend does not start at all, so it is a hard
+# requirement despite looking like a feature dependency.
+python-multipart==0.0.32
+
+# Cron-expression triggers (services/triggers.py). The import sits in a try, so
+# without it a cron-shaped trigger silently never fires rather than erroring.
+croniter==6.0.0

@@ -1,0 +1,8 @@
+# Development-only dependencies. Installed by `bash scripts/bootstrap.sh --dev`.
+#
+# Kept out of requirements.txt so a production bring-up does not pull a test
+# runner, and so the backend's runtime dependency list stays a statement about
+# what the app needs to serve rather than what a contributor needs to work.
+-r requirements.txt
+
+pytest==9.0.3
