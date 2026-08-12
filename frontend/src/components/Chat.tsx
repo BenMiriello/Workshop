@@ -610,6 +610,11 @@ export default function Chat({
     // reached the usage ledger. Voice INPUT still goes the voice path — that is
     // what the mode is for.
     if (voiceOn) vsession.setTyping(false);
+    // The box just emptied, so voice owns nothing in it. Said here rather than
+    // inferred a tick later, so the next words dictated go in immediately
+    // instead of spending a snapshot relinquishing a prefix that is already
+    // gone. Anything dictated was part of `text` and went out with it.
+    dictatedRef.current = "";
     pipeline.submitText(text, files.take());
   }, [input, clearInput, voiceOn, vsession, pipeline, files]);
 
