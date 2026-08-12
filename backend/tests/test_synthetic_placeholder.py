@@ -218,3 +218,47 @@ class TestCleanExitWithNoClosingMessage:
 
     def test_neither_line_has_an_em_dash(self):
         assert "—" not in self.DID_WORK and "—" not in self.DID_NOTHING
+
+
+class TestAnInjectedSlashCommandStillCounts:
+    """A slash command delivered INTO a running turn must not be reported as
+    having done nothing.
+
+    The CLI runs `/context` and `/compact` locally and never calls the model, so
+    such a turn legitimately produces no text. `is_command` is derived from the
+    turn's ORIGINAL prompt, which cannot see a command injected mid-flight, so
+    the turn fell through to the empty-turn copy and claimed nothing ran.
+    """
+
+    def test_injecting_a_command_marks_the_turn(self):
+        t = bs._make_turn("thread-1", "general", turn_id="t-cmd")
+        assert t.injected_command is False
+        bs.TURNS["t-cmd"] = t
+        try:
+            bs.inject("t-cmd", "/context")   # no FIFO: the write fails
+        finally:
+            bs.TURNS.pop("t-cmd", None)
+        # A refused write must NOT mark it: nothing reached the CLI.
+        assert t.injected_command is False
+
+    def test_a_marked_turn_is_treated_as_a_command_turn(self, monkeypatch):
+        """The flag is what `is_command` reads, so the commit path says
+        "Command ran." instead of the empty-turn line."""
+        t = bs._make_turn("thread-1", "general", turn_id="t-cmd2")
+        bs.TURNS["t-cmd2"] = t
+        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text: True)
+        try:
+            assert bs.inject("t-cmd2", "/compact") is True
+            assert t.injected_command is True
+        finally:
+            bs.TURNS.pop("t-cmd2", None)
+
+    def test_ordinary_injected_text_does_not_mark_it(self, monkeypatch):
+        t = bs._make_turn("thread-1", "general", turn_id="t-msg")
+        bs.TURNS["t-msg"] = t
+        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text: True)
+        try:
+            assert bs.inject("t-msg", "stop, wrong file") is True
+            assert t.injected_command is False
+        finally:
+            bs.TURNS.pop("t-msg", None)

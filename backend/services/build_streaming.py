@@ -239,6 +239,13 @@ class Turn:
     # ("may I deliver this?") and the answer must not depend on which reason
     # applies. `inject` refuses on it, and the client is told so it can queue.
     accepts_input: bool = True
+    # A slash command was INJECTED into this turn after it started. The commit
+    # path derives "was this a command turn?" from the turn's original prompt,
+    # which cannot see a command delivered mid-flight. The CLI runs a slash
+    # command locally and never calls the model, so such a turn legitimately
+    # produces no text — and without this flag it reports "Nothing ran this
+    # turn" about a command that did run.
+    injected_command: bool = False
     complete: bool = False
     error: str | None = None
     final_text: str = ""
@@ -499,13 +506,20 @@ def _tool_result_text(content: object) -> str:
 # The CLI's own no-op placeholder, and the ONLY synthetic message we drop.
 #
 # `model: "<synthetic>"` marks a message the CLI wrote itself: the model was
-# never called (zero tokens, stop_reason "stop_sequence"). The CLI emits one to
-# close a turn it decided needs no reply, which happens when a `queue-operation`
-# is followed by the meta prompt "Continue from where you left off." — i.e.
-# after an interrupt, or after a queued message that turned out to be empty.
-# The operator sees a reply that says nothing, in a turn they did not start.
-# Measured 2026-08-11: 106 of these across the session logs, on CLI 2.1.207
-# through 2.1.227.
+# never called (zero tokens, stop_reason "stop_sequence").
+#
+# IT IS EMITTED AT THE START OF A TURN, NOT THE END. This comment used to say
+# the opposite ("the CLI emits one to CLOSE a turn it decided needs no reply"),
+# and that reading is what made empty replies look like the placeholder's fault.
+# Re-measured 2026-08-12 across 104 occurrences in the CLI session journals
+# (2.1.185 through 2.1.228): it is RESUME REPAIR. On `--resume`, when the
+# transcript's last record is an unanswered user message (an interrupt, a
+# dangling tool_result, a session-init marker), the CLI injects the meta prompt
+# "Continue from where you left off." and synthesizes this assistant slot to
+# restore role alternation, THEN delivers the real prompt — which carries the
+# same promptId as the meta one. In 102 of the 104 cases a real assistant reply
+# follows immediately. Dropping it is correct and is NOT why a turn comes back
+# empty; the real causes are locally-run slash commands and operator stops.
 #
 # DO NOT widen this to "drop synthetic messages". The same channel carries the
 # things the operator most needs: "You've hit your session limit · resets
@@ -1853,6 +1867,45 @@ def _stale_pending_approvals(turn: Turn) -> None:
         _push(turn, "permission_resolved", {"stale": True})
 
 
+def build_receipts(kind: str, labels: list[str],
+                   refs: list[dict] | None = None) -> list[dict]:
+    """Turn one write helper's outcome strings into typed receipts.
+
+    A receipt is a durable effect on the world OUTSIDE the chat: a note written,
+    a ticket filed, a preference captured. `refs` are what the write actually
+    PRODUCED, paired positionally with the labels that describe them, and a
+    receipt carrying one becomes a link, so "Saved a note" can be opened rather
+    than only read.
+
+    A warning never takes a ref. Failure strings are parenthesised by convention
+    in every one of these helpers ("(note skipped: ...)"), and a refusal or a
+    parse error produced nothing to link to. The helpers return an empty ref
+    list in those cases too; this is the second guard, because a link to a note
+    that was never written is worse than no link.
+
+    Refs are trusted ONLY when they describe the labels one for one. Pairing by
+    index across two lists of different lengths can attach a ref to the wrong
+    label, and a receipt linking to the wrong note is a worse failure than one
+    linking nowhere, so a mismatch drops every ref rather than guessing.
+
+    Module level, not a closure inside _finalize_turn, so a test can exercise
+    THIS function rather than a copy of it.
+    """
+    paired = refs if refs and len(refs) == len(labels or []) else []
+    out: list[dict] = []
+    for i, label in enumerate(labels or []):
+        text = (label or "").strip()
+        if not text:
+            continue
+        warn = text.startswith("(")
+        receipt = {"kind": "warn" if warn else kind, "label": text}
+        ref = paired[i] if not warn and i < len(paired) else None
+        if ref:
+            receipt["ref"] = ref
+        out.append(receipt)
+    return out
+
+
 def _close_open_tools(turn: Turn) -> None:
     """Any tool call still open when the turn ends never reported a result.
 
@@ -1977,7 +2030,10 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
 
     # Same plain-language finalize as the original path: salvage any text; when
     # nothing came back, say WHY (timeout / compact / clean-no-summary / failure).
-    is_command = prompt.strip().startswith("/")
+    # The turn's own prompt, OR a slash command injected into it after it began.
+    # Without the second half a mid-turn `/context` (which the CLI runs locally
+    # and answers without the model) commits as "Nothing ran this turn".
+    is_command = prompt.strip().startswith("/") or turn.injected_command
     minutes = max(1, round(timeout_s / 60)) if timeout_s > 0 else 0
     # Neither cap is passed to the CLI any more (see start_turn): no step cap,
     # and by default no wall clock either. A turn ends when the model is done,
@@ -2075,15 +2131,9 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             # receipts of something that happened.
             receipts: list[dict] = []
 
-            def _receipt(kind: str, labels: list[str]) -> None:
-                for label in labels or []:
-                    text_ = (label or "").strip()
-                    if not text_:
-                        continue
-                    receipts.append({
-                        "kind": "warn" if text_.startswith("(") else kind,
-                        "label": text_,
-                    })
+            def _receipt(kind: str, labels: list[str],
+                         refs: list[dict] | None = None) -> None:
+                receipts.extend(build_receipts(kind, labels, refs))
             # Whose reply is this, and what may that speaker write?
             #
             # These protocol blocks are mediated writes: a reply containing a
@@ -2136,12 +2186,12 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
                 # note and the assistant's are otherwise byte-identical when
                 # either is recalled later. See services/origin.
                 from services import origin as _origin
-                new_text, nnotes = await task_scope.apply_note_block(
+                new_text, nnotes, nrefs = await task_scope.apply_note_block(
                     ctx_key, new_text,
                     author=(_origin.agent(_speaker) if _is_agent and _speaker else _origin.SELF),
                 )
                 applied_notes += nnotes
-                _receipt("note", nnotes)
+                _receipt("note", nnotes, nrefs)
             # A data-mode assistant is told it may ask for a skill by emitting a
             # fenced block. It has tools and reads the skill itself, so nothing
             # expands one; take the raw protocol off the reply.
@@ -2457,7 +2507,13 @@ def inject(turn_id: str, text: str) -> bool:
     t = TURNS.get(turn_id)
     if t is not None and not t.accepts_input:
         return False
-    return write_to_turn(turn_id, text)
+    ok = write_to_turn(turn_id, text)
+    # Remember that a command went in, so a turn whose only work was a locally
+    # run slash command is not reported as having done nothing. Only on a
+    # successful write: a refused injection never reached the CLI.
+    if ok and t is not None and text.startswith("/"):
+        t.injected_command = True
+    return ok
 
 
 async def iter_events(turn: Turn, after: int = 0):
