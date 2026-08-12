@@ -2199,6 +2199,44 @@ async def upload_attachment(file: UploadFile, scope: str = Form(""),
             "size": rec["size"], "created_at": rec["created_at"]}
 
 
+@router.get("/attachments")
+async def list_attachments(scope: str = "", q: str = ""):
+    """Every stored attachment, newest first, for the Files tab on Memory.
+
+    Newest first because the thing you are looking for is almost always the
+    thing you just attached. `missing` says the index has a row whose blob is
+    gone, which the list shows rather than hiding: a file that cannot be opened
+    should say so where you would go looking for it."""
+    recs = chat_attachments.list_records()
+    if scope:
+        recs = [r for r in recs if (r.get("scope") or "") == scope]
+    needle = q.strip().lower()
+    if needle:
+        recs = [r for r in recs if needle in (r.get("name") or "").lower()]
+    # `created_at` is second-granularity, and a multi-file drop writes several
+    # rows inside one second. Tie-break on index position so the order is
+    # deterministic rather than whatever the stable sort happened to preserve:
+    # later-appended is later-attached.
+    order = {r["id"]: i for i, r in enumerate(chat_attachments.list_records())}
+    recs = sorted(recs, key=lambda r: (r.get("created_at") or "", order.get(r["id"], 0)),
+                  reverse=True)
+    out = [{
+        "id": r["id"], "name": r["name"], "kind": r["kind"], "size": r["size"],
+        "scope": r.get("scope") or "", "thread_id": r.get("thread_id") or "",
+        "created_at": r.get("created_at") or "",
+        "missing": chat_attachments.blob_for(r) is None,
+    } for r in recs]
+    scopes = sorted({r["scope"] for r in out if r["scope"]})
+    return {"files": out, "count": len(out), "scopes": scopes}
+
+
+@router.delete("/attachments/{att_id}")
+async def delete_attachment(att_id: str):
+    if not chat_attachments.delete(att_id):
+        raise HTTPException(404, "attachment not found")
+    return {"deleted": att_id}
+
+
 @router.get("/attachments/{att_id}")
 async def get_attachment(att_id: str):
     """The stored bytes, for the composer's thumbnail and the transcript's.

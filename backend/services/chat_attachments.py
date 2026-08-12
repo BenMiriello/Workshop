@@ -206,6 +206,37 @@ def get(att_id: str, owner_id: int | None = None) -> dict | None:
     return None
 
 
+def delete(att_id: str, owner_id: int | None = None) -> bool:
+    """Forget one attachment. False if it was not there.
+
+    The BLOB only goes when no other row still points at that sha. Content
+    addressing means one file's bytes can back several attachments (the same
+    screenshot dropped into three chats), so deleting the bytes with the row
+    would blank an image in a chat the operator never touched.
+
+    The index is append-only in normal use, so removal rewrites it whole. That
+    is fine at this size and it is atomic (write-then-rename), which matters
+    more: a half-written index is every attachment lost, not one."""
+    rows = list_records(owner_id)
+    keep = [r for r in rows if r.get("id") != att_id]
+    if len(keep) == len(rows):
+        return False
+    gone = next(r for r in rows if r.get("id") == att_id)
+
+    idx = _index_path(owner_id)
+    tmp = idx.with_name(f".index.{uuid.uuid4().hex}.part")
+    tmp.write_text("".join(json.dumps(r) + "\n" for r in keep), encoding="utf-8")
+    os.replace(tmp, idx)
+
+    sha = gone.get("sha256", "")
+    if sha and not any(r.get("sha256") == sha for r in keep):
+        try:
+            _blob_path(owner_id, sha).unlink(missing_ok=True)
+        except OSError as e:
+            log.warning("attachment %s: blob %s not removed: %s", att_id, sha, e)
+    return True
+
+
 def blob_for(rec: dict, owner_id: int | None = None) -> Path | None:
     p = _blob_path(owner_id, rec.get("sha256", ""))
     return p if p.exists() else None

@@ -18,6 +18,9 @@ import {
   ConfirmDialog,
   StateBlock,
   Skeleton,
+  StatusDot,
+  Table,
+  TableScroll,
   Tag,
   catFor,
   type SegmentedOption,
@@ -76,12 +79,34 @@ const OVERFLOW_AT = 100;
 // Filter view: all scopes or one scope. The Segmented over scopes would grow
 // unbounded (a scope per project + agent), so scope is a Select. The Segmented
 // switches between the editable Notes list and the read-only Documents index.
-type Tab = "notes" | "vault" | "docs";
+type Tab = "notes" | "vault" | "docs" | "files";
 const TABS: SegmentedOption<Tab>[] = [
   { value: "notes", label: "Notes" },
   { value: "vault", label: "Vault" },
   { value: "docs", label: "Documents" },
+  { value: "files", label: "Files" },
 ];
+
+// A file the operator attached to a chat (GET /api/chat/attachments).
+//
+// Files live HERE rather than on a page of their own because this page is
+// already "what this system knows, by scope": notes are the text half and an
+// attached image or PDF is the binary half. Same scope vocabulary, same filter,
+// same four list states — so the tab is a read of data the attachment index
+// already carries rather than a second knowledge surface with its own rules.
+type StoredFile = {
+  id: string;
+  name: string;
+  kind: "image" | "pdf" | "text";
+  size: number;
+  scope: string;
+  thread_id: string;
+  created_at: string;
+  // The index has a row but the bytes are gone. Shown rather than hidden: a
+  // file that cannot be opened should say so where you go looking for it.
+  missing: boolean;
+};
+type FilesResp = { files: StoredFile[]; count: number; scopes: string[] };
 
 function fmtTs(ts?: string | null): string {
   if (!ts) return "";
@@ -306,6 +331,8 @@ export default function Notes() {
         <Documents />
       ) : tab === "vault" ? (
         <VaultNotes />
+      ) : tab === "files" ? (
+        <Files />
       ) : (
         <>
           {notice && (
@@ -736,6 +763,223 @@ function VaultNotes() {
       {body}
     </Stack>
   );
+}
+
+// ---- Files -----------------------------------------------------------------
+// Everything the operator has attached to a chat, newest first. A table rather
+// than the card grid the other tabs use: a file is a row of small facts (name,
+// kind, size, scope, when), and cards would spend a whole tile saying very
+// little. It is the same four list states and the same scope filter either way.
+function Files() {
+  const [data, setData] = useState<FilesResp | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [scope, setScope] = useState("all");
+  const [query, setQuery] = useState("");
+  const [applied, setApplied] = useState("");
+  // Deleting bytes is destructive and gets a ConfirmDialog naming the file, per
+  // the design system. Nothing here is one-tap.
+  const [confirm, setConfirm] = useState<StoredFile | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const params = new URLSearchParams();
+      if (scope !== "all") params.set("scope", scope);
+      if (applied.trim()) params.set("q", applied.trim());
+      const qs = params.toString();
+      const r = await fetch(`/api/chat/attachments${qs ? `?${qs}` : ""}`);
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setData(await r.json());
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [scope, applied]);
+
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const remove = useCallback(async (f: StoredFile) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/chat/attachments/${encodeURIComponent(f.id)}`, {
+        method: "DELETE",
+      });
+      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      setConfirm(null);
+      await refresh();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+      setConfirm(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [refresh]);
+
+  const files = data?.files ?? [];
+  const overflow = files.length > OVERFLOW_AT;
+  const shown = overflow ? files.slice(0, OVERFLOW_AT) : files;
+  // Scope options come from the FILES, not the notes scope list: a scope with no
+  // attachment in it would only ever filter to an empty table.
+  const scopeOptions = data?.scopes ?? [];
+
+  const filterBar = (
+    <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+      <Field label="Scope" inline>
+        <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter files by scope">
+          <option value="all">All scopes</option>
+          {scopeOptions.map((s) => (
+            <option key={s} value={s}>{scopeLabel(s)}</option>
+          ))}
+        </Select>
+      </Field>
+      <Field label="Search" inline>
+        <form
+          onSubmit={(e) => { e.preventDefault(); setApplied(query); }}
+          style={{ display: "flex", gap: "var(--space-2)" }}
+        >
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Find by filename"
+            aria-label="Search files"
+          />
+          <Button size="sm" type="submit">Search</Button>
+        </form>
+      </Field>
+      <Button size="sm" onClick={refresh} loading={loading}>
+        <RefreshCw aria-hidden /> Refresh
+      </Button>
+    </Row>
+  );
+
+  const filtered = scope !== "all" || applied.trim() !== "";
+
+  let body: JSX.Element;
+  if (err) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't load files"
+        hint={<><code>/api/chat/attachments</code> ({err})</>}
+        action={<Button size="sm" onClick={refresh}>Retry</Button>}
+      />
+    );
+  } else if (!data) {
+    body = (
+      <Stack gap="sm">
+        {[0, 1, 2, 3].map((i) => <Skeleton key={i} />)}
+      </Stack>
+    );
+  } else if (files.length === 0) {
+    body = filtered ? (
+      <StateBlock
+        title="No files match"
+        hint="Clear the scope filter or the search to see everything attached."
+        action={
+          <Button size="sm" onClick={() => { setScope("all"); setQuery(""); setApplied(""); }}>
+            Clear filters
+          </Button>
+        }
+      />
+    ) : (
+      <StateBlock
+        title="No files yet"
+        hint="Drop an image or a file into any chat, or use the paperclip beside the composer. What you attach is stored here."
+      />
+    );
+  } else {
+    body = (
+      <>
+        <TableScroll>
+          <Table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Kind</th>
+                <th>Size</th>
+                <th>Scope</th>
+                <th>Attached</th>
+                <th aria-label="Actions" />
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((f) => (
+                <tr key={f.id}>
+                  <td>
+                    {f.missing ? (
+                      <span>{f.name}</span>
+                    ) : (
+                      <a href={`/api/chat/attachments/${encodeURIComponent(f.id)}`} target="_blank" rel="noreferrer">
+                        {f.name}
+                      </a>
+                    )}
+                  </td>
+                  <td>
+                    {f.missing
+                      ? <StatusDot status="warn">Bytes missing</StatusDot>
+                      : <Tag hue={catFor(f.kind)}>{f.kind}</Tag>}
+                  </td>
+                  <td>{fmtBytes(f.size)}</td>
+                  <td>
+                    {f.scope
+                      ? <Tag hue={catFor(f.scope)}>{scopeLabel(f.scope)}</Tag>
+                      : <span className="ws-muted">unscoped</span>}
+                  </td>
+                  <td>{fmtTs(f.created_at)}</td>
+                  <td>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setConfirm(f)}
+                      aria-label={`Delete ${f.name}`}
+                    >
+                      <Trash2 aria-hidden />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </TableScroll>
+        {overflow && (
+          <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", marginTop: "var(--space-3)" }}>
+            Showing the {OVERFLOW_AT} newest of {files.length}. Narrow it with the scope filter or a search.
+          </p>
+        )}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ marginBottom: "var(--space-4)" }}>{filterBar}</div>
+      {body}
+      {confirm && (
+        <ConfirmDialog
+          open
+          title="Delete this file?"
+          // Names the consequence, and the one thing that is easy to get wrong
+          // here: the chat keeps the message, it just loses what was attached.
+          body={`${confirm.name} is deleted for good. The chat that used it keeps the message but can no longer open the file.`}
+          confirmLabel="Delete"
+          busy={busy}
+          onConfirm={() => { void remove(confirm); }}
+          onCancel={() => setConfirm(null)}
+        />
+      )}
+    </>
+  );
+}
+
+// Whole numbers below a megabyte: the tenths of a KB are noise in a table.
+function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function Documents() {
