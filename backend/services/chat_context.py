@@ -1144,7 +1144,13 @@ class ContextProvider:
             "so a worker who never saw this chat can act. A weak spec is the top cause of a "
             "failed run. Use `mcp__workshop__query` to answer questions about ongoing tasks, "
             "jobs, and notes, and to report and interpret how a job or ticket turned out when "
-            "asked. When the operator states that one thing matters more than another, set or "
+            "asked. Use `mcp__workshop__search` to search the workshop's own writing by meaning, "
+            "across knowledge notes, everything under docs/, and the full text of past chats. "
+            "Reach for it before designing anything that may already exist and whenever the "
+            "operator refers to something decided earlier: nothing is injected into this chat "
+            "for you any more, so what you have not looked up, you do not know. An empty result "
+            "is a real answer, meaning there is no prior art rather than that the search failed. "
+            "When the operator states that one thing matters more than another, set or "
             "adjust ticket priority through the task-patch block below.\n\n"
             "Below each turn you may be given live snapshots from the operator's installed apps "
             "(accounts, budget, location, commute, etc.). Read what's given to you before "
@@ -1478,7 +1484,12 @@ _general = ContextProvider()
 # (platform MCP server, always available) so it can answer "what is going on /
 # what tasks and notes exist" on demand from the task + knowledge digest. It is
 # NOT a filesystem grant and never exposes `.runtime` secrets.
-_general.allowed_tools = ["mcp__workshop__query", "Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+# `search` is listed alongside `query` because this allowlist is exact: a tool
+# the server exposes but the list omits is simply unreachable, silently. It is
+# the same read-only server and the same bounded surface, and it is what the
+# chat now uses INSTEAD of having notes injected into it unasked.
+_general.allowed_tools = ["mcp__workshop__query", "mcp__workshop__search",
+                          "Read", "Grep", "Glob", "Edit", "Write", "Bash"]
 _general.mcp_servers = ["workshop"]
 
 # Platform providers — always present, no app required: the general assistant.
