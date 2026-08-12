@@ -33,21 +33,34 @@ import type { ChatProblem } from "./chatProblem";
 // with a reply streaming under it; without one it is an optimistic message that
 // nothing will ever reconcile, which is a bubble stuck on "sending" forever.
 // The fold divider MessageList draws from the boundary event says "N earlier
-// messages folded into the running summary", is read rather than guessed, and
-// survives a reload. That is the report.
+// messages folded into a summary", is read rather than guessed, and survives a
+// reload. That is the report.
 //
-// NOTHING IS ANNOUNCED ANYWHERE ELSE. This used to report itself in the notice
-// bar under the toolbar as well, which produced exactly the sequence the
-// operator described: a banner pinned above the transcript for the ~30s the
-// fold takes, and only then a bubble down in the chat. Two announcements of one
-// action, in two places, in the wrong order. Worse, a message sent during that
-// window rendered ABOVE the banner in reading order, because a bar above the log
-// has no position in time at all.
+// BUT THE FOLD IS VISIBLE WHILE IT RUNS, and dropping the bubble is what took
+// that away. A compact is a ~30s model call, and between the operator hitting
+// it and the divider appearing there was nothing on screen at all: the typed
+// command vanished into a dialog and the transcript sat still. Reported
+// 2026-08-12 as "it just disappeared, it didn't run". `mode` is what this hook
+// publishes for that: which fold is in flight, held until the boundary lands, so
+// the log can draw FoldingNote at the foot in the divider's own language and
+// the real divider then takes its place.
+//
+// IT IS ANNOUNCED IN ONE PLACE, IN THE LOG. This used to report itself in the
+// notice bar under the toolbar, which produced the sequence the operator
+// described: a banner pinned above the transcript for the length of the fold,
+// and only then a bubble down in the chat. Two announcements of one action, in
+// two places, in the wrong order. Worse, a message sent during that window
+// rendered ABOVE the banner in reading order, because a bar above the log has no
+// position in time at all. One line, where the result lands, is the whole
+// report.
 //
 // NEITHER IS GATED ON `streaming`. Both are server-side operations on the saved
 // thread, independent of whatever turn is in flight, and refusing while a turn
 // ran meant /compact was rejected almost every time it was reached for — which
 // is exactly when context is under pressure.
+/** Which fold is in flight. Both hold the composer; only the wording differs. */
+export type FoldMode = "compact" | "clear";
+
 export type Compaction = {
   // Bumped after a fold so the context meter refetches: folding does not change
   // the message count, which is what otherwise drives that read.
@@ -57,12 +70,14 @@ export type Compaction = {
 };
 
 export function useCompaction({
-  activeIdRef, setCompacting, setErr, sync,
+  activeIdRef, setFolding, setErr, sync,
 }: {
   activeIdRef: React.MutableRefObject<string | null>;
-  // Owned by the chat, not by this hook: the composer and the message queue both
-  // have to hold while a fold is in flight, and both are declared before it.
-  setCompacting: (v: boolean) => void;
+  // Owned by the chat, not by this hook: the composer, the message queue and the
+  // log's in-flight line all read it, and all are declared before it. Null means
+  // no fold is running; otherwise it is WHICH one, because the two say different
+  // things while they run.
+  setFolding: (mode: FoldMode | null) => void;
   setErr: (problem: ChatProblem | null) => void;
   // Pull the log after a boundary lands, so the divider draws from the event
   // rather than from an optimistic count.
@@ -75,8 +90,9 @@ export function useCompaction({
     if (!id) { setErr({ text: "Nothing to compact. This chat has no messages yet.", endpoint: null }); return; }
     setErr(null);
     // Held so a message typed right after this call does not become a turn
-    // against the session being dropped.
-    setCompacting(true);
+    // against the session being dropped, and shown at the foot of the log for
+    // as long as the hold lasts.
+    setFolding("compact");
     try {
       const r = await chatApi.compactThread(id);
       // The fold moved the cut and wrote the summary; the divider is drawn from
@@ -103,9 +119,9 @@ export function useCompaction({
         endpoint: `/api/chat/threads/${id}/compact`,
       });
     } finally {
-      setCompacting(false);
+      setFolding(null);
     }
-  }, [activeIdRef, setCompacting, setErr, sync]);
+  }, [activeIdRef, setFolding, setErr, sync]);
 
   const clear = useCallback(async () => {
     const id = activeIdRef.current;
@@ -115,7 +131,7 @@ export function useCompaction({
     // closed — a message typed right after this call must not become a turn
     // before the boundary actually moves, or it would land above the cut and
     // read as having vanished.
-    setCompacting(true);
+    setFolding("clear");
     try {
       const r = await chatApi.clearThreadContext(id);
       // `cleared` is about the TRANSCRIPT boundary; `session_reset` is about the
@@ -138,9 +154,9 @@ export function useCompaction({
         endpoint: `/api/chat/threads/${id}/clear`,
       });
     } finally {
-      setCompacting(false);
+      setFolding(null);
     }
-  }, [activeIdRef, setCompacting, setErr, sync]);
+  }, [activeIdRef, setFolding, setErr, sync]);
 
   return { ctxNonce, compact, clear };
 }

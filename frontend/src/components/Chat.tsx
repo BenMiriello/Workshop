@@ -14,7 +14,7 @@ import ChatLog from "./chat/ChatLog";
 import ChatProblemBlock from "./chat/ChatProblemBlock";
 import ChatDialogs from "./chat/ChatDialogs";
 import ContextModal from "./chat/ContextModal";
-import { useCompaction } from "./chat/useCompaction";
+import { useCompaction, type FoldMode } from "./chat/useCompaction";
 import { useVoiceMode } from "./chat/useVoiceMode";
 import { matchMention, applyMention } from "./chat/mentions";
 import { enterAction } from "./chat/enterKey";
@@ -142,7 +142,11 @@ export default function Chat({
     scope, selectedModel, setSelectedModel, setSelectedEffort, setSelectedPermissionMode,
   } = scopeState;
 
-  const [compacting, setCompacting] = useState(false);
+  // WHICH fold is in flight, not merely whether one is. Null while none is
+  // running. Everything that used to read a boolean still does (`compacting`),
+  // but the log needs the mode to say the true thing on its in-flight line.
+  const [folding, setFolding] = useState<FoldMode | null>(null);
+  const compacting = folding !== null;
 
   // The outbox needs the store, and the thread loader needs the outbox (it is
   // what points storage at the conversation being opened). The store is built
@@ -300,7 +304,7 @@ export default function Chat({
   // /compact reaches BOTH homes of a chat's context, server-side and without a
   // turn of its own. See useCompaction.
   const { ctxNonce, compact, clear } = useCompaction({
-    activeIdRef, setCompacting, setErr, sync,
+    activeIdRef, setFolding, setErr, sync,
   });
 
   // ---- Voice mode ----------------------------------------------------------
@@ -369,7 +373,11 @@ export default function Chat({
     input,
     inputFocused,
     expanded: inputExpanded,
-    followDeps: [transcript, state.queued, vsnap.state, vsnap.sentences, vsnap.lastUser],
+    // `folding` is here for the same reason the voice snapshot is: the fold's
+    // in-flight line is rendered from it rather than from the transcript, so
+    // without it the log does not follow down to the one thing that just
+    // appeared at its foot.
+    followDeps: [transcript, state.queued, folding, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
     // Restore the scroll position per thread when returning to it.
     //
@@ -660,7 +668,6 @@ export default function Chat({
   const workingLabel = turnLabel({
     attached: stream.attached,
     reconnecting: stream.reconnecting,
-    compacting: pipeline.turnIsCompact,
   });
 
   // ---- Egress banner (build only) -----------------------------------------
@@ -956,6 +963,7 @@ export default function Chat({
       answerPermission={answerPermission}
       liveTurnId={runId}
       queued={queuedWaiting}
+      folding={folding}
       voiceOn={voiceOn}
       settling={settling}
       vsnap={vsnap}

@@ -65,14 +65,10 @@ describe("planSend", () => {
 });
 
 describe("the working indicator never goes quiet on a running turn", () => {
-  const base = { attached: true, reconnecting: false, compacting: false };
+  const base = { attached: true, reconnecting: false };
 
   it("says what a plain turn is doing", () => {
     expect(TURN_LABEL[turnPhase(base)]).toBe("Working");
-  });
-
-  it("names a compaction rather than calling it work", () => {
-    expect(TURN_LABEL[turnPhase({ ...base, compacting: true })]).toBe("Compacting");
   });
 
   it("says so while the socket is being retried", () => {
@@ -86,7 +82,7 @@ describe("the working indicator never goes quiet on a running turn", () => {
   });
 
   it("prefers reconnecting over detached, because it is the more specific fact", () => {
-    expect(turnPhase({ attached: false, reconnecting: true, compacting: false })).toBe("reconnecting");
+    expect(turnPhase({ attached: false, reconnecting: true })).toBe("reconnecting");
   });
 });
 

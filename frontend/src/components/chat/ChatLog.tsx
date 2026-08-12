@@ -6,6 +6,8 @@ import { logPlaceholder } from "./chatLogState";
 import type { ChatProblem } from "./chatProblem";
 import ChatProblemBlock from "./ChatProblemBlock";
 import MessageList, { SentAttachments, type AnswerPermissionFor } from "./MessageList";
+import FoldingNote from "./FoldingNote";
+import type { FoldMode } from "./useCompaction";
 import CopyMessage from "./CopyMessage";
 import QueueNote from "./QueueNote";
 import { SettlingTurn, VoiceLiveTurn, VoicePendingTurn } from "./VoiceTurn";
@@ -62,7 +64,7 @@ export default function ChatLog({
   selectedModel, cardCtx, onRetry, onCancelQueued, onReleaseQueue,
   queueHeld, queueError, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId,
-  queued,
+  queued, folding,
   voiceOn, settling, vsnap,
 }: {
   scrollRef: RefObject<HTMLDivElement>;
@@ -101,6 +103,9 @@ export default function ChatLog({
     text: string; sentAt: string; clientId: string;
     attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
   }[];
+  /** A /compact or /clear in flight, or null. It is drawn at the foot of the
+   *  log, where its divider lands, and nowhere else. */
+  folding: FoldMode | null;
   voiceOn: boolean;
   settling: { user: string; assistant: string } | null;
   vsnap: VoiceSnapshot;
@@ -173,6 +178,11 @@ export default function ChatLog({
           onCancelLast={() => onCancelQueued(queued[queued.length - 1].clientId)}
         />
       )}
+
+      {/* The fold, while it runs. Below the queue for the same reason the cut
+          divider ends up below it: what is queued was typed before the fold was
+          asked for, and the boundary lands after everything above it. */}
+      {folding && <FoldingNote mode={folding} />}
 
       {voiceOn && settling && <SettlingTurn settling={settling} />}
       {voiceLive && <VoiceLiveTurn vsnap={vsnap} />}

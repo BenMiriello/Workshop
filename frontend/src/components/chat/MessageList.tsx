@@ -47,10 +47,15 @@ import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 
 // TWO CUTS, TWO SENTENCES, because they are two different things that happened
 // to the same messages and the operator's next move differs. /clear drops them;
-// /compact replaces them with a summary the model still reads. Both say "no
-// longer sent VERBATIM" rather than implying anything was deleted: the
-// transcript above the line is complete either way, which is the fact that
-// makes a cut safe to use.
+// /compact replaces them with a summary the model still reads. Neither implies
+// anything was deleted: the transcript above the line is complete either way,
+// which is the fact that makes a cut safe to use.
+//
+// The compact line used to close with ", still here to read". Cut on operator
+// instruction, 2026-08-12: the messages are visibly still on screen directly
+// above the line, so the clause spends a third of the sentence stating what the
+// reader can see. It says what happened and stops. The same fold, while it is
+// running, is FoldingNote.
 function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" }) {
   const n = `${count} earlier ${count === 1 ? "message" : "messages"}`;
   return (
@@ -60,7 +65,7 @@ function ContextCut({ count, mode }: { count: number; mode: "clear" | "compact" 
         : <Eraser size={14} strokeWidth={1.8} aria-hidden />}
       <span>
         {mode === "compact"
-          ? `Compacted. ${n} folded into a summary, still here to read`
+          ? `Compacted. ${n} folded into a summary`
           : `Context cleared. ${n} no longer sent to the model`}
       </span>
     </div>

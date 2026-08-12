@@ -19,11 +19,16 @@
 // which is server state (`meta.active_run_id`), not socket state. `attached`
 // only chooses the WORDING.
 
-export type TurnPhase = "working" | "compacting" | "reconnecting" | "detached";
+// A FOLD IS NOT A PHASE OF A TURN, and it used to be listed here as one. When
+// /compact ran as an ordinary turn, "Compacting" was this indicator's label for
+// it; the fold is a server call with no turn now, so nothing could ever set that
+// phase and the word was unreachable. It said the thing the operator was owed
+// while apparently still saying it. The fold announces itself at the foot of the
+// log instead, for as long as it runs. See FoldingNote.
+export type TurnPhase = "working" | "reconnecting" | "detached";
 
 export const TURN_LABEL: Record<TurnPhase, string> = {
   working: "Working",
-  compacting: "Compacting",
   reconnecting: "Reconnecting",
   // Running, but this tab is not the one reading its output. Says the true
   // thing ("it has not stopped") without implying a stream that is not open.
@@ -35,13 +40,9 @@ export function turnPhase(o: {
   attached: boolean;
   // The socket dropped and is being retried.
   reconnecting: boolean;
-  // The turn IS the CLI's own /compact — "Working" is the one word that tells
-  // you nothing about the seconds you are waiting through.
-  compacting: boolean;
 }): TurnPhase {
   if (o.reconnecting) return "reconnecting";
   if (!o.attached) return "detached";
-  if (o.compacting) return "compacting";
   return "working";
 }
 

@@ -451,6 +451,11 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: 0.72rem; color: var(--muted);
   border-top: 1px dashed var(--border); padding-top: var(--space-2);
 }
+/* The same divider while the fold is still running: same shape, same place, so
+   the settled one replaces it without anything moving. It takes the system tone
+   because a fold is machine work inside a conversation you are present for, and
+   its dots (.chat-working__dots) are the only part that animates. */
+.chat-fold--live { color: var(--sys); }
 
 /* A user message that never reached the server. It stays in the log (losing it
    is the bug) but must not look delivered. */

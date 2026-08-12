@@ -40,8 +40,6 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export type SendPipeline = {
   /** A turn has been requested and not confirmed yet. */
   starting: boolean;
-  /** The running turn IS the CLI's own /compact — the indicator says so. */
-  turnIsCompact: boolean;
   /** Send one composed message. THE entry point for the composer.
    *  `attachments` are already uploaded; only their ids travel. */
   submitText: (raw: string, attachments?: AttachmentRef[]) => void;
@@ -83,7 +81,6 @@ export function useSendPipeline({
   onNewChat: () => void;
 }): SendPipeline {
   const [starting, setStarting] = useState(false);
-  const [turnIsCompact, setTurnIsCompact] = useState(false);
   const startingRef = useRef(false);
   const compactingRef = useRef(compacting);
   compactingRef.current = compacting;
@@ -121,7 +118,6 @@ export function useSendPipeline({
     text: string, clientId: string, sentAt?: string, attachments?: AttachmentRef[],
   ): Promise<SendOutcome> => {
     setStartingBoth(true);
-    setTurnIsCompact(text.trim() === "/compact");
     try {
       let id = activeIdRef.current;
       if (!id) {
@@ -378,7 +374,7 @@ export function useSendPipeline({
     dispatchSend(pending.text, clientId, pending.attachments);
   }, [stateRef, setErr, dispatchSend]);
 
-  return { starting, turnIsCompact, submitText, retry };
+  return { starting, submitText, retry };
 }
 
 /** Whether this turn is the first exchange in the chat, which is when the
