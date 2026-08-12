@@ -733,12 +733,11 @@ input[type="range"].grad::-moz-range-thumb {
 
 /* ---- Tool call: one bare row, tap to expand ----
    THE LEAF HAS NO BOX. It used to carry the border, the inset background and
-   the rounded corners, which forced the group that CONTAINS steps to go without
-   one (a box in a box read as noise) and left the container looking lighter
-   than the thing it contained. Operator called it on 2026-08-12; the frame
-   moved to .chat-group, where it belongs, and a step is now the same row
-   whether it stands alone or sits inside an opened group. Hierarchy from
-   position and weight, not borders (design system rule 6). */
+   the rounded corners, which made a single step look heavier than a group of
+   them. The frame did not move to the group either: it went to the subagent and
+   stopped there. A step is now the same row whether it stands alone or sits
+   inside an opened group. Hierarchy from position and indentation, not borders
+   (design system rule 6). See the .chat-group note for the whole arrangement. */
 .chat-tool { margin: 0; min-width: 0; border-radius: var(--radius-sm); }
 .chat-tool__head {
   display: flex; align-items: center; gap: 0.4rem;
@@ -754,22 +753,23 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-tool__icon { flex: 0 0 auto; }
 .chat-tool__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
 .chat-tool__preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
-/* The opened output. The row itself has no frame, so the panel carries its own
-   inset surface: that is what attaches it to the row above it, in place of the
-   border-top it used when the row was a box. Indented to the text, so an open
-   step reads as belonging to its row rather than to the group. */
+/* The opened output, behind the same rail every other disclosure uses. Not an
+   inset box: a box here would be a second frame competing with the subagent's,
+   which is the one thing allowed to have one. See the .chat-group note. */
 .chat-tool__detail {
-  margin: 0 0 0 1.1rem; padding: 0.35rem 0.5rem;
-  border-radius: var(--radius-sm); background: var(--bg-inset);
+  margin: 0.1rem 0 0.2rem 0.45rem;
+  padding: 0.1rem 0 0.1rem 0.6rem; border-left: 2px solid var(--border);
   font-size: var(--fs-xs); white-space: pre-wrap; word-break: break-word;
   max-height: 30vh; overflow: auto;
 }
 
 /* ---- Subagent: one row for a whole delegation ----
-   Reads as a sibling of .chat-tool because it sits in the same list and is the
-   same kind of thing (one step the turn took), but it is the only step that
-   CONTAINS other steps, so its body is inset and its name carries the accent.
-   No extra border: the inset background and the icon carry the nesting. */
+   THE ONLY FRAMED THING IN THE TRANSCRIPT, and deliberately so. A delegation is
+   not just a step that contains steps; it holds a whole separate context that
+   was kept out of this conversation on purpose, and the border plus the inset
+   background is what says so. Nothing else may take this treatment: the moment
+   a group or a step gets a frame too, the frame stops meaning anything.
+   Operator-set, 2026-08-12. */
 .chat-agent {
   margin: 0.3rem 0; min-width: 0;
   border: 1px solid var(--border); border-radius: var(--radius-md);
@@ -812,29 +812,33 @@ input[type="range"].grad::-moz-range-thumb {
 }
 
 /* ---- Step group: a run of adjacent tool calls behind one count ----
-   THE GROUP IS THE CONTAINER, SO THE GROUP GETS THE FRAME. This is the exact
-   reverse of what it was, and the old comment here argued the wrong way round:
-   it said a group "has no box of its own" because giving it one on top of the
-   boxed steps inside would read as boxes inside boxes. True, but the fix was to
-   take the box off the STEP, not to leave the container looking lighter than
-   the things it contains. Operator called it on 2026-08-12. Now exactly one
-   level is a box, matching .chat-agent, which is the other container of steps. */
-.chat-group {
-  margin: 0.3rem 0; min-width: 0;
-  border: 1px solid var(--border); border-radius: var(--radius-md);
-  background: var(--bg-inset); overflow: hidden;
-}
+   ONE BOX IN THE WHOLE TRANSCRIPT, AND IT IS THE SUBAGENT. Operator, 2026-08-12,
+   after seeing both arrangements: a frame is a strong claim and only a
+   delegation earns it, because only a delegation holds a whole separate context.
+   Everything else discloses the same quiet way: a chevron on the row, and the
+   opened contents indented behind a vertical rail.
+
+   So the rail is the ONE nesting mark, used at every depth (.chat-group__body,
+   .chat-tool__detail, .chat-agent__steps). It was already the idiom here for
+   the delegate's own steps; it is now the idiom everywhere, which is what makes
+   a group and a step read as the same kind of thing at different depths rather
+   than as two competing treatments. Hierarchy from position and indentation,
+   not from borders (design system rule 6). */
+.chat-group { margin: 0.3rem 0; min-width: 0; }
 .chat-group__head {
   display: flex; align-items: center; gap: 0.4rem;
-  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
+  width: 100%; min-width: 0; padding: 0.2rem 0.35rem;
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
+  border-radius: var(--radius-sm);
 }
-.chat-group__head:hover { color: var(--fg); }
+/* No frame to sit in, so hover is what says the row is a control. Same as the
+   step row, because they are the same kind of control. */
+.chat-group__head:hover { color: var(--fg); background: var(--bg-inset); }
 /* Same chevron in all three disclosures (step, group, delegation). It means the
-   same thing in each, so it cannot look like three different controls: the step
-   used to take --sys here and the group inherited plain muted, which is the
-   inconsistency that made a group read as the lesser thing. */
+   same thing in each, so it must not look like three different controls: the
+   step took --sys here and the group inherited plain muted, which is part of
+   what made a group read as the lesser thing. */
 .chat-group__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
 .chat-group.is-open .chat-group__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-group__chev { transition: none; } }
@@ -846,9 +850,11 @@ input[type="range"].grad::-moz-range-thumb {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
 }
-/* The steps, one level in. Same treatment as .chat-agent__body, because it is
-   the same relationship: a container opening onto what it contains. */
-.chat-group__body { border-top: 1px solid var(--border); padding: 0.2rem 0.35rem 0.3rem; }
+/* The steps, one level in, behind the rail. */
+.chat-group__body {
+  margin: 0.1rem 0 0.2rem 0.45rem;
+  padding-left: 0.6rem; border-left: 2px solid var(--border);
+}
 /* Still working: motion means in-flight and nothing else, matching the
    `running` status kind. A group holding the live step opens itself, so this
    marks the header the reader is already looking at. */

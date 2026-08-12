@@ -27,8 +27,8 @@ import { modelDisplay, type ModelDisplay } from "./models";
 //
 // THE LEAF HAS NO BOX. It is the same row whether it stands alone in a run or
 // sits inside an opened group, so a step does not change weight by being
-// grouped. The frame belongs to whatever CONTAINS steps: a group, a delegation.
-// See GroupChip.
+// grouped. The only framed thing in the transcript is a delegation. See
+// GroupChip for why.
 //
 // A FAILURE IS MARKED, NOT EXPANDED. Operator instruction, 2026-08-12.
 // This used to auto-open a failed step to show its error, which is the rule
@@ -79,15 +79,17 @@ function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; no
 
 // A run of adjacent tool calls, behind one count.
 //
-// THE GROUP IS THE CONTAINER AND THE STEP IS THE LEAF. This used to be the
-// other way round: a step carried the border, the inset background and the
-// rounded box, and the group had none, on the reasoning that giving the group
-// one too would read as boxes inside boxes. That reasoning was backwards, and
-// the operator called it on 2026-08-12: the group is the thing that contains
-// steps, so the group is the thing that gets the frame, and a step inside it is
-// a bare row. There are no boxes inside boxes because only one of them is a box.
-// A lone step outside any group is the same bare row, so a step looks the same
-// wherever it sits. Same language as AgentChip, which is a container too.
+// ONE BOX IN THE TRANSCRIPT, AND IT IS THE SUBAGENT. Operator, 2026-08-12,
+// having seen both arrangements: originally the STEP carried the border and the
+// inset background and the group carried nothing, which made one call look
+// heavier than a run of them; then the frame moved to the group, which was the
+// wrong fix. A frame is a strong claim, and only a delegation earns it, because
+// only a delegation holds a whole separate context.
+//
+// So a group discloses the quiet way: a chevron and a count on the row, and the
+// steps indented behind a vertical rail when open. Same for an opened step's
+// output. The rail was already this file's idiom for a delegate's own steps; it
+// is now the only nesting mark there is, at every depth.
 //
 // A COUNT, NOT A DESCRIPTION, plus the distinct tool names. See grouping.ts:
 // what the steps DID is never summarised, because a summary can be wrong about
