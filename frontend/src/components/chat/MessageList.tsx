@@ -1,5 +1,5 @@
 import { Fragment, memo } from "react";
-import { ArrowRightLeft, Bot, Clock, Eraser, FileText, FoldVertical, Lightbulb, Ticket, TriangleAlert, Zap } from "lucide-react";
+import { ArrowRightLeft, Bot, Clock, Eraser, FileText, FoldVertical, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
@@ -167,6 +167,14 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
   return <AnswerBody source={m.content} cfg={modelDisplay(model)} expanded={isLatest} cardCtx={cardCtx} />;
 }
 
+// What the platform posted, in three words, so the tier's label says which kind
+// of unattended write this was rather than only that it was one.
+function autonomousLabel(kind?: string): string {
+  if (kind === "run_report") return "Autonomous run";
+  if (kind === "ticket_question") return "Autonomous, needs you";
+  return "Autonomous";
+}
+
 // Memoized per message. The list memo above already covers typing; this one
 // covers a LIVE turn, where `elapsed` ticks once a second and re-renders the
 // list by design — without it, every historical message re-rendered on every
@@ -192,8 +200,15 @@ const MessageBubble = memo(function MessageBubble({
   // and an empty box above the "user interrupted" line reads as a rendering
   // fault rather than as a turn the operator ended. See replyBody.hasBubble.
   const body = hasBubble(msg);
+  // WHO PUT THIS HERE. A run report or a sweep's question was posted with
+  // nobody watching, and that is the first thing a reader needs — so it takes
+  // the autonomous agency tier (rail, tint, label) rather than passing itself
+  // off as a reply to something you said. Everything else stays the neutral
+  // card: tinting bubbles by tier turns a long log into a quilt.
+  const autonomous = msg.role === "assistant" && !!msg.meta?.autonomous;
   return (
-    <div className={`chat-msg ${msg.role}`}>
+    <div className={`chat-msg ${msg.role}${autonomous ? " autonomous" : ""}`}
+         {...(autonomous ? { "data-agency": "autonomous" as const } : {})}>
       {/* --copyable reserves the inline room the copy button occupies, so the
           button never lands on top of the last line of text. It is only set
           when there IS something to copy. */}
@@ -207,6 +222,12 @@ const MessageBubble = memo(function MessageBubble({
           )}
           {msg.role === "assistant" ? (
             <>
+              {autonomous && (
+                <div className="chat-autonomous-tag">
+                  <Radio size={12} strokeWidth={1.8} aria-hidden />
+                  <span>{autonomousLabel(msg.meta?.kind)}</span>
+                </div>
+              )}
               {msg.meta?.agent && (
                 <div className="chat-byline">
                   <Bot size={13} strokeWidth={1.8} aria-hidden />

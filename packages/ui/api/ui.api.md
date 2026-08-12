@@ -6,13 +6,18 @@ This is the contract other apps compile against. A name leaving this file, or
 changing shape, is a BREAKING change and needs a major version bump plus a
 CHANGELOG migration note. See CONTRIBUTING.md.
 
-Version: 0.2.3
+Version: 0.3.0
 
 ## @workshop/ui
 
 Source: `src/index.ts`
 
 - ActionBar
+- AGENCY_LABEL
+- AgencyChip
+- AgencyDot
+- agencyFor
+- agencyProps
 - applyPalette
 - applyTheme
 - Badge
@@ -35,6 +40,7 @@ Source: `src/index.ts`
 - getStoredPalette
 - getStoredTheme
 - Input
+- LEGACY_PALETTES
 - Menu
 - MenuItem
 - MenuLabel
@@ -47,6 +53,7 @@ Source: `src/index.ts`
 - PalettePicker
 - ProgressBar
 - ReadOnly
+- resolvePaletteId
 - RevealField
 - Row
 - SectionLabel
@@ -70,8 +77,10 @@ Source: `src/index.ts`
 - TimeCell
 - Toggle
 - Toolbar
+- type AgencyTier
 - type CatHue
 - type EditMode
+- type PaletteGroup
 - type PaletteId
 - type PaletteMeta
 - type SegmentedOption

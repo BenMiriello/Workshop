@@ -65,3 +65,15 @@ export function nextScheduled(triggers?: Trigger[]): string {
   if (triggers?.some((t) => t.kind === "event")) return "on event";
   return "on demand";
 }
+
+// WHICH AGENCY TIER AN AGENT BELONGS TO — the color axis, from the same facts.
+//
+// An agent that can start work on its own (a cron schedule, an event source, a
+// continuous loop) is autonomous, and its card says so before you read a word
+// of it. One that only ever runs when you ask is `system`: machine work inside
+// a conversation you are present for. There is no `you` tier for an agent; an
+// agent is never the operator.
+export function agentAgency(triggers?: Trigger[]): "system" | "autonomous" {
+  const self = triggers?.some((t) => t.kind !== "manual");
+  return self ? "autonomous" : "system";
+}

@@ -14,10 +14,10 @@ Both stylesheets are imported in `src/main.tsx` **before** `styles.css`. `styles
 
 ## The ten rules (non-negotiable)
 
-1. **Use the primitives.** `Button, Field, Input, Select, Textarea, Card, PageHeader, SectionLabel, Stack, Row, Badge, StatusPill, StatusDot, Tag, Tabs, Toggle, Checkbox, Segmented, Modal, ConfirmDialog, Table/TableScroll, CopyButton, RevealField, StateBlock, Skeleton, ActionBar, Stat, ChartFrame, ChartTooltip` — all from `@workshop/ui` (the full list is `packages/ui/api/ui.api.md`). If you need something not covered, add a primitive to `packages/ui/src` + a `.ws-` rule to `components.css`, bump the kit's MINOR version and re-run `npm run api:snapshot`; don't one-off it inline.
+1. **Use the primitives.** `Button, Field, Input, Select, Textarea, Card, PageHeader, SectionLabel, Stack, Row, Badge, StatusPill, StatusDot, AgencyChip, AgencyDot, Tag, Tabs, Toggle, Checkbox, Segmented, Modal, ConfirmDialog, Table/TableScroll, CopyButton, RevealField, StateBlock, Skeleton, ActionBar, Stat, ChartFrame, ChartTooltip` — all from `@workshop/ui` (the full list is `packages/ui/api/ui.api.md`). If you need something not covered, add a primitive to `packages/ui/src` + a `.ws-` rule to `components.css`, bump the kit's MINOR version and re-run `npm run api:snapshot`; don't one-off it inline.
 2. **No inline hex colors. Ever.** No `color:"#16a34a"`, no `#ef4444`, no `background:"#fff"`. Color comes from tokens (`var(--accent)`, `var(--muted)`, …) or, far better, from a primitive. `scripts/check_design.sh` fails the build on raw hex in `.tsx`.
-3. **Status = meaning, mapped to five kinds.** `ok | running | stopped | warn | danger` via `StatusPill` (standalone) or `StatusDot` (dense table rows). Never invent a status color. `running` is the only thing that animates. Most of a screen is neutral — color is a signal, not decoration.
-4. **Categorical ≠ status.** To tell apart agents / sources / repos / chart series, use `Tag` with a `--cat-*` hue (`catFor(key)` gives a stable hue). Cool tones that can't be misread as ok/warn/danger.
+3. **Status = meaning, mapped to five kinds.** `ok | running | stopped | warn | danger` via `StatusPill` (standalone) or `StatusDot` (dense table rows). Never invent a status color. **Status is OUTLINE** (see the color-axes section): a hairline, never a fill. `running` is the only one that animates and the only one that is filled, because it is the only one that describes an actor.
+4. **Agency ≠ status, and both ≠ categorical.** Three vocabularies, three treatments. **Who did it** is `AgencyChip`/`AgencyDot`/`data-agency` (`you | system | autonomous`) and is FILLED. **How it went** is `StatusPill`/`StatusDot` and is OUTLINED. **Which one it is** (agents / sources / repos / chart series) is `Tag` with a `--cat-*` hue from `catFor(key)`, a rounded rect with a dot. A run's `trigger` is agency, not categorical: map it with `agencyFor()`, never with `catFor()`.
 5. **lucide icons only — never emoji.** 14px in section labels/meta, 16px in buttons, 1.8 stroke. Every icon names the thing beside it. `check_design.sh` fails on emoji in `.tsx`.
 6. **Hierarchy from position, scale, weight, color — not borders.** `PageHeader` (one per screen) → status band → content grouped under `SectionLabel` (the uppercase motif). Cards float on shadow (light) / a faint ring (dark). 4px spacing grid (`--space-1..8`); use the steps, never invent `13px`.
 7. **Editability model, not tap-to-edit.** Anything that writes config or money uses `useEditMode` + a sticky `ActionBar` (Save primary / Cancel ghost, "unsaved" pill while dirty). View prefs (theme, filters, reveal/hide, source `<select>`) commit **on change**. Config/money commit **on explicit Save**. See "When does a control commit?" below.
@@ -65,28 +65,54 @@ Rules that still hold:
 - **Never add a `maxWidth` to a regular page wrapper.** `check_design.sh` fails on `maxWidth: >= 600` in `.tsx`. Small element caps (a 150px input, a 420px filter column) sit below the threshold and are fine. An app that owns its width does its capping through `.ws-page` or its own container, not an inline `maxWidth` on a Workshop page.
 - **`.ws-app--appfull` is not "a wider page".** It is the absence of the page cap, handed to an app. Do not put it on a regular Workshop page to make that page wider; that is the per-page-width instinct wearing a new name.
 
-## Theming — two axes, one generated color layer
+## Two color axes: STATUS (how it went) and AGENCY (who did it)
+
+**This is the part of the system most likely to be got wrong, so read it before touching a color.** Workshop runs work on its own. A palette that only answers *is it healthy* cannot answer the question that actually matters when you open the app in the morning: *did I do that, or did something move without me?*
+
+### The agency tiers
+
+| tier | meaning | where it shows up |
+|---|---|---|
+| **you** | your hand on it: typed, clicked, confirmed | your chat bubble, primary buttons, focus ring, nav active state |
+| **system** | machine work inside a conversation you are present for | working dots, tool-call rows, "show N steps", a delegation chip |
+| **autonomous** | it moved with nobody watching | cron/sweep messages, agent cards, count badges, watchdog events |
+
+Each tier has a resting tone and an **active** one (`-up`). Active means *happening right now* — never read/unread, never severity, and it is the only tone allowed to animate.
+
+### The two rules that keep the vocabularies apart
+
+1. **AGENCY IS FILLED. STATUS IS OUTLINE.** An agency chip (`AgencyChip`, `.ws-agency`) has a soft fill in its tier's tone and **no border**. A status chip (`StatusPill`) has a **transparent background and a hairline** in its own tone. Fill-vs-outline is the primary separator; hue is secondary, which is what lets an agency tone and a status tone share a hue in some scheme without either being misread. **Never give a status element a soft fill, and never give an agency element a bare outline.**
+2. **ONE AGENCY COLOR PER SURFACE.** A card is never both system and autonomous. If an autonomous agent calls a tool, the card stays autonomous: **provenance beats mechanism.** Set the tier once with `data-agency` on the container and everything inside it follows, including which tone `running` resolves to.
+
+`running` is the single deliberate exception to rule 1: it is **filled**, and its tone comes from the initiating tier, because a run describes an ACTOR rather than an outcome. Terminal states (ok / warn / stopped / danger) never split by tier — an outcome has no actor. Use `agencyFor(trigger)` to map the platform's own `manual | cron | event | loop` vocabulary onto the axis; do not invent a second mapping.
+
+### The attributes
 
 Appearance is `data-theme` × `data-palette`, both on `<html>`, both applied by the pre-React bootstrap in `index.html` before first paint:
 
 | attribute | values | storage | default | writer |
 |---|---|---|---|---|
 | `data-theme` | `light \| dark \| system` | `localStorage["ws-theme"]` | `dark` | Settings → Appearance (`useTheme()`) |
-| `data-palette` | `violet \| cobalt \| teal \| plum \| sandstone` | `localStorage["ws-palette"]` | `violet` | Settings → Appearance (`usePalette()`) |
+| `data-palette` | `lagoon \| iris \| cobalt \| fern \| clay \| slate \| linen \| graphite` | `localStorage["ws-palette"]` | `iris` | Settings → Appearance (`usePalette()`) |
 
-**Color is generated, not hand-written.** The model lives in `packages/ui/src/styles/palette.mjs` (OKLCh tonal ramp + five palette seeds + the pinned status tone table). `packages/ui/scripts/gen-tokens.mjs` emits three files from it — `palettes.css` (all ten schemes), `palettes.gen.ts` (the typed menu), `tokens.generated.js` (the same hexes for Expo). To change a color: **edit `palette.mjs`, then `npm run gen:tokens` from `packages/ui/`** (or `npm run gen:tokens` from the repo root). Editing a generated file is wasted work; `check_design.sh` fails on a stale one. `tokens.css` `@import`s `palettes.css`, so every entry point picks it up.
+Eight schemes in two groups, and the groups are a real distinction the picker shows separately. **Expressive** (lagoon, iris, cobalt, fern, clay) spends three hues: `you` takes the base and the machine pair sits together across the wheel. **Quiet** (slate, linen, graphite) spends one hue and separates the tiers by **chroma ratio** instead. A stored id from before the agency model resolves through `resolvePaletteId()` rather than snapping to the default.
 
-Rules the model enforces, checked by `packages/ui/src/styles/palette.test.ts` (54 assertions across all ten schemes, run by `npm test` in `packages/ui/` — NOT by the frontend's vitest run):
+**Color is generated, not hand-written.** The model lives in `packages/ui/src/styles/palette.mjs` (eight scheme seeds + the designer's OKLCh stops + derived ladders + the pinned status tones). `packages/ui/scripts/gen-tokens.mjs` emits three files from it — `palettes.css` (all sixteen scheme×mode blocks), `palettes.gen.ts` (the typed menu), `tokens.generated.js` (the same hexes for Expo). To change a color: **edit `palette.mjs`, then `npm run gen:tokens` from `packages/ui/`** (or from the repo root). Editing a generated file is wasted work; `check_design.sh` fails on a stale one. `tokens.css` `@import`s `palettes.css`, so every entry point picks it up.
 
-- **One brand accent per scheme**, and it is not separately selectable — picking a palette picks the accent. (Multiple simultaneous accents were tried and dropped.)
-- **`ok` / `warn` / `danger` are byte-identical in all five palettes.** Status is meaning; meaning does not move when someone restyles. Only `running` (the accent) and `stopped` (the neutral) follow the palette.
-- **Every text token clears WCAG AA (4.5:1) on `--bg`, `--card` AND `--bg-inset`**; every solid mark clears 3:1. Accent tone is *solved* per hue, not fixed, because a teal at a given lightness is far lighter to the eye than a violet.
-- **`--accent-fg` is not always white** — it is whichever end of the ramp contrasts more (teal light mode gets a near-black foreground). Never hardcode `#fff` on an accent fill.
-- The `--cat-*` categorical suite is deliberately palette-INdependent: a tag color is an identity, so it must not change when the scheme does.
-- **OKLCh is not perceptually uniform across hue — don't set `brandChroma: 1.0` on a new blue/magenta seed without checking.** A hue in the ~250-270° (blue) or ~320-345° (magenta) band reads distinctly more vivid than a violet at the identical numeric chroma; the contrast solver won't catch it, since it optimizes for legibility, not "does this look calm." `Cobalt`/`Sandstone` (blue-family) and `Plum` (magenta) carry a `brandChroma` pull-back for exactly this — see the comments in `palette.mjs`. `Teal` needed none: sRGB's gamut is naturally narrow there, so a full-chroma request already gets gamut-clipped to about half.
-- **The Settings picker's swatch and the app's real tokens are two different colors, on purpose.** The live preview (the tiny card + accent bar) renders the scheme's actual, very-low-chroma neutrals — correct, but a warm scheme and a cool one can look the same in a 76px chip, since near-black/near-white don't show hue well and the one bright element (the accent bar) is deliberately a cool brand hue even in a warm scheme. `identitySwatch()` in `palette.mjs` supplies a second, moderate-chroma, mode-independent tone at the palette's NEUTRAL hue, rendered as a strip above the preview — that's what actually reads as "warm" or "cool" at a glance. Never used outside the picker.
+Rules the model enforces, checked by `packages/ui/src/styles/palette.test.ts` (144 assertions across all sixteen scheme×modes, run by `npm test` in `packages/ui/` — NOT by the frontend's vitest run):
 
-Adding a palette: add a seed to `PALETTES` in `palette.mjs`, add the id to the `PALETTES` array in the `index.html` bootstrap, run `npm run gen:tokens`, run the tests. The Settings picker builds itself from the generated list.
+- **The accent family IS the `you` tier.** `--accent`, `--accent-fg` and `--accent-soft` are emitted as `var()` aliases of `--you`, `--you-fg`, `--you-soft`. They are kept because half the app already used them and they were always the same idea; new code should say `--you` when it means the tier.
+- **The brand accent IS user-selectable now**, which reverses this file's old "one brand accent, not user-selectable" rule. Identity moved from "the violet" to **the relationship between the three tiers**, and that relationship is the same in all eight schemes.
+- **`ok` / `warn` / `danger` are byte-identical in all eight schemes.** Status is meaning; meaning does not move when someone restyles. `stopped` follows the neutral, and `running` follows the actor (above).
+- **Every colored text tone clears WCAG AA (4.5:1) on `--bg`, `--card`, `--bg-inset` AND its own `-soft` fill**; every solid mark clears 3:1. The tone is *solved*, not fixed, because a teal at a given lightness is far lighter to the eye than a violet. This is the one place the designer's stop is not the final answer: it moves `warn` in light mode and darkens `you` a step in several light schemes, and nothing else. Dark mode is byte-identical to the handoff.
+- **`--you-fg` is not always white.** It is the designer's paired foreground for that scheme, dark on a light tier tone. Never hardcode `#fff` on a `--you` fill.
+- **The base block in `palettes.css` is unconditional (`:root`), and must stay that way.** It paints the default scheme for any document, including one carrying a `data-palette` value the stylesheet has never heard of. When it was `:root:not([data-palette])`, a tab holding a renamed id matched no block at all, every token resolved to nothing, and the whole app went white and grey. A color layer must never be able to leave the app unpainted.
+- The `--cat-*` categorical suite stays palette-INdependent: a tag color is an identity, so it must not change when the scheme does. Eight schemes cover the wheel, so a cat hue WILL land near some scheme's agency hue; that is handled by treatment, exactly as status is. A categorical tag is a rounded rect with a dot in sans; an agency chip is a pill with no dot, in uppercase mono.
+- **Light mode darkens hues near cyan/green** (`lightDrop()`): hues around 170° are intrinsically lighter at a given OKLCh L, so a fixed stop that clears 4.5:1 for vermilion will not for cyan.
+- **Surfaces take the `you` hue at ~10% of accent chroma, trimmed per scheme by `bgC`.** Warm and green bases tint neutrals far more visibly than blue or violet ones at equal chroma, so Fern (0.45), Clay (0.55) and Graphite (0.25) trim harder. No contrast check can see this; it is a seed-level constraint, pinned in the tests.
+- **The Settings picker's identity strip is not the app's tokens, on purpose.** The live preview renders the scheme's real, very-low-chroma neutrals — correct, but near-black and near-white do not show hue in a 76px chip. `identitySwatch()` supplies the scheme's three agency tones at moderate chroma, mode-independent, as a strip above the preview. What is being chosen is the relationship between the tiers, so all three are shown. Never used outside the picker.
+
+Adding a scheme: add a seed to `SCHEMES` in `palette.mjs`, add the id to the `PALETTES` array in the `index.html` bootstrap, run `npm run gen:tokens`, run the tests. The picker builds itself from the generated list, into the right group.
 
 ## Charts (recharts)
 

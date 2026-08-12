@@ -26,7 +26,7 @@ import {
   type StatusKind,
 } from "@workshop/ui";
 import DelegatesSection from "../components/DelegatesSection";
-import { triggerSummary, nextScheduled, type UnifiedAgent } from "../lib/agentTriggers";
+import { triggerSummary, nextScheduled, agentAgency, type UnifiedAgent } from "../lib/agentTriggers";
 import { latitudeDesc, type Latitude } from "../lib/tasks";
 
 // Roster item enriched with the O6/O7 autonomy fields the backend now returns on
@@ -436,7 +436,11 @@ export default function Agents() {
                     : `/agents/${encodeURIComponent(a.id)}`}
                   style={{ textDecoration: "none", color: "inherit" }}
                 >
-                  <Card interactive className="ws-agent-card">
+                  <Card
+                    interactive
+                    className={`ws-agent-card ws-agency-rail${lastJob?.status === "failed" ? " is-failed" : ""}`}
+                    data-agency={agentAgency(a.triggers)}
+                  >
                     <Row between>
                       <h2 className="ws-card__title">
                         <Icon size={14} strokeWidth={1.8} aria-hidden style={{ verticalAlign: "middle", marginRight: "0.4rem" }} />

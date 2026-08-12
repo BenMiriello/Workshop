@@ -295,7 +295,12 @@ def post_for_job(job_id: str, status: str = "done") -> int:
                 ownership.set_current_owner(owner)
                 chat_store.append_message(
                     thread_id, "assistant", _summarize(job, tickets, status),
-                    meta={"kind": "run_report", "job": job_id, "status": status,
+                    # AUTONOMOUS: nobody was watching. The client renders
+                    # these with the autonomous agency tier (rail + tint +
+                    # label) rather than as an ordinary assistant reply, which
+                    # is what they are not. See frontend/src/lib/chat.ts.
+                    meta={"kind": "run_report", "autonomous": True,
+                          "job": job_id, "status": status,
                           "tickets": [t.get("id") for t in tickets]},
                 )
                 posted += 1

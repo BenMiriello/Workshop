@@ -190,6 +190,17 @@ export type ChatMsg = {
     // The model that produced this assistant message — drives per-model display
     // handling (how aggressively to collapse thinking/tools, elision sizes).
     model?: string;
+    // WHO PUT THIS HERE. True on a message the platform posted into the thread
+    // with nobody watching: a finished job's run report, a question a sweep hit
+    // and had to ask. It is not "the assistant replied to you", and the log has
+    // to say so before the words are read, so these carry the autonomous agency
+    // tier (rail + tint + label) instead of rendering as an ordinary reply.
+    // Written by services/run_report.py and services/question_report.py.
+    autonomous?: boolean;
+    // What that background write WAS: "run_report" | "ticket_question". Carried
+    // for the label; `autonomous` alone decides the treatment, so a new kind of
+    // background post gets it right by setting that flag and nothing else.
+    kind?: string;
   };
 };
 

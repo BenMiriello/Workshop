@@ -84,7 +84,10 @@ def post_for_task(task: dict, request: dict, *, scope: str | None = None) -> boo
             ownership.set_current_owner(owner)
             chat_store.append_message(
                 thread_id, "assistant", _compose(task, request, scope),
-                meta={"kind": "ticket_question", "ticket": task.get("id"),
+                # AUTONOMOUS: a sweep hit a block and had to ask. Marked so
+                # the thread shows who is speaking before the words are read.
+                meta={"kind": "ticket_question", "autonomous": True,
+                      "ticket": task.get("id"),
                       "scope": scope, "block_kind": request.get("kind")},
             )
             return True

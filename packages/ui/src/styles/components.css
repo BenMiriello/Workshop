@@ -593,12 +593,18 @@ a.ws-btn { text-decoration: none; }
   background: var(--bg-inset); color: var(--muted); border: 1px solid var(--border);
 }
 
+/* STATUS IS OUTLINE. A status chip is a transparent box with a hairline in its
+   own tone; it never takes a soft fill. That is the primary separator between
+   the status vocabulary (how it went) and the agency vocabulary below (who did
+   it), and it is why the two can share a hue in some scheme without either
+   being misread. See the agency block. */
 .ws-pill {
   display: inline-flex; align-items: center; gap: var(--space-2);
   padding: 0.1875rem var(--space-3) 0.1875rem var(--space-2);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font-size: var(--fs-xs); font-weight: var(--fw-semi); line-height: 1;
-  background: var(--_soft, var(--bg-inset)); color: var(--_fg, var(--muted));
+  background: transparent; color: var(--_fg, var(--muted));
+  border: 1px solid color-mix(in oklab, var(--_fg, var(--muted)), transparent 55%);
 }
 .ws-pill__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--_solid, var(--muted)); flex: none; }
 
@@ -613,10 +619,100 @@ a.ws-btn { text-decoration: none; }
 .ws-status-warn    { --_fg: var(--warn);    --_solid: var(--warn-solid);    --_soft: var(--warn-soft); }
 .ws-status-danger  { --_fg: var(--danger);  --_solid: var(--danger-solid);  --_soft: var(--danger-soft); }
 
-/* running gets a gentle pulse on the dot */
+/* `running` is the ONE status that is filled, and the exception is the rule
+   working: running describes an ACTOR rather than an outcome, so it belongs to
+   the agency vocabulary. Its tone comes from the initiating tier (see the
+   [data-agency] block) and it is the only status that animates. Terminal
+   states never split by tier — an outcome has no actor. */
+.ws-status-running.ws-pill {
+  background: var(--running-soft);
+  border-color: transparent;
+  border-radius: var(--radius-pill);
+}
 .ws-status-running .ws-pill__dot,
 .ws-status-running.ws-dot::before { animation: ws-pulse 1.8s var(--ease-in-out) infinite; }
 @keyframes ws-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ---- AGENCY — who did this: you / system / autonomous ---------------------
+   The second axis of the color system. Status answers "is it healthy"; agency
+   answers "was that me, or something moving without me", which for a system
+   that runs sweeps and crons is the more important question.
+
+     you          your hand on it: typed, clicked, confirmed
+     system       machine work inside a conversation you are present for
+     autonomous   it moved with nobody watching
+
+   AGENCY IS FILLED: a soft fill in the tier's tone and no border, the exact
+   inverse of the status chip above. ONE AGENCY COLOR PER SURFACE: if an
+   autonomous agent calls a tool, the surface stays autonomous, because
+   provenance beats mechanism.
+
+   The tier is set with `data-agency` on any element, which binds the three
+   local roles AND re-points `running` for anything inside it. That is what lets
+   a row say "this run belongs to a cron" once, and have its dot, its chip and
+   its progress bar all agree. */
+[data-agency="you"] {
+  --_ag: var(--you); --_ag-soft: var(--you-soft); --_ag-up: var(--you);
+  --running: var(--you); --running-solid: var(--you); --running-soft: var(--you-soft);
+}
+[data-agency="system"] {
+  --_ag: var(--sys); --_ag-soft: var(--sys-soft); --_ag-up: var(--sys-up);
+  --running: var(--sys-up); --running-solid: var(--sys-up); --running-soft: var(--sys-soft);
+}
+[data-agency="autonomous"] {
+  --_ag: var(--auto); --_ag-soft: var(--auto-soft); --_ag-up: var(--auto-up);
+  --running: var(--auto-up); --running-solid: var(--auto-up); --running-soft: var(--auto-soft);
+}
+
+/* The chip: filled, no border, uppercase mono. Deliberately a different SHAPE
+   and a different typeface from both the outlined status chip and the
+   categorical tag (rounded rect + dot + sans), so three vocabularies can sit in
+   one row and still be told apart at a glance. */
+.ws-agency {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: 0.125rem var(--space-2); border-radius: var(--radius-pill);
+  font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5;
+  letter-spacing: var(--label-spacing); text-transform: uppercase;
+  white-space: nowrap;
+  background: var(--_ag-soft, var(--bg-inset)); color: var(--_ag, var(--muted));
+  border: none;
+}
+.ws-agency svg { width: 12px; height: 12px; stroke-width: 1.8; flex: none; }
+
+/* The identity dot: who this row belongs to. Filled, and it sits opposite the
+   outlined state chip — the dot says WHO, the chip says HOW IT WENT, and they
+   never take the same slot. */
+.ws-agency-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none; display: inline-block;
+  background: var(--_ag, var(--muted));
+}
+/* Only the ACTIVE tone animates, and the pulse animates the ring's alpha, never
+   the dot's own opacity — a dot that fades out reads as a rendering fault. */
+.ws-agency-dot.is-active {
+  background: var(--_ag-up, var(--_ag, var(--muted)));
+  color: var(--_ag-up, var(--_ag, var(--muted)));
+  animation: ws-ring 1.8s var(--ease-out) infinite;
+}
+@keyframes ws-ring {
+  0%   { box-shadow: 0 0 0 0   color-mix(in oklab, currentColor, transparent 45%); }
+  70%  { box-shadow: 0 0 0 8px color-mix(in oklab, currentColor, transparent 100%); }
+  100% { box-shadow: 0 0 0 0   color-mix(in oklab, currentColor, transparent 100%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ws-agency-dot.is-active { animation: none; }
+}
+
+/* A surface that belongs to an agency tier carries a 2px rail in its tone: the
+   top edge of a card, the leading edge of a message. It is the quietest way to
+   say "this is not yours" without tinting a whole block of text. */
+.ws-agency-rail { border-top: 2px solid var(--_ag, var(--border)); }
+/* A FAILED surface drops its agency rail entirely and takes a full hairline in
+   danger — back to the outline vocabulary. A card cannot be both "an autonomous
+   agent's" and "broken" in the same stroke; broken wins. */
+.ws-agency-rail.is-failed {
+  border-top-color: transparent;
+  border-color: color-mix(in oklab, var(--danger), transparent 62%);
+}
 
 /* CATEGORICAL chips — differentiation / accent, NOT status. Soft tint + colored text. */
 .ws-tag {
@@ -972,6 +1068,12 @@ a.ws-btn { text-decoration: none; }
   transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .ws-nav a:hover { color: var(--fg); background: var(--card-hover); }
+/* WHERE YOU ARE is a `you`-tier fact: you navigated here. The rule is unchanged
+   from before the agency model — `--accent` is now an alias of `--you`, so the
+   active item moved onto the tier without any change of shape. Do not add a
+   marker, rail or edge accent here: the handoff's 3px leading marker was
+   written for a vertical sidebar, and on this horizontal toolbar it reads as
+   decoration (operator, 2026-08-11). */
 .ws-nav a.is-active { color: var(--accent); background: var(--accent-soft); font-weight: var(--fw-semi); }
 
 /* ---- SEGMENTED CONTROL — sliding thumb ----------------------------------- */
@@ -1005,11 +1107,24 @@ a.ws-btn { text-decoration: none; }
 .ws-segmented-field { display: inline-flex; flex-direction: column; gap: var(--space-1); }
 .ws-segmented__hint { font-size: var(--fs-xs); color: var(--muted); }
 
-/* ---- PALETTE PICKER — pick one of the five color schemes ------------------
+/* ---- PALETTE PICKER — pick one of the eight color schemes -----------------
    Each tile carries data-palette + data-theme on the PREVIEW only, so the
    miniature resolves that scheme's real tokens (a live preview, not a painted
    approximation) while the label stays in the page's own colors. Selection is
-   the scheme's own accent ring plus a check — no decorative borders. */
+   the scheme's own accent ring plus a check — no decorative borders.
+
+   The schemes come in two GROUPS, shown as separate rows with a divider: the
+   expressive set spends three hues on the agency tiers, the quiet set spends
+   one and separates them by chroma. That is a different kind of choice, not
+   three more colors, so it is not one flat row of eight. */
+.ws-palette-group + .ws-palette-group { margin-top: var(--space-5); }
+.ws-palette-group__label {
+  display: flex; align-items: center; gap: var(--space-3);
+  font-size: var(--fs-xs); font-weight: var(--fw-semi); color: var(--faint);
+  letter-spacing: var(--label-spacing); text-transform: uppercase;
+  margin-bottom: var(--space-3);
+}
+.ws-palette-group__label::after { content: ""; flex: 1 1 auto; height: 1px; background: var(--border); }
 .ws-palettes { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .ws-palette {
   appearance: none; border: none; background: transparent; padding: 0; cursor: pointer;
@@ -1031,8 +1146,14 @@ a.ws-btn { text-decoration: none; }
 .ws-palette:active .ws-palette__preview { transform: scale(0.98); }
 .ws-palette.is-selected .ws-palette__preview { box-shadow: inset 0 0 0 1px var(--border), 0 0 0 2px var(--accent); }
 .ws-palette:focus-visible .ws-palette__preview { box-shadow: var(--focus-ring); }
-/* The scheme's identity color — see the comment in PalettePicker.tsx. */
-.ws-palette__strip { display: block; height: 6px; border-radius: var(--radius-pill); background: var(--_swatch); flex-shrink: 0; }
+/* The scheme's identity: its three agency tones, side by side. What is being
+   chosen is the RELATIONSHIP between you / system / autonomous, so the strip
+   shows all three rather than one brand color. See PalettePicker.tsx. */
+.ws-palette__strip { display: flex; gap: 2px; height: 6px; flex-shrink: 0; }
+.ws-palette__strip > span { flex: 1 1 0; border-radius: var(--radius-pill); }
+.ws-palette__strip > span:nth-child(1) { background: var(--_sw-you); }
+.ws-palette__strip > span:nth-child(2) { background: var(--_sw-sys); }
+.ws-palette__strip > span:nth-child(3) { background: var(--_sw-auto); }
 .ws-palette__card {
   flex: 1; border-radius: var(--radius-sm); background: var(--card); box-shadow: var(--shadow-sm);
   padding: 6px; display: flex; flex-direction: column; justify-content: space-between;
@@ -1040,6 +1161,9 @@ a.ws-btn { text-decoration: none; }
 .ws-palette__bar { display: block; height: 6px; width: 62%; border-radius: var(--radius-pill); background: var(--accent); }
 .ws-palette__dots { display: flex; gap: 4px; }
 .ws-palette__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--stopped-solid); }
+/* One agency mark in the row, so the preview shows both vocabularies at once:
+   an autonomous identity dot beside the three pinned status tones. */
+.ws-palette__dot--auto { background: var(--auto); }
 .ws-palette__dot--ok { background: var(--ok-solid); }
 .ws-palette__dot--warn { background: var(--warn-solid); }
 .ws-palette__dot--danger { background: var(--danger-solid); }

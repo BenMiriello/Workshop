@@ -13,7 +13,7 @@
          load) so first paint is never a white flash. The bootstrap script below
          may switch to light/system per the persisted choice. -->
     <style>
-      html { background: #0f0e17; }
+      html { background: #100d11; }
     </style>
     <!-- iOS Safari requires an explicit Permissions-Policy grant before it will
          honor navigator.geolocation.getCurrentPosition / watchPosition, even on
@@ -30,22 +30,28 @@
     <!-- Pre-React appearance bootstrap. Applies both axes to <html> before any
          paint so there's no light/dark or wrong-scheme flash.
            localStorage["ws-theme"]   = "light" | "dark" | "system"  (default dark)
-           localStorage["ws-palette"] = one of the five ids in palettes.gen.ts
-                                        (default violet)
-         Settings is the only writer of either; see src/ui/theme.ts. The palette
-         list is duplicated here because this runs before any module loads —
-         keep it in step with PALETTE_IDS if a palette is ever added. -->
+           localStorage["ws-palette"] = one of the eight ids in palettes.gen.ts
+                                        (default iris)
+         Settings is the only writer of either; see packages/ui/src/theme.ts. The
+         scheme list is duplicated here because this runs before any module
+         loads — keep it in step with PALETTE_IDS and LEGACY_PALETTES if a
+         scheme is ever added or renamed. -->
     <script>
       (function () {
-        var PALETTES = ["violet", "cobalt", "teal", "plum", "sandstone"];
+        var PALETTES = ["lagoon", "iris", "cobalt", "fern", "clay", "slate", "linen", "graphite"];
+        // Ids from before the agency color model, mapped to their nearest
+        // surviving scheme so a saved preference moves across instead of
+        // silently snapping to the default. (cobalt kept its id and its hue.)
+        var LEGACY = { violet: "iris", plum: "iris", teal: "lagoon", sandstone: "linen" };
         var root = document.documentElement;
         try {
           root.setAttribute("data-theme", localStorage.getItem("ws-theme") || "dark");
           var p = localStorage.getItem("ws-palette");
-          root.setAttribute("data-palette", PALETTES.indexOf(p) >= 0 ? p : "violet");
+          if (PALETTES.indexOf(p) < 0) p = LEGACY[p] || "iris";
+          root.setAttribute("data-palette", p);
         } catch (e) {
           root.setAttribute("data-theme", "dark");
-          root.setAttribute("data-palette", "violet");
+          root.setAttribute("data-palette", "iris");
         }
       })();
     </script>

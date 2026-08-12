@@ -489,7 +489,9 @@ function DeviceTokens() {
 // ----------------------------------------------------------------------------
 // Appearance — the only writer of localStorage["ws-theme"] and ["ws-palette"].
 // Two independent axes: mode (light/dark/system, default dark) and color scheme
-// (five palettes, default violet). Both commit ON CHANGE — view preferences.
+// (eight schemes in two groups, default iris). Both commit ON CHANGE — view
+// preferences. Picking a scheme picks the three AGENCY tones together (you /
+// system / autonomous); that relationship is the identity, not one accent.
 // ----------------------------------------------------------------------------
 const THEME_OPTIONS: SegmentedOption<ThemeMode>[] = [
   { value: "light", label: <><Sun size={15} strokeWidth={1.8} aria-hidden /> Light</> },

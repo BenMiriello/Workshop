@@ -1,16 +1,26 @@
 import { Check } from "lucide-react";
 import { cx } from "./cx";
-import { PALETTE_META, type PaletteId } from "./styles/palettes.gen";
+import { PALETTE_META, type PaletteGroup, type PaletteId, type PaletteMeta } from "./styles/palettes.gen";
 
-// Picks one of the five color schemes. A view preference: commits on change,
+// Picks one of the eight color schemes. A view preference: commits on change,
 // no Save step (DS rule 7).
 //
 // Each tile is a LIVE preview, not a painting of one: the miniature carries
 // `data-palette` + `data-theme`, which is exactly what palettes.css keys on, so
-// it resolves that scheme's real --bg / --card / --accent / status tokens. Add a
-// palette to palette.mjs, regenerate, and it appears here correctly with no
-// change to this file. `mode` must be a concrete light|dark — pass
+// it resolves that scheme's real --bg / --card / --you / status tokens. Add a
+// scheme to palette.mjs, regenerate, and it appears here in the right group with
+// no change to this file. `mode` must be a concrete light|dark — pass
 // useResolvedMode(theme) so "system" previews what the OS is actually doing.
+//
+// THE TWO GROUPS ARE NOT DECORATION. The expressive set spends three hues on
+// the agency tiers; the quiet set spends one and separates them by chroma. That
+// is a different kind of choice, so they are separate rows with a divider
+// rather than one flat row of eight.
+const GROUPS: { id: PaletteGroup; label: string }[] = [
+  { id: "expressive", label: "Expressive" },
+  { id: "quiet", label: "Quiet" },
+];
+
 export function PalettePicker({
   value,
   onChange,
@@ -25,46 +35,77 @@ export function PalettePicker({
   ariaLabel?: string;
 }) {
   return (
-    <div className={cx("ws-palettes", className)} role="radiogroup" aria-label={ariaLabel}>
-      {PALETTE_META.map((p) => {
-        const selected = p.id === value;
+    <div className={className} role="radiogroup" aria-label={ariaLabel}>
+      {GROUPS.map((g) => {
+        const items = PALETTE_META.filter((p) => p.group === g.id);
+        if (!items.length) return null;
         return (
-          <button
-            key={p.id}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            title={p.blurb}
-            className={cx("ws-palette", selected && "is-selected")}
-            onClick={() => onChange(p.id)}
-          >
-            {/* --_swatch is the scheme's identity color: a moderate, always-
-                visible tone at its neutral hue (see identitySwatch() in
-                palette.mjs). The live preview below is correct but, at chip
-                size, a warm scheme (Sandstone) and a cool one (Cobalt) can
-                look the same — near-black/near-white surfaces don't show hue,
-                and the one bright element in them (the accent bar) is
-                deliberately a cool brand hue even in a warm scheme. The strip
-                carries the identity the preview can't. */}
-            <span className="ws-palette__preview" data-palette={p.id} data-theme={mode} aria-hidden style={{ ["--_swatch" as string]: p.swatch }}>
-              <span className="ws-palette__strip" />
-              <span className="ws-palette__card">
-                <span className="ws-palette__bar" />
-                <span className="ws-palette__dots">
-                  <span className="ws-palette__dot ws-palette__dot--ok" />
-                  <span className="ws-palette__dot ws-palette__dot--warn" />
-                  <span className="ws-palette__dot ws-palette__dot--danger" />
-                  <span className="ws-palette__dot" />
-                </span>
-              </span>
-            </span>
-            <span className="ws-palette__label">
-              {p.label}
-              {selected && <Check strokeWidth={2} aria-hidden />}
-            </span>
-          </button>
+          <div key={g.id} className="ws-palette-group">
+            <div className="ws-palette-group__label">{g.label}</div>
+            <div className="ws-palettes">
+              {items.map((p) => (
+                <PaletteTile key={p.id} p={p} mode={mode} selected={p.id === value} onChange={onChange} />
+              ))}
+            </div>
+          </div>
         );
       })}
     </div>
+  );
+}
+
+function PaletteTile({
+  p, mode, selected, onChange,
+}: {
+  p: PaletteMeta;
+  mode: "light" | "dark";
+  selected: boolean;
+  onChange: (next: PaletteId) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      title={p.blurb}
+      className={cx("ws-palette", selected && "is-selected")}
+      onClick={() => onChange(p.id)}
+    >
+      {/* The strip is the scheme's IDENTITY: its three agency tones side by
+          side, mode-independent and at moderate chroma (identitySwatch() in
+          palette.mjs). The live preview below is correct but nearly hue-less at
+          chip size, since near-black and near-white don't show hue, so a warm
+          scheme and a cool one can look the same in 76px. And what is actually
+          being chosen is the RELATIONSHIP between you / system / autonomous, so
+          showing one brand color would name the wrong thing. */}
+      <span
+        className="ws-palette__preview"
+        data-palette={p.id}
+        data-theme={mode}
+        aria-hidden
+        style={{
+          ["--_sw-you" as string]: p.swatch.you,
+          ["--_sw-sys" as string]: p.swatch.sys,
+          ["--_sw-auto" as string]: p.swatch.auto,
+        }}
+      >
+        <span className="ws-palette__strip">
+          <span /><span /><span />
+        </span>
+        <span className="ws-palette__card">
+          <span className="ws-palette__bar" />
+          <span className="ws-palette__dots">
+            <span className="ws-palette__dot ws-palette__dot--auto" />
+            <span className="ws-palette__dot ws-palette__dot--ok" />
+            <span className="ws-palette__dot ws-palette__dot--warn" />
+            <span className="ws-palette__dot ws-palette__dot--danger" />
+          </span>
+        </span>
+      </span>
+      <span className="ws-palette__label">
+        {p.label}
+        {selected && <Check strokeWidth={2} aria-hidden />}
+      </span>
+    </button>
   );
 }

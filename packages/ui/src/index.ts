@@ -17,8 +17,14 @@ export {
   type ThemeMode, type PaletteId,
 } from "./theme";
 export { PalettePicker } from "./PalettePicker";
-export { PALETTE_META, DEFAULT_PALETTE, type PaletteMeta } from "./styles/palettes.gen";
+export {
+  PALETTE_META, DEFAULT_PALETTE, LEGACY_PALETTES, resolvePaletteId,
+  type PaletteMeta, type PaletteGroup,
+} from "./styles/palettes.gen";
 export { statusClass, catClass, catFor, type StatusKind, type CatHue } from "./status";
+export {
+  AgencyChip, AgencyDot, agencyFor, agencyProps, AGENCY_LABEL, type AgencyTier,
+} from "./agency";
 
 export { Stack, Row, Spacer, SectionLabel, PageHeader, Toolbar, Card, CardGrid, Stat, Divider, ProgressBar, StackedBar } from "./layout";
 export {

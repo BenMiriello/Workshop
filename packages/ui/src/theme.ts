@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { DEFAULT_PALETTE, isPaletteId, type PaletteId } from "./styles/palettes.gen";
+import { resolvePaletteId, type PaletteId } from "./styles/palettes.gen";
 
 // Appearance has two independent axes, both attributes on <html>:
 //
 //   data-theme    light | dark | system     — mode
-//   data-palette  violet | cobalt | ...     — color scheme (five, from palette.mjs)
+//   data-palette  lagoon | iris | ...       — color scheme (eight, from palette.mjs)
 //
 // The pre-React bootstrap in index.html applies both from localStorage before
 // first paint; these hooks keep a React-visible copy and are the only things
@@ -56,18 +56,22 @@ export function useTheme(): [ThemeMode, (mode: ThemeMode) => void] {
 }
 
 // ---------------------------------------------------------------------------
-// Palette — which of the five color schemes is on. Orthogonal to light/dark:
-// every palette ships both modes, so switching scheme never changes mode.
+// Palette — which of the eight color schemes is on. Orthogonal to light/dark:
+// every scheme ships both modes, so switching scheme never changes mode.
+//
+// A stored id from before the agency model resolves to its nearest surviving
+// scheme rather than snapping to the default (resolvePaletteId, generated from
+// LEGACY_PALETTES in palette.mjs). Reading is forgiving; writing is not — only
+// a real id is ever stored.
 // ---------------------------------------------------------------------------
 
 export function getStoredPalette(): PaletteId {
   try {
-    const v = localStorage.getItem(PALETTE_KEY);
-    if (isPaletteId(v)) return v;
+    return resolvePaletteId(localStorage.getItem(PALETTE_KEY));
   } catch {
     /* private mode / disabled storage — fall through */
   }
-  return DEFAULT_PALETTE;
+  return resolvePaletteId(null);
 }
 
 export function applyPalette(id: PaletteId): void {

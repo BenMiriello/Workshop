@@ -12,6 +12,95 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.3.0 — 2026-08-11 — the agency axis: who did this, not just how it went
+
+**Breaking.** The palette answered one question, *is it healthy* (the status
+five). It now answers a second, which for a system that runs sweeps and crons is
+the more important one: *was that me, or something moving without me.*
+
+New axis, three tiers, each with a resting and an active (`-up`) tone:
+
+| tier | meaning |
+|---|---|
+| `you` | your hand on it: typed, clicked, confirmed |
+| `system` | machine work inside a conversation you are present for |
+| `autonomous` | it moved with nobody watching |
+
+Two rules the kit now enforces:
+
+1. **Agency is FILLED, status is OUTLINE.** `StatusPill` lost its soft fill and
+   took a hairline in its own tone; the new `AgencyChip` is a filled pill with
+   no border. That pairing, not hue, is what separates the two vocabularies, so
+   a hue coincidence in one scheme is survivable.
+2. **One agency color per surface.** `data-agency` on any element binds the tier
+   for everything inside it. Provenance beats mechanism: an autonomous agent
+   calling a tool leaves the surface autonomous.
+
+New exports: `AgencyChip`, `AgencyDot`, `agencyFor`, `agencyProps`,
+`AGENCY_LABEL`, `AgencyTier`, `resolvePaletteId`, `LEGACY_PALETTES`,
+`PaletteGroup`. New CSS: `.ws-agency`, `.ws-agency-dot`, `.ws-agency-rail`,
+`[data-agency]`, `.ws-palette-group`, `.ws-nav__count`, `@keyframes ws-ring`.
+
+New tokens per scheme: `--you`, `--you-fg`, `--you-soft`, `--sys`, `--sys-soft`,
+`--sys-up`, `--auto`, `--auto-soft`, `--auto-up`. `--accent`, `--accent-fg` and
+`--accent-soft` are now aliases of the `you` family, so nothing that used them
+had to change; the brand accent and "your hand on it" were always the same idea.
+
+**`--running` is no longer one fixed color.** A run you started, a run inside
+your chat and a run nothing asked for are three different facts, so `running`
+resolves to the initiating tier's active tone (default `system`, re-pointed by
+`data-agency`). It is also the one status that stays filled: `running` describes
+an actor, not an outcome. Terminal states never split by tier.
+
+### Migration
+
+- **The five palettes are gone; there are eight schemes**, in two groups.
+  Expressive (`lagoon`, `iris`, `cobalt`, `fern`, `clay`) spends three hues;
+  quiet (`slate`, `linen`, `graphite`) spends one and separates the tiers by
+  chroma. `PaletteId` changed values accordingly and the default is now `iris`.
+  A stored id from before resolves through `resolvePaletteId()`
+  (`violet`/`plum` → `iris`, `teal` → `lagoon`, `sandstone` → `linen`,
+  `cobalt` kept its id and its 258 hue), so no saved preference is lost.
+- **`PaletteMeta.swatch` is now `{ you, sys, auto }`**, not a single string: what
+  a scheme IS is the relationship between its three tiers, so the picker shows
+  all three. `PaletteMeta.group` is new.
+- **Consumers styling a status chip against its old fill must re-check
+  contrast** — the fill is gone, and the chip is now hairline-on-transparent.
+- The brand accent is user-selectable now, reversing the old "one brand accent,
+  not user-selectable" rule. Identity moved from the violet to the relationship
+  between the tiers, which is the same in all eight schemes.
+
+Color model rewritten around the handoff's generator (`palette.mjs`): eight
+scheme seeds, the designer's stops, and per-scheme chroma/lightness trims. Dark
+mode is byte-identical to the handoff; in light mode every colored TEXT tone is
+walked to 4.5:1 against the surfaces and its own soft fill, which moves `warn`
+and darkens `you` a step in several schemes. 144 contract assertions in
+`palette.test.ts`.
+
+## 0.2.5 — 2026-08-11 — ticket link rows, comments, board lanes, phone fixes
+
+Compatible. CSS only, no export or prop change.
+
+New rules: `.ws-ticket-link` (a linked ticket as a whole clickable row),
+`.ws-comment` (one entry in a discussion thread), and `.ws-board` +
+`.ws-board__lane/head/count/items/empty` (fixed-lane board that scrolls
+horizontally rather than crushing its columns).
+
+Two phone fixes at `max-width: 640px`. `.ws-ticket-card__pills` now wraps
+instead of clipping: the `nowrap; overflow: hidden` that keeps a grid of cards
+one height was chopping scope tags mid-word on a phone, where there is only one
+card per row and the height argument does not apply. `.ws-segmented` now scrolls
+horizontally instead of overflowing the viewport, and hides its sliding thumb
+while scrolled (the thumb is absolutely positioned and stops tracking the
+visible row), with the pressed state carrying the background itself.
+
+## 0.2.4 — 2026-08-11 — MenuItem disabled
+
+Compatible. Adds an optional `disabled` prop to `MenuItem`: renders a native
+`disabled` button (no `onSelect`, no menu-close, cursor stays `default` per
+rule 10) so a present-but-not-choosable row can still carry a `title` tooltip
+explaining why. No export removed or renamed.
+
 ## 0.2.3 — 2026-08-11 — full-width shell, content at an intermediate measure, apps own their width
 
 Compatible. No export or prop change. `--page-max` changes value, `--chat-max`

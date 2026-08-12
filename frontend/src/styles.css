@@ -495,10 +495,45 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-msg.user .chat-copy:focus-visible { color: var(--accent-fg); }
 .chat-msg.user .chat-bubble { background: var(--accent); color: var(--accent-fg); border-bottom-right-radius: 4px; }
 .chat-msg.assistant .chat-bubble { background: var(--card); color: var(--fg); border-bottom-left-radius: 4px; }
-.chat-bubble.error { background: var(--danger-soft); border: 1px solid var(--danger); color: var(--fg); }
-/* Timeout: a calm warn treatment (not the red error), with a small lead tag so
-   even a partial-then-stopped turn reads as "stopped at the limit, continue". */
-.chat-bubble--timeout { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--fg); }
+/* A failure is STATUS, and status is outline: a transparent box with a hairline
+   in the danger tone, never a red fill. A filled error block is the loudest
+   thing in a log, and it reads as an alarm rather than as one turn that did not
+   land. (Agency is what gets a fill here; see .chat-msg.autonomous below.) */
+.chat-bubble.error {
+  background: transparent; color: var(--fg);
+  border: 1px solid color-mix(in oklab, var(--danger), transparent 62%);
+}
+/* Timeout: the same outline vocabulary a step quieter, in warn rather than
+   danger, with a small lead tag so even a partial-then-stopped turn reads as
+   "stopped at the limit, continue". */
+.chat-bubble--timeout {
+  background: transparent; color: var(--fg);
+  border: 1px solid color-mix(in oklab, var(--warn), transparent 70%);
+}
+
+/* ---- AUTONOMOUS MESSAGE — it moved with nobody watching -------------------
+   A run report, a question from a sweep, anything the platform posted into this
+   thread while you were not here. It is the one bubble that is TINTED, because
+   provenance is exactly what a reader needs to know before reading the words:
+   a 2px rail in the autonomous tone and a soft fill of the same tier.
+
+   Only this. Assistant replies stay neutral card — tinting every bubble by tier
+   turns a long log into a quilt and hurts readability on exactly the messages
+   that are longest. */
+.chat-msg.autonomous .chat-bubble {
+  background: var(--auto-soft);
+  border-left: 2px solid var(--auto);
+  border-radius: 3px 12px 12px 3px;
+}
+.chat-msg.autonomous .chat-bubble.error { background: transparent; }
+.chat-autonomous-tag {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  margin-bottom: var(--space-1);
+  font-family: var(--font-mono); font-size: 10px; line-height: 1.6;
+  letter-spacing: var(--label-spacing); text-transform: uppercase;
+  color: var(--auto);
+}
+.chat-autonomous-tag svg { width: 12px; height: 12px; stroke-width: 1.8; }
 
 /* Assistant replies are MARKDOWN, which controls its own wrapping + spacing.
    The bubble's pre-wrap (needed for the user's plain text) would otherwise
@@ -570,7 +605,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* Three sequentially-pulsing dots — a "typing/working" motif, not a loader. */
 .chat-working__dots { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; }
 .chat-working__dots i {
-  width: 5px; height: 5px; border-radius: 50%; background: var(--accent);
+  width: 5px; height: 5px; border-radius: 50%; background: var(--sys-up);
   animation: chat-working-dot 1.2s ease-in-out infinite;
 }
 .chat-working__dots i:nth-child(2) { animation-delay: 0.2s; }
@@ -584,7 +619,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* Vertical margin comes from .chat-footrow — see there. */
 .chat-more {
   background: none; border: none; padding: 0;
-  color: var(--accent); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  color: var(--sys); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-more:hover { text-decoration: underline; }
 /* Length clamp: show the first N WHOLE rendered lines and end there. Uses
@@ -625,7 +660,7 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work__toggle {
   display: inline-flex; align-items: center; gap: 0.3rem;
   background: none; border: none; padding: 0.15rem 0; margin: 0;
-  color: var(--muted); font: inherit; font-size: var(--fs-xs); cursor: pointer;
+  color: var(--sys); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-work__toggle:hover { color: var(--fg); }
 .chat-work__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
@@ -647,7 +682,7 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
 }
 .chat-tool__head:hover { color: var(--fg); }
-.chat-tool__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-tool__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
 .chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
 .chat-tool__icon { flex: 0 0 auto; }
@@ -676,10 +711,10 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
 }
 .chat-agent__head:hover { color: var(--fg); }
-.chat-agent__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-agent__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
 .chat-agent.is-open .chat-agent__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-agent__chev { transition: none; } }
-.chat-agent__icon { flex: 0 0 auto; color: var(--accent); }
+.chat-agent__icon { flex: 0 0 auto; color: var(--sys); }
 .chat-agent__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
 .chat-agent__preview {
   flex: 1 1 auto; min-width: 0;
@@ -688,7 +723,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* Still working: the only animated thing here, matching the `running` status
    kind's rule that motion means in-flight and nothing else. */
 .chat-agent__meta { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.8; }
-.chat-agent.is-running .chat-agent__meta { color: var(--accent); animation: ws-pulse 1.6s ease-in-out infinite; }
+.chat-agent.is-running .chat-agent__meta { color: var(--sys-up); animation: ws-pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .chat-agent.is-running .chat-agent__meta { animation: none; } }
 .chat-agent__body { border-top: 1px solid var(--border); padding: 0.35rem 0.5rem 0.4rem; }
 /* The delegate's own steps, one level in — a nested step must never read as a
@@ -736,7 +771,7 @@ input[type="range"].grad::-moz-range-thumb {
 /* How long a step took, or has been taking. Tabular so a ticking counter does
    not shift the row it sits on. */
 .chat-tool__time { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
-.chat-tool.is-running .chat-tool__time { color: var(--accent); }
+.chat-tool.is-running .chat-tool__time { color: var(--sys-up); }
 /* A failed step. Opened by default and marked, because a step that failed is
    usually the reason the turn did what it did next. */
 .chat-tool__failed { flex: 0 0 auto; color: var(--danger); font-weight: var(--fw-semi); }

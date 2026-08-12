@@ -21,7 +21,7 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { PALETTES, MODES, DEFAULT_PALETTE, buildScheme, CATEGORICAL, identitySwatch } from "../src/styles/palette.mjs";
+import { SCHEMES, MODES, DEFAULT_PALETTE, LEGACY_PALETTES, buildScheme, paletteById, CATEGORICAL, identitySwatch } from "../src/styles/palette.mjs";
 import { tokens } from "../src/styles/tokens.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -33,11 +33,25 @@ const kebab = (k) => k.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase());
    into a shadow/ring instead. */
 const COMPOSED = new Set(["focusRing", "shadowSm", "shadowCard", "shadowMd", "shadowLg"]);
 
+/* The accent family IS the `you` agency tier. Emitted as `var()` aliases rather
+   than as a second copy of the hex, so the two can never drift and so the CSS
+   says out loud which one is the real name. The RN object copies the values,
+   since it has no var() to point with. */
+const ALIASES = {
+  accent: "you",
+  accentFg: "you-fg",
+  accentSoft: "you-soft",
+};
+
 function cssBlock(selector, paletteId, mode) {
   const s = buildScheme(paletteId, mode);
   const lines = [];
   for (const [k, v] of Object.entries(s)) {
     if (COMPOSED.has(k)) continue;
+    if (ALIASES[k]) {
+      lines.push(`  --${kebab(k)}: var(--${ALIASES[k]});`);
+      continue;
+    }
     lines.push(`  --${kebab(k)}: ${v};`);
   }
   lines.push(`  --err: var(--danger);`);
@@ -53,29 +67,51 @@ function cssBlock(selector, paletteId, mode) {
 /* Selector strategy
    ------------------
    `data-palette` and `data-theme` are independent attributes on <html>, so each
-   palette needs a light block, a dark block, and a system block that follows the
-   OS. The default palette additionally answers when NO data-palette is set at
-   all (`:root:not([data-palette])`) so the CSS is correct before the bootstrap
-   script runs and in any surface that never sets the attribute.
+   scheme needs a light block, a dark block, and a system block that follows the
+   OS.
+
+   THE BASE BLOCK IS UNCONDITIONAL, and that is not a detail. It emits the
+   default scheme on a bare `:root`, so EVERY document is fully painted no
+   matter what `data-palette` says — including a value this stylesheet has never
+   heard of. It used to be `:root:not([data-palette])`, which meant a stale or
+   renamed id matched no block at all and every color token in the system
+   resolved to nothing: the whole app went white and grey, with only whatever
+   the browser defaults to. That is exactly what happened when the five palettes
+   became eight schemes and a tab still holding `data-palette="violet"` picked
+   up the new CSS over HMR. A color layer must never be able to leave the app
+   unpainted; an unknown scheme falls back to the default's colors, and the
+   bootstrap in index.html rewrites the attribute on the next load.
+
+   Per-scheme blocks come AFTER the base and carry equal specificity, so they
+   win by source order for the document that actually names them.
 
    Both attributes are matched on the SAME element, which is what lets the
-   Settings swatches preview a scheme: give a swatch `data-palette="teal"
+   Settings swatches preview a scheme: give a swatch `data-palette="lagoon"
    data-theme="dark"` and it resolves that scheme locally, because custom
    properties are matched per element and then inherited. */
+function baseCss() {
+  const p = paletteById(DEFAULT_PALETTE);
+  const out = [
+    `/* ---- BASE — ${p.label}, on a bare :root, so no document is ever unpainted --- */`,
+  ];
+  out.push(cssBlock([`:root`, `:root[data-theme="light"]`].join(",\n"), p.id, "light"));
+  out.push(cssBlock(`:root[data-theme="dark"]`, p.id, "dark"));
+  out.push(
+    `@media (prefers-color-scheme: dark) {\n${indent(
+      cssBlock([`:root[data-theme="system"]`, `:root:not([data-theme="light"]):not([data-theme="dark"])`].join(",\n"), p.id, "dark"),
+    )}}\n`,
+  );
+  return out.join("\n");
+}
+
 function paletteCss(p) {
-  const isDefault = p.id === DEFAULT_PALETTE;
   const self = `[data-palette="${p.id}"]`;
-  const fallback = `:root:not([data-palette])`;
-  const out = [`/* ---- ${p.label} — ${p.blurb} ------------------------------------ */`];
+  const hues = `you ${p.base} · system ${p.sys} · autonomous ${p.auto}`;
+  const out = [`/* ---- ${p.label} (${p.quiet ? "quiet" : "expressive"}) — ${hues} ---------------- */`];
 
   const lightSel = [self, `${self}[data-theme="light"]`];
   const darkSel = [`${self}[data-theme="dark"]`];
   const sysSel = [`${self}[data-theme="system"]`, `${self}:not([data-theme="light"]):not([data-theme="dark"])`];
-  if (isDefault) {
-    lightSel.push(fallback, `${fallback}[data-theme="light"]`);
-    darkSel.push(`${fallback}[data-theme="dark"]`);
-    sysSel.push(`${fallback}[data-theme="system"]`, `${fallback}:not([data-theme="light"]):not([data-theme="dark"])`);
-  }
 
   out.push(cssBlock(lightSel.join(",\n"), p.id, "light"));
   out.push(cssBlock(darkSel.join(",\n"), p.id, "dark"));
@@ -92,17 +128,18 @@ function buildCss() {
    Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
    Edit palette.mjs, then run \`npm run gen:tokens\` from packages/ui/.
 
-   ${PALETTES.length} palettes x { light, dark }. \`data-palette\` and \`data-theme\` both live on
+   ${SCHEMES.length} palettes x { light, dark }. \`data-palette\` and \`data-theme\` both live on
    <html>; the pre-React bootstrap in index.html sets them before first paint.
    Imported by tokens.css, so every entry point picks it up automatically.
    ========================================================================== */
 
-${PALETTES.map(paletteCss).join("\n")}`;
+${baseCss()}
+${SCHEMES.map(paletteCss).join("\n")}`;
 }
 
 function buildJs() {
   const entries = [];
-  for (const p of PALETTES) {
+  for (const p of SCHEMES) {
     const modes = MODES.map((m) => {
       const s = buildScheme(p.id, m);
       const body = Object.entries(s).map(([k, v]) => `      ${k}: ${JSON.stringify(v)},`).join("\n");
@@ -110,8 +147,8 @@ function buildJs() {
     }).join("\n");
     entries.push(`  ${p.id}: {\n${modes}\n  },`);
   }
-  const meta = PALETTES.map(
-    (p) => `  { id: ${JSON.stringify(p.id)}, label: ${JSON.stringify(p.label)}, blurb: ${JSON.stringify(p.blurb)} },`
+  const meta = SCHEMES.map(
+    (p) => `  { id: ${JSON.stringify(p.id)}, label: ${JSON.stringify(p.label)}, blurb: ${JSON.stringify(p.blurb)}, group: ${JSON.stringify(p.quiet ? "quiet" : "expressive")} },`
   ).join("\n");
   return `/* =============================================================================
    Workshop Design System — MOBILE COLOR TOKENS (GENERATED — do not edit by hand)
@@ -137,20 +174,29 @@ export const categorical = ${JSON.stringify(CATEGORICAL, null, 2).replace(/\n/g,
 }
 
 /* The typed list the web app imports. Kept separate from tokens.generated.js so
-   a Settings picker pulls in five labels, not every hex in the system. */
+   a Settings picker pulls in eight labels, not every hex in the system. */
 function buildTs() {
-  const ids = PALETTES.map((p) => JSON.stringify(p.id)).join(" | ");
-  const rows = PALETTES.map(
+  const ids = SCHEMES.map((p) => JSON.stringify(p.id)).join(" | ");
+  const rows = SCHEMES.map(
     (p) =>
-      `  { id: ${JSON.stringify(p.id)}, label: ${JSON.stringify(p.label)}, blurb: ${JSON.stringify(p.blurb)}, swatch: ${JSON.stringify(identitySwatch(p.id))} },`
+      `  { id: ${JSON.stringify(p.id)}, label: ${JSON.stringify(p.label)}, blurb: ${JSON.stringify(p.blurb)},` +
+      ` group: ${JSON.stringify(p.quiet ? "quiet" : "expressive")}, swatch: ${JSON.stringify(identitySwatch(p.id))} },`
   ).join("\n");
+  const legacy = Object.entries(LEGACY_PALETTES)
+    .map(([from, to]) => `  ${from}: ${JSON.stringify(to)},`)
+    .join("\n");
   return `/* =============================================================================
-   Workshop Design System — PALETTE LIST (GENERATED — do not edit by hand)
+   Workshop Design System — SCHEME LIST (GENERATED — do not edit by hand)
    Emitted by scripts/gen-tokens.mjs from packages/ui/src/styles/palette.mjs.
    The colors themselves are in palettes.css; this is just the menu.
    ========================================================================== */
 
 export type PaletteId = ${ids};
+
+/** Which row of the Settings picker a scheme belongs to. The quiet set is a
+    different KIND of choice (one hue, tiers by chroma), not three more colors,
+    so the picker shows the two groups separately. */
+export type PaletteGroup = "expressive" | "quiet";
 
 export interface PaletteMeta {
   id: PaletteId;
@@ -158,8 +204,10 @@ export interface PaletteMeta {
   label: string;
   /** One line describing the scheme's character. */
   blurb: string;
-  /** Mode-independent identity color for the picker swatch. See palette.mjs identitySwatch(). */
-  swatch: string;
+  group: PaletteGroup;
+  /** The scheme's three agency tones, mode-independent, for the picker's
+      identity strip. See palette.mjs identitySwatch(). */
+  swatch: { you: string; sys: string; auto: string };
 }
 
 export const PALETTE_META: readonly PaletteMeta[] = [
@@ -172,6 +220,21 @@ export const PALETTE_IDS: readonly PaletteId[] = PALETTE_META.map((p) => p.id);
 
 export function isPaletteId(v: unknown): v is PaletteId {
   return typeof v === "string" && (PALETTE_IDS as readonly string[]).includes(v);
+}
+
+/** Scheme ids from before the agency model, mapped to their nearest surviving
+    scheme, so a stored preference moves across instead of snapping to the
+    default. Unknown ids still fall back to DEFAULT_PALETTE. */
+export const LEGACY_PALETTES: Record<string, PaletteId> = {
+${legacy}
+};
+
+/** The id to actually apply for a stored value: itself, its replacement, or the
+    default. One function so the bootstrap, the hook and the tests agree. */
+export function resolvePaletteId(v: unknown): PaletteId {
+  if (isPaletteId(v)) return v;
+  if (typeof v === "string" && LEGACY_PALETTES[v]) return LEGACY_PALETTES[v];
+  return DEFAULT_PALETTE;
 }
 `;
 }
@@ -251,6 +314,6 @@ if (scaleProblems.length) {
 if (check) {
   if (stale) process.exit(1);
   console.log(
-    `gen-tokens: color files up to date (${PALETTES.length} palettes x ${MODES.length} modes), scales in sync`
+    `gen-tokens: color files up to date (${SCHEMES.length} palettes x ${MODES.length} modes), scales in sync`
   );
 }

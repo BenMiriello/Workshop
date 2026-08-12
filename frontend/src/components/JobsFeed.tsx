@@ -12,9 +12,10 @@ import {
   StateBlock,
   StatusPill,
   StatusDot,
-  Tag,
   Segmented,
-  catFor,
+  AgencyChip,
+  AgencyDot,
+  agencyFor,
   type SegmentedOption,
 } from "@workshop/ui";
 import { type Job, jobStatusKind as statusKind } from "../lib/jobs";
@@ -215,6 +216,7 @@ export default function JobsFeed() {
           <div
             role="link"
             tabIndex={0}
+            data-agency={agencyFor(child.trigger)}
             onClick={() => nav(`/runs/${encodeURIComponent(child.id)}`)}
             style={{
               display: "flex", alignItems: "baseline", gap: "var(--space-2)",
@@ -256,10 +258,15 @@ export default function JobsFeed() {
                 interactive
                 compact
                 className="ws-job-card"
+                data-agency={agencyFor(job.trigger)}
                 onClick={() => nav(`/runs/${encodeURIComponent(job.id)}`)}
                 style={{ cursor: "pointer" }}
               >
                 <div className="ws-job-card__bind">
+                  {/* The identity dot says WHO started this run; the state chip
+                      at the other end says how it went. They never take the
+                      same slot, and only a live run's dot pulses. */}
+                  <AgencyDot tier={agencyFor(job.trigger)} active={job.status === "running"} />
                   {bind.icon}
                   <span>{job.title || bind.text}</span>
                 </div>
@@ -288,7 +295,7 @@ export default function JobsFeed() {
                 <div className="ws-job-card__pills">
                   <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
                   {(job.trigger_label || job.trigger) && (
-                    <Tag hue={catFor(job.trigger || "")}>{job.trigger_label || job.trigger}</Tag>
+                    <AgencyChip tier={agencyFor(job.trigger)}>{job.trigger_label || job.trigger}</AgencyChip>
                   )}
                   {kids && (
                     <button
