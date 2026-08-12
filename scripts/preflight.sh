@@ -177,6 +177,22 @@ port_note 8000 "the backend"
 port_note 5173 "the vite dev server"
 port_note 8002 "the public edge"
 
+# ---- scheduled work ---------------------------------------------------------
+# Cron is this deployment's scheduler and nothing else reports on it: there are
+# no systemd timers. A missing or drifted block means the commute briefs, the
+# daily digest and the frontend watchdog silently do not happen, and the only
+# symptom is an absence -- which is the hardest kind of failure to notice.
+# Optional, not required: a clone that only serves the UI needs none of it.
+if command -v crontab >/dev/null 2>&1; then
+  if bash "$REPO_ROOT/scripts/install_cron.sh" --check >/dev/null 2>&1; then
+    OKS+=("cron block installed and matches infra/cron/workshop.crontab")
+  elif crontab -l 2>/dev/null | grep -qF "managed by scripts/install_cron.sh"; then
+    WARNS+=("cron block DRIFTED from infra/cron/workshop.crontab|bash scripts/install_cron.sh --check shows the diff; re-run install_cron.sh to reconcile")
+  else
+    WARNS+=("cron block not installed|bash scripts/install_cron.sh — without it nothing scheduled runs (commute briefs, daily digest, frontend watchdog)")
+  fi
+fi
+
 # ---- output -----------------------------------------------------------------
 if [ "$JSON" = "1" ]; then
   printf '{"ok":%s,"failures":[' "$([ ${#FAILS[@]} -eq 0 ] && echo true || echo false)"

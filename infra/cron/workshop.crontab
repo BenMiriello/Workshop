@@ -1,0 +1,73 @@
+# Workshop scheduled work — crontab template.
+#
+# Do NOT install this file by hand: the @WORKSHOP_ROOT@ token below is a
+# placeholder. Run
+#   bash scripts/install_cron.sh
+# which substitutes this checkout's absolute path and splices the block into
+# the user crontab between its markers, leaving any unrelated entries alone.
+#
+# WHY CRON AND NOT SYSTEMD TIMERS. These predate the systemd units and several
+# encode wall-clock windows (the commute ticks) that read more clearly as cron
+# expressions than as OnCalendar= lists. Converting them is a real change with
+# real risk of a missed window, so it is a deliberate open choice, not an
+# oversight. If you convert them, convert ALL of them and delete this file.
+#
+# ENVIRONMENT. cron gives these scripts almost nothing: no EnvironmentFile, no
+# systemd Environment=, a bare PATH and no WORKSHOP_* vars. Every script here
+# therefore sources scripts/lib/instance.sh itself to pick up this deployment's
+# identity. A new scheduled script that skips that step will run with the wrong
+# paths and fail quietly, which is the single most common way a cron entry here
+# has broken.
+#
+# TIMES ARE SYSTEM-LOCAL (this deployment: US/Pacific, the operator's tz).
+
+# ---- Autonomous work: OFF by operator decision 2026-08-10 ----
+# Disabled HERE rather than by the emergency override at
+# .runtime/autonomy-override.json, which was engaged 2026-07-18 for an
+# 'in-flight coherence migration' that ended long ago and had become the
+# only thing holding autonomy off. Off is now expressed where it is true:
+# nothing autonomous is scheduled. Re-enable by uncommenting these two.
+#
+# THIS COMMENT STATE IS THE OPERATOR'S DECISION, NOT AN ACCIDENT OF EDITING.
+# install_cron.sh installs these lines exactly as they appear here. Do not
+# uncomment them to "restore" anything.
+# */20 * * * * @WORKSHOP_ROOT@/cron_agent.sh
+0 14 * * * @WORKSHOP_ROOT@/scripts/daily_todo_digest.sh
+
+# ---- Commute (Phase 6) — times are in system tz (US/Pacific, operator's tz) ----
+# Pre-commute briefs: 60min and 30min before AM target_depart_home (07:10)
+10 6 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-1h
+40 6 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-30m
+# Pre-commute briefs: 60min and 30min before PM target_depart_work (18:00)
+0 17 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-1h
+30 17 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh pre-30m
+# During-commute: every 5 minutes through the AM active window (07:00-09:30)
+*/5 7 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
+*/5 8 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
+0,5,10,15,20,25,30 9 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
+# During-commute: every 5 minutes through the PM active window (18:00-20:00)
+*/5 18 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
+*/5 19 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh during
+# Post-commute settle (cooldown reset reads happen here; mostly no-op)
+30 9 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh post
+0 20 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/tick.sh post
+# Post-commute pattern-learning note (19:30 PT = 19:30 system time)
+30 19 * * 1-5 @WORKSHOP_ROOT@/apps/commute/scripts/notes.sh
+
+# ---- Autonomy reinforcement (rebuild 2026-05-22) ----
+# Curriculum tick: refill the queue when [ ] count drops below threshold (hourly)
+# Daily autonomy report: dropped into notify-masini.txt at 7am PT
+0 7 * * * @WORKSHOP_ROOT@/scripts/autonomy_report.sh
+
+# ---- Frontend watchdog (added 2026-06-06): restart Vite dev servers if they die ----
+#
+# NOTE: this relaunches Vite with setsid+nohup, OUTSIDE any systemd unit, and it
+# still asserts in its own header that "there is no systemd on this box" — which
+# stopped being true when workshop-frontend.service was installed. If it wins a
+# race with a restarting unit it will hold :5173 and make the unit crash-loop.
+# Tracked here so that interaction is visible rather than folklore.
+*/2 * * * * @WORKSHOP_ROOT@/scripts/frontends_watchdog.sh
+
+# ---- Task queue worker loop: ensure the resident runner is up (restart-on-death) ----
+# Disabled with the rest of autonomous work (see the top of this file).
+# */5 * * * * @WORKSHOP_ROOT@/scripts/queue_runner_watchdog.sh

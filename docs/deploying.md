@@ -64,6 +64,21 @@ by design (tailscale serve, cloudflared), because nothing sits in front of the
 backend enforcing a boundary: the edge is a separate proxy process, not a
 gateway the backend hides behind.
 
+**Everything periodic is cron, not a systemd timer.** There are no timers at all.
+The schedule lives in `infra/cron/workshop.crontab` (templated on `@WORKSHOP_ROOT@`
+like the units) and installs with `bash scripts/install_cron.sh`, which splices a
+marked block into the user crontab and leaves unrelated entries alone. It carries
+the commute briefs, the daily digest and the frontend watchdog. `--check` reports
+drift and prints the diff; `preflight.sh` runs that check so a missing schedule
+shows up as something other than an absence of events. Autonomous entries ship
+commented out, which is an operator decision recorded in the file; installing does
+not turn them on.
+
+Note that `frontends_watchdog.sh` relaunches vite outside any unit and still
+claims in its own header that this box has no systemd. If it races
+`workshop-frontend.service` it will hold `:5173` and make the unit crash-loop.
+Untangling those two is unfinished work, not a settled design.
+
 ## Configuration
 
 Three files under `~/.config/workshop/`, all mode 600:

@@ -155,6 +155,18 @@ else
   echo "  skipping the public edge: WORKSHOP_PUBLIC_HOST / WORKSHOP_TUNNEL_ID are not set in instance.env"
 fi
 
+# Cron is the scheduler for everything periodic; there are no systemd timers.
+# Opt-in because a clone that only serves the UI wants none of it, and because
+# the block includes host-specific schedules (the operator's commute windows)
+# that are meaningless elsewhere. Autonomous entries ship commented out and
+# install_cron.sh does not change that.
+if [ "${WITH_CRON:-0}" = "1" ]; then
+  step "scheduled work"
+  bash "$REPO_ROOT/scripts/install_cron.sh"
+else
+  echo "  skipping cron: re-run with WITH_CRON=1, or bash scripts/install_cron.sh"
+fi
+
 step "done"
 cat <<EOF
 Workshop is installed.
@@ -163,6 +175,7 @@ Workshop is installed.
   frontend   systemctl --user status workshop-frontend
   check      bash scripts/preflight.sh
   origins    bash scripts/ui_sync.sh
+  schedule   bash scripts/install_cron.sh --check
 
 After any change under frontend/, rebuild the public bundle:
   bash scripts/build_workshop_public.sh
