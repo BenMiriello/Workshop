@@ -13,6 +13,7 @@ Three things were wrong on this path and each one hid the next:
     readiness gate the /run route applied, so a BROKEN ticket launched from a card.
 """
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -86,6 +87,22 @@ def test_without_a_pid_a_dead_run_waits_two_hours(job_log):
     assert [j["id"] for j in job_log.reconcile_stuck()] == [rec["id"]]
 
 
+async def _wait_for(done, timeout_s: float = 5.0) -> None:
+    """Wait on a WALL CLOCK, not on a yield count.
+
+    Both loop tests used to spin a fixed number of `await asyncio.sleep(0)`
+    yields. `reconcile_loop` hands each pass to `asyncio.to_thread`, so a pass
+    needs a real threadpool round-trip, and a yield count is not a duration: on a
+    busy or slower machine the round-trips did not land inside the budget and the
+    test failed with nothing wrong. Give it real time and a generous ceiling.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if done():
+            return
+        await asyncio.sleep(0.005)
+
+
 def test_reconcile_loop_runs_reconcile_in_process(job_log, monkeypatch):
     """The whole point of item 4's second half: a caller that actually fires,
     with no cron and no dispatcher involved."""
@@ -94,10 +111,7 @@ def test_reconcile_loop_runs_reconcile_in_process(job_log, monkeypatch):
 
     async def drive():
         task = asyncio.create_task(jobs.reconcile_loop(interval_s=0))
-        for _ in range(50):
-            await asyncio.sleep(0)
-            if calls:
-                break
+        await _wait_for(lambda: len(calls) >= 1)
         task.cancel()
         try:
             await task
@@ -120,10 +134,7 @@ def test_reconcile_loop_survives_a_failing_pass(job_log, monkeypatch):
 
     async def drive():
         task = asyncio.create_task(jobs.reconcile_loop(interval_s=0))
-        for _ in range(200):
-            await asyncio.sleep(0)
-            if len(calls) >= 2:
-                break
+        await _wait_for(lambda: len(calls) >= 2)
         task.cancel()
         try:
             await task
