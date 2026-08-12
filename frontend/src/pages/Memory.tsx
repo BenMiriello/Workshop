@@ -132,7 +132,12 @@ function freshNoteId(title: string): string {
 
 export default function Notes() {
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState<Tab>("notes");
+  // Honour ?tab=. The attachment viewer links here with ?tab=files, and without
+  // this the link landed on Notes and the operator had to find the tab again.
+  const urlTab = searchParams.get("tab");
+  const [tab, setTab] = useState<Tab>(
+    TABS.some((t) => t.value === urlTab) ? (urlTab as Tab) : "notes",
+  );
   const [data, setData] = useState<NotesResp | null>(null);
   const [scopes, setScopes] = useState<string[]>([]);
   const [err, setErr] = useState<string | null>(null);
@@ -772,6 +777,13 @@ function VaultNotes() {
 // kind, size, scope, when), and cards would spend a whole tile saying very
 // little. It is the same four list states and the same scope filter either way.
 function Files() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  // ?file=<id> arrives from the attachment viewer's "Open in Memory". It narrows
+  // the table to that one file rather than opening its viewer again: you just
+  // came from that viewer, so re-opening it would be a loop. Narrowing is also
+  // the only thing that reliably WORKS, since the row could otherwise be a
+  // hundred entries down a list you would then have to hunt through.
+  const wantFile = searchParams.get("file");
   const [data, setData] = useState<FilesResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -821,7 +833,8 @@ function Files() {
     }
   }, [refresh]);
 
-  const files = data?.files ?? [];
+  const all = data?.files ?? [];
+  const files = wantFile ? all.filter((f) => f.id === wantFile) : all;
   const overflow = files.length > OVERFLOW_AT;
   const shown = overflow ? files.slice(0, OVERFLOW_AT) : files;
   // Scope options come from the FILES, not the notes scope list: a scope with no
@@ -858,7 +871,15 @@ function Files() {
     </Row>
   );
 
-  const filtered = scope !== "all" || applied.trim() !== "";
+  const filtered = scope !== "all" || applied.trim() !== "" || !!wantFile;
+
+  // Drops ?file= and leaves every other param alone, so clearing the deep link
+  // does not also clear a scope the operator picked after landing.
+  const clearWanted = useCallback(() => {
+    const next = new URLSearchParams(searchParams);
+    next.delete("file");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   let body: JSX.Element;
   if (err) {
@@ -879,11 +900,16 @@ function Files() {
   } else if (files.length === 0) {
     body = filtered ? (
       <StateBlock
-        title="No files match"
-        hint="Clear the scope filter or the search to see everything attached."
+        title={wantFile ? "That file is no longer here" : "No files match"}
+        hint={wantFile
+          ? "It may have been deleted since the link was made."
+          : "Clear the scope filter or the search to see everything attached."}
         action={
-          <Button size="sm" onClick={() => { setScope("all"); setQuery(""); setApplied(""); }}>
-            Clear filters
+          <Button
+            size="sm"
+            onClick={() => { setScope("all"); setQuery(""); setApplied(""); clearWanted(); }}
+          >
+            {wantFile ? "Show all files" : "Clear filters"}
           </Button>
         }
       />
@@ -896,6 +922,14 @@ function Files() {
   } else {
     body = (
       <>
+        {wantFile && (
+          <Row style={{ gap: "var(--space-2)", alignItems: "center", marginBottom: "var(--space-3)" }}>
+            <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
+              Showing one file.
+            </span>
+            <Button size="sm" onClick={clearWanted}>Show all files</Button>
+          </Row>
+        )}
         <TableScroll>
           <Table>
             <thead>
@@ -968,6 +1002,7 @@ function Files() {
         <AttachmentViewer
           file={{ id: viewing.id, name: viewing.name, kind: viewing.kind }}
           onClose={() => setViewing(null)}
+          inMemory
         />
       )}
       {confirm && (

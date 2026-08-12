@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { FolderOpen } from "lucide-react";
 import { Button, Modal, StateBlock } from "@workshop/ui";
 import { chatApi } from "../../lib/chat";
 
@@ -28,10 +30,14 @@ export type ViewableAttachment = {
 };
 
 export default function AttachmentViewer({
-  file, onClose,
+  file, onClose, inMemory,
 }: {
   file: ViewableAttachment;
   onClose: () => void;
+  /** Set when the viewer was opened FROM the Memory page, which suppresses the
+   *  "Open in Memory" link. A control that navigates you to where you already
+   *  are is noise. */
+  inMemory?: boolean;
 }) {
   const url = chatApi.attachmentUrl(file.id);
   const [failed, setFailed] = useState(false);
@@ -80,13 +86,30 @@ export default function AttachmentViewer({
   // key and the scrim can be a thin margin around a large image. A visible
   // button is the one exit that is always there, which is the whole point of
   // this change.
+  // A ROUTER LINK, not an anchor with a target. Getting to Memory is in-app
+  // navigation like every other link in the shell, so the back affordance the
+  // app already has still works. It carries the file id so Memory opens on the
+  // Files tab showing THIS file rather than the whole list.
   return (
     <Modal
       open
       onClose={onClose}
       title={file.name}
       size="lg"
-      actions={<Button onClick={onClose} data-autofocus>Close</Button>}
+      actions={
+        <>
+          {!inMemory && (
+            <Link
+              className="ws-btn ws-btn--ghost ws-btn--sm"
+              to={`/memory?tab=files&file=${encodeURIComponent(file.id)}`}
+              onClick={onClose}
+            >
+              <FolderOpen size={16} aria-hidden /> Open in Memory
+            </Link>
+          )}
+          <Button onClick={onClose} data-autofocus>Close</Button>
+        </>
+      }
     >
       <div className="chat-att-view">{body}</div>
     </Modal>
