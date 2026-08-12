@@ -96,7 +96,18 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
   const parts = cutReply(segments, interrupts);
   const out: TranscriptBlock[] = [];
   let emitted = 0;
-  const lastPart = parts.length - 1;
+  // HOW THE TURN ENDED GOES ON THE LAST BLOCK THAT EXISTS, not on the last
+  // SLICE. An empty slice emits no block, so keying the ending to `parts.length
+  // - 1` dropped it entirely whenever the final slice was empty — and that is
+  // the common shape, not an edge case: a message sent and then Stop pressed, a
+  // message that lands after the turn's last output, or (now that a delegation
+  // is atomic) any message landing inside the final subagent, which snaps the
+  // cut to the very end. The turn's error, stopped and timeout tags, its
+  // receipts, its status note and its duration all live in that metadata, so an
+  // errored reply rendered as an ordinary one and "Stopped by operator" never
+  // appeared.
+  let lastPart = -1;
+  for (let i = 0; i < parts.length; i++) if (parts[i].length) lastPart = i;
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
     if (part.length) {
@@ -105,6 +116,13 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
       // run, not the end of every stretch of work inside it.
       const tail = i === lastPart;
       const meta = { ...msg.meta, segments: part };
+      // NO TOTAL ON A SPLIT REPLY. A duration is a property of the whole turn
+      // and every block here carries the same `started_at`, so pairing it with
+      // a summary counting only THIS block's steps printed things like
+      // "2 steps · 3h 41m". The pair is computed only when both ends are known,
+      // so dropping the start suppresses it. Everything below this line is the
+      // split path: an uninterrupted reply returned above.
+      delete meta.started_at;
       if (!tail) {
         delete meta.notes;
         // Same reason as `notes`, which this replaced: a receipt is what the

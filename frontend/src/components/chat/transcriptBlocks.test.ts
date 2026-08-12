@@ -156,6 +156,37 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     expect((blocks[1] as { msg: { meta?: { receipts?: R } } }).msg.meta?.receipts).toEqual(receipts);
   });
 
+  it("keeps how the turn ended when the LAST slice is empty", () => {
+    // A message sent and then Stop pressed: the cut is at the very end, so the
+    // final slice holds nothing and emits no block. Keying the ending to the
+    // last SLICE dropped it, so "Stopped by operator" never rendered and an
+    // errored reply rendered as an ordinary one.
+    const s = stateOf([
+      user("stop", { during_run: "r1", at_unit: 2 }),
+      reply("", { turn_id: "r1", segments: [text("a"), text("b")], stopped: true, error: "boom" }),
+    ]);
+    const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
+    expect(blocks).toHaveLength(1);
+    const meta = (blocks[0] as { msg: { meta?: { stopped?: boolean; error?: string } } }).msg.meta;
+    expect(meta?.stopped).toBe(true);
+    expect(meta?.error).toBe("boom");
+  });
+
+  it("shows no turn total on a split reply", () => {
+    // Every block carries the same started_at while only the last carries
+    // ended_at, so a total paired with a per-block step count read "2 steps ·
+    // 3h 41m". Both ends are needed to compute one, so the start is dropped.
+    const s = stateOf([
+      user("wait", { during_run: "r1", at_unit: 1 }),
+      reply("", { turn_id: "r1", segments: [text("a"), text("b")], started_at: 1000, ended_at: 2000 }),
+    ]);
+    const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
+    expect(blocks).toHaveLength(2);
+    for (const b of blocks) {
+      expect((b as { msg: { meta?: { started_at?: number } } }).msg.meta?.started_at).toBeUndefined();
+    }
+  });
+
   it("leaves a message filed against an ALREADY finished run where the log put it", () => {
     // The take-over case: the run refused delivery, so the message is below the
     // reply in the log and that is where it belongs.

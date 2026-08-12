@@ -183,7 +183,18 @@ export function useTurnStream({
       const p = parse(e);
       cb.current.dispatch({
         type: "runDelta", runId: turnId,
-        event: { kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string },
+        event: {
+          kind: "tool_result", tool_use_id: p.tool_use_id as string, text: p.text as string,
+          // WITHOUT THIS EVERY LIVE STEP READS AS SUCCEEDED. The server sends
+          // `is_error` and this listener used to drop it, so `ok: !is_error`
+          // was unconditionally true while the turn ran: a failed step merged
+          // into a collapsed group, never auto-opened, and carried no failure
+          // tag, then flipped to red the moment the turn committed and the
+          // server's own segments replaced these. The outcome only ever
+          // existed after the fact, which is the opposite of when it matters.
+          is_error: Boolean(p.is_error),
+          parent: (p.parent as string) || null,
+        },
       });
     });
     // The turn is blocked, asking. This is the one event the operator MUST see:

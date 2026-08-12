@@ -316,13 +316,19 @@ function StepRun({ items, cfg, nowMs, onAnswerPermission }: {
   const [open, setOpen] = useState(false);
   const id = useId();
   const { shown, hidden } = splitRun(items);
+  // KEY ON THE STEP, NOT ON ITS POSITION. `i` indexes the SHOWN window, and
+  // splitRun slides that window once a run passes RUN_ROW_CAP, so index k means
+  // a different item after every new step. A chip the operator had opened to
+  // read handed its open state to whatever slid into its slot. Tool and
+  // approval rows were already keyed by id; a group takes its first step's id
+  // (a group only ever grows at its tail) and a delegation has one of its own.
   const renderItem = (item: TurnItem, i: number) =>
     item.t === "group"
-      ? <GroupChip key={`g${i}`} item={item} nowMs={nowMs} />
+      ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs} />
       : item.seg.t === "tool"
         ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} />
         : item.seg.t === "agent"
-          ? <AgentChip key={`a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
+          ? <AgentChip key={item.seg.id || `a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
           : item.seg.t === "approval"
             ? <ApprovalBlock key={item.seg.id || `p${i}`} seg={item.seg}
                              onAnswer={onAnswerPermission ?? (async () => {})} />
