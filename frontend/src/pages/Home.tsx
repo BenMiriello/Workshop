@@ -55,7 +55,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section style={{ marginBottom: "var(--space-7)" }}>
+    <section style={{ marginBottom: "var(--space-6)" }}>
       <Row between style={{ marginBottom: "var(--space-3)", alignItems: "baseline" }}>
         <SectionLabel icon={<Icon aria-hidden />}>{title}</SectionLabel>
         {viewAll && (

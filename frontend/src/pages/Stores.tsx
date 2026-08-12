@@ -79,7 +79,7 @@ export default function Stores() {
         }
       />
 
-      <Row wrap between style={{ marginBottom: "var(--space-3)", gap: "var(--space-2)" }}>
+      <Row wrap between style={{ marginBottom: "var(--space-4)", gap: "var(--space-2)" }}>
         <Row wrap style={{ gap: "var(--space-2)" }}>
           <Field label="Type">
             <Select value={type} onChange={(e) => setType(e.target.value)}>

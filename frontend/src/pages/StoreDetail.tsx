@@ -170,7 +170,7 @@ export default function StoreDetail() {
       />
 
       {banner && (
-        <div style={{ marginBottom: "var(--space-3)" }}>
+        <div style={{ marginBottom: "var(--space-4)" }}>
           <Card>
             <Row style={{ alignItems: "center", gap: "var(--space-2)" }}>
               <span style={{ flex: 1 }}>{banner}</span>

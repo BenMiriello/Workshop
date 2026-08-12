@@ -684,7 +684,12 @@ function ExistingAgent({ agentId }: { agentId: string }) {
     );
   }
   if (!agent) {
-    return <div><PageHeader title="Agent" sub="Loading…" /></div>;
+    return (
+      <div>
+        <PageHeader title="Agent" sub="Loading…" />
+        <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="40%" /></Stack></Card>
+      </div>
+    );
   }
 
   const isBuilder = agent.runtime === "builder";

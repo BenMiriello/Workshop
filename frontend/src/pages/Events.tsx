@@ -9,6 +9,8 @@ import {
   Row,
   SectionLabel,
   Select,
+  Skeleton,
+  Stack,
   StateBlock,
   StatusDot,
   Table,
@@ -98,6 +100,7 @@ export default function Events() {
     return (
       <div>
         <PageHeader title="Events" sub="Loading…" actions={refreshBtn} />
+        <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="45%" /></Stack></Card>
       </div>
     );
   }

@@ -181,7 +181,7 @@ export default function Deploys() {
         </div>
       )}
 
-      <Row wrap between style={{ marginBottom: "var(--space-3)" }}>
+      <Row wrap between style={{ marginBottom: "var(--space-4)" }}>
         <Row wrap style={{ gap: "var(--space-2)" }}>
           {chips.map((c) => (
             <button

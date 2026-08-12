@@ -306,7 +306,12 @@ export default function Agents() {
     );
   }
   if (!agents) {
-    return <div><PageHeader title="Agents" sub="Loading…" /></div>;
+    return (
+      <div>
+        <PageHeader title="Agents" sub="Loading…" />
+        <Stack><Skeleton /><Skeleton /><Skeleton /></Stack>
+      </div>
+    );
   }
 
   const total = agents.length;

@@ -8,6 +8,8 @@ import {
   PageHeader,
   Row,
   SectionLabel,
+  Skeleton,
+  Stack,
   StateBlock,
   StatusDot,
   StatusPill,
@@ -167,6 +169,7 @@ export default function Services() {
     return (
       <div>
         <PageHeader title="Services" sub="Probing…" actions={refreshBtn} />
+        <Card><Stack gap="sm"><Skeleton width="60%" /><Skeleton width="45%" /></Stack></Card>
       </div>
     );
   }
