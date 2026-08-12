@@ -35,12 +35,49 @@ TOOL_DESC = (
 )
 TOOL_SCHEMA = {
     "type": "object",
+    "properties": {},
+    "additionalProperties": False,
+}
+
+# The `topic` parameter is gone rather than implemented. It was declared, was
+# accepted, and was then discarded: `_build_digest()` takes no arguments and
+# never read it. A tool that advertises a filter it ignores is worse than one
+# that advertises nothing, because the model spends a turn phrasing a query and
+# reasons over an answer it believes was narrowed. Searching is now a real tool,
+# below, and `query` is honestly what it always was: a fixed digest.
+
+SEARCH_TOOL_NAME = "search"
+SEARCH_TOOL_DESC = (
+    "Search the workshop's own writing by meaning: knowledge notes, everything "
+    "under docs/, and the full text of past chats. Returns ranked passages with "
+    "the text itself and where it came from, so you can read what you find. Use "
+    "it for 'have we decided X before', 'why is Y built this way', 'what did we "
+    "say about Z', and before designing anything that may already exist. "
+    "Returns nothing when nothing is genuinely relevant, which means an empty "
+    "result is an answer: there is no prior art in the workshop for that."
+)
+SEARCH_TOOL_SCHEMA = {
+    "type": "object",
     "properties": {
-        "topic": {
+        "query": {
             "type": "string",
-            "description": "Optional free-text focus; currently informational only.",
-        }
+            "description": "What you want to know, phrased as a question or a topic.",
+        },
+        "kinds": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["note", "doc", "chat", "vault"]},
+            "description": (
+                "Restrict to some sources. Default: note, doc and chat. "
+                "'vault' is the operator's personal Obsidian notes and is only "
+                "searched when you ask for it by name."
+            ),
+        },
+        "limit": {
+            "type": "integer",
+            "description": "How many passages to return. Default 6, max 20.",
+        },
     },
+    "required": ["query"],
     "additionalProperties": False,
 }
 
@@ -82,6 +119,46 @@ def _build_digest() -> str:
     return "\n\n".join(parts) if parts else "No open tasks, jobs, or notes in scope."
 
 
+def _run_search(args: dict) -> str:
+    """Ranked passages, rendered for a model to read.
+
+    Each hit leads with its source so the model can cite it or go read the whole
+    thing, and carries the passage itself. Returning a title alone was the old
+    tool's defect and is the one thing this must not repeat."""
+    _pin_owner()
+    from services import semantic_index
+
+    query = (args.get("query") or "").strip()
+    if not query:
+        return "error: a query is required"
+    kinds = args.get("kinds") or list(semantic_index.DEFAULT_KINDS)
+    limit = max(1, min(int(args.get("limit") or 6), 20))
+
+    hits = semantic_index.search(query, limit=limit, kinds=tuple(kinds))
+    if not hits:
+        st = semantic_index.status()
+        if not st["chunks"]:
+            why = st["embedder_error"] or "it has not been built yet"
+            return f"The search index is empty: {why}."
+        # An empty result is a real answer, and saying so plainly stops the model
+        # from reading it as a malfunction and retrying the same query.
+        return (f"No passages in the workshop are relevant to that "
+                f"({st['chunks']} indexed). Nothing has been written about it.")
+
+    out = [f"{len(hits)} passage(s) for: {query}", ""]
+    for h in hits:
+        where = h["ref"]
+        if h["kind"] == "chat":
+            where = f"chat {h['ref']}"
+        stamp = (h["ts"] or "")[:10]
+        scope = f" · scope {h['scope']}" if h.get("scope") else ""
+        out.append(f"--- [{h['score']:.2f}] {h['kind']}: {h['title']} ({where}{scope}"
+                   + (f" · {stamp}" if stamp else "") + ")")
+        out.append(h["text"])
+        out.append("")
+    return "\n".join(out)
+
+
 def _handle(msg: dict) -> dict | None:
     """Return a JSON-RPC response dict, or None for a notification (no reply)."""
     method = msg.get("method")
@@ -103,19 +180,22 @@ def _handle(msg: dict) -> dict | None:
     if method == "tools/list":
         return {
             "jsonrpc": "2.0", "id": mid,
-            "result": {"tools": [{
-                "name": TOOL_NAME,
-                "description": TOOL_DESC,
-                "inputSchema": TOOL_SCHEMA,
-            }]},
+            "result": {"tools": [
+                {"name": TOOL_NAME, "description": TOOL_DESC,
+                 "inputSchema": TOOL_SCHEMA},
+                {"name": SEARCH_TOOL_NAME, "description": SEARCH_TOOL_DESC,
+                 "inputSchema": SEARCH_TOOL_SCHEMA},
+            ]},
         }
     if method == "tools/call":
-        name = (msg.get("params") or {}).get("name")
-        if name != TOOL_NAME:
+        params = msg.get("params") or {}
+        name = params.get("name")
+        if name not in (TOOL_NAME, SEARCH_TOOL_NAME):
             return {"jsonrpc": "2.0", "id": mid,
                     "error": {"code": -32602, "message": f"unknown tool: {name}"}}
         try:
-            text = _build_digest()
+            text = (_run_search(params.get("arguments") or {})
+                    if name == SEARCH_TOOL_NAME else _build_digest())
         except Exception as e:  # noqa: BLE001
             return {"jsonrpc": "2.0", "id": mid,
                     "result": {"content": [{"type": "text", "text": f"error: {e}"}],
