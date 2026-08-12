@@ -57,11 +57,75 @@ export function isRunning(seg: ChatSegment): boolean {
   return seg.t === "tool" && typeof seg.at === "number" && seg.ok === undefined;
 }
 
-/** Did it fail? `ok` is only absent on a step recorded before outcomes existed
- *  and on one whose turn ended before its result arrived. Neither is a failure,
- *  and treating them as one would paint the whole history red. */
-export function isFailed(seg: ChatSegment): boolean {
+/** THE RAW TRANSPORT FACT, and not by itself a reason to mark anything.
+ *
+ *  `ok` is `not is_error` from the API's tool_result, set in
+ *  build_streaming.py `_close_tool`. It says the tool call came back on the
+ *  error channel. It does NOT say anything went wrong, which is why nothing in
+ *  the UI marks on it any more. See `stepAlert`. */
+export function hadErrorResult(seg: ChatSegment): boolean {
   return seg.t === "tool" && seg.ok === false;
+}
+
+// WHAT COUNTS AS A FAILURE WORTH TELLING THE OPERATOR ABOUT.
+//
+// It used to be `ok === false`, straight from the API's is_error flag. That
+// flag is a transport fact and marking on it was wrong. Measured over the
+// operator's real logs, of the 41 steps it flagged:
+//
+//   90.2%  the command RAN and exited nonzero
+//    4.9%  <tool_use_error>: the tool could not do its job (Edit found no match)
+//    4.9%  DENIED: "Bash is disabled for this session"
+//    0.0%  terminal: the turn stopped on it
+//
+// and 100% were followed by more work. A mark whose whole population was
+// recovered from has never once been actionable. The 90% is not even failure:
+// `git status` exits 1 to say there are changes, grep exits 1 to say no match.
+// Bash succeeded at being Bash in every one of those.
+//
+// So the mark now means: THE TURN COULD NOT DO THE THING AND YOU ARE THE ONE
+// WHO CAN DO SOMETHING ABOUT IT. Two cases qualify, and nothing else does.
+// Everything else keeps its output (opening the step still shows the error
+// text) and simply stops claiming something went wrong.
+
+/** A step the harness REFUSED, as opposed to one that ran and returned badly.
+ *
+ *  Matched against the harness's own refusal shapes only, never against
+ *  arbitrary program output: a tool that is disabled, a permission not granted,
+ *  an operator rejection. This is the only category where the operator is the
+ *  remedy. Anything unrecognised is not a denial, which is the safe way round:
+ *  a missed denial costs a mark, an over-eager one puts us back where we were.
+ *
+ *  The AI SDK draws the same line, with `output-denied` as a state distinct
+ *  from `output-error`. */
+const DENIED =
+  /no such tool available|is disabled|permission denied|not permitted|requires approval|user (?:rejected|doesn't want|refused)|operation not permitted|blocked by/i;
+
+export type StepAlert = "blocked" | "stopped";
+
+/** The id of the step a turn STOPPED on, if it stopped on one.
+ *
+ *  Positional and free: the last thing in a turn's work, when that thing came
+ *  back on the error channel. Nothing followed it, so the turn either died
+ *  there or gave up and went straight to explaining itself. Both are worth
+ *  saying. Currently zero occurrences in the operator's whole history, which is
+ *  the point: this should be rare, and loud when it happens.
+ *
+ *  Undefined for a step with no id (every turn stored before ids existed), so
+ *  legacy history shows no mark rather than a guessed one. */
+export function stoppedStepId(work: ChatSegment[]): string | undefined {
+  const last = work[work.length - 1];
+  if (!last || last.t !== "tool" || last.ok !== false) return undefined;
+  return last.id;
+}
+
+/** Does this step deserve a mark, and which one. `stoppedId` comes from
+ *  `stoppedStepId` over the same turn's work. */
+export function stepAlert(seg: ChatSegment, stoppedId?: string): StepAlert | null {
+  if (seg.t !== "tool" || seg.ok !== false) return null;
+  if (DENIED.test(seg.error || "")) return "blocked";
+  if (stoppedId && seg.id && seg.id === stoppedId) return "stopped";
+  return null;
 }
 
 export type TurnItem =
@@ -117,16 +181,23 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
   return blocks;
 }
 
-/** The collapsed label for a group: how many steps, and how many went wrong.
+/** The collapsed label for a group: how many steps, and anything blocked.
  *
  *  A COUNT, NEVER A DESCRIPTION. See the header note: a paraphrase is the one
  *  thing a collapsed group must not do, because it can be wrong about what it
- *  hid. Failures are named because they are the usual reason to open it. */
-export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
+ *  hid. It used to append "N failed" off the raw is_error flag, which on this
+ *  history would have shouted about 37 nonzero exit codes and 2 real denials in
+ *  the same voice. */
+export function groupSummary(
+  item: Extract<TurnItem, { t: "group" }>, stoppedId?: string,
+): string {
   const n = item.steps.length;
-  const failed = item.steps.filter(isFailed).length;
-  const base = `${n} step${n === 1 ? "" : "s"}`;
-  return failed ? `${base}, ${failed} failed` : base;
+  const alerts = item.steps.map((s) => stepAlert(s, stoppedId));
+  const blocked = alerts.filter((a) => a === "blocked").length;
+  const parts = [`${n} step${n === 1 ? "" : "s"}`];
+  if (blocked) parts.push(`${blocked} blocked`);
+  if (alerts.some((a) => a === "stopped")) parts.push("stopped here");
+  return parts.join(", ");
 }
 
 /** The distinct tool names in a group, in the order they first appear.
@@ -156,8 +227,10 @@ export function groupIsRunning(item: Extract<TurnItem, { t: "group" }>): boolean
  *  thread: today an old turn shows exactly one line for all of its work, and
  *  that is the right amount for something the reader has already read. */
 export function turnWorkSummary(work: ChatSegment[]): string {
+  const stoppedId = stoppedStepId(work);
   let steps = 0;
-  let failed = 0;
+  let blocked = 0;
+  let stopped = false;
   let agents = 0;
   let asked = 0;
   for (const s of work) {
@@ -168,7 +241,9 @@ export function turnWorkSummary(work: ChatSegment[]): string {
     if (s.t === "approval") { asked++; steps++; continue; }
     if (s.t !== "tool") continue;
     steps++;
-    if (isFailed(s)) failed++;
+    const alert = stepAlert(s, stoppedId);
+    if (alert === "blocked") blocked++;
+    else if (alert === "stopped") stopped = true;
   }
   // "" only when there is genuinely nothing to count. A turn's work never
   // consists of prose alone (the trailing text run is split off as the answer
@@ -178,9 +253,10 @@ export function turnWorkSummary(work: ChatSegment[]): string {
   const parts = [`${steps} step${steps === 1 ? "" : "s"}`];
   if (agents) parts.push(`${agents} agent${agents === 1 ? "" : "s"}`);
   if (asked) parts.push(`${asked} approval${asked === 1 ? "" : "s"}`);
-  // Failures are named in the collapsed line, because the whole reason to open
-  // a settled turn is usually that something in it went wrong.
-  if (failed) parts.push(`${failed} failed`);
+  // Named in the collapsed line, because a turn that hit one of these is the
+  // turn worth opening. A nonzero exit code is not one of them.
+  if (blocked) parts.push(`${blocked} blocked`);
+  if (stopped) parts.push("stopped here");
   return parts.join(" · ");
 }
 

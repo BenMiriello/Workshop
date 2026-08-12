@@ -5,8 +5,9 @@ import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
 import { agentBrief, agentChipLine, agentSummary } from "./segments";
 import {
-  buildTurnBlocks, groupIsRunning, groupSummary, groupTools, isFailed, isRunning,
-  runningSeconds, stepDuration, turnDuration, turnWorkSummary, type TurnItem,
+  buildTurnBlocks, groupIsRunning, groupSummary, groupTools, hadErrorResult, isRunning,
+  runningSeconds, stepAlert, stepDuration, stoppedStepId, turnDuration, turnWorkSummary,
+  type TurnItem,
 } from "./grouping";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
@@ -30,28 +31,37 @@ import { modelDisplay, type ModelDisplay } from "./models";
 // grouped. The only framed thing in the transcript is a delegation. See
 // GroupChip for why.
 //
-// A FAILURE IS MARKED, NOT EXPANDED. Operator instruction, 2026-08-12.
-// This used to auto-open a failed step to show its error, which is the rule
-// GitHub Actions and VS Code both follow. In this transcript it is wrong: a
-// turn here routinely carries several failures that the assistant handled and
-// moved past, and each one unrolling its output mid-scroll is a page of noise
-// about something already dealt with. The mark is enough, and the group holding
-// it counts its failures in its own header so one is never hidden by being
-// folded away. Opening it is the reader's call.
+// A MARK MEANS YOU HAVE TO DO SOMETHING, so most error results carry none.
+// Operator, 2026-08-12: the old mark fired on the API's is_error flag, which on
+// his real history was 90% nonzero exit codes (`git status` exiting 1 to say
+// there are changes) and 100% recovered from. Only two things are marked now,
+// `blocked` and `stopped here`; see grouping.ts `stepAlert` for the rule and
+// the numbers. Everything else keeps its error text, visible on opening the
+// row, and says nothing in the collapsed line.
+//
+// AND IT IS MARKED, NOT EXPANDED. This used to auto-open, which is the rule
+// GitHub Actions and VS Code both follow. Wrong here: a turn routinely carries
+// several results the assistant handled and moved past, and each one unrolling
+// mid-scroll is a page of noise about something already dealt with.
 //
 // A step still running says how long it has been going, but only past the 10s
 // attention limit, so a fast call never flickers a counter. See grouping.ts.
-function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; nowMs: number }) {
-  const failed = isFailed(seg);
+function ToolChip({ seg, nowMs, stoppedId }: {
+  seg: Extract<ChatSegment, { t: "tool" }>; nowMs: number; stoppedId?: string;
+}) {
+  const alert = stepAlert(seg, stoppedId);
   const running = isRunning(seg);
   const [open, setOpen] = useState(false);
   const panelId = useId();
-  const detail = failed && seg.error ? seg.error : seg.input;
+  // The error text is still the useful thing to show on opening, marked or not:
+  // a step is opened to find out what came back, and on an error result that IS
+  // what came back.
+  const detail = hadErrorResult(seg) && seg.error ? seg.error : seg.input;
   const hasDetail = !!detail;
   const secs = runningSeconds(seg, nowMs);
   const took = stepDuration(seg);
   return (
-    <div className={`chat-tool${open ? " is-open" : ""}${failed ? " is-failed" : ""}${running ? " is-running" : ""}`}>
+    <div className={`chat-tool${open ? " is-open" : ""}${alert ? ` is-${alert}` : ""}${running ? " is-running" : ""}`}>
       <button
         type="button"
         className="chat-tool__head"
@@ -70,7 +80,11 @@ function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; no
             stuck. */}
         {secs > 0 && <span className="chat-tool__time">{secs}s</span>}
         {!running && !!took && <span className="chat-tool__time">{took}</span>}
-        {failed && <span className="chat-tool__failed">failed</span>}
+        {alert && (
+          <span className="chat-tool__alert">
+            {alert === "blocked" ? "blocked" : "stopped here"}
+          </span>
+        )}
       </button>
       {open && hasDetail && <pre id={panelId} className="chat-tool__detail ws-mono">{detail}</pre>}
     </div>
@@ -97,8 +111,9 @@ function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; no
 //
 // It opens itself while a step inside it is running (assistant-ui's auto-expand
 // during streaming), and when the reader has opened the settled turn it sits in.
-function GroupChip({ item, nowMs, defaultOpen }: {
+function GroupChip({ item, nowMs, defaultOpen, stoppedId }: {
   item: Extract<TurnItem, { t: "group" }>; nowMs: number; defaultOpen?: boolean;
+  stoppedId?: string;
 }) {
   const live = groupIsRunning(item);
   const [open, setOpen] = useState(!!defaultOpen || live);
@@ -117,11 +132,13 @@ function GroupChip({ item, nowMs, defaultOpen }: {
       >
         <ChevronRight size={13} aria-hidden className="chat-group__chev" />
         <Wrench size={12} aria-hidden className="chat-group__icon" />
-        <span className="chat-group__name">{groupSummary(item)}</span>
+        <span className="chat-group__name">{groupSummary(item, stoppedId)}</span>
         <span className="chat-group__preview">{groupTools(item)}</span>
       </button>
       <div id={id} className="chat-group__body" hidden={!open}>
-        {open && item.steps.map((s, i) => <ToolChip key={s.id || i} seg={s} nowMs={nowMs} />)}
+        {open && item.steps.map((s, i) => (
+          <ToolChip key={s.id || i} seg={s} nowMs={nowMs} stoppedId={stoppedId} />
+        ))}
       </div>
     </div>
   );
@@ -347,8 +364,9 @@ export type AnswerPermission = (a: {
 // approvals in it, and those are the things the reader wants to see. A second
 // truncation on top of the grouping would hide work for no gain and bring back
 // the pinning rules to stop it hiding the wrong work.
-function StepRun({ items, cfg, nowMs, openGroups, onAnswerPermission }: {
+function StepRun({ items, cfg, nowMs, openGroups, stoppedId, onAnswerPermission }: {
   items: TurnItem[]; cfg: ModelDisplay; nowMs: number; openGroups?: boolean;
+  stoppedId?: string;
   onAnswerPermission?: AnswerPermission;
 }) {
   // KEY ON THE STEP, NOT ON ITS POSITION. A live run grows, so index k means a
@@ -358,9 +376,10 @@ function StepRun({ items, cfg, nowMs, openGroups, onAnswerPermission }: {
   // at its tail) and a delegation has one of its own.
   const renderItem = (item: TurnItem, i: number) =>
     item.t === "group"
-      ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs} defaultOpen={openGroups} />
+      ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs}
+                   defaultOpen={openGroups} stoppedId={stoppedId} />
       : item.seg.t === "tool"
-        ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} />
+        ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} stoppedId={stoppedId} />
         : item.seg.t === "agent"
           ? <AgentChip key={item.seg.id || `a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
           : item.seg.t === "approval"
@@ -440,6 +459,10 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, onAnswerPermission }
   openGroups?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
+  // Computed ONCE per turn, here, because "the turn stopped on this step" is a
+  // fact about the whole work stream and not about any single step. Passing the
+  // id down beats handing every row the entire turn.
+  const stoppedId = stoppedStepId(work);
   return (
     <>
       {buildTurnBlocks(work).map((b, i) =>
@@ -450,7 +473,7 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, onAnswerPermission }
           // must not be a live control, and card outcomes persist server-side.
           ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
           : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs} openGroups={openGroups}
-                     onAnswerPermission={onAnswerPermission} />)}
+                     stoppedId={stoppedId} onAnswerPermission={onAnswerPermission} />)}
     </>
   );
 }

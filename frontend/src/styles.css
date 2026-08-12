@@ -864,11 +864,19 @@ input[type="range"].grad::-moz-range-thumb {
    not shift the row it sits on. */
 .chat-tool__time { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
 .chat-tool.is-running .chat-tool__time { color: var(--sys-up); }
-/* A failed step. Marked, never auto-opened. The mark is the whole treatment now
-   that the row has no frame to tint: colour and weight, not a border, which is
-   design system rule 6 anyway. */
-.chat-tool__failed { flex: 0 0 auto; color: var(--danger); font-weight: var(--fw-semi); }
-.chat-tool.is-failed .chat-tool__name { color: var(--danger); }
+/* A step that needs the operator, and ONLY that. Two kinds, both rare:
+   `blocked` (the harness refused the capability, so the operator is the remedy)
+   and `stopped` (the turn ended on it). An ordinary error result gets no mark
+   at all; see grouping.ts `stepAlert` for why and for the numbers.
+
+   Warn for blocked: something needs attention, nothing is broken. Danger for
+   stopped: the turn did not finish what it was doing. Colour and weight, not a
+   border, which is design system rule 6 and also all a bare row has. */
+.chat-tool__alert { flex: 0 0 auto; font-weight: var(--fw-semi); }
+.chat-tool.is-blocked .chat-tool__alert,
+.chat-tool.is-blocked .chat-tool__name { color: var(--warn); }
+.chat-tool.is-stopped .chat-tool__alert,
+.chat-tool.is-stopped .chat-tool__name { color: var(--danger); }
 
 /* ---- Receipts: what the turn changed outside the chat ----
    One row per turn, outside every fold. Quiet by default: a receipt records

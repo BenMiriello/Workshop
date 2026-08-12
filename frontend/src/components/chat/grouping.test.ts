@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { ChatSegment } from "../../lib/chat";
 import {
   buildTurnBlocks, groupSummary, groupTools, groupIsRunning, turnWorkSummary,
-  isRunning, isFailed, stepDuration, runningSeconds, turnDuration,
-  type TurnItem, type TurnBlock,
+  isRunning, hadErrorResult, stepAlert, stoppedStepId, stepDuration,
+  runningSeconds, turnDuration, type TurnItem, type TurnBlock,
 } from "./grouping";
 
 const read = (path: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> = {}): ChatSegment =>
@@ -104,13 +104,17 @@ describe("the group header is a count, never a description", () => {
     expect(groupSummary(g as never)).toBe("2 steps");
   });
 
-  it("names failures, because that is the reason to open it", () => {
+  it("says nothing about error results the turn recovered from", () => {
+    // This used to read "3 steps, 2 failed" off the raw is_error flag. Both of
+    // these were followed by more work, so neither is news. See "what deserves
+    // a mark" below for the two things that are.
     const g = items(buildTurnBlocks([
       read("a"),
       { t: "tool", name: "Bash", input: "make", ok: false },
       { t: "tool", name: "Bash", input: "make", ok: false },
+      read("b"),
     ]))[0];
-    expect(groupSummary(g as never)).toBe("3 steps, 2 failed");
+    expect(groupSummary(g as never)).toBe("4 steps");
   });
 
   it("NEVER paraphrases what a step did, not even a destructive one", () => {
@@ -159,11 +163,96 @@ describe("state predicates", () => {
     expect(isRunning({ t: "tool", name: "Bash", input: "x" })).toBe(false);
   });
 
-  it("an unknown outcome is not a failure", () => {
+  it("an unknown outcome is not an error result", () => {
     // A turn that ended before its result arrived leaves ok unset. Reading that
     // as failure would paint every step of an interrupted turn red.
-    expect(isFailed({ t: "tool", name: "Bash", input: "x" })).toBe(false);
-    expect(isFailed({ t: "tool", name: "Bash", input: "x", ok: false })).toBe(true);
+    expect(hadErrorResult({ t: "tool", name: "Bash", input: "x" })).toBe(false);
+    expect(hadErrorResult({ t: "tool", name: "Bash", input: "x", ok: false })).toBe(true);
+  });
+});
+
+describe("what deserves a mark", () => {
+  const err = (error: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> = {}): ChatSegment =>
+    ({ t: "tool", name: "Bash", input: "x", ok: false, error, ...extra });
+
+  it("marks NOTHING for the ordinary error results, which were 90% of them", () => {
+    // Verbatim from the operator's real logs. Every one of these was followed
+    // by more work. `git status` exits 1 to say there are changes; grep exits 1
+    // to say no match. Bash succeeded at being Bash in all of them.
+    for (const e of [
+      "Exit code 1 On branch main Your branch is ahead of 'origin/main' by 16 commits",
+      "Exit code 1 /bin/bash: line 12: cd: backend: No such file or directory",
+      "Exit code 2 sed: can't read backend/routes/notes_all.py: No such file or directory",
+      "Exit code 144 SYNTAX OK",
+      "<tool_use_error>String to replace not found in file.</tool_use_error>",
+    ]) {
+      expect(stepAlert(err(e)), e).toBeNull();
+    }
+  });
+
+  it("marks a capability the harness REFUSED, because only the operator can fix it", () => {
+    expect(stepAlert(err(
+      "<tool_use_error>Error: No such tool available: Bash. Bash is disabled for this session.</tool_use_error>",
+    ))).toBe("blocked");
+    expect(stepAlert(err("permission denied"))).toBe("blocked");
+    expect(stepAlert(err("The user rejected this tool call"))).toBe("blocked");
+  });
+
+  it("marks the step a turn STOPPED on", () => {
+    const last = err("Exit code 1 something", { id: "s9" });
+    const work: ChatSegment[] = [read("a"), last];
+    expect(stoppedStepId(work)).toBe("s9");
+    expect(stepAlert(last, stoppedStepId(work))).toBe("stopped");
+  });
+
+  it("does not call it stopped when the turn carried on working", () => {
+    const mid = err("Exit code 1 something", { id: "s9" });
+    const work: ChatSegment[] = [mid, read("b")];
+    expect(stoppedStepId(work)).toBeUndefined();
+    expect(stepAlert(mid, stoppedStepId(work))).toBeNull();
+  });
+
+  it("never marks a step that succeeded, whatever its output said", () => {
+    expect(stepAlert({ t: "tool", name: "Bash", input: "x", ok: true, error: "permission denied" }))
+      .toBeNull();
+  });
+
+  it("marks nothing on legacy history rather than guessing", () => {
+    // Segments predating both the outcome fields and step ids. An absent mark
+    // is honest; an inferred one is not.
+    expect(stepAlert({ t: "tool", name: "Bash", input: "x" })).toBeNull();
+    expect(stoppedStepId([{ t: "tool", name: "Bash", input: "x", ok: false }])).toBeUndefined();
+  });
+});
+
+describe("marks in the collapsed lines", () => {
+  const denied = (id: string): ChatSegment =>
+    ({ t: "tool", name: "Bash", input: "x", ok: false, id, error: "Bash is disabled for this session" });
+
+  it("a group counts what is blocked and stays quiet about the rest", () => {
+    const g = items(buildTurnBlocks([
+      read("a"),
+      { t: "tool", name: "Bash", input: "git status", ok: false, error: "Exit code 1 changes" },
+      denied("d1"),
+    ]))[0] as Extract<TurnItem, { t: "group" }>;
+    expect(groupSummary(g)).toBe("3 steps, 1 blocked");
+  });
+
+  it("a group says so when the turn stopped inside it", () => {
+    const work: ChatSegment[] = [read("a"), { t: "tool", name: "Bash", input: "x", ok: false, id: "s9" }];
+    const g = items(buildTurnBlocks(work))[0] as Extract<TurnItem, { t: "group" }>;
+    expect(groupSummary(g, stoppedStepId(work))).toBe("2 steps, stopped here");
+  });
+
+  it("the turn line no longer shouts about a nonzero exit code", () => {
+    // This exact shape used to read "2 steps · 1 failed".
+    expect(turnWorkSummary([
+      read("a"), { t: "tool", name: "Bash", input: "make", ok: false, error: "Exit code 2" },
+    ])).toBe("2 steps");
+  });
+
+  it("the turn line names a denial", () => {
+    expect(turnWorkSummary([read("a"), denied("d1")])).toBe("2 steps · 1 blocked");
   });
 });
 
@@ -196,9 +285,15 @@ describe("turnWorkSummary", () => {
     expect(turnWorkSummary([read("a"), read("b"), edit("x.ts"), bash("make")])).toBe("4 steps");
   });
 
-  it("names failures, because that is why a settled turn gets opened", () => {
-    expect(turnWorkSummary([read("a"), { t: "tool", name: "Bash", input: "make", ok: false }]))
-      .toBe("2 steps · 1 failed");
+  it("names the step a settled turn stopped on", () => {
+    // The one failure shape worth putting on the line that summarises a whole
+    // turn: it ended there. A mid-turn error result adds nothing here.
+    expect(turnWorkSummary([
+      read("a"), { t: "tool", name: "Bash", input: "make", ok: false, id: "s2" },
+    ])).toBe("2 steps · stopped here");
+    expect(turnWorkSummary([
+      read("a"), { t: "tool", name: "Bash", input: "make", ok: false, id: "s2" }, read("b"),
+    ])).toBe("3 steps");
   });
 
   it("counts a subagent as a step and names it", () => {
