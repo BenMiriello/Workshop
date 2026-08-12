@@ -507,6 +507,18 @@ input[type="range"].grad::-moz-range-thumb {
   overflow-x: hidden;
   /* Keep a touch swipe inside the log; don't chain it to the page. */
   overscroll-behavior: contain;
+  /* EXPANDING SOMETHING PUSHES CONTENT DOWN, it does not slide the page up.
+     Browsers anchor a scroller to a node below whatever changed size and
+     silently adjust scrollTop to hold that node still. When you open a step
+     group, that means the log scrolls by the amount it grew, so the control you
+     just clicked walks up the screen and the block appears to expand upwards.
+     The operator described it as unclear which direction things open in.
+     Turning anchoring off makes the clicked row stay exactly where it is and
+     the new content appear below it, which is what a disclosure should do.
+     Nothing is lost: this log never relies on the heuristic, it restores
+     position explicitly (useLogScroll saves and re-applies a scroll position,
+     and follows the bottom only when the reader was already there). */
+  overflow-anchor: none;
   /* The transcript indents by the SAME amount as content on every other page.
      This was 0.8rem — close enough to look like a mistake rather than a choice,
      and the reason the chat never quite lined up with the rest of the app. */
@@ -689,29 +701,25 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--sys); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-more:hover { text-decoration: underline; }
-/* Length clamp: show the first N WHOLE rendered lines and end there. Uses
-   line-clamp, not a max-height cut: max-height lands on an arbitrary pixel and
-   slices through a line (worse on markdown, where paragraph margins mean N line
-   heights is not N lines of text), whereas line-clamp always ends on a line
-   box — never mid-line — and re-wraps for free when the column changes. The
-   bottom-row .chat-more appears only when the block was clamped, and the JS
-   only clamps when there are 2+ lines to hide (a single hidden line would just
-   be replaced by the Show more row). */
+/* Length clamp: show the first N WHOLE rendered lines and end there.
+   THE HEIGHT IS MEASURED, NOT COMPUTED. --clamp-h is the bottom of the Nth real
+   line box, found by walking the block's client rects (see clampCut.ts), so the
+   cut always lands between two boxes and never through one.
+
+   This replaced `-webkit-line-clamp` plus `max-height: calc(N * 1lh)`, which
+   was wrong twice over. The height cap assumed every line sits one line-height
+   below the last, which markdown breaks with paragraph margins, headings and
+   lists, so it sliced through a line and showed half a row of text. And
+   line-clamp counts only line boxes, so a reply whose overflow was a table or a
+   code block was not clamped at all. Measuring the real boxes fixes both, and
+   it treats a table row or an image as a box like any other.
+
+   No fallback height on purpose: if the measurement has not landed yet, show
+   everything rather than guess a cut. Not clamping is a missing feature for one
+   frame; guessing is the defect this rule exists to remove. */
 .chat-clamp.is-clamped {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: var(--clamp-lines, 10);
-  line-clamp: var(--clamp-lines, 10);
   overflow: hidden;
-  /* Line-clamp counts LINE BOXES, and a block child generates none, so a reply
-     containing a table, a code block or an image was not clamped at all: the
-     control appeared (JS measures scrollHeight, which was genuinely over), and
-     toggling it added and removed a class that changed nothing on screen. The
-     operator reported exactly that, on a markdown table. This height cap is the
-     floor under it, so every kind of content actually collapses. Prose still
-     ends on a whole line via line-clamp above; only block content falls through
-     to this, where a cut at N line heights is far better than no cut. */
-  max-height: calc(var(--clamp-lines, 10) * 1lh);
+  max-height: var(--clamp-h, none);
 }
 /* No cap once opened, or a long table would stay stuck at the clamp height with
    the control claiming it had expanded. */

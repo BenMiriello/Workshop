@@ -11,6 +11,7 @@ import {
 } from "./grouping";
 import { openInitial, onLive, onToggle } from "./disclosure";
 import { Reveal } from "./Reveal";
+import { lineBottoms, cutHeight, worthClamping } from "./clampCut";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -192,6 +193,8 @@ export function ElidedContent({
 }) {
   const [open, setOpen] = useState(!!expanded);
   const [overflowing, setOverflowing] = useState(false);
+  /** The measured height that ends on a whole line. Null means do not clamp. */
+  const [clampH, setClampH] = useState<number | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   // Programmatic, so it does not animate: this fires as a turn stops being the
   // latest one, which happens to every message in the log as history loads.
@@ -208,6 +211,8 @@ export function ElidedContent({
   // thing would jump. Then clear both, so nothing is capped afterwards and a
   // message that keeps streaming can never be clipped by a stale measurement.
   const [anim, setAnim] = useState(false);
+  const animRef = useRef(false);
+  animRef.current = anim;
   const [pending, setPending] = useState<boolean | null>(null);
   const toggle = () => {
     const el = ref.current;
@@ -232,24 +237,43 @@ export function ElidedContent({
     return () => { clearTimeout(t); el?.removeEventListener("transitionend", done); };
   }, [anim]);
 
-  // Does the content run PAST the clamp by enough to be worth clamping?
-  // Measured against the full content height (`scrollHeight`, which reports the
-  // whole block even while it is clamped), so it is correct whether the block is
-  // open or collapsed — the most recent turn opens expanded and still needs its
-  // Show less. Re-runs on content change and, via the observer, on any width
-  // change that re-wraps the text.
+  // WHERE THE CUT GOES, measured, never estimated.
   //
-  // The threshold is previewLines + 1, not previewLines: clamping a block that
-  // is only ONE line over hides one line and adds a Show more row in its place —
-  // no shorter, just different. So it only clamps once there are 2+ lines to
-  // hide. (Line-clamp itself, in CSS, always ends on a whole line box, so a
-  // clamped block never cuts mid-line.)
+  // This used to be `-webkit-line-clamp: N` with `max-height: calc(N * 1lh)`
+  // under it. N line heights is only N lines if every line sits on one
+  // line-height grid, and in markdown nothing does: paragraph margins, a
+  // heading at a different size, a list, a table all move the real lines off
+  // it, so the cap landed mid-line and half a row of text showed above the
+  // fold. Reported repeatedly, and it was always the same defect.
+  //
+  // A Range over the contents reports one rect per line box actually laid out,
+  // so the bottom of the Nth is exactly where the block should end, whatever
+  // produced those lines. Clipping still happens, but now it clips at a place
+  // where there is nothing to clip. See clampCut.ts.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     const measure = () => {
+      // NOT WHILE THE TOGGLE IS ANIMATING. The observer watches this element,
+      // whose height is what the animation changes, so it would fire every
+      // frame and run the range walk each time. The lines have not moved, only
+      // the cap over them, so there is nothing to re-measure.
+      if (animRef.current) return;
+      // Cheap gate next. The range walk is a full layout read and this runs on
+      // every token of a streaming reply; most blocks are nowhere near the fold.
       const lh = parseFloat(getComputedStyle(el).lineHeight) || 20;
-      setOverflowing(el.scrollHeight > lh * (cfg.previewLines + 1) + 2);
+      if (el.scrollHeight <= lh * (cfg.previewLines + 1) + 2) {
+        setOverflowing(false);
+        setClampH(null);
+        return;
+      }
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      // Rects describe LAYOUT, so they cover the whole block even while it is
+      // clipped: overflow hides paint, it does not shorten the content.
+      const bottoms = lineBottoms(Array.from(range.getClientRects()));
+      setOverflowing(worthClamping(bottoms.length, cfg.previewLines));
+      setClampH(cutHeight(bottoms, el.getBoundingClientRect().top, cfg.previewLines));
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -263,7 +287,7 @@ export function ElidedContent({
       <div
         ref={ref}
         className={`chat-clamp${clamped ? " is-clamped" : ""}${anim ? " is-animating" : ""}`}
-        style={{ "--clamp-lines": cfg.previewLines } as CSSProperties}
+        style={{ "--clamp-h": clampH === null ? undefined : `${clampH}px` } as CSSProperties}
       >
         {render(source)}
       </div>

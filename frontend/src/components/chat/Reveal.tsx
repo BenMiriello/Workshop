@@ -97,9 +97,18 @@ export function Reveal({ open, id, className, animate, children }: {
       className={`chat-reveal${shown ? " is-shown" : ""}${animate === false ? " is-instant" : ""}`}
       aria-hidden={!shown || undefined}
     >
-      <div className={`chat-reveal__inner${className ? ` ${className}` : ""}`}>
-        {mounted ? children : null}
-      </div>
+      {/* NOTHING AT ALL WHEN CLOSED, not an empty styled box. The inner carries
+          the rail (a left border) and its padding, and neither is clipped by
+          the element's own overflow, so a collapsed group left a stub of the
+          rail showing under the chevron. Operator, 2026-08-12: if it is closed
+          the line should not be there, and it should not be hidden, it should
+          not be rendered. The wrapper itself has no paint of its own, so an
+          empty one is genuinely invisible while still anchoring aria-controls. */}
+      {mounted ? (
+        <div className={`chat-reveal__inner${className ? ` ${className}` : ""}`}>
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
