@@ -50,6 +50,17 @@ describe("the operator's action is the last word", () => {
     expect(run(d, [false, true]).open).toBe(false);
   });
 
+  it("a whole turn replaying produces no operator-driven transitions", () => {
+    // `byUser` is also what decides whether the reveal ANIMATES. Re-attaching
+    // to a turn in flight replays it from offset 0, so every group in it opens
+    // and closes for real in a few hundred milliseconds; animating those fired
+    // dozens of animations at once when the chat was opened. Nothing in a
+    // replay is the operator, so nothing in a replay animates. If this ever
+    // goes true, that bug is back.
+    const replay = Array.from({ length: 40 }, (_, i) => i % 2 === 0);
+    expect(run(openInitial(false), replay).byUser).toBe(false);
+  });
+
   it("keeps tracking liveness while hands off, so control could be handed back", () => {
     const d = run(openInitial(false), ["click", true]);
     expect(d.live).toBe(true);

@@ -716,24 +716,26 @@ input[type="range"].grad::-moz-range-thumb {
 /* No cap once opened, or a long table would stay stuck at the clamp height with
    the control claiming it had expanded. */
 .chat-clamp:not(.is-clamped) { max-height: none; }
-/* Show more / less, animated, as a PROGRESSIVE ENHANCEMENT and nothing more.
-   The open state of a clamp has no fixed height, and the two ways of faking one
-   (measuring into an inline max-height, or capping at max-content) both risk
-   clipping or overlapping a message that is still streaming. `interpolate-size`
-   is the one way to do it that cannot be wrong about the height, and it is
-   Chromium-only as of August 2026, so where it is missing the clamp simply
-   toggles as it always has. Everything load-bearing uses .chat-reveal instead.
+/* Show more / less, animated, in every browser.
+   This first shipped on `interpolate-size`, which is Chromium-only as of August
+   2026. That was the wrong call and the operator said so: a feature the app
+   depends on may not work in one engine and not another.
 
-   Gated on .is-animating, which exists only just after the control is pressed:
-   a message's height changes as tokens arrive, and a permanent transition here
-   would animate every one of them. */
-@supports (interpolate-size: allow-keywords) {
-  .chat-clamp { interpolate-size: allow-keywords; }
-  .chat-clamp.is-animating { transition: height var(--dur-base) var(--ease-in-out); overflow: hidden; }
-  .chat-clamp.is-animating.is-clamped { height: calc(var(--clamp-lines, 10) * 1lh); }
-  .chat-clamp.is-clamped { height: calc(var(--clamp-lines, 10) * 1lh); }
-  .chat-clamp.is-animating:not(.is-clamped) { height: auto; }
+   So both ends of the transition are made concrete instead. The clamped height
+   already is (N line heights). The open height is measured once, at the moment
+   the control is pressed, and written to --clamp-open; ElidedContent then flips
+   the state one frame later so there is a start value to move from, and clears
+   both the class and the variable when the transition ends. Nothing is capped
+   outside that window, so a message that keeps streaming can never be clipped
+   by a stale measurement.
+
+   .is-animating exists ONLY during that window, which is also what keeps a
+   streaming message from animating on every token it gains. */
+.chat-clamp.is-animating {
+  transition: max-height var(--dur-base) var(--ease-in-out);
+  overflow: hidden;
 }
+.chat-clamp.is-animating:not(.is-clamped) { max-height: var(--clamp-open); }
 
 /* ---- The one way anything in the chat opens and closes ----
    A one-row grid going 0fr to 1fr. The height is never named, so this animates
@@ -746,6 +748,9 @@ input[type="range"].grad::-moz-range-thumb {
 }
 .chat-reveal.is-shown { grid-template-rows: 1fr; }
 .chat-reveal__inner { overflow: hidden; min-height: 0; }
+/* A change the machine made, not the operator. Skipping the frames in JS is not
+   enough on its own: the row would still transition from wherever it was. */
+.chat-reveal.is-instant { transition: none; }
 /* Legible on the accent-filled user bubble. */
 .chat-msg.user .chat-more { color: color-mix(in srgb, var(--accent-fg) 90%, transparent); }
 /* Deterministic spacing for the work section (the "Show N earlier steps" toggle

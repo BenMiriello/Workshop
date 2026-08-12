@@ -27,12 +27,34 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
  *  has finished and the children can go; the animation itself is pure CSS. */
 const REVEAL_MS = 200;
 
+// ONLY WHAT THE OPERATOR DID ANIMATES. The machine's own opening and closing
+// is instant, and that is not a compromise, it is the fix for a real bug.
+//
+// Re-attaching to a turn in flight REPLAYS IT FROM OFFSET 0 (useTurnStream: a
+// fresh EventSource carries no Last-Event-ID, so the server sends the whole
+// turn again). Every group in that turn therefore opens and closes for real, in
+// a few hundred milliseconds, as the replay walks past. With machine
+// transitions animated, opening the chat on a long-running turn fired dozens of
+// animations at once. The operator reported exactly that on 2026-08-12.
+//
+// A window guard or a settling delay would only paper over it, because a replay
+// takes as long as it takes. Keying on WHO caused the change removes the
+// problem by construction: a replay produces no operator actions, so a replay
+// animates nothing. The caller already tracks this, in `disclosure.ts`.
+
 /** `mounted` is whether to render the children, `shown` is whether the row is
- *  open. They differ only during a collapse, which is the whole point. */
-export function useReveal(open: boolean): { mounted: boolean; shown: boolean } {
+ *  open. They differ only during a collapse, which is the whole point.
+ *
+ *  `animate` false means jump straight there: no frames, no unmount delay. */
+export function useReveal(open: boolean, animate = true): { mounted: boolean; shown: boolean } {
   const [mounted, setMounted] = useState(open);
   const [shown, setShown] = useState(open);
   useEffect(() => {
+    if (!animate) {
+      setMounted(open);
+      setShown(open);
+      return;
+    }
     if (open) {
       setMounted(true);
       // TWO frames, not one. The children mount in the first, and the class
@@ -45,7 +67,7 @@ export function useReveal(open: boolean): { mounted: boolean; shown: boolean } {
     setShown(false);
     const t = setTimeout(() => setMounted(false), REVEAL_MS);
     return () => clearTimeout(t);
-  }, [open]);
+  }, [open, animate]);
   // Opening on first render is not an animation: a settled turn the reader
   // opened, or a group that mounts mid-flight, is already open when it appears
   // and must not slide in. Both states seed from `open`, so nothing moves.
@@ -54,17 +76,27 @@ export function useReveal(open: boolean): { mounted: boolean; shown: boolean } {
 
 /** A collapsible region. The caller keeps owning the open state; this owns only
  *  how it gets there. */
-export function Reveal({ open, id, className, children }: {
+export function Reveal({ open, id, className, animate, children }: {
   open: boolean;
   /** For the trigger's `aria-controls`. The wrapper stays mounted so this
    *  always resolves, even collapsed. */
   id?: string;
   className?: string;
+  /** Default true, for a disclosure only the operator ever opens. Pass the
+   *  provenance flag for one the machine also opens. See the note above. */
+  animate?: boolean;
   children: ReactNode;
 }) {
-  const { mounted, shown } = useReveal(open);
+  const { mounted, shown } = useReveal(open, animate);
   return (
-    <div id={id} className={`chat-reveal${shown ? " is-shown" : ""}`} aria-hidden={!shown || undefined}>
+    // `is-instant` kills the CSS transition too. Setting the open state without
+    // frames is not enough on its own: grid-template-rows would still animate
+    // from whatever it was, which is the burst all over again.
+    <div
+      id={id}
+      className={`chat-reveal${shown ? " is-shown" : ""}${animate === false ? " is-instant" : ""}`}
+      aria-hidden={!shown || undefined}
+    >
       <div className={`chat-reveal__inner${className ? ` ${className}` : ""}`}>
         {mounted ? children : null}
       </div>

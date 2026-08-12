@@ -10,7 +10,7 @@ import {
   type TurnItem,
 } from "./grouping";
 import { openInitial, onLive, onToggle } from "./disclosure";
-import { Reveal, useToggleAnim } from "./Reveal";
+import { Reveal } from "./Reveal";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -151,7 +151,11 @@ function GroupChip({ item, nowMs, defaultOpen, stoppedId, current }: {
         <span className="chat-group__name">{groupSummary(item, stoppedId)}</span>
         <span className="chat-group__preview">{groupTools(item)}</span>
       </button>
-      <Reveal open={open} id={id} className="chat-group__body">
+      {/* Only the operator's own toggle animates. A group that opens because
+          work started, or closes because the turn moved on, is instant: a
+          re-attach replays the whole turn, and animating the machine's
+          transitions turned that replay into dozens of animations at once. */}
+      <Reveal open={open} id={id} className="chat-group__body" animate={disc.byUser}>
         {item.steps.map((s, i) => (
           <ToolChip key={s.id || i} seg={s} nowMs={nowMs} stoppedId={stoppedId} />
         ))}
@@ -189,7 +193,44 @@ export function ElidedContent({
   const [open, setOpen] = useState(!!expanded);
   const [overflowing, setOverflowing] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Programmatic, so it does not animate: this fires as a turn stops being the
+  // latest one, which happens to every message in the log as history loads.
   useEffect(() => { setOpen(!!expanded); }, [expanded]);
+
+  // SHOW MORE / LESS, ANIMATED, IN TWO PHASES.
+  //
+  // A clamp's open height is not a value CSS knows, so both ends are made
+  // concrete for the length of the toggle and only for that. Phase one, on the
+  // click: measure the full height into --clamp-open and turn the transition
+  // on, WITHOUT changing the state. Phase two, one frame later: flip the state,
+  // so there is a start value to move from. Flipping in the same commit would
+  // move max-height from `none`, which does not interpolate, and the whole
+  // thing would jump. Then clear both, so nothing is capped afterwards and a
+  // message that keeps streaming can never be clipped by a stale measurement.
+  const [anim, setAnim] = useState(false);
+  const [pending, setPending] = useState<boolean | null>(null);
+  const toggle = () => {
+    const el = ref.current;
+    if (!el) { setOpen((o) => !o); return; }
+    el.style.setProperty("--clamp-open", `${el.scrollHeight}px`);
+    setAnim(true);
+    setPending(!open);
+  };
+  useEffect(() => {
+    if (pending === null) return;
+    const r = requestAnimationFrame(() => { setOpen(pending); setPending(null); });
+    return () => cancelAnimationFrame(r);
+  }, [pending]);
+  useEffect(() => {
+    if (!anim) return;
+    const el = ref.current;
+    const done = () => { setAnim(false); el?.style.removeProperty("--clamp-open"); };
+    // transitionend is the real signal; the timer is the backstop for the case
+    // where the two heights are close enough that no transition fires at all.
+    el?.addEventListener("transitionend", done, { once: true });
+    const t = setTimeout(done, 600);
+    return () => { clearTimeout(t); el?.removeEventListener("transitionend", done); };
+  }, [anim]);
 
   // Does the content run PAST the clamp by enough to be worth clamping?
   // Measured against the full content height (`scrollHeight`, which reports the
@@ -217,15 +258,11 @@ export function ElidedContent({
   }, [source, cfg.previewLines]);
 
   const clamped = overflowing && !open;
-  // Only while the reader is actually toggling. A permanent transition here
-  // would animate a streaming message on every token, because its height grows
-  // as it is written. See useToggleAnim.
-  const animating = useToggleAnim(open);
   return (
     <>
       <div
         ref={ref}
-        className={`chat-clamp${clamped ? " is-clamped" : ""}${animating ? " is-animating" : ""}`}
+        className={`chat-clamp${clamped ? " is-clamped" : ""}${anim ? " is-animating" : ""}`}
         style={{ "--clamp-lines": cfg.previewLines } as CSSProperties}
       >
         {render(source)}
@@ -234,7 +271,7 @@ export function ElidedContent({
         <button
           type="button"
           className="chat-more chat-footrow"
-          onClick={() => setOpen((o) => !o)}
+          onClick={toggle}
         >
           {open ? "Show less" : "Show more"}
         </button>
