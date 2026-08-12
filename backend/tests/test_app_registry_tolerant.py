@@ -69,7 +69,14 @@ def test_chat_personas_are_install_gated():
     assembles its provider map from installed apps, hardcoding none."""
     from services import chat_context, app_registry
 
-    # Full roster: the four app personas plus the general platform provider.
+    from tests.conftest import requires_app
+
+    # The full roster is only "full" where those apps are installed. On a fresh
+    # instance none are, and asserting them here failed for the absence of a
+    # feature rather than for the behaviour under test.
+    for key in ("finance", "budget", "commute", "location"):
+        requires_app(key)
+
     full = chat_context.provider_map()
     for key in ("general", "finance", "budget", "commute", "location"):
         assert key in full, f"{key} persona missing from full provider map"

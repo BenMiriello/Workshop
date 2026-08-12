@@ -28,12 +28,16 @@ def thread(tmp_path, monkeypatch):
         ownership.clear_current_owner()
 
 
+from tests.conftest import requires_app
+
+
 def _rescope(thread_id: str, key: str):
     import routes.chat as rc
     return asyncio.run(rc.rescope_thread(thread_id, rc.RescopeThread(context_key=key)))
 
 
 def test_the_live_session_is_dropped_with_the_scope(thread):
+    requires_app("budget")
     tid = thread["id"]
     sid, _ = chat_store.ensure_thread_session(tid)
     assert chat_store.get_thread(tid)["claude_session"] == sid
@@ -46,6 +50,7 @@ def test_the_live_session_is_dropped_with_the_scope(thread):
 
 
 def test_the_conversation_itself_is_untouched(thread):
+    requires_app("budget")
     tid = thread["id"]
     chat_store.append_message(tid, "user", "keep me")
     chat_store.ensure_thread_session(tid)

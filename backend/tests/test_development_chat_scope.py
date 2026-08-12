@@ -15,6 +15,8 @@ ADR 0014 exists to remove.
 """
 import importlib
 
+from pathlib import Path
+
 import pytest
 
 
@@ -44,10 +46,19 @@ class TestDeveloperModeOn:
 
     def test_it_resolves_to_the_platform_repo(self, ctx, monkeypatch):
         monkeypatch.setenv("WORKSHOP_DEV_MODE", "1")
+        # Needs the registry row that points the development scope at the repo.
+        # Without it the provider falls back to <root>/projects/development,
+        # which is a real rough edge on a fresh developer clone but is not what
+        # this test is about.
+        from tests.conftest import requires_registry
+        requires_registry()
         p = ctx.get_provider("development")
         assert p.key == "development"
-        assert str(p.dir) == str(ctx.task_scope.WORKSHOP_ROOT) if hasattr(ctx, "task_scope") \
-            else p.dir.name == "workshop"
+        # Compare against the derived root, not against the directory NAME. The
+        # old assertion fell through to `p.dir.name == "workshop"`, which is only
+        # true when the checkout happens to be in a directory called workshop.
+        from services import paths
+        assert Path(p.dir).resolve() == paths.workshop_root()
 
     def test_it_is_a_build_provider(self, ctx, monkeypatch):
         """Working on the platform is a build chat: full agentic toolset, cwd
@@ -109,8 +120,17 @@ class TestExactlyOneNameForTheRepo:
         """The gate must not swallow real projects."""
         monkeypatch.delenv("WORKSHOP_DEV_MODE", raising=False)
         from services import task_scope
-        root = task_scope.root_for_context("project:birds")
-        assert root is not None and root.name == "birds"
+        from tests.conftest import requires_registry
+        # Any real project will do; "birds" only exists on an instance that has
+        # registered it, and the point is that the gate does not swallow
+        # ordinary projects, not that this particular one is present.
+        data = requires_registry()
+        slug = next((s for s in (data.get("projects") or {})
+                     if s not in ("development",)), None)
+        if slug is None:
+            pytest.skip("no ordinary (non-development) project registered here")
+        root = task_scope.root_for_context(f"project:{slug}")
+        assert root is not None and root.name == slug
 
 
 class TestTheDowngradeIsNotSilent:

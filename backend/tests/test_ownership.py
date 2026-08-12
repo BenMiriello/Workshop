@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from services import auth_store, ownership
 from main import app
+from tests.conftest import requires_app
 
 CSRF = {"X-Workshop-Client": "1"}
 BACKEND = pathlib.Path(__file__).resolve().parents[1]
@@ -45,18 +46,33 @@ def _client_for(email: str, password: str) -> TestClient:
     return c
 
 
+def _is_mounted(path: str) -> bool:
+    """Is this path actually served by this deployment?
+
+    Several of these routes belong to installable apps, so on a fresh clone with
+    no apps installed they are not mounted at all. A 404 there is not an
+    ownership failure, it is an absent feature, and asserting `401 or 403`
+    against it made the whole suite red on any machine but the one it was
+    written on.
+    """
+    return any(getattr(r, "path", None) == path for r in app.routes)
+
+
 # 1 + 2 — no credential (from loopback) reaches any personal/platform endpoint.
 @pytest.mark.parametrize("path", [
     "/finance/cache", "/budget/plan", "/location/latest", "/health/latest",
     "/commute/schedule", "/chat/threads", "/agents/", "/push/status",
 ])
 def test_unauthenticated_is_denied(env, path):
+    if not _is_mounted(path):
+        pytest.skip(f"{path} is not mounted on this deployment (app not installed)")
     anon = TestClient(app)
     assert anon.get(path).status_code in (401, 403)
 
 
 # 4 — garbage / absent credentials never fail open.
 def test_garbage_credentials_denied(env):
+    requires_app("location")
     anon = TestClient(app)
     assert anon.get("/location/latest", headers={"Authorization": "Bearer nonsense"}).status_code == 401
     anon.cookies.set("workshop_session", "forged-cookie-value")
@@ -65,6 +81,8 @@ def test_garbage_credentials_denied(env):
 
 # 3 — a second member never sees the operator's data and cannot widen scope.
 def test_member_cannot_read_operator_domains(env):
+    requires_app("commute")
+    requires_app("finance")
     member = _client_for("member@example.com", "password2")
     # commute is still the operator's single-dataset domain -> 403.
     assert member.get("/commute/schedule").status_code == 403
@@ -78,6 +96,7 @@ def test_member_cannot_read_operator_domains(env):
 
 
 def test_per_user_stores_are_isolated(env):
+    requires_app("location")
     op = _client_for("operator@example.com", "password1")
     member = _client_for("member@example.com", "password2")
     # Operator records a location ping into THEIR partition.
@@ -106,6 +125,7 @@ def test_platform_requires_operator(env):
 
 # 5 — a service token only works inside its scope / ownership.
 def test_service_token_scoping(env):
+    requires_app("commute")
     # An operator-owned commute token authenticates the cron to the commute domain.
     tok = auth_store.create_service_token(env["op"]["id"], "automation:commute", "cron")
     c = TestClient(app)
