@@ -1255,24 +1255,33 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
      attachment viewer still opens on top. */
   /* A CONTAINED REGION, not a wash over the whole panel. It was `inset: 0`, so
      it ran edge to edge and top to bottom: the radius was always flush against
-     the panel's own edges and never actually drew, which left it reading as the
-     screen tinting rather than as an area you are dropping something into
-     (operator, 2026-08-12). Inset by one step and it gets a top, a bottom and
-     four visible corners.
+     the panel's own edges and never actually drew.
+
+     THE VERTICAL INSET IS THE POINT, and it is bigger than the horizontal one
+     on purpose. The ask was that it stop running from the top of the area to
+     the bottom, so the gap that has to be unmistakable is the one above and
+     below. A uniform 12px was too small to read as anything at all: it left the
+     top and bottom looking flush, which is the exact thing it was meant to fix.
+
+     No border. The fill against the chat behind it draws the edge, and the
+     radius rounds it, which is this system's way (see the hierarchy rule: not
+     borders). A dashed outline was tried here and was never asked for.
 
      THE INSET IS COSMETIC ONLY. The drop handlers are on `.chat-panel` and this
      overlay is `pointer-events: none`, so the whole panel still accepts the
      drop, including the margin outside this box. What moved is where the edge
      is drawn, not where a file may be let go. */
-  position: absolute; inset: var(--space-3); z-index: var(--z-dock);
+  position: absolute; inset: var(--space-6) var(--space-4);
+  z-index: var(--z-dock);
   pointer-events: none;
   display: flex; align-items: center; justify-content: center;
   background: var(--accent-soft);
-  /* Dashed is the one border in this file that is not decoration: it is the
-     conventional "drop target" affordance, and it is what states the boundary
-     the operator asked for. See the no-decorative-borders rule it sits under. */
-  border: 2px dashed var(--accent);
   border-radius: var(--radius-lg);
+}
+/* A phone has far less height to give away, so the top and bottom gaps shrink
+   to a step that still reads as a gap without eating the message it covers. */
+@media (max-width: 640px) {
+  .chat-dropzone { inset: var(--space-5) var(--space-3); }
 }
 .chat-dropzone__card {
   display: inline-flex; align-items: center; gap: var(--space-2);
