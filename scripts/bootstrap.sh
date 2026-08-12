@@ -108,7 +108,16 @@ if [ "$NO_FRONTEND" = "0" ]; then
   # AT THE ROOT. This is an npm workspace ("packages/*" + "frontend"), so
   # installing inside frontend/ leaves @workshop/ui unresolvable and is what the
   # old README told people to do.
-  npm install --silent
+  # `npm ci` when the lockfile is there, because that is the whole reason it is
+  # committed: an exact, reproducible tree rather than a fresh resolve that can
+  # drift (a downstream instance re-resolved its way to two React majors). It
+  # refuses to run if package.json and the lock disagree, which is the correct
+  # loud failure; fall back only when there is no lockfile at all.
+  if [ -f "$REPO_ROOT/package-lock.json" ]; then
+    npm ci --silent
+  else
+    npm install --silent
+  fi
   # The kit's dist must exist BEFORE any typecheck: vite resolves @workshop/ui to
   # the sources via a custom condition, but tsc goes through the exports map to
   # dist/index.d.ts. A missing dist therefore builds fine and fails typecheck.
