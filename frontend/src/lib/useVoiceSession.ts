@@ -1,20 +1,23 @@
-// React binding for VoiceSession. Owns one session per contextKey, wires the
-// streaming reply path to the resident voice worker (/api/voice/session +
-// /turns + SSE), loads + persists per-owner prefs, and exposes a live snapshot
-// via useSyncExternalStore.
+// React binding for the voice client.
+//
+// It owns one VoiceClient per contextKey, loads and persists per-owner prefs,
+// and exposes the server's state through useSyncExternalStore. It no longer
+// owns a transport, a fallback path or any turn logic: the conversation lives
+// on the server (services/voice/machine.py) and arrives here as snapshots.
+//
+// The whole of `startReply` is gone. It used to assemble a turn out of a POST,
+// an SSE stream and a blocking fallback, with a cancel and a commit endpoint
+// each racing the others, and that arrangement is why the session needed an
+// epoch counter to make stale continuations no-ops.
+
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
-import { chatApi } from "./chat";
 import { voiceApi } from "./voiceApi";
-import {
-  VoiceSession,
-  DEFAULT_PREFS,
-  normalizeModes,
-  type VoicePrefs,
-  type VoiceSnapshot,
-  type ReplyHandle,
-  type ReplyHandlers,
-} from "./voiceSession";
+import { VoiceClient, type VoiceSnapshot } from "./voice/client";
+import { DEFAULT_PREFS, normalizeModes, type VoicePrefs } from "./voice/modes";
+
+export type { VoicePrefs } from "./voice/modes";
+export type { VoiceSnapshot } from "./voice/client";
 
 export function useVoiceSession(
   contextKey: string,
@@ -22,260 +25,80 @@ export function useVoiceSession(
   threadId?: string,
   onThreadBound?: (id: string) => void,
 ) {
-  const threadRef = useRef<string | null>(threadId ?? null);
-  // The thread the resident worker is currently warmed for. Cleared when the host
-  // chat switches threads so the next spoken turn re-binds (and re-warms) lazily.
-  const workerThreadRef = useRef<string | null>(null);
-  const onBoundRef = useRef(onThreadBound);
-  onBoundRef.current = onThreadBound;
-  // Prefs are React state so every control repaints the instant it changes (no
-  // reliance on the 60fps mic-level emit to force a re-render). prefsRef mirrors
-  // the same value synchronously so updatePrefs can merge against the live prefs
-  // and construct the session before the first render commit.
   const [prefs, setPrefsState] = useState<VoicePrefs>({ ...DEFAULT_PREFS });
   const prefsRef = useRef<VoicePrefs>(prefs);
-  // The 400ms persist debounce accumulates the WHOLE set of fields changed within
-  // the window and PUTs them together, so a rapid Voice-then-Speed change doesn't
-  // drop the Voice save (the old code persisted only the last patch).
+  const onBoundRef = useRef(onThreadBound);
+  onBoundRef.current = onThreadBound;
+  // The 400ms persist debounce accumulates the WHOLE set of fields changed in
+  // the window and PUTs them together, so a rapid Voice-then-Speed change does
+  // not drop the Voice save.
   const pendingPatch = useRef<Partial<VoicePrefs>>({});
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Ensure the resident worker exists for the bound thread; returns the thread id.
-  // Binds the host chat's active thread when there is one (so the conversation
-  // continues), else the backend creates one and we report it back via
-  // onThreadBound so the host can adopt it. NOT called on mount — a worker is
-  // only spawned when voice actually starts, so idle chats never spawn one.
-  const ensureSession = useCallback(async (): Promise<string> => {
-    if (threadRef.current && workerThreadRef.current === threadRef.current) return threadRef.current;
-    const wasBound = !!threadRef.current;
-    const r = await fetch("/api/voice/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ context_key: contextKey, thread_id: threadRef.current ?? undefined }),
-    });
-    if (!r.ok) throw new Error(`session ${r.status}`);
-    const id = (await r.json()).thread_id as string;
-    threadRef.current = id;
-    workerThreadRef.current = id;
-    if (!wasBound) onBoundRef.current?.(id);
-    return id;
-  }, [contextKey]);
-
-  // startReply: begin a streaming turn. Deltas arrive over SSE; the returned
-  // handle cancels generation (barge-in). Falls back to the blocking /messages
-  // path if streaming can't start and no tokens have arrived yet.
-  const startReply = useCallback(
-    (text: string, handlers: ReplyHandlers, opts?: { speculative?: boolean; blocking?: boolean }): ReplyHandle => {
-      const ac = new AbortController();
-      let turnId: string | null = null;
-      let full = "";
-      let gotDelta = false;
-      let settled = false;
-
-      const cancelTurn = (id: string, reason: string, heard?: number, heardText?: string) => {
-        fetch(`/api/voice/turns/${id}/cancel`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason, heard, heard_text: heardText }),
-        }).catch(() => {});
-      };
-      const commitTurn = (id: string) => {
-        fetch(`/api/voice/turns/${id}/commit`, { method: "POST" }).catch(() => {});
-      };
-
-      const fallback = async () => {
-        try {
-          const id = await ensureSession();
-          const { message } = await chatApi.sendMessage(id, text, model);
-          if (!settled) { settled = true; handlers.onDone(message.content || ""); }
-        } catch (e) {
-          if (!settled) { settled = true; handlers.onError(String(e)); }
-        }
-      };
-
-      const handleEvent = (name: string, data: string) => {
-        if (settled) return;
-        if (name === "text") {
-          try {
-            const d = JSON.parse(data);
-            full += d.payload?.content || "";
-            gotDelta = true;
-            handlers.onDelta(full);
-          } catch { /* ignore malformed frame */ }
-        } else if (name === "done" || name === "end") {
-          settled = true;
-          handlers.onDone(full);
-        } else if (name === "error") {
-          let detail = "reply error";
-          try { detail = JSON.parse(data).payload?.detail || detail; } catch { /* noop */ }
-          settled = true;
-          handlers.onError(detail);
-        }
-      };
-
-      (async () => {
-        // Watchdog retry (and any caller that asks): skip streaming, go straight
-        // to the blocking /messages fallback.
-        if (opts?.blocking) { await fallback(); return; }
-        try {
-          const thread = await ensureSession();
-          const tr = await fetch(`/api/voice/session/${thread}/turns`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ context_key: contextKey, text, model, speculative: !!opts?.speculative }),
-          });
-          if (!tr.ok) throw new Error(`turn ${tr.status}`);
-          turnId = (await tr.json()).turn_id as string;
-          const resp = await fetch(`/api/voice/turns/${turnId}/stream`, {
-            headers: { Accept: "text/event-stream" },
-            signal: ac.signal,
-          });
-          if (!resp.ok || !resp.body) throw new Error(`stream ${resp.status}`);
-          const reader = resp.body.getReader();
-          const dec = new TextDecoder();
-          let buf = "";
-          for (;;) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buf += dec.decode(value, { stream: true });
-            let idx: number;
-            while ((idx = buf.indexOf("\n\n")) >= 0) {
-              const frame = buf.slice(0, idx);
-              buf = buf.slice(idx + 2);
-              let evName = "message";
-              let data = "";
-              for (const line of frame.split("\n")) {
-                if (line.startsWith("event:")) evName = line.slice(6).trim();
-                else if (line.startsWith("data:")) data += line.slice(5).trim();
-              }
-              handleEvent(evName, data);
-            }
-            if (settled) { reader.cancel().catch(() => {}); break; }
-          }
-          if (!settled) { settled = true; handlers.onDone(full); }
-        } catch (e) {
-          if (ac.signal.aborted) return;         // cancelled by barge-in
-          if (!gotDelta) { fallback(); return; }  // never started: blocking fallback
-          if (!settled) { settled = true; handlers.onError(String(e)); }
-        }
-      })();
-
-      return {
-        cancel: (info) => {
-          settled = true;
-          ac.abort();
-          if (turnId) cancelTurn(turnId, info?.reason ?? "barge", info?.heard, info?.heardText);
-        },
-        commit: () => {
-          if (turnId) commitTurn(turnId);
-        },
-      };
-    },
-    [contextKey, model, ensureSession],
-  );
-
-  const persistSignal = useCallback((rate: number) => {
-    voiceApi.putPrefs({ interrupt_rate: Number(rate.toFixed(3)) }).catch(() => {});
-  }, []);
-
-  // Build chats (context_key "build:<slug>") run tools and sit in `thinking` far
-  // longer than a conversational reply, so the session's stall watchdog needs the
-  // longer ceiling.
-  const isBuild = contextKey.startsWith("build:");
+  // ONE client per scope, and NOT keyed on the thread.
+  //
+  // Keying it on `threadId` meant that binding a thread rebuilt the client, so
+  // a brand-new voice chat restarted itself the moment the server told it which
+  // chat it was. `setBinding` below keeps the live one in step instead.
   const session = useMemo(
-    () => new VoiceSession({ startReply, prefs: prefsRef.current, onPrefsSignal: persistSignal, isBuild }),
-    [startReply, persistSignal, isBuild],
+    () => new VoiceClient({
+      contextKey,
+      model,
+      threadId: threadId ?? null,
+      prefs: prefsRef.current,
+      onThreadBound: (id) => onBoundRef.current?.(id),
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see setBinding
+    [contextKey],
   );
 
-  // Follow the host chat's active thread. When it switches (or first resolves),
-  // rebind so the next spoken turn targets the right thread; the worker re-warms
-  // lazily on that turn. Voice is just another interface to the SAME chat — it
-  // must never fabricate a parallel thread.
   useEffect(() => {
-    const next = threadId ?? null;
-    if (next !== threadRef.current) {
-      threadRef.current = next;
-      workerThreadRef.current = null;
-    }
-  }, [threadId]);
-
-  // Warm the worker ahead of the first spoken turn (called when voice turns on),
-  // so first-turn latency isn't paid on the mic. No-op if already warm.
-  const prewarm = useCallback(() => { ensureSession().catch(() => {}); }, [ensureSession]);
-
-  // Give the resident worker back. Voice mode spawns a claude process and, until
-  // this existed, never released one: switching voice off stopped the mic and
-  // the speaker and left the process holding memory until the idle reaper took
-  // it ten minutes later. Idempotent — the ref is cleared first, so a double
-  // teardown sends one request.
-  const endSession = useCallback(() => {
-    const id = workerThreadRef.current;
-    if (!id) return;
-    workerThreadRef.current = null;
-    void voiceApi.endSession(id);
-  }, []);
-
-  // Load persisted prefs once and push them into the live session.
-  useEffect(() => {
-    let alive = true;
-    voiceApi
-      .getPrefs()
-      .then((p) => {
-        if (!alive) return;
-        const merged: VoicePrefs = {
-          ...DEFAULT_PREFS,
-          voice: p.voice ?? DEFAULT_PREFS.voice,
-          speed: p.speed ?? DEFAULT_PREFS.speed,
-          tts_provider: (p.tts_provider as VoicePrefs["tts_provider"]) ?? DEFAULT_PREFS.tts_provider,
-          stt_provider: (p.stt_provider as VoicePrefs["stt_provider"]) ?? DEFAULT_PREFS.stt_provider,
-          // The modality matrix. A prefs file written before it existed carries
-          // only the legacy booleans; normalizeModes below derives the modes
-          // from them rather than snapping back to the default.
-          input_mode: (p.input_mode as VoicePrefs["input_mode"]) ?? DEFAULT_PREFS.input_mode,
-          output_mode: (p.output_mode as VoicePrefs["output_mode"]) ?? DEFAULT_PREFS.output_mode,
-          mic_enabled: p.mic_enabled ?? DEFAULT_PREFS.mic_enabled,
-          speak_replies: p.speak_replies ?? DEFAULT_PREFS.speak_replies,
-          typing_hold: p.typing_hold ?? DEFAULT_PREFS.typing_hold,
-          typing_hold_ms: p.typing_hold_ms ?? DEFAULT_PREFS.typing_hold_ms,
-          enter_interrupts: p.enter_interrupts ?? DEFAULT_PREFS.enter_interrupts,
-          endpoint_silence_ms: p.endpoint_silence_ms ?? DEFAULT_PREFS.endpoint_silence_ms,
-          eager_endpoint: p.eager_endpoint ?? DEFAULT_PREFS.eager_endpoint,
-          eager_silence_ms: p.eager_silence_ms ?? DEFAULT_PREFS.eager_silence_ms,
-          barge_in: p.barge_in ?? DEFAULT_PREFS.barge_in,
-          barge_sensitivity: p.barge_sensitivity ?? DEFAULT_PREFS.barge_sensitivity,
-          verbosity: (p.verbosity as VoicePrefs["verbosity"]) ?? DEFAULT_PREFS.verbosity,
-        };
-        // One normalization at the boundary, so nothing downstream has to ask
-        // whether the modes or the legacy booleans are the truthful pair.
-        const norm = normalizeModes(merged);
-        prefsRef.current = norm;
-        setPrefsState(norm);
-        session.setPrefs(norm);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, [session]);
-
-  // Tear the session down when the component using it unmounts.
-  useEffect(() => () => session.stop(), [session]);
+    session.setBinding(threadId ?? null, model);
+  }, [session, threadId, model]);
 
   const snapshot = useSyncExternalStore<VoiceSnapshot>(
     (cb) => session.subscribe(cb),
     () => session.snapshot(),
   );
 
+  // Load persisted prefs once and push them into the live client.
+  useEffect(() => {
+    let alive = true;
+    voiceApi.getPrefs().then((p) => {
+      if (!alive) return;
+      const merged: VoicePrefs = normalizeModes({
+        ...DEFAULT_PREFS,
+        voice: p.voice ?? DEFAULT_PREFS.voice,
+        speed: p.speed ?? DEFAULT_PREFS.speed,
+        input_mode: (p.input_mode as VoicePrefs["input_mode"]) ?? DEFAULT_PREFS.input_mode,
+        output_mode: (p.output_mode as VoicePrefs["output_mode"]) ?? DEFAULT_PREFS.output_mode,
+        mic_enabled: p.mic_enabled ?? DEFAULT_PREFS.mic_enabled,
+        speak_replies: p.speak_replies ?? DEFAULT_PREFS.speak_replies,
+        reply_pace: (p.reply_pace as VoicePrefs["reply_pace"]) ?? DEFAULT_PREFS.reply_pace,
+      });
+      prefsRef.current = merged;
+      setPrefsState(merged);
+      session.setPrefs(merged);
+    }).catch(() => { /* defaults are usable; a failed read is not a failed session */ });
+    return () => { alive = false; };
+  }, [session]);
+
+  useEffect(() => () => session.stop(), [session]);
+
   const updatePrefs = useCallback(
     (patch: Partial<VoicePrefs>) => {
-      const next = normalizeModes({ ...prefsRef.current, ...patch });
+      // THE PATCH IS PASSED, and this is the only call site.
+      //
+      // `mic_enabled` and `speak_replies` are derived from the modes, so a
+      // caller writing only the boolean (the composer's mic button does exactly
+      // that) had its value recomputed from a mode nobody changed and discarded
+      // on the same line. The button did nothing in both directions. The
+      // previous fix landed here and left a second, patchless call site inside
+      // the session; there is no second call site now.
+      const next = normalizeModes({ ...prefsRef.current, ...patch }, patch);
       prefsRef.current = next;
-      // (a) React state so the controls repaint now; (b) push merged prefs to the
-      // live session (re-resolves providers / applies mute mid-speech).
       setPrefsState(next);
       session.setPrefs(next);
-      // (c) accumulate the changed fields and flush the whole set once — merging
-      // so a second field changed within the window is not lost.
       pendingPatch.current = { ...pendingPatch.current, ...patch };
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
@@ -287,5 +110,16 @@ export function useVoiceSession(
     [session],
   );
 
-  return { session, snapshot, prefs, updatePrefs, prewarm, endSession };
+  // Warm the resident worker ahead of the first spoken turn, so first-turn
+  // latency is not paid on the microphone. The socket binds the thread itself;
+  // this only spawns the process early.
+  const prewarm = useCallback(() => {
+    fetch("/api/voice/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-workshop-client": "web" },
+      body: JSON.stringify({ context_key: contextKey, thread_id: threadId }),
+    }).catch(() => {});
+  }, [contextKey, threadId]);
+
+  return { session, snapshot, prefs, updatePrefs, prewarm };
 }

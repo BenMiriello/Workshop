@@ -518,10 +518,6 @@ def create_thread(
     promo = _promotion_patch(meta)
     if promo:
         meta.update(promo)
-    if meta.get("title") == "Voice":                       # TEMP-DIAG 2026-08-12
-        import traceback
-        log.warning("VOICE-THREAD-CREATED %s from:\n%s", tid,
-                    "".join(traceback.format_stack()[-12:]))
     chat_log.create_thread(tid, meta)
     return get_thread(tid)
 

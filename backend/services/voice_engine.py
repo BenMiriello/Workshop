@@ -123,7 +123,52 @@ class _STT:
             beam_size=1,
             condition_on_previous_text=False,
         )
-        return " ".join(s.text.strip() for s in segments).strip()
+        kept = [s.text.strip() for s in segments if _is_speech(s)]
+        return " ".join(t for t in kept if t).strip()
+
+
+# --- hallucination guard -----------------------------------------------------
+# Whisper does not return "nothing" for a segment of silence or room noise: it
+# returns its most likely caption for that audio, which on near-silence is a
+# short stock phrase from its training set. The operator was sent "Bye bye." for
+# a word he never said, and a phantom word is worse than a dropped one because
+# it becomes a message.
+#
+# The phrase list alone is NOT the filter. "Bye" and "Thank you" are things a
+# person genuinely says as a whole utterance, so a stock phrase is only dropped
+# when the decoder ALSO reports it was unsure — `no_speech_prob` high or
+# `avg_logprob` low. A confidently decoded goodbye is a goodbye.
+_STOCK_PHRASES = {
+    "bye", "bye bye", "byebye", "goodbye", "good bye",
+    "thank you", "thanks", "thank you very much", "thanks for watching",
+    "thank you for watching", "please subscribe", "subscribe",
+    "you", "so", "oh", "okay", "ok", "hmm", "mm", "uh", "um",
+    "the end", "amen", "i'm sorry",
+}
+_STRIP_PUNCT = re.compile(r"[^\w\s']+")
+
+# A stock phrase needs only mild doubt to be dropped; anything else needs the
+# decoder to be confident it was not speech at all.
+_STOCK_NO_SPEECH = 0.4
+_STOCK_LOGPROB = -0.7
+_HARD_NO_SPEECH = 0.8
+_HARD_LOGPROB = -0.5
+
+
+def _norm_phrase(text: str) -> str:
+    return _STRIP_PUNCT.sub("", text.lower()).strip()
+
+
+def _is_speech(seg) -> bool:
+    """Did the decoder actually hear this, or invent it over silence?"""
+    text = (getattr(seg, "text", "") or "").strip()
+    if not text:
+        return False
+    no_speech = float(getattr(seg, "no_speech_prob", 0.0) or 0.0)
+    logprob = float(getattr(seg, "avg_logprob", 0.0) or 0.0)
+    if _norm_phrase(text) in _STOCK_PHRASES:
+        return not (no_speech > _STOCK_NO_SPEECH or logprob < _STOCK_LOGPROB)
+    return not (no_speech > _HARD_NO_SPEECH and logprob < _HARD_LOGPROB)
 
 
 # ============================================================================

@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { createElement } from "react";
 import { AlertTriangle, AudioLines, Loader, Square, X } from "lucide-react";
-import { MIC_FAIL_TEXT } from "../../lib/voice";
-import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
+import { MIC_FAIL_TEXT } from "../../lib/voice/errors";
+import type { VoiceSnapshot } from "../../lib/voice/client";
+import type { VoicePrefs } from "../../lib/voice/modes";
 import type { VoiceStatus } from "./VoiceControls";
 
 // What the voice orb does and says, and what the status strip reads, derived
@@ -67,23 +68,36 @@ export function useVoiceComposer(
     : vsnap.state === "thinking" ? "Cancel"
     : vsnap.state === "connecting" ? "Starting" : "Listening";
 
+  // THE STRIP NO LONGER CARRIES THE TRANSCRIPT. It is one line inside the
+  // composer, so anything that grows in it pushes the action row down, and it
+  // clipped a long utterance to its first few words anyway. What you are saying
+  // renders as a prospective bubble at the foot of the log (VoicePendingTurn);
+  // the strip is left with the one thing that is genuinely a fixed-size status.
+  //
+  // A capture problem is a NOTICE, not an error. "You didn't allow the
+  // microphone" is a state with a recovery step, and showing it in the red
+  // per-turn slot said something broke when nothing did.
   const status: VoiceStatus =
     vsnap.error
       ? { kind: "error", text: vsnap.error }
       : vsnap.micFail
-        ? { kind: "error", text: MIC_FAIL_TEXT[vsnap.micFail] }
-        : vsnap.state === "listening" && (vsnap.partial || vsnap.pendingUser)
-          ? { kind: "partial", text: vsnap.partial || vsnap.pendingUser }
-          : {
-              kind: "state",
-              text:
-                vsnap.state === "connecting" ? "Connecting"
-                : vsnap.state === "thinking" ? "Thinking"
-                : vsnap.state === "speaking" ? "Speaking. Esc to stop"
-                : vsnap.state === "listening"
-                  ? (vprefs.mic_enabled ? "Listening" : "Mic off. Type to send")
-                  : "Voice on",
-            };
+        ? { kind: "notice", text: MIC_FAIL_TEXT[vsnap.micFail] }
+        : {
+            kind: "state",
+            text:
+              vsnap.state === "connecting" ? "Connecting"
+              : vsnap.state === "thinking" ? "Thinking"
+              : vsnap.state === "speaking" ? "Speaking. Esc to stop"
+              : vsnap.state === "listening"
+                ? (!vprefs.mic_enabled ? "Mic off. Tap the mic to talk"
+                  // A muted output lane is a legitimate setting and an invisible
+                  // one: you talk, the reply arrives as text, and nothing ever
+                  // says why it did not speak. Say it here rather than leaving it
+                  // to be discovered in the settings sheet.
+                  : !vprefs.speak_replies ? "Listening. Replies in text"
+                  : "Listening")
+                : "Voice on",
+          };
 
   return { errored, orbAction, orbIcon, orbLabel, status };
 }

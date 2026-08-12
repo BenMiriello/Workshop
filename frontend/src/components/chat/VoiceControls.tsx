@@ -22,10 +22,13 @@ export function VoiceStrip({ status, onRetry }: { status: VoiceStatus; onRetry: 
           </span>
           <Button size="sm" variant="ghost" onClick={onRetry}>Retry</Button>
         </>
-      ) : status.kind === "partial" ? (
+      ) : status.kind === "notice" ? (
+        // A standing capture condition (permission refused, no device, insecure
+        // origin). Says what to do, in the neutral tone, with no Retry: there is
+        // nothing here for a retry to fix until the browser setting changes.
         <span className="chat-voice-strip__msg">
-          <span className="chat-voice-strip__label">Heard:</span>
-          <span className="chat-voice-strip__partial">{status.text}</span>
+          <MicOff size={14} aria-hidden className="chat-voice-strip__icon" />
+          <span className="chat-voice-strip__state">{status.text}</span>
         </span>
       ) : (
         <span className="chat-voice-strip__msg">

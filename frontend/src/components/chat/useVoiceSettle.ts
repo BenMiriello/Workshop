@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { VoiceSnapshot } from "../../lib/voiceSession";
+import type { VoiceSnapshot } from "../../lib/voice/client";
 
 // Holding a finished spoken exchange on screen until its persisted messages land.
 //

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useVoiceSession } from "../../lib/useVoiceSession";
-import { unlockAudio } from "../../lib/voice";
+import { primeAudio } from "../../lib/voice/playback";
 import type { ChatProblem } from "./chatProblem";
 
 // Voice as a MODE of this chat, not a separate screen: the same thread, the same
@@ -48,7 +48,7 @@ export function useVoiceMode({
 
   const {
     session: vsession, snapshot: vsnap, prefs: vprefs, updatePrefs: vupdatePrefs,
-    prewarm: vprewarm, endSession: vendSession,
+    prewarm: vprewarm,
   } = useVoiceSession(
     contextKey,
     model || undefined,
@@ -57,7 +57,7 @@ export function useVoiceMode({
   );
 
   const toggleVoice = useCallback(() => {
-    unlockAudio();
+    primeAudio();
     setVoiceOn((on) => !on);
   }, []);
 
@@ -69,13 +69,15 @@ export function useVoiceMode({
     // on the other end. `pagehide` fires for a close, a navigation and a mobile
     // background alike, which is the whole set of ways this can end without an
     // unmount.
-    const release = () => { vsession.stop(); vendSession(); };
+    // Closing the socket IS releasing the session: the server tears down the
+    // runtime and hands back the resident worker when the client says bye.
+    const release = () => { vsession.stop(); };
     window.addEventListener("pagehide", release);
     return () => {
       window.removeEventListener("pagehide", release);
       release();
     };
-  }, [voiceOn, vsession, vprewarm, vendSession]);
+  }, [voiceOn, vsession, vprewarm]);
 
   // Probe capabilities when voice turns on or the settings sheet opens, so the
   // provider controls reflect the truth before a session ever starts. Caps live

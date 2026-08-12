@@ -1,93 +1,90 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Mic } from "lucide-react";
-import { Modal, SectionLabel, Select, Toggle, Segmented, Button, ProgressBar, StatusPill } from "@workshop/ui";
+import { Modal, SectionLabel, Select, Segmented, Button, StatusPill } from "@workshop/ui";
 import { voiceApi } from "../lib/voiceApi";
-import type { EngineCaps } from "../lib/voice";
-import type {
-  VoicePrefs, VoiceSession, VoiceDiagnostics, MicTestResult, ModalityMode,
-} from "../lib/voiceSession";
-
-// Human label for a resolved engine tier, used in the "Auto (X)" hints.
-const ENGINE_LABEL: Record<string, string> = {
-  server: "Local",
-  browser: "Browser",
-  native: "Device",
-};
+import type { VoiceClient } from "../lib/voice/client";
+import type { ModalityMode, ReplyPace, VoicePrefs } from "../lib/voice/modes";
 
 // Keep a stored pref inside its slider's range so an out-of-range persisted value
 // can never render a thumb off-track (clamp on READ, not just on change).
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 
-const ms = (v: number | null) => (v == null ? "–" : `${v} ms`);
+// What each perception tier means, said plainly. The sheet reports which one is
+// RUNNING rather than which one is configured: with the ONNX weights absent it
+// has to be able to say so instead of implying accuracy the box does not have.
+const TIER_LABEL: Record<string, string> = {
+  silero: "Silero",
+  energy: "Level based",
+  "smart-turn": "Smart Turn",
+  heuristic: "Rule based",
+};
 
-// Voice settings sheet. Lives in the shared Modal (size="lg" so the control list
-// fits on desktop and scrolls its body rather than overflowing the viewport).
-// The modality matrix and four essentials are always visible; engine knobs live
-// in "Advanced" and measurements in "Diagnostics". Every control here is a view
-// preference — commits on change.
+// Voice settings. Eight knobs became three, because the rest were tuning
+// mechanisms that no longer exist: endpoint_silence_ms, eager_endpoint and
+// eager_silence_ms all tried to answer "have they finished speaking" with a
+// stopwatch, which no value can do, and barge_sensitivity was presented as an
+// interruption preference while actually being the master gate on whether you
+// were heard at all. A knob whose correct value the system can measure is a bug
+// wearing a control.
 export default function VoiceSettings({
-  open, onClose, prefs, updatePrefs, caps, session,
+  open, onClose, prefs, updatePrefs, session,
 }: {
   open: boolean;
   onClose: () => void;
   prefs: VoicePrefs;
   updatePrefs: (patch: Partial<VoicePrefs>) => void;
-  caps: EngineCaps | null;
-  session: VoiceSession;
+  session: VoiceClient;
 }) {
   const [voices, setVoices] = useState<string[]>([]);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [diagOpen, setDiagOpen] = useState(false);
-  const [diag, setDiag] = useState<VoiceDiagnostics | null>(null);
+  const [diag, setDiag] = useState<ReturnType<VoiceClient["diagnostics"]> | null>(null);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<MicTestResult | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; text?: string; reason?: string } | null>(null);
   const testSeq = useRef(0);
 
   useEffect(() => {
     if (!open) return;
     voiceApi.voices().then((r) => setVoices(r.voices || [])).catch(() => {});
-  }, [open]);
+    void session.probeCaps();
+  }, [open, session]);
 
-  // Poll diagnostics only while the section is actually visible. The raw level
-  // moves at frame rate and deliberately never enters the session snapshot (it
-  // would re-render the whole chat every frame); 10 Hz is plenty for a meter.
   useEffect(() => {
     if (!open || !diagOpen) return;
     const tick = () => setDiag(session.diagnostics());
     tick();
-    const t = setInterval(tick, 100);
+    const t = setInterval(tick, 500);
     return () => clearInterval(t);
   }, [open, diagOpen, session]);
 
-  const ttsServerOk = !!caps?.server?.tts.available;
-  const sttServerOk = !!caps?.server?.stt.available;
-  const browserTtsOk = !!caps?.browserTts;
-  const browserSttOk = !!caps?.browserStt;
-  const serverTts = ttsServerOk;
-  const autoTtsLabel = caps?.tts ? `Auto (${ENGINE_LABEL[caps.tts] ?? caps.tts})` : "Auto";
-  const autoSttLabel = caps?.stt ? `Auto (${ENGINE_LABEL[caps.stt] ?? caps.stt})` : "Auto";
-  const engineHint = caps && !caps.server ? "Voice server offline" : undefined;
+  const snap = session.snapshot();
+  const ttsOk = snap.engines.tts;
 
   const runMicTest = async () => {
     const seq = ++testSeq.current;
     setTesting(true);
     setTestResult(null);
     const r = await session.testMic();
-    if (seq !== testSeq.current) return;   // sheet closed / retested meanwhile
+    if (seq !== testSeq.current) return;   // sheet closed or retested meanwhile
     setTestResult(r);
     setTesting(false);
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Voice settings" size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Voice settings"
+      size="lg"
+      // A VISIBLE WAY OUT. Esc and a scrim tap both close this, and on a phone
+      // neither is reachable: there is no Esc key, and a sheet this tall leaves
+      // almost no scrim to tap. Every control here commits on change, so this
+      // only dismisses.
+      actions={<Button onClick={onClose}>Done</Button>}
+    >
       <div className="ws-voice-settings">
-        {/* The modality matrix. One concept for what used to be four booleans
-            spread across three resolution sites — and the only place that says,
-            in one line each, how this conversation is carried. Any of the nine
-            combinations is legal. */}
         <div className="ws-voice-settings-group">Conversation</div>
         <label className="ws-voice-setting">
-          <SectionLabel>How I talk to you</SectionLabel>
+          <SectionLabel>How I send messages</SectionLabel>
           <Segmented<ModalityMode>
             value={prefs.input_mode}
             onChange={(v) => updatePrefs({ input_mode: v })}
@@ -102,11 +99,11 @@ export default function VoiceSettings({
               ? "The mic stays off."
               : prefs.input_mode === "voice"
                 ? "Hands-free: the mic is the only way in."
-                : "Talk or type, whichever is to hand."}
+                : "Use whichever suits the moment."}
           </span>
         </label>
         <label className="ws-voice-setting">
-          <SectionLabel>How I answer</SectionLabel>
+          <SectionLabel>How replies come back</SectionLabel>
           <Segmented<ModalityMode>
             value={prefs.output_mode}
             onChange={(v) => updatePrefs({ output_mode: v })}
@@ -124,14 +121,33 @@ export default function VoiceSettings({
                 : "Spoken aloud and written down."}
           </span>
         </label>
+        <label className="ws-voice-setting">
+          <SectionLabel>How soon I reply</SectionLabel>
+          <Segmented<ReplyPace>
+            value={prefs.reply_pace}
+            onChange={(v) => updatePrefs({ reply_pace: v })}
+            options={[
+              { value: "snappy", label: "Snappy" },
+              { value: "natural", label: "Natural" },
+              { value: "patient", label: "Patient" },
+            ]}
+          />
+          <span className="ws-voice-hintline">
+            {prefs.reply_pace === "snappy"
+              ? "Answers fast. May cut in if you pause to think."
+              : prefs.reply_pace === "patient"
+                ? "Waits through long pauses. Good for dictation."
+                : "Waits when you sound unfinished, answers when you sound done."}
+          </span>
+        </label>
 
-        <div className="ws-voice-settings-group">Voice</div>
+        <div className="ws-voice-settings-group">Speech</div>
         <label className="ws-voice-setting">
           <SectionLabel>Voice</SectionLabel>
           <Select
             value={prefs.voice}
             onChange={(e) => updatePrefs({ voice: e.target.value })}
-            disabled={!serverTts || voices.length === 0}
+            disabled={!ttsOk || voices.length === 0}
           >
             {(voices.length ? voices : [prefs.voice]).map((v) => (
               <option key={v} value={v}>{v}</option>
@@ -147,82 +163,6 @@ export default function VoiceSettings({
             onChange={(e) => updatePrefs({ speed: Number(e.target.value) })}
           />
         </label>
-        <label className="ws-voice-setting">
-          <SectionLabel>Pause before reply {(prefs.endpoint_silence_ms / 1000).toFixed(2)}s</SectionLabel>
-          <input
-            className="ws-range"
-            type="range" min={300} max={2000} step={50}
-            value={clamp(prefs.endpoint_silence_ms, 300, 2000)}
-            onChange={(e) => updatePrefs({ endpoint_silence_ms: Number(e.target.value) })}
-          />
-          <span className="ws-voice-hintline">How long a silence before I take my turn.</span>
-        </label>
-
-        <div className="ws-disclosure" data-open={advancedOpen}>
-          <button
-            type="button"
-            className="ws-disclosure__summary"
-            aria-expanded={advancedOpen}
-            onClick={() => setAdvancedOpen((o) => !o)}
-          >
-            <ChevronDown size={14} strokeWidth={1.8} aria-hidden className="ws-disclosure__chevron" />
-            Advanced
-          </button>
-          {advancedOpen && (
-            <div className="ws-disclosure__body">
-              <label className="ws-voice-setting">
-                <SectionLabel>Hearing engine</SectionLabel>
-                <Segmented<typeof prefs.stt_provider>
-                  value={prefs.stt_provider}
-                  onChange={(v) => updatePrefs({ stt_provider: v })}
-                  hint={engineHint}
-                  options={[
-                    { value: "auto", label: autoSttLabel },
-                    { value: "server", label: "Local", disabled: !sttServerOk },
-                    { value: "browser", label: "Browser", disabled: !browserSttOk },
-                  ]}
-                />
-              </label>
-              <label className="ws-voice-setting">
-                <SectionLabel>Speech engine</SectionLabel>
-                <Segmented<typeof prefs.tts_provider>
-                  value={prefs.tts_provider === "off" ? "auto" : prefs.tts_provider}
-                  onChange={(v) => updatePrefs({ tts_provider: v })}
-                  hint={engineHint}
-                  options={[
-                    { value: "auto", label: autoTtsLabel },
-                    { value: "server", label: "Local", disabled: !ttsServerOk },
-                    { value: "browser", label: "Browser", disabled: !browserTtsOk },
-                  ]}
-                />
-              </label>
-              <label className="ws-voice-setting ws-voice-setting--row">
-                <SectionLabel>Fast responses</SectionLabel>
-                <Toggle checked={prefs.eager_endpoint} onChange={(v) => updatePrefs({ eager_endpoint: v })} />
-              </label>
-              <label className="ws-voice-setting ws-voice-setting--row">
-                <SectionLabel>Talk over me to interrupt</SectionLabel>
-                <Toggle checked={prefs.barge_in} onChange={(v) => updatePrefs({ barge_in: v })} />
-              </label>
-              <label className="ws-voice-setting">
-                <SectionLabel>Mic sensitivity</SectionLabel>
-                <input
-                  className="ws-range"
-                  type="range" min={0} max={1} step={0.05}
-                  value={clamp(prefs.barge_sensitivity, 0, 1)}
-                  onChange={(e) => updatePrefs({ barge_sensitivity: Number(e.target.value) })}
-                />
-                <span className="ws-voice-hintline">
-                  How loud you have to be to cut in. A noisy room raises the bar on its own.
-                </span>
-              </label>
-              <label className="ws-voice-setting ws-voice-setting--row">
-                <SectionLabel>Typing holds my turn</SectionLabel>
-                <Toggle checked={prefs.typing_hold} onChange={(v) => updatePrefs({ typing_hold: v })} />
-              </label>
-            </div>
-          )}
-        </div>
 
         {/* Diagnostics. The point of this section is that "it isn't hearing me"
             stops being a guess: every layer between the microphone and the
@@ -240,43 +180,41 @@ export default function VoiceSettings({
           </button>
           {diagOpen && (
             <div className="ws-disclosure__body">
-              <div className="ws-voice-setting">
-                <SectionLabel>Input level</SectionLabel>
-                <ProgressBar
-                  value={diag ? diag.rawLevel : 0}
-                  max={0.3}
-                  status={diag && diag.rawLevel > diag.threshold ? "running" : "ok"}
-                />
-                <span className="ws-voice-hintline">
-                  {diag
-                    ? diag.calibrated
-                      ? `floor ${diag.noiseFloor.toFixed(3)} · speech above ${diag.threshold.toFixed(3)} · now ${diag.rawLevel.toFixed(3)}`
-                      : "calibrating the room's noise floor…"
-                    : "–"}
-                </span>
-              </div>
               <dl className="ws-voice-diag">
-                <dt>Capture</dt>
+                <dt>Connection</dt>
                 <dd>
-                  <StatusPill status={diag?.micSuspended ? "stopped" : diag?.micRunning ? "ok" : "warn"}>
-                    {diag?.micSuspended ? "Off by setting" : diag?.micRunning ? "Open" : "Closed"}
+                  <StatusPill status={snap.connected ? "ok" : "warn"}>
+                    {snap.connected ? "Live" : "Offline"}
                   </StatusPill>
                 </dd>
+                <dt>Microphone</dt>
+                <dd>
+                  <StatusPill status={diag?.trackLive ? "ok" : diag?.micRunning ? "warn" : "stopped"}>
+                    {diag?.trackLive ? "Open" : diag?.micRunning ? "Stopped" : "Closed"}
+                  </StatusPill>
+                </dd>
+                <dt>Echo cancellation</dt>
+                <dd>
+                  <StatusPill status={snap.echoCancelled ? "ok" : "warn"}>
+                    {snap.echoCancelled ? "On" : "Unavailable"}
+                  </StatusPill>
+                </dd>
+                <dt>Talking over it</dt>
+                <dd>
+                  {snap.echoCancelled
+                    ? "Works. Just start talking."
+                    : "Use the stop button. Without echo cancellation the mic hears the reply."}
+                </dd>
                 <dt>Device</dt>
-                <dd>{diag?.deviceLabel || "–"}</dd>
+                <dd>{diag?.deviceLabel || "not open"}</dd>
                 <dt>Secure origin</dt>
                 <dd>{diag?.secureContext ? "yes" : "no, voice input needs https"}</dd>
-                <dt>Hearing</dt>
-                <dd>
-                  {caps?.stt ? ENGINE_LABEL[caps.stt] ?? caps.stt : "–"}
-                  {caps?.server?.stt.model ? ` · ${caps.server.stt.model}` : ""}
-                </dd>
-                <dt>Speech</dt>
-                <dd>{caps?.tts ? ENGINE_LABEL[caps.tts] ?? caps.tts : "–"}</dd>
-                <dt>Last transcription</dt>
-                <dd>{ms(diag?.lastSttMs ?? null)}</dd>
-                <dt>Last reply latency</dt>
-                <dd>{ms(diag?.lastTurnMs ?? null)}</dd>
+                <dt>Speech detection</dt>
+                <dd>{TIER_LABEL[snap.tiers.vad] || snap.tiers.vad || "not connected"}</dd>
+                <dt>Turn detection</dt>
+                <dd>{TIER_LABEL[snap.tiers.turnEnd] || snap.tiers.turnEnd || "not connected"}</dd>
+                <dt>Transcription</dt>
+                <dd>{snap.engines.stt ? snap.engines.sttModel || "on" : "unavailable"}</dd>
               </dl>
               <div className="ws-voice-setting">
                 <Button onClick={() => void runMicTest()} loading={testing}>
@@ -285,14 +223,14 @@ export default function VoiceSettings({
                 </Button>
                 <span className="ws-voice-hintline">
                   {testing
-                    ? "Recording 3 seconds. Say something."
+                    ? "Transcribing the last few seconds. Say something first."
                     : testResult
                       ? testResult.ok
                         ? testResult.text
-                          ? `Heard: "${testResult.text}" (${testResult.bytes} bytes, ${testResult.ms} ms)`
-                          : `Recorded audio, but nothing was transcribed. Check the mic level and the language.`
+                          ? `Heard: "${testResult.text}"`
+                          : "Audio arrived, but nothing was transcribed. Check the level and that you spoke recently."
                         : testResult.reason
-                      : "Records 3 seconds and transcribes it."}
+                      : "Transcribes the last few seconds through the real path."}
                 </span>
               </div>
             </div>

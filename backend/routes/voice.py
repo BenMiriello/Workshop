@@ -48,11 +48,32 @@ _PREFS_DEFAULTS = {
     "typing_hold": True,      # typing defers the voice endpoint
     "typing_hold_ms": 3000,
     "enter_interrupts": True,  # Enter sends and interrupts ongoing speech
-    "endpoint_silence_ms": 900,  # trailing silence that ends an utterance (server VAD)
+    # Trailing silence that ends an utterance (server VAD).
+    #
+    # This was raised to 1400ms to stop a mid-thought pause splitting one sentence
+    # into several messages. That was the wrong lever: it bought fewer splits by
+    # making every single turn wait longer, which read as sluggish, and it still
+    # split anyone who paused for longer than the threshold.
+    #
+    # Firing early is RECOVERABLE now (see voiceTurnAction / reclaimTurn: carrying
+    # on speaking takes the turn back and merges), so the threshold can go back to
+    # being responsive. It no longer has to be right, only close.
+    "endpoint_silence_ms": 1000,
     "eager_endpoint": True,   # speculative endpointing: think during an early pause
     "eager_silence_ms": 400,  # the early-pause threshold (< endpoint_silence_ms)
     "barge_in": True,
     "barge_sensitivity": 0.5,  # 0..1 VAD threshold knob (client-side)
+    # How soon it takes a turn: snappy | natural | patient. ONE number, applied
+    # as a bias on the turn-end model's threshold and its silence ceiling.
+    #
+    # It replaces four knobs that all tried to answer this question with timers
+    # and could not: endpoint_silence_ms (no value works — short splits a
+    # thought, long makes every turn sluggish), eager_endpoint and
+    # eager_silence_ms (speculative drafts, which semantic endpointing makes
+    # unnecessary), and barge_sensitivity, which was labelled as an interruption
+    # preference and was actually the master gate on whether you were heard at
+    # all. The four above are kept only so stored prefs files still round-trip.
+    "reply_pace": "natural",
     # rolling adaptation signal — updated by the client per session
     "interrupt_rate": 0.0,
 }
@@ -116,7 +137,14 @@ def _save_prefs(patch: dict) -> dict:
 
 @router.get("/voice/health")
 async def voice_health():
-    return voice_engine.health()
+    """Engine truth, including WHICH perception tier is actually running.
+
+    The tier is reported rather than configured: the settings sheet must be able
+    to say "energy VAD, heuristic turn detection" when the ONNX weights are not
+    on disk, instead of implying an accuracy the box does not have."""
+    from services.voice import detectors
+
+    return {**voice_engine.health(), "perception": detectors.status()}
 
 
 @router.get("/voice/voices")
@@ -218,6 +246,7 @@ class PrefsBody(BaseModel):
     eager_silence_ms: int | None = None
     barge_in: bool | None = None
     barge_sensitivity: float | None = None
+    reply_pace: str | None = None
     interrupt_rate: float | None = None
 
 
@@ -239,91 +268,31 @@ class SessionBody(BaseModel):
 
 @router.post("/voice/session")
 async def voice_session(body: SessionBody):
-    """Prewarm/bind the resident worker for a voice session. Called on surface
-    mount so the process is up before the first utterance finishes."""
+    """Prewarm the resident worker for a voice session. Called on surface mount
+    so the process is up before the first utterance finishes.
+
+    IT DOES NOT CREATE A CHAT. It used to, for any call naming no thread, and
+    then discarded the id: the caller is a fire-and-forget `fetch` that reads no
+    response, so every prewarm on a new chat left an empty "Voice" thread nobody
+    could be handed. Warming is keyed by thread anyway, so there was never
+    anything to warm there. A session with no thread yet gets one when it is
+    spoken to (services/voice/runtime.VoiceRuntime._thread)."""
     thread_id = body.thread_id
     if not thread_id or not chat_store.get_thread(thread_id):
-        thread = chat_store.create_thread(context_key=body.context_key, title="Voice")
-        thread_id = thread["id"]
+        return {"session_key": None, "thread_id": None, "warmed": False}
     await voice_worker.ensure_worker(body.context_key, thread_id, body.model)
-    return {"session_key": thread_id, "thread_id": thread_id}
+    return {"session_key": thread_id, "thread_id": thread_id, "warmed": True}
 
 
-class TurnBody(BaseModel):
-    context_key: str = "general"
-    text: str
-    model: str | None = None
-    speculative: bool = False
-
-
-@router.post("/voice/session/{thread_id}/turns")
-async def voice_start_turn(thread_id: str, body: TurnBody):
-    text = (body.text or "").strip()
-    if not text:
-        raise HTTPException(400, "empty utterance")
-    turn = await voice_worker.start_turn(
-        context_key=body.context_key, thread_id=thread_id, text=text,
-        model=body.model, speculative=body.speculative,
-    )
-    return {"turn_id": turn.id, "thread_id": thread_id}
-
-
-@router.get("/voice/turns/{turn_id}/stream")
-async def voice_stream_turn(turn_id: str, request: Request):
-    turn = voice_worker.get_turn(turn_id)
-    if not turn:
-        raise HTTPException(404, "turn not found")
-    last_event_id = request.headers.get("Last-Event-ID") or "0"
-    try:
-        after = max(0, int(last_event_id))
-    except ValueError:
-        after = 0
-
-    async def gen():
-        try:
-            async for offset, ev in voice_worker.iter_events(turn, after=after):
-                if await request.is_disconnected():
-                    return
-                kind = ev["kind"]
-                payload = json.dumps({"kind": kind, "payload": ev["payload"], "ts": ev["ts"]})
-                yield f"id: {offset}\nevent: {kind}\ndata: {payload}\n\n"
-            yield "event: end\ndata: {}\n\n"
-        except asyncio.CancelledError:
-            return
-
-    return StreamingResponse(
-        gen(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",
-            "Connection": "keep-alive",
-        },
-    )
-
-
-class CancelBody(BaseModel):
-    reason: str = "superseded"
-    heard: int | None = None
-    heard_text: str | None = None
-
-
-@router.post("/voice/turns/{turn_id}/cancel")
-async def voice_cancel_turn(turn_id: str, body: CancelBody):
-    ok = await voice_worker.cancel_turn(
-        turn_id, reason=body.reason, heard=body.heard, heard_text=body.heard_text,
-    )
-    if not ok:
-        raise HTTPException(404, "turn not found")
-    return {"ok": True}
-
-
-@router.post("/voice/turns/{turn_id}/commit")
-async def voice_commit_turn(turn_id: str):
-    ok = await voice_worker.commit_turn(turn_id)
-    if not ok:
-        raise HTTPException(404, "turn not found")
-    return {"ok": True}
+# The per-turn REST surface (POST /turns, GET /turns/{id}/stream,
+# /cancel, /commit) is GONE. A turn used to be assembled out of a POST, an SSE
+# stream and two more POSTs racing each other, which is why the client needed an
+# epoch counter to make stale continuations no-ops. It is one socket now:
+# /voice/stream (routes/voice_stream.py). `voice_worker` still owns generation
+# and is driven directly by services/voice/runtime.py.
+#
+# What stays here: prefs, the voice catalog, health, the one-shot stt/tts
+# endpoints (still useful for probing), and session prewarm/release below.
 
 
 @router.delete("/voice/session/{thread_id}")

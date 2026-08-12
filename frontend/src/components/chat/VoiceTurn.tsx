@@ -1,4 +1,4 @@
-import type { VoiceSnapshot } from "../../lib/voiceSession";
+import type { VoiceSnapshot } from "../../lib/voice/client";
 import WorkingIndicator from "./WorkingIndicator";
 
 // A spoken exchange in the log, as ordinary bubbles.
@@ -23,6 +23,28 @@ export function SettlingTurn({ settling }: { settling: { user: string; assistant
         <div className="chat-msg assistant"><div className="chat-bubble">{settling.assistant}</div></div>
       )}
     </>
+  );
+}
+
+// What you are saying RIGHT NOW, as the message it is about to become.
+//
+// This used to be one clipped line in the strip above the composer: nowrap plus
+// an ellipsis, so it showed the first few words of an utterance and never the
+// latest ones — the part you actually want to check. And because the strip sits
+// inside the composer, growing it pushed the whole action row down.
+//
+// A bubble at the foot of the log fixes both by construction. It wraps to as
+// many lines as the speech needs, the log is already pinned to the bottom so the
+// newest words are the visible ones, and it takes its space from the transcript
+// (which scrolls) rather than from the composer (which does not).
+export function VoicePendingTurn({ text, previewing }: { text: string; previewing: boolean }) {
+  return (
+    <div className="chat-msg user">
+      <div className="chat-bubble chat-bubble--speaking" aria-live="polite">
+        {text}
+        {previewing && <span className="chat-voice-catchup" aria-hidden />}
+      </div>
+    </div>
   );
 }
 
