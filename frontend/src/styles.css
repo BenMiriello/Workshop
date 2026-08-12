@@ -1132,45 +1132,34 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-attach-row--sent { margin-bottom: var(--space-2); }
 .chat-attach.is-sent { max-width: 14rem; }
 
-/* A CHIP INSIDE YOUR OWN BUBBLE IS DRAWN FROM THAT BUBBLE, not from the page.
-   It used to take `--bg-inset` for its surface while inheriting the bubble's
-   foreground. In light mode that is a near-white panel carrying near-white
-   text: MEASURED AT 1.02:1, which is not "hard to read", it is invisible.
-   Reported in light mode 2026-08-12.
+/* A CHIP INSIDE YOUR OWN BUBBLE KEEPS THE PAGE'S COLOURS, NOT THE BUBBLE'S.
+   It is a small card sitting ON the message, so it takes the page's inset
+   surface and the page's foreground: dark text on a light panel in light mode,
+   light text on a dark panel in dark mode. That pairing is guaranteed to be
+   legible, because the palette solves `--fg` against `--bg-inset` directly and
+   the contract pins it (see frontend/CLAUDE.md: every text tone clears AA on
+   --bg, --card AND --bg-inset). Measured across all 27 generated scheme blocks
+   the worst case is well clear of AA.
 
-   Everything here derives from `--accent-fg`, which is BY CONSTRUCTION the
-   colour the palette solved to contrast with this bubble, in every scheme and
-   both themes (it is not always white).
+   These are the same values the base `.chat-attach` rule sets, restated here on
+   purpose: they are DEFENSIVE. The bug this replaces was `.is-sent` setting
+   `color: inherit`, which quietly handed the chip the bubble's own foreground.
+   In light mode that is near-white text on a near-white panel, measured at
+   1.02:1, which is not "hard to read", it is invisible. Stating both properties
+   at this specificity means no rule that only sets a colour on the BUBBLE can
+   reach inside the chip and do it again.
 
-   THE HAIRLINE DOES THE WORK, NOT THE FILL, and that is forced by arithmetic
-   rather than taste. Mixing the text colour into the surface behind it can only
-   ever spend contrast: measured across all 27 generated scheme blocks, the
-   bubble's own baseline is 5.19:1, a 6% fill still clears AA at 4.60:1, and 8%
-   already fails at 4.43:1. So the fill stays at the 6% that reads as "slightly
-   lifted off the message background" and the ring, which sits beside the text
-   and not behind it, carries the edge at no contrast cost at all. */
+   A previous attempt tinted the chip from the bubble instead. It was the wrong
+   way round (operator, 2026-08-12) and it was also boxed in by arithmetic:
+   mixing the text colour into the surface behind it can only spend contrast,
+   and it capped out at a 6% fill before failing AA. */
 .chat-msg.user .chat-attach {
-  background: color-mix(in srgb, var(--accent-fg) 6%, transparent);
-  color: var(--accent-fg);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-fg) 26%, transparent);
+  background: var(--bg-inset);
+  color: var(--fg);
 }
-/* Hover raises the RING, never the fill, for the same reason. */
-.chat-msg.user .chat-attach:hover {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-fg) 45%, transparent);
-}
+.chat-msg.user .chat-attach:hover { background: var(--card-hover); }
 .chat-msg.user .chat-attach__mark,
-.chat-msg.user .chat-attach__meta {
-  color: color-mix(in srgb, var(--accent-fg) 72%, transparent);
-}
-/* SENT BUT NOT COMMITTED, and queued-but-not-sent, dim the whole bubble to 0.55.
-   The chip is dimmed with it, which is right: it should read exactly as settled
-   as the message text beside it, no more and no less. So this strengthens only
-   the ring, keeping the chip's edge findable while it is on its way without
-   touching the text contrast the dim is already applying evenly to both. */
-.chat-bubble--inflight .chat-attach,
-.chat-bubble--queued .chat-attach {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-fg) 40%, transparent);
-}
+.chat-msg.user .chat-attach__meta { color: var(--muted); }
 
 /* Drop target: the WHOLE chat, not a small zone you have to aim at. The overlay
    is pointer-events:none so it can never eat the drop it is advertising. */
