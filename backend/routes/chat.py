@@ -985,7 +985,16 @@ def _link_build_skills(provider) -> None:
 # budget, fold its oldest half into a running summary in ONE pass. One cache
 # invalidation per compaction instead of one per turn; raw messages stay in the
 # thread JSON so it is always reversible.
-_COMPACT_TOKEN_THRESHOLD = 6000  # tokens of uncompacted tail before folding
+# Automatic folding is a NEAR-WINDOW SAFETY VALVE, not a routine housekeeping
+# pass. It was 6000 tokens, which on today's ~1M-token model windows fired when a
+# chat was well under 1% full: the operator saw "N earlier messages folded into
+# the running summary" on conversations nowhere near their limit, and since the
+# fold is lossy (the model then sees a summary in place of those turns) that was
+# pure downside. Raised to sit near the real window so ordinary chats never
+# auto-fold; the manual /compact command (force=True) is unchanged and remains
+# the way to reclaim context on purpose. (Operator, 2026-08-12: the early
+# auto-summary was "only causing headaches".)
+_COMPACT_TOKEN_THRESHOLD = 700_000  # tokens of uncompacted tail before auto-folding
 _CHARS_PER_TOKEN = 4
 _COMPACT_KEEP_TAIL = 4  # turns a forced /compact keeps verbatim
 # Summarization is one text-in/text-out call, so it should take seconds. Cap it

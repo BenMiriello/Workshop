@@ -15,8 +15,11 @@ import glob
 import json
 import logging
 import os
+import re
+import select
 import shutil
 import signal
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -75,26 +78,60 @@ def _initialize_line() -> str:
     }) + "\n"
 
 
+# One frame is one line of JSON the CLI parses whole. Two writers to the same
+# FIFO (a mid-turn message racing a permission answer) or a frame larger than the
+# pipe's atomic PIPE_BUF (4096B on Linux) used to interleave or truncate, and the
+# CLI's JSON parser then hit end-of-object early ("Expected '}'") and exited 1.
+# So: serialise every writer, and write the whole frame before releasing.
+_FIFO_WRITE_LOCK = threading.Lock()
+# How long to keep trying to hand off one frame before giving up. A healthy CLI
+# drains stdin continuously, so this is only ever approached if the reader has
+# wedged — in which case failing is better than blocking the request forever.
+_FIFO_WRITE_TIMEOUT_S = 10.0
+
+
+def _write_all(fd: int, data: bytes) -> bool:
+    """Write every byte of one frame to a non-blocking fd, looping over short
+    writes and waiting for writability on a full pipe. Returns True only if the
+    WHOLE frame went out: a partially written frame is the corruption this
+    guards against, so a caller that gets False must not treat it as delivered."""
+    view = memoryview(data)
+    deadline = time.monotonic() + _FIFO_WRITE_TIMEOUT_S
+    while view:
+        try:
+            n = os.write(fd, view)
+            view = view[n:]
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            _, writable, _ = select.select([], [fd], [], remaining)
+            if not writable:
+                return False
+    return True
+
+
 def _write_line(turn_id: str, line: str) -> bool:
     """Write one raw frame to a running turn's stdin. See write_to_turn for why
-    this is non-blocking."""
+    this is non-blocking; see _write_all for why it is written whole under a lock."""
     fifo = _stdin_fifo(turn_id)
     if not fifo.exists():
         return False
-    fd = None
-    try:
-        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
-        os.write(fd, line.encode())
-        return True
-    except OSError as e:
-        log.debug("turn %s: control write failed (%s)", turn_id, e)
-        return False
-    finally:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+    data = line.encode()
+    with _FIFO_WRITE_LOCK:
+        fd = None
+        try:
+            fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            return _write_all(fd, data)
+        except OSError as e:
+            log.debug("turn %s: control write failed (%s)", turn_id, e)
+            return False
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def answer_permission(turn_id: str, request_id: str, allow: bool,
@@ -128,21 +165,26 @@ def write_to_turn(turn_id: str, text: str) -> bool:
     fifo = _stdin_fifo(turn_id)
     if not fifo.exists():
         return False
-    fd = None
-    try:
-        fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
-        os.write(fd, _user_message_line(text).encode())
-        return True
-    except OSError as e:
-        # ENXIO = FIFO open for write with no reader: the turn's process is gone.
-        log.debug("turn %s: injection failed (%s)", turn_id, e)
-        return False
-    finally:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+    # This is the path a pasted message travels, so it is the one that most often
+    # carries a frame past PIPE_BUF. Same whole-frame, serialised write as every
+    # other frame (see _write_all): a truncated user message was the "Expected
+    # '}'" crash the operator hit on a long paste.
+    data = _user_message_line(text).encode()
+    with _FIFO_WRITE_LOCK:
+        fd = None
+        try:
+            fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+            return _write_all(fd, data)
+        except OSError as e:
+            # ENXIO = FIFO open for write with no reader: the turn's process is gone.
+            log.debug("turn %s: injection failed (%s)", turn_id, e)
+            return False
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
 
 
 def session_alive(session_id: str | None, cwd: str) -> bool:
@@ -1088,6 +1130,31 @@ def _looks_like_auth_failure(text: str) -> bool:
     return any(h in low for h in _AUTH_HINTS)
 
 
+# The repo root, resolved from this file so it carries no machine-identifying
+# literal (check_no_hardcoding fails on those). Everything the operator works on
+# lives under it; anything absolute outside it is system detail a chat has no
+# business showing.
+_WORKSHOP_ROOT = str(Path(__file__).resolve().parents[2])
+# Any absolute filesystem path that survives the workshop-root rewrite points
+# OUTSIDE the project (a home dir, a config or secrets path, a system dir), which
+# a chat has no business revealing. Redact it whole rather than show it relative.
+_ABS_PATH_RE = re.compile(r"/(?:home|Users|root|etc|var|opt|usr|tmp|private|Library|mnt|srv)/[^\s\"'):,]*")
+
+
+def _scrub_paths(text: str) -> str:
+    """Redact filesystem detail from a message before it reaches the chat.
+
+    A user-facing error must never expose where on the host things live. A path
+    inside workshop is shown project-relative (the root prefix dropped); anything
+    ABOVE workshop is not the operator's project and is redacted to `[path]`.
+    Operator directive 2026-08-12: in-app errors stay scoped to the project, and
+    no chat scope has any business knowing the system outside workshop."""
+    if not text:
+        return text
+    text = text.replace(_WORKSHOP_ROOT + "/", "").replace(_WORKSHOP_ROOT, "")
+    return _ABS_PATH_RE.sub("[path]", text)
+
+
 def _failure_text(rc: int, turn_error: str, stderr_tail: str) -> str:
     """The message shown for a turn that produced nothing and failed.
 
@@ -1096,9 +1163,9 @@ def _failure_text(rc: int, turn_error: str, stderr_tail: str) -> str:
     in those cases it knows the cause exactly and the child either never ran or
     never got to say anything. Whenever the CLI itself is what broke, this
     module has nothing to add and the child's stderr is the only real
-    information available.
-    """
-    detail = (turn_error or "").strip() or (stderr_tail or "").strip()
+    information available. Whatever the source, host paths are scrubbed before it
+    is shown (see _scrub_paths)."""
+    detail = _scrub_paths((turn_error or "").strip() or (stderr_tail or "").strip())
     if not detail:
         return f"Ended unexpectedly (exit {rc})."
     if _looks_like_auth_failure(detail):
