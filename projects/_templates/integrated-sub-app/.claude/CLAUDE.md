@@ -10,4 +10,6 @@ In short:
 - Dark theme is default.
 
 Before claiming a UI task done: `bash scripts/check_design.sh` and
-`cd frontend && npx tsc --noEmit` from the workshop root.
+`npm run typecheck` from the workshop root. Do NOT use `npx tsc`: npx resolves a
+deprecated stub package of that name over the local TypeScript binary and exits 0
+without checking anything.

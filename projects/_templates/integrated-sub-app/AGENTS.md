@@ -6,7 +6,8 @@
   workshop-wide wiring (then stop and surface what files outside need to change).
 - Workshop design system is mandatory. Build from the `@workshop/ui` kit.
   Lucide icons only; no emoji. Five status kinds. ConfirmDialog for destructive.
-- Before claiming a UI task done: run `scripts/check_design.sh` and `npx tsc --noEmit`
-  from the workshop root.
+- Before claiming a UI task done: run `scripts/check_design.sh` and `npm run typecheck`
+  from the workshop root. Never `npx tsc` — npx picks a deprecated stub package of that
+  name over the real binary and exits 0 having checked nothing.
 - No stubs (TODO/FIXME/NotImplementedError/pass # stub/...). Mark `[~] BLOCKED` if
   a task is too big to finish in one tick.

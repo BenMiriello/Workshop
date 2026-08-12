@@ -59,6 +59,8 @@ The earlier v1 design set at [`docs/workshop-v1/`](docs/workshop-v1/) and the 20
 
 **Every change under `frontend/` and `mobile/` MUST follow [`frontend/CLAUDE.md`](frontend/CLAUDE.md)** — the Workshop Design System. In short: build from the `src/ui` primitives + `src/styles/tokens.css`; no inline hex colors; lucide icons only (never emoji); five status kinds; Edit-mode for config/money writes; `ConfirmDialog` for destructive actions; all four list states (loading/empty/error/overflow). Default theme is dark.
 
-Before claiming a UI task done: `bash scripts/check_design.sh`, `cd frontend && npx tsc --noEmit`, and `cd frontend && npm test` (vitest; pure logic modules only — no DOM harness). The reviewer gate fails on `design_violations` (new inline hex / emoji / `not-allowed` in changed `.tsx`).
+Before claiming a UI task done: `bash scripts/check_design.sh`, `npm run typecheck` (from the repo root), and `cd frontend && npm test` (vitest; pure logic modules only — no DOM harness). The reviewer gate fails on `design_violations` (new inline hex / emoji / `not-allowed` in changed `.tsx`).
+
+**Do NOT typecheck with `npx tsc`.** `tsc` is also the name of a deprecated stub package on npm, and npx resolves that ahead of the local TypeScript binary: it prints "This is not the tsc command you are looking for" and **exits 0**, so it reports success having checked nothing. This repo shipped on that no-op gate for months. `npm run typecheck` runs the real binary over both the kit and the frontend (~8s); `cd frontend && ./node_modules/.bin/tsc --noEmit` is the frontend-only equivalent.
 
 Design new screens to the system from the start — there is no "systematize it later" pass.
