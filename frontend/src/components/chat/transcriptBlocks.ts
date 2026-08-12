@@ -107,6 +107,11 @@ function replyBlocks(ev: LogEvent, interrupts: LogEvent[]): TranscriptBlock[] {
       const meta = { ...msg.meta, segments: part };
       if (!tail) {
         delete meta.notes;
+        // Same reason as `notes`, which this replaced: a receipt is what the
+        // whole TURN changed outside the chat, so it belongs once, at the end.
+        // Left in, a turn that wrote a note and was then interrupted repeated
+        // "Wrote 1 note" on every stretch of work in it.
+        delete meta.receipts;
         delete meta.timeout;
         delete meta.stopped;
         delete meta.ended_at;

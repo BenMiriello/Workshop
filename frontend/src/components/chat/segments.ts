@@ -136,6 +136,16 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
   if (ev.kind === "tool") {
     const step: ChatSegment = { t: "tool", name: ev.name || "?", input: ev.input || "" };
     if (parent) {
+      // A DELEGATE'S STEP IS OPEN THE SAME WAY A TOP-LEVEL ONE IS. This used to
+      // give nested steps neither `id` nor `at`, on the belief that a
+      // subagent's tool results never reach this reducer. They do: a nested
+      // result arrives with `parent` set. Without the id it matched nothing, so
+      // every step inside an opened chip stayed outcome-less, and no outcome
+      // reads as succeeded.
+      if (!ev.agent && ev.id) {
+        (step as Extract<ChatSegment, { t: "tool" }>).id = ev.id;
+        (step as Extract<ChatSegment, { t: "tool" }>).at = Date.now() / 1000;
+      }
       const nested = intoAgent(segs, parent, step);
       if (nested) return nested;
     }
@@ -143,8 +153,6 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
     // finds it, and `at` is both the start of its clock and the fact that it is
     // still going. Mirrors the backend's _seg_tool, which persists the same two
     // fields, so a reload mid-call keeps the same row in the same state.
-    // Nested steps get neither: a subagent's internals are summarised by its
-    // own row, and its tool results never reach this reducer.
     if (!ev.agent && ev.id) {
       step.name = ev.name || "?";
       (step as Extract<ChatSegment, { t: "tool" }>).id = ev.id;
@@ -177,19 +185,40 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
     return copy;
   }
   const j = segs.map((s, k) => (s.t === "tool" && s.id === id ? k : -1)).filter((k) => k >= 0).pop();
-  if (j === undefined) return segs;
-  const open = segs[j] as Extract<ChatSegment, { t: "tool" }>;
-  const closed: Extract<ChatSegment, { t: "tool" }> = {
-    ...open, ok: !ev.is_error,
-  };
-  // `at` is dropped on close: it is what marks a step as still running, and a
-  // finished step that kept it would tick forever.
+  if (j !== undefined) {
+    const out = segs.slice();
+    out[j] = closeStep(segs[j] as Extract<ChatSegment, { t: "tool" }>, ev);
+    return out;
+  }
+  // Not top-level, so look inside the delegations. A subagent's step closes
+  // exactly like the parent's own, which is what lets an opened chip tell a
+  // search that failed from one that came back empty.
+  for (let k = segs.length - 1; k >= 0; k--) {
+    const host = segs[k];
+    if (!isAgent(host)) continue;
+    const s = host.steps.findIndex((x) => x.t === "tool" && x.id === id);
+    if (s < 0) continue;
+    const steps = host.steps.slice();
+    steps[s] = closeStep(steps[s] as Extract<ChatSegment, { t: "tool" }>, ev);
+    const out = segs.slice();
+    out[k] = { ...host, steps };
+    return out;
+  }
+  return segs;
+}
+
+/** Settle one open tool step: its outcome, how long it ran, and its failure
+ *  text. `at` is dropped, because it is what marks a step as still running and
+ *  a finished step that kept it would tick forever. */
+function closeStep(
+  open: Extract<ChatSegment, { t: "tool" }>,
+  ev: { is_error?: boolean; text?: string },
+): Extract<ChatSegment, { t: "tool" }> {
+  const closed: Extract<ChatSegment, { t: "tool" }> = { ...open, ok: !ev.is_error };
   if (typeof open.at === "number") closed.ms = Math.max(0, Math.round(Date.now() - open.at * 1000));
   delete closed.at;
   if (ev.is_error && ev.text) closed.error = ev.text;
-  const out = segs.slice();
-  out[j] = closed;
-  return out;
+  return closed;
 }
 
 type AgentSegment = Extract<ChatSegment, { t: "agent" }>;

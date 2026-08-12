@@ -21,8 +21,10 @@ import type { ChatSegment } from "../../lib/chat";
 // system block" report, exactly.
 //
 // A UNIT is one rendered thing: a top-level segment, or a step nested inside a
-// subagent. The count advances with every step a delegate takes, so a cut can
-// fall INSIDE a chip — which is why splitAtUnits knows how to divide one.
+// subagent. The count advances with every step a delegate takes, so two messages
+// sent minutes apart during one delegation get different coordinates, which is
+// the whole point. A cut can therefore fall INSIDE a chip — see snapCut, which
+// moves it to the chip's end rather than dividing the delegation.
 //
 // Old messages carry only `at_segment`. `unitOfSegmentIndex` converts those to
 // the same coordinate space, and because it converts a segment boundary to the
@@ -50,36 +52,53 @@ export function unitOfSegmentIndex(segments: ChatSegment[], segIndex: number): n
   return n;
 }
 
-/** The segments covering units [from, to), with a subagent chip divided when the
- *  range falls inside one.
+/** A DELEGATION IS ONE THING AND IS NEVER DIVIDED.
  *
- *  A divided chip appears once on each side of the message. The earlier piece is
- *  forced back to not-done and carries no result: when the message landed, that
- *  delegation had not reported back, and showing its conclusion above the
- *  message would be the same lie in miniature that this whole file exists to
- *  end. The piece holding the chip's last unit keeps `done` and `result`. */
+ *  A cut that lands inside a subagent chip moves to the chip's end, so the whole
+ *  delegation stays in the slice where it was LAUNCHED and the message renders
+ *  below it.
+ *
+ *  This used to divide the chip instead, showing it once on each side with the
+ *  earlier piece forced back to not-done. Every consequence of that was wrong.
+ *  The two pieces are the same delegation, so it read as a duplicate; both were
+ *  not-done, so both pulsed as though two agents were running; the lower one's
+ *  step count climbed while the upper one sat frozen at a number that never
+ *  matched anything. And because the forcing was unconditional, a reply from
+ *  days ago that had been interrupted mid-delegation still carried a pulsing
+ *  chip for an agent that finished long before.
+ *
+ *  Snapping to the end and not the head is what keeps the message from drifting.
+ *  The chip is one collapsed row while it runs, growing only in its step count,
+ *  so nothing below it moves as the delegate works. Snapping to the head instead
+ *  would put the message above a delegation that was already running when it was
+ *  sent, which is the exact placement error this file exists to prevent.
+ *
+ *  No product surveyed divides a running delegation; they all keep one card and
+ *  update it in place. See docs/decisions/0015. */
+function snapCut(segments: ChatSegment[], cut: number): number {
+  let u = 0;
+  for (const seg of segments) {
+    const head = u;
+    u += 1;
+    if (!isAgent(seg)) continue;
+    u += seg.steps.length;
+    // Strictly inside: the delegation was launched before the message and had
+    // not reported back when it arrived. `head` itself is a clean boundary —
+    // the message beat the launch, so the chip belongs below it.
+    if (cut > head && cut < u) return u;
+  }
+  return cut;
+}
+
+/** The segments covering units [from, to). Chips are whole by construction:
+ *  every bound has been through snapCut. */
 function sliceUnits(segments: ChatSegment[], from: number, to: number): ChatSegment[] {
   const out: ChatSegment[] = [];
   let u = 0;
   for (const seg of segments) {
     const head = u;
-    u += 1;
-    if (!isAgent(seg)) {
-      if (head >= from && head < to) out.push(seg);
-      continue;
-    }
-    const stepsStart = u;
-    u += seg.steps.length;
-    const end = u; // exclusive
-    if (end <= from || head >= to) continue;
-    const steps = seg.steps.slice(
-      Math.max(0, from - stepsStart),
-      Math.max(0, Math.min(to, end) - stepsStart),
-    );
-    const takesHead = head >= from && head < to;
-    if (!takesHead && !steps.length) continue;
-    const tail = to >= end;
-    out.push(tail ? { ...seg, steps } : { ...seg, steps, done: false, result: "" });
+    u += isAgent(seg) ? 1 + seg.steps.length : 1;
+    if (head >= from && head < to) out.push(seg);
   }
   return out;
 }
@@ -94,7 +113,10 @@ export function splitAtUnits(segments: ChatSegment[], cuts: number[]): ChatSegme
   const bounds: number[] = [0];
   let prev = 0;
   for (const raw of cuts) {
-    const at = Math.max(prev, Math.min(Number.isFinite(raw) ? raw : total, total));
+    const clamped = Math.max(prev, Math.min(Number.isFinite(raw) ? raw : total, total));
+    // Snap AFTER clamping, so a cut pushed forward past a delegation still can't
+    // exceed the total or fall behind the cut before it.
+    const at = Math.max(prev, Math.min(snapCut(segments, clamped), total));
     bounds.push(at);
     prev = at;
   }

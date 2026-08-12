@@ -865,11 +865,24 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
         return False
     if kind == "tool":
         step = {"t": "tool", "name": payload.get("name") or "?", "input": payload.get("input") or ""}
-        if not (nested and _agent_step(turn, nested, step)):
-            if payload.get("agent"):
-                _seg_agent(turn, payload)
-            else:
-                _seg_tool(turn, payload.get("name"), payload.get("input"), payload.get("id") or "")
+        tool_id = payload.get("id") or ""
+        if nested and _agent_step(turn, nested, step):
+            # A DELEGATE'S STEP CLOSES THE SAME WAY A TOP-LEVEL ONE DOES.
+            # It used to be appended bare, with no id and no start, so
+            # `_close_tool` could never find it: every step inside an opened
+            # chip carried no outcome, and an absent outcome reads as
+            # succeeded. A delegate whose search failed looked like one that
+            # had not. tool_use_id is unique across the whole turn, so
+            # registering nested steps in the same map cannot collide.
+            if tool_id:
+                step["id"] = tool_id
+                step["at"] = time.time()
+                turn.tool_segs[tool_id] = step
+            return True
+        if payload.get("agent"):
+            _seg_agent(turn, payload)
+        else:
+            _seg_tool(turn, payload.get("name"), payload.get("input"), tool_id)
         return True
     if kind == "permission":
         # An approval is a segment, not a transient event: the turn is blocked on
@@ -892,9 +905,10 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
         })
         return True
     if kind == "tool_result":
-        # The Agent tool's own result closes its segment. Nested tool results
-        # (parent set) are the subagent's internal plumbing and are not rendered;
-        # its report comes back in this one.
+        # The Agent tool's own result closes its segment. A nested result's TEXT
+        # is the subagent's internal plumbing and is still not rendered (its
+        # report comes back in this one), but it does close the nested step
+        # below, which is where that step's outcome and duration come from.
         rid = payload.get("tool_use_id") or ""
         host = turn.agent_segs.get(rid)
         if host is not None:

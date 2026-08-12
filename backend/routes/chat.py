@@ -980,31 +980,20 @@ def _link_build_skills(provider) -> None:
 
 
 # --- Phase 3: threshold compaction -------------------------------------------
-# Instead of a sliding window (which shifts the cached prefix every turn), keep
-# the transcript append-only and, when the uncompacted tail exceeds a token
-# budget, fold its oldest half into a running summary in ONE pass. One cache
-# invalidation per compaction instead of one per turn; raw messages stay in the
-# thread JSON so it is always reversible.
-# Automatic folding is a NEAR-WINDOW SAFETY VALVE, not a routine housekeeping
-# pass. It was 6000 tokens, which on today's ~1M-token model windows fired when a
-# chat was well under 1% full: the operator saw "N earlier messages folded into
-# the running summary" on conversations nowhere near their limit, and since the
-# fold is lossy (the model then sees a summary in place of those turns) that was
-# pure downside. Raised to sit near the real window so ordinary chats never
-# auto-fold; the manual /compact command (force=True) is unchanged and remains
-# the way to reclaim context on purpose. (Operator, 2026-08-12: the early
-# auto-summary was "only causing headaches".)
-_COMPACT_TOKEN_THRESHOLD = 700_000  # tokens of uncompacted tail before auto-folding
-_CHARS_PER_TOKEN = 4
+# AUTOMATIC folding is REMOVED (operator, 2026-08-12). The running summary used
+# to fold the oldest half of the tail whenever a crude char estimate crossed a
+# token budget, which on today's ~1M-token windows fired on chats nowhere near
+# full and swapped real turns for a lossy summary mid-conversation. Nothing folds
+# on its own now: an ordinary turn sends the whole transcript (the model's own
+# window is the limit, and the CLI compacts that itself when it must). Only the
+# MANUAL /compact command still folds, on explicit request — see force=True in
+# _compact_thread and the /compact endpoint. Raw messages stay in the thread JSON
+# either way, so any past fold is still reversible.
 _COMPACT_KEEP_TAIL = 4  # turns a forced /compact keeps verbatim
 # Summarization is one text-in/text-out call, so it should take seconds. Cap it
 # hard: /compact is a foreground request the operator is waiting on, and the
 # 10-minute library default meant a slow call read as a dead button.
 _COMPACT_CALL_TIMEOUT_S = 120
-
-
-def _est_tokens(msgs: list[dict]) -> int:
-    return sum(len(m.get("content", "")) for m in msgs) // _CHARS_PER_TOKEN
 
 
 def _fmt_turns(msgs: list[dict]) -> str:
@@ -1121,12 +1110,10 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
                           force: bool = False) -> tuple[str, list[dict], int]:
     """One compaction pass. Returns (summary, recent verbatim turns, folded count).
 
-    Two entry conditions. Automatic (`force=False`): only when the uncompacted
-    tail is both long enough and over the token budget, and then only the oldest
-    half folds — that keeps the cached prefix stable across ordinary turns.
-    Forced (`force=True`, the /compact command): fold everything except the last
-    `_COMPACT_KEEP_TAIL` turns regardless of size, because the operator asked for
-    the context back now.
+    Only `force=True` (the manual /compact command) ever folds: everything
+    except the last `_COMPACT_KEEP_TAIL` turns, because the operator asked for the
+    context back now. The automatic path (`force=False`) is a no-op — automatic
+    folding was removed on 2026-08-12 (it summarised chats nowhere near full).
 
     Best-effort: any failure leaves the thread untouched and returns the current
     (summary, tail, 0), so a compaction hiccup never blocks a reply or loses
@@ -1144,14 +1131,12 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
     if ct < 0 or ct > len(msgs):
         ct = 0
     tail = msgs[ct:]
-    if force:
-        fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
-        if fold_n == 0:
-            return summary, tail, 0
-    else:
-        if len(tail) < 6 or _est_tokens(tail) < _COMPACT_TOKEN_THRESHOLD:
-            return summary, tail, 0
-        fold_n = len(tail) // 2
+    if not force:
+        # Automatic folding is removed: nothing folds unless the operator asks.
+        return summary, tail, 0
+    fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
+    if fold_n == 0:
+        return summary, tail, 0
     to_fold, keep = tail[:fold_n], tail[fold_n:]
     tid = thread.get("id") or ""
     if tid in _FOLDING:
@@ -1213,7 +1198,10 @@ async def _compact_thread(thread: dict, scope_key: str = "", *,
 
 
 async def _maybe_compact(thread: dict, scope_key: str = "") -> tuple[str, list[dict]]:
-    """Threshold compaction on the ordinary turn path. See `_compact_thread`."""
+    """Ordinary turn path. Automatic folding is removed, so this now just returns
+    the thread's existing summary (from a past MANUAL /compact, if any) and its
+    full uncompacted tail. Kept as the seam the turn assembler calls, so re-adding
+    a policy later is one function, not a scattered edit. See `_compact_thread`."""
     summary, tail, _ = await _compact_thread(thread, scope_key)
     return summary, tail
 

@@ -74,13 +74,16 @@ def test_a_result_for_an_unknown_step_changes_nothing():
     assert json.dumps(turn.segments, sort_keys=True) == before
 
 
-def test_a_nested_step_gets_no_id_so_it_cannot_close_a_parent_row():
+def test_a_nested_step_is_registered_so_its_own_result_can_close_it():
     turn = _turn()
     bs._segment_ingest(turn, "tool", {"agent": "Explore", "input": "look", "id": "a1"})
     bs._segment_ingest(turn, "tool", {"name": "Read", "input": "x.ts", "id": "n1", "parent": "a1"})
     step = turn.segments[0]["steps"][0]
-    assert step["t"] == "tool" and "id" not in step
-    assert "n1" not in turn.tool_segs
+    assert step["t"] == "tool" and step["id"] == "n1"
+    # Registered in the SAME map as top-level calls. tool_use_id is unique
+    # across the turn, so one map cannot confuse a delegate's step for the
+    # parent's, and `_close_open_tools` reaches both on an interrupt.
+    assert turn.tool_segs["n1"] is step
 
 
 def test_an_interrupted_turn_leaves_the_outcome_unknown_not_failed():
@@ -100,3 +103,42 @@ def test_a_legacy_segment_without_an_id_still_records_the_call():
     turn = _turn()
     bs._segment_ingest(turn, "tool", {"name": "Bash", "input": "ls"})
     assert turn.segments[0] == {"t": "tool", "name": "Bash", "input": "ls"}
+
+
+def test_a_delegates_step_closes_like_a_top_level_one():
+    """A nested step used to be appended bare, with no id and no start, so
+    `_close_tool` could never find it. Every step inside an opened chip carried
+    no outcome, and an absent outcome reads as succeeded: a delegate whose
+    search failed looked exactly like one that had not."""
+    turn = _turn()
+    bs._segment_ingest(turn, "tool", {"name": "Agent", "input": "go", "id": "a1", "agent": "Explore"})
+    bs._segment_ingest(turn, "tool", {"name": "Read", "input": "x.ts", "id": "n1", "parent": "a1"})
+
+    step = turn.segments[0]["steps"][0]
+    assert step["id"] == "n1"
+    assert isinstance(step.get("at"), float)
+
+    bs._segment_ingest(turn, "tool_result", {
+        "tool_use_id": "n1", "text": "no such file", "is_error": True, "parent": "a1",
+    })
+    assert step["ok"] is False
+    assert step["error"] == "no such file"
+    assert "at" not in step
+    assert isinstance(step["ms"], int)
+
+    # The delegation itself is still running: only the Agent tool's OWN result
+    # reports back.
+    assert turn.segments[0]["done"] is False
+
+
+def test_a_delegates_step_does_not_close_another_delegates():
+    turn = _turn()
+    bs._segment_ingest(turn, "tool", {"name": "Agent", "input": "one", "id": "a1", "agent": "Explore"})
+    bs._segment_ingest(turn, "tool", {"name": "Agent", "input": "two", "id": "a2", "agent": "Plan"})
+    bs._segment_ingest(turn, "tool", {"name": "Read", "input": "p", "id": "n1", "parent": "a1"})
+    bs._segment_ingest(turn, "tool", {"name": "Read", "input": "q", "id": "n2", "parent": "a2"})
+    bs._segment_ingest(turn, "tool_result", {
+        "tool_use_id": "n2", "text": "boom", "is_error": True, "parent": "a2",
+    })
+    assert "ok" not in turn.segments[0]["steps"][0]
+    assert turn.segments[1]["steps"][0]["ok"] is False

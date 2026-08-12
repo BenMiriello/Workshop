@@ -40,28 +40,32 @@ describe("unitOfSegmentIndex", () => {
 describe("splitAtUnits inside a delegation", () => {
   const steps = [tool("one"), tool("two"), tool("three"), tool("four")];
 
-  it("divides a chip at the step the message landed on", () => {
+  it("never divides a chip: the message goes below the whole delegation", () => {
     const [before, after] = splitAtUnits([agent(steps, true, "found it")], [3]);
-    // head + two steps above, the remaining two below.
     expect(before).toHaveLength(1);
-    expect(after).toHaveLength(1);
+    expect(after).toHaveLength(0);
     const b = before[0] as Extract<ChatSegment, { t: "agent" }>;
-    const a = after[0] as Extract<ChatSegment, { t: "agent" }>;
-    expect(b.steps.map((s) => (s.t === "tool" ? s.name : "?"))).toEqual(["one", "two"]);
-    expect(a.steps.map((s) => (s.t === "tool" ? s.name : "?"))).toEqual(["three", "four"]);
+    expect(b.steps.map((s) => (s.t === "tool" ? s.name : "?")))
+      .toEqual(["one", "two", "three", "four"]);
   });
 
-  it("does not show a conclusion above the message that preceded it", () => {
-    // The piece above the operator's message is a delegation that had NOT
-    // reported back when they typed. Carrying `done`/`result` up there would be
-    // this whole file's bug in miniature.
-    const [before, after] = splitAtUnits([agent(steps, true, "found it")], [3]);
+  it("leaves a running chip running, and only on the one row it has", () => {
+    // The bug this replaces: the earlier piece was forced to done:false, so a
+    // still-running delegation rendered as two rows that BOTH pulsed, the lower
+    // one counting up while the upper sat frozen.
+    const [before, after] = splitAtUnits([agent(steps)], [3]);
+    expect(before).toHaveLength(1);
+    expect(after).toHaveLength(0);
+    expect((before[0] as Extract<ChatSegment, { t: "agent" }>).done).toBe(false);
+  });
+
+  it("does not force a finished delegation back to running", () => {
+    // The same forcing ran unconditionally, so a reply from days ago that had
+    // been interrupted mid-delegation still carried a pulsing chip.
+    const [before] = splitAtUnits([agent(steps, true, "found it")], [3]);
     const b = before[0] as Extract<ChatSegment, { t: "agent" }>;
-    const a = after[0] as Extract<ChatSegment, { t: "agent" }>;
-    expect(b.done).toBe(false);
-    expect(b.result).toBe("");
-    expect(a.done).toBe(true);
-    expect(a.result).toBe("found it");
+    expect(b.done).toBe(true);
+    expect(b.result).toBe("found it");
   });
 
   it("keeps the whole chip below a message that arrived before it started", () => {
@@ -78,19 +82,29 @@ describe("splitAtUnits inside a delegation", () => {
     expect(after).toEqual([text("bye")]);
   });
 
-  it("places two messages sent during one delegation in different places", () => {
-    // seq37 and seq38 both recorded 42 and could only render together. With unit
-    // coordinates they land where they were actually typed.
-    const parts = splitAtUnits([agent(steps)], [2, 4]);
+  it("places messages sent during DIFFERENT delegations in different places", () => {
+    // The measured bug: seq37 and seq38, minutes apart, both recorded segment 42
+    // because a segment count stands still for a whole delegation, so everything
+    // between them rendered below both. Unit coordinates separate them.
+    const parts = splitAtUnits([agent(steps), agent(steps)], [2, 7]);
     expect(parts).toHaveLength(3);
-    const stepsOf = (p: ChatSegment[]) =>
-      p.length ? (p[0] as Extract<ChatSegment, { t: "agent" }>).steps.length : 0;
-    expect(stepsOf(parts[0])).toBe(1);
-    expect(stepsOf(parts[1])).toBe(2);
-    expect(stepsOf(parts[2])).toBe(1);
+    expect(parts[0]).toHaveLength(1);
+    expect(parts[1]).toHaveLength(1);
+    expect(parts[2]).toHaveLength(0);
   });
 
-  it("drops nothing: every step appears exactly once across the slices", () => {
+  it("puts two messages sent during ONE delegation together, after it", () => {
+    // Deliberate. There is no work between them to separate them by: the whole
+    // delegation is one card, and splitting it to place them apart is what
+    // produced the duplicate pulsing rows.
+    const parts = splitAtUnits([agent(steps), text("z")], [2, 4]);
+    expect(parts).toHaveLength(3);
+    expect(parts[0]).toHaveLength(1);
+    expect(parts[1]).toHaveLength(0);
+    expect(parts[2]).toEqual([text("z")]);
+  });
+
+  it("drops nothing and duplicates nothing across the slices", () => {
     const parts = splitAtUnits([text("a"), agent(steps), text("z")], [2, 4]);
     const names = parts.flatMap((p) => p.flatMap((s) =>
       s.t === "agent" ? s.steps.map((x) => (x.t === "tool" ? x.name : "?"))

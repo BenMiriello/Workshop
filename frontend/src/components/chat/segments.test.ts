@@ -246,10 +246,38 @@ describe("tool outcomes close their own step", () => {
     expect(segs[0]).toMatchObject({ t: "agent", done: true, result: "report" });
   });
 
-  it("a nested step gets no id, so a subagent's plumbing cannot close a parent row", () => {
+  it("closes a delegate's own step, so an opened chip shows real outcomes", () => {
+    // This used to give a nested step no id at all, so its result matched
+    // nothing and every step inside a chip stayed outcome-less. An absent
+    // outcome reads as succeeded, so a delegate's failed search looked fine.
     let segs = applyStreamEvent([], { kind: "tool", name: "Agent", input: "go", id: "a1", agent: "Explore" });
     segs = applyStreamEvent(segs, { kind: "tool", name: "Read", input: "x.ts", id: "n1", parent: "a1" });
-    const step = (segs[0] as { steps: { id?: string }[] }).steps[0];
-    expect(step.id).toBeUndefined();
+    expect((segs[0] as { steps: { id?: string }[] }).steps[0].id).toBe("n1");
+
+    segs = applyStreamEvent(segs, { kind: "tool_result", tool_use_id: "n1", text: "no such file", is_error: true, parent: "a1" });
+    const step = (segs[0] as { steps: { ok?: boolean; error?: string; at?: number }[] }).steps[0];
+    expect(step.ok).toBe(false);
+    expect(step.error).toBe("no such file");
+    expect(step.at).toBeUndefined();
+  });
+
+  it("a nested result leaves the delegation itself running", () => {
+    // Only the Agent tool's OWN result reports back. A step closing inside the
+    // chip must not mark the whole delegation done.
+    let segs = applyStreamEvent([], { kind: "tool", name: "Agent", input: "go", id: "a1", agent: "Explore" });
+    segs = applyStreamEvent(segs, { kind: "tool", name: "Grep", input: "x", id: "n1", parent: "a1" });
+    segs = applyStreamEvent(segs, { kind: "tool_result", tool_use_id: "n1", text: "hit", parent: "a1" });
+    expect(segs[0]).toMatchObject({ t: "agent", done: false, result: "" });
+    expect((segs[0] as { steps: { ok?: boolean }[] }).steps[0].ok).toBe(true);
+  });
+
+  it("closes the right step when two delegations run at once", () => {
+    let segs = applyStreamEvent([], { kind: "tool", name: "Agent", input: "one", id: "a1", agent: "Explore" });
+    segs = applyStreamEvent(segs, { kind: "tool", name: "Agent", input: "two", id: "a2", agent: "Plan" });
+    segs = applyStreamEvent(segs, { kind: "tool", name: "Read", input: "p", id: "n1", parent: "a1" });
+    segs = applyStreamEvent(segs, { kind: "tool", name: "Read", input: "q", id: "n2", parent: "a2" });
+    segs = applyStreamEvent(segs, { kind: "tool_result", tool_use_id: "n2", text: "boom", is_error: true, parent: "a2" });
+    expect((segs[0] as { steps: { ok?: boolean }[] }).steps[0].ok).toBeUndefined();
+    expect((segs[1] as { steps: { ok?: boolean }[] }).steps[0].ok).toBe(false);
   });
 });

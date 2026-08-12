@@ -141,6 +141,21 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     expect((blocks[1] as { msg: { meta?: { notes?: string[] } } }).msg.meta?.notes).toEqual(["did a thing"]);
   });
 
+  it("carries the turn's RECEIPTS only on the final block", () => {
+    // A receipt is what the whole turn changed outside the chat. Repeated on
+    // every stretch of work, "Wrote 1 note" reads as several notes.
+    type R = { kind: string; label: string }[];
+    const receipts: R = [{ kind: "note", label: "Wrote 1 note" }];
+    const s = stateOf([
+      user("wait", { during_run: "r1", at_unit: 1 }),
+      reply("", { turn_id: "r1", segments: [text("a"), text("b")], receipts }),
+    ]);
+    const blocks = selectTranscript(s).filter((b) => b.kind === "message" && b.msg.role === "assistant");
+    expect(blocks).toHaveLength(2);
+    expect((blocks[0] as { msg: { meta?: { receipts?: R } } }).msg.meta?.receipts).toBeUndefined();
+    expect((blocks[1] as { msg: { meta?: { receipts?: R } } }).msg.meta?.receipts).toEqual(receipts);
+  });
+
   it("leaves a message filed against an ALREADY finished run where the log put it", () => {
     // The take-over case: the run refused delivery, so the message is below the
     // reply in the log and that is where it belongs.
