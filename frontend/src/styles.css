@@ -1171,12 +1171,24 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-mode[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
 .chat-mode__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The row is already crowded. Below the small breakpoint the mode keeps its icon
-   and drops its label, and the effort bars keep their full tap target — a
-   control that shrinks to nothing disappears exactly when the screen is small. */
+/* The row is already crowded. Below the small breakpoint each of the two label
+   controls drops its LESS informative half, and they are not the same half.
+
+   Mode keeps its icon and drops its label: the labels ("Manual", "Edit
+   automatically") are long, and each mode has a distinct glyph that carries it.
+
+   The model does the opposite — it drops its icon and keeps its label. Its icon
+   is the same one at every setting, so it says only "this is the model picker",
+   which the name beside it already said; the label ("Opus 5", "Haiku 4.5") is
+   the whole content of the control and is short enough to keep.
+
+   The effort bars keep their full tap target either way: a control that shrinks
+   to nothing disappears exactly when the screen is small. */
 @media (max-width: 30rem) {
   .chat-mode__val { display: none; }
   .chat-mode { padding: 0 0.45rem; }
+  .chat-model > svg { display: none; }
+  .chat-model { padding: 0 0.45rem; }
 }
 
 /* An approval: the turn has stopped and is asking. It is the only thing in the

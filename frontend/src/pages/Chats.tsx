@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArchiveRestore, MessagesSquare, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ArrowLeft, MessagesSquare, Plus, Trash2 } from "lucide-react";
 import {
   Button,
   Card,
@@ -32,34 +32,48 @@ import { DEV_MODE } from "../lib/devMode";
 
 // Scope-kind view filter (C17). Commits on change (a view preference).
 //
-// `archived` is in the same control but is NOT a scope kind: it switches which
-// LIST is being shown, where the others narrow the one list. It sits here
-// because the operator asked for it here, and it is right for the same reason
-// the rest are: this row is "which chats am I looking at", and the archive is an
-// answer to that question. It is deliberately EXCLUDED from All, since the whole
-// point of archiving is that those chats stop appearing in the list you use.
-type FilterKind = "all" | "development" | "workshop" | "project" | "app" | "agent" | "archived";
+// The archive is NOT in this control. It was, and it was wrong twice over: it is
+// not a scope kind, so it made a row of "which place" answers carry one "which
+// list" answer; and the seventh chip pushed the row past a phone viewport, which
+// the segmented primitive answers by widening the page rather than wrapping. The
+// archive is a different list and now has its own route, reached from a button
+// at the foot of this page.
+type FilterKind = "all" | "development" | "workshop" | "project" | "app" | "agent";
 // Dev is absent, not present-and-disabled, in a non-dev build — same rule
 // devMode.ts applies to the scope itself: a disabled option still tells every
 // user about a capability they do not have.
 //
 // It sorts ABOVE Workshop, matching `orderScopes` and the chat's own scope
 // picker: Development is where a developer already is, so the root organising
-// layer should not come first. And it reads "Dev", not "Development", because
-// this is a row of chips that has to fit a phone.
+// layer should not come first. It reads "Development", its real name: the
+// abbreviation was there to save room in a row that no longer has to fit seven
+// chips, and it was the only scope in the app called one thing here and another
+// everywhere else.
 const KIND_OPTIONS: SegmentedOption<FilterKind>[] = [
   { value: "all", label: "All" },
-  ...(DEV_MODE ? [{ value: "development" as const, label: "Dev" }] : []),
+  ...(DEV_MODE ? [{ value: "development" as const, label: "Development" }] : []),
   { value: "workshop", label: "Workshop" },
   { value: "project", label: "Projects" },
   { value: "app", label: "Apps" },
   { value: "agent", label: "Agents" },
-  { value: "archived", label: "Archived" },
 ];
 
 // Cap the rendered list so a large history never mounts unbounded (design rule
 // 9, overflow state). The filter narrows the list toward the cap.
 const RENDER_CAP = 100;
+
+// The chip row scrolls sideways on a narrow screen instead of setting the page's
+// width. `.ws-segmented` is an inline-flex with no wrap and an absolutely
+// positioned thumb, so it cannot wrap; left alone it made the whole Chats page
+// wider than a phone.
+// The 2px of padding is for the thumb's shadow and the focus ring: `overflow-x`
+// computes `overflow-y` to auto too, so a ring drawn at the edge would clip.
+const CHIP_SCROLL: React.CSSProperties = {
+  minWidth: 0,
+  maxWidth: "100%",
+  overflowX: "auto",
+  padding: "2px",
+};
 
 // When a chat was archived, at the resolution the archive is read at: you are
 // looking for the one you put here, so the day is the useful unit and today is
@@ -77,91 +91,55 @@ function archivedLabel(iso?: string | null): string {
 /** What the archive is being asked to do to a chat, while the dialog is open. */
 type Pending = { id: string; title: string; action: "restore" | "delete" };
 
+/** Search over a loaded list. Shared by both pages so they narrow identically. */
+function matches(t: ThreadSummary, needle: string): boolean {
+  if (!needle) return true;
+  const participantMatch = (t.participants ?? []).some((p) => p.toLowerCase().includes(needle));
+  return (
+    (t.title || "").toLowerCase().includes(needle) ||
+    (t.last_message || "").toLowerCase().includes(needle) ||
+    scopeLabel(t.context_key).toLowerCase().includes(needle) ||
+    participantMatch
+  );
+}
+
 export default function Chats() {
   const nav = useNavigate();
   const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<FilterKind>("all");
-  const [pending, setPending] = useState<Pending | null>(null);
-  const [busy, setBusy] = useState(false);
-  // A failed restore or delete. Kept apart from `err` (which replaces the whole
-  // list) because the list is still good: one row's action failed, and the row
-  // is still there to try again.
-  const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
-
-  // The archive is a DIFFERENT LIST, not a filter over this one, so switching to
-  // it re-fetches. That is also what keeps the two consistent: a chat archived
-  // in another tab leaves this list the next time either is opened, rather than
-  // lingering because the client filtered a stale array.
-  const archiveView = kind === "archived";
 
   const load = useCallback(() => {
     setThreads(null);
     setErr(null);
-    setActionErr(null);
     chatApi
-      .listThreads(undefined, archiveView)
+      .listThreads()
       .then(setThreads)
       .catch((e) => {
         setErr(String(e));
         setThreads([]);
       });
-  }, [archiveView]);
+  }, []);
   useEffect(() => {
     load();
   }, [load]);
 
-  // Restore and delete both END with the row gone from the list on screen, so
-  // they drop it locally rather than re-fetching: the archive can be long, and
-  // re-reading it to learn one row left is a request that says nothing new.
-  const runPending = useCallback(async () => {
-    if (!pending) return;
-    const { id, action } = pending;
-    setBusy(true);
-    try {
-      if (action === "restore") await chatApi.restoreThread(id);
-      else await chatApi.deleteThread(id);
-      setThreads((list) => (list ? list.filter((t) => t.id !== id) : list));
-      setPending(null);
-      setActionErr(null);
-    } catch (e) {
-      setPending(null);
-      setActionErr({
-        text: action === "restore"
-          ? `Couldn't restore this conversation: ${e}. It is still archived.`
-          : `Couldn't delete this conversation: ${e}. It is still here.`,
-        endpoint: action === "restore"
-          ? `/api/chat/threads/${id}/restore`
-          : `/api/chat/threads/${id}`,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }, [pending]);
-
   const newChat = () => nav(newChatHref("general"));
 
-  // Most-recent first, then apply the context-kind and text filters. The ARCHIVE
-  // keeps the server's order instead, which is most-recently-archived first: it
-  // answers "where did the one I just archived go", where updated_at would sort
-  // by a conversation's own last activity and bury it.
+  // Most-recent first, then apply the context-kind and text filters.
   const sorted = useMemo(
     () =>
       threads
-        ? archiveView
-          ? threads
-          : [...threads].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
+        ? [...threads].sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""))
         : [],
-    [threads, archiveView],
+    [threads],
   );
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return sorted.filter((t) => {
-      // The archive holds every kind of chat, and it is already the whole list
-      // being shown, so only the search narrows it.
-      if (kind !== "all" && kind !== "archived") {
+      if (kind !== "all") {
         const k = scopeKind(t.context_key);
         // P3: the Agent filter matches BOTH context_key-derived agent chats
         // (legacy shape) AND any chat carrying an agent as a participant
@@ -174,16 +152,7 @@ export default function Chats() {
           return false;
         }
       }
-      if (!needle) return true;
-      const participantMatch = (t.participants ?? []).some(
-        (p) => p.toLowerCase().includes(needle),
-      );
-      return (
-        (t.title || "").toLowerCase().includes(needle) ||
-        (t.last_message || "").toLowerCase().includes(needle) ||
-        scopeLabel(t.context_key).toLowerCase().includes(needle) ||
-        participantMatch
-      );
+      return matches(t, needle);
     });
   }, [sorted, q, kind]);
 
@@ -222,28 +191,17 @@ export default function Chats() {
             />
           </Field>
         </div>
-        <Field label="Context">
-          <Segmented
-            ariaLabel="Filter by context"
-            options={KIND_OPTIONS}
-            value={kind}
-            onChange={setKind}
-          />
-        </Field>
-      </div>
-
-      {actionErr && (
-        <div style={{ marginBottom: "var(--space-3)" }}>
-          <StateBlock
-            variant="error"
-            title="That didn't go through"
-            hint={<>
-              {actionErr.text} <code>{actionErr.endpoint}</code>
-            </>}
-            action={<Button size="sm" onClick={() => setActionErr(null)}>Dismiss</Button>}
-          />
+        <div style={CHIP_SCROLL}>
+          <Field label="Context">
+            <Segmented
+              ariaLabel="Filter by context"
+              options={KIND_OPTIONS}
+              value={kind}
+              onChange={setKind}
+            />
+          </Field>
         </div>
-      )}
+      </div>
 
       {threads === null ? (
         <div style={{ display: "grid", gap: "var(--space-3)" }}>
@@ -254,84 +212,25 @@ export default function Chats() {
       ) : err ? (
         <StateBlock
           variant="error"
-          title={archiveView ? "Couldn't load the archive" : "Couldn't load chats"}
-          hint={<code>GET /api/chat/threads{archiveView ? "?archived=true" : ""}: {err}</code>}
+          title="Couldn't load chats"
+          hint={<code>GET /api/chat/threads: {err}</code>}
           action={<Button size="sm" onClick={load}>Retry</Button>}
         />
       ) : threads.length === 0 ? (
-        archiveView ? (
-          <StateBlock
-            title="Nothing archived"
-            hint="Archiving a chat from its menu puts it here. It keeps its messages, and can be restored or deleted from this list."
-          />
-        ) : (
-          <StateBlock
-            title="No chats yet"
-            hint="Start a conversation with the general assistant, or open chat inside any app or project."
-            action={
-              <Button variant="primary" size="sm" onClick={newChat}>
-                <Plus aria-hidden /> New chat
-              </Button>
-            }
-          />
-        )
+        <StateBlock
+          title="No chats yet"
+          hint="Start a conversation with the general assistant, or open chat inside any app or project."
+          action={
+            <Button variant="primary" size="sm" onClick={newChat}>
+              <Plus aria-hidden /> New chat
+            </Button>
+          }
+        />
       ) : filtered.length === 0 ? (
         <StateBlock
           title="No matches"
-          hint={archiveView
-            ? "Clear the search to see everything in the archive."
-            : "Clear the search or pick All to see every chat."}
+          hint="Clear the search or pick All to see every chat."
         />
-      ) : archiveView ? (
-        <>
-          {/* AN ARCHIVED CHAT IS NOT A LINK. There is no way in from here on
-              purpose: an archived conversation is closed, so opening one would
-              have to either un-archive it silently or drop you in a chat you
-              cannot send to. The two things you can do to it are the two
-              buttons, and both of them ask first. */}
-          <div style={{ display: "grid", gap: "var(--space-2)" }}>
-            {visible.map((t) => (
-              <Card key={t.id} compact className="ws-chat-card" style={{ minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, overflow: "hidden" }}>
-                  <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
-                  <strong style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {t.title || "New chat"}
-                  </strong>
-                  <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
-                    <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
-                  </span>
-                </div>
-                <div className="ws-chat-card__last">
-                  <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
-                  <span className="ws-card__meta ws-chat-card__count">{t.message_count}</span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-2)" }}>
-                  <span className="ws-card__meta">{archivedLabel(t.archived_at)}</span>
-                  <span style={{ display: "flex", gap: "var(--space-2)", marginLeft: "auto" }}>
-                    <Button
-                      size="sm"
-                      onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "restore" })}
-                    >
-                      <ArchiveRestore aria-hidden /> Restore
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "delete" })}
-                    >
-                      <Trash2 aria-hidden /> Delete
-                    </Button>
-                  </span>
-                </div>
-              </Card>
-            ))}
-          </div>
-          {filtered.length > RENDER_CAP && (
-            <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", textAlign: "center" }}>
-              Showing {RENDER_CAP} of {filtered.length}. Refine the search to narrow the list.
-            </p>
-          )}
-        </>
       ) : (
         <>
           <div style={{ display: "grid", gap: "var(--space-2)" }}>
@@ -395,6 +294,202 @@ export default function Chats() {
           {filtered.length > RENDER_CAP && (
             <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", textAlign: "center" }}>
               Showing {RENDER_CAP} of {filtered.length}. Refine the search or context filter to narrow the list.
+            </p>
+          )}
+        </>
+      )}
+
+      {/* The way into the archive: one quiet control at the foot of the list,
+          where you look after not finding what you came for. It is not a filter
+          on this page, so it does not sit in the filter row. */}
+      <div style={{ display: "flex", justifyContent: "center", marginTop: "var(--space-5)" }}>
+        <Button size="sm" onClick={() => nav("/chats/archived")}>
+          <Archive aria-hidden /> Archived chats
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The archive: a different LIST, not a filter over the one above.
+ *
+ * Its own route and its own component on purpose. As a view flag inside Chats it
+ * rendered the still-loaded live chats as archive rows for one frame before the
+ * refetch cleared them, so an empty archive announced itself by flashing several
+ * chats and then deleting them. Separate mounts cannot show each other's data.
+ */
+export function ChatsArchived() {
+  const nav = useNavigate();
+  const [threads, setThreads] = useState<ThreadSummary[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [busy, setBusy] = useState(false);
+  // A failed restore or delete. Kept apart from `err` (which replaces the whole
+  // list) because the list is still good: one row's action failed, and the row
+  // is still there to try again.
+  const [actionErr, setActionErr] = useState<{ text: string; endpoint: string } | null>(null);
+
+  const load = useCallback(() => {
+    setThreads(null);
+    setErr(null);
+    setActionErr(null);
+    chatApi
+      .listThreads(undefined, true)
+      .then(setThreads)
+      .catch((e) => {
+        setErr(String(e));
+        setThreads([]);
+      });
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Restore and delete both END with the row gone from the list on screen, so
+  // they drop it locally rather than re-fetching: the archive can be long, and
+  // re-reading it to learn one row left is a request that says nothing new.
+  const runPending = useCallback(async () => {
+    if (!pending) return;
+    const { id, action } = pending;
+    setBusy(true);
+    try {
+      if (action === "restore") await chatApi.restoreThread(id);
+      else await chatApi.deleteThread(id);
+      setThreads((list) => (list ? list.filter((t) => t.id !== id) : list));
+      setPending(null);
+      setActionErr(null);
+    } catch (e) {
+      setPending(null);
+      setActionErr({
+        text: action === "restore"
+          ? `Couldn't restore this conversation: ${e}. It is still archived.`
+          : `Couldn't delete this conversation: ${e}. It is still here.`,
+        endpoint: action === "restore"
+          ? `/api/chat/threads/${id}/restore`
+          : `/api/chat/threads/${id}`,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [pending]);
+
+  // The server's order, which is most-recently-archived first: it answers "where
+  // did the one I just archived go", where updated_at would sort by a
+  // conversation's own last activity and bury it.
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return (threads ?? []).filter((t) => matches(t, needle));
+  }, [threads, q]);
+
+  const visible = filtered.slice(0, RENDER_CAP);
+
+  return (
+    <div>
+      <PageHeader
+        title="Archived chats"
+        actions={
+          <Button onClick={() => nav("/chats")}>
+            <ArrowLeft aria-hidden /> Chats
+          </Button>
+        }
+      />
+
+      <div style={{ flex: "1 1 260px", maxWidth: 420, marginBottom: "var(--space-4)" }}>
+        <Field label="Search">
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Filter by title, context, or last message"
+            spellCheck={false}
+          />
+        </Field>
+      </div>
+
+      {actionErr && (
+        <div style={{ marginBottom: "var(--space-3)" }}>
+          <StateBlock
+            variant="error"
+            title="That didn't go through"
+            hint={<>
+              {actionErr.text} <code>{actionErr.endpoint}</code>
+            </>}
+            action={<Button size="sm" onClick={() => setActionErr(null)}>Dismiss</Button>}
+          />
+        </div>
+      )}
+
+      {threads === null ? (
+        <div style={{ display: "grid", gap: "var(--space-3)" }}>
+          {[0, 1, 2, 3].map((i) => (
+            <Skeleton key={i} style={{ height: 64 }} />
+          ))}
+        </div>
+      ) : err ? (
+        <StateBlock
+          variant="error"
+          title="Couldn't load the archive"
+          hint={<code>GET /api/chat/threads?archived=true: {err}</code>}
+          action={<Button size="sm" onClick={load}>Retry</Button>}
+        />
+      ) : threads.length === 0 ? (
+        <StateBlock
+          title="Nothing archived"
+          hint="Archiving a chat from its menu puts it here. It keeps its messages, and can be restored or deleted from this list."
+        />
+      ) : filtered.length === 0 ? (
+        <StateBlock
+          title="No matches"
+          hint="Clear the search to see everything in the archive."
+        />
+      ) : (
+        <>
+          {/* AN ARCHIVED CHAT IS NOT A LINK. There is no way in from here on
+              purpose: an archived conversation is closed, so opening one would
+              have to either un-archive it silently or drop you in a chat you
+              cannot send to. The two things you can do to it are the two
+              buttons, and both of them ask first. */}
+          <div style={{ display: "grid", gap: "var(--space-2)" }}>
+            {visible.map((t) => (
+              <Card key={t.id} compact className="ws-chat-card" style={{ minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", minWidth: 0, overflow: "hidden" }}>
+                  <MessagesSquare size={14} aria-hidden style={{ flex: "none" }} />
+                  <strong style={{ minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {t.title || "New chat"}
+                  </strong>
+                  <span style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flex: "none", marginLeft: "auto" }}>
+                    <Tag hue={catFor(t.context_key)}>{scopeLabel(t.context_key)}</Tag>
+                  </span>
+                </div>
+                <div className="ws-chat-card__last">
+                  <p className="ws-muted ws-chat-card__snippet">{t.last_message || " "}</p>
+                  <span className="ws-card__meta ws-chat-card__count">{t.message_count}</span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap", marginTop: "var(--space-2)" }}>
+                  <span className="ws-card__meta">{archivedLabel(t.archived_at)}</span>
+                  <span style={{ display: "flex", gap: "var(--space-2)", marginLeft: "auto" }}>
+                    <Button
+                      size="sm"
+                      onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "restore" })}
+                    >
+                      <ArchiveRestore aria-hidden /> Restore
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => setPending({ id: t.id, title: t.title || "this chat", action: "delete" })}
+                    >
+                      <Trash2 aria-hidden /> Delete
+                    </Button>
+                  </span>
+                </div>
+              </Card>
+            ))}
+          </div>
+          {filtered.length > RENDER_CAP && (
+            <p className="ws-muted" style={{ margin: "var(--space-3) 0 0", textAlign: "center" }}>
+              Showing {RENDER_CAP} of {filtered.length}. Refine the search to narrow the list.
             </p>
           )}
         </>

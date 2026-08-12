@@ -61,7 +61,7 @@ export function scopeKind(key: string): ScopeKind {
 }
 
 export function scopeLabel(key: string): string {
-  if (key === DEVELOPMENT_SCOPE) return "Dev";
+  if (key === DEVELOPMENT_SCOPE) return "Development";
   if (!key || key === "general" || key === "workshop") return "Workshop";
   if (!key.includes(":")) return `App · ${key}`;
   const [kind, rest] = key.split(":", 2);
@@ -75,7 +75,7 @@ export function scopeLabel(key: string): string {
 // only its own name. The full "Project · foo" form is for surfaces with no
 // heading above the row: the chat list, and the picker's own trigger.
 export function scopeName(key: string): string {
-  if (key === DEVELOPMENT_SCOPE) return "Dev";
+  if (key === DEVELOPMENT_SCOPE) return "Development";
   if (!key || key === "general" || key === "workshop") return "Workshop";
   if (!key.includes(":")) return key; // a bare app id, shown as the chat list shows it
   const [, rest] = key.split(":", 2);

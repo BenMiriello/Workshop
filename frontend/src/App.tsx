@@ -2,7 +2,7 @@ import { lazyPage } from "./lib/lazyPage";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { OverlayHost } from "@workshop/ui";
 import Agents from "./pages/Agents";
-import Chats from "./pages/Chats";
+import Chats, { ChatsArchived } from "./pages/Chats";
 import Projects from "./pages/Projects";
 import Apps from "./pages/Apps";
 import Home from "./pages/Home";
@@ -117,6 +117,9 @@ export default function App() {
           <Route path="/agents/build/:slug" element={<AgentBuildRedirect />} />
           <Route path="/agents/:slug" element={<AgentDetail />} />
           <Route path="/chats" element={<Chats />} />
+          {/* The archive is its own list, not a filter over /chats. Eager like
+              Chats itself: it is one small component in the same module. */}
+          <Route path="/chats/archived" element={<ChatsArchived />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/new" element={<ProjectNew />} />
           <Route path="/projects/:slug" element={<ProjectDetail />} />
