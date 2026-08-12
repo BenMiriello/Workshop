@@ -357,32 +357,53 @@ input[type="range"].grad::-moz-range-thumb {
 @media (max-width: 640px) {
   .chat-tb__picker-val--wide { display: none; }
 }
-/* Where you are — and, tapped, how to rename it. Sized and reset to read as
-   the same quiet label it always was; the hover state is the only hint it
-   is a control, the way .chat-tb__picker's is. The negative margin matches
-   the added padding so the bigger hit target doesn't nudge its neighbors. */
+/* Where you are, and the way back to the other chats. Sized and reset to read
+   as the same quiet label it always was; the hover state is the only hint it is
+   a control, the way .chat-tb__picker's is.
+
+   NO NEGATIVE MARGIN. It used to carry `margin: -0.2rem -0.4rem` to cancel its
+   own padding so the bigger hit target would not nudge its neighbours. That was
+   defensible while this was a bare button; it is wrong now that it is a Menu
+   trigger, because the wrapper sizes to the button's OUTER box and a negative
+   margin makes that box smaller than what you see:
+     - horizontally, the name sat 0.4rem outside its wrapper on each side, so
+       the gap to the scope picker measured ~1.6px against everything else's 8px;
+     - vertically, `100%` of the wrapper landed 0.4rem above the button's visual
+       bottom, and the popover anchored to it opened tight against the name
+       instead of at the same offset as every other menu in the app.
+   One negative margin, both symptoms. The padding now costs its own width, and
+   the toolbar's own `gap` spaces this the same as everything else. */
 .chat-tb__title {
   flex: 0 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font: inherit; font-size: var(--fs-sm); color: var(--muted);
   background: transparent; border: none; cursor: pointer;
-  padding: 0.2rem 0.4rem; margin: -0.2rem -0.4rem;
+  padding: 0.2rem 0.4rem;
   border-radius: var(--radius-sm);
 }
 .chat-tb__title:hover { color: var(--fg); background: var(--card-hover); }
 /* Open state reads like every other quiet trigger in the chat (.chat-model,
    .chat-effort): background carries it, no border. */
 .chat-tb__title[aria-expanded="true"] { color: var(--fg); background: var(--card-hover); }
-/* The title is wrapped in a Menu now, and .ws-menu is flex: 0 0 auto. The
-   toolbar's whole fits-one-row rule depends on the title being the element that
-   gives up room, so the shrink moves out to the wrapper. */
-.chat-tb__titlemenu { flex: 0 1 auto; min-width: 0; }
+/* THE NAME IS NOT TRUNCATED WHILE THERE IS ROOM FOR IT.
+   `overflow: hidden` gives a flex item an automatic minimum size of ZERO, so
+   the title was the one element in this row that could give up space, and it
+   therefore gave it up FIRST and alone: adding the rename button was enough to
+   start clipping a name on a desktop with hundreds of spare pixels.
+   So it does not shrink here. The toolbar already wraps on wide viewports (a
+   safety net it documents above), and wrapping a control to a second row is the
+   honest response to a full row; clipping the one string on the bar that says
+   which conversation you are in is not. `max-width: 100%` is the floor: a name
+   longer than the entire bar still ellipsises rather than pushing the layout
+   sideways, which is the only case where the space has genuinely run out. */
+.chat-tb__titlemenu { flex: 0 0 auto; min-width: 0; max-width: 100%; }
 /* Rename sits immediately right of the name, so it is smaller than the action
    buttons at the far end of the bar: it belongs to the title, not to the row of
    things you do to the chat. It also must not be what gives up room when the
    bar is tight — the NAME shrinks, and a 1.5rem button next to a shrinking name
-   is the pair that stays legible longest. */
-.chat-tb__rename { flex: 0 0 auto; width: 1.5rem; height: 1.5rem; margin-left: -0.1rem; }
+   is the pair that stays legible longest. Spaced by the toolbar's own gap like
+   every other neighbour here, not pulled in by a negative margin. */
+.chat-tb__rename { flex: 0 0 auto; width: 1.5rem; height: 1.5rem; }
 .chat-tb__spacer { flex: 1 1 var(--space-2); min-width: 0; }
 .chat-tb__btn {
   flex: 0 0 auto; position: relative;
@@ -414,6 +435,12 @@ input[type="range"].grad::-moz-range-thumb {
    fixed-width icon, so it is the only thing actually competing for room. */
 @media (max-width: 640px) {
   .chat-toolbar { flex-wrap: nowrap; }
+  /* Here the row genuinely cannot grow: wrapping is off, so something has to
+     give, and the name is the right thing to clip because it is the only
+     element that still reads at half its width. This is the one width where
+     truncating it is correct, which is why it is scoped to this query rather
+     than left on as the default. */
+  .chat-tb__titlemenu { flex: 0 1 auto; }
 }
 
 /* Compaction fold marker. Compaction never drops raw messages, so this divider
@@ -704,27 +731,36 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
 .chat-work__text { font-size: var(--fs-sm); }
 
-/* ---- Tool call: compact row, tap to expand ---- */
-.chat-tool {
-  margin: 0.3rem 0; min-width: 0;
-  border: 1px solid var(--border); border-radius: var(--radius-md);
-  background: var(--bg-inset); overflow: hidden;
-}
+/* ---- Tool call: one bare row, tap to expand ----
+   THE LEAF HAS NO BOX. It used to carry the border, the inset background and
+   the rounded corners, which forced the group that CONTAINS steps to go without
+   one (a box in a box read as noise) and left the container looking lighter
+   than the thing it contained. Operator called it on 2026-08-12; the frame
+   moved to .chat-group, where it belongs, and a step is now the same row
+   whether it stands alone or sits inside an opened group. Hierarchy from
+   position and weight, not borders (design system rule 6). */
+.chat-tool { margin: 0; min-width: 0; border-radius: var(--radius-sm); }
 .chat-tool__head {
   display: flex; align-items: center; gap: 0.4rem;
-  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
+  width: 100%; min-width: 0; padding: 0.2rem 0.35rem;
   background: transparent; border: none; color: var(--muted);
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
+  border-radius: var(--radius-sm);
 }
-.chat-tool__head:hover { color: var(--fg); }
+.chat-tool__head:hover { color: var(--fg); background: var(--bg-inset); }
 .chat-tool__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
 .chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
 .chat-tool__icon { flex: 0 0 auto; }
 .chat-tool__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
 .chat-tool__preview { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+/* The opened output. The row itself has no frame, so the panel carries its own
+   inset surface: that is what attaches it to the row above it, in place of the
+   border-top it used when the row was a box. Indented to the text, so an open
+   step reads as belonging to its row rather than to the group. */
 .chat-tool__detail {
-  margin: 0; padding: 0.4rem 0.6rem; border-top: 1px solid var(--border);
+  margin: 0 0 0 1.1rem; padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm); background: var(--bg-inset);
   font-size: var(--fs-xs); white-space: pre-wrap; word-break: break-word;
   max-height: 30vh; overflow: auto;
 }
@@ -1096,7 +1132,11 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 }
 .chat-send { background: var(--accent); color: var(--accent-fg); border: none; }
 .chat-send:hover:not(:disabled) { background: var(--accent-hover); }
-.chat-send:disabled { opacity: 0.4; }
+/* Dimmed AND not pointing: a pointer cursor is a promise that clicking does
+   something, and with nothing to send it does not. `default`, never
+   `not-allowed` — the design system bans that cursor outright (rule 10), and
+   check_design.sh fails on it. */
+.chat-send:disabled { opacity: 0.4; cursor: default; }
 
 /* Context-usage meter: a small circular ring under the composer showing how full
    the chat's context is, with the % to its right. Single accent tone — it does
