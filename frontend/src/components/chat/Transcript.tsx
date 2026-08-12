@@ -10,6 +10,7 @@ import {
   type TurnItem,
 } from "./grouping";
 import { openInitial, onLive, onToggle } from "./disclosure";
+import { Reveal, useToggleAnim } from "./Reveal";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -87,7 +88,9 @@ function ToolChip({ seg, nowMs, stoppedId }: {
           </span>
         )}
       </button>
-      {open && hasDetail && <pre id={panelId} className="chat-tool__detail ws-mono">{detail}</pre>}
+      <Reveal open={open && hasDetail} id={panelId}>
+        <pre className="chat-tool__detail ws-mono">{detail}</pre>
+      </Reveal>
     </div>
   );
 }
@@ -148,11 +151,11 @@ function GroupChip({ item, nowMs, defaultOpen, stoppedId, current }: {
         <span className="chat-group__name">{groupSummary(item, stoppedId)}</span>
         <span className="chat-group__preview">{groupTools(item)}</span>
       </button>
-      <div id={id} className="chat-group__body" hidden={!open}>
-        {open && item.steps.map((s, i) => (
+      <Reveal open={open} id={id} className="chat-group__body">
+        {item.steps.map((s, i) => (
           <ToolChip key={s.id || i} seg={s} nowMs={nowMs} stoppedId={stoppedId} />
         ))}
-      </div>
+      </Reveal>
     </div>
   );
 }
@@ -214,11 +217,15 @@ export function ElidedContent({
   }, [source, cfg.previewLines]);
 
   const clamped = overflowing && !open;
+  // Only while the reader is actually toggling. A permanent transition here
+  // would animate a streaming message on every token, because its height grows
+  // as it is written. See useToggleAnim.
+  const animating = useToggleAnim(open);
   return (
     <>
       <div
         ref={ref}
-        className={`chat-clamp${clamped ? " is-clamped" : ""}`}
+        className={`chat-clamp${clamped ? " is-clamped" : ""}${animating ? " is-animating" : ""}`}
         style={{ "--clamp-lines": cfg.previewLines } as CSSProperties}
       >
         {render(source)}
@@ -327,8 +334,8 @@ function AgentChip({ seg, cfg, nowMs }: {
         <span className="chat-agent__preview">{line}</span>
         <span className="chat-agent__meta">{agentSummary(seg)}</span>
       </button>
-      {open && (
-        <div className="chat-agent__body">
+      <Reveal open={open} className="chat-agent__body">
+        <>
           {brief && (
             <div className="chat-agent__brief">
               <span className="chat-agent__result-label">Brief</span>
@@ -356,8 +363,8 @@ function AgentChip({ seg, cfg, nowMs }: {
               <ElidedContent source={seg.result} cfg={cfg} render={(s) => <Markdown>{s}</Markdown>} />
             </div>
           )}
-        </div>
-      )}
+        </>
+      </Reveal>
     </div>
   );
 }
@@ -453,10 +460,10 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
           steps" is the same disclosure twice, and the reader who opened the
           turn has already asked for exactly what the group would be hiding.
           Operator-agreed, 2026-08-12. */}
-      <div id={id} hidden={!open}>
-        {open && <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups
-                           onAnswerPermission={onAnswerPermission} />}
-      </div>
+      <Reveal open={open} id={id}>
+        <TurnWork work={work} cfg={cfg} nowMs={nowMs} openGroups
+                  onAnswerPermission={onAnswerPermission} />
+      </Reveal>
     </div>
   );
 }

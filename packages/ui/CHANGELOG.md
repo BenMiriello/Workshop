@@ -12,6 +12,18 @@ remain in the order they were written.
 breaking position: `^0.2.0` means `>=0.2.0 <0.3.0`. So a breaking change bumps
 the minor (0.2 → 0.3) and a compatible one bumps the patch. See CONTRIBUTING.md.
 
+## 0.3.2 — 2026-08-12 — two chevrons that never rotated
+
+Patch. No API change; the snapshot is unmoved.
+
+`.ctx-expand__chev` and `.mcp-name__chev` declared
+`transition: transform var(--motion-fast) ease`. There is no `--motion-fast`
+token in this system and there never has been. With no fallback the `var()`
+is invalid at computed-value time, which invalidates the whole `transition`
+declaration, so both chevrons snapped rather than rotating. Both now use
+`--dur-fast` and `--ease-in-out`, the real tokens, which also means they are
+finally zeroed by the reduced-motion block that rewrites `--dur-*`.
+
 ## 0.3.1 — 2026-08-12 — the focus ring is a shadow, so stop suppressing an outline
 
 **Fix.** An open `Menu` popover sometimes drew a hairline highlight where its

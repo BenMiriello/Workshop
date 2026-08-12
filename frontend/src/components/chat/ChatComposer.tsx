@@ -1,14 +1,16 @@
 import type { RefObject } from "react";
-import { AudioLines, BotMessageSquare, CornerDownLeft, Maximize2, Minimize2, PhoneOff, Square } from "lucide-react";
+import { AudioLines, BotMessageSquare, CornerDownLeft, Maximize2, Minimize2, Square } from "lucide-react";
 import { Menu, MenuItem } from "@workshop/ui";
 import type { ChatMsg } from "../../lib/chat";
-import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
+import type { VoiceSnapshot } from "../../lib/voice/client";
+import type { VoicePrefs } from "../../lib/voice/modes";
 import AttachmentChips, { AttachButton } from "./AttachmentChips";
 import type { Attachment } from "./attachments";
 import { filesFromTransfer } from "./useAttachments";
 import CommandPicker, { type PickerOption } from "./CommandPicker";
 import ContextMeter from "./ContextMeter";
 import { VoiceStrip, VoiceCluster } from "./VoiceControls";
+import { useToggleAnim } from "./Reveal";
 import { useVoiceComposer } from "./useVoiceComposer";
 import { modelLabel, orderModels } from "./models";
 import EffortMeter from "./EffortMeter";
@@ -105,11 +107,16 @@ export default function ChatComposer({
   onOpenContext: () => void;
 }) {
   const voice = useVoiceComposer(vsnap, vprefs, vsession);
+  // The input's height is written by the autosize handler on every keystroke,
+  // so the expand/collapse transition is gated on a class that only exists just
+  // after the control is pressed. Without it, growing by a line while typing
+  // would animate too, and typing is the one place lag is least welcome.
+  const sizing = useToggleAnim(expanded);
 
   return (
     <div
       ref={composerRef}
-      className={`chat-composer${streaming ? " is-streaming" : ""}${focused ? " is-focused" : ""}${expanded ? " is-expanded" : ""}`}
+      className={`chat-composer${streaming ? " is-streaming" : ""}${focused ? " is-focused" : ""}${expanded ? " is-expanded" : ""}${sizing ? " is-sizing" : ""}`}
     >
       {showMentions && (
         <CommandPicker
@@ -176,8 +183,8 @@ export default function ChatComposer({
           className="chat-expand"
           onClick={onToggleExpand}
           aria-pressed={expanded}
-          aria-label={expanded ? "Collapse the message box" : "Expand the message box"}
-          title={expanded ? "Collapse the message box" : "Expand the message box"}
+          aria-label={expanded ? "Collapse the message input" : "Expand the message input"}
+          title={expanded ? "Collapse the message input" : "Expand the message input"}
         >
           {expanded ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
         </button>
@@ -187,17 +194,19 @@ export default function ChatComposer({
           textarea, so it never spends itself closing the mobile keyboard
           instead of pressing the button. See keepFocus. */}
       <div className="chat-actions" onPointerDown={keepFocusOnTap}>
-        {!voiceOn && (
-          <ContextMeter
-            activeId={activeId}
-            streaming={streaming}
-            messages={messages}
-            draft={input}
-            model={selectedModel}
-            nonce={ctxNonce}
-            onOpen={onOpenContext}
-          />
-        )}
+        {/* The context meter stays put when voice turns on. Voice is another way
+            to talk to the SAME conversation, so how full that conversation is
+            does not stop being relevant, and removing it made the row visibly
+            rearrange itself for no reason the operator could act on. */}
+        <ContextMeter
+          activeId={activeId}
+          streaming={streaming}
+          messages={messages}
+          draft={input}
+          model={selectedModel}
+          nonce={ctxNonce}
+          onOpen={onOpenContext}
+        />
         <span className="chat-actions__spacer" />
 
         {/* Effort sits left of the model because it reads as a modifier of it:
@@ -281,6 +290,11 @@ export default function ChatComposer({
           </span>
         ) : null}
 
+        {/* Attach sits LEFT of the whole voice group. It used to sit between the
+            voice cluster and the voice toggle, which split one set of controls
+            in half with an unrelated one. The voice controls are contiguous. */}
+        <AttachButton onFiles={onAttachFiles} />
+
         {voiceOn && (
           <VoiceCluster
             orbRef={orbRef}
@@ -295,22 +309,19 @@ export default function ChatComposer({
           />
         )}
 
-        {/* Attach sits immediately LEFT of voice, where the operator asked for
-            it: the two are the same class of control, things you add to a
-            message that are not the message. */}
-        <AttachButton onFiles={onAttachFiles} />
-
-        {/* Distinct glyph on/off so the exit toggle never reads as a twin of the
-            listening orb's AudioLines: AudioLines invites voice, PhoneOff leaves it. */}
+        {/* ONE glyph, both states. The pressed state is carried by the button's
+            own treatment (accent fill via is-active), which is how every other
+            toggle in this row reads. Swapping in a hang-up icon made leaving
+            voice look like ending a phone call, which is not what it is: it is
+            the same switch, off. */}
         <button
           className={`chat-slash-btn${voiceOn ? " is-active" : ""}`}
-         
           onClick={onToggleVoice}
           aria-pressed={voiceOn}
-          aria-label={voiceOn ? "Exit voice mode" : "Voice mode"}
-          title={voiceOn ? "Exit voice mode" : (isBuild ? "Voice mode: build by talking" : "Voice mode: talk instead of type")}
+          aria-label={voiceOn ? "Turn voice off" : "Voice mode"}
+          title={voiceOn ? "Turn voice off" : (isBuild ? "Voice mode: build by talking" : "Voice mode: talk instead of type")}
         >
-          {voiceOn ? <PhoneOff size={16} aria-hidden /> : <AudioLines size={16} aria-hidden />}
+          <AudioLines size={16} aria-hidden />
         </button>
 
         {/* Stop sits left of Send: Send is the primary, most-reached-for control

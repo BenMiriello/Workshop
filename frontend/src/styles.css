@@ -716,6 +716,36 @@ input[type="range"].grad::-moz-range-thumb {
 /* No cap once opened, or a long table would stay stuck at the clamp height with
    the control claiming it had expanded. */
 .chat-clamp:not(.is-clamped) { max-height: none; }
+/* Show more / less, animated, as a PROGRESSIVE ENHANCEMENT and nothing more.
+   The open state of a clamp has no fixed height, and the two ways of faking one
+   (measuring into an inline max-height, or capping at max-content) both risk
+   clipping or overlapping a message that is still streaming. `interpolate-size`
+   is the one way to do it that cannot be wrong about the height, and it is
+   Chromium-only as of August 2026, so where it is missing the clamp simply
+   toggles as it always has. Everything load-bearing uses .chat-reveal instead.
+
+   Gated on .is-animating, which exists only just after the control is pressed:
+   a message's height changes as tokens arrive, and a permanent transition here
+   would animate every one of them. */
+@supports (interpolate-size: allow-keywords) {
+  .chat-clamp { interpolate-size: allow-keywords; }
+  .chat-clamp.is-animating { transition: height var(--dur-base) var(--ease-in-out); overflow: hidden; }
+  .chat-clamp.is-animating.is-clamped { height: calc(var(--clamp-lines, 10) * 1lh); }
+  .chat-clamp.is-clamped { height: calc(var(--clamp-lines, 10) * 1lh); }
+  .chat-clamp.is-animating:not(.is-clamped) { height: auto; }
+}
+
+/* ---- The one way anything in the chat opens and closes ----
+   A one-row grid going 0fr to 1fr. The height is never named, so this animates
+   to content nobody measured, and it needs no JS. The inner element must keep
+   `overflow: hidden` and `min-height: 0` or the row refuses to shrink below its
+   content. See Reveal.tsx for why the children still unmount. */
+.chat-reveal {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-base) var(--ease-in-out);
+}
+.chat-reveal.is-shown { grid-template-rows: 1fr; }
+.chat-reveal__inner { overflow: hidden; min-height: 0; }
 /* Legible on the accent-filled user bubble. */
 .chat-msg.user .chat-more { color: color-mix(in srgb, var(--accent-fg) 90%, transparent); }
 /* Deterministic spacing for the work section (the "Show N earlier steps" toggle
@@ -730,7 +760,7 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--sys); font: inherit; font-size: var(--fs-xs); cursor: pointer;
 }
 .chat-work__toggle:hover { color: var(--fg); }
-.chat-work__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-work__chev { flex: 0 0 auto; transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-work__toggle.is-open .chat-work__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-work__chev { transition: none; } }
 .chat-work__list { display: flex; flex-direction: column; gap: 0.2rem; }
@@ -752,7 +782,7 @@ input[type="range"].grad::-moz-range-thumb {
   border-radius: var(--radius-sm);
 }
 .chat-tool__head:hover { color: var(--fg); background: var(--bg-inset); }
-.chat-tool__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
+.chat-tool__chev { flex: 0 0 auto; color: var(--sys); transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-tool.is-open .chat-tool__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-tool__chev { transition: none; } }
 .chat-tool__icon { flex: 0 0 auto; }
@@ -761,9 +791,12 @@ input[type="range"].grad::-moz-range-thumb {
 /* The opened output, behind the same rail every other disclosure uses. Not an
    inset box: a box here would be a second frame competing with the subagent's,
    which is the one thing allowed to have one. See the .chat-group note. */
+/* Vertical space is PADDING, not margin. This sits inside a .chat-reveal, whose
+   collapsed row is zero-height and clips its child's content; a child's own
+   margins are outside that clip and would leave a gap behind when closed. */
 .chat-tool__detail {
-  margin: 0.1rem 0 0.2rem 0.45rem;
-  padding: 0.1rem 0 0.1rem 0.6rem; border-left: 2px solid var(--border);
+  margin: 0 0 0 0.45rem;
+  padding: 0.1rem 0 0.3rem 0.6rem; border-left: 2px solid var(--border);
   font-size: var(--fs-xs); white-space: pre-wrap; word-break: break-word;
   max-height: 30vh; overflow: auto;
 }
@@ -787,7 +820,7 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: var(--fs-xs); text-align: left; cursor: pointer;
 }
 .chat-agent__head:hover { color: var(--fg); }
-.chat-agent__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
+.chat-agent__chev { flex: 0 0 auto; color: var(--sys); transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-agent.is-open .chat-agent__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-agent__chev { transition: none; } }
 .chat-agent__icon { flex: 0 0 auto; color: var(--sys); }
@@ -801,7 +834,11 @@ input[type="range"].grad::-moz-range-thumb {
 .chat-agent__meta { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .chat-agent.is-running .chat-agent__meta { color: var(--sys-up); animation: ws-pulse 1.6s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .chat-agent.is-running .chat-agent__meta { animation: none; } }
-.chat-agent__body { border-top: 1px solid var(--border); padding: 0.35rem 0.5rem 0.4rem; }
+/* The divider is on the SHOWN state only. A border is part of the border box
+   and is not clipped by the element's own overflow, so on the collapsed reveal
+   it would survive as a stray hairline under the header. */
+.chat-agent__body { padding: 0.35rem 0.5rem 0.4rem; }
+.chat-reveal.is-shown > .chat-agent__body { border-top: 1px solid var(--border); }
 /* The delegate's own steps, one level in — a nested step must never read as a
    step the turn itself took. */
 .chat-agent__steps { padding-left: 0.6rem; border-left: 2px solid var(--border); }
@@ -844,7 +881,7 @@ input[type="range"].grad::-moz-range-thumb {
    same thing in each, so it must not look like three different controls: the
    step took --sys here and the group inherited plain muted, which is part of
    what made a group read as the lesser thing. */
-.chat-group__chev { flex: 0 0 auto; color: var(--sys); transition: transform 0.12s ease; }
+.chat-group__chev { flex: 0 0 auto; color: var(--sys); transition: transform var(--dur-fast) var(--ease-in-out); }
 .chat-group.is-open .chat-group__chev { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .chat-group__chev { transition: none; } }
 .chat-group__icon { flex: 0 0 auto; color: var(--sys); }
@@ -855,10 +892,11 @@ input[type="range"].grad::-moz-range-thumb {
   flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
 }
-/* The steps, one level in, behind the rail. */
+/* The steps, one level in, behind the rail. Vertical space is padding for the
+   same reason as .chat-tool__detail: a margin would survive the collapse. */
 .chat-group__body {
-  margin: 0.1rem 0 0.2rem 0.45rem;
-  padding-left: 0.6rem; border-left: 2px solid var(--border);
+  margin: 0 0 0 0.45rem;
+  padding: 0.1rem 0 0.2rem 0.6rem; border-left: 2px solid var(--border);
 }
 /* Still working: motion means in-flight and nothing else, matching the
    `running` status kind. A group holding the live step opens itself, so this
@@ -967,6 +1005,14 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 .chat-composer.is-expanded .chat-input {
   height: var(--chat-input-expanded);
   max-height: var(--chat-input-expanded);
+}
+/* Only while the expand control is being pressed. The autosize handler writes
+   this same height on every keystroke, so a permanent transition would animate
+   the input growing by a line as you type, which is the last place to add lag.
+   `is-sizing` is set for one duration after `expanded` flips. */
+.chat-composer.is-sizing .chat-input {
+  transition: height var(--dur-base) var(--ease-in-out),
+              max-height var(--dur-base) var(--ease-in-out);
 }
 /* Phone: the operator asked for nearly the whole chat area, so the box takes
    most of the column and leaves the last message or two visible above it. */
@@ -1325,7 +1371,7 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
   border: none; border-radius: 0; cursor: pointer;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--muted);
-  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+  transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out);
 }
 .chat-attach__remove:hover { background: var(--danger-soft); color: var(--danger); }
 .chat-attach.is-failed .chat-attach__remove { color: var(--danger); }
@@ -1602,7 +1648,10 @@ button.chat-attach {
 }
 .chat-inbox__caret {
   flex: 0 0 auto; color: var(--muted);
-  transition: transform var(--motion-fast, 120ms) ease;
+  /* --motion-fast is not a token in this system and never was, so this fell
+     through to the literal 120ms and, more to the point, was never zeroed by
+     the reduced-motion block that rewrites --dur-*. */
+  transition: transform var(--dur-fast) var(--ease-in-out);
 }
 .chat-inbox__caret.is-open { transform: rotate(90deg); }
 .chat-inbox__dismiss {

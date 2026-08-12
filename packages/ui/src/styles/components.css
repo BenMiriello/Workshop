@@ -1938,11 +1938,20 @@ a.ws-btn { text-decoration: none; }
 
 /* The voice cluster: orb + mic-mute + reply-mute + gear share a subtle pill so
    they read as one group, distinct from the exit toggle and Send outside it. */
+/* THE CLUSTER IS EXACTLY AS TALL AS EVERY OTHER CONTROL IN THE ROW (2.1rem).
+   It used to be its children's 2.1rem plus its own vertical padding and border,
+   so switching voice on made the action row grow, which pushed the composer
+   down and moved everything above and below it. A control that appears must not
+   change the height of the bar it appears in. */
 .chat-voice-cluster {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  padding: 0.15rem 0.25rem; border-radius: var(--radius-pill);
+  display: inline-flex; align-items: center; gap: 0.15rem;
+  height: 2.1rem; padding: 0 0.25rem; border-radius: var(--radius-pill);
   background: var(--bg-inset); border: 1px solid var(--border);
+  box-sizing: border-box;
 }
+/* Inset to fit the pill without changing its height. */
+.chat-voice-cluster .chat-slash-btn,
+.chat-voice-cluster .chat-voice-orb { width: 1.7rem; height: 1.7rem; }
 .chat-voice-cluster.is-error { border-color: var(--danger); }
 /* Inside the pill the buttons blend into the group: drop their own chrome so the
    cluster reads as one surface rather than four boxes. */
@@ -2154,7 +2163,7 @@ a.ws-btn { text-decoration: none; }
 .ctx-expand .ctx-row { flex: 1 1 auto; min-width: 0; }
 .ctx-expand__chev { flex: 0 0 auto; }
 .ctx-expand:hover { background: var(--bg-inset); }
-.ctx-expand__chev { transition: transform var(--motion-fast) ease; color: var(--muted); }
+.ctx-expand__chev { transition: transform var(--dur-fast) var(--ease-in-out); color: var(--muted); }
 .ctx-expand.is-open .ctx-expand__chev { transform: rotate(90deg); }
 .ctx-expand .ctx-row { grid-template-columns: 10px 1fr 4.5rem 3rem; }
 .ctx-sublist { padding-left: var(--space-5); }
@@ -2227,7 +2236,7 @@ a.ws-btn { text-decoration: none; }
   background: none; border: 0; padding: 0; color: inherit; font: inherit;
   cursor: pointer; border-radius: var(--radius-sm); text-align: left;
 }
-.mcp-name__chev { transition: transform var(--motion-fast) ease; color: var(--muted); }
+.mcp-name__chev { transition: transform var(--dur-fast) var(--ease-in-out); color: var(--muted); }
 .mcp-name.is-open .mcp-name__chev { transform: rotate(90deg); }
 .mcp-why td {
   color: var(--muted); font-size: var(--text-xs);
