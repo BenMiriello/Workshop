@@ -61,11 +61,10 @@
 
 # ---- Frontend watchdog (added 2026-06-06): restart Vite dev servers if they die ----
 #
-# NOTE: this relaunches Vite with setsid+nohup, OUTSIDE any systemd unit, and it
-# still asserts in its own header that "there is no systemd on this box" — which
-# stopped being true when workshop-frontend.service was installed. If it wins a
-# race with a restarting unit it will hold :5173 and make the unit crash-loop.
-# Tracked here so that interaction is visible rather than folklore.
+# Defers to systemd: when workshop-frontend.service exists it restarts the UNIT
+# rather than spawning its own vite, so it can no longer hold :5173 outside the
+# unit's cgroup and leave the unit crash-looping. The bare setsid relaunch is
+# the fallback for a box with no unit.
 */2 * * * * @WORKSHOP_ROOT@/scripts/frontends_watchdog.sh
 
 # ---- Task queue worker loop: ensure the resident runner is up (restart-on-death) ----

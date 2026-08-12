@@ -74,10 +74,11 @@ shows up as something other than an absence of events. Autonomous entries ship
 commented out, which is an operator decision recorded in the file; installing does
 not turn them on.
 
-Note that `frontends_watchdog.sh` relaunches vite outside any unit and still
-claims in its own header that this box has no systemd. If it races
-`workshop-frontend.service` it will hold `:5173` and make the unit crash-loop.
-Untangling those two is unfinished work, not a settled design.
+`frontends_watchdog.sh` restarts `workshop-frontend.service` when that unit
+exists, and only falls back to launching vite itself on a box that has none. It
+used to always do the latter, which meant two owners for `:5173`: whenever the
+watchdog won the race it held the port outside the unit's cgroup and the unit
+crash-looped on a port it could not bind.
 
 ## Configuration
 
