@@ -794,7 +794,7 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     # like a project chat with someone else's instructions.
     #
     # Clearing it is cheap and loses nothing: the next turn re-assembles the full
-    # prompt (summary + transcript tail) for a fresh session, which is the same
+    # prompt (the transcript after the cut) for a fresh session, which is the same
     # path a pruned session already takes.
     chat_store.clear_thread_session(thread_id)
 
@@ -812,13 +812,45 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     }
 
 
+def _within_ceiling(history: list[dict]) -> tuple[list[dict], int]:
+    """(messages to send, how many were left out). Left out is 0 almost always.
+
+    The fuse described at PROMPT_CEILING_TOKENS. It keeps the NEWEST messages,
+    because the recent end is what the next reply is actually about, and it
+    returns the count it dropped so the caller can say so in the prompt. It never
+    touches the stored transcript: this is an assembly-time decision and the
+    thread is unchanged.
+
+    Whole messages only. Cutting one in half to hit a byte target would hand the
+    model a fragment with no speaker and no end, which is worse than one fewer
+    message."""
+    if not history:
+        return history, 0
+    budget = PROMPT_CEILING_TOKENS * _CHARS_PER_TOKEN
+    total = sum(len(m.get("content") or "") for m in history)
+    if total <= budget:
+        return history, 0
+    kept: list[dict] = []
+    used = 0
+    for m in reversed(history):
+        size = len(m.get("content") or "")
+        if used + size > budget and kept:
+            break
+        kept.append(m)
+        used += size
+    kept.reverse()
+    dropped = len(history) - len(kept)
+    log.warning("prompt ceiling hit: %d of %d messages left out (~%dk tokens)",
+                dropped, len(history), total // _CHARS_PER_TOKEN // 1000)
+    return kept, dropped
+
+
 def _build_prompt(
     provider: chat_context.ContextProvider,
     history: list[dict],
     user_msg: str,
     *,
     preamble: str = "",
-    summary: str = "",
 ) -> str:
     # Layered prompt (see docs 01 §3):
     #   1. ROLE PREAMBLE (platform-owned safety/capability facts) — first, and
@@ -917,18 +949,21 @@ def _build_prompt(
         custom = ""
     if custom:
         parts.append("=== CUSTOM INSTRUCTIONS (operator-set) ===\n" + origin.escape_markers(custom))
-    # A prior-conversation summary (Phase 3 compaction) is comparatively stable: it
-    # only changes when a compaction runs, not every turn, so it sits just before
-    # the recent verbatim turns.
-    if summary:
-        # ATTRIBUTED, because a different and cheaper model wrote it
-        # (_summarize_sync calls TIER_HAIKU). Unlabelled, a third-person account
-        # of the conversation reads as neutral fact the assistant itself
-        # established. See docs/decisions/0015 §8 case 2.
-        parts.append(origin.heading("EARLIER CONVERSATION (summary)",
-                                    origin.derived(llm_router.TIER_HAIKU))
-                     + "\n" + origin.escape_markers(summary))
     if history:
+        history, over_ceiling = _within_ceiling(history)
+        if over_ceiling:
+            # SAID, not done quietly. The predecessor's whole failure was that it
+            # deleted the start of a conversation and told nobody, so the model
+            # answered confidently out of a transcript it did not know was
+            # missing a beginning. Naming the count and the reason is what lets
+            # it say "I cannot see the start of this" instead.
+            parts.append(
+                f"=== EARLIER MESSAGES NOT INCLUDED ({over_ceiling}) ===\n"
+                f"This conversation is larger than one prompt can carry, so the "
+                f"{over_ceiling} oldest messages were left out. They are NOT deleted: "
+                f"they are still in the transcript, and they are searchable with "
+                f"mcp__workshop__search. Say so if the answer depends on them."
+            )
         # `meta.agent` names the AGENT that produced a reply when the operator
         # addressed one by @mention. It is stored on every such message and was
         # dropped here, so the assistant was handed another agent's words as its
@@ -971,290 +1006,44 @@ def _link_build_skills(provider) -> None:
         log.info("skill link skipped for %s: %s", getattr(provider, "key", "?"), e)
 
 
-# --- Phase 3: threshold compaction -------------------------------------------
-# AUTOMATIC folding is REMOVED (operator, 2026-08-12). The running summary used
-# to fold the oldest half of the tail whenever a crude char estimate crossed a
-# token budget, which on today's ~1M-token windows fired on chats nowhere near
-# full and swapped real turns for a lossy summary mid-conversation. Nothing folds
-# on its own now: an ordinary turn sends the whole transcript (the model's own
-# window is the limit, and the CLI compacts that itself when it must). Only the
-# MANUAL /compact command still folds, on explicit request — see force=True in
-# _compact_thread and the /compact endpoint. Raw messages stay in the thread JSON
-# either way, so any past fold is still reversible.
-_COMPACT_KEEP_TAIL = 4  # turns a forced /compact keeps verbatim
-# Summarization is one text-in/text-out call, so it should take seconds. Cap it
-# hard: /compact is a foreground request the operator is waiting on, and the
-# 10-minute library default meant a slow call read as a dead button.
-_COMPACT_CALL_TIMEOUT_S = 120
+# --- The context cut ---------------------------------------------------------
+# THERE IS NO SERVER-SIDE FOLDING. It is not disabled, it is gone: no running
+# summary, no Haiku summarize call, no distillation pass, no `/threads/:id/compact`
+# endpoint, no `_FOLDING` guard, no keep-tail constant.
+#
+# What replaced it is one rule. A thread's prompt is every message after the last
+# cut, and the only thing that makes a cut is an explicit `/clear`. That is the
+# whole model, and it is enforced in chat_store: `update_thread` now REFUSES to
+# move the cut, so nothing can hide messages as a side effect of writing a field.
+#
+# `/compact` still exists and still works. It is the CLI's own command, sent as a
+# raw turn, and it reclaims the LIVE session's window, which is the thing that
+# actually fills up. The server keeps no state for it and the stored transcript
+# is untouched. The old implementation ran a second, server-side fold alongside
+# it that replaced real turns with a summary of them, which is what made
+# `/compact` feel destructive.
+#
+# The size backstop for a thread that gets away from us lives in `_build_prompt`
+# (`PROMPT_CEILING_TOKENS`). It fires on SIZE, never on a message count, and it
+# says so in the prompt rather than dropping messages silently.
 
-
-def _fmt_turns(msgs: list[dict]) -> str:
-    # Named speakers, not a flat Operator/Assistant split. A summary that folds
-    # an @mentioned agent's reply into "Assistant" makes the summary itself a
-    # provenance leak: everything downstream of the fold then reads as one voice.
-    out = []
-    for m in msgs:
-        who = origin.speaker_label(m.get("role", ""), m.get("meta"))
-        if who == "You":
-            who = "Assistant"
-        out.append(f"{who}: {origin.escape_markers(m.get('content', ''))}")
-    return "\n\n".join(out)
-
-
-def _summarize_sync(prev_summary: str, to_fold: list[dict]) -> str:
-    prompt = (
-        "You are compacting a chat transcript to save context. Produce a concise running "
-        "summary that preserves decisions made, facts established, the operator's stated "
-        "preferences, and any open threads or unfinished tasks. Drop pleasantries and "
-        "redundant back-and-forth. Write plainly. No em-dashes, no emojis.\n\n"
-        + (f"=== EXISTING SUMMARY ===\n{prev_summary}\n\n" if prev_summary else "")
-        + f"=== NEW TURNS TO FOLD IN ===\n{_fmt_turns(to_fold)}\n\n"
-        "=== OUTPUT ===\nThe updated summary only, no preamble."
-    )
-    # Text in, text out. Without tools_disabled this ran in the DEFAULT agentic
-    # mode: a full toolset plus every MCP server spun up just to write a summary,
-    # which took minutes and made /compact look like it had hung or done nothing.
-    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
-                                tools_disabled=True, timeout_s=_COMPACT_CALL_TIMEOUT_S)
-    return (res.get("text") or "").strip()
-
-
-def _distill_sync(to_fold: list[dict]) -> list[str]:
-    prompt = (
-        "From the following chat turns, extract only DURABLE facts worth remembering long "
-        "term: the operator's stated preferences, decisions, commitments, and stable facts "
-        "about their projects or life. Ignore transient chit-chat and anything trivial. "
-        "Output each fact as one short plain line, no bullet characters, no em-dashes, no "
-        "emojis. If there is nothing durable, output nothing.\n\n"
-        f"=== TURNS ===\n{_fmt_turns(to_fold)}\n\n=== FACTS (one per line) ===\n"
-    )
-    res = llm_router.call_cloud(prompt, model=llm_router.TIER_HAIKU,
-                                tools_disabled=True, timeout_s=_COMPACT_CALL_TIMEOUT_S)
-    lines = [ln.strip("-*• \t") for ln in (res.get("text") or "").splitlines()]
-    return [ln for ln in lines if ln and len(ln) > 8][:5]
-
-
-# Scheduled distillations, held so the event loop cannot garbage-collect a task
-# that nothing else references.
-_DISTILL_TASKS: set = set()
-
-# Thread ids with a fold in its summarization call right now. See _compact_thread.
-_FOLDING: set[str] = set()
-
-# Background folds, held for the same reason as _DISTILL_TASKS.
-_FOLD_TASKS: set = set()
-
-
-def _schedule_distill(to_fold: list[dict], scope_key: str) -> None:
-    """Run distillation OUT of band.
-
-    It used to be awaited inside the compaction pass, which put a second model
-    call plus a note write on the foreground path. On /compact — a request the
-    operator is actively waiting on — that turned a summarize call into
-    summarize + distill + dedupe, and the button read as dead for ~30 seconds
-    before anything appeared in the chat.
-
-    Nothing in the response depends on the distilled facts: they land in the
-    scope's knowledge note for LATER turns to recall. So the caller should not
-    pay for them. Same reasoning as `chat_naming.schedule`.
-    """
-    if not scope_key:
-        return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:  # pragma: no cover — no running loop: do it inline.
-        return
-    task = loop.create_task(_distill(to_fold, scope_key))
-    _DISTILL_TASKS.add(task)
-    task.add_done_callback(_DISTILL_TASKS.discard)
-
-
-async def _distill(to_fold: list[dict], scope_key: str) -> None:
-    """Distillation (Phase 3): pull durable facts out of the turns being compacted
-    away and into the scope's `chat-distilled` note, so knowledge that would other
-    wise scroll out of context is retained and recallable. Best-effort, deduped,
-    size-capped. Never raises into the reply path."""
-    try:
-        facts = await asyncio.to_thread(_distill_sync, to_fold)
-        if not facts:
-            return
-        # Strip the author marker off the body before appending to it: it lives
-        # on the first line, and put_note re-stamps it. Carrying it through
-        # would bury a second copy of it in the middle of the note.
-        _, existing = knowledge.split_author(knowledge.get_note(scope_key, "chat-distilled") or "")
-        have = {ln.strip().lstrip("- ").strip().lower() for ln in existing.splitlines() if ln.strip()}
-        fresh = [f for f in facts if f.strip().lower() not in have]
-        if not fresh:
-            return
-        prefix = existing.rstrip() + "\n" if existing.strip() else ""
-        body = (prefix + "\n".join(f"- {f}" for f in fresh))[-8000:]
-        # A DIFFERENT AND CHEAPER MODEL wrote these lines, from turns it was
-        # shown once. Unattributed, they come back on a later turn looking like
-        # facts the assistant established itself. See docs/decisions/0015 §8.
-        await knowledge.put_note(scope_key, "chat-distilled", "Distilled from chats", body,
-                                 hook="facts auto-captured from chat compaction",
-                                 author=origin.derived(llm_router.TIER_HAIKU))
-    except Exception as e:
-        log.warning("chat distillation failed for %s: %s", scope_key, e)
-
-
-async def _compact_thread(thread: dict, scope_key: str = "", *,
-                          force: bool = False) -> tuple[str, list[dict], int]:
-    """One compaction pass. Returns (summary, recent verbatim turns, folded count).
-
-    Only `force=True` (the manual /compact command) ever folds: everything
-    except the last `_COMPACT_KEEP_TAIL` turns, because the operator asked for the
-    context back now. The automatic path (`force=False`) is a no-op — automatic
-    folding was removed on 2026-08-12 (it summarised chats nowhere near full).
-
-    Best-effort: any failure leaves the thread untouched and returns the current
-    (summary, tail, 0), so a compaction hiccup never blocks a reply or loses
-    messages. Raw messages stay in the thread JSON either way, so the fold is
-    always reversible. On a successful fold it also distills durable facts from
-    the folded turns into the scope's knowledge (Phase 3)."""
-    # Committed messages only. A run in flight renders as a trailing assistant
-    # message (chat_store._live_view) but is not in the record yet, so folding it
-    # would summarize a half-written reply and push the boundary past a message
-    # that does not exist.
-    msgs = [m for m in thread.get("messages", [])
-            if not (m.get("meta") or {}).get("streaming")]
-    summary = thread.get("summary", "") or ""
-    ct = int(thread.get("compacted_through", 0) or 0)
-    if ct < 0 or ct > len(msgs):
-        ct = 0
-    tail = msgs[ct:]
-    if not force:
-        # Automatic folding is removed: nothing folds unless the operator asks.
-        return summary, tail, 0
-    fold_n = max(0, len(tail) - _COMPACT_KEEP_TAIL)
-    if fold_n == 0:
-        return summary, tail, 0
-    to_fold, keep = tail[:fold_n], tail[fold_n:]
-    tid = thread.get("id") or ""
-    if tid in _FOLDING:
-        # Another fold is already in the summarization call for this thread. Both
-        # would compute the same `ct` and write the same range, so the second
-        # would fold already-folded turns into a summary built without the
-        # first's — losing the difference. One at a time; the loser is a no-op.
-        return summary, tail, 0
-    _FOLDING.add(tid)
-    try:
-        new_summary = await asyncio.to_thread(_summarize_sync, summary, to_fold)
-    except Exception as e:
-        log.warning("chat compaction failed for %s: %s", thread.get("id"), e)
-        return summary, tail, 0
-    finally:
-        _FOLDING.discard(tid)
-    if not new_summary:
-        return summary, tail, 0
-
-    # Write the FIELDS THIS FOLD OWNS, onto the thread as it is NOW — never the
-    # snapshot above. That snapshot was read before a summarization call lasting
-    # tens of seconds, and saving it back deleted every message the operator sent
-    # during the fold. (Measured: 11 messages in, 10 on disk, the missing one
-    # theirs. The transcript is an append-only log now, so no write can express
-    # that at all — but the snapshot's OTHER fields would still be stale.)
-    #
-    # `compacted_through` survives the switch because it counts from the FRONT of
-    # the transcript and appends land at the BACK: the messages this fold covers
-    # are at the same indices no matter how many arrived meanwhile. The store
-    # records it as the seq of the last folded message, which nothing can shift.
-    # A /clear can land while this call was in flight. It advances
-    # `compacted_through` to the end of the transcript and drops `summary`
-    # outright; writing this fold's `ct + fold_n` afterward would move the
-    # boundary BACKWARD and resurrect a summary of content the operator just
-    # asked to forget. Check against the current record, not the snapshot this
-    # function started from.
-    current = chat_store.get_thread(tid) or {}
-    if int(current.get("compacted_through", 0) or 0) >= ct + fold_n:
-        return summary, tail, 0
-
-    fields: dict[str, object] = {"summary": new_summary, "compacted_through": ct + fold_n}
-    if force:
-        # The stored measured value is the pre-fold context size; leaving it
-        # would pin the composer meter at its old reading and make /compact look
-        # like it did nothing. Drop it so the meter re-estimates from the newly
-        # compacted prompt on the next read.
-        fields["context_tokens"] = None
-    chat_store.update_thread(tid, **fields)
-    # Keep the caller's in-memory copy consistent with what was just persisted;
-    # it is building this turn's prompt out of it.
-    thread["summary"] = new_summary
-    thread["compacted_through"] = ct + fold_n
-    if force:
-        thread.pop("context_tokens", None)
-    # Scheduled, not awaited: the fold is what the caller asked for and is now
-    # saved. See `_schedule_distill`.
-    _schedule_distill(to_fold, scope_key)
-    return new_summary, keep, fold_n
-
-
-async def _maybe_compact(thread: dict, scope_key: str = "") -> tuple[str, list[dict]]:
-    """Ordinary turn path. Automatic folding is removed, so this now just returns
-    the thread's existing summary (from a past MANUAL /compact, if any) and its
-    full uncompacted tail. Kept as the seam the turn assembler calls, so re-adding
-    a policy later is one function, not a scattered edit. See `_compact_thread`."""
-    summary, tail, _ = await _compact_thread(thread, scope_key)
-    return summary, tail
-
-
-@router.post("/threads/{thread_id}/compact")
-async def compact_thread(thread_id: str):
-    """Fold the STORED transcript now (half of the /compact command).
-
-    A chat's context lives in two places and /compact has to reach both:
-
-      1. the live claude session, whose window is what actually fills up. Only
-         the CLI's own `/compact` frees that, and it does so by running as a
-         normal turn (the raw-slash branch in POST /turns). The client sends
-         that turn itself, so the fold is visible in the transcript instead of
-         happening invisibly.
-      2. the stored transcript, which is what gets re-assembled whenever a fresh
-         session starts. That is this endpoint: fold everything except the last
-         `_COMPACT_KEEP_TAIL` turns into the running summary, and report what
-         moved so the client can render a marker rather than a silent no-op.
-
-    `live_session` tells the client whether (1) is worth doing — a chat that has
-    not started a session yet has no live window to reclaim.
-
-    RETURNS IMMEDIATELY. This used to await the fold, which meant a summarization
-    call — tens of seconds — stood between the operator pressing enter and the
-    visible compaction starting. Their words: "it shows a weird message saying
-    compacting... and then 30s later it starts ACTUALLY compacting." Nothing in
-    (1) depends on (2): the live session's window is reclaimed by the CLI, and
-    the stored fold is housekeeping on a file. Serializing them bought nothing
-    and cost the entire delay.
-
-    So the parts the client actually needs are computed here — how many turns
-    WILL fold (pure arithmetic) and whether there is a live session — and the
-    summarization runs detached. The client starts the visible half at once."""
-    t = chat_store.get_thread(thread_id)
-    if t is None:
-        raise HTTPException(404, "thread not found")
-    provider = chat_context.get_provider(t.get("context_key"))
-    msgs = t.get("messages", [])
-    ct = int(t.get("compacted_through", 0) or 0)
-    if ct < 0 or ct > len(msgs):
-        ct = 0
-    tail = msgs[ct:]
-    # Same rule _compact_thread(force=True) applies, stated once here so the
-    # client can be told the outcome without waiting for the model call.
-    will_fold = max(0, len(tail) - _COMPACT_KEEP_TAIL)
-
-    if will_fold:
-        task = asyncio.get_running_loop().create_task(
-            _compact_thread(t, provider.knowledge_scope(), force=True))
-        _FOLD_TASKS.add(task)
-        task.add_done_callback(_FOLD_TASKS.discard)
-
-    return {
-        "will_fold": will_fold,
-        "kept": min(len(tail), _COMPACT_KEEP_TAIL),
-        "before": len(tail),
-        "compacted_through": ct,
-        "live_session": _has_live_session(t, provider),
-    }
-
+# The backstop itself. NOT a policy, a fuse: it exists so a thread that somehow
+# gets away from us produces a degraded prompt instead of an unsendable one.
+#
+# It fires on estimated SIZE, never on a message count. That distinction is the
+# whole lesson of the thing it replaces: `MAX_HISTORY = 60` capped the count, and
+# the largest thread in this store is ~110k tokens in THIRTEEN messages, so it
+# sailed straight past while a 129-message thread less than half its size was
+# amputated. A fuse measured in the wrong unit protects nothing.
+#
+# Set high on purpose. Nothing in the store is within 5x of it, and the CLI
+# compacts its own session long before a live conversation could get here; this
+# only covers fresh-session assembly, where the whole transcript is re-sent at
+# once. If it ever fires, that is a fact worth seeing, not a routine trim.
+PROMPT_CEILING_TOKENS = int(os.environ.get("WORKSHOP_PROMPT_CEILING_TOKENS", "600000"))
+# The usual 4-chars-per-token approximation. Precision does not matter for a
+# fuse; being in the right order of magnitude does.
+_CHARS_PER_TOKEN = 4
 
 def _has_live_session(t: dict, provider) -> bool:
     """Does this chat have a claude session whose window /compact can reclaim?
@@ -1278,7 +1067,7 @@ def _reset_live_session(t: dict, provider) -> bool:
     """Detach the live claude session so the next turn mints a fresh one instead
     of --resuming. Same two homes as `_has_live_session`. This is what /clear
     uses instead of a native CLI /clear: a native /clear empties the live
-    window but leaves the *stored* transcript's `compacted_through` alone, so
+    window but leaves the *stored* transcript's cut alone, so
     the next stale-session prune or restart would re-resume from disk and
     silently undo the clear. A brand-new session id has nothing to resume from.
 
@@ -1299,18 +1088,81 @@ def _reset_live_session(t: dict, provider) -> bool:
     return bool(t.get("claude_session"))
 
 
-@router.post("/threads/{thread_id}/clear")
-async def clear_thread_context(thread_id: str):
-    """Drop this thread's context, keeping the transcript — the other half of
-    the /clear vs /compact split (see `slashCommands.ts`). No summarization
-    call, no detached task: this is a handful of field writes and returns as
-    soon as they land. Do NOT "make it consistent with /compact" by adding a
-    summarization step here — that is precisely what /clear exists to skip."""
+def _detach_live_session(thread_id: str, t: dict, provider) -> bool:
+    """Drop the live session AND the meter reading that described it.
+
+    `_reset_live_session` reaches the agent-keyed home; the thread's own
+    `claude_session` is dropped here, because unlike /clear there is no
+    `clear_thread_context` call behind this to do it.
+
+    The context reading goes with it. It measured the window of the session
+    being dropped, so keeping it pins the composer meter to a window that no
+    longer exists: the exact symptom that made /compact read as dead, a
+    four-message chat sitting at 142k because that was the last thing
+    measured."""
+    had = _reset_live_session(t, provider)
+    chat_store.clear_thread_session(thread_id)
+    chat_store.clear_thread_context_tokens(thread_id)
+    return had
+
+
+@router.post("/threads/{thread_id}/compact")
+async def compact_thread(thread_id: str):
+    """Reclaim the LIVE window: drop the session, keep the transcript.
+
+    THE CLI CANNOT DO THIS FOR US, which is the correction this endpoint exists
+    to carry. `/compact` was sent as a raw turn for the CLI's own command to
+    run, and in headless mode (`-p --input-format stream-json`) a leading slash
+    is parsed into a local-command block that nothing executes. The turn at
+    2026-08-12T05:10:18Z came back in two seconds and the CLI session recorded
+    the whole of it as
+
+        user    <command-name>/compact</command-name>
+        system  local_command
+                <local-command-caveat> ... DO NOT respond to these messages
+
+    with no `compact_boundary` behind it, no summarization, and a window exactly
+    as full as before. (A real one, in a terminal the same night, took 136
+    seconds and reported 492981 -> 14880 tokens.) There is no control request
+    for it either: the protocol's entire list is initialize, set_model,
+    rename_session, read_file, interrupt, set_permission_mode,
+    set_max_thinking_tokens, mcp_oauth_callback_url, file_suggestions,
+    get_usage, set_color. Compaction is not in it. The chat reported "Command
+    ran." over that for months.
+
+    So the one lever that works from out here is the one /clear already uses:
+    DETACH. The next turn mints a fresh session and re-sends the prompt (every
+    message after the last cut), so the window drops because the session
+    carrying it is gone.
+
+    NOTHING IS FORGOTTEN, which is what separates this from /clear. The cut does
+    not move and the transcript is untouched: only the CLI's private copy of the
+    conversation goes, and that copy is re-derivable from the transcript by
+    definition. No summarizer, no stored state, no fold. That is also why this
+    returns in milliseconds.
+
+    `session_reset` is false when there was no live window to reclaim, so the
+    client can say nothing happened only when nothing did."""
     t = chat_store.get_thread(thread_id)
     if t is None:
         raise HTTPException(404, "thread not found")
     provider = chat_context.get_provider(t.get("context_key"))
-    had_summary = bool(t.get("summary"))
+    return {"session_reset": _detach_live_session(thread_id, t, provider)}
+
+
+@router.post("/threads/{thread_id}/clear")
+async def clear_thread_context(thread_id: str):
+    """Drop this thread's context, keeping the transcript — the other half of
+    the /clear vs /compact split (see `slashCommands.ts`).
+
+    THIS IS THE ONLY THING THAT CUTS A THREAD'S CONTEXT. `/compact` reclaims the
+    live CLI session's window and leaves the transcript alone; this draws the
+    line the prompt is assembled from. A handful of field writes, no model call,
+    no detached task, returns as soon as they land."""
+    t = chat_store.get_thread(thread_id)
+    if t is None:
+        raise HTTPException(404, "thread not found")
+    provider = chat_context.get_provider(t.get("context_key"))
     session_reset = _reset_live_session(t, provider)
     result = chat_store.clear_thread_context(thread_id)
     if result is None:
@@ -1318,8 +1170,7 @@ async def clear_thread_context(thread_id: str):
     thread, cleared = result
     return {
         "cleared": cleared,
-        "compacted_through": int(thread.get("compacted_through", 0) or 0),
-        "dropped_summary": had_summary,
+        "cleared_through": int(thread.get("cleared_through", 0) or 0),
         "session_reset": session_reset,
     }
 
@@ -1387,7 +1238,7 @@ async def thread_context(thread_id: str):
 
     Fallback (a thread that has not completed a streamed turn yet): estimate from
     the same prompt a turn WOULD send. For data providers that compact, that is
-    only `summary + the uncompacted tail`, never the whole transcript, so the
+    only the messages after the last /clear, never more, so the
     estimate already respects compaction too. ~4 chars/token (no local Claude
     tokenizer)."""
     t = chat_store.get_thread(thread_id)
@@ -1423,15 +1274,12 @@ async def thread_context(thread_id: str):
     # Same stop rule on the first turn as on every resumed one, so behaviour
     # does not differ between a fresh chat and a continued one.
     preamble = chat_context.turn_contract(CHAT_TIMEOUT_S) + "\n\n" + preamble
-    # Mirror what a real turn sends. Every provider folds the oldest turns into a
-    # running summary (see _maybe_compact); only the summary + the tail after
-    # `compacted_through` actually go to the model, so count that, not everything.
+    # Mirror what a real turn sends: everything after the last /clear.
     history = t.get("messages", [])
-    ct = int(t.get("compacted_through", 0) or 0)
+    ct = int(t.get("cleared_through", 0) or 0)
     if 0 <= ct <= len(history):
         history = history[ct:]
-    summary = t.get("summary", "") or ""
-    prompt = _build_prompt(provider, history, "", preamble=preamble, summary=summary)
+    prompt = _build_prompt(provider, history, "", preamble=preamble)
     used = max(1, round(len(prompt) / 4))
     return {
         "used_tokens": used,
@@ -1636,7 +1484,6 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
         is_build=is_build_mode,
     )
     history = t.get("messages", [])
-    summary = ""
     # AUTO-RECALL IS REMOVED (operator, 2026-08-12). It ran `knowledge.search` on
     # every message and pasted the top 3 notes in here. That search scored a note
     # as `sum(hay.count(t))`: raw term frequency, no stopwords, no IDF, no length
@@ -1649,13 +1496,9 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
     # model CALLS. It searches notes, docs and past chats by meaning, returns the
     # passage itself with its provenance, and returns nothing when nothing is
     # relevant. Pull, not push. Do not reintroduce an injection here.
-    # Threshold compaction (Phase 3): fold the oldest half of a long transcript
-    # into a running summary so the cached prefix stays stable and the window does
-    # not overflow. Applies to EVERY provider here, because this is the fresh-
-    # session assembly: whatever it builds is the whole context the model gets, so
-    # an uncompacted 200-message project chat would re-send the entire transcript
-    summary, history = await _maybe_compact(t, provider.knowledge_scope())
-    prompt = _build_prompt(provider, history, content, preamble=preamble, summary=summary)
+    # The transcript goes as it is. `chat_store` already cut it at the last
+    # /clear before handing it over, and nothing else may remove a message.
+    prompt = _build_prompt(provider, history, content, preamble=preamble)
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
     prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
@@ -1682,7 +1525,7 @@ def _thread_session(thread_id: str, cwd: str) -> tuple[str | None, bool]:
     Stale-session guard, same as the build-agent path: an id whose session file
     is gone (pruned, or written under a different cwd) would make `--resume` fail
     the entire turn, so drop it and mint a fresh one. Starting fresh is safe —
-    the caller re-assembles the full prompt (summary + transcript tail) for a new
+    the caller re-assembles the full prompt (the transcript after the cut) for a new
     session, so continuity is preserved even when the CLI's copy is gone."""
     got = chat_store.ensure_thread_session(thread_id)
     if got is None:
@@ -2369,17 +2212,8 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
             thread_id=thread_id, agent_slug=provider.slug, prompt=prompt, model=model,
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
             timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
-            permission_mode=permission_mode,
+            permission_mode=permission_mode, mcp_selection=mcp_selection,
         )
-
-    # This chat's own MCP choice: None (the overwhelmingly common case) means
-    # every server, and every branch below must then produce exactly the argv it
-    # produced before the control existed. A list narrows the servers the turn
-    # can reach, and — because a tool named in --allowedTools whose server is
-    # not in the strict config is a tool that cannot exist — it narrows the
-    # allowlist to match. Applied HERE rather than deeper down so the filter
-    # runs once, on the values actually handed to the spawn.
-    mcp_selection = chat_store.get_thread_mcp_servers(thread_id)
 
     is_project = chat_context.is_build_provider(provider)
     if is_project:
@@ -2416,6 +2250,11 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
         permission_mode=permission_mode, attachments=attachments,
         allowed_tools=allowed_tools, mcp_servers=mcp_servers, tools_disabled=tools_disabled,
+        # Redundant on the narrow branch above (which already filtered
+        # `mcp_servers` and `allowed_tools` through it, and the filter is
+        # idempotent), load-bearing on the project branch, which sets
+        # `allowed_tools=None` and would otherwise emit no MCP flags at all.
+        mcp_selection=mcp_selection,
     )
 
 

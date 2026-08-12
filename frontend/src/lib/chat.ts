@@ -227,16 +227,15 @@ export type ThreadSummary = {
   // How much this chat asks before acting. Absent/null = the platform default
   // (bypassPermissions), which is what every chat ran at before the picker.
   permission_mode?: string | null;
-  // How many leading messages are out of the prompt — either folded into the
-  // running summary, or dropped outright by /clear. Raw messages are never
-  // deleted, so this is the only way a client can tell a cut thread from an
-  // uncut one, and the only way the divider survives a reload.
-  compacted_through?: number;
-  // HOW the boundary above was made: absent (or any value other than
-  // "cleared") means a fold — a summary of the cut messages survives.
-  // "cleared" means /clear made it — nothing survives, so the divider must
-  // never claim a summary exists.
-  context_cut?: "cleared";
+  // How many leading messages /clear has taken out of the prompt. Raw messages
+  // are never deleted, so this is the only way a client can tell a cut thread
+  // from an uncut one, and the only way the divider survives a reload.
+  //
+  // There is only one kind of cut now. It used to also count messages folded
+  // into a running summary, and `context_cut` existed to say which of the two
+  // had happened; server-side folding was removed on 2026-08-12, so the
+  // question no longer has two answers.
+  cleared_through?: number;
   // Which in-chat cards have already been acted on, keyed by a digest of the
   // card block. Without this a card that was filed and run came back on the next
   // load looking exactly like one that had never been touched.
@@ -277,9 +276,11 @@ export type LogEvent = {
   // log until it finishes.
   run_id?: string;
   state?: "started" | "finished" | "lost";
-  // kind === "boundary" — a context cut made by /compact or /clear.
+  // kind === "boundary" — a context cut, which only /clear makes.
+  // `mode` survives as a discriminator: a boundary left behind by the removed
+  // folding path reads as "compact" and is ignored everywhere.
   mode?: "compact" | "clear";
-  summary?: string;
+  at_seq?: number;
   // kind === "title"
   title?: string;
 };
@@ -553,19 +554,14 @@ export const chatApi = {
       body: JSON.stringify({ title }),
     }).then(j<ThreadSummary>),
 
-  // Fold the STORED transcript into the running summary (half of /compact — the
-  // half that shrinks what a fresh session re-reads). `live_session` reports
-  // whether this chat also has a live claude session whose window only the CLI's
-  // own /compact can reclaim; the caller sends that as a turn.
+  // /compact: drop the LIVE session so the next turn starts a fresh one from the
+  // stored transcript. Nothing is folded, summarized or forgotten, and the cut
+  // does not move; the CLI's private copy of the conversation is simply
+  // discarded, and it is re-derivable from the transcript by definition.
+  // `session_reset` says whether there was a live window to reclaim.
   compactThread: (id: string) =>
     fetch(`/api/chat/threads/${id}/compact`, { method: "POST" }).then(
-      // Returns in milliseconds: `will_fold` is arithmetic, not the result of
-      // the summarization call, which now runs detached server-side. Waiting for
-      // it is what put ~30s between pressing enter and anything happening.
-      j<{
-        will_fold: number; kept: number; before: number;
-        compacted_through: number; live_session: boolean;
-      }>,
+      j<{ session_reset: boolean }>,
     ),
 
   // Drop this thread's context outright — the other half of /clear vs /compact.
@@ -573,10 +569,7 @@ export const chatApi = {
   // and returns as soon as it lands.
   clearThreadContext: (id: string) =>
     fetch(`/api/chat/threads/${id}/clear`, { method: "POST" }).then(
-      j<{
-        cleared: number; compacted_through: number;
-        dropped_summary: boolean; session_reset: boolean;
-      }>,
+      j<{ cleared: number; cleared_through: number; session_reset: boolean }>,
     ),
 
   // Record that an in-chat card has been acted on, so it stops offering an

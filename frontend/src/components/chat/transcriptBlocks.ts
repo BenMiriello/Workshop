@@ -62,8 +62,12 @@ export type TranscriptBlock =
       // out of nowhere the moment the server commits the message.
       attachments?: PendingSend["attachments"];
     }
-  // The context boundary a /compact or /clear left behind.
-  | { kind: "cut"; key: string; count: number; cleared: boolean };
+  // The context boundary a /clear left behind. Nothing else makes one.
+  | { kind: "cut"; key: string; count: number }
+  // A scope change the operator has since sent a message past. See
+  // withScopeNotes: client-side, not stored on the thread, anchored at the
+  // point in the log it actually happened.
+  | { kind: "scope"; key: string; to: string };
 
 /** Split a segment list at the cut points of the messages that interrupted it.
  *  The coordinate is a UNIT index, not a segment index — see transcriptUnits.ts
@@ -199,6 +203,9 @@ function liveBlocks(
 export type CommittedTranscript = {
   blocks: TranscriptBlock[];
   heldForActiveRun: LogEvent[];
+  /** The run that is GENUINELY still writing, which is not always the one the
+   *  snapshot names. See `selectCommitted`. Null means render no live block. */
+  liveRunId: string | null;
 };
 
 /**
@@ -242,6 +249,19 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
     if (rid && !replySeqByRun.has(rid)) replySeqByRun.set(rid, ev.seq);
   }
 
+  // A RUN WHOSE REPLY IS ALREADY IN THE LOG IS FINISHED, whatever the snapshot
+  // says. The two facts arrive on the same page and the server does not write
+  // them atomically: chat_log.read_thread reads `meta` before the events, while
+  // commit_run appends the reply first and clears `active_run_id` after. A read
+  // landing in that gap returns the committed reply AND `active_run` still
+  // naming the run that produced it, with its now-stale draft attached.
+  //
+  // Believing the snapshot there printed the previous reply twice: once
+  // committed, and once again below the operator's new message as a block marked
+  // `working`, which is why it looked like the answer was being written and then
+  // "replaced" when the next sync cleared it. Reported 2026-08-12 in those words.
+  const liveRunId = activeRunId && !replySeqByRun.has(activeRunId) ? activeRunId : null;
+
   const held = new Map<string, LogEvent[]>();
   const hold = (rid: string, ev: LogEvent) => {
     const list = held.get(rid);
@@ -254,21 +274,24 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
   // event sits in the log — which is after everything it cut.
   let cutAt = -1;
   let cutCount = 0;
-  let cutCleared = false;
   let messagesSoFar = 0;
 
   for (const ev of events) {
     if (ev.kind === "boundary") {
+      // A boundary from the removed folding path draws NOTHING. It hid messages
+      // behind a running summary that is no longer assembled into any prompt, so
+      // the server stopped honouring it and the divider must not claim a cut
+      // that is not happening. See chat_store._fold.
+      if (ev.mode !== "clear") continue;
       cutAt = out.length;
       cutCount = messagesSoFar;
-      cutCleared = ev.mode === "clear";
       continue;
     }
     if (ev.kind !== "message") continue;
     messagesSoFar++;
     if (ev.role === "user") {
       const rid = ev.meta?.during_run;
-      if (rid && (rid === activeRunId || (replySeqByRun.get(rid) ?? -1) > ev.seq)) {
+      if (rid && (rid === liveRunId || (replySeqByRun.get(rid) ?? -1) > ev.seq)) {
         hold(rid, ev);
         continue;
       }
@@ -283,19 +306,20 @@ export function selectCommitted(state: ThreadState): CommittedTranscript {
 
   if (cutAt >= 0 && cutCount > 0) {
     out.splice(cutAt, 0, {
-      kind: "cut", key: `cut:${cutCount}:${cutCleared}`, count: cutCount, cleared: cutCleared,
+      kind: "cut", key: `cut:${cutCount}`, count: cutCount,
     });
   }
 
   return {
     blocks: out,
-    heldForActiveRun: activeRunId ? held.get(activeRunId) || [] : [],
+    heldForActiveRun: liveRunId ? held.get(liveRunId) || [] : [],
+    liveRunId,
   };
 }
 
 /** Where a pending send sits in the committed blocks: immediately after the last
  *  block the log had when that send was made. */
-function anchorIndex(blocks: TranscriptBlock[], afterSeq: number): number {
+export function anchorIndex(blocks: TranscriptBlock[], afterSeq: number): number {
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
     if (b.kind === "message" && b.seq <= afterSeq) return i + 1;
@@ -347,7 +371,10 @@ export function composeTranscript(
     else out.splice(anchorIndex(out, p.afterSeq), 0, toBlock(p));
   }
 
-  if (state.activeRun) {
+  // Only when the committed half agrees the run is still writing. See the
+  // liveRunId note in selectCommitted: the snapshot can name a run whose reply
+  // is already committed above, and rendering its draft prints that reply twice.
+  if (state.activeRun && committed.liveRunId === state.activeRun.runId) {
     out.push(...liveBlocks(
       state.activeRun.runId, state.activeRun.segments, committed.heldForActiveRun,
     ));
@@ -426,6 +453,27 @@ export function withStaleFailures(
     ...(q.error ? { error: q.error } : {}),
   }));
   return [...blocks.slice(0, insertAt), ...extra, ...blocks.slice(insertAt)];
+}
+
+/** A scope change the operator sent a message past, frozen at the seq the log
+ *  had at the moment it was sent (Chat.tsx's `onSend`). Not stored on the
+ *  thread — this is a client-side annotation of a rebind that already
+ *  happened server-side, splices in the same way a stale failure does. */
+export type ScopeNote = { afterSeq: number; to: string };
+
+export function withScopeNotes(blocks: TranscriptBlock[], notes: ScopeNote[]): TranscriptBlock[] {
+  if (!notes.length) return blocks;
+  const out = blocks.slice();
+  // Back-to-front for the same reason composeTranscript anchors pending sends
+  // that way: notes are in the order they settled (non-decreasing afterSeq),
+  // so inserting the latest first keeps every earlier index still valid.
+  for (let i = notes.length - 1; i >= 0; i--) {
+    const n = notes[i];
+    out.splice(anchorIndex(out, n.afterSeq), 0, {
+      kind: "scope", key: `scope:${n.afterSeq}:${i}`, to: n.to,
+    });
+  }
+  return out;
 }
 
 /** Every committed message, flat, in log order. The context meter's local

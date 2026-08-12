@@ -549,18 +549,22 @@ class TestMigration:
         assert t["card_states"] == {"abc": {"ran": True}}
         assert t["created_at"] == doc["created_at"]
 
-    def test_the_boundary_lands_on_the_same_messages(self, owned):
+    def test_a_legacy_fold_boundary_is_inert_and_the_messages_come_back(self, owned):
+        """A legacy `compacted_through` came from server-side folding, which was
+        removed on 2026-08-12. It hid messages behind a running summary that is
+        no longer assembled into any prompt, so honouring it would hide them
+        behind nothing at all. Only `/clear` cuts now, and migration writes no
+        clear event, so the conversation is whole again.
+
+        The cached `boundary_seq` is still migrated faithfully. It is simply not
+        what decides any more."""
         tid, _ = _write_legacy(compacted_through=2)
         chat_log.migrate_owner()
         t = chat_store.get_thread(tid)
-        assert t["compacted_through"] == 2
-        folded_away = t["messages"][:t["compacted_through"]]
-        assert [m["content"] for m in folded_away] == \
-            ["how do subagents work", "like this"]
-        # And it is stored as a seq, so appending cannot move it.
+        assert "cleared_through" not in t
+        assert [m["content"] for m in t["messages"]] == \
+            [m["content"] for m in _LEGACY_MESSAGES]
         assert chat_log.read_meta(tid)["boundary_seq"] == 2
-        chat_store.append_message(tid, "user", "later")
-        assert chat_store.get_thread(tid)["compacted_through"] == 2
 
     def test_messages_replay_as_seqs_one_through_n(self, owned):
         tid, _ = _write_legacy()
@@ -571,7 +575,7 @@ class TestMigration:
         tid, _ = _write_legacy(compacted_through=0)
         chat_log.migrate_owner()
         assert chat_log.read_meta(tid)["boundary_seq"] == 0
-        assert "compacted_through" not in chat_store.get_thread(tid)
+        assert "cleared_through" not in chat_store.get_thread(tid)
 
     def test_the_original_is_kept_under_a_migrated_name(self, owned):
         tid, _ = _write_legacy()

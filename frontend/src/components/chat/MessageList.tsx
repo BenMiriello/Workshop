@@ -1,5 +1,5 @@
 import { Fragment, memo, useState } from "react";
-import { ArrowRightLeft, Bot, Clock, Eraser, FileText, FoldVertical, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
+import { ArrowRightLeft, Bot, Clock, Eraser, FileText, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
@@ -25,12 +25,9 @@ import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 //
 // These annotations exist because their absence was itself a bug:
 //
-//  - THE FOLD MARKER. Compaction never drops raw messages, so without a divider
-//    a compacted thread looks identical to an uncompacted one and the operator
-//    cannot tell whether /compact did anything. /clear draws the same divider
-//    with different wording and icon (Eraser, not FoldVertical) — folding
-//    preserves a summary, clearing does not, and the wording must never claim
-//    otherwise.
+//  - THE CUT MARKER. /clear never drops raw messages, so without a divider a
+//    cleared thread looks identical to an uncleared one and the operator cannot
+//    tell whether it did anything.
 //  - THE AGENT BYLINE. A reply from a mentioned agent is not the assistant's,
 //    and without a byline there is no way to tell who answered — which is the
 //    whole point of addressing one. Only agent replies carry it; the assistant
@@ -47,19 +44,16 @@ import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 //    statements of one small fact and reads as an error the operator caused.
 //    The line, and nothing else — see stopReason.ts.
 
-// One divider, two meanings. `cleared` is the ONLY thing that decides which:
-// a fold's summary is real content the operator can still draw on; a clear's
-// is not, so the wording never uses the word "summary".
-function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
+// ONE DIVIDER, ONE MEANING. It used to have two: a fold's summary was real
+// content the operator could still draw on, a clear's was not, and the wording
+// had to distinguish them. Server-side folding was removed on 2026-08-12, so
+// there is one kind of cut and it says one thing.
+function ContextCut({ count }: { count: number }) {
   return (
     <div className="chat-fold" role="separator">
-      {cleared
-        ? <Eraser size={14} strokeWidth={1.8} aria-hidden />
-        : <FoldVertical size={14} strokeWidth={1.8} aria-hidden />}
+      <Eraser size={14} strokeWidth={1.8} aria-hidden />
       <span>
-        {cleared
-          ? `Context cleared. ${count} earlier ${count === 1 ? "message is" : "messages are"} no longer sent to the model`
-          : `${count} earlier ${count === 1 ? "message" : "messages"} folded into the running summary`}
+        {`Context cleared. ${count} earlier ${count === 1 ? "message is" : "messages are"} no longer sent to the model`}
       </span>
     </div>
   );
@@ -391,7 +385,7 @@ function MessageList({
     <>
       {blocks.map((b) => (
         <Fragment key={b.key}>
-          {b.kind === "cut" && <ContextCut count={b.count} cleared={b.cleared} />}
+          {b.kind === "cut" && <ContextCut count={b.count} />}
           {b.kind === "scope" && <ScopeChangeNote to={b.to} />}
           {b.kind === "message" && (
             <MessageBubble

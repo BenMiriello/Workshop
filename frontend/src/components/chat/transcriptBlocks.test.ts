@@ -3,7 +3,7 @@ import type { ChatSegment } from "../../lib/chat";
 import { initialThreadState, threadReducer, type LogEvent, type ThreadState } from "./threadStore";
 import {
   selectTranscript, selectCommitted, composeTranscript, withStaleFailures,
-  committedClientIds, withoutCommitted,
+  withScopeNotes, committedClientIds, withoutCommitted,
   type TranscriptBlock,
 } from "./transcriptBlocks";
 import { splitAtUnits } from "./transcriptUnits";
@@ -30,7 +30,8 @@ const shape = (blocks: TranscriptBlock[]) => blocks.map((b) => {
   if (b.kind === "message") return `${b.msg.role}:${(b.msg.meta?.segments || []).map((s) => (s.t === "text" ? s.text : `[${s.t}]`)).join("") || b.msg.content}`;
   if (b.kind === "live") return `live:${b.segments.map((s) => (s.t === "text" ? s.text : `[${s.t}]`)).join("")}${b.working ? "*" : ""}`;
   if (b.kind === "pending") return `pending:${b.text}`;
-  return `cut:${b.count}${b.cleared ? ":cleared" : ""}`;
+  if (b.kind === "scope") return `scope:${b.to}`;
+  return `cut:${b.count}`;
 });
 
 describe("splitAtUnits", () => {
@@ -196,6 +197,43 @@ describe("a message sent mid-turn closes the assistant's block", () => {
     ]);
     expect(shape(selectTranscript(s))).toEqual(["assistant:done", "user:late"]);
   });
+
+  it("ignores an active_run whose reply the log already carries", () => {
+    // The server does not write these two facts atomically: commit_run appends
+    // the reply and clears active_run_id afterwards, while read_thread reads the
+    // meta BEFORE the events. A page landing in that gap carries the committed
+    // reply AND active_run still naming the run that produced it, with its stale
+    // draft attached.
+    //
+    // Believing it printed that reply twice — once committed, and again below
+    // the operator's new message as a block marked `working`, which is why it
+    // read as the answer being written and then swapped out. Reported
+    // 2026-08-12: "it shows your previous response underneath my message, and
+    // then it finally removes that and replaces it with your actual response".
+    const events = [
+      user("first"),
+      reply("done", { turn_id: "r1", segments: [text("done")] }),
+      user("next", { during_run: "r1", at_unit: 0 }),
+    ];
+    const s = threadReducer(initialThreadState("t"), {
+      type: "eventsReceived",
+      events,
+      lastSeq: events.length,
+      activeRun: { run_id: "r1", live: { meta: { segments: [text("done")] } } },
+    });
+    expect(s.activeRun?.runId).toBe("r1");   // the stale snapshot really is adopted
+    expect(shape(selectTranscript(s))).toEqual(["user:first", "assistant:done", "user:next"]);
+  });
+
+  it("still renders the live block for a run that has NOT committed a reply", () => {
+    // The guard must not cost the ordinary case: a genuinely running turn has no
+    // committed reply yet, so its draft is the only copy there is.
+    let s = stateOf([user("go"), user("wait", { during_run: "r2", at_unit: 1 })]);
+    s = threadReducer(s, { type: "runStarted", runId: "r2" });
+    s = threadReducer(s, { type: "runDelta", runId: "r2", event: { kind: "text", content: "a" } });
+    s = threadReducer(s, { type: "runDelta", runId: "r2", event: { kind: "tool", name: "Read" } });
+    expect(shape(selectTranscript(s))).toEqual(["user:go", "live:a", "user:wait", "live:[tool]*"]);
+  });
 });
 
 describe("the live turn", () => {
@@ -237,18 +275,26 @@ describe("pending sends and the context cut", () => {
   });
 
   it("draws the divider where the boundary sits in the log", () => {
-    const s = stateOf([user("a"), user("b"), boundary("compact"), user("c")]);
+    const s = stateOf([user("a"), user("b"), boundary("clear"), user("c")]);
     expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2", "user:c"]);
   });
 
-  it("says a clear was a clear, so the wording never claims a summary", () => {
-    const s = stateOf([user("a"), boundary("clear")]);
-    expect(shape(selectTranscript(s))).toEqual(["user:a", "cut:1:cleared"]);
+  it("shows only the latest boundary, as one divider", () => {
+    const s = stateOf([user("a"), boundary("clear"), user("b"), boundary("clear")]);
+    expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2"]);
   });
 
-  it("shows only the latest boundary, as one divider", () => {
-    const s = stateOf([user("a"), boundary("compact"), user("b"), boundary("compact")]);
-    expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2"]);
+  it("draws nothing for a boundary left by the removed folding path", () => {
+    // A `compact` boundary hid messages behind a running summary that is no
+    // longer assembled into any prompt. The server stopped honouring it, so the
+    // divider must not claim a cut that is not happening.
+    const s = stateOf([user("a"), user("b"), boundary("compact"), user("c")]);
+    expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "user:c"]);
+  });
+
+  it("ignores a stale fold boundary even after a real clear", () => {
+    const s = stateOf([user("a"), boundary("compact"), user("b"), boundary("clear"), user("c")]);
+    expect(shape(selectTranscript(s))).toEqual(["user:a", "user:b", "cut:2", "user:c"]);
   });
 });
 
@@ -351,6 +397,48 @@ describe("withStaleFailures", () => {
     const p = out.find((b) => b.kind === "pending");
     expect(p && p.kind === "pending" && p.error)
       .toBe("Not sent: the server refused this message (403).");
+  });
+});
+
+describe("withScopeNotes", () => {
+  // `seq` is a module-global counter shared across every test in this file
+  // (see `user`/`reply` above), so a note's `afterSeq` has to be read off the
+  // blocks it is being spliced into rather than guessed as 1, 2, 3 — Chat.tsx
+  // itself always reads it the same way, off `lastSeq(stateRef.current)`.
+  const seqOf = (blocks: TranscriptBlock[], i: number): number => {
+    const b = blocks[i];
+    if (b.kind !== "message") throw new Error("expected a message block");
+    return b.seq;
+  };
+
+  // Chat.tsx never appends more than one note per settle (a flip the operator
+  // hasn't sent past yet just overwrites its own pending state, not this
+  // list), but the merge itself just has to place whatever it is given at the
+  // seq it happened.
+  it("splices a note in at the seq it happened", () => {
+    const blocks = selectTranscript(stateOf([user("a"), user("b")]));
+    const out = withScopeNotes(blocks, [{ afterSeq: seqOf(blocks, 0), to: "development" }]);
+    expect(shape(out)).toEqual(["user:a", "scope:development", "user:b"]);
+  });
+
+  it("keeps several notes in order", () => {
+    const blocks = selectTranscript(stateOf([user("a"), user("b"), user("c")]));
+    const out = withScopeNotes(blocks, [
+      { afterSeq: seqOf(blocks, 0), to: "development" },
+      { afterSeq: seqOf(blocks, 1), to: "general" },
+    ]);
+    expect(shape(out)).toEqual(["user:a", "scope:development", "user:b", "scope:general", "user:c"]);
+  });
+
+  it("is a no-op with nothing to splice in", () => {
+    const blocks = selectTranscript(stateOf([user("a")]));
+    expect(withScopeNotes(blocks, [])).toBe(blocks);
+  });
+
+  it("lands at the very top for a scope changed before the first message", () => {
+    const blocks = selectTranscript(stateOf([user("a")]));
+    const out = withScopeNotes(blocks, [{ afterSeq: 0, to: "development" }]);
+    expect(shape(out)).toEqual(["scope:development", "user:a"]);
   });
 });
 

@@ -30,7 +30,7 @@ anything, because there is no operation that writes the transcript as a whole.
     kind        payload                                  meaning
     message     role, content, client_id?, meta          a user or assistant message
     run         run_id, state (started/finished/lost)    a turn's lifecycle marker
-    boundary    mode (compact/clear), summary?           context cut at this point
+    boundary    mode ("clear"), at_seq                   context cut at this point
     title       title, source (auto/manual)              the thread was named
 
 There is no revision, edit or delete event, deliberately. A `message` event says

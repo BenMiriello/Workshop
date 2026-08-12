@@ -255,8 +255,8 @@ def _promotion_patch(meta: dict) -> dict:
 # ---- folding the log into the thread document ------------------------------
 
 
-def _fold(thread_id: str) -> tuple[dict, list[dict], list[int]] | None:
-    """(meta, messages, seq-of-each-message) or None if the thread is gone.
+def _fold(thread_id: str) -> tuple[dict, list[dict], list[int], int] | None:
+    """(meta, messages, seq-of-each-message, cut-seq) or None if the thread is gone.
 
     A straight replay: every `message` event in seq order, nothing rewritten and
     nothing moved. The log has no revision event, so this cannot do anything
@@ -281,7 +281,35 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int]] | None:
             meta = {**meta, "live_message": merged}
     messages: list[dict] = []
     seqs: list[int] = []
+    # THE CUT IS DERIVED HERE, FROM THE EVENTS, and only a `clear` makes one.
+    #
+    # It is read off the log rather than trusted from `meta.boundary_seq` for one
+    # reason: the log records WHY a boundary exists and meta does not. There used
+    # to be a second kind, written by server-side folding, which replaced real
+    # turns with a summary. Folding is gone (2026-08-12), and the few threads
+    # carrying one of its boundaries would otherwise keep hiding messages behind
+    # a summary that no longer exists. Deriving from `mode == "clear"` makes
+    # those inert and hands those threads their history back, with no migration
+    # and no field to backfill: the condition IS the migration.
+    #
+    # Last clear wins, and it costs nothing: this loop already reads every event.
+    #
+    # `at_seq` on the event is new. A boundary used to say only THAT it happened,
+    # never where, so the position lived in `meta.boundary_seq` alone and the log
+    # could not answer the question by itself. Clears written before this fall
+    # back to that field, which is the one piece of legacy handling here.
+    # Two facts, not one: WHETHER a clear happened, and WHERE it cut. A clear
+    # written before `at_seq` existed has the first and not the second, and
+    # collapsing them into a single nullable made it indistinguishable from a
+    # thread that was never cleared at all.
+    saw_clear = False
+    cut_at: int | None = None
     for ev in chat_log.read_events(thread_id):
+        if ev.get("kind") == "boundary":
+            if ev.get("mode") == "clear":
+                saw_clear = True
+                cut_at = ev.get("at_seq")
+            continue
         if ev.get("kind") != "message":
             continue
         msg = {
@@ -293,7 +321,16 @@ def _fold(thread_id: str) -> tuple[dict, list[dict], list[int]] | None:
             msg["meta"] = dict(ev["meta"])
         messages.append(msg)
         seqs.append(ev["seq"])
-    return meta, messages, seqs
+    # A clear with no `at_seq` is one written before the event carried it.
+    # No clear at all means no cut, whatever `meta.boundary_seq` still says:
+    # that is what retires a fold boundary without touching the file.
+    if not saw_clear:
+        resolved = 0
+    elif cut_at:
+        resolved = int(cut_at)
+    else:
+        resolved = int(meta.get("boundary_seq") or 0)
+    return meta, messages, seqs, resolved
 
 
 def _live_view(meta: dict) -> dict | None:
@@ -332,18 +369,22 @@ def _live_view(meta: dict) -> dict | None:
     }
 
 
-def _compacted_through(seqs: list[int], boundary_seq: int) -> int:
-    """How many messages are behind the context boundary.
+def _cleared_through(seqs: list[int], cut_seq: int) -> int:
+    """How many messages are behind the cut.
 
-    `boundary_seq` is a seq, which nothing can shift; `compacted_through` is the
-    count of messages at or before it, which is the index-into-the-array the old
-    field was and callers still read."""
-    if boundary_seq <= 0:
+    The cut is a SEQ, which nothing can shift; this is the count of messages at
+    or before it, which is the index-into-the-array that callers read.
+
+    Named for what it is now. It used to be `compacted_through`, from a time when
+    a fold could also move the boundary; folding is gone and `/clear` is the only
+    thing that cuts, so the compaction vocabulary was describing a mechanism that
+    no longer exists."""
+    if cut_seq <= 0:
         return 0
-    return bisect.bisect_right(seqs, boundary_seq)
+    return bisect.bisect_right(seqs, cut_seq)
 
 
-def _document(meta: dict, messages: list[dict], seqs: list[int]) -> dict:
+def _document(meta: dict, messages: list[dict], seqs: list[int], cut_seq: int = 0) -> dict:
     """The thread dict callers have always been handed."""
     t = {k: v for k, v in meta.items() if k not in _INTERNAL_META}
     # Back-fill the entity-model fields for legacy threads (P1 / C11).
@@ -360,9 +401,9 @@ def _document(meta: dict, messages: list[dict], seqs: list[int]) -> dict:
         t["participants"] = _participants_from_context_key(ck)
     else:
         t["participants"] = _normalize_participants(t.get("participants"))
-    ct = _compacted_through(seqs, int(meta.get("boundary_seq") or 0))
+    ct = _cleared_through(seqs, cut_seq)
     if ct:
-        t["compacted_through"] = ct
+        t["cleared_through"] = ct
     live = _live_view(meta)
     t["messages"] = ([*messages, live] if live is not None else messages)
     return t
@@ -490,7 +531,7 @@ def list_threads(context_key: str | None = None) -> list[dict]:
         folded = _fold(tid)
         if folded is None:
             continue
-        meta, msgs, _seqs = folded
+        meta, msgs, _seqs, _cut = folded
         if "id" not in meta:
             continue
         if context_key and meta.get("context_key") != context_key:
@@ -880,7 +921,7 @@ def save_thread(thread: dict) -> dict:
     folded = _fold(tid)
     if folded is None:
         raise KeyError(tid)
-    meta, stored_msgs, _seqs = folded
+    meta, stored_msgs, _seqs, _cut = folded
 
     # The live view is a rendering of the run in flight, not a record. A caller
     # that read the thread mid-turn is holding one; appending it would commit a
@@ -903,7 +944,7 @@ def save_thread(thread: dict) -> dict:
 
     fields: dict = {}
     for k, v in thread.items():
-        if k in ("messages", "compacted_through", "id"):
+        if k in ("messages", "cleared_through", "id"):
             continue
         if meta.get(k) != v:
             fields[k] = v
@@ -915,10 +956,9 @@ def save_thread(thread: dict) -> dict:
     fields["updated_at"] = _now_iso()
     _patch(tid, **fields)
 
-    want_ct = thread.get("compacted_through")
-    if want_ct is not None and int(want_ct) != _compacted_through(
-            seqs, int(meta.get("boundary_seq") or 0)):
-        _set_boundary(tid, int(want_ct), "compact", thread.get("summary"))
+    # No boundary is written here. A cut is made by `/clear` and nothing else,
+    # through `clear_thread_context`; a document round-trip must never be able to
+    # move it as a side effect of saving some unrelated field.
     return get_thread(tid)
 
 
@@ -935,35 +975,40 @@ def update_thread(thread_id: str, **fields: object) -> dict | None:
     A field set to `None` is REMOVED, which is how a caller unsets one (e.g.
     compaction dropping the stale `context_tokens` measurement).
 
-    `compacted_through` is translated: it is written as a `boundary` event plus
-    the seq of the last folded message, so the cut survives anything appended
-    afterwards instead of being an index into a list that grows."""
+    THE CUT IS NOT WRITABLE HERE. It used to be: passing `compacted_through`
+    moved the boundary, which is how server-side folding hid messages. A cut is
+    now made in exactly one place, by `clear_thread_context`, in response to the
+    operator asking for one."""
     if "messages" in fields:
         raise ValueError("update_thread cannot write `messages`; append instead")
+    if "cleared_through" in fields or "compacted_through" in fields:
+        raise ValueError("update_thread cannot move the context cut; use clear_thread_context")
     if chat_log.read_meta(thread_id) is None:
         return None
-    ct = fields.pop("compacted_through", None)
     if fields:
         _patch(thread_id, **fields)
-    if ct is not None:
-        _set_boundary(thread_id, int(ct), "compact", fields.get("summary"))
     return get_thread(thread_id)
 
 
-def _set_boundary(thread_id: str, compacted_through: int, mode: str,
-                  summary: object = None) -> None:
-    """Record a context cut: a `boundary` event plus the seq it cuts at."""
+def _set_cut(thread_id: str, through: int) -> None:
+    """Record the one kind of context cut there is: a `/clear`.
+
+    The event carries `at_seq`, so the log alone says both that a cut happened
+    and where. It used to say only that one happened, leaving the position in
+    `meta.boundary_seq`, which meant the log could not be replayed into a thread
+    without also trusting a mutable field beside it. `boundary_seq` is still
+    written, as a cache for readers that have not folded the log.
+
+    `mode` stays on the event even though `clear` is now the only value. It is
+    what makes a retired fold boundary identifiable rather than ambiguous."""
     folded = _fold(thread_id)
     if folded is None:
         return
-    _meta, _msgs, seqs = folded
-    ct = max(0, min(int(compacted_through), len(seqs)))
-    boundary_seq = seqs[ct - 1] if ct > 0 else 0
-    ev: dict = {"kind": "boundary", "mode": mode}
-    if isinstance(summary, str) and summary:
-        ev["summary"] = summary
-    chat_log.append_sync(thread_id, ev)
-    chat_log.patch_meta_sync(thread_id, boundary_seq=boundary_seq)
+    _meta, _msgs, seqs, _cut = folded
+    ct = max(0, min(int(through), len(seqs)))
+    at_seq = seqs[ct - 1] if ct > 0 else 0
+    chat_log.append_sync(thread_id, {"kind": "boundary", "mode": "clear", "at_seq": at_seq})
+    chat_log.patch_meta_sync(thread_id, boundary_seq=at_seq)
 
 
 # ---- Runs ------------------------------------------------------------------
@@ -1369,12 +1414,12 @@ def clear_thread_context(thread_id: str) -> tuple[dict, int] | None:
     folded = _fold(thread_id)
     if folded is None:
         return None
-    meta, msgs, seqs = folded
-    ct = _compacted_through(seqs, int(meta.get("boundary_seq") or 0))
+    meta, msgs, seqs, cut_seq = folded
+    ct = _cleared_through(seqs, cut_seq)
     cleared = max(0, len(msgs) - ct)
     if cleared == 0:
-        return _document(meta, msgs, seqs), 0
-    _set_boundary(thread_id, len(msgs), "clear")
+        return _document(meta, msgs, seqs, cut_seq), 0
+    _set_cut(thread_id, len(msgs))
     _patch(thread_id, context_cut="cleared", summary=None, context_tokens=None,
            claude_session=None, agent_sessions=None, turn_marks=None)
     return get_thread(thread_id), cleared
