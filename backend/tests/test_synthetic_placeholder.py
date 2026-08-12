@@ -181,6 +181,47 @@ class TestCompactTurnSaysOneLine:
         assert "—" not in self.LINE
 
 
+class TestTheCompactDumpLeavesTheSegmentsToo:
+    """Replacing the reply TEXT was not enough, and this is why.
+
+    MessageList renders `meta.segments` whenever there are any, and only falls
+    back to the committed `content` when there are none. The dump the CLI writes
+    for /compact is streamed into a text segment on its way past, so rewriting
+    `text` swapped the bubble's fallback for a fallback that was never reached:
+    the "## Context Usage" table went on being drawn, in full, under a one-line
+    confirmation that had supposedly replaced it. The operator reported the
+    table a third time on 2026-08-12 for exactly this reason.
+
+    TestCompactTurnSaysOneLine above could not catch it: it models the reply-text
+    decision only and never looks at a segment.
+    """
+    DUMP = ("## Context Usage\n\n**Model:** claude-opus-5\n\n"
+            "| Category | Tokens |\n|---|---|\n| System prompt | 3.5k |\n")
+
+    def test_the_dump_segment_is_dropped(self):
+        segs = [{"t": "text", "text": self.DUMP}]
+        assert bs._drop_text_segments(segs) == []
+
+    def test_the_bubble_then_falls_back_to_our_line(self):
+        """An empty segment list is the condition MessageList checks."""
+        assert not bs._drop_text_segments([{"t": "text", "text": self.DUMP}])
+
+    def test_work_is_never_dropped(self):
+        """/compact is local and has no tools, but dropping work that DID happen
+        would be a worse lie than the dump this removes."""
+        segs = [{"t": "tool", "name": "Read", "input": "x.py"},
+                {"t": "text", "text": self.DUMP},
+                {"t": "agent", "name": "Explore"}]
+        assert bs._drop_text_segments(segs) == [
+            {"t": "tool", "name": "Read", "input": "x.py"},
+            {"t": "agent", "name": "Explore"},
+        ]
+
+    def test_it_is_total_on_junk(self):
+        assert bs._drop_text_segments(None) == []
+        assert bs._drop_text_segments(["not a dict"]) == ["not a dict"]
+
+
 class TestCleanExitWithNoClosingMessage:
     """A turn that exits 0 without a closing message must not claim work it did
     not do.
@@ -246,7 +287,7 @@ class TestAnInjectedSlashCommandStillCounts:
         "Command ran." instead of the empty-turn line."""
         t = bs._make_turn("thread-1", "general", turn_id="t-cmd2")
         bs.TURNS["t-cmd2"] = t
-        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text: True)
+        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text, blocks=None: True)
         try:
             assert bs.inject("t-cmd2", "/compact") is True
             assert t.injected_command is True
@@ -256,7 +297,7 @@ class TestAnInjectedSlashCommandStillCounts:
     def test_ordinary_injected_text_does_not_mark_it(self, monkeypatch):
         t = bs._make_turn("thread-1", "general", turn_id="t-msg")
         bs.TURNS["t-msg"] = t
-        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text: True)
+        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text, blocks=None: True)
         try:
             assert bs.inject("t-msg", "stop, wrong file") is True
             assert t.injected_command is False

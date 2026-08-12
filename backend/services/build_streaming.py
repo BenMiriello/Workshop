@@ -1268,6 +1268,24 @@ def _did_visible_work(segments: list[dict]) -> bool:
     return False
 
 
+def _drop_text_segments(segments: list[dict]) -> list[dict]:
+    """The same turn with the model's prose removed and its work left alone.
+
+    For the one turn whose prose is replaced wholesale rather than shown: an
+    explicit `/compact`. Rewriting the committed `text` was not enough, because
+    the transcript RENDERS `meta.segments` and only falls back to `text` when
+    there are none. So the "## Context Usage" table went on being drawn from the
+    segment it was streamed into, under a one-line confirmation that had already
+    replaced it. The operator reported the table a third time on 2026-08-12 for
+    exactly this reason.
+
+    Tool and agent segments survive on purpose. `/compact` is a local command
+    and never has any, but dropping work that did happen would be a worse lie
+    than the dump this removes."""
+    return [s for s in segments or []
+            if not (isinstance(s, dict) and s.get("t") == "text")]
+
+
 def _clean_exit_text(segments: list[dict]) -> str:
     """What to say for a turn that exited 0 and wrote no closing message.
 
@@ -2167,6 +2185,9 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     if compacted and prompt.strip().lower() == "/compact":
         text = "Compacted. Earlier messages are now a summary."
         is_error = False
+        # The dump lives in the SEGMENTS too, and segments are what the
+        # transcript draws. Replacing `text` alone left it fully on screen.
+        turn.segments = _drop_text_segments(turn.segments)
     elif over_memory:
         # ABOVE final_text on purpose. A turn killed at the memory ceiling may
         # already have written a perfectly ordinary-looking reply, and showing

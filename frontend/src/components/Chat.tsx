@@ -17,6 +17,8 @@ import ContextModal from "./chat/ContextModal";
 import { useCompaction } from "./chat/useCompaction";
 import { useVoiceMode } from "./chat/useVoiceMode";
 import { matchMention, applyMention } from "./chat/mentions";
+import { enterAction } from "./chat/enterKey";
+import { usePhysicalKeyboard } from "./chat/usePhysicalKeyboard";
 import { type ChatDrawer } from "./chat/drawers";
 import {
   deriveMode, buildSlug, taskScopeFor, composerPlaceholder,
@@ -562,6 +564,10 @@ export default function Chat({
 
   const { matches: mentionMatches, show: showMentions } = matchMention(input, mentionable);
 
+  // Read on Enter, never rendered. See usePhysicalKeyboard for why it holds no
+  // state: this is on the per-keystroke path.
+  const physicalKeyboard = usePhysicalKeyboard();
+
   const pickMention = (s: string) => {
     setInput(applyMention(input, s));
     setMentionSel(0);
@@ -578,7 +584,25 @@ export default function Chat({
       if (e.key === "Escape") { e.preventDefault(); setMentionSel(0); setInput(input.replace(/@[a-z0-9-]*$/, "")); return; }
       if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); pickMention(mentionMatches[sel].slug); return; }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Enter sends on a real keyboard and starts a new line on a soft one, and
+    // the reasoning for both (plus why it is not a width test) is in enterKey.
+    // "newline" is the browser's own default for a textarea, so it is reached
+    // by NOT calling preventDefault rather than by inserting a "\n" — that way
+    // the caret, the undo stack and the auto-grow all behave as they do for any
+    // other typed character.
+    // `isComposing` is on the NATIVE event: React's synthetic keyboard event
+    // does not carry it. Reading it off the synthetic one silently yields
+    // undefined, which is how an IME composition ends up being sent.
+    const action = enterAction({
+      key: e.key,
+      shiftKey: e.shiftKey,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      isComposing: e.nativeEvent.isComposing,
+      keyCode: e.nativeEvent.keyCode,
+    }, physicalKeyboard.check());
+    if (action === "send") {
       e.preventDefault();
       send();
     }

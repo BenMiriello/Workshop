@@ -135,6 +135,12 @@ export default function ChatComposer({
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
         onKeyDown={onKeyDown}
+        // Label the Return key on the soft keyboard with what it will actually
+        // do. A fixed "enter" is right rather than lazy: this hint is drawn
+        // ONLY by a virtual keyboard, and on a virtual keyboard Return makes a
+        // new line (see chat/enterKey). A keyboard that would send on Return is
+        // a physical one, which draws no hint at all.
+        enterKeyHint="enter"
         onFocus={() => onFocusChange(true)}
         onBlur={() => onFocusChange(false)}
         // A pasted screenshot attaches instead of pasting its filename as text.
@@ -292,8 +298,12 @@ export default function ChatComposer({
          
           onClick={onSend}
           disabled={!canSend}
-          aria-label="Send (Enter)"
-          title={streaming ? "Send (queues behind the current turn)" : "Send (Enter)"}
+          // Not "Send (Enter)" any more. Enter only sends on a physical
+          // keyboard; on a phone it makes a new line, so the old label was a
+          // false instruction on exactly the device that most needed the
+          // button. The shortcut is standard enough not to need announcing.
+          aria-label="Send"
+          title={streaming ? "Send (queues behind the current turn)" : "Send"}
         >
           <CornerDownLeft size={16} aria-hidden />
         </button>
