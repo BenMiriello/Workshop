@@ -172,7 +172,10 @@ export default function WorkDrawer({
   }, [open, onClose]);
 
   const reload = useCallback(() => { void loadTickets(); }, [loadTickets]);
-  const openGlobalInbox = useCallback(() => onNavigate("/work?tab=inbox"), [onNavigate]);
+  // The Inbox TAB is gone; what it listed is blocked work across every scope,
+  // which the one ticket list answers with a filter. A link that lands on a real
+  // query beats a fourth surface.
+  const openGlobalInbox = useCallback(() => onNavigate("/work?status=blocked"), [onNavigate]);
   const openAllTickets = useCallback(
     () => onNavigate(scope ? `/work?scope=${encodeURIComponent(scope)}` : "/work"),
     [onNavigate, scope],

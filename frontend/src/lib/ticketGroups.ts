@@ -10,6 +10,7 @@
 import {
   STATUSES_BY_STATE_TYPE,
   TASK_STATE_TYPES,
+  TASK_STATUSES,
   type TaskStateType,
   type TaskStatus,
 } from "./tasks";
@@ -26,6 +27,14 @@ import {
 export type StatusFilter = "all" | "active" | TaskStateType | TaskStatus;
 
 export const DEFAULT_STATUS_FILTER: StatusFilter = "active";
+
+/** Whether a raw string (a URL param, say) names a filter this list understands. */
+export function isStatusFilter(v: string | null | undefined): v is StatusFilter {
+  if (!v) return false;
+  return v === "all" || v === "active"
+    || (TASK_STATE_TYPES as readonly string[]).includes(v)
+    || (TASK_STATUSES as readonly string[]).includes(v);
+}
 
 // The state types "Active" stands for. Named once so the label, the filter and
 // any future default all mean the same thing.

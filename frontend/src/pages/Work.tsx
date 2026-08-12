@@ -63,11 +63,12 @@ import {
 import {
   DEFAULT_STATUS_FILTER,
   STATUS_FILTERS,
+  isStatusFilter,
   statusFilterQuery,
   type StatusFilter,
 } from "../lib/ticketGroups";
 import { orderScopes } from "../lib/devMode";
-import { ALL_SCOPES, nextWorkParams, parseWorkScope } from "../lib/workParams";
+import { ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkStatus } from "../lib/workParams";
 
 // One page of tickets. The endpoint sorts and pages, so this is a real page size.
 const PAGE_SIZE = 50;
@@ -108,7 +109,12 @@ export default function Work() {
   const [loading, setLoading] = useState(false);
   // ACTIVE, not "all". The list is asked "what is in flight", and answering with
   // 179 rows including every cancelled ticket from July is not an answer.
-  const [status, setStatus] = useState<StatusFilter>(DEFAULT_STATUS_FILTER);
+  // The status filter lives in the URL so it can be linked to. An unrecognised
+  // value falls back to the default rather than showing an empty list.
+  const rawStatus = parseWorkStatus(search.get("status"));
+  const status: StatusFilter = isStatusFilter(rawStatus) ? rawStatus : DEFAULT_STATUS_FILTER;
+  const setStatus = (v: StatusFilter) =>
+    setSearch(nextWorkParams(search, { status: v === DEFAULT_STATUS_FILTER ? null : v }), { replace: true });
   const [sort, setSort] = useState<TaskSort>("updated");
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");

@@ -421,7 +421,7 @@ function DeployRow({
                       {r.evidence.summary}
                     </span>
                   )}
-                  <Link to={`/work?tab=runs&job=${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
+                  <Link to={`/runs?job=${encodeURIComponent(r.id)}`} style={{ textDecoration: "none" }}>
                     <Button size="sm" variant="ghost">View run</Button>
                   </Link>
                   {r.status === "done" && r.kind === "deploy" && (

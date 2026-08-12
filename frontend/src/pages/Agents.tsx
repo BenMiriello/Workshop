@@ -344,7 +344,7 @@ export default function Agents() {
             <Button variant="ghost" size="sm" onClick={() => setTemplating(true)}>
               <FileStack aria-hidden /> From template
             </Button>
-            <Link to="/work?tab=runs">
+            <Link to="/runs">
               <Button variant="ghost" size="sm"><ListChecks aria-hidden /> Runs</Button>
             </Link>
           </Row>
