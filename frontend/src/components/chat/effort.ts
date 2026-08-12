@@ -23,12 +23,18 @@ const EFFORT_LABELS: Record<string, string> = {
 
 // Shown in the menu row beside the name, and on the trigger's tooltip. One line:
 // a description long enough to wrap competes with the name for width and wins.
+//
+// THE WORDING IS ANTHROPIC'S, compressed, not ours. These are paraphrases of the
+// `effort` table in the Claude platform docs (build-with-claude/effort) and the
+// Claude Code model-config page, kept to the documented tradeoff and nothing
+// else. Do not re-write these as pitches for a level; the operator asked for
+// plain facts, and this control is not a product to sell.
 const EFFORT_HINTS: Record<string, string> = {
-  low: "Fastest and cheapest. Fewer tool calls, little thinking.",
-  medium: "Balanced. Solid work without the full spend.",
-  high: "The model's default. Thorough reasoning.",
-  xhigh: "For long agentic work: more exploration, more tool calls.",
-  max: "No ceiling on thinking. Slowest and most expensive.",
+  low: "Fastest and cheapest. Fewer tool calls, less depth.",
+  medium: "Balanced speed, cost, and quality.",
+  high: "Default. Balances tokens and depth.",
+  xhigh: "Deeper reasoning, higher token spend.",
+  max: "Maximum depth. No ceiling on token spend.",
 };
 
 // An unknown level renders as its own id rather than vanishing, so a level added

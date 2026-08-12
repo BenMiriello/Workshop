@@ -112,12 +112,17 @@ export function useLogScroll({
   // restored when the same thread is opened again. null disables restore (there
   // is nothing stable to key it on), and it still lands at the bottom.
   restoreKey,
+  // The composer has been expanded to a fixed tall box. Autosize stands down
+  // while it is: the two would fight over the same inline height, and the
+  // operator's chosen size must win over the content's.
+  expanded = false,
 }: {
   input: string;
   inputFocused: boolean;
   followDeps: unknown[];
   hasContent: boolean;
   restoreKey?: string | null;
+  expanded?: boolean;
 }): LogScroll {
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
@@ -296,12 +301,17 @@ export function useLogScroll({
     if (maxHeightRef.current?.el !== el) {
       maxHeightRef.current = { el, max: parseFloat(getComputedStyle(el).maxHeight) || 96 };
     }
+    // Expanded: hand the height back to the stylesheet. Clearing the inline
+    // value rather than writing the expanded one keeps the size in ONE place
+    // (--chat-input-expanded), so the desktop and mobile sizes stay a media
+    // query rather than a second copy of the number in here.
+    if (expanded) { el.style.height = ""; return; }
     const { max } = maxHeightRef.current;
     // The write-to-auto has to stay: it is what lets the box SHRINK, because
     // scrollHeight never reports less than the current fixed height.
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, max)}px`;
-  }, []);
+  }, [expanded]);
   useLayoutEffect(() => { autosize(); }, [input, autosize]);
 
   return { scrollRef, composerRef, inputRef, showJumpToLatest, onLogScroll, followLatest };

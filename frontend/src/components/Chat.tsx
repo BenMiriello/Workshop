@@ -21,7 +21,7 @@ import { enterAction } from "./chat/enterKey";
 import { usePhysicalKeyboard } from "./chat/usePhysicalKeyboard";
 import { type ChatDrawer } from "./chat/drawers";
 import {
-  deriveMode, buildSlug, taskScopeFor, composerPlaceholder,
+  deriveMode, buildSlug, taskScopeFor, composerPlaceholder, scopeName,
   isEgressFailure, type ChatMode, type ChatVariant,
 } from "./chat/chatScope";
 import { useMessageQueue, type SendOutcome } from "./chat/useMessageQueue";
@@ -40,9 +40,11 @@ import { staleNoticeText } from "./chat/staleNotice";
 import { elapsedSeconds, turnLabel } from "./chat/turnStatus";
 import {
   committedClientIds, committedMessages, withStaleFailures, withoutCommitted,
+  withScopeNotes, type ScopeNote,
 } from "./chat/transcriptBlocks";
+import { lastSeq } from "./chat/threadStore";
 import { chatApi, type CardState } from "../lib/chat";
-import { writeSelection } from "../lib/chatSelection";
+import { writeSelection, NEW_CHAT } from "../lib/chatSelection";
 import { useDraft } from "../lib/draftSync";
 import VoiceSettings from "./VoiceSettings";
 import { type UiCardCtx } from "./chat/uiCardActions";
@@ -57,7 +59,7 @@ import { type UiCardCtx } from "./chat/uiCardActions";
 //   useChatThread     which conversation is open and its settings
 //   useSendPipeline   what happens to a message the operator hit enter on
 //   useMessageQueue   type-ahead, and its five durability invariants
-//   useCompaction     /compact and /clear, and the order they must keep
+//   useCompaction     /compact and /clear, both one server call and no turn
 //   useLogScroll      following the conversation, and jump-to-latest
 //   useVoiceMode      voice as a mode of this chat, not a separate screen
 //
@@ -205,6 +207,20 @@ export default function Chat({
 
   const [taskRefetchKey, setTaskRefetchKey] = useState(0);
 
+  // A scope flip the operator hasn't sent anything past yet. NOT rendered:
+  // nothing has happened since, so there is nothing true to say in the
+  // transcript yet, only a pending intent on the picker. A second flip before
+  // the first is acted on just overwrites this, so hopping A -> B -> C reads
+  // as one note ("moved to C") once it does land, not three. `onSend` (below)
+  // freezes it into `scopeNotes`, at the point it actually happened, only if
+  // a message actually follows it.
+  const [scopeAnnounce, setScopeAnnounce] = useState<{ key: string; label: string } | null>(null);
+  // Scope changes the log has moved past, anchored where they happened — same
+  // idea as a stale failed send (transcriptBlocks.withStaleFailures): derived
+  // client-side state spliced into the transcript at a real position, not
+  // stored on the thread itself.
+  const [scopeNotes, setScopeNotes] = useState<ScopeNote[]>([]);
+
   // Changing the scope MOVES this conversation. It does not walk away from it.
   //
   // The picker used to only set `activeProvider`, and the thread list is
@@ -233,7 +249,16 @@ export default function Chat({
     });
     if (plan.action === "noop") return;
     if (plan.action === "switch") {
+      // There is nothing to move, but useChatThread's loader re-resolves on
+      // every scope change, and its fallback is `readSelection(scope)` — the
+      // last thread that was open in the TARGET scope. Left unset, moving a
+      // blank draft to `development` silently swapped in whatever dev
+      // conversation was open last time, discarding what was being typed.
+      // Recording the blank intent for the new scope keeps the loader landing
+      // on blank there too, same as pressing "New chat" does today.
+      writeSelection(key, NEW_CHAT);
       scopeState.chooseProvider(key);
+      setScopeAnnounce({ key, label: scopeName(key) });
       return;
     }
     if (plan.action === "refuse") {
@@ -250,6 +275,7 @@ export default function Chat({
       // something else.
       writeSelection(key, id);
       scopeState.chooseProvider(key);
+      setScopeAnnounce({ key, label: scopeName(key) });
       void thread.refreshThreads();
       void sync();
     } catch (e) {
@@ -306,11 +332,10 @@ export default function Chat({
     }
   }, [beginStop, stateRef, stopWatching, queue]);
 
-  // /compact reaches BOTH homes of a chat's context — see useCompaction.
-  const { ctxNonce, compact, queuedStatus, clear } = useCompaction({
-    activeIdRef, runActiveRef, queue, dispatch,
-    setCompacting, setErr, sync,
-    sendTurn: (t, clientId) => sendBatchRef.current(t, [{ text: t, sentAt: new Date().toISOString(), clientId }]),
+  // /compact reaches BOTH homes of a chat's context, server-side and without a
+  // turn of its own. See useCompaction.
+  const { ctxNonce, compact, clear } = useCompaction({
+    activeIdRef, setCompacting, setErr, sync,
   });
 
   // ---- Voice mode ----------------------------------------------------------
@@ -347,6 +372,11 @@ export default function Chat({
   const draftKey = activeId ? `${contextKey}::${activeId}` : `${contextKey}::new`;
   const [input, setInput, clearInput] = useDraft(draftKey);
   const [inputFocused, setInputFocused] = useState(false);
+  // Whether the operator has held the message box open at its tall size. Plain
+  // component state on purpose: it is a view preference for the session, not
+  // part of the draft, so it must not follow a draft into another thread or be
+  // restored days later on a chat you opened to type one line into.
+  const [inputExpanded, setInputExpanded] = useState(false);
   // Attached files sit BESIDE the draft, never inside it, which is what makes
   // removing one a single click instead of a run of backspaces. Not keyed per
   // thread like the draft: an upload is already on the server and the list is
@@ -361,6 +391,7 @@ export default function Chat({
   } = useLogScroll({
     input,
     inputFocused,
+    expanded: inputExpanded,
     followDeps: [transcript, queue.items, vsnap.state, vsnap.sentences, vsnap.lastUser],
     hasContent: transcript.length > 0,
     // Restore the scroll position per thread when returning to it.
@@ -396,6 +427,13 @@ export default function Chat({
       followLatest();
       // They are driving again, so the queue may resume draining itself.
       queue.release();
+      // A scope flip not yet acted on settles here: this send is the "next
+      // thing" that decides it stuck, so it freezes at the position the log is
+      // at right now rather than staying a tail-only preview.
+      if (scopeAnnounce) {
+        setScopeNotes((prev) => [...prev, { afterSeq: lastSeq(stateRef.current), to: scopeAnnounce.label }]);
+        setScopeAnnounce(null);
+      }
     },
     // `/new` ASKS. It opens the same dialog the toolbar button does rather than
     // abandoning the conversation on a four-character keystroke.
@@ -540,6 +578,14 @@ export default function Chat({
       .then((j) => { if (!cancelled) setMentionable(j.agents || []); })
       .catch(() => { if (!cancelled) setMentionable([]); });
     return () => { cancelled = true; };
+  }, [activeId]);
+
+  // A different conversation has nothing to do with a scope flip made on the
+  // last one. Without this, opening another chat kept showing "Scope changed
+  // to X" — a fact about a thread no longer on screen.
+  useEffect(() => {
+    setScopeAnnounce(null);
+    setScopeNotes([]);
   }, [activeId]);
 
   const send = useCallback(() => {
@@ -771,6 +817,7 @@ export default function Chat({
       providers={scopeState.providers}
       activeProvider={scopeState.activeProvider}
       onChooseProvider={chooseScope}
+      runActive={runActive}
       chatMode={thread.chatMode}
       onChooseChatMode={thread.chooseChatMode}
       drawer={drawer}
@@ -882,6 +929,15 @@ export default function Chat({
     () => withStaleFailures(transcript, queuedStaleFailed),
     [transcript, queuedStaleFailed],
   );
+  // Settled scope changes, spliced back in at the seq they happened at.
+  // `scopeAnnounce` (not sent past yet) deliberately renders NOTHING here — a
+  // flip nobody has acted on isn't a fact about the conversation yet, only
+  // about the picker. It exists purely so `onSend` above knows what to freeze
+  // if and when a message actually follows it.
+  const blocksWithScopeNotes = useMemo(
+    () => withScopeNotes(blocksWithStaleFailures, scopeNotes),
+    [blocksWithStaleFailures, scopeNotes],
+  );
   // Filtering the ghost out of the render is not enough: the entry is in
   // localStorage, so every future load would rebuild it and it would outlive
   // the tab, the thread switch and the reload. Once the log carries the id, the
@@ -921,7 +977,7 @@ export default function Chat({
   // not the place for it, and the slot above the composer takes it instead.
   // Both draw the same component — see ChatProblemBlock.
   const logShowsProblem = logPlaceholder({
-    empty: blocksWithStaleFailures.length === 0,
+    empty: blocksWithScopeNotes.length === 0,
     loading: logLoading,
     error: !!chatProblem,
     inFlight: runActive || pipeline.starting,
@@ -933,7 +989,7 @@ export default function Chat({
       onScroll={onLogScroll}
       loading={logLoading}
       error={chatProblem}
-      blocks={blocksWithStaleFailures}
+      blocks={blocksWithScopeNotes}
       isBuild={build}
       inFlight={runActive || pipeline.starting}
       selectedModel={selectedModel}
@@ -946,7 +1002,6 @@ export default function Chat({
       answerPermission={answerPermission}
       liveTurnId={runId}
       queued={queuedWaiting}
-      queuedStatus={queuedStatus}
       voiceOn={voiceOn}
       settling={settling}
       vsnap={vsnap}
@@ -984,6 +1039,8 @@ export default function Chat({
       }
       focused={inputFocused}
       onFocusChange={setInputFocused}
+      expanded={inputExpanded}
+      onToggleExpand={() => setInputExpanded((v) => !v)}
       mentionOptions={mentionMatches.map((a) => ({
         key: a.slug,
         label: `@${a.slug}`,

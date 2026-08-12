@@ -1,4 +1,4 @@
-import { FastForward, Hand, Map, ShieldOff, Zap } from "lucide-react";
+import { FastForward, Map, Pause, ShieldOff, Zap } from "lucide-react";
 
 // How much a chat asks before it acts, as the UI says it.
 //
@@ -22,22 +22,27 @@ export type PermissionModeDef = {
   // One line, shown in the menu row. It says what runs WITHOUT asking, because
   // that is the actual difference between these modes.
   hint: string;
-  Icon: typeof Hand;
+  Icon: typeof Map;
   // Renders in the danger tone: nothing is checked in this mode.
   danger?: boolean;
 };
 
+// The hints are one clause each, saying only what runs without asking. They were
+// two sentences of explanation; the operator asked for plain compact facts, not
+// a description of each mode's character.
 const DEFS: Record<string, PermissionModeDef> = {
   default: {
     id: "default",
+    // Pause, not Hand: it is Claude Code's own glyph for this mode, and it says
+    // the right thing — the turn stops at each edit and waits for you.
     label: "Manual",
-    hint: "Reads freely. Asks before every edit and command.",
-    Icon: Hand,
+    hint: "Asks before every edit and command.",
+    Icon: Pause,
   },
   plan: {
     id: "plan",
     label: "Plan",
-    hint: "Researches and proposes. Makes no changes until you approve.",
+    hint: "Researches and proposes. Changes nothing.",
     Icon: Map,
   },
   acceptEdits: {
@@ -47,19 +52,19 @@ const DEFS: Record<string, PermissionModeDef> = {
     // different about it — it skips PAST the ask, for edits only — and reads
     // apart from Auto's Zap at a glance instead of both looking like "writes".
     label: "Edit automatically",
-    hint: "Edits files without asking. Still asks for anything riskier.",
+    hint: "Edits without asking. Asks for anything riskier.",
     Icon: FastForward,
   },
   auto: {
     id: "auto",
     label: "Auto",
-    hint: "Acts without asking, with background safety checks.",
+    hint: "Acts without asking. Background safety checks.",
     Icon: Zap,
   },
   bypassPermissions: {
     id: "bypassPermissions",
     label: "Bypass",
-    hint: "Acts without asking and without checks.",
+    hint: "Acts without asking. No checks.",
     Icon: ShieldOff,
     danger: true,
   },

@@ -860,6 +860,40 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
   padding-bottom: max(var(--space-3), env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
 }
+/* The box and its expand control. Positioning context only: the wrapper adds no
+   spacing of its own, so the composer's column gap still measures from the
+   textarea's own edges exactly as it did when the textarea was a direct child. */
+.chat-input-wrap { position: relative; display: block; min-width: 0; }
+/* How tall the box goes when held open. ONE number per breakpoint, read by the
+   height rule below; the autosize handler stands down while expanded rather
+   than carrying a second copy of it in JS (see useLogScroll).
+   Desktop lands near half the column, which is what the common composers do:
+   enough to draft a long message against, never so much that the conversation
+   you are replying to is gone. */
+.chat-composer { --chat-input-expanded: min(46vh, 26rem); }
+.chat-composer.is-expanded .chat-input {
+  height: var(--chat-input-expanded);
+  max-height: var(--chat-input-expanded);
+}
+/* Phone: the operator asked for nearly the whole chat area, so the box takes
+   most of the column and leaves the last message or two visible above it. */
+@media (max-width: 640px) {
+  .chat-composer { --chat-input-expanded: 62vh; }
+}
+/* Overlays the top-right corner of the box. The textarea reserves this width
+   back as right padding, so it never sits on the text. Quiet by default in the
+   same language as .chat-model and .chat-effort: transparent, background alone
+   carries hover. It keeps a field-coloured backdrop so that an expanded box
+   scrolled under it still reads cleanly. */
+.chat-expand {
+  position: absolute; top: 0.4rem; right: 0.4rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.6rem; height: 1.6rem; padding: 0;
+  color: var(--muted); background: var(--field-bg);
+  border: none; border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.chat-expand:hover { color: var(--fg); background: var(--card-hover); }
 .chat-input {
   display: block; width: 100%; resize: none;
   /* Starts at one row; the autosize handler grows it as you type, up to 3 rows
@@ -867,8 +901,11 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
   min-height: 2.6rem;
   max-height: 6rem;
   /* Matches the standard field scale (--field-pad-x / --space-2), same as every
-     .ws-input/.ws-textarea, rather than a bespoke looser inset. */
-  padding: var(--space-2) var(--field-pad-x);
+     .ws-input/.ws-textarea, rather than a bespoke looser inset. The right inset
+     is wider by exactly the expand button's footprint (1.6rem + its 0.4rem
+     offset), which is what keeps that button an overlay without it ever landing
+     on the first line of text. */
+  padding: var(--space-2) 2.25rem var(--space-2) var(--field-pad-x);
   /* 16px minimum: stops iOS auto-zoom on focus */
   font-size: 1rem; line-height: 1.45; font-family: inherit;
   /* Field surface comes from the SAME token every .ws-input/.ws-textarea uses,
@@ -1253,9 +1290,7 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
    underneath it, visible through the fill, which is what this replaces.
 
    That is also why there is no z-index and no pointer-events here any more:
-   nothing is behind it to be covered or to be clicked through to. The panel's
-   `position: relative`, which existed only to anchor the old sheet, went with
-   them; the inbox and the jump pill anchor to .chat-log-wrap, not to this.
+   nothing is behind it to be covered or to be clicked through to.
 
    The margin, not an inset, now carries the gap. Bigger above and below than at
    the sides, because the ask was that it stop running from the top of the area
@@ -1350,6 +1385,27 @@ button.chat-attach {
    dispatched rather than held back. See ChatLog.tsx for why this is a plain
    opacity and nothing else. */
 .chat-bubble--inflight { opacity: 0.55; }
+/* The utterance being spoken right now, as the message it is about to become.
+   Same "hasn't landed yet" opacity as --queued/--inflight, and it wraps like any
+   other bubble, which is the whole point: the strip it replaced was one clipped
+   line that showed the first few words and never the latest ones. */
+.chat-bubble--speaking { opacity: 0.55; white-space: pre-wrap; }
+/* A live transcription pass is still catching up with the speech. Three dots
+   after the text, so a pause in the caption reads as "still listening" rather
+   than "stopped hearing you". */
+.chat-voice-catchup {
+  display: inline-block; margin-left: 0.15rem; vertical-align: baseline;
+  width: 1.6em; height: 1em;
+  background:
+    radial-gradient(circle 2px at 0.3em 0.72em, currentColor 99%, transparent) 0 0/1.6em 1em no-repeat,
+    radial-gradient(circle 2px at 0.8em 0.72em, currentColor 99%, transparent) 0 0/1.6em 1em no-repeat,
+    radial-gradient(circle 2px at 1.3em 0.72em, currentColor 99%, transparent) 0 0/1.6em 1em no-repeat;
+  animation: chat-voice-catchup 1.2s ease-in-out infinite;
+}
+@keyframes chat-voice-catchup { 0%, 100% { opacity: 0.3; } 50% { opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-voice-catchup { animation: none; opacity: 0.6; }
+}
 
 /* ---- Per-agent task drawer (build chats only) ----
    Opened from the toolbar Tasks button; the list scrolls so it never crowds. */

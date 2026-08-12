@@ -1,5 +1,5 @@
 import type { RefObject } from "react";
-import { AudioLines, ChevronDown, CornerDownLeft, PhoneOff, Square } from "lucide-react";
+import { AudioLines, ChevronDown, CornerDownLeft, Maximize2, Minimize2, PhoneOff, Square } from "lucide-react";
 import { Menu, MenuItem } from "@workshop/ui";
 import type { ChatMsg } from "../../lib/chat";
 import type { VoiceSnapshot, VoicePrefs } from "../../lib/voiceSession";
@@ -33,6 +33,7 @@ export default function ChatComposer({
   composerRef, inputRef,
   input, onChange, onKeyDown, placeholder,
   focused, onFocusChange,
+  expanded, onToggleExpand,
   // Type-ahead
   mentionOptions, mentionSelected, showMentions, onMentionHover, onMentionPick,
   // Turn controls
@@ -57,6 +58,9 @@ export default function ChatComposer({
   placeholder: string;
   focused: boolean;
   onFocusChange: (v: boolean) => void;
+  /** The input is held open at a tall fixed height instead of tracking content. */
+  expanded: boolean;
+  onToggleExpand: () => void;
   mentionOptions: PickerOption[];
   mentionSelected: number;
   showMentions: boolean;
@@ -105,7 +109,7 @@ export default function ChatComposer({
   return (
     <div
       ref={composerRef}
-      className={`chat-composer${streaming ? " is-streaming" : ""}${focused ? " is-focused" : ""}`}
+      className={`chat-composer${streaming ? " is-streaming" : ""}${focused ? " is-focused" : ""}${expanded ? " is-expanded" : ""}`}
     >
       {showMentions && (
         <CommandPicker
@@ -127,33 +131,57 @@ export default function ChatComposer({
         onDismissNotice={onDismissAttachNotice}
       />
 
-      <textarea
-        ref={inputRef}
-        className="chat-input"
-        rows={1}
-        value={input}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={onKeyDown}
-        // Label the Return key on the soft keyboard with what it will actually
-        // do. A fixed "enter" is right rather than lazy: this hint is drawn
-        // ONLY by a virtual keyboard, and on a virtual keyboard Return makes a
-        // new line (see chat/enterKey). A keyboard that would send on Return is
-        // a physical one, which draws no hint at all.
-        enterKeyHint="enter"
-        onFocus={() => onFocusChange(true)}
-        onBlur={() => onFocusChange(false)}
-        // A pasted screenshot attaches instead of pasting its filename as text.
-        // Only when the clipboard actually carries a file: ordinary text paste
-        // must fall through untouched, which is why this does not preventDefault
-        // unconditionally.
-        onPaste={(e) => {
-          const files = filesFromTransfer(e.clipboardData);
-          if (!files.length) return;
-          e.preventDefault();
-          onPasteFiles(files);
-        }}
-      />
+      {/* The expand control belongs to the BOX, not to the action row below it.
+          The row holds per-turn knobs (model, effort, send); how tall you want
+          to type is a property of the input itself, so it sits on the input,
+          top-right, in the corner every editor puts it in.
+
+          It overlays rather than taking a column, and the textarea reserves the
+          width back as right padding: overlaying WITHOUT the reservation means
+          the first line of text runs under the button, which is the one place
+          text is guaranteed to be when the box is collapsed to a single row.
+
+          keepFocusOnTap sits on the wrapper, not the button, and the textarea is
+          exempt inside it, so expanding never closes the mobile keyboard, and
+          tapping the text still moves the caret. */}
+      <div className="chat-input-wrap" onPointerDown={keepFocusOnTap}>
+        <textarea
+          ref={inputRef}
+          className="chat-input"
+          rows={1}
+          value={input}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={onKeyDown}
+          // Label the Return key on the soft keyboard with what it will actually
+          // do. A fixed "enter" is right rather than lazy: this hint is drawn
+          // ONLY by a virtual keyboard, and on a virtual keyboard Return makes a
+          // new line (see chat/enterKey). A keyboard that would send on Return is
+          // a physical one, which draws no hint at all.
+          enterKeyHint="enter"
+          onFocus={() => onFocusChange(true)}
+          onBlur={() => onFocusChange(false)}
+          // A pasted screenshot attaches instead of pasting its filename as text.
+          // Only when the clipboard actually carries a file: ordinary text paste
+          // must fall through untouched, which is why this does not preventDefault
+          // unconditionally.
+          onPaste={(e) => {
+            const files = filesFromTransfer(e.clipboardData);
+            if (!files.length) return;
+            e.preventDefault();
+            onPasteFiles(files);
+          }}
+        />
+        <button
+          className="chat-expand"
+          onClick={onToggleExpand}
+          aria-pressed={expanded}
+          aria-label={expanded ? "Collapse the message box" : "Expand the message box"}
+          title={expanded ? "Collapse the message box" : "Expand the message box"}
+        >
+          {expanded ? <Minimize2 size={14} aria-hidden /> : <Maximize2 size={14} aria-hidden />}
+        </button>
+      </div>
 
       {/* One handler for the whole row: a tap here never steals focus from the
           textarea, so it never spends itself closing the mobile keyboard
@@ -190,7 +218,7 @@ export default function ChatComposer({
             trigger={
               <button
                 className="chat-mode"
-                title={`${permissionModeDef(effectivePermissionMode).label}. ${permissionModeDef(effectivePermissionMode).hint}`}
+                title={`Mode: ${permissionModeDef(effectivePermissionMode).label}. ${permissionModeDef(effectivePermissionMode).hint}`}
                 aria-label={`Mode: ${permissionModeDef(effectivePermissionMode).label}`}
               >
                 {(() => {
