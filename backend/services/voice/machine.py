@@ -430,7 +430,18 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
     if isinstance(event, Endpoint):
         if not event.complete:
             return Outcome(s)                    # keep listening; not finished
-        final = " ".join(s.segments).strip()
+        # EVERYTHING HEARD, INCLUDING THE UNSTABLE TAIL. This used to read
+        # `" ".join(s.segments)`, which is the stable part only — so the last
+        # words of every utterance, still sitting in `partial` when the endpoint
+        # fired, were dropped on the floor. "call the dentist tomorrow" was sent
+        # as "call the dentist", on EVERY turn; and when the endpoint beat the
+        # first final back (a short utterance, or a slow engine) `segments` was
+        # empty, the whole thing was deleted, and the operator was told "Didn't
+        # catch that" about words the system had already transcribed.
+        #
+        # `pending_user` is the joiner that was always correct and that the UI
+        # was already showing. The message must be exactly what was on screen.
+        final = s.pending_user
         if not final:
             # Nothing came back. A REAL failure to reach the engine always gets
             # said. "Didn't catch that" does not, unless there was enough speech
@@ -444,7 +455,7 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
             return Outcome(replace(s, segments=(), partial="", error=error))
         if s.turn is not None and s.turn.heard == 0 and not s.turn.audible:
             s, fx = _abandon(s, Abandon.DISCARD, keep_utterance=True)
-            final = " ".join(s.segments).strip()
+            final = s.pending_user
         s2, fx2 = _begin_turn(s, final, turn_id)
         return Outcome(s2, fx + fx2)
 

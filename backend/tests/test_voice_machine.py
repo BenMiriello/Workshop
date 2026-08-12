@@ -324,3 +324,51 @@ class TestWhatTheOperatorSees:
         assert s.phase is Phase.THINKING
         s, _ = run(ReplyClause(s.turn.id, "Hi."), ClauseAudible(s.turn.id, 0), state=s)
         assert s.phase is Phase.SPEAKING
+
+
+# ------------------------------------------------------- nothing is lost
+class TestWhatWasHeardIsWhatIsSent:
+    """The invariant the previous rounds were missing.
+
+    `pending_user` is what the operator watches accumulate on screen. Whatever
+    is on screen when the endpoint fires is the message. Any gap between those
+    two is words deleted in front of him, which is exactly what he reported.
+    """
+
+    def test_the_unstable_tail_is_part_of_the_message(self):
+        # The endpoint almost always beats the final result for the last chunk:
+        # you stop talking, and THAT is what makes the endpoint fire. So the
+        # tail is in `partial`, not in `segments`, at the moment it matters.
+        s, _ = run(SegmentTranscribed("remind me to call"),
+                   m.PartialTranscript("the dentist tomorrow"))
+        shown = s.pending_user
+        s2, fx = run(Endpoint(complete=True, had_speech=True), state=s)
+        assert s2.last_user == shown == "remind me to call the dentist tomorrow"
+        assert only(fx, StartGeneration)[0].text == shown
+
+    def test_a_short_utterance_is_not_deleted_as_not_caught(self):
+        # No final had landed at all. This used to wipe the state and claim
+        # "Didn't catch that" about words it had already transcribed and shown.
+        s, _ = run(m.PartialTranscript("call the dentist"))
+        s2, fx = run(Endpoint(complete=True, had_speech=True), state=s)
+        assert s2.last_user == "call the dentist"
+        assert s2.error is None
+        assert only(fx, StartGeneration)
+
+    def test_still_says_nothing_was_caught_when_nothing_was(self):
+        # The guard has to keep working, or every cough becomes a turn.
+        s, fx = run(Endpoint(complete=True, had_speech=True))
+        assert s.last_user == ""
+        assert s.error is not None
+        assert [f for f in fx if isinstance(f, StartGeneration)] == []
+
+    def test_a_continuation_keeps_the_tail_of_the_second_half_too(self):
+        # Interrupting an unheard reply folds the first half back in; the tail
+        # of the SECOND half was dropped by the same join.
+        s, _ = run(SegmentTranscribed("what is the weather"),
+                   Endpoint(complete=True, had_speech=True))
+        assert s.turn is not None
+        s, _ = run(m.PartialTranscript("in san francisco"), state=s)
+        s2, fx = run(Endpoint(complete=True, had_speech=True), state=s)
+        assert "in san francisco" in s2.last_user
+        assert "what is the weather" in s2.last_user
