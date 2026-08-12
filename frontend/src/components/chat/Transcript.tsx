@@ -9,6 +9,7 @@ import {
   runningSeconds, stepAlert, stepDuration, stoppedStepId, turnDuration, turnWorkSummary,
   type TurnItem,
 } from "./grouping";
+import { openInitial, onLive, onToggle } from "./disclosure";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -109,24 +110,36 @@ function ToolChip({ seg, nowMs, stoppedId }: {
 // what the steps DID is never summarised, because a summary can be wrong about
 // what it hid. Opening the group shows every step, in order, individually.
 //
-// It opens itself while a step inside it is running (assistant-ui's auto-expand
-// during streaming), and when the reader has opened the settled turn it sits in.
-function GroupChip({ item, nowMs, defaultOpen, stoppedId }: {
+// IT OPENS WHILE ITS WORK RUNS AND CLOSES AGAIN WHEN THAT WORK FINISHES, so a
+// long turn does not leave a trail of opened groups behind it. It used to open
+// on the way past and stay open, which is why a turn watched live looked
+// nothing like the same turn opened afterwards.
+//
+// The automatic close must never fight the operator, so the open flag carries
+// its provenance and anything automatic may only move a disclosure the machine
+// itself last moved. The rule is `disclosure.ts`, pure and tested there;
+// everything here is wiring.
+// WHY `current` AND NOT JUST "a step in here is running". Within one run of
+// tool calls there is a gap between a result landing and the next call being
+// issued, and in that gap no step is running. Closing on that alone would shut
+// the group and reopen it between every pair of calls, which is a flicker, not
+// a disclosure. A group is finished when the TURN HAS MOVED PAST IT: it is no
+// longer the last thing in a turn that is still streaming.
+function GroupChip({ item, nowMs, defaultOpen, stoppedId, current }: {
   item: Extract<TurnItem, { t: "group" }>; nowMs: number; defaultOpen?: boolean;
-  stoppedId?: string;
+  stoppedId?: string; current?: boolean;
 }) {
-  const live = groupIsRunning(item);
-  const [open, setOpen] = useState(!!defaultOpen || live);
+  const live = groupIsRunning(item) || !!current;
+  const [disc, setDisc] = useState(() => openInitial(live, !!defaultOpen));
+  const open = disc.open;
   const id = useId();
-  // A group that starts running after it was drawn opens itself; one the reader
-  // has since closed by hand stays closed, because setOpen is not called again.
-  useEffect(() => { if (live) setOpen(true); }, [live]);
+  useEffect(() => { setDisc((prev) => onLive(prev, live)); }, [live]);
   return (
     <div className={`chat-group${open ? " is-open" : ""}${live ? " is-running" : ""}`}>
       <button
         type="button"
         className="chat-group__head"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setDisc(onToggle)}
         aria-expanded={open}
         aria-controls={id}
       >
@@ -364,9 +377,12 @@ export type AnswerPermission = (a: {
 // approvals in it, and those are the things the reader wants to see. A second
 // truncation on top of the grouping would hide work for no gain and bring back
 // the pinning rules to stop it hiding the wrong work.
-function StepRun({ items, cfg, nowMs, openGroups, stoppedId, onAnswerPermission }: {
+function StepRun({ items, cfg, nowMs, openGroups, stoppedId, current, onAnswerPermission }: {
   items: TurnItem[]; cfg: ModelDisplay; nowMs: number; openGroups?: boolean;
   stoppedId?: string;
+  // This run is the trailing one of a turn still streaming, so its LAST item is
+  // the work in progress.
+  current?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
   // KEY ON THE STEP, NOT ON ITS POSITION. A live run grows, so index k means a
@@ -377,7 +393,8 @@ function StepRun({ items, cfg, nowMs, openGroups, stoppedId, onAnswerPermission 
   const renderItem = (item: TurnItem, i: number) =>
     item.t === "group"
       ? <GroupChip key={item.steps[0]?.id || `g${i}`} item={item} nowMs={nowMs}
-                   defaultOpen={openGroups} stoppedId={stoppedId} />
+                   defaultOpen={openGroups} stoppedId={stoppedId}
+                   current={current && i === items.length - 1} />
       : item.seg.t === "tool"
         ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} stoppedId={stoppedId} />
         : item.seg.t === "agent"
@@ -448,7 +465,7 @@ function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
 // them. There is no wrapper around the whole thing, because there never was one
 // worth naming: the old `.chat-work` div was whatever remained after the answer
 // was taken off the end. See ADR 0015 §1.
-function TurnWork({ work, cfg, nowMs, expanded, openGroups, onAnswerPermission }: {
+function TurnWork({ work, cfg, nowMs, expanded, openGroups, streaming, onAnswerPermission }: {
   work: ChatSegment[]; cfg: ModelDisplay; nowMs: number;
   // The most recent turn reads in full, the same rule the answer already uses.
   // Narration on a live turn is there precisely so progress is legible as it
@@ -457,15 +474,24 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, onAnswerPermission }
   // Draw the step groups already open. Set when the reader has opened a settled
   // turn, so that one click reaches the steps rather than two.
   openGroups?: boolean;
+  // This turn is still being written, so its trailing run holds work in flight.
+  streaming?: boolean;
   onAnswerPermission?: AnswerPermission;
 }) {
   // Computed ONCE per turn, here, because "the turn stopped on this step" is a
   // fact about the whole work stream and not about any single step. Passing the
   // id down beats handing every row the entire turn.
   const stoppedId = stoppedStepId(work);
+  const blocks = buildTurnBlocks(work);
+  // The trailing run, which is where work in flight is. Not simply the last
+  // block: a turn narrating as it goes ends on prose, and the run before that
+  // prose is finished, not current.
+  let lastRun = -1;
+  blocks.forEach((b, i) => { if (b.t === "run") lastRun = i; });
+  const endsOnRun = blocks.length > 0 && blocks[blocks.length - 1].t === "run";
   return (
     <>
-      {buildTurnBlocks(work).map((b, i) =>
+      {blocks.map((b, i) =>
         b.t === "prose"
           // Interim prose is CONVERSATION, and renders as prose. It goes
           // through WorkText, not AnswerBody, deliberately: a ```ui-card``` the
@@ -473,7 +499,9 @@ function TurnWork({ work, cfg, nowMs, expanded, openGroups, onAnswerPermission }
           // must not be a live control, and card outcomes persist server-side.
           ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} expanded={expanded} />
           : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs} openGroups={openGroups}
-                     stoppedId={stoppedId} onAnswerPermission={onAnswerPermission} />)}
+                     stoppedId={stoppedId}
+                     current={!!streaming && endsOnRun && i === lastRun}
+                     onAnswerPermission={onAnswerPermission} />)}
     </>
   );
 }
@@ -508,7 +536,8 @@ export function AssistantTurn({
   return (
     <>
       {work.length > 0 && (isLatest
-        ? <TurnWork work={work} cfg={cfg} nowMs={clock} expanded onAnswerPermission={onAnswerPermission} />
+        ? <TurnWork work={work} cfg={cfg} nowMs={clock} expanded streaming={streaming}
+                    onAnswerPermission={onAnswerPermission} />
         : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
                        onAnswerPermission={onAnswerPermission} />)}
       {answer.map((s, i) =>
