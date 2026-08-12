@@ -1183,6 +1183,69 @@ def _scrub_paths(text: str) -> str:
     return _ABS_PATH_RE.sub("[path]", text)
 
 
+# ---- Memory ceiling for a turn -------------------------------------------
+#
+# WHY A WATCHDOG AND NOT AN RLIMIT OR A CGROUP.
+#
+# RLIMIT_AS is the obvious answer and it is wrong here: the CLI is Node, and V8
+# reserves enormous VIRTUAL regions it never faults in, so an address-space cap
+# that looks generous kills a perfectly ordinary turn. MemoryMax on
+# workshop-backend.service is worse: the turns are children in the backend's own
+# cgroup, so a runaway turn would OOM-kill THE BACKEND and take the whole app
+# down with it. A transient systemd scope per turn would work but puts
+# systemd-run in the path of every spawn, and these turns are deliberately
+# detached (start_new_session) so they survive a backend restart.
+#
+# So: watch, and kill only the turn. It cannot break a normal turn (it does
+# nothing below the ceiling), it kills the process GROUP so a turn's subagents
+# count toward its own budget, and unlike an OOM kill it can say what happened.
+#
+# THE DEFAULT IS DELIBERATELY GENEROUS, and it is measured against the GROUP.
+# Measured 2026-08-12 on this box (62 GB RAM): an individual CLI process sits at
+# 250-600 MB, but a turn's whole group — the CLI plus its node children, tools
+# and subagents, which is what this counts — reached 1.2 GB. 6 GB is ~5x that
+# busiest observed group: high enough that no real turn, even one running
+# several subagents, should reach it; low enough that a genuine runaway (tens of
+# GB) is stopped long before the box is. Even four concurrent turns at the
+# ceiling fit. This is a runaway guard, not a budget. Set
+# WORKSHOP_TURN_MEMORY_MAX_MB=0 to disable it entirely.
+_TURN_MEMORY_MAX_MB = int(os.environ.get("WORKSHOP_TURN_MEMORY_MAX_MB", "6144") or 0)
+# Polling this is a /proc scan, so it is throttled well below the 0.15s
+# supervision tick. A turn that balloons takes seconds to do it, not one tick.
+_MEMORY_CHECK_EVERY_S = 5.0
+_PAGE_MB = os.sysconf("SC_PAGE_SIZE") / (1024 * 1024)
+
+
+def _pgid_rss_mb(pgid: int) -> float:
+    """Resident MB across every process in `pgid`, the turn's process group.
+
+    The group, not the pid: a turn's subagents and any tool it shells out to are
+    its own memory as far as the box is concerned, and charging them to the turn
+    is what makes the ceiling mean anything. Returns 0.0 if nothing matches (the
+    group is already gone), so a missing group never trips the ceiling."""
+    total_pages = 0
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return 0.0
+    for name in entries:
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", "rb") as fh:
+                data = fh.read()
+            # comm (field 2) is parenthesised and may contain spaces, so split
+            # after the LAST ')'. rest[0] is field 3, hence pgrp=rest[2],
+            # rss=rest[21] (fields 5 and 24).
+            rest = data[data.rfind(b")") + 2:].split()
+            if int(rest[2]) != pgid:
+                continue
+            total_pages += int(rest[21])
+        except (OSError, IndexError, ValueError):
+            continue   # the process exited mid-read, or /proc raced us
+    return total_pages * _PAGE_MB
+
+
 def _did_visible_work(segments: list[dict]) -> bool:
     """True if a turn produced anything the operator can actually see above the
     reply. A tool call or a subagent counts; so does non-empty interim text. A
@@ -1787,9 +1850,31 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         return saw_tool
 
     timed_out = False
+    over_memory = False
+    last_mem_check = time.time()
     while True:
         saw_tool = _drain()
         now = time.time()
+        # Runaway-memory guard. See _pgid_rss_mb for why this is a watchdog
+        # rather than an rlimit or a cgroup cap.
+        if _TURN_MEMORY_MAX_MB > 0 and now - last_mem_check >= _MEMORY_CHECK_EVERY_S:
+            last_mem_check = now
+            group_pid = meta.get("pid") or (proc.pid if proc is not None else 0)
+            if group_pid:
+                used = _pgid_rss_mb(int(group_pid))
+                if used > _TURN_MEMORY_MAX_MB:
+                    over_memory = True
+                    turn.error = (
+                        f"Stopped: this turn's processes reached "
+                        f"{used / 1024:.1f} GB of memory, over the "
+                        f"{_TURN_MEMORY_MAX_MB / 1024:.1f} GB ceiling. Any file "
+                        "changes it already made are saved."
+                    )
+                    log.warning("turn %s killed: %.0f MB > %d MB ceiling",
+                                turn.id, used, _TURN_MEMORY_MAX_MB)
+                    _kill_turn_proc(meta.get("pid"), proc)
+                    _drain(final=True)
+                    break
         # A tool event still gets a fast snapshot, because a tool chip appearing
         # is the most visible sign a turn is moving. It just gets a FLOOR now:
         # `saw_tool` alone was unthrottled, so a burst of tool events wrote the
@@ -1849,7 +1934,7 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                          context_tokens=int(state.get("last_ctx") or 0),
                          spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
                          subtype=str(state.get("result_subtype") or ""), lost=lost,
-                         stopped=stopped)
+                         stopped=stopped, over_memory=over_memory)
 
 
 def _stale_pending_approvals(turn: Turn) -> None:
@@ -2019,7 +2104,7 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
 async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
                        context_tokens: int = 0, spend_tokens: int = 0,
                        subtype: str = "", lost: bool = False,
-                       stopped: bool = False) -> None:
+                       stopped: bool = False, over_memory: bool = False) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 0) or 0)
@@ -2061,6 +2146,14 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     if compacted and prompt.strip().lower() == "/compact":
         text = "Compacted. Earlier messages are now a summary."
         is_error = False
+    elif over_memory:
+        # ABOVE final_text on purpose. A turn killed at the memory ceiling may
+        # already have written a perfectly ordinary-looking reply, and showing
+        # only that would hide the fact that the rest of the work was cut off.
+        # Whatever it did write is kept, with the reason under it.
+        text = (f"{turn.final_text}\n\n{turn.error}".strip()
+                if turn.final_text else (turn.error or "Stopped at the memory ceiling."))
+        is_error = True
     elif turn.final_text:
         text = turn.final_text
         is_error = False
