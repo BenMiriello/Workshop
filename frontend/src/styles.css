@@ -1149,6 +1149,42 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
   font-size: var(--fs-sm);
 }
 
+/* A chip is a BUTTON once it has been sent (it opens the viewer), so it needs
+   the button reset the anchor never did. Same box either way. */
+button.chat-attach {
+  font: inherit; font-size: var(--fs-sm); text-align: left;
+  border: none; cursor: pointer;
+}
+/* A filename in the Files table opens the viewer rather than navigating, but it
+   is still a link to the reader, so it keeps link affordance. */
+.chat-att-link {
+  padding: 0; border: none; background: none; cursor: pointer;
+  font: inherit; color: var(--accent); text-align: left;
+}
+.chat-att-link:hover { text-decoration: underline; }
+
+/* The attachment viewer's body. Sized to the viewport rather than to the file:
+   an image opens at a size you can actually look at, and a tall one scrolls
+   inside the dialog instead of pushing the Close button off screen. */
+.chat-att-view {
+  display: flex; align-items: center; justify-content: center;
+  max-height: 70vh; overflow: auto;
+}
+.chat-att-view__img {
+  display: block; max-width: 100%; max-height: 70vh;
+  object-fit: contain; border-radius: var(--radius-md);
+}
+.chat-att-view__frame {
+  width: 100%; height: 70vh; border: none; border-radius: var(--radius-md);
+  background: var(--bg-inset);
+}
+.chat-att-view__text {
+  width: 100%; margin: 0; padding: var(--space-3);
+  white-space: pre-wrap; word-break: break-word;
+  font-size: var(--fs-sm); line-height: 1.5;
+  background: var(--bg-inset); border-radius: var(--radius-md);
+}
+
 /* ---- Slash commands: composer button + autocomplete popover ---- */
 .chat-slash-btn {
   flex: 0 0 auto;

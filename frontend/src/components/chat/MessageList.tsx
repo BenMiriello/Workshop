@@ -1,4 +1,4 @@
-import { Fragment, memo } from "react";
+import { Fragment, memo, useState } from "react";
 import { ArrowRightLeft, Bot, Clock, Eraser, FileText, FoldVertical, Lightbulb, Radio, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { chatApi, type ChatMsg } from "../../lib/chat";
@@ -12,6 +12,7 @@ import { modelDisplay } from "./models";
 import { stoppedTag } from "./stopReason";
 import { hasBubble, noReplyText } from "./replyBody";
 import type { TranscriptBlock } from "./transcriptBlocks";
+import AttachmentViewer, { type ViewableAttachment } from "./AttachmentViewer";
 import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 
 // The transcript body: one rendered block per entry the selector produced.
@@ -280,21 +281,26 @@ const MessageBubble = memo(function MessageBubble({
 // sentence, under the message it belongs to — see UnsentNote.
 /** The attachments on a message that has been sent. Same chip shape as the
  *  composer's, minus the remove control and the upload state: this is a record
- *  of what went, not a list you are still editing. An image links to its own
- *  bytes so it can be opened full size. */
+ *  of what went, not a list you are still editing.
+ *
+ *  A BUTTON, not a link. This was `<a target="_blank">`, which opened the raw
+ *  file in a new window: fine in a desktop tab, a dead end on a phone, where an
+ *  installed app has no tab strip and no back gesture, so opening your own
+ *  screenshot meant force-quitting the app to get back to the chat. It opens an
+ *  overlay over the transcript now and the conversation keeps its place. */
 function SentAttachments({ items }: {
   items: NonNullable<NonNullable<ChatMsg["meta"]>["attachments"]>;
 }) {
+  const [viewing, setViewing] = useState<ViewableAttachment | null>(null);
   return (
     <div className="chat-attach-row chat-attach-row--sent">
       {items.map((a) => (
-        <a
+        <button
           key={a.id}
+          type="button"
           className="chat-attach is-sent"
-          href={chatApi.attachmentUrl(a.id)}
-          target="_blank"
-          rel="noreferrer"
-          title={a.name}
+          onClick={() => setViewing(a)}
+          title={`Open ${a.name}`}
         >
           <span className="chat-attach__mark" aria-hidden>
             {a.kind === "image"
@@ -302,8 +308,9 @@ function SentAttachments({ items }: {
               : <FileText size={14} strokeWidth={1.8} />}
           </span>
           <span className="chat-attach__name">{a.name}</span>
-        </a>
+        </button>
       ))}
+      {viewing && <AttachmentViewer file={viewing} onClose={() => setViewing(null)} />}
     </div>
   );
 }

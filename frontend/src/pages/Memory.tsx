@@ -27,6 +27,7 @@ import {
 } from "@workshop/ui";
 import { scopeLabel, scopeHref } from "../lib/tasks";
 import { orderScopes } from "../lib/devMode";
+import AttachmentViewer from "../components/chat/AttachmentViewer";
 
 // The Notes surface (notes-system plan Phase N1): one /notes page over the
 // EXISTING scoped knowledge store. A note IS a knowledge note; the per-note CRUD
@@ -781,6 +782,7 @@ function Files() {
   // the design system. Nothing here is one-tap.
   const [confirm, setConfirm] = useState<StoredFile | null>(null);
   const [busy, setBusy] = useState(false);
+  const [viewing, setViewing] = useState<StoredFile | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -913,9 +915,13 @@ function Files() {
                     {f.missing ? (
                       <span>{f.name}</span>
                     ) : (
-                      <a href={`/api/chat/attachments/${encodeURIComponent(f.id)}`} target="_blank" rel="noreferrer">
+                      // Opens the viewer over this table, not a new window. The
+                      // link version was a dead end on mobile (see
+                      // chat/AttachmentViewer) and it also cost the operator
+                      // their scope filter and scroll position on the way back.
+                      <button type="button" className="chat-att-link" onClick={() => setViewing(f)}>
                         {f.name}
-                      </a>
+                      </button>
                     )}
                   </td>
                   <td>
@@ -958,6 +964,12 @@ function Files() {
     <>
       <div style={{ marginBottom: "var(--space-4)" }}>{filterBar}</div>
       {body}
+      {viewing && (
+        <AttachmentViewer
+          file={{ id: viewing.id, name: viewing.name, kind: viewing.kind }}
+          onClose={() => setViewing(null)}
+        />
+      )}
       {confirm && (
         <ConfirmDialog
           open
