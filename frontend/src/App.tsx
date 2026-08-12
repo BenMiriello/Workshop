@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazyPage } from "./lib/lazyPage";
 import { Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { OverlayHost } from "@workshop/ui";
 import Agents from "./pages/Agents";
@@ -22,23 +22,23 @@ import { AppProviders, AppSuspense, appRoutes } from "./apps/registry";
 // Keep Home, Work, Agents, Apps, Chats and FocusedChat EAGER: those are the
 // landing surfaces, and a suspense flash on the way into the chat is worse
 // than the bytes.
-const AgentDetail = lazy(() => import("./pages/AgentDetail"));
-const AgentBuild = lazy(() => import("./pages/AgentBuild"));
-const ProjectNew = lazy(() => import("./pages/ProjectNew"));
-const ProjectDetail = lazy(() => import("./pages/ProjectDetail"));
-const AppPreview = lazy(() => import("./pages/AppPreview"));
-const BaseApps = lazy(() => import("./pages/settings/BaseApps"));
-const Grants = lazy(() => import("./pages/settings/Grants"));
-const Trackers = lazy(() => import("./pages/settings/Trackers"));
-const McpServers = lazy(() => import("./pages/settings/McpServers"));
-const Marketplace = lazy(() => import("./pages/Marketplace"));
-const DeployDetail = lazy(() => import("./pages/DeployDetail"));
-const StoreDetail = lazy(() => import("./pages/StoreDetail"));
-const Stores = lazy(() => import("./pages/Stores"));
-const MemoryPage = lazy(() => import("./pages/Memory"));
-const RunDetail = lazy(() => import("./pages/RunDetail"));
-const Usage = lazy(() => import("./pages/Usage"));
-const Settings = lazy(() => import("./pages/Settings"));
+const AgentDetail = lazyPage(() => import("./pages/AgentDetail"));
+const AgentBuild = lazyPage(() => import("./pages/AgentBuild"));
+const ProjectNew = lazyPage(() => import("./pages/ProjectNew"));
+const ProjectDetail = lazyPage(() => import("./pages/ProjectDetail"));
+const AppPreview = lazyPage(() => import("./pages/AppPreview"));
+const BaseApps = lazyPage(() => import("./pages/settings/BaseApps"));
+const Grants = lazyPage(() => import("./pages/settings/Grants"));
+const Trackers = lazyPage(() => import("./pages/settings/Trackers"));
+const McpServers = lazyPage(() => import("./pages/settings/McpServers"));
+const Marketplace = lazyPage(() => import("./pages/Marketplace"));
+const DeployDetail = lazyPage(() => import("./pages/DeployDetail"));
+const StoreDetail = lazyPage(() => import("./pages/StoreDetail"));
+const Stores = lazyPage(() => import("./pages/Stores"));
+const MemoryPage = lazyPage(() => import("./pages/Memory"));
+const RunDetail = lazyPage(() => import("./pages/RunDetail"));
+const Usage = lazyPage(() => import("./pages/Usage"));
+const Settings = lazyPage(() => import("./pages/Settings"));
 
 // Workshop IS the homepage. Apps live INSIDE Workshop — the Apps tab lists
 // them. No peer-app nav strip; the Apps tab is the discovery surface. Which

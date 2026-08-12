@@ -92,7 +92,14 @@ export type ChatMsg = {
     // used to render as the same anonymous `.chat-note` div, which is why a
     // note and a stopped run were indistinguishable. `kind` is one of
     // note / ticket / learning / action / warn.
-    receipts?: { kind: string; label: string }[];
+    // `ref` is what the write PRODUCED, so the receipt can be opened rather
+    // than only read. Absent on a warning: a refusal or a parse failure made
+    // nothing to link to.
+    receipts?: {
+      kind: string;
+      label: string;
+      ref?: { scope: string; id: string; title?: string };
+    }[];
     error?: boolean;
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.

@@ -418,28 +418,36 @@ def _note_id_from_title(title: str) -> str:
 
 
 async def apply_note_block(context_key: str | None, reply: str,
-                           author: str = "") -> tuple[str, list[str]]:
+                           author: str = "") -> tuple[str, list[str], list[dict]]:
     """Find a ``note`` block, write its {scope, title, body} as a durable note in
     the knowledge store (the Notes substrate), strip the block, and return
-    (cleaned_reply, notes). No-op (reply unchanged, empty notes) when there is no
-    block. The note lands at the block's explicit `scope` or, absent one, this
-    chat's own knowledge scope (general -> workshop). Mirrors apply_learning_note:
-    server-side application, fence stripped, a human-readable outcome for
-    meta.notes. An invalid scope is reported, not raised."""
+    (cleaned_reply, labels, refs). No-op (reply unchanged, empty lists) when
+    there is no block. The note lands at the block's explicit `scope` or, absent
+    one, this chat's own knowledge scope (general -> workshop). Mirrors
+    apply_learning_note: server-side application, fence stripped, a
+    human-readable outcome for meta.notes. An invalid scope is reported, not
+    raised.
+
+    `refs` carries WHAT WAS WRITTEN, not just that something was. This function
+    already knows the scope and the note id it just created and used to throw
+    both away into a sentence, so the chat could say "Saved a note to workshop"
+    and offer no way to go read it. A ref is {scope, id, title}; the caller turns
+    it into a link. Empty when nothing was written, and empty on failure, so a
+    refusal never renders as a link to a note that does not exist."""
     m = _NOTE_BLOCK.search(reply)
     if not m:
-        return reply, []
+        return reply, [], []
     cleaned = _NOTE_BLOCK.sub("", reply).strip()
     try:
         block = json.loads(m.group(1).strip())
     except json.JSONDecodeError:
-        return cleaned, ["(could not parse a note. Nothing was captured)"]
+        return cleaned, ["(could not parse a note. Nothing was captured)"], []
     if not isinstance(block, dict):
-        return cleaned, []
+        return cleaned, [], []
     title = (block.get("title") or "").strip()
     body = (block.get("body") or "").strip()
     if not title and not body:
-        return cleaned, []
+        return cleaned, [], []
 
     from services import knowledge
     scope = (block.get("scope") or "").strip()
@@ -459,5 +467,11 @@ async def apply_note_block(context_key: str | None, reply: str,
         # Report what actually failed. put_note validates the scope AND the note
         # id, so blaming the scope for either sent the operator looking at a
         # scope that was fine while a malformed id went unmentioned.
-        return cleaned, [f"(note skipped: {e})"]
-    return cleaned, [f"Saved a note to {scope}."]
+        return cleaned, [f"(note skipped: {e})"], []
+    # The label names the NOTE, not the act of saving one. "Saved a note to
+    # workshop" describes the machine's own bookkeeping; the title is the thing
+    # the operator might actually want to open.
+    label = title or note_id
+    return cleaned, [f"Saved a note to {scope}."], [
+        {"scope": scope, "id": note_id, "title": label},
+    ]

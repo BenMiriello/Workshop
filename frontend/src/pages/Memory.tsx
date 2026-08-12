@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { RefreshCw, Plus, Pencil, Trash2, FileText, ShieldCheck } from "lucide-react";
 import {
@@ -155,6 +155,22 @@ export default function Notes() {
   }, []);
 
   const notes = data?.notes ?? [];
+
+  // Open the note a `?note=` deep link names, once. A chat receipt links here
+  // ("Saved a note to workshop" used to be a dead sentence), and landing on a
+  // filtered grid still leaves the operator hunting for the one note they
+  // clicked. Fires once per id: without the guard, closing the modal would
+  // immediately reopen it, since the param is still in the URL.
+  const wantNote = searchParams.get("note");
+  const openedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!wantNote || openedRef.current === wantNote || !notes.length) return;
+    const hit = notes.find((n) => n.id === wantNote);
+    if (!hit) return;
+    openedRef.current = wantNote;
+    setOpen({ mode: "edit", note: hit });
+  }, [wantNote, notes]);
+
   const overflow = notes.length > OVERFLOW_AT;
   const shown = overflow ? notes.slice(0, OVERFLOW_AT) : notes;
 

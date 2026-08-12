@@ -18,9 +18,10 @@
 // calls this the deferred seam) lazy imports are what keeps an uninstalled
 // app's code off the critical path.
 
-import { Suspense, lazy } from "react";
+import { Suspense } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { Outlet, Route } from "react-router-dom";
+import { RouteBoundary, RouteSkeleton, lazyPage } from "../lib/lazyPage";
 import { Banknote, Bird, MapPin, NotebookPen, PiggyBank, TrainFront } from "lucide-react";
 import type { LucideProps } from "lucide-react";
 
@@ -50,22 +51,22 @@ export type AppModule = {
   routes: () => ReactNode;
 };
 
-const Finance = lazy(() => import("../pages/apps/Finance"));
-const Budget = lazy(() => import("../pages/apps/Budget"));
-const LocationApp = lazy(() => import("../pages/apps/Location"));
-const CommuteApp = lazy(() => import("../pages/apps/Commute"));
-const Notes = lazy(() => import("../pages/apps/notes/Notes"));
-const Birds = lazy(() => import("../pages/apps/Birds"));
-const Locations = lazy(() => import("../pages/apps/birds/Locations"));
-const LocationDetail = lazy(() => import("../pages/apps/birds/LocationDetail"));
-const Devices = lazy(() => import("../pages/apps/birds/Devices"));
-const BirdDetail = lazy(() => import("../pages/apps/birds/BirdDetail"));
-const BirdsReview = lazy(() => import("../pages/apps/birds/BirdsReview"));
-const BirdSettings = lazy(() => import("../pages/apps/birds/BirdSettings"));
-const Recordings = lazy(() => import("../pages/apps/birds/RecordingsPage"));
-const Atlas = lazy(() => import("../pages/apps/birds/Atlas"));
-const ForecastWeek = lazy(() => import("../pages/apps/birds/ForecastWeek"));
-const HealthSettings = lazy(() => import("../pages/apps/health/HealthSettings"));
+const Finance = lazyPage(() => import("../pages/apps/Finance"));
+const Budget = lazyPage(() => import("../pages/apps/Budget"));
+const LocationApp = lazyPage(() => import("../pages/apps/Location"));
+const CommuteApp = lazyPage(() => import("../pages/apps/Commute"));
+const Notes = lazyPage(() => import("../pages/apps/notes/Notes"));
+const Birds = lazyPage(() => import("../pages/apps/Birds"));
+const Locations = lazyPage(() => import("../pages/apps/birds/Locations"));
+const LocationDetail = lazyPage(() => import("../pages/apps/birds/LocationDetail"));
+const Devices = lazyPage(() => import("../pages/apps/birds/Devices"));
+const BirdDetail = lazyPage(() => import("../pages/apps/birds/BirdDetail"));
+const BirdsReview = lazyPage(() => import("../pages/apps/birds/BirdsReview"));
+const BirdSettings = lazyPage(() => import("../pages/apps/birds/BirdSettings"));
+const Recordings = lazyPage(() => import("../pages/apps/birds/RecordingsPage"));
+const Atlas = lazyPage(() => import("../pages/apps/birds/Atlas"));
+const ForecastWeek = lazyPage(() => import("../pages/apps/birds/ForecastWeek"));
+const HealthSettings = lazyPage(() => import("../pages/apps/health/HealthSettings"));
 
 import { BirdsScopeProvider } from "../pages/apps/birds/scope";
 import BirdsShell from "../pages/apps/birds/BirdsShell";
@@ -260,9 +261,18 @@ export function AppProviders({ children }: { children: ReactNode }) {
   ) as React.ReactElement;
 }
 
-/** Wraps lazily-loaded app pages. The shell renders instantly either way. */
+/** Wraps lazily-loaded app pages. The shell renders instantly either way.
+ *
+ *  The boundary is not optional. `fallback={null}` with nothing catching the
+ *  load rejection meant a chunk that 404s (a tab open across a rebuild, which
+ *  renames every content-hashed chunk) left the route blank permanently, with
+ *  no message and no way back. See lib/lazyPage. */
 export function AppSuspense({ children }: { children: ReactNode }) {
-  return <Suspense fallback={null}>{children}</Suspense>;
+  return (
+    <RouteBoundary>
+      <Suspense fallback={<RouteSkeleton />}>{children}</Suspense>
+    </RouteBoundary>
+  );
 }
 
 /** Every installed app's Settings panel, in catalog order. */

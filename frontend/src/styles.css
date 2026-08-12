@@ -751,9 +751,17 @@ input[type="range"].grad::-moz-range-thumb {
   font-size: var(--fs-xs);
 }
 .chat-receipt { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--muted); }
-.chat-receipt--ok > svg { color: var(--ok); flex: 0 0 auto; }
+/* The icon names the OBJECT (a note, a ticket), so it is not a status and does
+   not take a status hue. It was `--ok` green on every receipt, which spent the
+   success colour on decoration and made three different kinds look alike. */
+.chat-receipt--ok > svg { flex: 0 0 auto; }
 .chat-receipt--warn { color: var(--warn); }
 .chat-receipt--warn > svg { flex: 0 0 auto; }
+/* A receipt that can be opened. Underline on hover only: a permanent underline
+   on every note written turns the quiet row into a wall of links. */
+a.chat-receipt--link { text-decoration: none; }
+a.chat-receipt--link:hover { color: var(--fg); text-decoration: underline; }
+a.chat-receipt--link:hover > svg { color: var(--accent); }
 
 /* How a turn ENDED, which is not a receipt: nothing changed, the run just
    stopped. One quiet line, no card, no accent. */

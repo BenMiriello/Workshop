@@ -1,5 +1,6 @@
 import { Fragment, memo } from "react";
-import { Bot, Check, Clock, Eraser, FoldVertical, TriangleAlert } from "lucide-react";
+import { ArrowRightLeft, Bot, Clock, Eraser, FileText, FoldVertical, Lightbulb, Ticket, TriangleAlert, Zap } from "lucide-react";
+import { Link } from "react-router-dom";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
@@ -62,6 +63,18 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
   );
 }
 
+// One line, same divider language as ContextCut: a fact about the conversation
+// itself, not a message in it, so it reads as a marker in the log rather than
+// as something either side said.
+function ScopeChangeNote({ to }: { to: string }) {
+  return (
+    <div className="chat-fold" role="separator">
+      <ArrowRightLeft size={14} strokeWidth={1.8} aria-hidden />
+      <span>Scope changed to {to}</span>
+    </div>
+  );
+}
+
 // WHAT THIS TURN CHANGED OUTSIDE THE CHAT: a note written, a ticket filed, a
 // preference captured.
 //
@@ -74,27 +87,61 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
 // One row for the whole turn rather than one card per string. `meta.notes` is
 // the pre-typing form and every stored turn has it, so it is read as untyped
 // receipts rather than lost. See ADR 0015 §4.
+// THE ICON NAMES THE OBJECT, IT DOES NOT CONGRATULATE THE MACHINE.
+//
+// Every receipt used to carry a green tick. A tick asserts "this succeeded",
+// which is both redundant (an unqualified receipt is only written when the write
+// went through) and uninformative: three receipts of three different kinds
+// looked identical. It also spent the `ok` status hue on decoration, and status
+// colour is a signal here, not an ornament. The icon now says WHAT was written,
+// per the design system's rule that an icon names the thing beside it.
+const RECEIPT_ICON: Record<string, typeof FileText> = {
+  note: FileText,
+  ticket: Ticket,
+  learning: Lightbulb,
+  action: Zap,
+};
+
+/** Where a receipt's object can be opened. Notes live in the scoped knowledge
+ *  store, which the Memory page reads; `?note=` selects one. */
+function receiptHref(r: { kind: string; ref?: { scope: string; id: string } }): string | null {
+  if (!r.ref) return null;
+  if (r.kind === "note") {
+    return `/memory?scope=${encodeURIComponent(r.ref.scope)}&note=${encodeURIComponent(r.ref.id)}`;
+  }
+  return null;
+}
+
 function Receipts({ msg }: { msg: ChatMsg }) {
   const typed = msg.meta?.receipts;
   const items = typed?.length
     ? typed
     // The same parenthesis rule the write side uses (build_streaming._receipt).
     // Without it a stored refusal, "(a triager agent may not file tickets)",
-    // reads back as a green tick saying it succeeded.
+    // reads back as though it succeeded.
     : (msg.meta?.notes || []).map((label) => ({
-        kind: label.trim().startsWith("(") ? "warn" : "note", label,
+        kind: label.trim().startsWith("(") ? "warn" : "note",
+        label,
+        ref: undefined,
       }));
   if (!items.length) return null;
   return (
     <div className="chat-receipts">
-      {items.map((r, j) => (
-        <span key={j} className={`chat-receipt chat-receipt--${r.kind === "warn" ? "warn" : "ok"}`}>
-          {r.kind === "warn"
-            ? <TriangleAlert size={13} strokeWidth={1.8} aria-hidden />
-            : <Check size={13} strokeWidth={1.8} aria-hidden />}
-          <span>{r.label}</span>
-        </span>
-      ))}
+      {items.map((r, j) => {
+        const warn = r.kind === "warn";
+        const Icon = warn ? TriangleAlert : (RECEIPT_ICON[r.kind] ?? FileText);
+        const href = warn ? null : receiptHref(r);
+        const body = (
+          <>
+            <Icon size={13} strokeWidth={1.8} aria-hidden />
+            <span>{r.ref?.title || r.label}</span>
+          </>
+        );
+        const cls = `chat-receipt chat-receipt--${warn ? "warn" : "ok"}`;
+        return href
+          ? <Link key={j} className={`${cls} chat-receipt--link`} to={href}>{body}</Link>
+          : <span key={j} className={cls}>{body}</span>;
+      })}
     </div>
   );
 }
@@ -185,6 +232,13 @@ const MessageBubble = memo(function MessageBubble({
                 </div>
               )}
               {renderAssistantBody(msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs)}
+              {/* INSIDE the reply, as its last line. A receipt is part of what
+                  the turn did, and rendering it as a sibling of the bubble made
+                  a written note the one and only thing in this chat that got a
+                  block of its own. It stays out of the work fold (a folded turn
+                  must still show that it wrote something) but it belongs to the
+                  message, not beside it. */}
+              <Receipts msg={msg} />
             </>
           ) : (
             <ElidedContent source={msg.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
@@ -197,7 +251,9 @@ const MessageBubble = memo(function MessageBubble({
       {msg.meta?.stopped && (
         <div className="chat-status-line">{stoppedTag(msg.meta.stopped)}</div>
       )}
-      <Receipts msg={msg} />
+      {/* A turn stopped before it wrote anything has no bubble to sit in, and a
+          receipt must never be dropped just because the reply was empty. */}
+      {!body && <Receipts msg={msg} />}
       {msg.meta?.status && <StatusNote status={msg.meta.status} />}
     </div>
   );
@@ -286,6 +342,7 @@ function MessageList({
       {blocks.map((b) => (
         <Fragment key={b.key}>
           {b.kind === "cut" && <ContextCut count={b.count} cleared={b.cleared} />}
+          {b.kind === "scope" && <ScopeChangeNote to={b.to} />}
           {b.kind === "message" && (
             <MessageBubble
               msg={b.msg}
