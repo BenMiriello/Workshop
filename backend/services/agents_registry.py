@@ -48,10 +48,11 @@ import yaml
 from services import triggers
 from services import build_agents as _build_agents
 from services import latitude as _latitude
+from services import paths
 
 log = logging.getLogger("workshop.agents_registry")
 
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
+WORKSHOP_ROOT = paths.workshop_root()
 USER_AGENTS_DIR = Path(os.environ.get(
     "WORKSHOP_AGENTS_DIR", str(WORKSHOP_ROOT / "agents")))
 PROJECTS_REGISTRY = Path(os.environ.get(

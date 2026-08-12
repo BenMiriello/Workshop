@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from services import port_registry
+from services import paths
 
 log = logging.getLogger("workshop.dev_servers")
 
@@ -28,10 +29,7 @@ log = logging.getLogger("workshop.dev_servers")
 PORT_MIN = 8500
 PORT_MAX = 8599
 
-LOG_ROOT = Path(os.environ.get(
-    "WORKSHOP_DEV_LOG_ROOT",
-    str(Path.home() / "workshop" / ".runtime" / "dev-server-logs"),
-))
+LOG_ROOT = paths.env_path("WORKSHOP_DEV_LOG_ROOT", "dev-server-logs")
 
 
 @dataclass

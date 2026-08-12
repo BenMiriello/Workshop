@@ -27,6 +27,7 @@ import re
 from pathlib import Path
 
 import yaml
+from services import paths
 
 log = logging.getLogger("workshop.compose_gen")
 
@@ -35,7 +36,7 @@ log = logging.getLogger("workshop.compose_gen")
 # published to a host port. Peers connect to http://<service>:<INTERNAL_PORT>.
 INTERNAL_PORT = 8080
 
-COMPOSE_ROOT = Path.home() / "workshop" / ".runtime" / "compose"
+COMPOSE_ROOT = paths.env_path("WORKSHOP_COMPOSE_ROOT", "compose")
 
 _RUNTIME_IMAGES = [
     (("bun",), "oven/bun:1"),

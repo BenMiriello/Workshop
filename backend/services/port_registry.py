@@ -34,6 +34,7 @@ import socket
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from services import paths
 
 log = logging.getLogger("workshop.port_registry")
 
@@ -59,10 +60,7 @@ RESERVED: frozenset[int] = frozenset({
     8443, 8445, 8446, 8447,  # tailscale serve mounts
 })
 
-STORE = Path(os.environ.get(
-    "WORKSHOP_PORT_REGISTRY",
-    str(Path.home() / "workshop" / ".runtime" / "ports.json"),
-))
+STORE = paths.env_path("WORKSHOP_PORT_REGISTRY", "ports.json")
 
 _LOCK = threading.Lock()
 

@@ -41,7 +41,7 @@ import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import compose_gen, container_runtime, local_runner, port_registry
+from services import compose_gen, container_runtime, local_runner, paths, port_registry
 
 log = logging.getLogger("workshop.app_runner")
 
@@ -51,7 +51,7 @@ PROJECTS_REGISTRY = local_runner.PROJECTS_REGISTRY
 # `self` in the registry) is the SELF / platform project: editing it edits the
 # running app, so it is never a separate deployment (frontend hot-reloads;
 # backend changes need scripts/restart_backend.sh).
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop"))).resolve()
+WORKSHOP_ROOT = paths.workshop_root()
 
 
 def is_self_project(slug: str) -> bool:
@@ -148,15 +148,9 @@ def assert_run_target(target: str | Path | None, who: str) -> None:
         raise HTTPException(403, self_dir_refusal(target, who))
 
 
-LOG_ROOT = Path(os.environ.get(
-    "WORKSHOP_APP_LOG_ROOT",
-    str(Path.home() / "workshop" / ".runtime" / "app-logs"),
-))
+LOG_ROOT = paths.env_path("WORKSHOP_APP_LOG_ROOT", "app-logs")
 
-STATE_STORE = Path(os.environ.get(
-    "WORKSHOP_APP_STATE",
-    str(Path.home() / "workshop" / ".runtime" / "app-deploys.json"),
-))
+STATE_STORE = paths.env_path("WORKSHOP_APP_STATE", "app-deploys.json")
 
 MANIFEST_NAMES = ("workshop.app.json", "workshop.app.jsonc")
 

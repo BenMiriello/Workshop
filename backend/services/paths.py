@@ -19,17 +19,25 @@ _THIS = Path(__file__).resolve()
 
 
 def workshop_root() -> Path:
-    """The repository root. `backend/services/paths.py` -> up two."""
+    """The repository root. `backend/services/paths.py` -> up two.
+
+    Always absolute. compose_gen writes these paths into generated compose files
+    as bind-mount sources, and docker resolves a bind mount on the DAEMON's
+    filesystem: a relative source there does not fail, it silently creates an
+    empty directory and starts the app against nothing. Resolving here makes
+    every downstream path safe by construction rather than by each call site
+    remembering.
+    """
     env = os.environ.get("WORKSHOP_ROOT")
     if env:
-        return Path(env).expanduser()
+        return Path(env).expanduser().resolve()
     return _THIS.parents[2]
 
 
 def runtime_dir() -> Path:
     env = os.environ.get("WORKSHOP_RUNTIME")
     if env:
-        return Path(env).expanduser()
+        return Path(env).expanduser().resolve()
     return workshop_root() / ".runtime"
 
 

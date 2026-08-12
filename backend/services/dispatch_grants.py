@@ -26,8 +26,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from services import permissions, stores
+from services import paths
 
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
+WORKSHOP_ROOT = paths.workshop_root()
 
 # The superset every dispatch grant is attenuated FROM: a subtree grant over the
 # whole store namespace. `workshop://store/scope/project-acme` is under it, so the

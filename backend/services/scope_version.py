@@ -30,8 +30,9 @@ import os
 import time
 from pathlib import Path
 from typing import Any
+from services import paths
 
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
+WORKSHOP_ROOT = paths.workshop_root()
 STORE = Path(os.environ.get(
     "WORKSHOP_SCOPE_VERSIONS",
     str(WORKSHOP_ROOT / ".runtime" / "scope-versions.json"),

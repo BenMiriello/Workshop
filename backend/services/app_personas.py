@@ -33,6 +33,7 @@ from typing import Any
 
 from services import llm_router as _llm
 from services.chat_context import ContextProvider
+from services import paths
 
 log = logging.getLogger("workshop.app_personas")
 
@@ -40,7 +41,7 @@ log = logging.getLogger("workshop.app_personas")
 def _runtime_dir() -> Path:
     """The instance .runtime dir (gitignored per-instance state), home-relative by
     default so nothing is pinned to one operator's checkout path."""
-    return Path(os.environ.get("WORKSHOP_RUNTIME", str(Path.home() / "workshop" / ".runtime")))
+    return paths.runtime_dir()
 
 
 def _finance_cache_path() -> Path:

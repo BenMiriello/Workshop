@@ -16,16 +16,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any
+from services import paths
 
-COMMUTE_ROOT = Path(os.environ.get(
-    "WORKSHOP_COMMUTE_ROOT",
-    str(Path.home() / "workshop" / ".runtime" / "commute-config"),
-))
+COMMUTE_ROOT = paths.env_path("WORKSHOP_COMMUTE_ROOT", "commute-config")
 
-RUNTIME_ROOT = Path(os.environ.get(
-    "WORKSHOP_COMMUTE_RUNTIME",
-    str(Path.home() / "workshop" / ".runtime" / "commute"),
-))
+RUNTIME_ROOT = paths.env_path("WORKSHOP_COMMUTE_RUNTIME", "commute")
 
 
 def _read_json(p: Path) -> dict[str, Any]:

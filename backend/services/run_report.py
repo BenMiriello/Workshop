@@ -38,10 +38,11 @@ import json
 import logging
 import os
 from pathlib import Path
+from services import paths
 
 log = logging.getLogger("workshop.run_report")
 
-WORKSHOP_ROOT = Path(os.environ.get("WORKSHOP_ROOT", str(Path.home() / "workshop")))
+WORKSHOP_ROOT = paths.workshop_root()
 _RUNTIME = Path(os.environ.get("WORKSHOP_RUNTIME", str(WORKSHOP_ROOT / ".runtime")))
 
 # A report is a courtesy, not a result. Nothing here may raise into the caller:

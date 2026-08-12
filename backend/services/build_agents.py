@@ -25,21 +25,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from services import paths
 
 # Per-instance operator state — lives in .runtime/ (gitignored), never in the
 # tracked tree. See routes/projects.py for the matching rationale.
-REGISTRY = Path(os.environ.get(
-    "WORKSHOP_BUILD_AGENTS_JSON",
-    str(Path.home() / "workshop" / ".runtime" / "build_agents.json"),
-))
-SCRATCH_ROOT = Path(os.environ.get(
-    "WORKSHOP_BUILD_AGENTS_SCRATCH",
-    str(Path.home() / "workshop" / "build-agents"),
-))
-PROJECTS_ROOT = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_ROOT_NEW",
-    str(Path.home() / "workshop" / "projects"),
-))
+REGISTRY = paths.env_path("WORKSHOP_BUILD_AGENTS_JSON", "build_agents.json")
+SCRATCH_ROOT = paths.env_path("WORKSHOP_BUILD_AGENTS_SCRATCH", "build-agents", base="root")
+PROJECTS_ROOT = paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
 PROJECTS_REGISTRY = Path(os.environ.get(
     "WORKSHOP_PROJECTS_REGISTRY",
     str(PROJECTS_ROOT.parent / ".runtime" / "projects.json"),

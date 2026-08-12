@@ -39,7 +39,7 @@ import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
 
-from services import dev_servers, port_registry
+from services import dev_servers, paths, port_registry
 
 log = logging.getLogger("workshop.local_runner")
 
@@ -50,18 +50,12 @@ PORT_MIN = 8600
 PORT_MAX = 8699
 
 # Per-deploy log files (mirrors dev_servers' LOG_ROOT layout, separate subdir).
-LOG_ROOT = Path(os.environ.get(
-    "WORKSHOP_DEPLOY_LOG_ROOT",
-    str(Path.home() / "workshop" / ".runtime" / "deploy-logs"),
-))
+LOG_ROOT = paths.env_path("WORKSHOP_DEPLOY_LOG_ROOT", "deploy-logs")
 
 # Runtime store: persisted record of the current standalone deploy per slug, so
 # status survives within the process and the project's surfaces.standalone can be
 # reflected. PIDs are also kept in-memory in RUNNING for lifecycle control.
-RUNTIME_STORE = Path(os.environ.get(
-    "WORKSHOP_DEPLOY_RUNTIME",
-    str(Path.home() / "workshop" / ".runtime" / "deploys.json"),
-))
+RUNTIME_STORE = paths.env_path("WORKSHOP_DEPLOY_RUNTIME", "deploys.json")
 
 # Projects registry — same file routes/projects.py owns. We reflect a deploy into
 # surfaces.standalone here (best-effort) so the Projects hub sees the running URL.
@@ -74,10 +68,7 @@ RUNTIME_STORE = Path(os.environ.get(
 # constant — answered False for the self project itself. Harmless while it only
 # suppressed an auto-checkpoint; not harmless now that ADR 0014 makes it half of
 # the developer-mode predicate.
-PROJECTS_REGISTRY = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_REGISTRY",
-    str(Path.home() / "workshop" / ".runtime" / "projects.json"),
-))
+PROJECTS_REGISTRY = paths.env_path("WORKSHOP_PROJECTS_REGISTRY", "projects.json")
 
 # Per-project manifest filenames that may carry a `run` field (the contract both
 # runners read, living with the project). apps.json is keyed by app id, not

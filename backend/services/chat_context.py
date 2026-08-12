@@ -42,6 +42,7 @@ def operator_name() -> str:
 # The three pickable models surfaced in the composer's model selector, full ids.
 # Sourced from llm_router so they never drift from the actual call tiers.
 from services import llm_router as _llm  # noqa: E402
+from services import paths
 
 PICKABLE_MODELS: list[str] = [
     _llm.TIER_OPUS_5,     # claude-opus-5
@@ -1250,10 +1251,7 @@ from pathlib import Path as _Path
 
 
 def _projects_root() -> _Path:
-    return _Path(_os.environ.get(
-        "WORKSHOP_PROJECTS_ROOT_NEW",
-        str(_Path.home() / "workshop" / "projects"),
-    ))
+    return paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
 
 
 class ProjectContextProvider(ContextProvider):
@@ -1388,7 +1386,7 @@ class BuildAgentContextProvider(ContextProvider):
         try:
             record = _ba.get_agent(slug)
         except KeyError:
-            record = {"name": slug, "purpose": "", "cwd": str(_Path.home() / "workshop"), "project_slug": None}
+            record = {"name": slug, "purpose": "", "cwd": str(paths.workshop_root()), "project_slug": None}
         self.slug = slug
         self.key = f"build:{slug}"
         self.name = record.get("name") or slug

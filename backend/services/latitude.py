@@ -64,6 +64,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from services import paths
 
 LATITUDES = ("strict", "standard", "open")
 DEFAULT_LATITUDE = "standard"
@@ -117,9 +118,7 @@ def scope_latitude(scope_key: str | None) -> str | None:
     if not slug:
         return None
     if kind == "project":
-        registry = Path(os.environ.get(
-            "WORKSHOP_PROJECTS_REGISTRY",
-            str(Path.home() / "workshop" / ".runtime" / "projects.json")))
+        registry = paths.env_path("WORKSHOP_PROJECTS_REGISTRY", "projects.json")
         try:
             reg = json.loads(registry.read_text())
         except (FileNotFoundError, json.JSONDecodeError, OSError):

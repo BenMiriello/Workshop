@@ -31,15 +31,10 @@ import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+from services import paths
 
-BRANCHES_ROOT = Path(os.environ.get(
-    "WORKSHOP_BRANCHES_ROOT",
-    str(Path.home() / "workshop" / "branches"),
-))
-PROJECTS_ROOT = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_ROOT_NEW",
-    str(Path.home() / "workshop" / "projects"),
-))
+BRANCHES_ROOT = paths.env_path("WORKSHOP_BRANCHES_ROOT", "branches", base="root")
+PROJECTS_ROOT = paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
 # The canonical registry lives at .runtime/projects.json (registry.py is the one
 # writer; routes/projects.py reads the same path). A bare projects.json next to
 # the projects dir never existed, so every Branches lookup raised "registry

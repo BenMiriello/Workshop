@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from services import manifests
+from services import paths
 
 Decision = Literal["allow", "confirm", "deny"]
 ActionPolicy = Literal["read", "confirm", "allow"]
@@ -578,9 +579,12 @@ def _scope_sensitivity(scope_key: str) -> str:
     kind, _, slug = scope_key.partition(":")
     if kind == "project" and slug:
         try:
-            root = Path(os.environ.get(
-                "WORKSHOP_PROJECTS_ROOT_NEW", str(Path.home() / "workshop" / "projects")))
-            reg = root.parent / "projects.json"
+            # The registry lives at .runtime/projects.json. This used to derive it
+            # as <projects root>/../projects.json, i.e. a repo-root file that has
+            # never existed, so the read ALWAYS raised and every project silently
+            # fell through to `shareable` below. A project marked private was
+            # therefore treated as shareable for knowledge recall.
+            reg = paths.env_path("WORKSHOP_PROJECTS_REGISTRY", "projects.json")
             data = json.loads(reg.read_text())
             rec = (data.get("projects") or {}).get(slug) or {}
             return rec.get("sensitivity") or "shareable"

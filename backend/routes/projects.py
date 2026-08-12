@@ -25,15 +25,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from services import tasks, jobs, triggers, latitude as latitude_svc
+from services import paths
 
 router = APIRouter()
 
 # Project tree lives inside ~/workshop so the design-system gate + watchdog
 # already apply. Configurable for tests.
-PROJECTS_ROOT = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_ROOT_NEW",
-    str(Path.home() / "workshop" / "projects"),
-))
+PROJECTS_ROOT = paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
 # Per-instance operator state — lives in .runtime/ (gitignored), never in the
 # tracked tree, so a fresh clone starts with an empty registry instead of
 # inheriting whichever operator committed it last. Overridable for tests.
