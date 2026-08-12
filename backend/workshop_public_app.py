@@ -20,19 +20,22 @@ depth for the network-trusted internal endpoints only.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import posixpath
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 log = logging.getLogger("workshop.public_edge")
 
 BACKEND = os.environ.get("WORKSHOP_BACKEND", "http://127.0.0.1:8000")
+# The same target as BACKEND, expressed as a ws:// origin for the upgrade path.
+_BACKEND_WS = BACKEND.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
 DIST = Path(os.environ.get("WORKSHOP_DIST", str(Path(__file__).resolve().parents[1] / "frontend" / "dist")))
 _DIST_ROOT = DIST.resolve()
 
@@ -278,6 +281,96 @@ async def healthz():
 @app.api_route("/api/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy_api(path: str, request: Request) -> Response:
     return await _proxy(request, f"/api/{path}")
+
+
+# --------------------------------------------------------------- websockets
+# httpx cannot proxy an Upgrade, so a WebSocket route needs its own path: accept
+# here, dial the backend, and pump both directions until either end goes.
+#
+# Voice mode runs entirely over one of these. Without this route the operator's
+# actual origin (the BUILT one on :8002) would fail the upgrade and voice would
+# be broken there while working perfectly on the Vite dev origin, which is the
+# exact shape of "it works for you and not for me" this edge exists to prevent.
+@app.websocket("/api/{path:path}")
+async def proxy_ws(websocket: WebSocket, path: str) -> None:
+    import websockets
+    from websockets.exceptions import ConnectionClosed
+
+    stripped = _normalize("/" + path)
+    if _is_blocked(stripped):
+        await websocket.close(code=4404)
+        return
+
+    # THIS is the origin boundary: the browser's socket terminates here, so this
+    # is the only place that knows the host it was actually opened against.
+    # Check it here, and forward that host so the backend can check it too.
+    # Without `x-forwarded-host` the backend compares the browser's Origin
+    # against its own `127.0.0.1:8000` and refuses every real connection.
+    host = websocket.headers.get("host", "")
+    origin = websocket.headers.get("origin")
+    if origin and host and origin.split("//", 1)[-1] != host:
+        await websocket.close(code=4403)
+        return
+
+    headers = [
+        (k, v) for k, v in websocket.headers.items()
+        if k.lower() in {"cookie", "authorization", "origin", "user-agent"}
+    ]
+    if host:
+        headers.append(("x-forwarded-host", host))
+    upstream_url = f"{_BACKEND_WS}{stripped}"
+    if websocket.url.query:
+        upstream_url += f"?{websocket.url.query}"
+
+    try:
+        upstream = await websockets.connect(
+            upstream_url,
+            additional_headers=headers,
+            open_timeout=10,
+            ping_interval=20,
+            # Audio frames are small; the default 1 MiB cap is plenty, and a
+            # bound keeps a wedged client from growing this process.
+            max_size=2 * 1024 * 1024,
+        )
+    except Exception:                                   # noqa: BLE001
+        # The backend refused (bad credential, blocked origin) or is down. Either
+        # way there is nothing to proxy, and the client's reconnect handles it.
+        await websocket.close(code=1011)
+        return
+
+    await websocket.accept()
+
+    async def to_upstream() -> None:
+        while True:
+            msg = await websocket.receive()
+            if msg["type"] == "websocket.disconnect":
+                return
+            if (data := msg.get("bytes")) is not None:
+                await upstream.send(data)
+            elif (text := msg.get("text")) is not None:
+                await upstream.send(text)
+
+    async def to_client() -> None:
+        async for msg in upstream:
+            if isinstance(msg, bytes):
+                await websocket.send_bytes(msg)
+            else:
+                await websocket.send_text(msg)
+
+    a = asyncio.create_task(to_upstream())
+    b = asyncio.create_task(to_client())
+    try:
+        done, pending = await asyncio.wait({a, b}, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+    except (WebSocketDisconnect, ConnectionClosed):
+        pass
+    finally:
+        await upstream.close()
+        try:
+            await websocket.close()
+        except RuntimeError:
+            pass                                        # already closed
 
 
 # Static SPA. Mounted last so /api wins. html=True serves index.html at "/".

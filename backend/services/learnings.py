@@ -96,7 +96,15 @@ _SAFE_SCOPE_RE = re.compile(r"[a-z0-9][a-z0-9:_-]*", re.IGNORECASE)
 
 # --- roots -------------------------------------------------------------------
 def _dir() -> Path:
-    d = knowledge._runtime() / "learnings"
+    """Per-owner. Learnings are durable operator feedback — "prefers brevity",
+    "always rebuild dist" — injected into every turn's prompt by
+    `learnings_context`. One directory meant one person's corrections steering
+    everybody's agents, so this follows `shared/knowledge/` (see
+    `knowledge._shared_knowledge_root`) rather than being gated off for
+    non-operators, which is what it was before and which left a second user's
+    Workshop unable to learn anything at all."""
+    from services import ownership
+    d = ownership.workspace_path(knowledge._runtime() / "learnings", "learnings")
     d.mkdir(parents=True, exist_ok=True)
     return d
 

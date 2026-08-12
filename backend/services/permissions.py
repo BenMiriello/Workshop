@@ -77,11 +77,17 @@ _VERBS = ("read", "list", "search", "append", "write")
 # Public alias — services/policy.py validates an operator's verbs_max against it.
 VERBS = _VERBS
 
-# The notes vault. Durable user data OUTSIDE the repo working tree, so it is not
-# reachable by "it's in the tree, therefore it's fair game" reasoning — it has to
-# be addressed as a Store to be reachable at all (services/stores.py registers it;
-# services/notes_vault.py owns the filesystem access). Same env override
-# notes_vault.vault_root() honors, so the two can never point at different dirs.
+# The OPERATOR's notes vault. Durable user data OUTSIDE the repo working tree, so
+# it is not reachable by "it's in the tree, therefore it's fair game" reasoning —
+# it has to be addressed as a Store to be reachable at all (services/stores.py
+# registers it; services/notes_vault.py owns the filesystem access). Same env
+# override `notes_vault.operator_vault_root()` honors.
+#
+# The operator's, specifically: the Store registry is instance-level (declared
+# once at startup, before any request pins an owner), whereas the vault is now
+# per-owner — `notes_vault.vault_root()` returns `.runtime/users/<id>/notes/` for
+# anyone else. So this constant names one real directory for the addressing
+# layer, and is NOT the path a non-operator's note operations resolve against.
 NOTES_VAULT_ROOT = Path(os.environ.get(
     "WORKSHOP_NOTES_VAULT", str(Path.home() / "notes")))
 

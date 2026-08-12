@@ -183,6 +183,15 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
+        // Voice mode runs over a WebSocket under /api. Vite does NOT proxy an
+        // upgrade unless this is set, so without it the socket fails on the dev
+        // origin only, which is the hardest kind of difference to notice.
+        ws: true,
+        // `changeOrigin` rewrites Host to the target, so the backend would see
+        // 127.0.0.1:8000 and reject the browser's Origin as cross-site. `xfwd`
+        // adds x-forwarded-host with the real one, which is what the backend
+        // checks against. Same arrangement as the public edge.
+        xfwd: true,
         rewrite: (p) => p.replace(/^\/api/, ""),
       },
     },

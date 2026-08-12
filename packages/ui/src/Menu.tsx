@@ -181,6 +181,7 @@ export function MenuItem({
   checked,
   active,
   danger,
+  disabled,
   title,
 }: {
   children: ReactNode;
@@ -194,6 +195,11 @@ export function MenuItem({
   // which is a choice you made; this is where the app currently is.
   active?: boolean;
   danger?: boolean;
+  // Present but not choosable right now (e.g. a scope you can't switch to
+  // mid-turn). A native disabled button neither fires onSelect nor bubbles a
+  // click the menu could treat as "close on activation", so the row simply
+  // does nothing until it isn't disabled any more — `title` is how it says why.
+  disabled?: boolean;
   // Hover/long-press explanation. A menu row is a NAME you are choosing; the
   // gloss on it belongs behind hover, the way every other app does it. This
   // replaces an inline `hint` span that sat in the same flex row as the label
@@ -207,6 +213,8 @@ export function MenuItem({
       type="button"
       role="menuitem"
       aria-current={active ? "page" : undefined}
+      aria-disabled={disabled || undefined}
+      disabled={disabled}
       className={cx("ws-menu__item", active && "is-active", danger && "ws-menu__item--danger")}
       title={title}
       onClick={onSelect}

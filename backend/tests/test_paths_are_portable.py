@@ -31,9 +31,15 @@ DERIVED = [
     ("services.local_runner", "PROJECTS_REGISTRY"),
     ("services.local_runner", "RUNTIME_STORE"),
     ("services.local_runner", "LOG_ROOT"),
-    ("services.build_agents", "PROJECTS_ROOT"),
-    ("services.build_agents", "SCRATCH_ROOT"),
-    ("services.build_agents", "REGISTRY"),
+    # Callables, not constants. A path resolved at CALL time follows a root
+    # that changed after import, which a module-level constant cannot — the
+    # exact failure this file exists to catch, one step earlier.
+    ("services.build_agents", "_scratch_root"),
+    ("services.build_agents", "_registry"),
+    ("services.build_agents", "_projects_registry"),
+    ("services.paths", "projects_root"),
+    ("services.paths", "projects_registry"),
+    ("services.paths", "chat_cwd"),
     ("services.worktrees", "BRANCHES_ROOT"),
     ("services.worktrees", "PROJECTS_ROOT"),
     ("services.compose_gen", "COMPOSE_ROOT"),
@@ -53,6 +59,8 @@ def test_every_state_path_follows_a_relocated_root(module_name, attr, monkeypatc
     mod = importlib.reload(importlib.import_module(module_name))
     try:
         value = getattr(mod, attr)
+        if callable(value):
+            value = value()
         assert str(value).startswith(str(root)), (
             f"{module_name}.{attr} = {value}, which ignores WORKSHOP_ROOT and would "
             f"send this instance's state to another checkout's directory"

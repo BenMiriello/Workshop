@@ -10,9 +10,10 @@ Every path that comes from a request is contained to the vault root (resolve +
 read or write outside the vault. Writes are atomic (temp file + `os.replace`) so
 an external editor never observes a half-written file.
 
-The vault lives at `$WORKSHOP_NOTES_VAULT` (default `~/notes`) — durable user
-data outside the (gitignored) repo working tree, independently backup-able, and
-openable in real Obsidian untouched.
+The operator's vault lives at `$WORKSHOP_NOTES_VAULT` (default `~/notes`) —
+durable user data outside the (gitignored) repo working tree, independently
+backup-able, and openable in real Obsidian untouched. Every OTHER owner gets
+their own vault under `.runtime/users/<owner_id>/notes/`; see `vault_root`.
 """
 from __future__ import annotations
 
@@ -23,11 +24,45 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-def vault_root() -> Path:
-    """Resolved vault directory. `WORKSHOP_NOTES_VAULT` overrides; default `~/notes`."""
+def operator_vault_root() -> Path:
+    """The operator's own vault: `$WORKSHOP_NOTES_VAULT`, default `~/notes`.
+
+    Kept as a plain folder in the operator's home, outside `.runtime`, because
+    real Obsidian is pointed at it — moving it under the per-owner runtime tree
+    would break an editor this module deliberately does not own.
+    """
     env = os.environ.get("WORKSHOP_NOTES_VAULT")
     base = Path(env) if env else Path.home() / "notes"
     root = base.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def vault_root() -> Path:
+    """The current owner's vault directory, created on demand.
+
+    The single chokepoint: every read, write, search, rename and delete in this
+    module resolves through here, so partitioning here partitions the whole app.
+    It used to return one global directory for everyone, and `routes/notes.py`
+    mounts under nothing but `require_user` (`app_registry.py`) — so any
+    authenticated account could read, overwrite, rename and delete every note in
+    the operator's vault. Not a bypass of a weak check; there was no check.
+
+    - operator (or no owner pinned: a background pass or a test, which
+      `ownership.py` already defines as the operator's context) -> the vault
+      above, unmoved.
+    - any other owner -> `.runtime/users/<owner_id>/notes/`, the same partition
+      `chat_store` and the other per-owner stores use.
+
+    Note this is where the vault DIVERGES from `permissions.NOTES_VAULT_ROOT`,
+    which names the operator's vault specifically for the instance-level Store
+    declaration (`services/stores.py`). See
+    docs/security-audit-2026-08-11-scope-separation.md section 3.
+    """
+    from services import ownership
+    if ownership.caller_is_operator() or ownership.owner_or_none() is None:
+        return operator_vault_root()
+    root = (ownership.user_runtime_dir() / "notes").resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 

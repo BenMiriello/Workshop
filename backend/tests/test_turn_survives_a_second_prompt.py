@@ -289,3 +289,43 @@ class TestWhatRidesWithThePrompt:
         assert [e["ts"] for e in out] == ["2026-08-12T20:00:00+00:00",
                                           "2026-08-12T20:01:00+00:00"]
         assert out[0]["attachments"] == [{"id": "att-1"}] and out[1]["attachments"] == []
+
+
+class TestAPromptThatCouldNotBeDeliveredAtAll:
+    """The write itself failed, so the message went nowhere. Same loss as one
+    the CLI never read, and it gets the same remedy: nothing else would ever
+    retry it."""
+
+    def test_it_is_requeued_rather_than_dropped(self, thread, monkeypatch, no_drain):
+        async def fake_exec(*a, **kw):
+            # The spawn succeeds; it is the write to its input channel that
+            # fails, which is the case this covers. The real child would dup the
+            # fds it was handed and the parent would close its own copies, so
+            # they are left exactly as the caller passed them.
+            return FakeProc(pid=os.getpid())
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        monkeypatch.setattr(build_streaming, "write_to_turn", lambda *a, **k: False)
+
+        async def _retire(pid, proc=None):
+            return None
+        monkeypatch.setattr(build_streaming, "_retire_turn_proc", _retire)
+
+        run_id = "run-undelivered"
+        chat_store.begin_run(thread["id"], run_id, model="m")
+        turn = build_streaming.Turn(id=run_id, thread_id=thread["id"], agent_slug="a")
+        build_streaming.TURNS[run_id] = turn
+        meta = {"turn_id": run_id, "thread_id": thread["id"], "agent_slug": "a",
+                "cwd": ".", "model": "m", "session_id": None, "resume": False,
+                "speaker": None, "owner_id": 1, "prompt": "the message",
+                "attachments": [], "timeout_s": 0, "pid": None, "status": "running",
+                "started": 0.0, "allowed_tools": None, "disallowed_tools": None,
+                "mcp_servers": None, "mcp_selection": None, "tools_disabled": False,
+                "effort": None, "permission_mode": None,
+                "origin": [{"text": "the message", "client_id": "cid-7",
+                            "ts": "2026-08-12T21:00:00+00:00", "attachments": []}]}
+        build_streaming._journal_dir(run_id).mkdir(parents=True, exist_ok=True)
+        asyncio.run(build_streaming._spawn_and_drive_inner(turn, meta))
+
+        q = chat_queue.read(thread["id"])
+        assert [(e["text"], e["client_id"], e["ts"]) for e in q] == [
+            ("the message", "cid-7", "2026-08-12T21:00:00+00:00")]

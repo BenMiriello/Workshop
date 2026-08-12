@@ -53,10 +53,22 @@ from services import paths
 log = logging.getLogger("workshop.agents_registry")
 
 WORKSHOP_ROOT = paths.workshop_root()
-USER_AGENTS_DIR = Path(os.environ.get(
+# An agent is owned by its definition's `owner_id`, not by which directory the
+# file sits in: `agent:<slug>` is a global scope key and role uniqueness is
+# checked per scope key, so a per-owner directory would let two owners mint the
+# same key. See paths.projects_root for the full reasoning.
+_USER_AGENTS_DEFAULT = Path(os.environ.get(
     "WORKSHOP_AGENTS_DIR", str(WORKSHOP_ROOT / "agents")))
-PROJECTS_REGISTRY = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_REGISTRY", str(WORKSHOP_ROOT / ".runtime" / "projects.json")))
+
+
+def _user_agents_dir() -> Path:
+    return _USER_AGENTS_DEFAULT
+
+
+def _projects_registry() -> Path:
+    return paths.projects_registry()
+
+
 SUBSCRIPTIONS_PATH = Path(os.environ.get(
     "WORKSHOP_SUBSCRIPTIONS", str(WORKSHOP_ROOT / ".runtime" / "agent-subscriptions.json")))
 CHANNEL_MAP = Path(os.environ.get(
@@ -72,7 +84,7 @@ SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 # runs. `.gitignore` carves `!/agents/_templates/` out of `/agents/*` for exactly
 # this, mirroring `projects/_templates/`.
 TEMPLATES_DIR = Path(os.environ.get(
-    "WORKSHOP_AGENT_TEMPLATES_DIR", str(USER_AGENTS_DIR / "_templates")))
+    "WORKSHOP_AGENT_TEMPLATES_DIR", str(_USER_AGENTS_DEFAULT / "_templates")))
 GROUPS_DIR = TEMPLATES_DIR / "groups"
 
 # Built-in app assistants (the Budget/Accounts/Commute/Location chat personas).
@@ -89,7 +101,7 @@ GROUPS_DIR = TEMPLATES_DIR / "groups"
 # assistant is the face of an installed app, reached by opening that app, not a
 # standing agent with triggers of its own.
 APP_AGENTS_DIR = Path(os.environ.get(
-    "WORKSHOP_APP_AGENTS_DIR", str(USER_AGENTS_DIR / "apps")))
+    "WORKSHOP_APP_AGENTS_DIR", str(_USER_AGENTS_DEFAULT / "apps")))
 
 # Frontmatter that belongs to the TEMPLATE, not to the instance it produces. It
 # is stripped on fork and replaced by a single `template: <slug>@<version>` line.
@@ -418,7 +430,7 @@ def per_channel_ids() -> set[str]:
 
 def _project_dirs() -> dict[str, Path]:
     try:
-        reg = json.loads(PROJECTS_REGISTRY.read_text())
+        reg = json.loads(_projects_registry().read_text())
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
     out: dict[str, Path] = {}
@@ -494,12 +506,49 @@ class AppPersonaMissing(RuntimeError):
     picker and leaves every other one working."""
 
 
+# What an app persona may NEVER declare, whatever its markdown says.
+#
+# An app assistant is the face of an installed app: it answers about that app's
+# data through that app's MCP tools. It has no working directory of its own —
+# `routes/chat.py` runs it at the shared non-build fallback (`WORKSHOP_CHAT_CWD`,
+# or the account's home when that is unset), the same fallback `general` used to
+# run at when it could read and edit the platform's own source. So a persona file
+# that declared `Bash` would get an unscoped shell in the operator's home, and
+# the only thing standing in its way would be that nobody had typed it yet.
+#
+# A ceiling rather than a review habit: these files are ordinary markdown, edited
+# by agents as well as people, and "no app persona has Bash today" is a fact
+# about the current contents of a directory, not a property of the system.
+# Filtered at the parser — the one place every reader of a persona goes through.
+_PERSONA_TOOL_CEILING = frozenset({
+    "Bash", "BashOutput", "KillShell",
+    "Edit", "MultiEdit", "Write", "NotebookEdit",
+    "Read", "Glob", "Grep",
+    "Task", "Agent",
+})
+
+
+def _cap_persona_tools(key: str, tools: list[str]) -> list[str]:
+    """Drop anything an app persona is not allowed to hold. Logged, not raised:
+    a bad line in one app's definition must not take the app down."""
+    kept, dropped = [], []
+    for t in tools:
+        (dropped if t in _PERSONA_TOOL_CEILING else kept).append(t)
+    if dropped:
+        log.warning(
+            "app persona %r declares tools it may not hold; dropped %s "
+            "(see _PERSONA_TOOL_CEILING)", key, ", ".join(sorted(dropped)))
+    return kept
+
+
 def app_persona(key: str) -> dict:
     """The declaration for a built-in app's chat assistant.
 
     Returns `{name, purpose, model, tools, mcp_servers, persona}` — `persona`
     being the body, which is the system prompt. Same parser as the roster
     (`_parse`), so the two cannot drift into different dialects of frontmatter.
+
+    `tools` is filtered through `_PERSONA_TOOL_CEILING` on the way out.
     """
     path = APP_AGENTS_DIR / f"{key}.md"
     try:
@@ -517,7 +566,8 @@ def app_persona(key: str) -> dict:
         "name": fm.get("name") or key,
         "purpose": fm.get("purpose") or "",
         "model": fm.get("model"),
-        "tools": [str(t) for t in tools] if isinstance(tools, list) else [],
+        "tools": _cap_persona_tools(
+            key, [str(t) for t in tools] if isinstance(tools, list) else []),
         "mcp_servers": [str(s) for s in servers] if isinstance(servers, list) else [],
         "persona": body,
         "definition_path": str(path),
@@ -675,11 +725,11 @@ def list_agents(*, include_retired: bool = False) -> list[dict]:
     live_slugs = _live_builder_slugs()
 
     defs: dict[str, dict] = {}
-    if USER_AGENTS_DIR.exists():
-        for p in sorted(USER_AGENTS_DIR.glob("*.md")):
+    if _user_agents_dir().exists():
+        for p in sorted(_user_agents_dir().glob("*.md")):
             r = _record_from_def(p, "user")
             defs[r["slug"]] = r
-    user_dir = USER_AGENTS_DIR.resolve() if USER_AGENTS_DIR.exists() else USER_AGENTS_DIR
+    user_dir = _user_agents_dir().resolve() if _user_agents_dir().exists() else _user_agents_dir()
     for pslug, d in _project_dirs().items():
         adir = d / "agents"
         # A self-project (dir == repo root) shares its agents/ dir with the user
@@ -760,7 +810,7 @@ def _path_for(slug: str, project_slug: str | None) -> Path:
         d = _project_dirs().get(project_slug)
         if d and d.exists():
             return d / "agents" / f"{slug}.md"
-    return USER_AGENTS_DIR / f"{slug}.md"
+    return _user_agents_dir() / f"{slug}.md"
 
 
 def _build_fm(*, runtime: str, name: str, purpose: str, capabilities: list,

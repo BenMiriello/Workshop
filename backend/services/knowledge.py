@@ -59,17 +59,39 @@ def _runtime() -> Path:
     return Path(os.environ.get("WORKSHOP_RUNTIME", str(_root() / ".runtime")))
 
 
+def _shared_knowledge_root() -> Path:
+    """`shared/knowledge/` FOR THE CURRENT OWNER — the `workshop`, `role:` and
+    `development` layers.
+
+    `read_layers` puts the `workshop` layer into every scope's prompt by design
+    ("operator preferences, house style, cross-cutting facts"), which is right
+    and is exactly why it could not stay shared: one directory meant one
+    person's house style, notes and distilled conversations were read into every
+    other account's turns, and their note fences wrote back into it.
+
+    The first fix for that was to gate the injection on `caller_is_operator()` —
+    correct as far as leaks go, and it left a second user with a Workshop whose
+    knowledge layer, work digest and auto-recall silently did nothing. This is
+    the real fix: the layer is per-owner, so it can be read and written by
+    everybody, against their own. Those gates are removed rather than kept
+    alongside this.
+
+    The operator's tracked `shared/knowledge/` does not move.
+    """
+    from services import ownership
+    return ownership.workspace_path(_root() / "shared" / "knowledge", "knowledge")
+
+
 # --- scope mapping -----------------------------------------------------------
 def _project_exists(slug: str) -> bool:
-    return (_root() / "projects" / slug / "knowledge").parent.exists() or (
-        _root() / "projects" / slug
-    ).exists()
+    root = paths.projects_root()
+    return (root / slug / "knowledge").parent.exists() or (root / slug).exists()
 
 
 def scope_for_context(context_key: str) -> str:
     """Map a chat context_key to a knowledge scope_key.
 
-    - `general`, `new-project` -> `workshop`
+    - `general`, `workshop`, `new-project` -> `workshop`
     - `budget`/`finance`/`commute`/`location` -> `app:<key>`
     - `project:<slug>` -> `project:<slug>`
     - `build:<slug>` -> `project:<slug>` if that project exists, else `agent:<slug>`
@@ -81,7 +103,13 @@ def scope_for_context(context_key: str) -> str:
     ck = (context_key or "general").strip()
     if ck == "development":
         return "development"
-    if ck in ("general", "new-project"):
+    # `workshop` names itself. It was missing from this list, so the bare key
+    # fell all the way to the `app:<key>` catch-all below and resolved to
+    # `app:workshop` -> `apps/workshop/knowledge/`, a THIRD directory for a name
+    # that already means `shared/queue` in task_scope and `shared/knowledge`
+    # here. `scope_dir` mkdirs on demand, so simply opening such a chat created
+    # it inside the tracked tree.
+    if ck in ("general", "workshop", "new-project"):
         return "workshop"
     if ck in app_context_keys():
         return f"app:{ck}"
@@ -93,7 +121,13 @@ def scope_for_context(context_key: str) -> str:
             return f"project:{slug}" if _project_exists(slug) else f"agent:{slug}"
         if prefix in ("app", "agent"):
             return ck
-    return f"app:{ck}"
+    # An unrecognized bare key is NOT an app. It used to mint `app:<key>`
+    # regardless, and since a thread's `context_key` is stored verbatim at
+    # creation and `scope_dir` mkdirs on demand, the first ambient-index read of
+    # a chat keyed `zzz` created `apps/zzz/knowledge/` inside the tracked tree —
+    # an unknown name inventing a store rather than resolving to one. Installed
+    # apps are matched above, by name, off the actual catalog.
+    return "workshop"
 
 
 def _parse_scope(scope_key: str) -> tuple[str, str]:
@@ -136,19 +170,28 @@ def scope_dir(scope_key: str) -> Path:
     """
     kind, slug = _parse_scope(scope_key)
     root = _root()
+    shared = _shared_knowledge_root()
     if kind == "workshop":
-        d = root / "shared" / "knowledge"
+        d = shared
     elif kind == "development":
         # A sub-directory of the workshop notes layer, like `role:`: durable,
         # git-inspectable knowledge about this installation's own source, kept
         # out of the layer every other scope inherits from.
-        d = root / "shared" / "knowledge" / "development"
+        #
+        # NOT per-owner in any meaningful sense even though it rides on the
+        # per-owner root: `development` is the platform's own source, gated by
+        # WORKSHOP_DEV_MODE, and ADR 0014 makes it the single key that reaches
+        # the repo. A non-operator reaching it is a separate refusal (see
+        # get_provider / root_for_context), not a directory question.
+        d = shared / "development"
     elif kind == "project":
-        d = root / "projects" / slug / "knowledge"
+        # Follows projects_root(), so a per-owner project's knowledge is
+        # per-owner without this needing to know about ownership at all.
+        d = paths.projects_root() / slug / "knowledge"
     elif kind == "app":
         d = root / "apps" / slug / "knowledge"
     elif kind == "role":
-        d = root / "shared" / "knowledge" / "roles" / slug.lower()
+        d = shared / "roles" / slug.lower()
     else:  # agent
         d = _runtime() / "agents" / slug / "knowledge"
     d.mkdir(parents=True, exist_ok=True)

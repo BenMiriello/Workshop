@@ -37,6 +37,13 @@ _LEARNING_BLOCK = re.compile(r"```learning-note\s*\n(.*?)\n```", re.DOTALL)
 # act instead of a hope that compaction catches it.
 _NOTE_BLOCK = re.compile(r"```note\s*\n(.*?)\n```", re.DOTALL)
 
+# The shape a registry agent slug may have, matching agents_registry.SLUG_RE.
+# Spelled here rather than imported to keep this module free of that import at
+# load time; `fullmatch` (not `match`) because `$` in Python also matches before
+# a trailing newline, and "the check passes on `foo\n`" is exactly the kind of
+# almost-right this module has already been bitten by.
+_AGENT_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{0,47}")
+
 # The platform repo — the Workshop's own source tree. Overridable for tests /
 # alternate checkouts; the default is this checkout's repo root
 # (backend/services -> parents[2]).
@@ -121,6 +128,15 @@ def root_for_context(context_key: str | None) -> Path | None:
 
     Callers that face the operator should pair this with `dev_mode_refusal`, so
     a refusal reads as a refusal instead of as an unknown scope."""
+    # CHOKEPOINT 0, ahead of the dev-mode gate: whose scope is this? Every HTTP
+    # route that reaches a project or an agent is operator-only, so the REST
+    # surface never needed to ask — but a chat `context_key` comes from any
+    # authenticated caller and lands here, and this function's answer becomes a
+    # task store, a ticket-run `--dir`, and an @-mention cwd. See
+    # services/scope_owner.py.
+    from services import scope_owner
+    if not scope_owner.may_reach(context_key):
+        return None
     root = _raw_root_for_context(context_key)
     if root is None:
         return None
@@ -238,10 +254,36 @@ def _build_agent_root(slug: str) -> Path | None:
     return Path(cwd) if cwd else None
 
 
-def _agent_scope_dir(slug: str) -> Path:
-    """A registry assistant's own durable task scope (.runtime/agent-scopes/<slug>)."""
+def _agent_scope_dir(slug: str) -> Path | None:
+    """A registry assistant's own durable task scope (.runtime/agent-scopes/<slug>).
+
+    Contained, and it was not. This join took the slug straight off an HTTP
+    `context_key`/`scope` — `POST /chat/threads/{id}/spawn-task` and
+    `POST /tasks` both accept one from any authenticated caller — and then
+    `mkdir(parents=True)`'d whatever came out. `agent:../../../../tmp/x`
+    therefore created a task store at an arbitrary host path, wrote
+    `.tasks.json` and `TODO.md` into it, and `launch_task_run` would then start
+    `project_ralph.sh --dir <that path>`: a detached, autonomous Claude Code
+    sweep rooted outside the workshop tree entirely.
+
+    The one containment downstream, `app_runner.is_self_dir`, is an
+    exact-equality test against the platform repo — so `agent:../..` was caught
+    and every deeper escape was not. Same defect and the same shape as the
+    `project:` traversal fixed alongside it; this branch is the one that also
+    ran something.
+
+    Returns None for an escaping or malformed slug, which `root_for_context`
+    already treats as "no task scope" — the caller reports an unknown scope
+    rather than 500ing. See
+    docs/security-audit-2026-08-11-scope-separation.md section 2.
+    """
     from services import ownership
-    d = ownership._RUNTIME / "agent-scopes" / slug
+    if not _AGENT_SLUG_RE.fullmatch(slug or ""):
+        return None
+    base = (ownership._RUNTIME / "agent-scopes").resolve()
+    d = (base / slug).resolve()
+    if not d.is_relative_to(base):
+        return None
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -387,7 +429,20 @@ def apply_learning_note(context_key: str | None, reply: str) -> tuple[str, list[
 
     # Default the scope to this chat's own knowledge scope (which the learnings
     # store shares its scope keys with); an explicit block scope wins.
+    #
+    # The override may only name a scope this caller could reach anyway. It was
+    # briefly operator-only, which was right while `workshop` was one shared
+    # directory; now that the learnings store is per-owner, aiming a learning at
+    # your OWN `workshop` is ordinary use and refusing it would make a second
+    # account unable to record a cross-project preference at all. What stays
+    # refused is naming someone else's project or agent scope — see
+    # services/scope_owner.py. Not a hard refusal either way: the learning
+    # lands, at the scope this chat actually occupies.
     scope = (block.get("scope") or "").strip()
+    if scope:
+        from services import scope_owner
+        if not scope_owner.may_reach(scope):
+            scope = ""
     if not scope:
         from services import knowledge
         try:
@@ -449,8 +504,17 @@ async def apply_note_block(context_key: str | None, reply: str,
     if not title and not body:
         return cleaned, [], []
 
-    from services import knowledge
+    from services import knowledge, scope_owner
     scope = (block.get("scope") or "").strip()
+    # The override (NOTE_PROTOCOL documents it: a build agent in project:foo
+    # deciding a finding is really cross-project knowledge belonging in
+    # `workshop`) may only name a scope this caller could reach anyway. Writing
+    # to your OWN `workshop` is the documented use and is per-owner now; what
+    # stays refused is naming someone else's project or agent scope. Not a
+    # refusal: the note still lands, just where this chat actually is. See
+    # services/scope_owner.py.
+    if scope and not scope_owner.may_reach(scope):
+        scope = ""
     if not scope:
         try:
             scope = knowledge.scope_for_context(context_key or "workshop")

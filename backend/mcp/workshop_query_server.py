@@ -83,11 +83,25 @@ SEARCH_TOOL_SCHEMA = {
 
 
 def _pin_owner() -> None:
-    """Best-effort: pin the operator owner so owner-scoped stores (jobs, knowledge)
-    resolve. Single-operator system."""
+    """Pin the data owner so owner-scoped stores (jobs, knowledge) resolve.
+
+    This runs as a SEPARATE stdio subprocess of the `claude` CLI, spawned fresh
+    per turn — it has no access to the backend request's `ownership`
+    contextvar, only whatever the parent process put in its environment.
+    `WORKSHOP_QUERY_OWNER` (app_registry._platform_mcp_servers) is the real
+    caller, set at spawn time from the actual request. Falling back to the
+    operator when it's absent is deliberate, not a workaround: a background
+    automation pass has no per-request owner to hand down either, and the
+    operator's id IS the correct one there (ownership.py's own rule for
+    background loops). What changed is that an ordinary chat turn now passes
+    its real caller instead of this always defaulting to the operator
+    regardless of who was actually asking — see
+    docs/security-audit-2026-08-11-scope-separation.md section 3.
+    """
     try:
         from services import auth_store, ownership
-        oid = auth_store.operator_id()
+        raw = os.environ.get("WORKSHOP_QUERY_OWNER", "").strip()
+        oid = int(raw) if raw else auth_store.operator_id()
         if oid is not None:
             ownership.set_current_owner(oid)
     except Exception:

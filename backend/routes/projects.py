@@ -26,25 +26,44 @@ from pydantic import BaseModel, Field
 
 from services import tasks, jobs, triggers, latitude as latitude_svc
 from services import paths
+from services import scope_owner
 
 router = APIRouter()
 
 # Project tree lives inside ~/workshop so the design-system gate + watchdog
 # already apply. Configurable for tests.
-PROJECTS_ROOT = paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
-# Per-instance operator state — lives in .runtime/ (gitignored), never in the
+# Both are per-OWNER and therefore functions, not constants: a module-level
+# constant is evaluated once at import, which would pin whichever owner happened
+# to be current then (in practice the operator, forever, for everyone). The
+# operator's own paths are unchanged — see paths.projects_root.
+#
+# Per-instance operator state lives in .runtime/ (gitignored), never in the
 # tracked tree, so a fresh clone starts with an empty registry instead of
 # inheriting whichever operator committed it last. Overridable for tests.
-REGISTRY = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_REGISTRY",
-    str(PROJECTS_ROOT.parent / ".runtime" / "projects.json"),
-))
-TEMPLATES_ROOT = PROJECTS_ROOT / "_templates"
+def _projects_root() -> Path:
+    return paths.projects_root()
+
+
+def _registry() -> Path:
+    return paths.projects_registry()
+
+
+def _templates_root() -> Path:
+    """Shipped project templates. NOT per-owner: tracked source the instance
+    provides, the same for everybody, forked into a real project on use."""
+    return paths.env_path(
+        "WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root") / "_templates"
 
 # Slug discipline: kebab-case, alphanumeric + dashes, max 48 chars. A leading
 # digit is fine ("3d-printer"): the frontend slugify produces it and it is valid
 # as a directory name and a route segment.
-SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
+#
+# `\Z`, not `$`: Python's `$` also matches before a trailing newline, so with
+# `.match()` (how all three call sites use this) the pattern accepted "foo\n"
+# as the slug "foo" and handed the newline through to whatever built a path
+# from it. Harmless in the cases that exist today and exactly the sort of
+# almost-right a containment check should not be built on.
+SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}\Z")
 
 State = Literal["sketch", "wip", "mounted", "shared", "published", "parked", "retired"]
 Sensitivity = Literal["private", "shareable", "public"]
@@ -55,14 +74,14 @@ def _now() -> str:
 
 
 def _load_registry() -> dict:
-    if not REGISTRY.exists():
+    if not _registry().exists():
         return {"projects": {}}
-    return json.loads(REGISTRY.read_text())
+    return json.loads(_registry().read_text())
 
 
 def _save_registry(data: dict) -> None:
-    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
-    REGISTRY.write_text(json.dumps(data, indent=2) + "\n")
+    _registry().parent.mkdir(parents=True, exist_ok=True)
+    _registry().write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _ensure_project(slug: str) -> dict:
@@ -164,8 +183,8 @@ def load_templates() -> list[dict]:
     `_templates/<name>/` reads its `template.json` for `label`/`hint`; a template
     with no (or a malformed) manifest falls back to the dir name + empty hint."""
     items = [{"slug": "blank", "label": "Blank", "hint": "Empty scaffold with the standard files"}]
-    if TEMPLATES_ROOT.exists():
-        for entry in sorted(TEMPLATES_ROOT.iterdir()):
+    if _templates_root().exists():
+        for entry in sorted(_templates_root().iterdir()):
             if not entry.is_dir() or entry.name.startswith("."):
                 continue
             label, hint = entry.name, ""
@@ -314,7 +333,7 @@ def _scaffold_blank(target: Path, slug: str, title: str, purpose: str, brief: st
 
 
 def _scaffold_from_template(target: Path, template: str, slug: str, title: str, purpose: str, brief: str) -> None:
-    tpl_dir = TEMPLATES_ROOT / template
+    tpl_dir = _templates_root() / template
     if template == "blank" or not tpl_dir.exists():
         _scaffold_blank(target, slug, title, purpose, brief)
         return
@@ -378,7 +397,7 @@ def _is_scratch_template(template: str) -> bool:
 def _assert_project_ignored(slug: str) -> None:
     """The workshop tree must never track a project working tree or its .git.
     `/projects/*` is gitignored; confirm it still holds after we touch the dir."""
-    workshop_root = PROJECTS_ROOT.parent
+    workshop_root = paths.workshop_root()
     r = subprocess.run(
         ["git", "-C", str(workshop_root), "check-ignore", f"projects/{slug}"],
         capture_output=True, text=True, timeout=15,
@@ -406,7 +425,7 @@ async def create_project(body: CreateProjectIn) -> Project:
     slug = body.slug.strip().lower()
     if not SLUG_RE.match(slug):
         raise HTTPException(400, "slug must be kebab-case alphanumeric, start with a letter, max 48 chars")
-    target = PROJECTS_ROOT / slug
+    target = _projects_root() / slug
     if target.exists():
         raise HTTPException(409, f"project dir already exists: {target}")
     data = _load_registry()
@@ -417,7 +436,7 @@ async def create_project(body: CreateProjectIn) -> Project:
     purpose = body.purpose.strip()
     brief = body.brief.strip()
 
-    PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    _projects_root().mkdir(parents=True, exist_ok=True)
     _scaffold_from_template(target, body.template, slug, title, purpose, brief)
     _git_init(target)
 
@@ -435,6 +454,10 @@ async def create_project(body: CreateProjectIn) -> Project:
         "last_touched": now,
         "claude_session": None,
         "concurrent_worktrees": False,
+        # Whose project this is. Stamped at creation so the "an absent
+        # owner_id reads as the operator's" assumption in scope_owner ages out
+        # instead of compounding.
+        **scope_owner.stamp(),
         # ZERO resident agents, explicitly (ask A4 / roles report 5.6). A new
         # project gets its autonomy preset and the project loop, and the project
         # loop IS NOT AN AGENT — it is project_ralph.sh sweeping the scope, which
@@ -694,7 +717,7 @@ def _touch(slug: str) -> None:
 #   continuous — one `loop` trigger; also eligible for background sweeps
 # The heavy lifting is scripts/project_ralph.sh; this router owns config + spawn.
 
-SCRIPTS_ROOT = PROJECTS_ROOT.parent / "scripts"
+SCRIPTS_ROOT = paths.workshop_root() / "scripts"
 
 # A Job left in `running` past this bound (e.g. a hard-killed sweep whose
 # finish() never ran) is reported as `crashed` rather than perpetually-running,
@@ -906,7 +929,7 @@ async def run_autonomy(slug: str) -> dict:
     try:
         proc = subprocess.Popen(
             ["bash", str(script), slug, "--force", "--job-id", job["id"]],
-            cwd=str(PROJECTS_ROOT.parent),
+            cwd=str(paths.workshop_root()),
             stdout=logf,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -1018,7 +1041,7 @@ def _valid_import_url(url: str) -> bool:
 
 @router.post("/import")
 async def import_project(body: ImportProjectIn) -> Project:
-    """Clone an external git repo into PROJECTS_ROOT and register it.
+    """Clone an external git repo into _projects_root() and register it.
 
     Steps: validate URL, derive/validate slug, reject collisions, git clone
     (timeout 180s, neutral committer env), stub PROJECT.md only if missing,
@@ -1034,14 +1057,14 @@ async def import_project(body: ImportProjectIn) -> Project:
     if not SLUG_RE.match(slug):
         raise HTTPException(400, "slug must be kebab-case alphanumeric, start with a letter, max 48 chars")
 
-    target = PROJECTS_ROOT / slug
+    target = _projects_root() / slug
     if target.exists():
         raise HTTPException(409, f"project dir already exists: {target}")
     data = _load_registry()
     if slug in (data.get("projects") or {}):
         raise HTTPException(409, f"slug already in registry: {slug}")
 
-    PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
+    _projects_root().mkdir(parents=True, exist_ok=True)
     env = {
         **os.environ,
         "GIT_AUTHOR_NAME": "Workshop Projects",
@@ -1090,6 +1113,10 @@ async def import_project(body: ImportProjectIn) -> Project:
         "created": now,
         "last_touched": now,
         "claude_session": None,
+        # Whose project this is. Stamped at creation so the "an absent
+        # owner_id reads as the operator's" assumption in scope_owner ages out
+        # instead of compounding.
+        **scope_owner.stamp(),
     }
     data.setdefault("projects", {})[slug] = record
     _save_registry(data)

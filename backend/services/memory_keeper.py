@@ -157,11 +157,26 @@ def _is_work_job(rec: dict) -> bool:
 def _state_dir() -> Path:
     # No eager mkdir: a dry-run reads the watermark/proposed state and must not
     # create anything. Writers (_write_watermark / _save_proposed) create the dir.
-    return knowledge._runtime() / "memory-keeper"
+    # Per-owner: this is watermark/proposal state ABOUT one person's scopes.
+    from services import ownership
+    return ownership.workspace_path(
+        knowledge._runtime() / "memory-keeper", "memory-keeper")
 
 
 def _safe_scope(scope_key: str) -> str:
-    return scope_key.replace(":", "-")
+    """A scope key as ONE filename component.
+
+    `:` -> `-` is what this used to be, and it made the name look safe while
+    leaving `/` and `..` untouched — `_write_watermark` mkdirs the parent and
+    writes, so a scope key carrying a traversal wrote outside the state dir. Not
+    HTTP-reachable (scope keys here come from agent definition frontmatter), but
+    a build agent writes those files, so "not reachable" is a statement about
+    today's callers rather than about this function. Validated the same way
+    `learnings._valid_scope` does, which is the module that already got this
+    right. See docs/security-audit-2026-08-11-scope-separation.md section 2.
+    """
+    from services import learnings
+    return learnings._valid_scope(scope_key).replace(":", "-")
 
 
 def _watermark_path(scope_key: str) -> Path:

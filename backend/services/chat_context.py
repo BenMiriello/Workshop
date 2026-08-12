@@ -1257,7 +1257,38 @@ from pathlib import Path as _Path
 
 
 def _projects_root() -> _Path:
-    return paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
+    """Per-owner; see paths.projects_root. Kept as a local alias because this
+    module's containment check and tests both monkeypatch it by name."""
+    return paths.projects_root()
+
+
+class ProjectOutsideRoot(ValueError):
+    """A project slug resolved to a directory outside `projects/`."""
+
+
+def contained_project_dir(slug: str) -> _Path:
+    """`projects/<slug>`, proven to still be inside `projects/`.
+
+    A containment check, not a name check. `get_provider` also screens the slug
+    against `routes.projects.SLUG_RE` before it ever gets here, and that alone
+    would stop `project:../../..` — but the regex lives at one call site and
+    this join is reachable from every other, so the invariant is enforced where
+    the path is actually built. What made the original traversal reach a spawn
+    was precisely this shape of gap: the only downstream guard,
+    `app_runner.is_self_dir`, is an exact-equality test against the repo root,
+    which a traversed path simply is not, so the turn ran the full agentic
+    toolset under bypassPermissions at an arbitrary host path.
+
+    `resolve()` before comparing, so a symlink inside `projects/` pointing out
+    of it is caught too. See
+    docs/security-audit-2026-08-11-scope-separation.md section 2.
+    """
+    root = _projects_root().resolve()
+    candidate = (root / slug).resolve()
+    if candidate != root and not candidate.is_relative_to(root):
+        raise ProjectOutsideRoot(
+            f"project slug {slug!r} resolves outside {root} (to {candidate})")
+    return candidate
 
 
 class ProjectContextProvider(ContextProvider):
@@ -1291,10 +1322,10 @@ class ProjectContextProvider(ContextProvider):
         # chat in the workshop project scope ran its tools against the wrong
         # tree, and `is_self` was False everywhere. A path spelled twice is a
         # path that will be spelled wrong in one of them.
-        self.dir = _projects_root() / slug
+        self.dir = contained_project_dir(slug)
         self.is_self = False
         try:
-            from routes.projects import REGISTRY as _reg
+            _reg = paths.projects_registry()
             rec = (json.loads(_reg.read_text()).get("projects") or {}).get(slug) if _reg.exists() else None
             if rec:
                 if rec.get("dir"):
@@ -1389,10 +1420,18 @@ class BuildAgentContextProvider(ContextProvider):
     def __init__(self, slug: str):
         # Defer build_agents import to avoid circulars at module load.
         from services import build_agents as _ba
-        try:
-            record = _ba.get_agent(slug)
-        except KeyError:
-            record = {"name": slug, "purpose": "", "cwd": str(paths.workshop_root()), "project_slug": None}
+        # No fallback record. This used to default an unknown slug's cwd to
+        # `workshop_root()` — the platform repo — which meant ANY nonexistent
+        # `build:<anything>` key ran full agentic tools (Bash/Edit/Write,
+        # bypassPermissions) against the Workshop's own source. The only thing
+        # standing between that and the operator's chat was `is_self_dir`'s
+        # exact-match check plus `WORKSHOP_DEV_MODE`, which is on in every
+        # deployment that also wants `development` scope to work — so the gate
+        # that was supposed to confine `development` alone was, in practice,
+        # authorizing this too. get_provider() checks existence before
+        # constructing one of these; propagate the KeyError rather than
+        # silently handing out a real cwd for a slug that names nothing.
+        record = _ba.get_agent(slug)
         self.slug = slug
         self.key = f"build:{slug}"
         self.name = record.get("name") or slug
@@ -1484,12 +1523,33 @@ _general = ContextProvider()
 # (platform MCP server, always available) so it can answer "what is going on /
 # what tasks and notes exist" on demand from the task + knowledge digest. It is
 # NOT a filesystem grant and never exposes `.runtime` secrets.
+#
+# NO OTHER TOOLS. `general` is unscoped — it has no project, no app, no build
+# dir of its own — so its only cwd is the shared non-build fallback
+# (`WORKSHOP_CHAT_CWD`, `chat.py`'s `os.environ.get(..., os.path.expanduser("~"))`),
+# which several OTHER providers (app personas) also fall back to and
+# legitimately use Bash/Edit/Write in. That fallback is not a sandbox scoped to
+# "this operator's own workshop projects" — unset, it is the account's real
+# home directory, carrying `.config/clawdbot`, `.claude`, and every other
+# credential this box holds; set (as this deployment's secrets.env does), it
+# was the platform repo itself. Once Read/Grep/Glob rode alongside the query
+# tool (2026-07-18, "Widen general chat's tool surface") plus Edit/Write/Bash,
+# `general` could read AND edit whatever that shared fallback pointed at —
+# `is_self_dir` in app_runner never caught it, because WORKSHOP_DEV_MODE is on
+# here for `development`'s own sake and gates by directory, not by scope.
+#
+# The fix is not "point the fallback somewhere safer": several providers share
+# it and each would need its own audit to know what safe means for it. The fix
+# is that `general`, having no cwd of its own to be scoped TO, gets no
+# filesystem tool at all — same posture as if this were one operator's install
+# among many, each with users who must never see anything past their own.
+# A real per-project answer goes through rescoping to project:/app:/agent:,
+# which binds a real, scoped `cwd`.
 # `search` is listed alongside `query` because this allowlist is exact: a tool
 # the server exposes but the list omits is simply unreachable, silently. It is
 # the same read-only server and the same bounded surface, and it is what the
 # chat now uses INSTEAD of having notes injected into it unasked.
-_general.allowed_tools = ["mcp__workshop__query", "mcp__workshop__search",
-                          "Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+_general.allowed_tools = ["mcp__workshop__query", "mcp__workshop__search"]
 _general.mcp_servers = ["workshop"]
 
 # Platform providers — always present, no app required: the general assistant.
@@ -1537,7 +1597,7 @@ def _self_project_slug() -> str | None:
     other four aliases, so exactly one row points at this checkout. Read by slug
     rather than assumed, because the name is data and this must not break if it
     is renamed again."""
-    from routes.projects import REGISTRY as _reg
+    _reg = paths.projects_registry()
     if not _reg.exists():
         return None
     try:
@@ -1558,7 +1618,7 @@ def _project_slugs() -> list[str]:
     `development` scope, and listing it here as well would put it under Projects
     too: two rows, two names, one tree. That is the multiplication ADR 0014
     exists to stop."""
-    from routes.projects import REGISTRY as _reg
+    _reg = paths.projects_registry()
     if not _reg.exists():
         return []
     try:
@@ -1646,6 +1706,18 @@ def dev_scope_refused(context_key: str | None) -> bool:
 
 
 def get_provider(context_key: str | None) -> ContextProvider:
+    # WHOSE scope is this? Asked first, before any branch below can turn a key
+    # into a working directory. Every HTTP route reaching a project, agent or
+    # worktree is mounted operator-only, so the REST surface never needed to
+    # ask; chat is mounted for any authenticated user, takes `context_key`
+    # verbatim from the client, and hands the result a cwd plus (on the build
+    # branches) the full agentic toolset. A caller who is not the owner
+    # degrades to `general`, the same way a refused `development` does — see
+    # services/scope_owner.py.
+    from services import scope_owner
+    if not scope_owner.may_reach(context_key):
+        log.warning("refusing scope %r: not the caller's to reach", context_key)
+        context_key = None
     if context_key == "development":
         from services import app_runner
         if app_runner.dev_mode_on():
@@ -1662,11 +1734,37 @@ def get_provider(context_key: str | None) -> ContextProvider:
         # become invisible.
     if context_key and context_key.startswith("project:"):
         slug = context_key.split(":", 1)[1]
-        return ProjectContextProvider(slug)
-    if context_key and context_key.startswith("build:"):
+        # Constrained to the same slug shape project CREATION already enforces
+        # (routes/projects.py). Every real project satisfies this, so the check
+        # costs nothing legitimate; what it stops is `project:../../..` — with
+        # no gate here, ProjectContextProvider's own fallback
+        # (`_projects_root() / slug`) joined that unchecked, resolving OUTSIDE
+        # `projects/` entirely, and the only downstream check
+        # (`app_runner.is_self_dir`) is an exact-equality test that a traversal
+        # target simply isn't. That gave a chat full agentic tools
+        # (bypassPermissions, no --allowedTools) at an arbitrary host path.
+        #
+        # Belt AND braces on purpose, and they are different checks: the regex
+        # here rejects a malformed KEY, `contained_project_dir` inside the
+        # constructor proves the resulting PATH. Neither subsumes the other —
+        # the regex does not see symlinks, and the containment check does not
+        # care what the key looks like.
+        from routes.projects import SLUG_RE as _project_slug_re
+        if _project_slug_re.match(slug):
+            try:
+                return ProjectContextProvider(slug)
+            except ProjectOutsideRoot:
+                log.warning("refusing project scope %r: resolves outside projects/",
+                            context_key)
+        # An invalid slug falls through to `general`, same as any other unknown
+        # key — not a 500, not a provider built from an unchecked path.
+    elif context_key and context_key.startswith("build:"):
         slug = context_key.split(":", 1)[1]
-        return BuildAgentContextProvider(slug)
-    if context_key and context_key.startswith("agent:"):
+        try:
+            return BuildAgentContextProvider(slug)
+        except KeyError:
+            pass  # unknown slug: falls through to `general`, same as agent: below
+    elif context_key and context_key.startswith("agent:"):
         # A registry agent bound to this chat. Builders resolve to the build
         # provider (their runtime); assistants resolve to the assistant provider
         # (persona from the definition body). An unknown slug falls back to
@@ -1679,8 +1777,12 @@ def get_provider(context_key: str | None) -> ContextProvider:
             rec = None
         if rec and not rec.get("retired"):
             if rec.get("runtime") == "builder":
-                return BuildAgentContextProvider(slug)
-            return AssistantAgentContextProvider(slug, rec)
+                try:
+                    return BuildAgentContextProvider(slug)
+                except KeyError:
+                    pass  # the agent registry and build_agents registry disagree; fall through
+            else:
+                return AssistantAgentContextProvider(slug, rec)
     providers = provider_map()
     return providers.get(context_key or "general", providers["general"])
 

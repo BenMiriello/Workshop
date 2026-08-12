@@ -1831,6 +1831,11 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     if not write_to_turn(turn.id, _prompt, att_blocks, origin=meta.get("origin")):
         turn.error = "could not deliver the prompt to the turn's input channel"
         _push(turn, "error", {"detail": turn.error})
+        # The write failed outright, so the message went nowhere at all. Same
+        # loss as one the CLI never read, and the same remedy: record it as an
+        # unread delivery so `_requeue_unread` puts it back on the queue and the
+        # drain sends it. Nothing else would ever retry it.
+        turn.unread.append({"origin": meta.get("origin") or []})
         await _retire_turn_proc(proc.pid, proc)
         _cleanup_turn_input(turn.id)
         await _finalize_turn(turn, meta, rc=-1, timed_out=False, compacted=False)

@@ -24,7 +24,21 @@ from services import task_scope
 def root(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKSHOP_ROOT", str(tmp_path))
     (tmp_path / "shared" / "knowledge").mkdir(parents=True)
-    return tmp_path
+    # The fence's explicit `scope` is an operator-only override (see
+    # apply_note_block): for anyone else it is a way to write into a scope the
+    # chat is not bound to, `workshop` above all, which is read into every other
+    # chat's ambient context. These cases exercise that override, so they need a
+    # real operator pinned rather than the unset owner a bare unit test has.
+    from services import auth_store, ownership
+    monkeypatch.setattr(auth_store, "DB_PATH", tmp_path / "auth.db")
+    auth_store.init_db()
+    op = auth_store.create_user("operator@example.com", "password1")
+    auth_store.set_operator(op["id"])
+    ownership.set_current_owner(op["id"])
+    try:
+        yield tmp_path
+    finally:
+        ownership.clear_current_owner()
 
 
 def _apply(reply: str):

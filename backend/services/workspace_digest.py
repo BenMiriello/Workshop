@@ -44,7 +44,8 @@ def _project_roots() -> list[tuple[str, Path]]:
     """(label, task-root) for every registered project. Best-effort."""
     out: list[tuple[str, Path]] = []
     try:
-        from routes.projects import REGISTRY
+        from services.paths import projects_registry as _pr
+        REGISTRY = _pr()
         if not REGISTRY.exists():
             return out
         data = json.loads(REGISTRY.read_text())

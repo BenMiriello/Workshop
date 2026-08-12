@@ -558,15 +558,29 @@ def _platform_mcp_servers() -> dict[str, dict]:
     python = os.environ.get(
         "WORKSHOP_MCP_PYTHON", str(backend_dir / ".venv" / "bin" / "python")
     )
+    env = {
+        "PYTHONPATH": str(backend_dir),
+        "WORKSHOP_QUERY_SCOPE": os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop"),
+    }
+    # WHOSE digest this turn gets. The server is a separate stdio subprocess —
+    # it does not inherit this process's request-scoped `ownership` contextvar,
+    # so it used to hardcode itself to the operator ("Single-operator system")
+    # regardless of who was actually asking. Read here, where the real caller
+    # IS known (this function runs inside the request, before the spawn), and
+    # handed down explicitly. `owner_or_none()` rather than `current_owner()`:
+    # a background pass that hasn't pinned an owner gets no env var and the
+    # server's own fallback (still the operator, which is correct there — see
+    # ownership.py's "top of each background loop... to the operator's id").
+    from services import ownership
+    owner_id = ownership.owner_or_none()
+    if owner_id is not None:
+        env["WORKSHOP_QUERY_OWNER"] = str(owner_id)
     return {
         "workshop": {
             "type": "stdio",
             "command": python,
             "args": [str(server)],
-            "env": {
-                "PYTHONPATH": str(backend_dir),
-                "WORKSHOP_QUERY_SCOPE": os.environ.get("WORKSHOP_QUERY_SCOPE", "workshop"),
-            },
+            "env": env,
         }
     }
 

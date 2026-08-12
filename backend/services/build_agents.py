@@ -29,13 +29,26 @@ from services import paths
 
 # Per-instance operator state — lives in .runtime/ (gitignored), never in the
 # tracked tree. See routes/projects.py for the matching rationale.
-REGISTRY = paths.env_path("WORKSHOP_BUILD_AGENTS_JSON", "build_agents.json")
-SCRATCH_ROOT = paths.env_path("WORKSHOP_BUILD_AGENTS_SCRATCH", "build-agents", base="root")
-PROJECTS_ROOT = paths.env_path("WORKSHOP_PROJECTS_ROOT_NEW", "projects", base="root")
-PROJECTS_REGISTRY = Path(os.environ.get(
-    "WORKSHOP_PROJECTS_REGISTRY",
-    str(PROJECTS_ROOT.parent / ".runtime" / "projects.json"),
-))
+# Functions rather than constants so tests and a relocated root are honoured at
+# CALL time. NOT per-owner: a build agent is owned by its registry record's
+# `owner_id`, not by which directory it sits in, because `build:<slug>` is a
+# global scope key — see paths.projects_root for the full reasoning.
+def _registry() -> Path:
+    return paths.env_path("WORKSHOP_BUILD_AGENTS_JSON", "build_agents.json")
+
+
+def _scratch_root() -> Path:
+    return paths.env_path("WORKSHOP_BUILD_AGENTS_SCRATCH", "build-agents", base="root")
+
+
+def _projects_registry() -> Path:
+    return paths.projects_registry()
+
+
+def _scope_owner():
+    # Local import: scope_owner reads this module's own registry.
+    from services import scope_owner
+    return scope_owner
 
 SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 
@@ -47,24 +60,24 @@ def _now() -> str:
 
 
 def _load() -> dict:
-    if not REGISTRY.exists():
+    if not _registry().exists():
         return {"build_agents": {}}
     try:
-        return json.loads(REGISTRY.read_text())
+        return json.loads(_registry().read_text())
     except Exception:
         return {"build_agents": {}}
 
 
 def _save(data: dict) -> None:
-    REGISTRY.parent.mkdir(parents=True, exist_ok=True)
-    REGISTRY.write_text(json.dumps(data, indent=2) + "\n")
+    _registry().parent.mkdir(parents=True, exist_ok=True)
+    _registry().write_text(json.dumps(data, indent=2) + "\n")
 
 
 def _project_dir(slug: str) -> Path | None:
-    if not PROJECTS_REGISTRY.exists():
+    if not _projects_registry().exists():
         return None
     try:
-        reg = json.loads(PROJECTS_REGISTRY.read_text())
+        reg = json.loads(_projects_registry().read_text())
     except Exception:
         return None
     p = (reg.get("projects") or {}).get(slug)
@@ -118,8 +131,8 @@ def create_agent(
             raise ValueError(f"project not found: {project_slug}")
         cwd = pd
     else:
-        SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
-        cwd = SCRATCH_ROOT / slug
+        _scratch_root().mkdir(parents=True, exist_ok=True)
+        cwd = _scratch_root() / slug
         cwd.mkdir(parents=True, exist_ok=False)
         # Drop the same agent rules + brief scaffold a Project would get.
         (cwd / "PROJECT.md").write_text(
@@ -166,6 +179,8 @@ def create_agent(
         "created": now,
         "last_active": now,
         "claude_session": None,
+        # Whose build agent this is — see services/scope_owner.py.
+        **_scope_owner().stamp(),
     }
     data.setdefault("build_agents", {})[slug] = record
     _save(data)

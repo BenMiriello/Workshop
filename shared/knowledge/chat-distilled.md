@@ -58,3 +58,8 @@
 - Chat bubbles sent mid-turn should render dimmed until turn completes, but this behavior remains broken after attempted fix
 - Operator prefers research-first approach before implementing design or styling decisions
 - Multiple concurrent agents editing chat UI concurrently creates file races; coordinate carefully on overlapping regions
+- Workshop must be deployable as a generalized system without personal/system-specific code or data hardcoded — a long-standing design requirement the operator is enforcing now.
+- Veritus (veritusagent org) is the operator's work boundary; personal workshop must never reference or depend on it; the blocklist should move to instance config (WORKSHOP_GITHUB_OWNER + WORKSHOP_BLOCKED_REPO_OWNERS) not core code.
+- Apps must be pluggable (separate repos or projects/ entries), not enumerated in platform core; frontend should build routes from manifest, not hardcode static imports in App.tsx.
+- Paths and machine identity (/home/clawd-a, hostnames, Discord snowflakes, map center, mobile defaults) must derive from env or instance config, never hardcoded.
+- Personal data files (relay-corpus.jsonl, store-policies.json) should be gitignored and untracked.

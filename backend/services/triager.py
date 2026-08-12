@@ -115,11 +115,18 @@ def validate_decision(value: object) -> str:
 
 def _state_dir() -> Path:
     # No eager mkdir: a dry-run reads state and must create nothing.
-    return knowledge._runtime() / "triager"
+    # Per-owner: this is watermark/proposal state ABOUT one person's scopes.
+    from services import ownership
+    return ownership.workspace_path(
+        knowledge._runtime() / "triager", "triager")
 
 
 def _safe_scope(scope_key: str) -> str:
-    return scope_key.replace(":", "-")
+    """A scope key as ONE filename component — see memory_keeper._safe_scope,
+    which had the identical defect: `:` -> `-` left `/` and `..` intact, and
+    `state_path`'s caller writes to whatever comes back."""
+    from services import learnings
+    return learnings._valid_scope(scope_key).replace(":", "-")
 
 
 def state_path(scope_key: str) -> Path:

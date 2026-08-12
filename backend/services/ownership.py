@@ -72,9 +72,77 @@ def owner_or_none() -> int | None:
     return _owner_ctx.get()
 
 
+def caller_is_operator() -> bool:
+    """Is the current request-scoped owner the single operator account?
+
+    NOT a personal-data authorization check — data access is owner-scoped
+    (every personal store filters by `current_owner()`, never by "is this the
+    operator"), and `auth_store.operator_id()`'s own docstring is explicit that
+    no request path may branch on it to grant access to data someone else
+    owns. This is narrower and different in kind: it exists for the handful of
+    INSTANCE-WIDE stores that predate per-user ownership and have no owner_id
+    in them at all — `shared/knowledge/`'s workshop layer, the cross-chat work
+    digest, MCP server credentials (Plaid, Google, Discord) — all of it
+    configured by, and about, whoever set up this Workshop instance. Until
+    those get real per-user partitioning, "belongs to the operator" is the
+    true, literal answer for all of them, and every caller that isn't the
+    operator gets none of it rather than someone else's. Fails closed (False)
+    on an unset owner or a bootstrap that hasn't run. See
+    docs/security-audit-2026-08-11-scope-separation.md.
+    """
+    from services import auth_store
+    try:
+        owner_id = current_owner()
+    except OwnerUnset:
+        return False
+    operator_id = auth_store.operator_id()
+    return operator_id is not None and owner_id == operator_id
+
+
 def user_runtime_dir(owner_id: int | None = None) -> Path:
     """`.runtime/users/<owner_id>/` for the given (or current) owner, created."""
     uid = owner_id if owner_id is not None else current_owner()
     d = _RUNTIME / "users" / str(int(uid))
     d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def workspace_path(operator_default: Path, under: str) -> Path:
+    """The current owner's copy of a WORKSPACE-level store.
+
+    A workspace is everything a person accumulates by using their Workshop:
+    projects, build agents, their agent roster, their knowledge, their queue,
+    their job history. All of it predates per-user ownership and all of it lived
+    at exactly one path — so "another user's Workshop" was the same projects
+    directory, the same registry file, the same knowledge layer read into every
+    prompt. Not a weak boundary; the same drawer.
+
+    Two rules, and the second is why this is a helper rather than a convention:
+
+    1. **The operator does not move.** `projects/`, `agents/`, `shared/knowledge/`
+       are git-tracked, opened in editors, and referenced by scripts and cron.
+       Repointing them would be a migration with a blast radius far larger than
+       the leak it closes, so the operator keeps `operator_default` byte for
+       byte and everyone else gets `.runtime/users/<id>/workspace/<under>/`.
+    2. **No owner pinned means the operator's**, matching `ownership.py`'s own
+       rule for background loops (they pin the operator's id) and keeping every
+       CLI script and unit test working unchanged. Request paths always have an
+       owner: `deps_user` pins it before any route body runs.
+
+    This is deliberately NOT another `caller_is_operator()` gate. A gate answers
+    "may you see the operator's store" with no, which secures the instance and
+    leaves the second user with a Workshop missing half its features. This
+    answers "which store is yours" — so the ambient knowledge injection, the
+    note fences and the work digest can go back to running for everybody,
+    against their own data. The gates it replaces are removed, not stacked.
+
+    Callers must resolve through this at CALL time, never capture it in a
+    module-level constant: those are evaluated once at import, which would pin
+    whichever owner happened to be current then — in practice the operator,
+    forever, for everyone.
+    """
+    if caller_is_operator() or owner_or_none() is None:
+        return operator_default
+    d = user_runtime_dir() / "workspace" / under
+    d.parent.mkdir(parents=True, exist_ok=True)
     return d
