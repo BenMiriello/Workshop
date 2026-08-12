@@ -95,17 +95,6 @@ export const taskStateTypeOf = (
     ? (task.state_type as TaskStateType)
     : taskStateType(task.status);
 
-const TASK_STATE_TYPE_LABEL: Record<TaskStateType, string> = {
-  backlog: "Backlog",
-  unstarted: "Unstarted",
-  started: "Started",
-  completed: "Completed",
-  canceled: "Canceled",
-};
-
-export const taskStateTypeLabel = (type?: string): string =>
-  TASK_STATE_TYPE_LABEL[(type ?? "") as TaskStateType] ?? String(type ?? "");
-
 export type TaskEvidence = {
   kind?: string;
   ref?: string;
@@ -160,16 +149,6 @@ export type TaskAcceptance = {
   kind: TaskAcceptanceKind;
   spec?: string | null;
 };
-
-// UI labels for the acceptance kinds (kept beside the type so no screen re-derives).
-const TASK_ACCEPTANCE_LABEL: Record<TaskAcceptanceKind, string> = {
-  reviewer: "reviewer pass",
-  command: "command exits 0",
-  operator: "operator approves",
-};
-
-export const taskAcceptanceLabel = (kind?: string): string =>
-  TASK_ACCEPTANCE_LABEL[(kind ?? "") as TaskAcceptanceKind] ?? String(kind ?? "");
 
 // ---- latitude ---------------------------------------------------------------
 // What a worker is TOLD to do where the ticket does not say (backend
@@ -411,26 +390,6 @@ export type TicketReadiness = {
   missing: { check: string; why: string }[];
   warnings: string[];
 };
-
-// The checks that refuse a run, mirroring ticket_readiness.BLOCKING. Everything
-// else is advice, and the UI has to show the difference or the checklist reads
-// as a wall of equally-urgent failures.
-const BLOCKING_CHECKS = new Set(["title", "dependencies"]);
-
-export const isBlockingCheck = (check: string): boolean => BLOCKING_CHECKS.has(check);
-
-// Human labels for each check, so the checklist reads as prose and not as keys.
-const READINESS_LABEL: Record<string, string> = {
-  title: "Title",
-  objective: "Objective",
-  acceptance: "What done looks like",
-  entry_points: "Where to start",
-  boundaries: "Boundaries",
-  dependencies: "Dependencies",
-};
-
-export const readinessLabel = (check: string): string =>
-  READINESS_LABEL[check] ?? check;
 
 // A friendly label for a scope key, for filters and the scope link.
 export function scopeLabel(scope?: string): string {
