@@ -6,7 +6,7 @@ import type { TranscriptBlock } from "./transcriptBlocks";
 import { logPlaceholder } from "./chatLogState";
 import type { ChatProblem } from "./chatProblem";
 import ChatProblemBlock from "./ChatProblemBlock";
-import MessageList, { type AnswerPermissionFor } from "./MessageList";
+import MessageList, { SentAttachments, type AnswerPermissionFor } from "./MessageList";
 import CopyMessage from "./CopyMessage";
 import StatusNote from "./StatusNote";
 import UnsentNote from "./UnsentNote";
@@ -91,7 +91,10 @@ export default function ChatLog({
   // The run in flight, so a pending approval on it can be answered. Persisted
   // messages carry their own turn id; a live one has not been committed yet.
   liveTurnId?: string | null;
-  queued: { text: string; sentAt: string; clientId: string; failed?: boolean }[];
+  queued: {
+    text: string; sentAt: string; clientId: string; failed?: boolean;
+    attachments?: { id: string; name: string; kind: "image" | "pdf" | "text" }[];
+  }[];
   // Progress on a queued message, keyed by the id it will be sent with so it
   // stays under the entry it belongs to as other messages queue up behind it.
   queuedStatus: { for: string; status: MsgStatus } | null;
@@ -145,6 +148,9 @@ export default function ChatLog({
             title={q.failed ? undefined : "Queued, sends when the current turn finishes"}
           >
             <div className="chat-bubble__body">
+              {/* A queued message keeps its files visible too. They are already
+                  uploaded, so the only thing waiting is the turn. */}
+              {!!q.attachments?.length && <SentAttachments items={q.attachments} />}
               {q.text}
               {q.failed && <UnsentNote onRetry={() => onRetryQueued(q.clientId)} />}
             </div>

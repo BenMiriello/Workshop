@@ -288,7 +288,7 @@ const MessageBubble = memo(function MessageBubble({
  *  installed app has no tab strip and no back gesture, so opening your own
  *  screenshot meant force-quitting the app to get back to the chat. It opens an
  *  overlay over the transcript now and the conversation keeps its place. */
-function SentAttachments({ items }: {
+export function SentAttachments({ items }: {
   items: NonNullable<NonNullable<ChatMsg["meta"]>["attachments"]>;
 }) {
   const [viewing, setViewing] = useState<ViewableAttachment | null>(null);
@@ -316,11 +316,12 @@ function SentAttachments({ items }: {
 }
 
 function PendingBubble({
-  text, status, error, onRetry,
+  text, status, error, attachments, onRetry,
 }: {
   text: string;
   status: "sending" | "sent" | "failed";
   error?: string;
+  attachments?: NonNullable<ChatMsg["meta"]>["attachments"];
   onRetry: () => void;
 }) {
   const failed = status === "failed";
@@ -328,6 +329,10 @@ function PendingBubble({
     <div className="chat-msg user">
       <div className={`chat-bubble ${failed ? "" : "chat-bubble--inflight"}${text.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
+          {/* Shown while the send is still in flight, not only once it commits.
+              Without this an attached image vanished for the length of the round
+              trip and then reappeared, which reads as the file not having gone. */}
+          {!!attachments?.length && <SentAttachments items={attachments} />}
           {text}
           {failed && <UnsentNote reason={error} onRetry={onRetry} />}
         </div>
@@ -415,6 +420,7 @@ function MessageList({
           {b.kind === "pending" && (
             <PendingBubble
               text={b.text} status={b.status} error={b.error}
+              attachments={b.attachments}
               onRetry={() => onRetry(b.clientId)}
             />
           )}

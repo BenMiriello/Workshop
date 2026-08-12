@@ -57,6 +57,10 @@ export type TranscriptBlock =
   | {
       kind: "pending"; key: string; clientId: string; text: string;
       status: PendingStatus; error?: string;
+      // Files this send carries. Rendered on the in-flight bubble too, so an
+      // image you just sent shows its chip immediately rather than appearing
+      // out of nowhere the moment the server commits the message.
+      attachments?: PendingSend["attachments"];
     }
   // The context boundary a /compact or /clear left behind.
   | { kind: "cut"; key: string; count: number; cleared: boolean };
@@ -328,6 +332,7 @@ export function composeTranscript(
   const toBlock = (p: PendingSend): TranscriptBlock => ({
     kind: "pending", key: `p:${p.clientId}`, clientId: p.clientId, text: p.text,
     status: p.status, ...(p.error ? { error: p.error } : {}),
+    ...(p.attachments?.length ? { attachments: p.attachments } : {}),
   });
 
   // Anchored back-to-front so an index computed against `out` is still valid
@@ -400,7 +405,12 @@ export function withoutCommitted<T extends { clientId: string }>(
 
 export function withStaleFailures(
   blocks: TranscriptBlock[],
-  staleFailed: { clientId: string; text: string; error?: string }[],
+  staleFailed: {
+    clientId: string; text: string; error?: string;
+    // A send that failed and was reloaded still shows the files it carried, so
+    // the retry visibly re-sends the same message rather than a bare line.
+    attachments?: PendingSend["attachments"];
+  }[],
 ): TranscriptBlock[] {
   if (!staleFailed.length) return blocks;
   const liveAt = blocks.findIndex((b) => b.kind === "live");
@@ -408,6 +418,7 @@ export function withStaleFailures(
   const extra: TranscriptBlock[] = staleFailed.map((q) => ({
     kind: "pending", key: `stale:${q.clientId}`, clientId: q.clientId,
     text: q.text, status: "failed",
+    ...(q.attachments?.length ? { attachments: q.attachments } : {}),
     // WHY IT FAILED, carried across the reload with the text. It used to be
     // dropped here, so a 403 or a 500 came back after a refresh reading "this
     // message never reached the server" (UnsentNote's default) — the one
