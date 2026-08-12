@@ -417,7 +417,8 @@ def _note_id_from_title(title: str) -> str:
     return f"{base}-{int(time.time() * 1000):x}"
 
 
-async def apply_note_block(context_key: str | None, reply: str) -> tuple[str, list[str]]:
+async def apply_note_block(context_key: str | None, reply: str,
+                           author: str = "") -> tuple[str, list[str]]:
     """Find a ``note`` block, write its {scope, title, body} as a durable note in
     the knowledge store (the Notes substrate), strip the block, and return
     (cleaned_reply, notes). No-op (reply unchanged, empty notes) when there is no
@@ -450,7 +451,10 @@ async def apply_note_block(context_key: str | None, reply: str) -> tuple[str, li
 
     note_id = _note_id_from_title(title or "note")
     try:
-        await knowledge.put_note(scope, note_id, title or note_id, body)
+        # `author` is an origin string (services/origin): which speaker wrote
+        # this. Without it, a note the assistant wrote, one an @mentioned agent
+        # wrote, and one distilled from a compaction are identical on recall.
+        await knowledge.put_note(scope, note_id, title or note_id, body, author=author)
     except ValueError as e:
         # Report what actually failed. put_note validates the scope AND the note
         # id, so blaming the scope for either sent the operator looking at a

@@ -82,7 +82,15 @@ def _open_task_lines(root: Path, cap: int, *, label: str | None = None) -> tuple
     # stable for the prompt cache.
     top.sort(key=_created)
     prefix = f"[{label}] " if label else ""
-    lines = [f"- {prefix}{_clip(t.get('text') or '')}" for t in top]
+    # WHO FILED IT rides along. `source.kind` is one of operator / chat / agent /
+    # autogen (services/tasks.py) and was dropped here, so a ticket the operator
+    # wrote by hand and one an agent generated read identically in the digest.
+    # `chat` is the unmarked majority and stays bare to keep the block small.
+    # See docs/decisions/0015-transcript-structure-and-content-provenance.md §8.
+    def _by(t: dict) -> str:
+        kind = ((t.get("source") or {}).get("kind") or "").strip()
+        return f" [filed by {kind}]" if kind and kind != "chat" else ""
+    lines = [f"- {prefix}{_clip(t.get('text') or '')}{_by(t)}" for t in top]
     return lines, total
 
 

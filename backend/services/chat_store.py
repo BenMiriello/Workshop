@@ -1067,6 +1067,7 @@ def commit_run(
     error: bool = False,
     timed_out: bool = False,
     notes: list[str] | None = None,
+    receipts: list[dict] | None = None,
     stopped: str | None = None,
     agent: str | None = None,
     state: str = "finished",
@@ -1089,7 +1090,12 @@ def commit_run(
     `stopped` names any OTHER non-completion ending — STOPPED_BY_OPERATOR when
     the operator pressed Stop, STOPPED_INTERRUPTED when a restart orphaned the
     run. `notes` carries the action pipeline's human-readable results (e.g.
-    "Updated the plan")."""
+    "Updated the plan").
+
+    `receipts` is the same information TYPED: [{kind, label}], where kind names
+    what changed outside the chat (note / ticket / learning / action / warn).
+    `notes` stays alongside it and stays the plain labels, because every stored
+    turn already has it and nothing may lose an old one on read."""
     stored = chat_log.read_meta(thread_id)
     if stored is None:
         return None
@@ -1115,6 +1121,8 @@ def commit_run(
         meta["stopped"] = stopped
     if notes:
         meta["notes"] = notes
+    if receipts:
+        meta["receipts"] = receipts
     if agent:
         meta["agent"] = agent
     ev = chat_log.append_message_sync(thread_id, "assistant", content, meta=meta,

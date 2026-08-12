@@ -35,6 +35,7 @@ from services import scope_version
 from services import agent_authority
 from services import ticket_drafts
 from services import knowledge
+from services import origin
 from services import skills
 from services import llm_router
 from services import build_streaming
@@ -798,6 +799,24 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     }
 
 
+def _recalled_block(hit: dict) -> str:
+    """One retrieved note, carrying WHO WROTE IT.
+
+    A note the operator hand-wrote, one the model wrote through a ```note```
+    block, and one Haiku distilled during compaction used to be byte-identical
+    on re-entry. `author` is "" on notes written before knowledge.put_note
+    recorded one, which is most of them, and those keep the old bare form.
+    See docs/decisions/0015 §8 case 3.
+    """
+    label = hit.get("note_id") or "note"
+    author = (hit.get("author") or "").strip()
+    # `self` is suppressed: a note this assistant wrote is the case that fires
+    # most often and says least, and a label that adds nothing still costs
+    # tokens on every turn it is recalled.
+    head = f"[{label} · written by {author}]" if author and author != "self" else f"[{label}]"
+    return f"{head} {origin.escape_markers((hit.get('text') or '').strip())}"
+
+
 def _build_prompt(
     provider: chat_context.ContextProvider,
     history: list[dict],
@@ -908,12 +927,23 @@ def _build_prompt(
     # only changes when a compaction runs, not every turn, so it sits just before
     # the recent verbatim turns.
     if summary:
-        parts.append("=== EARLIER CONVERSATION (summary) ===\n" + summary)
+        # ATTRIBUTED, because a different and cheaper model wrote it
+        # (_summarize_sync calls TIER_HAIKU). Unlabelled, a third-person account
+        # of the conversation reads as neutral fact the assistant itself
+        # established. See docs/decisions/0015 §8 case 2.
+        parts.append(origin.heading("EARLIER CONVERSATION (summary)",
+                                    origin.derived(llm_router.TIER_HAIKU))
+                     + "\n" + origin.escape_markers(summary))
     if history:
+        # `meta.agent` names the AGENT that produced a reply when the operator
+        # addressed one by @mention. It is stored on every such message and was
+        # dropped here, so the assistant was handed another agent's words as its
+        # own. The @mention path already did this correctly; this is the same
+        # rule on the default path. See docs/decisions/0015 §8 case 1.
         convo = []
         for m in history[-MAX_HISTORY:]:
-            who = "Operator" if m["role"] == "user" else "You"
-            convo.append(f"{who}: {m['content']}")
+            who = origin.speaker_label(m["role"], m.get("meta"))
+            convo.append(f"{who}: {origin.escape_markers(m['content'])}")
         parts.append("=== CONVERSATION SO FAR ===\n" + "\n\n".join(convo))
     # --- VOLATILE TAIL (Phase 3 cache-stable ordering) ---------------------------
     # Everything that changes every turn goes AFTER the conversation so it never
@@ -930,7 +960,7 @@ def _build_prompt(
         parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append(
         "=== NOW REPLY ===\n"
-        f"Operator: {user_msg}\n\n"
+        f"Operator: {origin.escape_markers(user_msg)}\n\n"
         "Reply as the assistant. Output only your reply text (plus a plan-patch block if a "
         "change was requested). No 'You:' prefix."
     )
@@ -969,10 +999,15 @@ def _est_tokens(msgs: list[dict]) -> int:
 
 
 def _fmt_turns(msgs: list[dict]) -> str:
+    # Named speakers, not a flat Operator/Assistant split. A summary that folds
+    # an @mentioned agent's reply into "Assistant" makes the summary itself a
+    # provenance leak: everything downstream of the fold then reads as one voice.
     out = []
     for m in msgs:
-        who = "Operator" if m.get("role") == "user" else "Assistant"
-        out.append(f"{who}: {m.get('content', '')}")
+        who = origin.speaker_label(m.get("role", ""), m.get("meta"))
+        if who == "You":
+            who = "Assistant"
+        out.append(f"{who}: {origin.escape_markers(m.get('content', ''))}")
     return "\n\n".join(out)
 
 
@@ -1053,15 +1088,22 @@ async def _distill(to_fold: list[dict], scope_key: str) -> None:
         facts = await asyncio.to_thread(_distill_sync, to_fold)
         if not facts:
             return
-        existing = knowledge.get_note(scope_key, "chat-distilled") or ""
+        # Strip the author marker off the body before appending to it: it lives
+        # on the first line, and put_note re-stamps it. Carrying it through
+        # would bury a second copy of it in the middle of the note.
+        _, existing = knowledge.split_author(knowledge.get_note(scope_key, "chat-distilled") or "")
         have = {ln.strip().lstrip("- ").strip().lower() for ln in existing.splitlines() if ln.strip()}
         fresh = [f for f in facts if f.strip().lower() not in have]
         if not fresh:
             return
         prefix = existing.rstrip() + "\n" if existing.strip() else ""
         body = (prefix + "\n".join(f"- {f}" for f in fresh))[-8000:]
+        # A DIFFERENT AND CHEAPER MODEL wrote these lines, from turns it was
+        # shown once. Unattributed, they come back on a later turn looking like
+        # facts the assistant established itself. See docs/decisions/0015 §8.
         await knowledge.put_note(scope_key, "chat-distilled", "Distilled from chats", body,
-                                 hook="facts auto-captured from chat compaction")
+                                 hook="facts auto-captured from chat compaction",
+                                 author=origin.derived(llm_router.TIER_HAIKU))
     except Exception as e:
         log.warning("chat distillation failed for %s: %s", scope_key, e)
 
@@ -1614,7 +1656,7 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
         if len(content.strip()) >= 8:
             try:
                 hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
-                blocks = [f"[{h.get('note_id') or 'note'}] {(h.get('text') or '').strip()}" for h in hits]
+                blocks = [_recalled_block(h) for h in hits]
                 recalled = "\n\n".join(blocks)[:2000]
             except Exception as e:
                 log.warning("chat auto-recall failed for %s: %s", provider.key, e)
@@ -1746,7 +1788,7 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
     if not chat_context.is_build_provider(provider) and len(content.strip()) >= 8:
         try:
             hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
-            blocks = [f"[{h.get('note_id') or 'note'}] {(h.get('text') or '').strip()}" for h in hits]
+            blocks = [_recalled_block(h) for h in hits]
             recalled = "\n\n".join(blocks)[:2000]
         except Exception as e:
             log.warning("chat auto-recall failed for %s: %s", provider.key, e)

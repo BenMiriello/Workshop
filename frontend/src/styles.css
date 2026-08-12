@@ -705,8 +705,59 @@ input[type="range"].grad::-moz-range-thumb {
   color: var(--muted);
 }
 
-/* Action confirmations (e.g. "Updated plan: ..."). */
-.chat-note { margin-top: 0.3rem; font-size: 0.74rem; color: var(--accent); background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 0.25rem 0.5rem; }
+/* ---- Merged group: one row for a run of read-only steps ----
+   Same row language as .chat-tool because it IS a row of steps, but it has no
+   box of its own: a group is a summary of siblings, not a container beside
+   them, and giving it a second border made a turn read as boxes inside boxes.
+   Hierarchy comes from the inset body, not from a frame. */
+.chat-group { margin: 0.3rem 0; min-width: 0; }
+.chat-group__head {
+  display: flex; align-items: center; gap: 0.4rem;
+  width: 100%; min-width: 0; padding: 0.3rem 0.5rem;
+  background: transparent; border: none; color: var(--muted);
+  font-size: var(--fs-xs); text-align: left; cursor: pointer;
+  border-radius: var(--radius-md);
+}
+.chat-group__head:hover { color: var(--fg); background: var(--bg-inset); }
+.chat-group__chev { flex: 0 0 auto; transition: transform 0.12s ease; }
+.chat-group.is-open .chat-group__chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .chat-group__chev { transition: none; } }
+.chat-group__icon { flex: 0 0 auto; }
+.chat-group__name { flex: 0 0 auto; font-weight: var(--fw-semi); color: var(--fg); }
+/* The objects it acted on, clamped at the reader's real width. A collapsed
+   summary that hides its object is the failure this whole rule exists to
+   avoid, so the line is elided, never dropped. */
+.chat-group__preview {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85;
+}
+.chat-group > div { padding-left: 0.6rem; border-left: 2px solid var(--border); }
+
+/* How long a step took, or has been taking. Tabular so a ticking counter does
+   not shift the row it sits on. */
+.chat-tool__time { flex: 0 0 auto; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.chat-tool.is-running .chat-tool__time { color: var(--accent); }
+/* A failed step. Opened by default and marked, because a step that failed is
+   usually the reason the turn did what it did next. */
+.chat-tool__failed { flex: 0 0 auto; color: var(--danger); font-weight: var(--fw-semi); }
+.chat-tool.is-failed { border-color: var(--danger); }
+
+/* ---- Receipts: what the turn changed outside the chat ----
+   One row per turn, outside every fold. Quiet by default: a receipt records
+   that something landed, and the reader mostly needs to be able to see it was
+   recorded, not to be told about it. */
+.chat-receipts {
+  margin-top: 0.3rem; display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem;
+  font-size: var(--fs-xs);
+}
+.chat-receipt { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--muted); }
+.chat-receipt--ok > svg { color: var(--ok); flex: 0 0 auto; }
+.chat-receipt--warn { color: var(--warn); }
+.chat-receipt--warn > svg { flex: 0 0 auto; }
+
+/* How a turn ENDED, which is not a receipt: nothing changed, the run just
+   stopped. One quiet line, no card, no accent. */
+.chat-status-line { margin-top: 0.3rem; font-size: var(--fs-xs); color: var(--muted); }
 /* Progress on something a message set off, under that message — see
    chat/StatusNote. Muted + the working dots, deliberately NOT `.chat-note`'s
    accent card: a note records something that happened, this reports something

@@ -210,6 +210,13 @@ class Turn:
     # work. Rebuilt from the journal on re-attach (the drive loop re-reads from
     # offset 0), so it never has to survive a restart.
     agent_segs: dict[str, dict] = field(default_factory=dict)
+    # Open TOP-LEVEL tool segments by their tool_use id, so the matching
+    # tool_result can close them with an outcome and a duration. Without this a
+    # tool segment was write-once: no status, no timing, no way to tell a command
+    # that failed from one that succeeded, which is why every step in a settled
+    # turn rendered identically. Same rebuilt-from-journal lifetime as
+    # `agent_segs`. See docs/decisions/0015 §5.
+    tool_segs: dict[str, dict] = field(default_factory=dict)
     # Permission requests already answered, by request_id -> "allowed"/"denied".
     # Seeded from the turn's meta on re-attach, because the drive loop re-reads
     # the journal from offset 0 and would otherwise rebuild every answered
@@ -619,9 +626,13 @@ def _parse_stream_event(line: str) -> tuple[str, dict] | None:
             return ("tool_result", {
                 "tool_use_id": b0.get("tool_use_id"),
                 "text": _tool_result_text(b0.get("content")),
+                # Whether the call FAILED. The one field the disclosure state
+                # machine turns on: a failed step never merges and never folds.
+                "is_error": bool(b0.get("is_error")),
                 "parent": parent,
             })
-        return ("tool_result", {"tool_use_id": None, "text": "", "parent": parent})
+        return ("tool_result", {"tool_use_id": None, "text": "", "is_error": False,
+                                "parent": parent})
     if t == "result":
         return ("result", {
             "stop_reason": ev.get("stop_reason") or ev.get("terminal_reason"),
@@ -710,8 +721,43 @@ def _seg_text(turn: "Turn", s: str) -> None:
         turn.segments.append({"t": "text", "text": s})
 
 
-def _seg_tool(turn: "Turn", name, inp) -> None:
-    turn.segments.append({"t": "tool", "name": name or "?", "input": inp or ""})
+def _seg_tool(turn: "Turn", name, inp, tool_id: str = "") -> None:
+    """One tool call, OPEN until its result lands.
+
+    `id` and `at` are what make a step closable: the matching tool_result sets
+    `ok` and `ms` on this same dict (see `_close_tool`). A segment recorded
+    before this existed has neither, and renders as it always did.
+    """
+    seg = {"t": "tool", "name": name or "?", "input": inp or ""}
+    if tool_id:
+        seg["id"] = tool_id
+        seg["at"] = time.time()
+    turn.segments.append(seg)
+    if tool_id:
+        turn.tool_segs[tool_id] = seg
+
+
+def _close_tool(turn: "Turn", tool_id: str, text: str, is_error: bool) -> bool:
+    """Close a top-level tool segment with its outcome and how long it took.
+
+    A FAILED step is never merged into a group and never collapses, so `ok` is
+    the single field the whole disclosure state machine turns on. `ms` is
+    dropped when the result arrives without a recorded start (a journal tailed
+    from mid-stream), rather than being invented as zero.
+    """
+    seg = turn.tool_segs.pop(tool_id, None)
+    if seg is None:
+        return False
+    seg["ok"] = not is_error
+    started = seg.pop("at", None)
+    if isinstance(started, (int, float)):
+        seg["ms"] = int(max(0.0, time.time() - started) * 1000)
+    if is_error and text:
+        # Only the failure text is kept. A successful result is plumbing the
+        # operator already sees the effect of, and storing every one of them
+        # would put the whole tool output history in the message.
+        seg["error"] = text if len(text) <= 600 else text[:597] + "…"
+    return True
 
 
 def _seg_agent(turn: "Turn", payload: dict) -> None:
@@ -781,7 +827,7 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
             if payload.get("agent"):
                 _seg_agent(turn, payload)
             else:
-                _seg_tool(turn, payload.get("name"), payload.get("input"))
+                _seg_tool(turn, payload.get("name"), payload.get("input"), payload.get("id") or "")
         return True
     if kind == "permission":
         # An approval is a segment, not a transient event: the turn is blocked on
@@ -807,10 +853,17 @@ def _segment_ingest(turn: "Turn", kind: str, payload: dict) -> bool:
         # The Agent tool's own result closes its segment. Nested tool results
         # (parent set) are the subagent's internal plumbing and are not rendered;
         # its report comes back in this one.
-        host = turn.agent_segs.get(payload.get("tool_use_id") or "")
+        rid = payload.get("tool_use_id") or ""
+        host = turn.agent_segs.get(rid)
         if host is not None:
             host["done"] = True
             host["result"] = payload.get("text") or ""
+            return True
+        # Every OTHER tool result closes its own step. Not rendered as content:
+        # what it sets is the step's outcome and duration, which is what decides
+        # whether the step merges into a group, collapses, or stays open in red.
+        if rid and _close_tool(turn, rid, payload.get("text") or "",
+                               bool(payload.get("is_error"))):
             return True
     return False
 
@@ -1681,6 +1734,20 @@ def _stale_pending_approvals(turn: Turn) -> None:
         _push(turn, "permission_resolved", {"stale": True})
 
 
+def _close_open_tools(turn: Turn) -> None:
+    """Any tool call still open when the turn ends never reported a result.
+
+    It is not a success and it is not a failure: the process it was running in
+    is gone. `at` is dropped so nothing renders a duration measured against a
+    clock that stopped, and `ok` is left UNSET, which the transcript reads as
+    "outcome unknown" rather than as either outcome. Setting ok=False here would
+    paint every step of an interrupted turn red.
+    """
+    for seg in turn.tool_segs.values():
+        seg.pop("at", None)
+    turn.tool_segs.clear()
+
+
 def _close_open_agents(turn: Turn, *, stopped: bool, lost: bool) -> None:
     """Any subagent still open when the turn ends did NOT finish. Say which.
 
@@ -1766,6 +1833,7 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     awaits `turn.finished`, and a finalize that fails silently would leave that
     request hanging for as long as the client will hold the socket open."""
     _stale_pending_approvals(turn)
+    _close_open_tools(turn)
     _close_open_agents(turn, stopped=bool(kw.get("stopped")), lost=bool(kw.get("lost")))
     try:
         await _commit_turn(turn, meta, **kw)
@@ -1862,6 +1930,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     # the action is applied server-side, its fence is stripped from the answer, and
     # any human-readable notes ("Updated the plan") ride along in meta.notes.
     notes: list[str] | None = None
+    turn_receipts: list[dict] | None = None
     if not is_error and text:
         try:
             from services import chat_context
@@ -1870,6 +1939,32 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             ctx_key = (thread or {}).get("context_key")
             new_text = text
             applied_notes: list[str] = []
+            # TYPED RECEIPTS, built here rather than in the helpers.
+            #
+            # A receipt is a durable effect on the world OUTSIDE the chat: a note
+            # written, a ticket filed, a preference captured. It is not a step
+            # (which folds away with the rest of a turn's work) and not a status
+            # (which is how the turn ended). All three used to render as the same
+            # anonymous `.chat-note` div, so "Saved a note to workshop" and
+            # "Stopped by operator" were indistinguishable.
+            # See docs/decisions/0015-transcript-structure-and-content-provenance.md §4.
+            #
+            # The kind comes from WHICH helper produced the string, which this
+            # function already knows, so no provider interface has to change.
+            # Failure strings are parenthesised by convention in every one of
+            # these helpers ("(note skipped: ...)"), and those are warnings, not
+            # receipts of something that happened.
+            receipts: list[dict] = []
+
+            def _receipt(kind: str, labels: list[str]) -> None:
+                for label in labels or []:
+                    text_ = (label or "").strip()
+                    if not text_:
+                        continue
+                    receipts.append({
+                        "kind": "warn" if text_.startswith("(") else kind,
+                        "label": text_,
+                    })
             # Whose reply is this, and what may that speaker write?
             #
             # These protocol blocks are mediated writes: a reply containing a
@@ -1897,24 +1992,37 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             if type(provider).apply_actions is not chat_context.ContextProvider.apply_actions:
                 new_text, pnotes = provider.apply_actions(new_text)
                 applied_notes += (pnotes or [])
+                _receipt("action", pnotes or [])
             # O2: apply a task-patch block against this chat's task scope.
             from services import task_scope
             if _permitted("tasks"):
                 new_text, tnotes = task_scope.apply_task_patch(
                     ctx_key, new_text, (thread or {}).get("id"), (thread or {}).get("mode"))
                 applied_notes += tnotes
+                _receipt("ticket", tnotes)
             else:
                 new_text = task_scope.strip_task_patch(new_text)
-                applied_notes.append(f"(a {_role or 'roleless'} agent may not file tickets)")
+                refusal = f"(a {_role or 'roleless'} agent may not file tickets)"
+                applied_notes.append(refusal)
+                _receipt("ticket", [refusal])
             # Phase 4: capture an explicit operator preference/correction emitted
             # as a ``learning-note`` block into the learnings store.
             if _permitted("learnings"):
                 new_text, lnotes = task_scope.apply_learning_note(ctx_key, new_text)
                 applied_notes += lnotes
+                _receipt("learning", lnotes)
             # Phase N3: capture a durable scoped ``note`` into the knowledge store.
             if _permitted("notes"):
-                new_text, nnotes = await task_scope.apply_note_block(ctx_key, new_text)
+                # The note is stamped with WHO WROTE IT: an @mentioned agent's
+                # note and the assistant's are otherwise byte-identical when
+                # either is recalled later. See services/origin.
+                from services import origin as _origin
+                new_text, nnotes = await task_scope.apply_note_block(
+                    ctx_key, new_text,
+                    author=(_origin.agent(_speaker) if _is_agent and _speaker else _origin.SELF),
+                )
                 applied_notes += nnotes
+                _receipt("note", nnotes)
             # A data-mode assistant is told it may ask for a skill by emitting a
             # fenced block. It has tools and reads the skill itself, so nothing
             # expands one; take the raw protocol off the reply.
@@ -1922,6 +2030,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
             if new_text != text or applied_notes:
                 text = new_text or "(done)"
                 notes = applied_notes or None
+                turn_receipts = receipts or None
                 # Replace the trailing text run with the cleaned answer so the
                 # rendered segments match the applied result.
                 cut = len(turn.segments)
@@ -1937,7 +2046,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
     try:
         turn.committed = chat_store.commit_run(
             turn.thread_id, turn.id, turn.segments, text,
-            error=is_error, timed_out=timed_out, notes=notes,
+            error=is_error, timed_out=timed_out, notes=notes, receipts=turn_receipts,
             agent=meta.get("speaker"), state=("lost" if lost else "finished"),
             # A stopped run is FINISHED, not lost: it produced what it produced
             # and nothing is coming later. `stopped` is what tells the operator

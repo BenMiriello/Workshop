@@ -16,7 +16,24 @@ export type ChatSegment =
   // and the message would render below text written after it. A sealed segment
   // never absorbs more text; the next character starts a new segment.
   | { t: "text"; text: string; sealed?: boolean }
-  | { t: "tool"; name: string; input: string }
+  // A tool call, and how it went. The last four fields are what let a settled
+  // turn distinguish its steps at all: before them every step rendered
+  // identically, so a command that failed looked exactly like a file that was
+  // read. All four are ABSENT on turns recorded before they existed, and on a
+  // step whose turn ended before its result arrived, and neither case is a
+  // failure. See components/chat/grouping.ts.
+  | {
+      t: "tool";
+      name: string;
+      input: string;
+      id?: string;             // the CLI's tool_use id; the result names it
+      // When it started, epoch SECONDS (the backend's time.time()). Present
+      // only while the call is open, so it doubles as "is this still running".
+      at?: number;
+      ok?: boolean;            // absent = outcome unknown, not failure
+      ms?: number;             // how long it took, once it finished
+      error?: string;          // the failure text, kept only when ok === false
+    }
   // The turn is BLOCKED, asking to use a tool. A segment rather than a transient
   // event because the process stays blocked across a page reload, and the reload
   // must not lose the only control that can unblock it.
@@ -65,7 +82,17 @@ export type ChatMsg = {
   content: string;
   ts: string;
   meta?: {
+    // The action pipeline's plain results ("Saved a note to workshop"). Kept
+    // because every stored turn has it; `receipts` is the same information
+    // typed, and is what the transcript renders when it is there.
     notes?: string[];
+    // WHAT THIS TURN CHANGED OUTSIDE THE CHAT: a note written, a ticket filed,
+    // a preference captured. Not a step (steps fold away with the rest of a
+    // turn's work) and not a status (that is how the turn ended). All three
+    // used to render as the same anonymous `.chat-note` div, which is why a
+    // note and a stopped run were indistinguishable. `kind` is one of
+    // note / ticket / learning / action / warn.
+    receipts?: { kind: string; label: string; href?: string }[];
     error?: boolean;
     // The turn hit its wall-clock limit and was stopped (vs a hard error) —
     // rendered as a calm "stopped, continue" note rather than a red error.

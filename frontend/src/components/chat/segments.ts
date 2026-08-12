@@ -18,8 +18,11 @@ export type StreamEvent =
   // and only ever shown when the chip is opened.
   | { kind: "tool"; name?: string; input?: string; detail?: string | null; id?: string; agent?: string | null; parent?: string | null }
   | { kind: "text"; content?: string; parent?: string | null }
-  // The Agent call's own result, which closes its segment.
-  | { kind: "tool_result"; tool_use_id?: string | null; text?: string; parent?: string | null }
+  // A tool's result. For an Agent call it closes the subagent segment; for any
+  // other top-level call it closes THAT STEP, setting its outcome and duration.
+  // `is_error` is the field the whole disclosure rule turns on: a failed step is
+  // never merged into a group and never collapses.
+  | { kind: "tool_result"; tool_use_id?: string | null; text?: string; is_error?: boolean; parent?: string | null }
   // The turn is asking to use a tool and is BLOCKED until answered.
   | {
       kind: "permission";
@@ -136,6 +139,17 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
       const nested = intoAgent(segs, parent, step);
       if (nested) return nested;
     }
+    // A TOP-LEVEL call is open until its result lands: `id` is how the result
+    // finds it, and `at` is both the start of its clock and the fact that it is
+    // still going. Mirrors the backend's _seg_tool, which persists the same two
+    // fields, so a reload mid-call keeps the same row in the same state.
+    // Nested steps get neither: a subagent's internals are summarised by its
+    // own row, and its tool results never reach this reducer.
+    if (!ev.agent && ev.id) {
+      step.name = ev.name || "?";
+      (step as Extract<ChatSegment, { t: "tool" }>).id = ev.id;
+      (step as Extract<ChatSegment, { t: "tool" }>).at = Date.now() / 1000;
+    }
     if (ev.agent) {
       return [...segs, {
         t: "agent",
@@ -150,15 +164,32 @@ export function applyStreamEvent(segs: ChatSegment[], ev: StreamEvent): ChatSegm
     }
     return [...segs, step];
   }
-  // tool_result: only a subagent's own result is rendered. Every other tool
-  // result is plumbing the operator already sees the effect of.
+  // tool_result: a subagent's result is RENDERED (it is the report the chip
+  // opens onto). Every other result closes its own step without being shown —
+  // what it contributes is the outcome and the duration, which is what lets a
+  // settled turn tell a command that failed from a file that was read.
   const id = ev.tool_use_id || "";
   if (!id) return segs;
   const i = segs.map((s, k) => (isAgent(s) && s.id === id ? k : -1)).filter((k) => k >= 0).pop();
-  if (i === undefined) return segs;
-  const copy = segs.slice();
-  copy[i] = { ...(segs[i] as Extract<ChatSegment, { t: "agent" }>), done: true, result: ev.text || "" };
-  return copy;
+  if (i !== undefined) {
+    const copy = segs.slice();
+    copy[i] = { ...(segs[i] as Extract<ChatSegment, { t: "agent" }>), done: true, result: ev.text || "" };
+    return copy;
+  }
+  const j = segs.map((s, k) => (s.t === "tool" && s.id === id ? k : -1)).filter((k) => k >= 0).pop();
+  if (j === undefined) return segs;
+  const open = segs[j] as Extract<ChatSegment, { t: "tool" }>;
+  const closed: Extract<ChatSegment, { t: "tool" }> = {
+    ...open, ok: !ev.is_error,
+  };
+  // `at` is dropped on close: it is what marks a step as still running, and a
+  // finished step that kept it would tick forever.
+  if (typeof open.at === "number") closed.ms = Math.max(0, Math.round(Date.now() - open.at * 1000));
+  delete closed.at;
+  if (ev.is_error && ev.text) closed.error = ev.text;
+  const out = segs.slice();
+  out[j] = closed;
+  return out;
 }
 
 type AgentSegment = Extract<ChatSegment, { t: "agent" }>;

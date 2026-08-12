@@ -566,6 +566,24 @@ def _persist_retrieval(scope: str, entries: list[dict], selected_ids: set[str]) 
         pass
 
 
+def _block_line(entry: dict) -> str:
+    """One rendered learning, CARRYING ITS SOURCE.
+
+    The store has recorded `source` and a `provenance[]` list since it was
+    written, and this render threw both away: a preference the operator stated
+    in chat, a lesson a reviewer filed after a failed run, and a fact the
+    memory-keeper consolidated all arrived as identical bullets, so nothing
+    downstream could weigh "I was told this" against "I inferred this".
+
+    `anon` and empty sources render bare. They say nothing, and a label that
+    says nothing is worse than no label at a per-turn token cost.
+    See docs/decisions/0015-transcript-structure-and-content-provenance.md §8.
+    """
+    src = (entry.get("source") or "").strip()
+    text = entry.get("text", "")
+    return f"- {text} [{src}]" if src and src != "anon" else f"- {text}"
+
+
 def memory_block(
     scope: str = GLOBAL,
     *,
@@ -612,7 +630,7 @@ def memory_block(
     for e in ranked:
         if len(selected) >= max_entries:
             break
-        cost = _approx_tokens("- " + e.get("text", ""))
+        cost = _approx_tokens(_block_line(e))
         if used_tokens + cost > max_tokens:
             continue  # try smaller lower-ranked entries rather than overflow
         selected.append(e)
@@ -623,7 +641,7 @@ def memory_block(
 
     remainder = total - len(selected)
     selected.sort(key=lambda e: order[id(e)])  # render oldest-first, cache-stable
-    lines = [f"- {e['text']}" for e in selected]
+    lines = [_block_line(e) for e in selected]
     if remainder > 0:
         lines.append(f"- +{remainder} more")
 

@@ -245,3 +245,53 @@ describe("sealTrailingText", () => {
     expect(sealTrailingText(segs)).toBe(segs);
   });
 });
+
+describe("tool outcomes close their own step", () => {
+  // The backend records the same four fields (build_streaming._close_tool), so a
+  // turn rendered from this reducer and the same turn rendered from the
+  // server's persisted segments after a reload have to agree. If they do not,
+  // a step changes state the moment you refresh.
+  const open = (id: string) =>
+    applyStreamEvent([], { kind: "tool", name: "Bash", input: "make", id });
+
+  it("marks a step running while it is open", () => {
+    const segs = open("t1");
+    expect(segs[0]).toMatchObject({ t: "tool", id: "t1" });
+    expect(typeof (segs[0] as { at?: number }).at).toBe("number");
+    expect((segs[0] as { ok?: boolean }).ok).toBeUndefined();
+  });
+
+  it("closes the matching step on success and stops it running", () => {
+    const segs = applyStreamEvent(open("t1"), { kind: "tool_result", tool_use_id: "t1", text: "done" });
+    expect(segs[0]).toMatchObject({ t: "tool", ok: true });
+    expect((segs[0] as { at?: number }).at).toBeUndefined();
+    expect(typeof (segs[0] as { ms?: number }).ms).toBe("number");
+  });
+
+  it("keeps the failure text, and only on failure", () => {
+    const bad = applyStreamEvent(open("t1"),
+      { kind: "tool_result", tool_use_id: "t1", text: "boom", is_error: true });
+    expect(bad[0]).toMatchObject({ ok: false, error: "boom" });
+    const good = applyStreamEvent(open("t2"),
+      { kind: "tool_result", tool_use_id: "t2", text: "lots of output" });
+    expect((good[0] as { error?: string }).error).toBeUndefined();
+  });
+
+  it("ignores a result for a step it never saw", () => {
+    const segs = open("t1");
+    expect(applyStreamEvent(segs, { kind: "tool_result", tool_use_id: "nope" })).toEqual(segs);
+  });
+
+  it("a subagent result still closes the subagent, not a tool", () => {
+    let segs = applyStreamEvent([], { kind: "tool", name: "Agent", input: "go", id: "a1", agent: "Explore" });
+    segs = applyStreamEvent(segs, { kind: "tool_result", tool_use_id: "a1", text: "report" });
+    expect(segs[0]).toMatchObject({ t: "agent", done: true, result: "report" });
+  });
+
+  it("a nested step gets no id, so a subagent's plumbing cannot close a parent row", () => {
+    let segs = applyStreamEvent([], { kind: "tool", name: "Agent", input: "go", id: "a1", agent: "Explore" });
+    segs = applyStreamEvent(segs, { kind: "tool", name: "Read", input: "x.ts", id: "n1", parent: "a1" });
+    const step = (segs[0] as { steps: { id?: string }[] }).steps[0];
+    expect(step.id).toBeUndefined();
+  });
+});

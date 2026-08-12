@@ -1,9 +1,13 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Bot, ChevronRight, Wrench } from "lucide-react";
 import { Markdown } from "@workshop/ui/markdown";
 import type { ChatSegment } from "../../lib/chat";
 import ApprovalBlock from "./ApprovalBlock";
-import { agentBrief, agentChipLine, agentSummary, recentWorkStepCount } from "./segments";
+import { agentBrief, agentChipLine, agentSummary } from "./segments";
+import {
+  buildTurnBlocks, groupDetail, groupSummary, isFailed, isRunning, runningSeconds,
+  splitRun, stepDuration, turnDuration, turnWorkSummary, type TurnItem,
+} from "./grouping";
 import { UiCard, UiCardPending, splitUiCards, hasUiCard } from "./UiCard";
 import type { UiCardCtx } from "./uiCardActions";
 import { modelDisplay, type ModelDisplay } from "./models";
@@ -20,24 +24,72 @@ import { modelDisplay, type ModelDisplay } from "./models";
 // One dense row (icon · name · truncated input). Tapping reveals the full input
 // (a command / path / pattern). Mobile-first: the preview truncates with an
 // ellipsis so a tool call never blows out the bubble width.
-function ToolChip({ name, input }: { name: string; input: string }) {
-  const [open, setOpen] = useState(false);
-  const hasDetail = !!input;
+// STATE DECIDES DISCLOSURE, not a preference. A step that failed opens itself
+// and says why; a step still running says how long it has been going, but only
+// past the 10s attention limit, so a fast call never flickers a counter. Every
+// other step is one collapsed row. See grouping.ts and ADR 0015 §3/§5.
+function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; nowMs: number }) {
+  const failed = isFailed(seg);
+  const running = isRunning(seg);
+  const [open, setOpen] = useState(failed);
+  const panelId = useId();
+  const detail = failed && seg.error ? seg.error : seg.input;
+  const hasDetail = !!detail;
+  const secs = runningSeconds(seg, nowMs);
+  const took = stepDuration(seg);
   return (
-    <div className={`chat-tool${open ? " is-open" : ""}`}>
+    <div className={`chat-tool${open ? " is-open" : ""}${failed ? " is-failed" : ""}${running ? " is-running" : ""}`}>
       <button
         type="button"
         className="chat-tool__head"
         onClick={() => hasDetail && setOpen((o) => !o)}
         aria-expanded={hasDetail ? open : undefined}
-        title={hasDetail ? input : name}
+        aria-controls={hasDetail ? panelId : undefined}
+        title={hasDetail ? detail : seg.name}
       >
         {hasDetail && <ChevronRight size={13} aria-hidden className="chat-tool__chev" />}
         <Wrench size={12} aria-hidden className="chat-tool__icon" />
-        <span className="chat-tool__name">{name}</span>
-        {hasDetail && <span className="chat-tool__preview ws-mono">{input}</span>}
+        <span className="chat-tool__name">{seg.name}</span>
+        {!!seg.input && <span className="chat-tool__preview ws-mono">{seg.input}</span>}
+        {/* The clock rides on the STEP, not the turn. A single total for the
+            whole turn reads "3h 41m" on a long one and describes nothing; what
+            the reader wants to know is whether the thing happening now is
+            stuck. */}
+        {secs > 0 && <span className="chat-tool__time">{secs}s</span>}
+        {!running && !!took && <span className="chat-tool__time">{took}</span>}
+        {failed && <span className="chat-tool__failed">failed</span>}
       </button>
-      {open && hasDetail && <pre className="chat-tool__detail ws-mono">{input}</pre>}
+      {open && hasDetail && <pre id={panelId} className="chat-tool__detail ws-mono">{detail}</pre>}
+    </div>
+  );
+}
+
+// A merged run of read-only steps: one row saying what it did and to what.
+//
+// The objects stay on the row. A collapsed summary that hides its object is the
+// documented failure mode (microsoft/vscode issue 292985: `rm -rf important_dir`
+// collapsed to "Executed command in terminal"), and the rule that keeps writes
+// and commands out of a group exists for the same reason.
+function GroupChip({ item, nowMs }: { item: Extract<TurnItem, { t: "group" }>; nowMs: number }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return (
+    <div className={`chat-group${open ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="chat-group__head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={id}
+      >
+        <ChevronRight size={13} aria-hidden className="chat-group__chev" />
+        <Wrench size={12} aria-hidden className="chat-group__icon" />
+        <span className="chat-group__name">{groupSummary(item)}</span>
+        <span className="chat-group__preview ws-mono">{groupDetail(item)}</span>
+      </button>
+      <div id={id} hidden={!open}>
+        {open && item.steps.map((s, i) => <ToolChip key={s.id || i} seg={s} nowMs={nowMs} />)}
+      </div>
     </div>
   );
 }
@@ -194,7 +246,9 @@ function WorkText({ text, cfg, expanded }: { text: string; cfg: ModelDisplay; ex
 // OPEN SHOWS THE BRIEF, then the steps, then the report. That is the whole
 // reason the chip is a disclosure control: the row says what was delegated, and
 // opening it says what the delegate was actually told, did, and answered.
-function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cfg: ModelDisplay }) {
+function AgentChip({ seg, cfg, nowMs }: {
+  seg: Extract<ChatSegment, { t: "agent" }>; cfg: ModelDisplay; nowMs: number;
+}) {
   const [open, setOpen] = useState(false);
   const line = agentChipLine(seg);
   const brief = agentBrief(seg);
@@ -225,14 +279,13 @@ function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cf
             </div>
           )}
           {seg.steps.length > 0 && (
+            // A delegate's own steps, grouped by the same rule as the parent's.
+            // Nested subagents and nested approvals render here too: they used
+            // to be dropped on the floor by a two-branch map, so a delegation
+            // that itself delegated showed a step count that did not match the
+            // steps it listed.
             <div className="chat-agent__steps">
-              {seg.steps.map((s, i) =>
-                s.t === "tool"
-                  ? <ToolChip key={i} name={s.name} input={s.input} />
-                  : s.t === "text" && s.text.trim()
-                    ? <WorkText key={i} text={s.text} cfg={cfg} />
-                    : null,
-              )}
+              <TurnWork work={seg.steps} cfg={cfg} nowMs={nowMs} />
             </div>
           )}
           {seg.result && (
@@ -249,86 +302,127 @@ function AgentChip({ seg, cfg }: { seg: Extract<ChatSegment, { t: "agent" }>; cf
   );
 }
 
-// The "work" of an assistant turn — its tool calls, subagents, and interim text.
-// On the most recent turn the latest few steps stay inline and older ones fold
-// into a re-openable accordion (widened to sweep in a nearby text checkpoint —
-// see recentWorkStepCount); on older turns all of it folds away (just the
-// answer shows). Tool calls and subagents stay individually expandable.
-function WorkSteps({ work, isLatest, cfg, onAnswerPermission }: {
-  work: ChatSegment[]; isLatest: boolean; cfg: ModelDisplay;
+export type AnswerPermission = (a: {
+  requestId: string; allow: boolean; message?: string; applySuggestion?: boolean;
+}) => Promise<void>;
+
+// One contiguous stretch of machine work, between two things the model said.
+//
+// The cap is PER RUN, not per prose block: a turn that wrote no prose at all is
+// common (one that ends on a write, one the operator stopped), and pegging
+// density to how chatty the model was would show more rows for the same work
+// when narrated than when not.
+function StepRun({ items, cfg, nowMs, onAnswerPermission }: {
+  items: TurnItem[]; cfg: ModelDisplay; nowMs: number;
   onAnswerPermission?: AnswerPermission;
 }) {
   const [open, setOpen] = useState(false);
-  const inlineCount = recentWorkStepCount(work, isLatest, cfg.recentSteps, cfg.recentSteps * 4);
-  // A PENDING approval is never foldable. The turn is blocked on it, so hiding
-  // it behind "3 steps hidden" would hide the only control that can restart the
-  // run — the operator would be looking at a chat that had simply stopped.
-  const firstPending = work.findIndex((s) => s.t === "approval" && s.state === "pending");
-  const keepFrom = firstPending >= 0
-    ? Math.min(firstPending, Math.max(0, work.length - Math.max(inlineCount, 0)))
-    : Math.max(0, work.length - inlineCount);
-  const older = inlineCount > 0 || firstPending >= 0 ? work.slice(0, keepFrom) : work;
-  const recent = inlineCount > 0 || firstPending >= 0 ? work.slice(keepFrom) : [];
-  const olderTools = older.filter((s) => s.t === "tool" || s.t === "agent").length;
-  // `expanded` follows the rule the answer already uses: the most recent turn
-  // reads in full. The steps kept inline on a live turn are there precisely so
-  // progress is legible as it happens, so a long text checkpoint among them must
-  // not arrive pre-collapsed. Folded-away steps open collapsed — you went looking
-  // for them, and a wall of text is not what you were looking for.
-  const renderSeg = (s: ChatSegment, i: number, expanded: boolean) =>
-    s.t === "tool"
-      ? <ToolChip key={i} name={s.name} input={s.input} />
-      : s.t === "agent"
-        ? <AgentChip key={i} seg={s} cfg={cfg} />
-        : s.t === "approval"
-          ? <ApprovalBlock key={s.id || i} seg={s} onAnswer={onAnswerPermission ?? (async () => {})} />
-          : (s.text.trim() ? <WorkText key={i} text={s.text} cfg={cfg} expanded={expanded} /> : null);
+  const id = useId();
+  const { shown, hidden } = splitRun(items);
+  const renderItem = (item: TurnItem, i: number) =>
+    item.t === "group"
+      ? <GroupChip key={`g${i}`} item={item} nowMs={nowMs} />
+      : item.seg.t === "tool"
+        ? <ToolChip key={item.seg.id || `s${i}`} seg={item.seg} nowMs={nowMs} />
+        : item.seg.t === "agent"
+          ? <AgentChip key={`a${i}`} seg={item.seg} cfg={cfg} nowMs={nowMs} />
+          : item.seg.t === "approval"
+            ? <ApprovalBlock key={item.seg.id || `p${i}`} seg={item.seg}
+                             onAnswer={onAnswerPermission ?? (async () => {})} />
+            : null;
   return (
     <div className="chat-work">
-      {older.length > 0 && (
+      {hidden.length > 0 && (
         <>
           <button
             type="button"
             className={`chat-work__toggle${open ? " is-open" : ""}`}
             onClick={() => setOpen((o) => !o)}
             aria-expanded={open}
+            aria-controls={id}
           >
             <ChevronRight size={13} aria-hidden className="chat-work__chev" />
-            {/* Same grammar as every other collapsed thing in the transcript:
-                say what is hidden, not what to do about it. The verb differs from
-                a message's "Show less" on purpose — this hides a LIST of steps,
-                a message shortens PROSE, and the chevron marks it as the
-                section-level control rather than a message-level one. */}
-            {open
-              ? "Hide steps"
-              : `${older.length} step${older.length > 1 ? "s" : ""} hidden` +
-                (olderTools > 0 ? ` · ${olderTools} tool${olderTools > 1 ? "s" : ""}` : "")}
+            {open ? "Hide earlier steps" : `${hidden.length} earlier step${hidden.length > 1 ? "s" : ""}`}
           </button>
-          {open && (
-            <div className="chat-work__list">
-              {older.map((s, i) => renderSeg(s, i, false))}
-            </div>
-          )}
+          <div id={id} className="chat-work__list" hidden={!open}>
+            {open && hidden.map(renderItem)}
+          </div>
         </>
       )}
-      {recent.length > 0 && (
-        <div className="chat-work__list">
-          {recent.map((s, i) => renderSeg(s, i, isLatest))}
-        </div>
-      )}
+      <div className="chat-work__list">{shown.map(renderItem)}</div>
     </div>
   );
 }
 
-// An assistant turn: split the trailing run of text (the answer) from the work
-// (tools + interim thinking). The answer renders fully on the most recent turn
-// and is elided on older ones; the work collapses per WorkSteps.
-export type AnswerPermission = (a: {
-  requestId: string; allow: boolean; message?: string; applySuggestion?: boolean;
-}) => Promise<void>;
+// The work of a SETTLED turn, behind one line.
+//
+// A turn the reader has already read gets one summary and nothing else until
+// they ask. Drawing every group of every historical turn would be a density
+// regression on a long thread: today an old turn shows exactly one line for all
+// of its work, and that is the right amount.
+function SettledWork({ work, cfg, nowMs, tookMs, onAnswerPermission }: {
+  work: ChatSegment[]; cfg: ModelDisplay; nowMs: number; tookMs?: number;
+  onAnswerPermission?: AnswerPermission;
+}) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  // THE TURN'S TOTAL LIVES HERE, on the line that already summarises the turn's
+  // work, rather than in a footer row of its own. A turn nobody waited on does
+  // not mention its duration at all: a number under every reply is noise, and
+  // the question a total answers ("was that slow?") only exists past a wait.
+  const summary = [turnWorkSummary(work), turnDuration(tookMs)].filter(Boolean).join(" · ");
+  // A turn blocked on a decision is never summarised away, even when it is no
+  // longer the latest: the buttons are the only thing that can restart it.
+  const pending = work.some((s) => s.t === "approval" && s.state === "pending");
+  if (pending) return <TurnWork work={work} cfg={cfg} nowMs={nowMs} onAnswerPermission={onAnswerPermission} />;
+  if (!summary) return null;
+  return (
+    <div className="chat-work">
+      <button
+        type="button"
+        className={`chat-work__toggle${open ? " is-open" : ""}`}
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={id}
+      >
+        <ChevronRight size={13} aria-hidden className="chat-work__chev" />
+        {open ? "Hide steps" : summary}
+      </button>
+      <div id={id} hidden={!open}>
+        {open && <TurnWork work={work} cfg={cfg} nowMs={nowMs} onAnswerPermission={onAnswerPermission} />}
+      </div>
+    </div>
+  );
+}
 
+// A turn's work as blocks: prose the model wrote, and the runs of steps between
+// them. There is no wrapper around the whole thing, because there never was one
+// worth naming: the old `.chat-work` div was whatever remained after the answer
+// was taken off the end. See ADR 0015 §1.
+function TurnWork({ work, cfg, nowMs, onAnswerPermission }: {
+  work: ChatSegment[]; cfg: ModelDisplay; nowMs: number;
+  onAnswerPermission?: AnswerPermission;
+}) {
+  return (
+    <>
+      {buildTurnBlocks(work).map((b, i) =>
+        b.t === "prose"
+          // Interim prose is CONVERSATION, and renders as prose. It goes
+          // through WorkText, not AnswerBody, deliberately: a ```ui-card``` the
+          // model wrote halfway through a turn and then talked itself out of
+          // must not be a live control, and card outcomes persist server-side.
+          ? <WorkText key={`p${i}`} text={b.text} cfg={cfg} />
+          : <StepRun key={`r${i}`} items={b.items} cfg={cfg} nowMs={nowMs}
+                     onAnswerPermission={onAnswerPermission} />)}
+    </>
+  );
+}
+
+// An assistant turn: the trailing run of text is the answer, everything before
+// it is the work. The answer renders fully on the most recent turn and is
+// elided on older ones.
 export function AssistantTurn({
-  segments, isLatest, model, cardCtx, streaming, onAnswerPermission,
+  segments, isLatest, model, cardCtx, streaming, onAnswerPermission, nowMs, tookMs,
 }: {
   segments: ChatSegment[];
   isLatest: boolean;
@@ -336,17 +430,27 @@ export function AssistantTurn({
   cardCtx: UiCardCtx;
   streaming?: boolean;
   onAnswerPermission?: AnswerPermission;
+  // The 1Hz clock, passed down rather than owned here so the whole transcript
+  // shares one interval and memoized history is not re-rendered by it.
+  nowMs?: number;
+  // How long the whole turn took. Undefined unless BOTH ends are known: a reply
+  // the operator interrupted renders as several blocks that all carry the same
+  // started_at and only the last of which carries ended_at, so computing a
+  // total from a half-pair would print the same wrong number on each of them.
+  tookMs?: number;
 }) {
   const cfg = modelDisplay(model);
   let cut = segments.length;
   while (cut > 0 && segments[cut - 1].t === "text") cut--;
   const work = segments.slice(0, cut);
   const answer = segments.slice(cut);
+  const clock = nowMs ?? 0;
   return (
     <>
-      {work.length > 0 && (
-        <WorkSteps work={work} isLatest={isLatest} cfg={cfg} onAnswerPermission={onAnswerPermission} />
-      )}
+      {work.length > 0 && (isLatest
+        ? <TurnWork work={work} cfg={cfg} nowMs={clock} onAnswerPermission={onAnswerPermission} />
+        : <SettledWork work={work} cfg={cfg} nowMs={clock} tookMs={tookMs}
+                       onAnswerPermission={onAnswerPermission} />)}
       {answer.map((s, i) =>
         s.t === "text" && s.text.trim() ? (
           <AnswerBody key={i} source={s.text} cfg={cfg} expanded={isLatest} cardCtx={cardCtx} streaming={streaming} />

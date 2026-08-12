@@ -411,19 +411,55 @@ def get_note(scope_key: str, note_id: str) -> str | None:
     return f.read_text() if f.exists() else None
 
 
+# --- authorship --------------------------------------------------------------
+# A note the operator hand-wrote, one the model wrote through a ```note``` block
+# last week, and one Haiku distilled during compaction were byte-identical on
+# re-entry, so nothing downstream could weigh them differently. The author rides
+# in an HTML comment on the first line of the body rather than in MEMORY.md: the
+# index line is regex-parsed with an already-optional ` - hook` tail, and a
+# second optional tail there would be ambiguous for any hook containing " - ".
+#
+# See docs/decisions/0015-transcript-structure-and-content-provenance.md §8.
+_AUTHOR_RE = re.compile(r"^<!--\s*author:\s*(?P<author>[^>]*?)\s*-->\s*\n?")
+
+
+def split_author(body: str) -> tuple[str, str]:
+    """(author, body-without-the-marker). Author is "" on notes written before
+    this existed, which is most of them and is not an error."""
+    m = _AUTHOR_RE.match(body or "")
+    if not m:
+        return "", (body or "")
+    return m.group("author").strip(), (body or "")[m.end():]
+
+
+def _with_author(body: str, author: str) -> str:
+    """Stamp `author` onto a body, PRESERVING an existing stamp when none is
+    given. An edit that passes no author is an edit, not a claim of anonymity:
+    round-tripping a note through the editor must not silently erase who wrote
+    it."""
+    existing, clean = split_author(body)
+    a = (author or "").strip() or existing
+    return f"<!-- author: {a} -->\n{clean}" if a else clean
+
+
 # --- writes ------------------------------------------------------------------
-async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "") -> dict:
+async def put_note(scope_key: str, note_id: str, title: str, content: str, hook: str = "",
+                   author: str = "") -> dict:
     """Write a note (source of truth on disk).
 
     1. write `<note-id>.md` atomically,
     2. upsert the MEMORY.md index line (kept sorted).
     Returns {scope, note_id}.
+
+    `author` is an origin string (see services/origin): "operator", "self",
+    "agent:<slug>", "derived:<model>". Optional, and absent on every note written
+    before it existed.
     """
     _parse_scope(scope_key)
     _valid_note_id(note_id)
     d = scope_dir(scope_key)
 
-    _atomic_write(d / f"{note_id}.md", content)
+    _atomic_write(d / f"{note_id}.md", _with_author(content, author))
 
     idx = _read_index(scope_key)
     idx[note_id] = {"title": (title or note_id).strip(), "hook": (hook or "").strip()}
@@ -482,13 +518,17 @@ def _plaintext_search(scope_key: str, query: str, limit: int) -> list[dict]:
     for note in list_notes(scope_key):
         note_id = note["id"]
         f = d / f"{note_id}.md"
-        body = f.read_text() if f.exists() else ""
+        author, body = split_author(f.read_text() if f.exists() else "")
         hay = f"{note['title']} {note['hook']} {body}".lower()
         score = sum(hay.count(t) for t in terms) if terms else 0
         if score > 0 or (query and query.lower() in hay):
             scored.append((score, {
                 "note_id": note_id,
                 "text": (f"{note['title']}\n\n{body}").strip(),
+                # Who wrote it. The recall site labels the note with this so a
+                # model-distilled note and an operator-written one are not
+                # byte-identical on re-entry. "" on older notes.
+                "author": author,
                 "score": None,
                 "debug": "fallback",
             }))

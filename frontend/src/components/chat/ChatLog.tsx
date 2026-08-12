@@ -61,7 +61,7 @@ import { SettlingTurn, VoiceLiveTurn } from "./VoiceTurn";
 export default function ChatLog({
   scrollRef, onScroll,
   loading, error, blocks, isBuild, inFlight,
-  selectedModel, cardCtx, onRetry, onRetryQueued, workingLabel, elapsed,
+  selectedModel, cardCtx, onRetry, onRetryQueued, workingLabel, elapsed, nowMs,
   answerPermission, liveTurnId,
   queued, queuedStatus,
   voiceOn, settling, vsnap,
@@ -85,6 +85,8 @@ export default function ChatLog({
   onRetryQueued: (clientId: string) => void;
   workingLabel: string;
   elapsed: number;
+  // The shared 1Hz clock, threaded to the per-step counters in the live turn.
+  nowMs: number;
   answerPermission?: AnswerPermissionFor;
   // The run in flight, so a pending approval on it can be answered. Persisted
   // messages carry their own turn id; a live one has not been committed yet.
@@ -126,6 +128,7 @@ export default function ChatLog({
         cardCtx={cardCtx}
         workingLabel={workingLabel}
         elapsed={elapsed}
+        nowMs={nowMs}
         onRetry={onRetry}
         answerPermission={answerPermission}
         liveTurnId={liveTurnId}

@@ -18,12 +18,14 @@ import WorkingIndicator from "./WorkingIndicator";
 // dropped past its reconnect budget, or one the operator stopped watching, is
 // still running and still says so.
 export default function LiveTurn({
-  segments, working, workingLabel, elapsed, model, cardCtx, onAnswerPermission,
+  segments, working, workingLabel, elapsed, nowMs, model, cardCtx, onAnswerPermission,
 }: {
   segments: ChatSegment[];
   working: boolean;
   workingLabel: string;
   elapsed: number;
+  // The shared 1Hz clock, for the per-step counter on whatever is running now.
+  nowMs: number;
   model: string;
   cardCtx: UiCardCtx;
   onAnswerPermission?: AnswerPermission;
@@ -38,6 +40,7 @@ export default function LiveTurn({
             isLatest
             model={model}
             cardCtx={cardCtx}
+            nowMs={nowMs}
             streaming
             onAnswerPermission={onAnswerPermission}
           />

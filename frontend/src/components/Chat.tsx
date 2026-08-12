@@ -898,6 +898,7 @@ export default function Chat({
       onRetryQueued={queue.retryFailed}
       workingLabel={workingLabel}
       elapsed={elapsed}
+      nowMs={nowMs}
       answerPermission={answerPermission}
       liveTurnId={runId}
       queued={queuedWaiting}

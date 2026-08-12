@@ -1,5 +1,5 @@
 import { Fragment, memo } from "react";
-import { Bot, Clock, Eraser, FoldVertical } from "lucide-react";
+import { Bot, Check, Clock, Eraser, FoldVertical, TriangleAlert } from "lucide-react";
 import type { ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
@@ -62,8 +62,54 @@ function ContextCut({ count, cleared }: { count: number; cleared: boolean }) {
   );
 }
 
+// WHAT THIS TURN CHANGED OUTSIDE THE CHAT: a note written, a ticket filed, a
+// preference captured.
+//
+// A receipt is not a step and not a status, and the three used to render as the
+// same anonymous `.chat-note` div, so "Saved a note to workshop" and "Stopped by
+// operator" were indistinguishable rows. Steps fold away with the rest of a
+// turn's work; a receipt does not, because when a turn is folded six messages
+// back you still need to see that it wrote something.
+//
+// One row for the whole turn rather than one card per string. `meta.notes` is
+// the pre-typing form and every stored turn has it, so it is read as untyped
+// receipts rather than lost. See ADR 0015 §4.
+function Receipts({ msg }: { msg: ChatMsg }) {
+  const typed = msg.meta?.receipts;
+  const items = typed?.length
+    ? typed
+    : (msg.meta?.notes || []).map((label) => ({ kind: "note", label, href: undefined }));
+  if (!items.length) return null;
+  return (
+    <div className="chat-receipts">
+      {items.map((r, j) => (
+        <span key={j} className={`chat-receipt chat-receipt--${r.kind === "warn" ? "warn" : "ok"}`}>
+          {r.kind === "warn"
+            ? <TriangleAlert size={13} strokeWidth={1.8} aria-hidden />
+            : <Check size={13} strokeWidth={1.8} aria-hidden />}
+          <span>{r.label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// How long the turn took, and ONLY when both ends are known.
+//
+// transcriptBlocks strips `ended_at` from every non-tail slice of a reply the
+// operator interrupted, and leaves `started_at` on all of them. Computing a
+// total from a half-pair would print the same wrong figure on each slice, and
+// falling back to "now" would make five settled turns tick forever.
+function turnTookMs(m: ChatMsg): number | undefined {
+  const a = m.meta?.started_at;
+  const b = m.meta?.ended_at;
+  if (!a || !b) return undefined;
+  const ms = Date.parse(b) - Date.parse(a);
+  return Number.isFinite(ms) && ms > 0 ? ms : undefined;
+}
+
 function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: string, cardCtx: UiCardCtx,
-                             answerPermission?: AnswerPermissionFor) {
+                             answerPermission?: AnswerPermissionFor, nowMs?: number) {
   // An error with no text is still an error; don't fall through to a blank bubble.
   if (m.meta?.error) return m.content.trim() || "The turn failed, but no error text was recorded.";
   const model = m.meta?.model ?? fallbackModel;
@@ -75,6 +121,8 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
     return (
       <AssistantTurn
         segments={m.meta.segments} isLatest={isLatest} model={model} cardCtx={cardCtx}
+        nowMs={nowMs}
+        tookMs={turnTookMs(m)}
         onAnswerPermission={
           answerPermission && tid ? (a) => answerPermission(tid, a) : undefined
         }
@@ -94,13 +142,17 @@ function renderAssistantBody(m: ChatMsg, isLatest: boolean, fallbackModel: strin
 // All five props are stable per message: `msg` comes from the memoized blocks
 // array, and the other four are shared and stable.
 const MessageBubble = memo(function MessageBubble({
-  msg, isLatest, selectedModel, cardCtx, answerPermission,
+  msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs,
 }: {
   msg: ChatMsg;
   isLatest: boolean;
   selectedModel: string;
   cardCtx: UiCardCtx;
   answerPermission?: AnswerPermissionFor;
+  // Only the LATEST turn can hold a running step, and only a running step reads
+  // the clock, so this is 0 for every historical bubble and the memo above
+  // keeps holding across a tick.
+  nowMs?: number;
 }) {
   const threadCfg = modelDisplay(selectedModel);
   // Stopping a turn before it wrote anything leaves nothing to put in a bubble,
@@ -127,7 +179,7 @@ const MessageBubble = memo(function MessageBubble({
                   <Clock size={13} strokeWidth={1.8} aria-hidden /> Turn stopped at the time limit
                 </div>
               )}
-              {renderAssistantBody(msg, isLatest, selectedModel, cardCtx, answerPermission)}
+              {renderAssistantBody(msg, isLatest, selectedModel, cardCtx, answerPermission, nowMs)}
             </>
           ) : (
             <ElidedContent source={msg.content} cfg={threadCfg} expanded={false} render={(s) => <>{s}</>} />
@@ -138,11 +190,9 @@ const MessageBubble = memo(function MessageBubble({
       {/* One quiet line under the reply, and that is the whole treatment for a
           turn that ended early. No border, no tag above the body, no icon. */}
       {msg.meta?.stopped && (
-        <div className="chat-note">{stoppedTag(msg.meta.stopped)}</div>
+        <div className="chat-status-line">{stoppedTag(msg.meta.stopped)}</div>
       )}
-      {msg.meta?.notes?.map((n, j) => (
-        <div key={j} className="chat-note">{n}</div>
-      ))}
+      <Receipts msg={msg} />
       {msg.meta?.status && <StatusNote status={msg.meta.status} />}
     </div>
   );
@@ -200,7 +250,7 @@ export type AnswerPermissionFor = (
 // Keep the props stable if you add one. An inline object or arrow here silently
 // turns this memo off and nothing fails visibly; it just gets slow again.
 function MessageList({
-  blocks, selectedModel, cardCtx, workingLabel, elapsed, onRetry,
+  blocks, selectedModel, cardCtx, workingLabel, elapsed, nowMs, onRetry,
   answerPermission, liveTurnId,
 }: {
   blocks: TranscriptBlock[];
@@ -208,6 +258,10 @@ function MessageList({
   cardCtx: UiCardCtx;
   workingLabel: string;
   elapsed: number;
+  // The shared 1Hz clock. One interval for the whole transcript, already owned
+  // by Chat.tsx and already gated on document.hidden; a per-step clock costs
+  // nothing new because LiveTurn re-renders on the tick regardless.
+  nowMs: number;
   onRetry: (clientId: string) => void;
   answerPermission?: AnswerPermissionFor;
   liveTurnId?: string | null;
@@ -234,6 +288,7 @@ function MessageList({
               selectedModel={selectedModel}
               cardCtx={cardCtx}
               answerPermission={answerPermission}
+              nowMs={b.key === latestAssistantKey ? nowMs : undefined}
             />
           )}
           {b.kind === "live" && (
@@ -242,6 +297,7 @@ function MessageList({
               working={b.working}
               workingLabel={workingLabel}
               elapsed={elapsed}
+              nowMs={nowMs}
               model={selectedModel}
               cardCtx={cardCtx}
               onAnswerPermission={
