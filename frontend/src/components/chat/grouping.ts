@@ -1,4 +1,5 @@
 import type { ChatSegment } from "../../lib/chat";
+import { bashClass } from "./bashClass";
 
 // How a turn's work becomes the rows the transcript draws.
 //
@@ -22,7 +23,13 @@ type ToolSegment = Extract<ChatSegment, { t: "tool" }>;
 
 /** What a run of the same kind of step collapses to. The verb is what the
  *  summary line leads with; `noun` is counted after it. */
-type ToolClass = { key: string; verb: string; noun: string };
+type ToolClass = {
+  key: string; verb: string; noun: string;
+  /** A fixed object the whole group acted on, when the group is defined by that
+   *  object rather than by a kind of act. Set only for repeated writes to one
+   *  file, where "Edited MessageList.tsx" says more than "Edited 3 files". */
+  object?: string;
+};
 
 // THE MERGE ALLOWLIST, and it is closed on purpose.
 //
@@ -38,6 +45,33 @@ const MERGEABLE: Record<string, ToolClass> = {
   WebFetch: { key: "fetch", verb: "Fetched", noun: "page" },
   WebSearch: { key: "websearch", verb: "Searched the web", noun: "time" },
 };
+
+// A SHELL COMMAND IS NOT ONE THING, and treating it as one is what made this
+// transcript flat. Measured over 10,847 real steps: Bash is 64% of everything
+// the assistant does, it was excluded wholesale as "a command", and only 6.2%
+// of rows ever merged. But most of that Bash is reading (grep 16%, sed -n 11%,
+// plus ls / cat / wc / find), so it is classified by what it actually does and
+// the read-only ones merge into the SAME classes as the native tools: a shell
+// `grep` and a `Grep` call are the same act, and only the spelling differs.
+//
+// Only what `bashClass` can PROVE is read-only merges. See bashClass.ts; it is
+// conservative by construction, because a false negative costs one extra row
+// and a false positive hides a mutation inside a count.
+const BASH_CLASS: Record<string, ToolClass> = {
+  read: { key: "read", verb: "Read", noun: "file" },
+  grep: { key: "grep", verb: "Searched", noun: "time" },
+  list: { key: "list", verb: "Listed", noun: "path" },
+  inspect: { key: "inspect", verb: "Checked", noun: "thing" },
+};
+
+const WRITE_TOOLS = new Set(["Edit", "Write", "NotebookEdit"]);
+
+/** The file a write touched, as the step recorded it: the input's first token,
+ *  because every write tool leads with its path. Empty for anything else. */
+export function writeTarget(seg: ChatSegment): string {
+  if (seg.t !== "tool" || !WRITE_TOOLS.has(seg.name)) return "";
+  return (seg.input || "").trim().split(/\s+/)[0] || "";
+}
 
 /** Is this step still going? A tool carries `at` (when it started) from the
  *  moment it is issued and loses it when its result lands, so "open" is a fact
@@ -61,6 +95,10 @@ export function isFailed(seg: ChatSegment): boolean {
 export function mergeClass(seg: ChatSegment): ToolClass | null {
   if (seg.t !== "tool") return null;
   if (isFailed(seg) || isRunning(seg)) return null;
+  if (seg.name === "Bash") {
+    const kind = bashClass(seg.input);
+    return kind ? BASH_CLASS[kind] : null;
+  }
   return MERGEABLE[seg.name] ?? null;
 }
 
@@ -113,6 +151,10 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
     run = [];
   };
 
+  // The previous work step, for the same-file write merge below. Null after
+  // prose, because prose closes the run and nothing may merge across it.
+  let prev: ChatSegment | null = null;
+
   for (const seg of work) {
     if (seg.t === "text") {
       // Prose CLOSES a run, always. An acknowledgement written halfway through
@@ -121,14 +163,50 @@ export function buildTurnBlocks(work: ChatSegment[]): TurnBlock[] {
       // statement into a single count that describes neither.
       closeRun();
       if (seg.text.trim()) blocks.push({ t: "prose", text: seg.text });
+      prev = null;
       continue;
     }
     const cls = mergeClass(seg);
     if (!cls) {
       closeWindow();
+      // REPEATED WRITES TO ONE FILE COLLAPSE, and only when strictly adjacent.
+      //
+      // Four edits to MessageList.tsx in a row are one act of editing that
+      // file, and Devin merges exactly this case. Adjacency is what keeps it
+      // honest: the window rule reorders groupable steps within a window, and
+      // if writes joined that window a read could hop over a write. So this
+      // looks only at the step immediately before, which a write has already
+      // flushed the window ahead of.
+      //
+      // Different files never merge. "Edited 3 files" hides which, and a write
+      // is the thing the operator most needs to see named.
+      // A failed or still-running write never merges, for the same reason a
+      // failed read does not: the outcome is the whole point of the row, and
+      // folding it into a neighbour's count hides that one of them went wrong.
+      const target = isFailed(seg) || isRunning(seg) ? "" : writeTarget(seg);
+      const last = run[run.length - 1];
+      if (target && prev && !isFailed(prev) && !isRunning(prev)
+          && writeTarget(prev) === target && last) {
+        if (last.t === "group" && last.cls.object === target) {
+          last.steps.push(seg as ToolSegment);
+          prev = seg;
+          continue;
+        }
+        if (last.t === "step" && writeTarget(last.seg) === target) {
+          run[run.length - 1] = {
+            t: "group",
+            cls: { key: `write:${target}`, verb: "Edited", noun: "change", object: target },
+            steps: [last.seg as ToolSegment, seg as ToolSegment],
+          };
+          prev = seg;
+          continue;
+        }
+      }
       run.push({ t: "step", seg });
+      prev = seg;
       continue;
     }
+    prev = seg;
     const open = window.find((g) => g.cls.key === cls.key);
     if (open) open.steps.push(seg as ToolSegment);
     else window.push({ cls, steps: [seg as ToolSegment] });
@@ -185,6 +263,10 @@ export function turnWorkSummary(work: ChatSegment[]): string {
  *  mode this rule exists to avoid. */
 export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
   const n = item.steps.length;
+  // A group defined by its object names the object, not a count of them:
+  // "Edited MessageList.tsx" beats "Edited 3 changes", and the count moves to
+  // the detail line where it belongs.
+  if (item.cls.object) return `${item.cls.verb} ${item.cls.object}`;
   return `${item.cls.verb} ${n} ${item.cls.noun}${n === 1 ? "" : "s"}`;
 }
 
@@ -192,6 +274,12 @@ export function groupSummary(item: Extract<TurnItem, { t: "group" }>): string {
  *  reader's real width rather than at a guessed character count, the same way
  *  every other one-line preview in the transcript is. */
 export function groupDetail(item: Extract<TurnItem, { t: "group" }>): string {
+  // The object is already in the summary, so repeating the same path N times
+  // here would say nothing. How many times it was touched is the new fact.
+  if (item.cls.object) {
+    const n = item.steps.length;
+    return `${n} ${item.cls.noun}${n === 1 ? "" : "s"}`;
+  }
   return item.steps
     .map((s) => (s.input || "").replace(/\s+/g, " ").trim())
     .filter(Boolean)

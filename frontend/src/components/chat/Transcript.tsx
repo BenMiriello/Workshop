@@ -24,14 +24,22 @@ import { modelDisplay, type ModelDisplay } from "./models";
 // One dense row (icon · name · truncated input). Tapping reveals the full input
 // (a command / path / pattern). Mobile-first: the preview truncates with an
 // ellipsis so a tool call never blows out the bubble width.
-// STATE DECIDES DISCLOSURE, not a preference. A step that failed opens itself
-// and says why; a step still running says how long it has been going, but only
-// past the 10s attention limit, so a fast call never flickers a counter. Every
-// other step is one collapsed row. See grouping.ts and ADR 0015 §3/§5.
+// A FAILURE IS MARKED, NOT EXPANDED. Operator instruction, 2026-08-12.
+//
+// This used to auto-open a failed step to show its error, which is the rule
+// GitHub Actions and VS Code both follow. In this transcript it is wrong: a
+// turn here routinely carries several failures that the assistant handled and
+// moved past, and each one unrolling its output mid-scroll is a page of noise
+// about something already dealt with. The failure still stands out and still
+// costs nothing to read: it is never merged into a group, never hidden behind
+// the row cap, and carries its own marker. Opening it is the reader's call.
+//
+// A step still running says how long it has been going, but only past the 10s
+// attention limit, so a fast call never flickers a counter. See grouping.ts.
 function ToolChip({ seg, nowMs }: { seg: Extract<ChatSegment, { t: "tool" }>; nowMs: number }) {
   const failed = isFailed(seg);
   const running = isRunning(seg);
-  const [open, setOpen] = useState(failed);
+  const [open, setOpen] = useState(false);
   const panelId = useId();
   const detail = failed && seg.error ? seg.error : seg.input;
   const hasDetail = !!detail;

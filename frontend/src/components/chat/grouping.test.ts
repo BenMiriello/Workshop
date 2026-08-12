@@ -3,6 +3,7 @@ import type { ChatSegment } from "../../lib/chat";
 import {
   buildTurnBlocks, groupSummary, groupDetail, splitRun, turnWorkSummary,
   isRunning, isFailed, mergeClass, stepDuration, runningSeconds, turnDuration, RUN_ROW_CAP,
+  type TurnItem,
 } from "./grouping";
 
 const read = (path: string, extra: Partial<Extract<ChatSegment, { t: "tool" }>> = {}): ChatSegment =>
@@ -47,8 +48,10 @@ describe("buildTurnBlocks", () => {
     expect((items[1] as unknown as { seg: ChatSegment }).seg).toMatchObject({ input: "rm -rf build/" });
   });
 
-  it("never merges a write or a command", () => {
-    const items = (buildTurnBlocks([bash("ls"), bash("pwd"), bash("id")])[0] as { items: { t: string }[] }).items;
+  it("never merges a MUTATING command", () => {
+    const items = (buildTurnBlocks([
+      bash("npm install"), bash("git commit -m x"), bash("systemctl restart api"),
+    ])[0] as { items: { t: string }[] }).items;
     expect(items.map((i) => i.t)).toEqual(["step", "step", "step"]);
   });
 
@@ -182,11 +185,28 @@ describe("state predicates", () => {
     expect(isFailed({ t: "tool", name: "Bash", input: "x", ok: false })).toBe(true);
   });
 
-  it("only allowlisted read-only tools have a merge class", () => {
+  it("only read-only work has a merge class", () => {
     expect(mergeClass(read("a"))).not.toBeNull();
-    expect(mergeClass(bash("ls"))).toBeNull();
     expect(mergeClass({ t: "tool", name: "Write", input: "a", ok: true })).toBeNull();
     expect(mergeClass({ t: "tool", name: "mcp__thing__do", input: "a", ok: true })).toBeNull();
+  });
+
+  it("classifies a shell command by what it does, not by being Bash", () => {
+    // Bash was excluded wholesale, and it is 64% of everything this assistant
+    // does, so the merge rule bought 6.2% and the transcript read as flat.
+    expect(mergeClass(bash("ls src/"))).not.toBeNull();
+    expect(mergeClass(bash("sed -n '1,50p' f.ts"))).not.toBeNull();
+    expect(mergeClass(bash("rm -rf build"))).toBeNull();
+    expect(mergeClass(bash("git commit -m x"))).toBeNull();
+  });
+
+  it("merges a shell grep into the same class as a native Grep", () => {
+    // They are the same act. Only the spelling differs, and splitting them
+    // would show "Searched 2 times" twice for one stretch of searching.
+    const shell = mergeClass(bash("grep -rn 'x' src/"));
+    const native = mergeClass({ t: "tool", name: "Grep", input: "x", ok: true });
+    expect(shell).not.toBeNull();
+    expect(shell?.key).toBe(native?.key);
   });
 });
 
@@ -262,5 +282,53 @@ describe("turnWorkSummary counts approvals", () => {
     };
     expect(turnWorkSummary([text("I will run the build."), denied]))
       .toBe("1 step · 1 approval");
+  });
+});
+
+describe("repeated writes to one file", () => {
+  const edit = (path: string): ChatSegment =>
+    ({ t: "tool", name: "Edit", input: path, ok: true });
+
+  it("collapses adjacent edits to the SAME file into one row", () => {
+    const blocks = buildTurnBlocks([edit("a.ts"), edit("a.ts"), edit("a.ts")]);
+    const items = (blocks[0] as { items: TurnItem[] }).items;
+    expect(items).toHaveLength(1);
+    const g = items[0] as Extract<TurnItem, { t: "group" }>;
+    expect(g.t).toBe("group");
+    expect(g.steps).toHaveLength(3);
+    // The object is named, and the count is the detail. "Edited 3 changes"
+    // would say less than the filename does.
+    expect(groupSummary(g)).toBe("Edited a.ts");
+    expect(groupDetail(g)).toBe("3 changes");
+  });
+
+  it("never merges edits to DIFFERENT files", () => {
+    // A write is the thing the operator most needs named. "Edited 2 files"
+    // hides which, which is the whole failure mode the allowlist exists for.
+    const blocks = buildTurnBlocks([edit("a.ts"), edit("b.ts")]);
+    expect((blocks[0] as { items: TurnItem[] }).items).toHaveLength(2);
+  });
+
+  it("requires strict adjacency, so nothing can hop over a write", () => {
+    // The window rule reorders groupable steps within a window. If writes
+    // joined that window, a read could be shown before a write that actually
+    // came first. Edits merge only with the step immediately before.
+    const blocks = buildTurnBlocks([edit("a.ts"), read("x.ts"), edit("a.ts")]);
+    const items = (blocks[0] as { items: TurnItem[] }).items;
+    expect(items).toHaveLength(3);
+    expect(items.every((i) => i.t === "step")).toBe(true);
+  });
+
+  it("does not merge across prose", () => {
+    const blocks = buildTurnBlocks([edit("a.ts"), text("Now the other half."), edit("a.ts")]);
+    expect(blocks.map((b) => b.t)).toEqual(["run", "prose", "run"]);
+  });
+
+  it("keeps a failed write on its own row", () => {
+    const blocks = buildTurnBlocks([
+      edit("a.ts"),
+      { t: "tool", name: "Edit", input: "a.ts", ok: false, error: "no match" },
+    ]);
+    expect((blocks[0] as { items: TurnItem[] }).items).toHaveLength(2);
   });
 });
