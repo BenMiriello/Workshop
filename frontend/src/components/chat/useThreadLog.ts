@@ -25,7 +25,14 @@ import type { ChatProblem } from "./chatProblem";
 // from a second tab, a turn that finished while this one slept. Liveness is
 // server state; a local flag can only ever describe this tab.
 
-const POLL_MS = 10_000;
+// THE POLL IS A BACKSTOP NOW, not the mechanism. `useThreadStream` below opens
+// a change stream for the thread and syncs the instant anything moves, so this
+// exists for the cases a stream cannot cover: a socket that dropped without
+// saying so, a proxy that closed it, a tab coming back from hidden with the
+// stream torn down. Sixty seconds is the right cadence for that; ten was the
+// cadence of a mechanism, and it meant everything a client did not do itself
+// arrived up to ten seconds late on every other device.
+const POLL_MS = 60_000;
 
 // How many polls in a row must fail before the chat says it has gone quiet.
 // Three at POLL_MS is half a minute of silence — long enough that a single
@@ -194,6 +201,51 @@ export function useThreadLog({
   // thread; the catch-up sync on the way back from hidden is what matters here,
   // and usePoll does that one unconditionally.
   usePoll(sync, POLL_MS, { enabled: !!threadId, immediate: false });
+
+  // Held in a ref so the stream effect depends on `threadId` alone: re-creating
+  // the EventSource whenever `sync` changed identity would tear down and reopen
+  // the connection constantly, which is a worse poll.
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+
+  // THE CHANGE STREAM. Anything that moves this thread — a message from another
+  // device, a queued message the server delivered, a turn started elsewhere, a
+  // compaction — wakes this and it syncs at once. The stream carries no
+  // content: it says the thread changed, and `sync` is the same cursor-based
+  // read it has always been, so there is still exactly one path by which a
+  // client learns what a chat contains.
+  useEffect(() => {
+    if (!threadId) return;
+    let es: EventSource | null = null;
+    let retry: number | undefined;
+    let closed = false;
+    let attempt = 0;
+
+    const open = () => {
+      if (closed) return;
+      es = new EventSource(`/api/chat/threads/${encodeURIComponent(threadId)}/stream`);
+      es.addEventListener("changed", () => {
+        attempt = 0;
+        void syncRef.current();
+      });
+      es.onerror = () => {
+        // A dropped stream is ordinary (a restart, a proxy timeout, sleep).
+        // Reconnect with a bounded backoff, and sync on the way back in: the
+        // reconnect itself is the moment this tab is most likely to be behind.
+        es?.close();
+        es = null;
+        if (closed) return;
+        const wait = Math.min(1000 * 2 ** attempt++, 30_000);
+        retry = window.setTimeout(() => { void syncRef.current(); open(); }, wait);
+      };
+    };
+    open();
+    return () => {
+      closed = true;
+      window.clearTimeout(retry);
+      es?.close();
+    };
+  }, [threadId]);
 
   // TWO BOUNDARIES, because the transcript has two halves that move at very
   // different rates. The committed half is keyed on the committed log itself

@@ -25,6 +25,7 @@ from pydantic import BaseModel
 
 from services import chat_attachments
 from services import chat_drain
+from services import chat_events
 from services import chat_queue
 from services import chat_store, chat_context, chat_log
 from services import tasks
@@ -441,6 +442,67 @@ async def thread(thread_id: str):
     return {**t, **chat_queue.state(thread_id)}
 
 
+# How long a thread stream waits before sending a keepalive. Long enough that an
+# idle chat costs almost nothing, short enough that a dead connection is noticed
+# by the proxy and the browser rather than lingering.
+_THREAD_STREAM_KEEPALIVE_S = 25.0
+
+
+@router.get("/threads/{thread_id}/stream")
+async def stream_thread(thread_id: str, request: Request, since: int = 0):
+    """Say WHEN this thread changes. The client then syncs.
+
+    THE POLL WAS THE PROBLEM. Everything a client did not do itself — a turn
+    started on another device, a message sent from a phone, a queued message the
+    server delivered, a compaction — arrived up to ten seconds late, on every
+    client but the one that caused it. There was already a stream, but it
+    carried ONE RUN's output to whoever knew that run's id, so a client that had
+    not started a turn had nothing to subscribe to and could only ask again.
+
+    IT CARRIES NO CONTENT, deliberately. `changed` and a version, nothing else;
+    the client calls the same cursor-based sync it always had. A stream that
+    carried the transcript would be a second answer to "what is in this chat",
+    and every reorder and eaten-message bug in this system's history was two
+    owners of that answer disagreeing. This adds a trigger, not a source.
+
+    `since` is the version the client last saw, so a reconnect that missed a
+    change wakes immediately instead of one keepalive behind. Missing a bump
+    costs latency and never correctness: the sync is idempotent and the poll
+    still runs behind this as a backstop.
+    """
+    if not chat_log.exists(thread_id):
+        raise HTTPException(404, "thread not found")
+
+    async def gen():
+        seen = max(0, since)
+        # The current version first, so a client that connects after a change it
+        # has not synced yet acts on it immediately.
+        yield f"event: changed\ndata: {chat_events.version(thread_id)}\n\n"
+        seen = chat_events.version(thread_id)
+        while True:
+            if await request.is_disconnected():
+                return
+            v = await chat_events.wait(thread_id, seen, _THREAD_STREAM_KEEPALIVE_S)
+            if await request.is_disconnected():
+                return
+            if v > seen:
+                seen = v
+                yield f"event: changed\ndata: {v}\n\n"
+            else:
+                # Nothing happened. A comment frame keeps the connection honest
+                # without waking the client's reducer.
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(gen(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        # The edge buffers by default, which would hold a one-line frame until
+        # something else came along — turning an instant update back into a slow
+        # one, which is the whole thing this replaces.
+        "X-Accel-Buffering": "no",
+    })
+
+
 @router.get("/threads/{thread_id}/events")
 async def thread_events(thread_id: str, after: int = 0, limit: int | None = None):
     """The thread's event log from a cursor. THE sync endpoint.
@@ -560,6 +622,7 @@ async def remove(thread_id: str):
     # The queue goes with the conversation it belongs to. Left behind it would
     # be text nothing can ever deliver, held forever under an id with no thread.
     chat_queue.forget(thread_id)
+    chat_events.forget(thread_id)
     t = chat_store.get_thread(thread_id)
     draft_store.clear_for_thread(t.get("context_key") if t else None, thread_id)
     return {"deleted": chat_store.delete_thread(thread_id)}

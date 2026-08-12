@@ -135,8 +135,20 @@ def _write(thread_id: str, data: dict) -> None:
                 p.unlink()
             except OSError as e:  # pragma: no cover - defensive
                 log.debug("could not remove empty queue for %s: %s", thread_id, e)
+        _notify(thread_id)
         return
     chat_log._write_json_atomic(queue_path(thread_id), data)
+    _notify(thread_id)
+
+
+def _notify(thread_id: str) -> None:
+    """A queued message appearing, draining or being cancelled is a change every
+    open client has to see. See services/chat_events."""
+    try:
+        from services import chat_events
+        chat_events.bump(thread_id)
+    except Exception:  # pragma: no cover - defensive
+        pass
 
 
 def _order_key(entry: dict) -> tuple[str, str]:

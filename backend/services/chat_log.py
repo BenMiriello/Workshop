@@ -276,6 +276,20 @@ def lock_for(thread_id: str) -> asyncio.Lock:
 # ---- raw io ----------------------------------------------------------------
 
 
+def _notify(thread_id: str) -> None:
+    """Tell anything watching this thread that it changed.
+
+    Imported lazily and swallowed whole: a change notification is a latency
+    optimization over the poll that still runs behind it, and it must never be
+    able to fail the write it is reporting. See services/chat_events.
+    """
+    try:
+        from services import chat_events
+        chat_events.bump(thread_id)
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+
 def _write_json_atomic(path: Path, data: dict) -> None:
     """Write whole-file JSON atomically: temp file, fsync, rename.
 
@@ -793,6 +807,7 @@ def append_sync(thread_id: str, event: dict) -> dict:
     seq = max(int(meta.get("last_seq") or 0), _tail_seq(thread_id)) + 1
     ev = _build_event(thread_id, event, seq)
     _append_line(log_path(thread_id), ev)
+    _notify(thread_id)
     meta["last_seq"] = seq
     meta["updated_at"] = now_iso()
     _write_json_atomic(meta_path(thread_id), meta)
@@ -866,6 +881,7 @@ def patch_meta_sync(thread_id: str, **fields: object) -> dict | None:
         meta["last_seq"] = on_disk
     meta["updated_at"] = now_iso()
     _write_json_atomic(meta_path(thread_id), meta)
+    _notify(thread_id)
     return meta
 
 
