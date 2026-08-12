@@ -2562,6 +2562,15 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
 
     # The thread now holds the final message; the journal is no longer needed.
     _mark_meta(meta, "done")
+    # EXCEPT WHEN THE TURN PRODUCED NOTHING, where the journal is the only
+    # evidence of why. Diagnosing the 2026-08-12 empty replies took reading the
+    # CLI's own session files, because ours had been deleted seconds after the
+    # failure. It is a few KB, it is kept only for the case that should now be
+    # rare, and `status: done` keeps the restart-recovery pass off it.
+    if not turn.segments and not (turn.final_text or "").strip() and not stopped:
+        log.warning("turn %s produced nothing; keeping its journal at %s",
+                    turn.id, _journal_dir(turn.id))
+        return
     try:
         shutil.rmtree(_journal_dir(turn.id), ignore_errors=True)
     except Exception:
