@@ -62,15 +62,48 @@ if [ "${1:-}" = "--deferred" ]; then
   # clear. The second wait is bounded, because a crashed run can leave the field
   # set until the next startup reconcile and must not park a restarter forever.
   commit_grace=180
+  # WAIT FOR *MY* TURN, NOT FOR EVERY TURN ON THE BOX.
+  #
+  # `turn_live` used to scan every turn under .runtime/turns and block while ANY
+  # of them was running. That is correct on a machine running one turn at a
+  # time, and it never fires on this one: a background worker or a second chat
+  # is almost always mid-turn, so the condition is true forever. Measured on
+  # 2026-08-11: NINE armed restarters stacked up over an hour, none fired, and
+  # the backend served hour-old code while every arming call cheerfully printed
+  # success. That is the same silent-no-op this whole block was written to kill,
+  # wearing a different hat.
+  #
+  # The turn that armed this restart is the one whose reply must land first, and
+  # it is identifiable: this process was spawned by it, so that turn's recorded
+  # pid is one of our ancestors. Walk the parent chain and match.
+  own_turn=""
+  _pid=$$
+  _ancestors=""
+  while [ -n "$_pid" ] && [ "$_pid" != "1" ] && [ "$_pid" != "0" ]; do
+    _ancestors="$_ancestors $_pid"
+    _pid="$(awk '{print $4}' "/proc/$_pid/stat" 2>/dev/null)"
+  done
+  for meta in "$turns"/*/meta.json; do
+    [ -f "$meta" ] || continue
+    tpid="$(sed -n 's/.*"pid": *\([0-9]\+\).*/\1/p' "$meta" | head -1)"
+    [ -n "$tpid" ] || continue
+    case " $_ancestors " in *" $tpid "*) own_turn="$tpid"; break ;; esac
+  done
+  # A concurrent turn still gets a chance to land, but a BOUNDED one. Restarting
+  # under another agent mid-turn is real damage (see the guard below), and never
+  # restarting at all is worse, so this waits minutes rather than forever.
+  other_cap=180
   setsid bash -c '
-    self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; waited=0
-    turn_live() {
+    self="$1"; turns="$2"; chat="$3"; max="$4"; grace="$5"; mine="$6"; ocap="$7"
+    live() {  # live <pid-filter>: "" = any turn, else only that pid
       [ -d "$turns" ] || return 1
       for meta in "$turns"/*/meta.json; do
         [ -f "$meta" ] || continue
         grep -q "\"status\": *\"running\"" "$meta" || continue
         pid="$(sed -n "s/.*\"pid\": *\([0-9]\+\).*/\1/p" "$meta" | head -1)"
-        [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && return 0
+        [ -n "$pid" ] || continue
+        [ -n "$1" ] && [ "$pid" != "$1" ] && continue
+        kill -0 "$pid" 2>/dev/null && return 0
       done
       return 1
     }
@@ -78,15 +111,32 @@ if [ "${1:-}" = "--deferred" ]; then
       [ -d "$chat" ] || return 1
       grep -rlq "\"active_run_id\": *\"[0-9a-f-]" "$chat"/*/chat/*/meta.json 2>/dev/null
     }
-    while turn_live && [ "$waited" -lt "$max" ]; do sleep 3; waited=$((waited+3)); done
+    # 1. My own turn, generously: it is the reply this restart must not eat.
+    waited=0
+    if [ -n "$mine" ]; then
+      while live "$mine" && [ "$waited" -lt "$max" ]; do sleep 3; waited=$((waited+3)); done
+      [ "$waited" -ge "$max" ] && echo "warn: arming turn $mine still running after ${max}s; restarting anyway"
+    fi
+    # 2. Anyone else, briefly.
+    waited=0
+    while live "" && [ "$waited" -lt "$ocap" ]; do sleep 3; waited=$((waited+3)); done
+    [ "$waited" -ge "$ocap" ] && echo "warn: another turn was still running after ${ocap}s; restarting anyway"
+    # 3. The commit window: a thread holds active_run_id until its reply lands.
     settled=0
     while commit_pending && [ "$settled" -lt "$grace" ]; do sleep 2; settled=$((settled+2)); done
     [ "$settled" -ge "$grace" ] && echo "warn: a run still held its thread after ${grace}s; restarting anyway"
     sleep 1
     bash "$self"
-  ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" >>/tmp/workshop-backend.log 2>&1 </dev/null &
+  ' _ "$self" "$turns" "$chat" "$max_wait" "$commit_grace" "$own_turn" "$other_cap" \
+    >>/tmp/workshop-backend.log 2>&1 </dev/null &
   disown || true
-  echo "Backend restart armed: it fires as soon as the running turn finishes (waiting up to ${max_wait}s)."
+  if [ -n "$own_turn" ]; then
+    echo "Backend restart armed: fires when this turn (pid $own_turn) ends, then within ${other_cap}s."
+  else
+    # Say so rather than implying a wait that is not happening. No owning turn
+    # means this was run from a plain shell, not from inside a turn.
+    echo "Backend restart armed: no arming turn found, so it fires within ${other_cap}s."
+  fi
   exit 0
 fi
 
