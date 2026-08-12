@@ -76,7 +76,8 @@ def stub_engines(monkeypatch):
     async def ensure_worker(*a, **k):
         return None
 
-    async def start_turn(*, context_key, thread_id, text, model=None, speculative=False):
+    async def start_turn(*, context_key, thread_id, text, model=None, speculative=False,
+                         user_client_id=None):
         started.append(text)
 
         class T:
@@ -271,3 +272,65 @@ class TestASpokenTurn:
             ws.send_bytes(protocol.encode_audio(protocol.KIND_MIC, 0, pcm[:3200]))
             seen = drain(ws, settle=0.3)
             assert first(seen, "state") is not None, "the socket died on a reordered frame"
+
+
+class TestTheSocketRecordsWhatWasSaid:
+    """End to end through the real app and a real chat store: the words reach the
+    thread, and they are there before any reply could have finished.
+
+    Everything below the socket is real here -- the route, the runtime, the
+    reducer, the chat store. Only the ASR/TTS engines and the model worker are
+    stubbed, because those are the slow things, not the risky ones. The risky
+    path was always the one no test executed: the machine wired to a real
+    transport writing to a real store.
+    """
+
+    def _thread_messages(self, thread_id):
+        from services import chat_store
+        return [(m.get("role"), (m.get("content") or "").strip())
+                for m in (chat_store.get_thread(thread_id) or {}).get("messages") or []]
+
+    def test_a_turn_over_the_socket_lands_on_the_thread(self, app, stub_engines):
+        from services import chat_store, ownership
+        ownership.set_current_owner(6)
+        th = chat_store.create_thread(context_key="general", title="Voice")["id"]
+
+        with TestClient(app).websocket_connect("/voice/stream") as ws:
+            ws.send_text(json.dumps(
+                {"t": "hello", "context_key": "general", "thread_id": th}))
+            drain(ws)
+            ws.send_text(json.dumps({"t": "text", "body": "put this on the thread"}))
+            drain(ws, settle=0.6)
+
+        assert ("user", "put this on the thread") in self._thread_messages(th)
+
+    def test_the_words_survive_the_socket_closing_mid_turn(self, app, stub_engines):
+        """Closing the tab while the reply is still being written. This is the
+        shape of the loss he reported: he spoke, then turned voice off."""
+        from services import chat_store, ownership
+        ownership.set_current_owner(6)
+        th = chat_store.create_thread(context_key="general", title="Voice")["id"]
+
+        with TestClient(app).websocket_connect("/voice/stream") as ws:
+            ws.send_text(json.dumps(
+                {"t": "hello", "context_key": "general", "thread_id": th}))
+            drain(ws)
+            ws.send_text(json.dumps({"t": "text", "body": "do not lose this"}))
+            # No settle: leave immediately, the way closing the tab does.
+
+        assert ("user", "do not lose this") in self._thread_messages(th)
+
+    def test_the_message_is_not_written_twice(self, app, stub_engines):
+        from services import chat_store, ownership
+        ownership.set_current_owner(6)
+        th = chat_store.create_thread(context_key="general", title="Voice")["id"]
+
+        with TestClient(app).websocket_connect("/voice/stream") as ws:
+            ws.send_text(json.dumps(
+                {"t": "hello", "context_key": "general", "thread_id": th}))
+            drain(ws)
+            ws.send_text(json.dumps({"t": "text", "body": "exactly once"}))
+            drain(ws, settle=0.6)
+
+        said = [t for role, t in self._thread_messages(th) if role == "user"]
+        assert said.count("exactly once") == 1

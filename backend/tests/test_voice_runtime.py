@@ -105,7 +105,8 @@ def stubbed(monkeypatch):
     async def ensure_worker(*a, **k):
         return None
 
-    async def start_turn(*, context_key, thread_id, text, model=None, speculative=False):
+    async def start_turn(*, context_key, thread_id, text, model=None, speculative=False,
+                         user_client_id=None):
         started.append(text)
         return types.SimpleNamespace(id=f"w{len(started)}")
 

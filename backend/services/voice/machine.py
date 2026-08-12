@@ -31,8 +31,15 @@ and the whole interaction policy is the table in `_on_speech_started` and
     HEARD, NOT HOW MUCH TIME PASSED.
 
 You cannot be reacting to a sentence you have not heard, so talking over a reply
-that has not made a sound yet means the endpoint fired too early: merge. Talking
-over one you have heard means you are answering it: interrupt.
+that has not made a sound yet means the endpoint fired too early: throw the reply
+away and let what comes next stand as its own message. Talking over one you have
+heard means you are answering it: interrupt.
+
+WHAT WAS SAID IS RECORDED WHEN IT IS CAPTURED, not when a reply finishes, which
+is how typing has always worked (routes/chat appends the user message and only
+then runs the model). Voice did the opposite, and so a cancel, a barge, a failed
+reply, a dropped socket or a turn that never ended each destroyed words the
+operator had already watched appear. Nothing here takes a recorded message back.
 """
 from __future__ import annotations
 
@@ -60,11 +67,13 @@ class ClauseStatus(str, Enum):
 
 
 class Abandon(str, Enum):
-    """Why a turn is being dropped. This is not cosmetic: `DISCARD` is what stops
-    a re-sent turn from appearing twice in the transcript, because the worker
-    drops the utterance instead of persisting it. Carried forward from the last
-    round, where a "timeout" cancel persisted the utterance and the retry
-    persisted it again."""
+    """Why a turn is being dropped.
+
+    This governs the REPLY only. It used to decide whether the operator's own
+    words were persisted too, which is why a cancel could erase them; they are
+    now written when they are captured and no reason here revokes that. What
+    `DISCARD` still buys is that the abandoned reply is never written, so a
+    superseded turn does not leave half an answer in the transcript."""
 
     DISCARD = "discard"       # never happened: merged into a later turn, or retried
     BARGE = "barge"           # the operator spoke over it; keep what was heard
@@ -262,6 +271,28 @@ Event = (
 
 
 @dataclass(frozen=True)
+class RecordUtterance:
+    """Write what was said to the thread, NOW, before a word of reply exists.
+
+    Typing has always worked this way: `routes/chat` appends the user message and
+    only then runs the model, so the message is on the thread even if the model
+    never answers. Voice did the opposite. It handed the text to the worker and
+    the worker persisted the user and assistant messages TOGETHER at the end of a
+    completed turn, so anything that went wrong in between -- a cancel, a barge,
+    a dropped socket, a failed reply, a turn that never ended -- took the
+    operator's words with it. That is not an edge case: it is what he saw, and
+    the forensics showed fourteen run events with no user message on the thread.
+
+    What you said is yours. It does not depend on the machine answering.
+
+    `turn_id` doubles as the idempotency key (chat_store.append_message dedups on
+    client_id), so a retry or a reconnect cannot write it twice.
+    """
+    turn_id: str
+    text: str
+
+
+@dataclass(frozen=True)
 class StartGeneration:
     turn_id: str
     text: str
@@ -295,7 +326,10 @@ class ArmCapture:
     on: bool
 
 
-Effect = StartGeneration | AbandonGeneration | Speak | StopSpeaking | ArmCapture
+Effect = (
+    RecordUtterance | StartGeneration | AbandonGeneration | Speak | StopSpeaking
+    | ArmCapture
+)
 
 
 # ------------------------------------------------------------------- reducer
@@ -307,14 +341,21 @@ class Outcome:
     effects: list[Effect] = field(default_factory=list)
 
 
-def _abandon(
-    state: State, reason: Abandon, *, keep_utterance: bool
-) -> tuple[State, list[Effect]]:
+def _abandon(state: State, reason: Abandon) -> tuple[State, list[Effect]]:
     """Drop the active turn. THE ONE TEARDOWN.
 
-    `keep_utterance` decides whether the words that caused it are carried into
-    the next utterance (a continuation) or dropped (an interruption, where the
-    operator has moved on, or a cancel, where they took it back).
+    A COMMITTED MESSAGE IS NOT TAKEN BACK. This used to carry the abandoned
+    turn's utterance back into the next one, so that pausing mid-thought and
+    resuming folded both halves into a single message. That was reasonable when
+    the utterance existed only in memory until a reply finished. It is wrong now
+    that it is written to the thread at capture: the first half is already a
+    message, so folding it into the second recorded the same words twice, once
+    alone and once inside a longer message. That is the duplication the operator
+    reported, and it is the reason every reference implementation treats
+    committed text as append-only and immutable.
+
+    A continuation is simply the next message. The model reads both, because
+    both are on the thread.
     """
     turn = state.turn
     if turn is None:
@@ -324,13 +365,7 @@ def _abandon(
     ]
     if turn.audible:
         effects.append(StopSpeaking(turn.id))
-    segments = state.segments
-    if keep_utterance and turn.utterance:
-        # The already-transcribed first half goes back to the FRONT, so the
-        # endpoint joins it with what is still being said and the whole thought
-        # lands as one message.
-        segments = (turn.utterance,) + segments
-    return replace(state, turn=None, segments=segments), effects
+    return replace(state, turn=None), effects
 
 
 def _begin_turn(state: State, text: str, turn_id: str) -> tuple[State, list[Effect]]:
@@ -347,7 +382,10 @@ def _begin_turn(state: State, text: str, turn_id: str) -> tuple[State, list[Effe
             turns=state.turns + 1,
             error=None,
         ),
-        [StartGeneration(turn_id, text)],
+        # RECORD FIRST, THEN GENERATE. The order is the point: the runtime
+        # performs effects in order and the write completes before generation
+        # starts, so there is no window in which the words exist only in memory.
+        [RecordUtterance(turn_id, text), StartGeneration(turn_id, text)],
     )
 
 
@@ -363,7 +401,7 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
                        [ArmCapture(s.mic_on)])
 
     if isinstance(event, Stopped):
-        s, fx = _abandon(s, Abandon.CANCELLED, keep_utterance=False)
+        s, fx = _abandon(s, Abandon.CANCELLED)
         return Outcome(replace(State(), mic_on=s.mic_on, speak_on=s.speak_on),
                        fx + [ArmCapture(False)])
 
@@ -406,13 +444,13 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
             return Outcome(s)
         if turn.heard == 0 and not turn.audible:
             # CONTINUATION. They cannot be answering something they have not
-            # heard, so the endpoint fired too early. Take the turn back and
-            # merge; the audio for what they are saying now is already in the
-            # timeline, so nothing is lost.
-            s, fx = _abandon(s, Abandon.DISCARD, keep_utterance=True)
+            # heard, so the endpoint fired too early: drop the reply nobody was
+            # given. What they said is already a message on the thread and stays
+            # one; what they say next becomes the next message.
+            s, fx = _abandon(s, Abandon.DISCARD)
             return Outcome(s, fx)
         # INTERRUPTION. They heard it and spoke anyway.
-        s, fx = _abandon(s, Abandon.BARGE, keep_utterance=False)
+        s, fx = _abandon(s, Abandon.BARGE)
         return Outcome(replace(s, interrupts=s.interrupts + 1), fx)
 
     if isinstance(event, SpeechEnded):
@@ -454,7 +492,7 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
                 error = _NOT_CAUGHT
             return Outcome(replace(s, segments=(), partial="", error=error))
         if s.turn is not None and s.turn.heard == 0 and not s.turn.audible:
-            s, fx = _abandon(s, Abandon.DISCARD, keep_utterance=True)
+            s, fx = _abandon(s, Abandon.DISCARD)
             final = s.pending_user
         s2, fx2 = _begin_turn(s, final, turn_id)
         return Outcome(s2, fx + fx2)
@@ -468,8 +506,7 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
             # the pending words are kept follows the same heard/not-heard rule.
             keep = s.turn.heard == 0 and not s.turn.audible
             s, fx = _abandon(
-                s, Abandon.DISCARD if keep else Abandon.BARGE, keep_utterance=False
-            )
+                s, Abandon.DISCARD if keep else Abandon.BARGE)
             if not keep:
                 s = replace(s, interrupts=s.interrupts + 1)
         # Anything half-spoken is abandoned in favour of what was typed: the
@@ -482,13 +519,13 @@ def reduce(state: State, event: Event, *, turn_id: str = "") -> Outcome:
         if s.turn is None:
             return Outcome(s)
         heard = s.turn.heard
-        s, fx = _abandon(s, Abandon.BARGE, keep_utterance=False)
+        s, fx = _abandon(s, Abandon.BARGE)
         return Outcome(replace(s, interrupts=s.interrupts + 1 if heard else s.interrupts), fx)
 
     if isinstance(event, CancelTurn):
         if s.turn is None:
             return Outcome(s)
-        s, fx = _abandon(s, Abandon.CANCELLED, keep_utterance=False)
+        s, fx = _abandon(s, Abandon.CANCELLED)
         # Scrapping the turn scraps the utterance that caused it, so a misheard
         # auto-send is fully recoverable and leaves no trace.
         return Outcome(replace(s, segments=(), partial="", last_user=""), fx)

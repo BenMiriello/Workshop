@@ -9,13 +9,11 @@ per-owner prefs live under `.runtime/users/<owner>/voice-prefs.json`.
 """
 from __future__ import annotations
 
-import json
 import logging
 
 import asyncio
 
-from fastapi import APIRouter, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from services import chat_store, voice_engine, voice_worker
@@ -154,74 +152,6 @@ async def voice_voices():
     return {"available": True, "voices": voice_engine.TTS.voices()}
 
 
-@router.post("/voice/stt")
-async def voice_stt(
-    audio: UploadFile,
-    language: str = Form("en"),
-    preview: bool = Form(False),
-):
-    """Transcribe an utterance.
-
-    `preview=1` is the live-partial path: a growing window of an utterance still
-    in progress, decoded by the small preview model so the pass finishes inside
-    the endpoint silence. Display only — the committed turn text always comes
-    from a full-quality pass over the finished segment."""
-    engine = voice_engine.STT_PREVIEW if preview else voice_engine.STT
-    if not engine.available:
-        raise HTTPException(status_code=503, detail="server STT unavailable")
-    data = await audio.read()
-    if not data:
-        raise HTTPException(status_code=400, detail="empty audio")
-    await VOICE_HOLD.touch("voice stt")
-
-    text = await asyncio.to_thread(
-        engine.transcribe, data, (language or None), preview
-    )
-    return {"text": text, "preview": preview}
-
-
-class TtsBody(BaseModel):
-    text: str
-    voice: str | None = None
-    speed: float = 1.0
-    # When true, split into sentences and return a multipart-ish concatenated
-    # stream of WAV chunks (one per sentence) so the client can start playing
-    # the first sentence while later ones render.
-    stream: bool = False
-
-
-@router.post("/voice/tts")
-async def voice_tts(body: TtsBody):
-    if not voice_engine.TTS.available:
-        raise HTTPException(status_code=503, detail="server TTS unavailable")
-    text = (body.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="empty text")
-    await VOICE_HOLD.touch("voice tts")
-    import asyncio
-
-    if not body.stream:
-        wav = await asyncio.to_thread(
-            voice_engine.TTS.synth_wav, text, body.voice, body.speed
-        )
-        return Response(content=wav, media_type="audio/wav")
-
-    # Streaming: emit length-prefixed WAV frames, one per sentence.
-    sentences = voice_engine.split_sentences(text) or [text]
-
-    async def gen():
-        for i, sent in enumerate(sentences):
-            wav = await asyncio.to_thread(
-                voice_engine.TTS.synth_wav, sent, body.voice, body.speed
-            )
-            header = json.dumps({"i": i, "n": len(sentences), "bytes": len(sent), "text": sent})
-            hb = header.encode("utf-8")
-            # frame = 4-byte header length | header json | 4-byte wav length | wav
-            yield len(hb).to_bytes(4, "big") + hb + len(wav).to_bytes(4, "big") + wav
-
-    return StreamingResponse(gen(), media_type="application/octet-stream")
-
-
 @router.get("/voice/prefs")
 async def voice_get_prefs():
     return _load_prefs()
@@ -291,11 +221,13 @@ async def voice_session(body: SessionBody):
 # /voice/stream (routes/voice_stream.py). `voice_worker` still owns generation
 # and is driven directly by services/voice/runtime.py.
 #
-# What stays here: prefs, the voice catalog, health, the one-shot stt/tts
-# endpoints (still useful for probing), and session prewarm/release below.
+# What stays here: prefs, the voice catalog, health, and session prewarm.
+#
+# The one-shot POST /voice/stt and POST /voice/tts are GONE, and so is DELETE
+# /voice/session/{thread_id}. They were the v1 request-per-utterance path that
+# the socket replaced, and they had no caller left in the app: the live path is
+# services/voice/runtime driving the engines directly, and a session is released
+# when its socket closes. Two ways to do the same thing, one of them untested
+# and unreachable, is how the surface drifts from what actually runs.
 
 
-@router.delete("/voice/session/{thread_id}")
-async def voice_stop_session(thread_id: str):
-    await voice_worker.stop_session(thread_id)
-    return {"ok": True}

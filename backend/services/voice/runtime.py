@@ -58,6 +58,10 @@ PARTIAL_MAX_MS = 5000
 # How often the runtime re-asks its own questions (commit / caption / endpoint).
 # Independent of the frame rate on purpose; see _tick_loop.
 TICK_MS = 40
+# How far back "Send now" reaches when the detector never opened an utterance.
+# Long enough to hold a whole thought said into a deaf VAD, short enough that it
+# cannot sweep up a previous turn's audio.
+FORCE_WINDOW_SAMPLES = 30 * 16000
 # Shortest burst that can fairly be called an attempt to say something. Below
 # it, an empty transcript is noise and must not be reported as a failure to hear.
 REAL_SPEECH_MS = 350
@@ -122,6 +126,10 @@ class VoiceRuntime:
         # Machine turn id -> worker turn id. Per INSTANCE: as a class attribute
         # this would be one dict shared by every open session on the box.
         self._worker_turns: dict[str, str] = {}
+        # Turns whose spoken message is already on the thread. The worker is told
+        # so it does not write it a second time, and so its context replay leaves
+        # it out of the history it seeds the model with.
+        self._recorded: set[str] = set()
         self.voice: str | None = None
         self.speed: float = 1.0
         self._clause_q: asyncio.Queue[Clause | None] = asyncio.Queue()
@@ -307,9 +315,29 @@ class VoiceRuntime:
         self._typing = active
 
     async def force_endpoint(self) -> None:
-        """The operator said they are done. No model gets a vote."""
+        """The operator said they are done. No model gets a vote.
+
+        THIS IS THE ESCAPE HATCH, so it must not be able to do nothing. It used
+        to return silently whenever no utterance was in progress, which sounds
+        like an impossible case and is not: an utterance only starts when the VAD
+        reports onset, and with no Silero weights on the box that is a hand-rolled
+        energy heuristic that goes deaf on a quiet voice or a noisy room. So the
+        one control meant to rescue a missed turn-end failed in exactly the
+        situation that produces a missed turn-end, and the press did nothing at
+        all -- no send, no error, no explanation.
+
+        The audio is on the timeline either way. If the detector never opened an
+        utterance, open one over what was actually captured and send that.
+        """
         if self._utt_start is None:
-            return
+            end = self.timeline.end
+            start = max(self._committed_to, end - FORCE_WINDOW_SAMPLES)
+            if end - start < int(0.2 * SAMPLE_RATE):
+                return                      # genuinely nothing there
+            self._utt_start = start
+            self._committed_to = start
+            self._silence_from = None
+            self._had_speech = True
         await self._endpoint()
 
     async def test_mic(self) -> str:
@@ -407,6 +435,12 @@ class VoiceRuntime:
                 self._carry = np.zeros(0, dtype=np.float32)
             return
 
+        if isinstance(fx, m.RecordUtterance):
+            # Awaited, not spawned: this must be on the thread before the worker
+            # reads it back as context and before any reply can be abandoned.
+            await self._record_utterance(fx.turn_id, fx.text)
+            return
+
         if isinstance(fx, m.StartGeneration):
             self._gen_tasks[fx.turn_id] = asyncio.create_task(
                 self._generate(fx.turn_id, fx.text)
@@ -477,13 +511,35 @@ class VoiceRuntime:
             await self.emit()
         return self.thread_id
 
+    async def _record_utterance(self, turn_id: str, text: str) -> None:
+        """Append the spoken message to the thread the moment it is captured.
+
+        Failure here is LOUD and does not stop the turn. A thread that cannot be
+        written is a real problem, but refusing to answer on top of it would
+        lose the words twice over.
+        """
+        thread_id = await self._thread()
+        try:
+            # Inline on the loop, like create_thread above: chat_log refuses a
+            # write from a worker thread while the loop is live, so to_thread
+            # would be rejected rather than merely slower.
+            chat_store.append_message(
+                thread_id, "user", text,
+                meta={"voice": True},
+                client_id=turn_id,        # idempotency key
+            )
+            self._recorded.add(turn_id)
+        except Exception as e:            # noqa: BLE001
+            log.error("spoken message not recorded on thread %s: %s", thread_id, e)
+        await self.emit()
+
     async def _generate(self, turn_id: str, text: str) -> None:
         stream = ClauseStream()
         full = ""
         try:
             turn = await voice_worker.start_turn(
                 context_key=self.context_key, thread_id=await self._thread(),
-                text=text, model=self.model,
+                text=text, model=self.model, user_client_id=turn_id,
             )
             self._worker_turns[turn_id] = turn.id
             async for _off, ev in voice_worker.iter_events(turn):

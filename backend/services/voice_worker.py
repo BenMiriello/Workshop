@@ -113,6 +113,11 @@ class VoiceTurn:
     session_key: str
     thread_id: str
     user_text: str
+    # The runtime's id for the utterance, used as the chat log's idempotency key.
+    # The runtime records the spoken message the moment it is captured; passing
+    # the SAME key here means a write from this side is deduped by the store
+    # rather than doubled, whichever order they happen to arrive in.
+    user_client_id: str | None = None
     speculative: bool = False
     deferred_persist: bool = False
     # Ordered event log the SSE endpoint replays/streams. Each: {kind, payload, ts}.
@@ -126,9 +131,12 @@ class VoiceTurn:
     complete: bool = False
     committed: bool = False
     cancelled: bool = False
-    # An explicit user cancel ("scrap what I just said") — the mis-heard utterance
-    # and any partial reply are DROPPED, not written to the thread. (A barge-in is
-    # different: reason="barge" keeps what was actually heard.)
+    # An explicit user cancel ("scrap that") — the partial REPLY is dropped and
+    # never written. The utterance itself stays: it is already on the thread,
+    # recorded when it was captured, and silently un-saying what the operator
+    # said is the exact behaviour that lost his words. A mis-heard message is
+    # deleted the way any other message is. (A barge-in is different again:
+    # reason="barge" keeps what was actually heard.)
     discarded: bool = False
     persisted: bool = False
     error: str | None = None
@@ -474,7 +482,8 @@ async def ensure_worker(context_key: str, thread_id: str, model: str | None) -> 
 
 
 async def start_turn(*, context_key: str, thread_id: str, text: str,
-                     model: str | None = None, speculative: bool = False) -> VoiceTurn:
+                     model: str | None = None, speculative: bool = False,
+                     user_client_id: str | None = None) -> VoiceTurn:
     """Begin a streaming reply turn. Returns immediately; the SSE endpoint reads
     the turn's event log as it fills."""
     worker = await ensure_worker(context_key, thread_id, model)
@@ -492,7 +501,8 @@ async def start_turn(*, context_key: str, thread_id: str, text: str,
         pass
     turn = VoiceTurn(
         id=str(uuid.uuid4()), session_key=worker.session_key, thread_id=thread_id,
-        user_text=text, speculative=speculative, deferred_persist=speculative,
+        user_text=text, user_client_id=user_client_id,
+        speculative=speculative, deferred_persist=speculative,
     )
     TURNS[turn.id] = turn
     # CLAIM THE THREAD. A spoken turn is a turn: it holds the session, it spends
@@ -524,7 +534,7 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
         turn.push("started", {"model": worker.model, "speculative": turn.speculative})
         # Build the wire message: live-context prefix on first turn / when it
         # changes, plus the user's utterance.
-        wire = _with_context(worker, turn.user_text)
+        wire = _with_context(worker, turn.user_text, turn.user_client_id)
         try:
             worker.proc.stdin.write(_umsg(wire))
             await worker.proc.stdin.drain()
@@ -564,7 +574,7 @@ async def _run_turn(worker: VoiceWorker, turn: VoiceTurn) -> None:
 # project chat is keyed `development` or `project:notes-app` and falls straight
 # through to the fresh-session path, which the comment there already admits. All
 # nine threads in the store that have spoken turns took that path.
-def _thread_seed(thread_id: str) -> str:
+def _thread_seed(thread_id: str, exclude_client_id: str | None = None) -> str:
     try:
         t = chat_store.get_thread(thread_id) or {}
     except Exception as e:
@@ -575,6 +585,12 @@ def _thread_seed(thread_id: str) -> str:
     # unfinished sentence as history.
     msgs = [m for m in (t.get("messages") or [])
             if not (m.get("meta") or {}).get("streaming")]
+    # THE UTTERANCE BEING ANSWERED IS NOT HISTORY. It is on the thread already
+    # (the runtime records it at capture), and it is also passed as the prompt
+    # itself -- so without this it reaches the model twice, once as "the
+    # conversation so far" and again as the thing to answer.
+    if exclude_client_id:
+        msgs = [m for m in msgs if m.get("client_id") != exclude_client_id]
     # Everything a /clear put behind the context boundary is, by definition, not
     # to be said to a model again. Voice honours that cut like every other path.
     ct = int(t.get("cleared_through", 0) or 0)
@@ -597,13 +613,14 @@ def _thread_seed(thread_id: str) -> str:
     )
 
 
-def _with_context(worker: VoiceWorker, text: str) -> str:
+def _with_context(worker: VoiceWorker, text: str,
+                  exclude_client_id: str | None = None) -> str:
     prefix = ""
     # Once per fresh session, before anything else: the model cannot answer in
     # context it was never given.
     if worker.needs_seed:
         worker.needs_seed = False
-        seed = _thread_seed(worker.thread_id)
+        seed = _thread_seed(worker.thread_id, exclude_client_id)
         if seed:
             prefix += seed + "\n\n"
     if worker.pending_note:
@@ -627,7 +644,11 @@ def _persist_turn(turn: VoiceTurn) -> None:
     if turn.persisted:
         return
     try:
-        chat_store.append_message(turn.thread_id, "user", turn.user_text)
+        # Deduped against the runtime's record-at-capture write by client_id.
+        # Kept rather than deleted so a caller that never recorded the utterance
+        # (a speculative draft promoted by commit_turn) still lands it.
+        chat_store.append_message(turn.thread_id, "user", turn.user_text,
+                                  client_id=turn.user_client_id)
         meta: dict = {"voice": True}
         if turn.heard_count is not None:
             meta["heard"] = turn.heard_count

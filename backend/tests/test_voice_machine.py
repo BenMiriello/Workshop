@@ -87,19 +87,32 @@ class TestOrdinaryTurn:
 class TestTheOneRule:
     """The line is whether anything was HEARD, not how much time passed."""
 
-    def test_speaking_before_the_reply_is_audible_merges(self):
+    def test_speaking_before_the_reply_is_audible_drops_the_reply(self):
         # The operator paused, the endpoint fired early, and they carried on.
-        # They cannot be reacting to something that has not made a sound, so
-        # this is one thought, not two messages plus a wasted reply.
+        # They cannot be reacting to something that has not made a sound, so the
+        # reply nobody heard is thrown away.
         s, _ = speak_a_turn("make the button blue")
         tid = s.turn.id
         s, fx = run(ReplyClause(tid, "Okay."), SpeechStarted(), state=s)
         assert s.turn is None
-        assert s.segments == ("make the button blue",)
         ab = only(fx, AbandonGeneration)
         assert len(ab) == 1 and ab[0].reason is Abandon.DISCARD
 
-    def test_the_merged_thought_lands_as_exactly_one_message(self):
+    def test_the_continuation_is_its_own_message(self):
+        """A CONTINUATION IS THE NEXT MESSAGE, not an edit of the last one.
+
+        This used to fold the abandoned utterance into the next one so a thought
+        said in two breaths landed as a single message. That was safe while the
+        utterance lived only in memory. It is not safe now that it is written to
+        the thread the moment it is captured: folding it forward would record the
+        same words twice, once alone and once inside a longer message, which is
+        the duplication the operator reported.
+
+        The cost is that a fragment can stand as its own message. That is the
+        right way round: it is visible, it is his, he can delete it, and the
+        model reads both messages because both are on the thread. The other
+        trade loses or repeats his words, silently.
+        """
         s, _ = speak_a_turn("make the button blue")
         tid = s.turn.id
         s, fx = run(
@@ -109,11 +122,13 @@ class TestTheOneRule:
         )
         starts = only(fx, StartGeneration)
         assert len(starts) == 1
-        assert starts[0].text == "make the button blue and move it left"
+        assert starts[0].text == "and move it left"
+        # And the first half is NOT repeated inside it.
+        assert "make the button blue" not in starts[0].text
 
-    def test_a_discarded_turn_never_persists(self):
-        # Abandon.DISCARD is what stops the fragment reaching the transcript and
-        # coming back as a duplicate of the message that replaced it.
+    def test_a_discarded_turn_drops_its_reply_not_the_words(self):
+        # Abandon.DISCARD governs the REPLY. What the operator said was recorded
+        # when it was captured and is not taken back by anything here.
         s, _ = speak_a_turn("half a sentence")
         s, fx = run(SpeechStarted(), state=s)
         assert only(fx, AbandonGeneration)[0].reason is Abandon.DISCARD
@@ -362,13 +377,49 @@ class TestWhatWasHeardIsWhatIsSent:
         assert s.error is not None
         assert [f for f in fx if isinstance(f, StartGeneration)] == []
 
-    def test_a_continuation_keeps_the_tail_of_the_second_half_too(self):
-        # Interrupting an unheard reply folds the first half back in; the tail
-        # of the SECOND half was dropped by the same join.
+    def test_a_continuation_keeps_its_own_tail(self):
+        # The second half is its own message, and its unstable tail belongs to
+        # it exactly as the first half's did.
         s, _ = run(SegmentTranscribed("what is the weather"),
                    Endpoint(complete=True, had_speech=True))
         assert s.turn is not None
         s, _ = run(m.PartialTranscript("in san francisco"), state=s)
-        s2, fx = run(Endpoint(complete=True, had_speech=True), state=s)
-        assert "in san francisco" in s2.last_user
-        assert "what is the weather" in s2.last_user
+        s2, _fx = run(Endpoint(complete=True, had_speech=True), state=s)
+        assert s2.last_user == "in san francisco"
+
+
+# ------------------------------------------------- the words are recorded first
+class TestWhatWasSaidIsRecordedBeforeAnyReply:
+    """Typing appends the user message and THEN runs the model. Voice used to
+    hand the text to the worker and persist it only when a reply completed, so
+    every failure between the two took the operator's words with it."""
+
+    def test_recording_is_ordered_before_generation(self):
+        s, fx = run(m.PartialTranscript("book the table for eight"),
+                    Endpoint(complete=True, had_speech=True))
+        kinds = [type(f).__name__ for f in fx
+                 if isinstance(f, (m.RecordUtterance, StartGeneration))]
+        assert kinds == ["RecordUtterance", "StartGeneration"]
+
+    def test_the_recorded_text_is_exactly_what_was_shown(self):
+        s, _ = run(SegmentTranscribed("book the table"),
+                   m.PartialTranscript("for eight"))
+        shown = s.pending_user
+        _s2, fx = run(Endpoint(complete=True, had_speech=True), state=s)
+        rec = only(fx, m.RecordUtterance)[0]
+        assert rec.text == shown == "book the table for eight"
+
+    def test_recording_shares_the_turn_id_so_a_retry_cannot_double_it(self):
+        _s, fx = run(m.PartialTranscript("hello"),
+                     Endpoint(complete=True, had_speech=True))
+        rec = only(fx, m.RecordUtterance)[0]
+        gen = only(fx, StartGeneration)[0]
+        assert rec.turn_id == gen.turn_id
+
+    def test_typing_is_recorded_the_same_way(self):
+        _s, fx = run(SubmitText("send it"))
+        assert only(fx, m.RecordUtterance)[0].text == "send it"
+
+    def test_nothing_is_recorded_when_nothing_was_heard(self):
+        _s, fx = run(Endpoint(complete=True, had_speech=True))
+        assert only(fx, m.RecordUtterance) == []
