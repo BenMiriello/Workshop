@@ -98,7 +98,19 @@ ENABLE_CHAT_TOOLS = True
 # 0 means no deadline (services/build_streaming reads it that way). A turn ends
 # when the model is done, when the process dies, or when the operator stops it.
 CHAT_TIMEOUT_S = 0
-MAX_HISTORY = 60  # messages of transcript carried into a fresh-session prompt
+
+# THERE IS NO MESSAGE CAP. `MAX_HISTORY = 60` used to slice the transcript here,
+# and it was measured in the wrong unit: the largest thread in the store is about
+# 110k tokens in THIRTEEN messages and sailed past a 60-message cap untouched,
+# while a 129-message thread less than half that size, ~52k tokens, was
+# amputated. A cap that fires on the count and not the size cannot protect the
+# window it exists to protect, and it silently deleted the beginning of long
+# conversations, which is the part that says what the work is for.
+#
+# Nothing in the store exceeds 11% of a 1M window. If a thread ever does
+# approach it, the CLI compacts its own session, and `/compact` is there
+# natively. The only thing that removes a message from a prompt is an explicit
+# `/clear`. Operator, 2026-08-12.
 
 
 class CreateThread(BaseModel):
@@ -800,31 +812,12 @@ async def rescope_thread(thread_id: str, body: RescopeThread):
     }
 
 
-def _recalled_block(hit: dict) -> str:
-    """One retrieved note, carrying WHO WROTE IT.
-
-    A note the operator hand-wrote, one the model wrote through a ```note```
-    block, and one Haiku distilled during compaction used to be byte-identical
-    on re-entry. `author` is "" on notes written before knowledge.put_note
-    recorded one, which is most of them, and those keep the old bare form.
-    See docs/decisions/0015 §8 case 3.
-    """
-    label = hit.get("note_id") or "note"
-    author = (hit.get("author") or "").strip()
-    # `self` is suppressed: a note this assistant wrote is the case that fires
-    # most often and says least, and a label that adds nothing still costs
-    # tokens on every turn it is recalled.
-    head = f"[{label} · written by {author}]" if author and author != "self" else f"[{label}]"
-    return f"{head} {origin.escape_markers((hit.get('text') or '').strip())}"
-
-
 def _build_prompt(
     provider: chat_context.ContextProvider,
     history: list[dict],
     user_msg: str,
     *,
     preamble: str = "",
-    recalled: str = "",
     summary: str = "",
 ) -> str:
     # Layered prompt (see docs 01 §3):
@@ -942,7 +935,7 @@ def _build_prompt(
         # own. The @mention path already did this correctly; this is the same
         # rule on the default path. See docs/decisions/0015 §8 case 1.
         convo = []
-        for m in history[-MAX_HISTORY:]:
+        for m in history:
             who = origin.speaker_label(m["role"], m.get("meta"))
             convo.append(f"{who}: {origin.escape_markers(m['content'])}")
         parts.append("=== CONVERSATION SO FAR ===\n" + "\n\n".join(convo))
@@ -957,8 +950,6 @@ def _build_prompt(
         ctx = ""
     if ctx:
         parts.append("=== LIVE CONTEXT (current app state) ===\n" + origin.escape_markers(ctx))
-    if recalled:
-        parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
     parts.append(
         "=== NOW REPLY ===\n"
         f"Operator: {origin.escape_markers(user_msg)}\n\n"
@@ -1624,7 +1615,7 @@ def _agent_role_for(provider) -> str | None:
 
 async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, bool]:
     """Assemble the full turn prompt (role preamble + persona + capability facts +
-    auto-recalled knowledge + compacted history + this message) for either a data
+    compacted history + this message) for either a data
     or a build provider. Shared by POST /messages (blocking) and POST /turns
     (streaming) so the two never fork. Returns (prompt, is_build_mode); persists
     nothing. Build providers on a resumed session use a runtime briefing instead
@@ -1645,27 +1636,26 @@ async def _assemble_full_prompt(t: dict, provider, content: str) -> tuple[str, b
         is_build=is_build_mode,
     )
     history = t.get("messages", [])
-    recalled = ""
     summary = ""
-    if not is_build_mode:
-        # Auto-recall (Phase 2): retrieve notes relevant to this message from the
-        # provider's knowledge scope and inject them into the reply tail. Build
-        # providers read files directly, so skip them. Best-effort.
-        if len(content.strip()) >= 8:
-            try:
-                hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
-                blocks = [_recalled_block(h) for h in hits]
-                recalled = "\n\n".join(blocks)[:2000]
-            except Exception as e:
-                log.warning("chat auto-recall failed for %s: %s", provider.key, e)
+    # AUTO-RECALL IS REMOVED (operator, 2026-08-12). It ran `knowledge.search` on
+    # every message and pasted the top 3 notes in here. That search scored a note
+    # as `sum(hay.count(t))`: raw term frequency, no stopwords, no IDF, no length
+    # normalisation, so longer notes won by containing more of every common word.
+    # Probed against the live scope, a query of pure stopwords returned the same
+    # three notes as a real question, and those three were the three largest
+    # files. It was a length sort, injected unasked, on every turn.
+    #
+    # Replaced by `mcp__workshop__search` (services/semantic_index), which the
+    # model CALLS. It searches notes, docs and past chats by meaning, returns the
+    # passage itself with its provenance, and returns nothing when nothing is
+    # relevant. Pull, not push. Do not reintroduce an injection here.
     # Threshold compaction (Phase 3): fold the oldest half of a long transcript
     # into a running summary so the cached prefix stays stable and the window does
     # not overflow. Applies to EVERY provider here, because this is the fresh-
     # session assembly: whatever it builds is the whole context the model gets, so
     # an uncompacted 200-message project chat would re-send the entire transcript
-    # (and, past MAX_HISTORY, silently drop its own beginning instead).
     summary, history = await _maybe_compact(t, provider.knowledge_scope())
-    prompt = _build_prompt(provider, history, content, preamble=preamble, recalled=recalled, summary=summary)
+    prompt = _build_prompt(provider, history, content, preamble=preamble, summary=summary)
     # Stated after the persona so it can override the ticket protocols the
     # persona carries, in the direction that removes capability.
     prompt = prompt + "\n\n" + chat_context.chat_mode_block(t.get("mode"))
@@ -1784,16 +1774,9 @@ async def _resumed_prompt(t: dict, provider, content: str) -> str:
                 new_marks["seen_scope_version"] = d["version"]
         except Exception as e:
             log.debug("scope freshness check skipped for %s: %s", scope_key, e)
-    if not chat_context.is_build_provider(provider) and len(content.strip()) >= 8:
-        try:
-            hits = await knowledge.search(provider.knowledge_scope(), content, limit=3)
-            blocks = [_recalled_block(h) for h in hits]
-            recalled = "\n\n".join(blocks)[:2000]
-        except Exception as e:
-            log.warning("chat auto-recall failed for %s: %s", provider.key, e)
-            recalled = ""
-        if recalled:
-            parts.append("=== RELEVANT NOTES (retrieved for this message) ===\n" + recalled)
+    # The per-message "=== RELEVANT NOTES ===" injection was here. Removed with
+    # its twin on the fresh-session path above; see the note there for why the
+    # ranking made it noise, and for what replaces it.
     parts.append("=== OPERATOR MESSAGE ===\n" + origin.escape_markers(content))
     # Immediately after the message, because it is a fact ABOUT that message:
     # whether it was typed while the previous turn was still running, and whether
