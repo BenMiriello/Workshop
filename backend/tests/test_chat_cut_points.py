@@ -131,7 +131,7 @@ class TestACommandTurnCannotBeSpokenTo:
         build_streaming.TURNS[turn.id] = turn
         wrote: list[str] = []
         monkeypatch.setattr(build_streaming, "write_to_turn",
-                            lambda tid, text: wrote.append(text) or True)
+                            lambda tid, text, blocks=None: wrote.append(text) or True)
         assert build_streaming.inject(turn.id, "and also do this") is True
         assert wrote == ["and also do this"]
 

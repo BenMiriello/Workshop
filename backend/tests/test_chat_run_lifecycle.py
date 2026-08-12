@@ -205,7 +205,7 @@ class TestPersistBeforeDeliver:
         _live("run-1", tid)
         seen: list[list[str]] = []
 
-        def spy(run_id, text):
+        def spy(run_id, text, attachments=None):
             seen.append([m["content"] for m in chat_store.get_thread(tid)["messages"]])
             return True
         monkeypatch.setattr(build_streaming, "inject", spy)
@@ -233,7 +233,7 @@ class TestSameTickRivals:
             return turn
         monkeypatch.setattr(rc, "_start_assistant_turn", fake_start)
         monkeypatch.setattr(build_streaming, "inject",
-                            lambda rid, text: delivered.append(text) or True)
+                            lambda rid, text, atts=None: delivered.append(text) or True)
 
         async def main():
             return await asyncio.gather(

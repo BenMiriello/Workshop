@@ -235,6 +235,7 @@ class TestCleanExitWithNoClosingMessage:
     """
     DID_WORK = "Finished with no closing message. The steps above are the result."
     DID_NOTHING = "Ended without a reply. Nothing ran this turn."
+    NEVER_READ = "Ended before this message reached the model. Nothing ran."
 
     def test_a_turn_that_ran_tools_points_at_them(self):
         segs = [{"t": "tool", "name": "Read", "input": "x.py"}]
@@ -257,8 +258,23 @@ class TestCleanExitWithNoClosingMessage:
     def test_a_pending_approval_alone_is_not_work(self):
         assert bs._clean_exit_text([{"t": "approval", "state": "pending"}]) == self.DID_NOTHING
 
-    def test_neither_line_has_an_em_dash(self):
-        assert "—" not in self.DID_WORK and "—" not in self.DID_NOTHING
+    def test_a_message_the_cli_never_read_says_so(self):
+        # The turn ended before the process acknowledged reading the message, so
+        # the model was never handed it. Reporting that as the model having
+        # nothing to say blamed the answer for a delivery failure. `unread` is
+        # `replays < delivered` in the driver; see services/turn_end.py.
+        assert bs._clean_exit_text([], unread=True) == self.NEVER_READ
+
+    def test_work_that_did_happen_still_wins_over_the_unread_line(self):
+        # Steps on screen mean the turn was running; whatever the counters say,
+        # "it never reached the model" would contradict what the operator can
+        # see above the reply.
+        segs = [{"t": "tool", "name": "Read", "input": "x.py"}]
+        assert bs._clean_exit_text(segs, unread=True) == self.DID_WORK
+
+    def test_no_line_has_an_em_dash(self):
+        for line in (self.DID_WORK, self.DID_NOTHING, self.NEVER_READ):
+            assert "—" not in line
 
 
 class TestAnInjectedSlashCommandStillCounts:

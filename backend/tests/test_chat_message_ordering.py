@@ -407,7 +407,7 @@ class TestOneRunPerThread:
         live.segments = [{"t": "text", "text": "x"}] * 5
 
         started = []
-        monkeypatch.setattr(build_streaming, "inject", lambda tid_, text: True)
+        monkeypatch.setattr(build_streaming, "inject", lambda tid_, text, atts=None: True)
 
         async def never(*a, **kw):
             started.append(a)

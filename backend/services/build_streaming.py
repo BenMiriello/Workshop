@@ -26,7 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services import (agent_slots, build_agents, chat_attachments, chat_drain,
-                      chat_log, chat_store, llm_router, model_caps, ownership)
+                      chat_log, chat_store, llm_router, model_caps, ownership,
+                      turn_end)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -181,7 +182,16 @@ def write_to_turn(turn_id: str, text: str, blocks: list[dict] | None = None) -> 
         fd = None
         try:
             fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
-            return _write_all(fd, data)
+            if not _write_all(fd, data):
+                return False
+            # COUNTED ONLY ON A COMPLETE WRITE. From here the CLI owes this turn
+            # one more result, and the driver must not retire the process until
+            # it has one. A partial or refused write reached nothing and is owed
+            # nothing. See services/turn_end.py.
+            t = TURNS.get(turn_id)
+            if t is not None:
+                t.delivered += 1
+            return True
         except OSError as e:
             # ENXIO = FIFO open for write with no reader: the turn's process is gone.
             log.debug("turn %s: injection failed (%s)", turn_id, e)
@@ -253,6 +263,13 @@ class Turn:
     # produces no text — and without this flag it reports "Nothing ran this
     # turn" about a command that did run.
     injected_command: bool = False
+    # HOW MANY MESSAGES WE HAVE HANDED THIS TURN'S PROCESS: its own prompt, plus
+    # every injection and every queued message drained into it. The driver
+    # compares it against the CLI's own echoes to know whether a `result` line
+    # means the turn is finished or only that ONE of the prompts in flight is.
+    # See services/turn_end.py — retiring the process on the wrong result is what
+    # killed the request that was answering the operator's message.
+    delivered: int = 0
     complete: bool = False
     error: str | None = None
     final_text: str = ""
@@ -1289,24 +1306,32 @@ def _drop_text_segments(segments: list[dict]) -> list[dict]:
             if not (isinstance(s, dict) and s.get("t") == "text")]
 
 
-def _clean_exit_text(segments: list[dict]) -> str:
+def _clean_exit_text(segments: list[dict], *, unread: bool = False) -> str:
     """What to say for a turn that exited 0 and wrote no closing message.
 
-    WHICH of the two cases this is matters, and saying the wrong one is what the
-    operator kept reporting:
+    WHICH of the three cases this is matters, and saying the wrong one is what
+    the operator kept reporting:
 
+      never read it  -> we handed the message to the process and it never
+                        acknowledged reading it. The model was not given the
+                        message at all, so nothing about the answer is the
+                        model's doing. This is the honest thing to say, and it
+                        is the one case where sending it again is the remedy.
       it did work    -> the tools and subagents above ARE the result, and
                         pointing at them is true and useful.
       it did nothing -> there is nothing above to point at, so
                         "the steps above are the result" is a sentence about an
-                        empty bubble, and it reads as the chat having silently
-                        given up. This is the case that fires when the model's
-                        whole output was the CLI's "No response requested."
-                        filler: _is_no_op_placeholder strips it, leaving a turn
-                        with no text and no segments.
+                        empty bubble.
+
+    THESE USED TO FIRE FOR A REASON THAT WAS OURS. Both of the last two were the
+    driver killing the CLI while it was answering — see services/turn_end.py,
+    where that is now prevented. What is left is the genuine article: a turn
+    whose model really did produce nothing.
 
     Say what actually happened, and nothing more (design rule 11: no advice
     nobody asked for, so this does not close by telling them to try again)."""
+    if unread and not _did_visible_work(segments):
+        return "Ended before this message reached the model. Nothing ran."
     if _did_visible_work(segments):
         return "Finished with no closing message. The steps above are the result."
     return "Ended without a reply. Nothing ran this turn."
@@ -1813,7 +1838,11 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
     deadline = ((meta.get("started") or time.time()) + _budget) if _budget > 0 else None
     # Answers recorded on disk win over anything the journal replay implies.
     turn.answers.update(meta.get("answers") or {})
-    state = {"compacted": False, "saw_result": False, "last_ctx": 0}
+    # `replays` and `results` are what turn_end reads: how many of the prompts we
+    # handed over the CLI has acknowledged reading, and how many requests it has
+    # finished. `activity_at` is the silence clock that bounds the wait.
+    state = {"compacted": False, "saw_result": False, "last_ctx": 0,
+             "replays": 0, "results": 0, "activity_at": time.time(), "seg_count": 0}
     buf = ""
     offset = 0
     last_persist = 0.0
@@ -1858,6 +1887,8 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             state["spend_sum"] = int(state.get("spend_sum") or 0) + _spend_tokens_from_usage(payload.get("usage"))
         elif kind == "result":
             state["saw_result"] = True
+            state["results"] += 1
+            state["activity_at"] = time.time()
             state["result_subtype"] = payload.get("subtype") or ""
             # The result envelope's usage is the turn TOTAL across tool rounds.
             # That overcounts the context window (hence the fallback-only use
@@ -1877,6 +1908,14 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
             elif kind == "meta" and payload.get("subtype") == "compact_boundary":
                 state["compacted"] = True
             elif kind == "user_echo":
+                # THE RECEIPT THAT THE CLI READ ONE OF OUR MESSAGES. Nothing is
+                # rendered from it (see below), but it is the only evidence that
+                # a prompt we wrote has actually been picked up, which is half of
+                # knowing whether a `result` ends this turn. Sidechain echoes are
+                # a subagent's own prompt and are not ours.
+                if payload.get("parent") is None:
+                    state["replays"] += 1
+                    state["activity_at"] = time.time()
                 # DROPPED, ALWAYS. `--replay-user-messages` makes the CLI echo
                 # every stdin user message back: the turn's own prompt, its
                 # synthetic /compact turns, a subagent's prompt on the sidechain,
@@ -1952,7 +1991,26 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
         gap = now - last_persist
         if (saw_tool and gap > 0.1) or (turn.segments and gap > 0.4):
             _persist(); last_persist = now
-        if state["saw_result"]:
+        if len(turn.segments) != state["seg_count"]:
+            # NEW output, not "has output": the stuck-bound below measures
+            # SILENCE, and reading `turn.segments` as a truthy value would reset
+            # it on every pass for the rest of the turn, which is no bound at
+            # all. A turn working through an injected message keeps resetting
+            # this and is never touched by that bound; a wedged one stops.
+            state["seg_count"] = len(turn.segments)
+            state["activity_at"] = now
+        if state["saw_result"] and turn_end.turn_is_over(turn_end.TurnProgress(
+                delivered=turn.delivered,
+                replayed=int(state["replays"]),
+                results=int(state["results"]),
+                produced=bool(turn.segments),
+                is_command=(meta.get("prompt") or "").strip().startswith("/") or turn.injected_command,
+                idle_s=now - float(state["activity_at"]),
+                stopped=turn.stop_requested)):
+            # THE FIRST RESULT IS NOT THE END OF THE TURN, only the end of one
+            # request. Retiring on it killed whatever the CLI had started for a
+            # second prompt — an injected message, or the task-notification the
+            # resume path delivers ahead of ours. See services/turn_end.py.
             await _retire_turn_proc(meta.get("pid"), proc)
             break
         if turn.stop_requested and not turn.stop_signalled:
@@ -2003,7 +2061,11 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                          context_tokens=int(state.get("last_ctx") or 0),
                          spend_tokens=int(state.get("spend_result") or state.get("spend_sum") or 0),
                          subtype=str(state.get("result_subtype") or ""), lost=lost,
-                         stopped=stopped, over_memory=over_memory)
+                         stopped=stopped, over_memory=over_memory,
+                         # A message the CLI never echoed back is one it never
+                         # read. The reply says so rather than reporting it as
+                         # the model having nothing to say.
+                         unread=int(state["replays"]) < turn.delivered)
 
 
 def _stale_pending_approvals(turn: Turn) -> None:
@@ -2181,7 +2243,8 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
 async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, compacted: bool,
                        context_tokens: int = 0, spend_tokens: int = 0,
                        subtype: str = "", lost: bool = False,
-                       stopped: bool = False, over_memory: bool = False) -> None:
+                       stopped: bool = False, over_memory: bool = False,
+                       unread: bool = False) -> None:
     prompt = meta.get("prompt", "") or ""
     cwd = meta.get("cwd", "") or ""
     timeout_s = float(meta.get("timeout_s", 0) or 0)
@@ -2273,7 +2336,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         )
         is_error = False
     elif rc == 0:
-        text = _clean_exit_text(turn.segments)
+        text = _clean_exit_text(turn.segments, unread=unread)
         is_error = False
     elif lost:
         # The operator saw "ended unexpectedly (exit -1)" over and over without
