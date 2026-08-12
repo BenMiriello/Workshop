@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "test": "npm test --workspace @workshop/ui && npm test --workspace workshop-frontend",
-    "typecheck": "npm run typecheck --workspace @workshop/ui && cd frontend && ./node_modules/.bin/tsc -b --noEmit",
+    "typecheck": "npm run typecheck --workspace @workshop/ui && cd frontend && tsc -b --noEmit",
     "build:ui": "npm run build --workspace @workshop/ui",
     "build:web": "npm run build --workspace workshop-frontend",
     "gen:tokens": "npm run gen:tokens --workspace @workshop/ui",
@@ -19,5 +19,19 @@
   "engines": {
     "node": ">=18",
     "npm": ">=9"
+  },
+  "//overrides": [
+    "One React for the whole workspace. packages/ui declares react/react-dom as",
+    "peers at '>=18', which is right for a library and dangerous for an install:",
+    "npm 7+ auto-installs peers, so with no lockfile it resolves the NEWEST match",
+    "and hoists React 19 to the root while frontend keeps its own 18. A downstream",
+    "instance hit exactly that. It builds anyway, because vite resolves frontend's",
+    "local copy first, until any resolution-order change turns it into 'Invalid",
+    "hook call'. Pin here rather than narrowing the kit's peer range, so the kit",
+    "stays honest about what it supports and the install stays single-copy."
+  ],
+  "overrides": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   }
 }

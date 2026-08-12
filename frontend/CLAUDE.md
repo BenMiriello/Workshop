@@ -104,7 +104,7 @@ Only the token subpath is importable there. The React primitives are react-dom a
 
 Run `bash scripts/check_design.sh` (from repo root) — it flags raw hex, emoji, and `not-allowed` cursors in `.tsx`, and confirms the foundation imports are intact. It is part of the completion gate; a UI change that fails it is **not** done. Also run `npm run typecheck` from the repo root.
 
-**Never `npx tsc`.** `tsc` is a deprecated stub package on npm that npx resolves ahead of the local TypeScript binary; it prints "This is not the tsc command you are looking for" and **exits 0**, checking nothing. Use `npm run typecheck` (kit + frontend) or `cd frontend && ./node_modules/.bin/tsc --noEmit`.
+**Never `npx tsc`.** `tsc` is a deprecated stub package on npm that npx resolves ahead of the local TypeScript binary; it prints "This is not the tsc command you are looking for" and **exits 0**, checking nothing. Use `npm run typecheck` (kit + frontend) from the repo root. Don't reach for the binary by path either: a root workspace install hoists typescript, so `frontend/node_modules/.bin/tsc` is present on some checkouts and absent on others.
 
 **Tests: `cd frontend && npm test`** (vitest, `*.test.ts` beside the module). If you touched `packages/ui/`, also run `npm test --workspace @workshop/ui` — the palette contract tests live with the kit and the frontend run does not pick them up. `npm test` from the repo root runs both. There is no DOM/render harness and none is planned — the target is the PURE RULE behind a behaviour, extracted into its own module so it can be executed. `turnBatching` (when a queue of typed-ahead messages becomes a turn) is the pattern.
 

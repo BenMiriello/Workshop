@@ -184,7 +184,13 @@ fi
 TS_CHECK="skipped"
 TS_FILES=$(printf '%s\n' "$CHANGED_ALL" | grep -E '\.(ts|tsx)$' | grep -v 'node_modules' || true)
 if [[ -n "$TS_FILES" ]]; then
+  # Resolve tsc from EITHER layout. A root `npm install` with workspaces hoists
+  # typescript to the root node_modules, so the frontend-local .bin/tsc that
+  # used to be here simply is not there after a clean install -- and this check
+  # degrades to ts_typecheck_unavailable, which reads as "no typechecker on this
+  # box" rather than "it moved one directory up".
   TSC=$WORKSHOP/frontend/node_modules/.bin/tsc
+  [[ -x "$TSC" ]] || TSC=$WORKSHOP/node_modules/.bin/tsc
   if [[ -x "$TSC" ]]; then
     # Run tsc against the whole frontend project (incremental, fast). This catches
     # cross-file errors that per-file checks miss. If no changed file is in

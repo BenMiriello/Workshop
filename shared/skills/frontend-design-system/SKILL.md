@@ -37,7 +37,8 @@ npm run typecheck                 # from repo root: real tsc over the kit + fron
 
 Do NOT use `npx tsc` — `tsc` is a deprecated npm stub package that npx picks over the local
 TypeScript binary, prints "This is not the tsc command you are looking for", and exits 0 without
-checking anything. The frontend-only form is `cd frontend && ./node_modules/.bin/tsc --noEmit`.
+checking anything. Don't substitute a path to the binary either: a root workspace install
+hoists typescript, so `frontend/node_modules/.bin/tsc` exists on some checkouts and not others.
 
 Both are part of the completion gate. A UI change that fails either is not done. Design new screens to
 the system from the start; there is no "systematize it later" pass.
