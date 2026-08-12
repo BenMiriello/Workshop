@@ -109,13 +109,36 @@ Everything below was a decision, not an accident.
 
 | surface | treatment |
 |---|---|
-| user bubble, primary buttons, focus ring, toggles, nav active | `you` (via the `--accent` aliases, plus a 3px marker on the active nav item) |
+| user bubble, primary buttons, focus ring, toggles, nav active | `you`, entirely via the `--accent` aliases: those surfaces already used the accent and did not change shape. The handoff's 3px leading marker on the active nav item was NOT taken, it is written for a vertical sidebar and reads as decoration on a horizontal toolbar (operator, 2026-08-11) |
 | working dots, "show N steps", tool-call chevrons, delegation chips | `system` |
 | run reports and sweep questions in a chat | `autonomous`: 2px rail, soft fill, uppercase mono label |
-| runs feed rows | identity dot + agency chip from the job's `trigger`; the row scopes `data-agency`, so its `running` chip takes that tier |
-| agent cards | 2px top rail in the agent's tier (autonomous if it can start its own work); a failed last run drops the rail for a danger hairline |
-| count badges | `autonomous` — an unread count is almost always something that happened without you |
+| runs feed rows | identity dot + agency chip from the job's `trigger`; the row scopes `data-agency`, so its `running` chip takes that tier. **A job with no recorded trigger gets no mark at all** (see below) |
+| agent cards | 2px top rail in the agent's tier: autonomous only if it can START ITS OWN WORK (`cron`, `event`, `loop`). A `discord`-triggered agent is answering you, so it is `system`. A failed last run drops the rail for a danger hairline |
 | error / timeout blocks | outline only: transparent, hairline in `danger` / `warn` |
+
+## Where the autonomous tone is NOT used
+
+The autonomous tier is the loudest claim in the system: it says nobody was
+watching. Over-applying it is worse than under-applying it, because a false
+alarm on work you did yourself teaches the operator to ignore the color. So:
+
+- **`agencyFor()` returns null, not a tier, when the record has no trigger**,
+  and callers render no dot and no chip. On this box 2749 of ~5500 jobs predate
+  the field. Calling those `autonomous` would invent an alarm; calling them
+  `system` would assert you were present for work that is by definition not a
+  chat turn. An absent provenance mark is honest; a guessed one is not.
+- **`discord` is `system`, not autonomous.** An agent you message is answering
+  you, with you present. The surface the work arrives on is not the tier.
+- **The chat uses `system` for everything except messages the platform posted
+  with nobody there.** Working dots, tool rows, "show N steps" and delegation
+  chips are all system: you are sitting there watching them. Only a run report
+  or a sweep's question takes the autonomous rail, gated on `meta.autonomous`
+  written by `run_report.py` / `question_report.py`.
+- **Nothing decorative takes the tone.** The Settings picker shows the three
+  agency tones in its identity strip, where the point IS the palette; its
+  preview dots stay the pinned status tones plus the neutral.
+
+The mapping is pinned in `packages/ui/src/agency.test.ts`.
 
 ## The failure this shipped with, and the rule it produced
 

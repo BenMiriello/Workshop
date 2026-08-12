@@ -1161,9 +1161,6 @@ a.ws-btn { text-decoration: none; }
 .ws-palette__bar { display: block; height: 6px; width: 62%; border-radius: var(--radius-pill); background: var(--accent); }
 .ws-palette__dots { display: flex; gap: 4px; }
 .ws-palette__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--stopped-solid); }
-/* One agency mark in the row, so the preview shows both vocabularies at once:
-   an autonomous identity dot beside the three pinned status tones. */
-.ws-palette__dot--auto { background: var(--auto); }
 .ws-palette__dot--ok { background: var(--ok-solid); }
 .ws-palette__dot--warn { background: var(--warn-solid); }
 .ws-palette__dot--danger { background: var(--danger-solid); }

@@ -84,7 +84,13 @@ Each tier has a resting tone and an **active** one (`-up`). Active means *happen
 1. **AGENCY IS FILLED. STATUS IS OUTLINE.** An agency chip (`AgencyChip`, `.ws-agency`) has a soft fill in its tier's tone and **no border**. A status chip (`StatusPill`) has a **transparent background and a hairline** in its own tone. Fill-vs-outline is the primary separator; hue is secondary, which is what lets an agency tone and a status tone share a hue in some scheme without either being misread. **Never give a status element a soft fill, and never give an agency element a bare outline.**
 2. **ONE AGENCY COLOR PER SURFACE.** A card is never both system and autonomous. If an autonomous agent calls a tool, the card stays autonomous: **provenance beats mechanism.** Set the tier once with `data-agency` on the container and everything inside it follows, including which tone `running` resolves to.
 
-`running` is the single deliberate exception to rule 1: it is **filled**, and its tone comes from the initiating tier, because a run describes an ACTOR rather than an outcome. Terminal states (ok / warn / stopped / danger) never split by tier — an outcome has no actor. Use `agencyFor(trigger)` to map the platform's own `manual | cron | event | loop` vocabulary onto the axis; do not invent a second mapping.
+`running` is the single deliberate exception to rule 1: it is **filled**, and its tone comes from the initiating tier, because a run describes an ACTOR rather than an outcome. Terminal states (ok / warn / stopped / danger) never split by tier — an outcome has no actor.
+
+**The autonomous tier is the loudest claim in the system and is the easiest one to over-apply.** It says nobody was watching, so a false alarm on work the operator did himself teaches him to ignore the color. Use `agencyFor(trigger)` to map the platform's own vocabulary onto the axis and do not invent a second mapping; it is pinned in `agency.test.ts`. Three rules fall out of it:
+
+- **`agencyFor()` returns `null` when the record has no trigger, and a caller renders no mark at all.** Over half this box's run history predates the field. An absent provenance mark is honest; a guessed one is not. Never default a missing trigger to a tier.
+- **The surface work arrives on is not the tier.** A `discord`-triggered agent is answering YOU, with you present: that is `system`. Only self-starting work (`cron`, `event`, `loop`) is autonomous.
+- **Nothing decorative takes an agency tone.** It marks provenance or it is not used.
 
 ### The attributes
 

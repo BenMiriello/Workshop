@@ -68,12 +68,18 @@ export function nextScheduled(triggers?: Trigger[]): string {
 
 // WHICH AGENCY TIER AN AGENT BELONGS TO — the color axis, from the same facts.
 //
-// An agent that can start work on its own (a cron schedule, an event source, a
-// continuous loop) is autonomous, and its card says so before you read a word
-// of it. One that only ever runs when you ask is `system`: machine work inside
-// a conversation you are present for. There is no `you` tier for an agent; an
-// agent is never the operator.
+// An agent that can START WORK ON ITS OWN is autonomous, and its card says so
+// before you read a word of it. One that only ever runs when you ask is
+// `system`: machine work inside a conversation you are present for. There is no
+// `you` tier for an agent; an agent is never the operator.
+//
+// SELF-STARTING IS THE TEST, NOT "NOT MANUAL". `discord` is a trigger kind, and
+// an agent you message on Discord is answering YOU, with you present — that is
+// the system tier, however the work reaches it. Only a clock, an outside event
+// and a continuous loop run with nobody watching.
+const SELF_STARTING: TriggerKind[] = ["cron", "event", "loop"];
+
 export function agentAgency(triggers?: Trigger[]): "system" | "autonomous" {
-  const self = triggers?.some((t) => t.kind !== "manual");
+  const self = triggers?.some((t) => SELF_STARTING.includes(t.kind));
   return self ? "autonomous" : "system";
 }

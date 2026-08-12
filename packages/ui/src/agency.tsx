@@ -30,21 +30,29 @@ export function agencyProps(tier: AgencyTier): { "data-agency": AgencyTier } {
 
 // The vocabulary the platform already records for a bounded execution
 // (services/jobs.py TRIGGERS, services/triggers.py) mapped onto the axis.
-// `manual` is the only one you did; everything else moved on its own.
+// `manual` is the only one you did; `discord` and `chat` are you talking to it,
+// so the work happens with you present; the rest start themselves.
 const TRIGGER_TIER: Record<string, AgencyTier> = {
   manual: "you",
   chat: "system",
+  discord: "system",
   cron: "autonomous",
   event: "autonomous",
   loop: "autonomous",
 };
 
-// The tier for a job/run/agent trigger. Unknown or missing triggers fall back
-// to `system`: work the app did, in a context you were present for, which is
-// the honest reading of "we do not know who started this" inside a chat.
-export function agencyFor(trigger?: string | null): AgencyTier {
-  if (!trigger) return "system";
-  return TRIGGER_TIER[trigger] ?? "system";
+// The tier for a job/run/agent trigger, or NULL when the record does not say.
+//
+// Null is not a formality: more than half the jobs on this box predate the
+// trigger field, and neither answer is safe for them. Calling an unknown run
+// `autonomous` raises a false alarm about something you may well have started
+// yourself; calling it `system` asserts you were present for work that is by
+// definition not a chat turn. So it makes NO CLAIM, and a caller renders no
+// identity mark at all — an absent provenance mark is honest, an invented one
+// is not. Callers must handle null rather than defaulting it.
+export function agencyFor(trigger?: string | null): AgencyTier | null {
+  if (!trigger) return null;
+  return TRIGGER_TIER[trigger] ?? null;
 }
 
 export const AGENCY_LABEL: Record<AgencyTier, string> = {

@@ -36,6 +36,12 @@ Two rules the kit now enforces:
    for everything inside it. Provenance beats mechanism: an autonomous agent
    calling a tool leaves the surface autonomous.
 
+`agencyFor()` returns `AgencyTier | null`: **null when the record carries no
+trigger**, so a caller renders no provenance mark rather than guessing one. The
+autonomous tier says nobody was watching, and a false alarm on work the operator
+did himself is worse than an absent mark. `discord` maps to `system`, not
+autonomous: an agent you message is answering you, with you present.
+
 New exports: `AgencyChip`, `AgencyDot`, `agencyFor`, `agencyProps`,
 `AGENCY_LABEL`, `AgencyTier`, `resolvePaletteId`, `LEGACY_PALETTES`,
 `PaletteGroup`. New CSS: `.ws-agency`, `.ws-agency-dot`, `.ws-agency-rail`,

@@ -216,7 +216,7 @@ export default function JobsFeed() {
           <div
             role="link"
             tabIndex={0}
-            data-agency={agencyFor(child.trigger)}
+            data-agency={agencyFor(child.trigger) ?? undefined}
             onClick={() => nav(`/runs/${encodeURIComponent(child.id)}`)}
             style={{
               display: "flex", alignItems: "baseline", gap: "var(--space-2)",
@@ -258,15 +258,20 @@ export default function JobsFeed() {
                 interactive
                 compact
                 className="ws-job-card"
-                data-agency={agencyFor(job.trigger)}
+                data-agency={agencyFor(job.trigger) ?? undefined}
                 onClick={() => nav(`/runs/${encodeURIComponent(job.id)}`)}
                 style={{ cursor: "pointer" }}
               >
                 <div className="ws-job-card__bind">
                   {/* The identity dot says WHO started this run; the state chip
                       at the other end says how it went. They never take the
-                      same slot, and only a live run's dot pulses. */}
-                  <AgencyDot tier={agencyFor(job.trigger)} active={job.status === "running"} />
+                      same slot, and only a live run's dot pulses. A run whose
+                      record never stored a trigger gets NO dot: half the run
+                      history predates the field, and a guessed provenance mark
+                      is worse than none. */}
+                  {agencyFor(job.trigger) && (
+                    <AgencyDot tier={agencyFor(job.trigger)!} active={job.status === "running"} />
+                  )}
                   {bind.icon}
                   <span>{job.title || bind.text}</span>
                 </div>
@@ -294,8 +299,8 @@ export default function JobsFeed() {
                 )}
                 <div className="ws-job-card__pills">
                   <StatusPill status={statusKind(job.status)}>{job.status ?? "unknown"}</StatusPill>
-                  {(job.trigger_label || job.trigger) && (
-                    <AgencyChip tier={agencyFor(job.trigger)}>{job.trigger_label || job.trigger}</AgencyChip>
+                  {agencyFor(job.trigger) && (
+                    <AgencyChip tier={agencyFor(job.trigger)!}>{job.trigger_label || job.trigger}</AgencyChip>
                   )}
                   {kids && (
                     <button

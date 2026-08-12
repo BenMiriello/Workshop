@@ -95,10 +95,10 @@ function PaletteTile({
         <span className="ws-palette__card">
           <span className="ws-palette__bar" />
           <span className="ws-palette__dots">
-            <span className="ws-palette__dot ws-palette__dot--auto" />
             <span className="ws-palette__dot ws-palette__dot--ok" />
             <span className="ws-palette__dot ws-palette__dot--warn" />
             <span className="ws-palette__dot ws-palette__dot--danger" />
+            <span className="ws-palette__dot" />
           </span>
         </span>
       </span>
