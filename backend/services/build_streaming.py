@@ -22,7 +22,8 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from services import build_agents, chat_log, chat_store, llm_router, model_caps, ownership
+from services import (agent_slots, build_agents, chat_log, chat_store, llm_router,
+                      model_caps, ownership)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -1363,6 +1364,19 @@ def _drive_task(turn: Turn, meta: dict, coro) -> "asyncio.Task":
 
 
 async def _spawn_and_drive(turn: Turn, meta: dict) -> None:
+    """Spawn the turn's CLI process and drive it to completion.
+
+    The whole body holds a slot from the turn pool (services/agent_slots), taken
+    before the spawn and released when the run finishes, so a fan-out cannot put
+    an unbounded number of CLI processes on the host. The limit is set well above
+    normal interactive use; reaching it means something is looping, not that the
+    operator is busy.
+    """
+    async with agent_slots.turn_slot():
+        await _spawn_and_drive_inner(turn, meta)
+
+
+async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     # The prompt goes in over stdin as a stream-json message rather than as an
     # argv positional, because stdin then STAYS open for the rest of the run and
     # anything else the operator sends lands at the next step boundary. (It also

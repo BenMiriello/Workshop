@@ -709,12 +709,46 @@ function ChatSection() {
 // ----------------------------------------------------------------------------
 // Agents section — fleet overview, defaults
 // ----------------------------------------------------------------------------
+type Pool = { limit: number; active: number; waiting: number };
+type Concurrency = { turns: Pool; helpers: Pool };
+type ConcurrencyDraft = { max_turns: number; max_helpers: number };
+
 function AgentsSection() {
   const [agents, setAgents] = useState<AgentSummary[] | null>(null);
+  const [conc, setConc] = useState<Concurrency | null>(null);
+  const [concErr, setConcErr] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/agents/").then((r) => r.ok ? r.json() : []).then((d) => setAgents(Array.isArray(d) ? d : []));
   }, []);
+
+  const loadConc = useCallback(() => {
+    setConcErr(null);
+    fetch("/api/concurrency")
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then(setConc)
+      .catch((e) => setConcErr(String(e)));
+  }, []);
+  useEffect(() => { loadConc(); }, [loadConc]);
+
+  const edit = useEditMode<ConcurrencyDraft>(
+    { max_turns: conc?.turns.limit ?? 8, max_helpers: conc?.helpers.limit ?? 4 },
+    async (draft) => {
+      setSaveErr(null);
+      const r = await fetch("/api/concurrency", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draft),
+      });
+      if (!r.ok) {
+        const detail = `PUT /api/concurrency failed: HTTP ${r.status}`;
+        setSaveErr(detail);
+        throw new Error(detail);
+      }
+      setConc(await r.json());
+    },
+  );
 
   return (
     <Section icon={Bot} title="Agents">
@@ -726,6 +760,79 @@ function AgentsSection() {
           </span>
         )}
       </Row>
+      {/* How many model processes may run at once. Each one is a whole OS
+          process, so this is the only thing standing between a runaway fan-out
+          and the host's memory. */}
+      <Row label="agent runs at once">
+        {concErr ? (
+          <StateBlock
+            variant="error"
+            title="Couldn't read the concurrency limits"
+            hint={`GET /api/concurrency failed: ${concErr}`}
+            action={<Button size="sm" variant="ghost" onClick={loadConc}>Retry</Button>}
+          />
+        ) : conc == null ? (
+          <Skeleton />
+        ) : edit.editing ? (
+          <Input
+            type="number"
+            min={1}
+            max={64}
+            value={String(edit.draft.max_turns)}
+            onChange={(e) => edit.set("max_turns", Number(e.currentTarget.value))}
+          />
+        ) : (
+          <ReadOnly value={`${conc.turns.limit} concurrent, ${conc.turns.active} running${
+            conc.turns.waiting > 0 ? `, ${conc.turns.waiting} waiting for a slot` : ""}`} />
+        )}
+      </Row>
+      <Row label="background calls at once">
+        {conc != null && !concErr && (edit.editing ? (
+          <Input
+            type="number"
+            min={1}
+            max={64}
+            value={String(edit.draft.max_helpers)}
+            onChange={(e) => edit.set("max_helpers", Number(e.currentTarget.value))}
+          />
+        ) : (
+          <ReadOnly value={`${conc.helpers.limit} concurrent, ${conc.helpers.active} running${
+            conc.helpers.waiting > 0 ? `, ${conc.helpers.waiting} waiting for a slot` : ""}`} />
+        ))}
+      </Row>
+      <Row label="">
+        <span className="muted" style={{ fontSize: "0.85rem" }}>
+          Short background calls (naming a chat, triage, compaction) have their own
+          pool, so a long agent run never holds them up. Over the limit, work waits
+          for a slot. Nothing running is ever stopped.
+        </span>
+      </Row>
+      {saveErr && (
+        <StateBlock
+          variant="error"
+          title="Couldn't save the concurrency limits"
+          hint={saveErr}
+        />
+      )}
+      {conc != null && !concErr && (edit.editing ? (
+        <ActionBar flash={edit.flash ? "Saved" : undefined}>
+          <Button variant="ghost" onClick={edit.cancel} disabled={edit.saving}>Cancel</Button>
+          <Button
+            variant="primary"
+            onClick={() => { void edit.save().catch(() => {}); }}
+            loading={edit.saving}
+            disabled={!edit.dirty}
+          >
+            Save
+          </Button>
+        </ActionBar>
+      ) : (
+        <div style={{ paddingTop: "var(--space-3)" }}>
+          <Button size="sm" variant="ghost" onClick={edit.begin}>
+            <Pencil aria-hidden /> Edit
+          </Button>
+        </div>
+      ))}
       <Row label="new agent">
         <Link to="/agents/new">
           <Button size="sm" variant="ghost">New agent ↗</Button>

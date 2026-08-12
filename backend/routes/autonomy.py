@@ -29,8 +29,8 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from services import autonomy_override, gpubroker_client, jobs, paths
-from pydantic import BaseModel
+from services import agent_slots, autonomy_override, gpubroker_client, jobs, paths
+from pydantic import BaseModel, Field
 
 
 router = APIRouter(tags=["autonomy"])
@@ -151,6 +151,40 @@ async def autonomy_status():
         "queue_runner": _queue_runner_state(),
         "jobs": _jobs_summary(),
     }
+
+
+# ============================================================
+# Model-process concurrency
+# ============================================================
+# How MANY agent processes may run at once. Distinct from the autonomy switch
+# below, which is about WHETHER background work runs at all: this bounds the
+# machine, that one bounds the policy.
+
+
+class ConcurrencyPatch(BaseModel):
+    max_turns: int | None = Field(default=None, ge=1, le=64)
+    max_helpers: int | None = Field(default=None, ge=1, le=64)
+
+
+# Top-level, NOT under /agents: `agents.router` is mounted first and owns
+# `/agents/{agent_id}`, so a two-segment `/agents/concurrency` would be captured
+# as an agent id and 404 instead of reaching this.
+@router.get("/concurrency")
+async def get_agent_concurrency():
+    """Limits plus what is running right now: {turns:{limit,active,waiting},
+    helpers:{...}}. The active counts are the only view the system has of how
+    many model processes it is holding."""
+    return agent_slots.snapshot()
+
+
+@router.put("/concurrency")
+async def put_agent_concurrency(body: ConcurrencyPatch):
+    """Change how many model processes may run at once. Takes effect on the next
+    acquire, with no restart: raising a limit lets work that is already waiting
+    start. Nothing in flight is ever cancelled by lowering one, it just stops new
+    work starting until the pool drains."""
+    agent_slots.update_config(max_turns=body.max_turns, max_helpers=body.max_helpers)
+    return agent_slots.snapshot()
 
 
 # ============================================================
