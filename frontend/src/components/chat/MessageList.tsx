@@ -1,7 +1,7 @@
 import { Fragment, memo } from "react";
 import { ArrowRightLeft, Bot, Clock, Eraser, FileText, FoldVertical, Lightbulb, Ticket, TriangleAlert, Zap } from "lucide-react";
 import { Link } from "react-router-dom";
-import type { ChatMsg } from "../../lib/chat";
+import { chatApi, type ChatMsg } from "../../lib/chat";
 import type { UiCardCtx } from "./uiCardActions";
 import { AssistantTurn, AnswerBody, ElidedContent } from "./Transcript";
 import CopyMessage from "./CopyMessage";
@@ -12,6 +12,7 @@ import { modelDisplay } from "./models";
 import { stoppedTag } from "./stopReason";
 import { hasBubble, noReplyText } from "./replyBody";
 import type { TranscriptBlock } from "./transcriptBlocks";
+import { receiptHref, receiptItems, receiptLabel } from "./receipts";
 
 // The transcript body: one rendered block per entry the selector produced.
 //
@@ -102,39 +103,19 @@ const RECEIPT_ICON: Record<string, typeof FileText> = {
   action: Zap,
 };
 
-/** Where a receipt's object can be opened. Notes live in the scoped knowledge
- *  store, which the Memory page reads; `?note=` selects one. */
-function receiptHref(r: { kind: string; ref?: { scope: string; id: string } }): string | null {
-  if (!r.ref) return null;
-  if (r.kind === "note") {
-    return `/memory?scope=${encodeURIComponent(r.ref.scope)}&note=${encodeURIComponent(r.ref.id)}`;
-  }
-  return null;
-}
-
 function Receipts({ msg }: { msg: ChatMsg }) {
-  const typed = msg.meta?.receipts;
-  const items = typed?.length
-    ? typed
-    // The same parenthesis rule the write side uses (build_streaming._receipt).
-    // Without it a stored refusal, "(a triager agent may not file tickets)",
-    // reads back as though it succeeded.
-    : (msg.meta?.notes || []).map((label) => ({
-        kind: label.trim().startsWith("(") ? "warn" : "note",
-        label,
-        ref: undefined,
-      }));
+  const items = receiptItems(msg.meta);
   if (!items.length) return null;
   return (
     <div className="chat-receipts">
       {items.map((r, j) => {
         const warn = r.kind === "warn";
         const Icon = warn ? TriangleAlert : (RECEIPT_ICON[r.kind] ?? FileText);
-        const href = warn ? null : receiptHref(r);
+        const href = receiptHref(r);
         const body = (
           <>
             <Icon size={13} strokeWidth={1.8} aria-hidden />
-            <span>{r.ref?.title || r.label}</span>
+            <span>{receiptLabel(r)}</span>
           </>
         );
         const cls = `chat-receipt chat-receipt--${warn ? "warn" : "ok"}`;
@@ -218,6 +199,12 @@ const MessageBubble = memo(function MessageBubble({
           when there IS something to copy. */}
       {body && <div className={`chat-bubble ${msg.meta?.error ? "error" : ""}${msg.meta?.timeout ? " chat-bubble--timeout" : ""}${msg.content.trim() ? " chat-bubble--copyable" : ""}`}>
         <div className="chat-bubble__body">
+          {/* Files the operator attached, shown on the message that carried
+              them. Read-only here: the send already happened, so there is
+              nothing to remove. */}
+          {msg.role === "user" && !!msg.meta?.attachments?.length && (
+            <SentAttachments items={msg.meta.attachments} />
+          )}
           {msg.role === "assistant" ? (
             <>
               {msg.meta?.agent && (
@@ -270,6 +257,36 @@ const MessageBubble = memo(function MessageBubble({
 // no copy of this message. A bubble that quietly is not real is exactly what
 // "my messages keep disappearing" felt like from outside. It carries WHY, in a
 // sentence, under the message it belongs to — see UnsentNote.
+/** The attachments on a message that has been sent. Same chip shape as the
+ *  composer's, minus the remove control and the upload state: this is a record
+ *  of what went, not a list you are still editing. An image links to its own
+ *  bytes so it can be opened full size. */
+function SentAttachments({ items }: {
+  items: NonNullable<NonNullable<ChatMsg["meta"]>["attachments"]>;
+}) {
+  return (
+    <div className="chat-attach-row chat-attach-row--sent">
+      {items.map((a) => (
+        <a
+          key={a.id}
+          className="chat-attach is-sent"
+          href={chatApi.attachmentUrl(a.id)}
+          target="_blank"
+          rel="noreferrer"
+          title={a.name}
+        >
+          <span className="chat-attach__mark" aria-hidden>
+            {a.kind === "image"
+              ? <img className="chat-attach__thumb" src={chatApi.attachmentUrl(a.id)} alt="" />
+              : <FileText size={14} strokeWidth={1.8} />}
+          </span>
+          <span className="chat-attach__name">{a.name}</span>
+        </a>
+      ))}
+    </div>
+  );
+}
+
 function PendingBubble({
   text, status, error, onRetry,
 }: {
