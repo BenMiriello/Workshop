@@ -1083,14 +1083,33 @@ a.chat-receipt--link:hover > svg { color: var(--accent); }
 
    Derived from the chip's own box (the mark's 1.4rem plus its padding) so the
    two stay in step; a hardcoded pixel height would drift the moment the chip's
-   padding changed and would cut the last row in half. */
+   padding changed and would cut the last row in half.
+
+   AND IT CUTS A THIRD OF THE NEXT ROW ON PURPOSE. A list clipped exactly at a
+   row boundary looks finished: there is nothing on screen to say more is below
+   it, so the scroll is invisible and the rest may as well not exist (operator,
+   2026-08-12). Showing a sliver of the row beneath is the standard cue, and it
+   is the content itself doing the telling rather than a scrollbar, which on a
+   phone is not painted until you are already scrolling.
+
+   The sliver COSTS NOTHING WHEN THERE IS NOTHING TO SCROLL TO, and that falls
+   out of `max-height` rather than needing to be detected: a max-height only
+   binds when the content exceeds it. Two rows of chips are shorter than the
+   two-and-a-third-row cap, so the box takes its content height and no gap
+   appears; the third row is what pushes it against the cap and gets clipped. So
+   the extra height is present exactly when there is a row to reveal, which is
+   the condition asked for, with no measuring and no resize observer. */
 .chat-composer .chat-attach-row {
   --attach-rows: 4;
   /* mark + the chip's padding + its 1px border top and bottom. */
   --attach-chip-h: calc(1.4rem + var(--space-1) * 2 + 2px);
   max-height: calc(
     var(--attach-rows) * var(--attach-chip-h)
-    + (var(--attach-rows) - 1) * var(--space-2)
+    /* One gap PER row, not one fewer: the gap above the peeking row has to be
+       fully shown, or the sliver reads as a clipped chip rather than as the
+       next row starting. */
+    + var(--attach-rows) * var(--space-2)
+    + var(--attach-chip-h) / 3
   );
   overflow-y: auto;
   /* Keeps a scrollbar off the chips rather than on top of them. */
