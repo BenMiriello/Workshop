@@ -75,7 +75,3 @@ class TestOriginStrings:
         assert origin.tool("Bash") == "tool:Bash"
         assert origin.derived("claude-haiku-4-5") == "derived:claude-haiku-4-5"
 
-    def test_attributed_names_a_source_and_skips_an_empty_one(self):
-        assert origin.attributed("a fact", "chat") == "a fact [chat]"
-        assert origin.attributed("a fact", "") == "a fact"
-        assert origin.attributed("a fact", "   ") == "a fact"

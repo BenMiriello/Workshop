@@ -15,14 +15,17 @@ Both are provenance handled by argument instead of by structure.
 
 See docs/decisions/0015-transcript-structure-and-content-provenance.md §8.
 
-WE DO NOT TAG EVERYTHING. Position already tells the model that the persona is
-platform-authored, and a universal envelope costs tokens on every turn for cases
-that are never confused. Three cases get tagged, because those are the three that
-produce errors:
+WE DO NOT TAG EVERYTHING. The reason is not token cost, which is negligible; it
+is that envelope noise degrades instruction-following, so a tag buys nothing
+where position already answers the question. Three cases get tagged, because
+those are the three that produce errors:
 
   1. content attributed to the model that it did not write  -> speaker_label
-  2. content another model generated, presented as fact     -> derived_by
-  3. content from other agents/chats/stores, unlabelled     -> attributed
+  2. content another model generated, presented as fact     -> heading + derived
+  3. content from other agents or stores, unlabelled        -> at each render
+     site (learnings._block_line, workspace_digest, chat._recalled_block), each
+     of which suppresses its unmarked majority rather than spending a label to
+     say nothing
 
 Origin never reaches the operator's screen. It is background structure so the
 agent can tell what it said from what was said to it.
@@ -110,15 +113,3 @@ def speaker_label(role: str, meta: dict | None) -> str:
         return "Operator"
     who = ((meta or {}).get("agent") or "").strip()
     return who or "You"
-
-
-def attributed(text: str, source: str) -> str:
-    """One retrieved line, carrying where it came from.
-
-    Used for learnings, task digests and recalled notes, all of which already
-    record a source and all of which stripped it at the render site: a note the
-    model wrote last week, one the operator hand-wrote, and one Haiku distilled
-    were byte-identical on re-entry.
-    """
-    src = (source or "").strip()
-    return f"{text} [{src}]" if src else text
