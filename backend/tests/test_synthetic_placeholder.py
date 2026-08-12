@@ -179,3 +179,42 @@ class TestCompactTurnSaysOneLine:
 
     def test_the_line_has_no_em_dash(self):
         assert "—" not in self.LINE
+
+
+class TestCleanExitWithNoClosingMessage:
+    """A turn that exits 0 without a closing message must not claim work it did
+    not do.
+
+    The bug the operator reported repeatedly: an empty reply that said
+    "Finished with no closing message. The steps above are the result." while
+    there were no steps above at all. It happens when the model's entire output
+    was the CLI's "No response requested." filler, which is stripped, leaving a
+    turn with no text and no segments. Pointing at steps that do not exist is
+    what made an empty bubble read as the chat giving up.
+    """
+    DID_WORK = "Finished with no closing message. The steps above are the result."
+    DID_NOTHING = "Ended without a reply. Nothing ran this turn."
+
+    def test_a_turn_that_ran_tools_points_at_them(self):
+        segs = [{"t": "tool", "name": "Read", "input": "x.py"}]
+        assert bs._clean_exit_text(segs) == self.DID_WORK
+
+    def test_a_turn_that_delegated_points_at_the_subagent(self):
+        assert bs._clean_exit_text([{"t": "agent", "name": "Explore"}]) == self.DID_WORK
+
+    def test_interim_text_counts_as_work(self):
+        segs = [{"t": "text", "text": "Looking at the router now."}]
+        assert bs._clean_exit_text(segs) == self.DID_WORK
+
+    def test_an_empty_turn_does_not_claim_steps(self):
+        """The reported case: nothing at all above the reply."""
+        assert bs._clean_exit_text([]) == self.DID_NOTHING
+
+    def test_whitespace_text_is_not_work(self):
+        assert bs._clean_exit_text([{"t": "text", "text": "   \n"}]) == self.DID_NOTHING
+
+    def test_a_pending_approval_alone_is_not_work(self):
+        assert bs._clean_exit_text([{"t": "approval", "state": "pending"}]) == self.DID_NOTHING
+
+    def test_neither_line_has_an_em_dash(self):
+        assert "—" not in self.DID_WORK and "—" not in self.DID_NOTHING

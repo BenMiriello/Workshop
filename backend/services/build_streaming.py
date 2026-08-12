@@ -1169,6 +1169,44 @@ def _scrub_paths(text: str) -> str:
     return _ABS_PATH_RE.sub("[path]", text)
 
 
+def _did_visible_work(segments: list[dict]) -> bool:
+    """True if a turn produced anything the operator can actually see above the
+    reply. A tool call or a subagent counts; so does non-empty interim text. A
+    pending approval or a whitespace-only text segment does not."""
+    for s in segments or []:
+        if not isinstance(s, dict):
+            continue
+        t = s.get("t")
+        if t in ("tool", "agent"):
+            return True
+        if t == "text" and (s.get("text") or "").strip():
+            return True
+    return False
+
+
+def _clean_exit_text(segments: list[dict]) -> str:
+    """What to say for a turn that exited 0 and wrote no closing message.
+
+    WHICH of the two cases this is matters, and saying the wrong one is what the
+    operator kept reporting:
+
+      it did work    -> the tools and subagents above ARE the result, and
+                        pointing at them is true and useful.
+      it did nothing -> there is nothing above to point at, so
+                        "the steps above are the result" is a sentence about an
+                        empty bubble, and it reads as the chat having silently
+                        given up. This is the case that fires when the model's
+                        whole output was the CLI's "No response requested."
+                        filler: _is_no_op_placeholder strips it, leaving a turn
+                        with no text and no segments.
+
+    Say what actually happened, and nothing more (design rule 11: no advice
+    nobody asked for, so this does not close by telling them to try again)."""
+    if _did_visible_work(segments):
+        return "Finished with no closing message. The steps above are the result."
+    return "Ended without a reply. Nothing ran this turn."
+
+
 def _failure_text(rc: int, turn_error: str, stderr_tail: str) -> str:
     """The message shown for a turn that produced nothing and failed.
 
@@ -1991,7 +2029,7 @@ async def _commit_turn(turn: Turn, meta: dict, *, rc: int, timed_out: bool, comp
         text = "Command ran."
         is_error = False
     elif rc == 0:
-        text = "Finished with no closing message. The steps above are the result."
+        text = _clean_exit_text(turn.segments)
         is_error = False
     elif lost:
         # The operator saw "ended unexpectedly (exit -1)" over and over without
