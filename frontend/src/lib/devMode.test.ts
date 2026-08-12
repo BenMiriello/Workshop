@@ -59,11 +59,14 @@ describe("dev surfaces are present, and sort above Workshop, in a dev build", ()
 });
 
 describe("naming: development is its own kind, not a project", () => {
-  it("reads as Development everywhere a scope is named", () => {
+  // "Dev", not "Development", since 2026-08-12: the chat list names this scope
+  // on a chip in a row of them, and on a phone the long form was most of the
+  // width. The KEY is still `development`; only what it reads as changed.
+  it("reads as Dev everywhere a scope is named", () => {
     expect(scopeKind(DEVELOPMENT_SCOPE)).toBe("development");
-    expect(scopeLabel(DEVELOPMENT_SCOPE)).toBe("Development");
-    expect(scopeName(DEVELOPMENT_SCOPE)).toBe("Development");
-    expect(taskScopeLabel(DEVELOPMENT_SCOPE)).toBe("Development");
+    expect(scopeLabel(DEVELOPMENT_SCOPE)).toBe("Dev");
+    expect(scopeName(DEVELOPMENT_SCOPE)).toBe("Dev");
+    expect(taskScopeLabel(DEVELOPMENT_SCOPE)).toBe("Dev");
   });
 
   it("is never mistaken for the workshop root", () => {

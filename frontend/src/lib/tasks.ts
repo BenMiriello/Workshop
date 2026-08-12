@@ -349,7 +349,7 @@ export function scopeLabel(scope?: string): string {
   if (!scope) return "unknown";
   // Work ON the Workshop: the platform repo and this installation's host. The
   // only name that resolves there, and only in a developer build (ADR 0014).
-  if (scope === DEVELOPMENT_SCOPE) return "Development";
+  if (scope === DEVELOPMENT_SCOPE) return "Dev";
   if (scope === "workshop") return "Workshop root";
   const [kind, slug] = scope.split(":", 2);
   if (!slug) return scope;

@@ -1,6 +1,6 @@
 import {
-  Bell, ChevronLeft, ListPlus, ListTodo, Maximize2, MessagesSquare, MoreVertical,
-  PanelsTopLeft, Pencil, Plus, Ticket, Trash2,
+  Archive, Bell, ChevronLeft, ListPlus, ListTodo, Maximize2, MessagesSquare,
+  MoreVertical, PanelsTopLeft, Pencil, Plus, Ticket,
 } from "lucide-react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "@workshop/ui";
 import type { Provider, ThreadSummary } from "../../lib/chat";
@@ -45,7 +45,7 @@ export default function ChatToolbar({
   chatMode, onChooseChatMode,
   drawer, onSetDrawer, inboxCount, taskScope, openTaskCount,
   onBack, onOpenWorkbench, onFileTicket, onEditTitle, onOpenThread,
-  onNewChat, onDelete, onPopOut, onNavigate,
+  onNewChat, onArchive, onPopOut, onNavigate,
 }: {
   variant: ChatVariant;
   mode: ChatMode;
@@ -82,7 +82,9 @@ export default function ChatToolbar({
    *  different scope, so the caller routes rather than setting local state. */
   onOpenThread: (t: ThreadSummary) => void;
   onNewChat: () => void;
-  onDelete: (id: string) => void;
+  /** Close this chat: it goes to the archive, from where it can be restored
+   *  or deleted. Nothing here destroys a conversation. */
+  onArchive: (id: string) => void;
   onPopOut: () => void;
   onNavigate: (to: string) => void;
 }) {
@@ -288,8 +290,13 @@ export default function ChatToolbar({
         {activeId && (
           <>
             <MenuSeparator />
-            <MenuItem danger icon={<Trash2 size={14} />} onSelect={() => onDelete(activeId)}>
-              Delete chat…
+            {/* ARCHIVE, NOT DELETE, and no confirmation. Closing a chat is a
+                thing the operator does constantly; destroying one is rare. The
+                common gesture is the reversible one, and a reversible action
+                that stops to ask is just friction. The delete lives in the
+                archive, behind a dialog, where it belongs. */}
+            <MenuItem icon={<Archive size={14} />} onSelect={() => onArchive(activeId)}>
+              Archive chat
             </MenuItem>
           </>
         )}

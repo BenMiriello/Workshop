@@ -22,7 +22,6 @@ export default function ChatDialogs({
   confirmNew, onCancelNew, onConfirmNew,
   confirmCompact, onCancelCompact, onConfirmCompact,
   confirmClear, onCancelClear, onConfirmClear,
-  confirmDeleteId, confirmDeleteTitle, onCancelDelete, onConfirmDelete,
 }: {
   scope: string;
   activeId: string | null;
@@ -43,10 +42,6 @@ export default function ChatDialogs({
   onConfirmClear: () => void;
   onCancelNew: () => void;
   onConfirmNew: () => void;
-  confirmDeleteId: string | null;
-  confirmDeleteTitle?: string;
-  onCancelDelete: () => void;
-  onConfirmDelete: (id: string) => void | Promise<void>;
 }) {
   return (
     <>
@@ -113,20 +108,6 @@ export default function ChatDialogs({
         }
         confirmLabel="Clear context"
         danger
-      />
-
-      <ConfirmDialog
-        open={confirmDeleteId != null}
-        onCancel={onCancelDelete}
-        onConfirm={async () => { if (confirmDeleteId) await onConfirmDelete(confirmDeleteId); }}
-        title="Delete chat?"
-        body={
-          <span>
-            This permanently deletes {confirmDeleteTitle ? `"${confirmDeleteTitle}"` : "this chat"} and its
-            messages. This can't be undone.
-          </span>
-        }
-        confirmLabel="Delete chat"
       />
     </>
   );
