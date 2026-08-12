@@ -39,6 +39,25 @@ class ResolveIn(BaseModel):
     dismissed: bool = False
 
 
+class SnoozeIn(BaseModel):
+    """Either an explicit instant or one of the panel's presets. `until: null`
+    with no preset wakes the item now, so the control is its own undo."""
+    until: str | None = None
+    preset: str | None = None
+
+
+# The answers that mean yes. The frontend used to post "approved" against a
+# backend that compared against "approve", so approving a memory promotion
+# closed the row and wrote nothing. Both literals are accepted now, because a
+# one-word protocol between two files is not worth a second outage, and the
+# comparison lives here so a backend test can pin it.
+_APPROVALS = {"approve", "approved"}
+
+
+def _is_approval(answer: str | None) -> bool:
+    return str(answer or "").strip().lower() in _APPROVALS
+
+
 def _scope_for_chat(chat_id: str | None) -> tuple[str | None, str | None]:
     """(scope, chat_id) for a chat, or (None, None) for the global inbox."""
     if not chat_id:
@@ -71,6 +90,14 @@ async def list_inbox(chat_id: str | None = None, state: str = "open"):
             memory_promotion.sweep()
         except Exception as e:
             log.warning("inbox: promotion sweep failed: %s", e)
+        # An autonomous run that ended with nobody watching. Reconciled from the
+        # job log here for the same reason blocked work is: the runs are closed
+        # by shell workers in another process, against a per-owner store that
+        # process has nobody pinned to. See inbox.sweep_finished_runs.
+        try:
+            inbox.sweep_finished_runs()
+        except Exception as e:
+            log.warning("inbox: finished-run sweep failed: %s", e)
     scope, cid = _scope_for_chat(chat_id)
     items = inbox.list_items(chat_scope=scope, chat_id=cid, state=state)
     return {
@@ -93,6 +120,21 @@ async def raise_inbox(body: RaiseIn):
         return inbox.raise_item(**body.model_dump())
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@router.post("/{item_id}/snooze")
+async def snooze_inbox(item_id: str, body: SnoozeIn):
+    """Defer an item. It stays open and keeps its dedupe key; it just stops
+    surfacing until then, and wakes early if the thing it is about changes
+    (services/inbox._refresh_on_reraise)."""
+    try:
+        until = (inbox.snooze_until(body.preset) if body.preset else body.until)
+        it = inbox.snooze_item(item_id, until)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if it is None:
+        raise HTTPException(404, "item not found")
+    return it
 
 
 async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -> dict | None:
@@ -129,7 +171,7 @@ async def _answer_the_task(item: dict, *, answer: str | None, dismissed: bool) -
     ans = str(answer or "").strip()
     if dismissed:
         action, note = "dismiss", ""
-    elif ans.lower() == "approve" and any(
+    elif _is_approval(ans) and any(
         str(o).strip().lower() == "approve" for o in (item.get("options") or [])
     ):
         # run_inbox offers Approve/Decline ONLY when the block carried a
@@ -168,8 +210,7 @@ async def resolve_inbox(item_id: str, body: ResolveIn):
     # An approved promotion is the one answer that performs a write. Everything
     # else is just a recorded decision.
     key = (before or {}).get("dedupe_key") or ""
-    if (not body.dismissed and str(body.answer or "").strip().lower() == "approve"
-            and key.startswith("promote:")):
+    if not body.dismissed and _is_approval(body.answer) and key.startswith("promote:"):
         try:
             done = memory_promotion.approve(key)
             it = {**it, "promoted": done}

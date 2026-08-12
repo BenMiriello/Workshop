@@ -8,9 +8,17 @@
 //
 // Both are now the single source of truth for the view, which is why the
 // parsing lives here rather than inline: a param nothing validates is a param
-// that silently accepts "inbox" and shows tickets.
+// that accepts an unknown tab and silently shows a different one.
+//
+// `inbox` was exactly that case for months. The chat's inbox footer link has
+// always navigated to `/work?tab=inbox`, this list held three tabs, and
+// `parseWorkTab` fell back to `tickets` — so the link "worked" and landed
+// somewhere else. The global inbox exists on the backend
+// (`inbox.list_items(chat_scope=None)`), so the fix was the fourth tab, not a
+// fifth guard. Adding a value here is half of adding a tab: Work.tsx must
+// render it, and the exhaustive check there is what makes the compiler say so.
 
-export const WORK_TABS = ["tickets", "runs", "review"] as const;
+export const WORK_TABS = ["tickets", "runs", "review", "inbox"] as const;
 
 export type WorkTab = (typeof WORK_TABS)[number];
 

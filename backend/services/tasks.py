@@ -126,6 +126,41 @@ STATUSES = {"draft", "todo", "doing", "in_review", "blocked", "parked", "done",
 TERMINAL = {"done", "cancelled"}
 DEFAULT_OWNER = "operator"  # canonical assignee for the human
 
+# Two-level status (ticket-system-consolidation-2026-08-12 §3.1). The eight named
+# statuses above stay exactly as they are; this is the coarse CATEGORY every
+# other tracker also models, so a board can group without inventing lanes.
+# `blocked` is `started` because the work has begun and is stuck (Linear's and
+# Shortcut's reading); `parked` is `backlog` because it is out of the active plan
+# but not finished.
+#
+# Spelling: the type is `canceled` with ONE l, matching every tracker's API,
+# while the status value stays `cancelled` with two because it is persisted in
+# live records and renaming it buys nothing.
+#
+# DERIVED, NEVER STORED. `_for_storage` strips only `_PROJECTED_KEYS`, so writing
+# this onto a record inside `_normalize` would persist it into .tasks.json and
+# make it a second source of truth. It is computed on the way out, in the route
+# layer, and the record on disk never carries it.
+STATE_TYPES = ("backlog", "unstarted", "started", "completed", "canceled")
+
+_STATE_TYPE = {
+    "draft": "backlog",
+    "parked": "backlog",
+    "todo": "unstarted",
+    "doing": "started",
+    "in_review": "started",
+    "blocked": "started",
+    "done": "completed",
+    "cancelled": "canceled",
+}
+
+
+def state_type(status) -> str:
+    """The coarse category for one of the eight statuses. An unrecognised status
+    reads as `backlog`, matching `_normalize`'s bias toward "not started yet"
+    for a record it cannot classify — a board must never drop a row."""
+    return _STATE_TYPE.get(str(status or ""), "backlog")
+
 # The sync boundary, in ONE place (ticket-model-and-external-trackers-2026-08-07).
 # These are the only fields that may ever cross to an external tracker; every
 # other field on the record is workshop-private execution state. A field added to
@@ -1388,6 +1423,37 @@ def reclaim(root: Path, *, now: datetime | None = None, ttl: int = LEASE_TTL_SEC
     return out
 
 
+def is_ready(task: dict, by_id: dict[str, dict]) -> bool:
+    """Could the scheduler pick this task up as it stands? A PURE predicate over
+    stored state: it reads the record and the sibling index it is handed, and
+    touches nothing else.
+
+    PURITY IS THE POINT. `next_ready` calls `reconcile()` and `reclaim()`, and
+    `reclaim` rewrites `doing` -> `todo` or -> `parked` at the attempt cap and
+    then persists. That is correct for the scheduler and the liveness watchdog,
+    and catastrophic on an HTTP GET: the ticket list polls every few seconds
+    while anything is `doing`, so wiring reclaim into a read would dead-letter
+    live work simply because a tab was left open. This function is therefore the
+    only readiness answer a read path may use. The honest consequence: `ready`
+    lags a crashed claim by one watchdog interval.
+
+    `by_id` is the index of ONE store, exactly as `next_ready` builds it, and the
+    `d is not None` test below deliberately treats a dependency id that is not in
+    it as satisfied. Cross-scope dependencies are therefore invisible here — not
+    because that is right, but because it is what the scheduler does, and a
+    stricter predicate would disagree with which tickets the sweep actually
+    picks up. `blocked_by` resolves across scopes for DISPLAY, so a row can
+    legitimately read `ready: true` next to a non-empty `blocked_by`.
+    """
+    if task.get("status") != "todo":
+        return False
+    for dep in task.get("depends_on") or []:
+        d = by_id.get(dep)
+        if d is not None and d.get("status") not in TERMINAL:
+            return False
+    return True
+
+
 def next_ready(root: Path, *, assignee: str | None = None) -> dict | None:
     """The next task ready to run: status==todo AND every depends_on is
     done|cancelled, ordered by priority desc then created asc. Optionally scoped
@@ -1400,13 +1466,7 @@ def next_ready(root: Path, *, assignee: str | None = None) -> dict | None:
     by_id = {t["id"]: t for t in tasks}
 
     def ready(t: dict) -> bool:
-        if t["status"] != "todo":
-            return False
-        for dep in t.get("depends_on") or []:
-            d = by_id.get(dep)
-            if d is not None and d["status"] not in TERMINAL:
-                return False
-        return True
+        return is_ready(t, by_id)
 
     def in_scope(t: dict) -> bool:
         if assignee is None:
@@ -1510,6 +1570,7 @@ def update(
     body: str | None = None,
     owner: str | None = None,
     assignee: str | None = None,
+    set_assignee: str | None = None,
     priority: int | None = None,
     depends_on: list[str] | None = None,
     relates_to: list[str] | None = None,
@@ -1530,9 +1591,26 @@ def update(
     restore_attempt: bool = False,
     expect_claim_token: int | None = None,
 ) -> dict | None:
-    """Update a task. ``owner`` (or ``assignee``) scopes the match so an agent
-    can't mutate another delegate's task. Additive fields are patched when
-    provided. Returns the updated task or None.
+    """Update a task. Additive fields are patched when provided. Returns the
+    updated task or None.
+
+    THREE ownership parameters, because two different questions were being asked
+    through one word and the answers contradicted each other:
+
+      ``owner``        MATCH only. Scopes the lookup so an agent cannot mutate
+                       another delegate's task. Never written.
+      ``set_assignee`` WRITE only. Reassigns the ticket. Never filters, so a
+                       patch may name an assignee the ticket does not have yet.
+                       "" (or whitespace) hands it back to DEFAULT_OWNER, which
+                       is what "nobody is delegated this" means on a record.
+      ``assignee``     LEGACY: match AND write, the original single parameter.
+                       Kept because callers depend on the filter half of it.
+
+    ``assignee`` doing both is exactly why an assignee could not be changed at
+    all: the value being written was also the filter used to find the record, so
+    naming a NEW assignee matched nothing, `update` returned None, and the HTTP
+    layer reported "task not found" while dropping the entire save. Anything that
+    means "reassign this ticket" must use ``set_assignee``.
 
     ``expect_claim_token`` fences a zombie: if provided and it does not match the
     task's current ``claim_token``, the task was reclaimed and re-claimed by a
@@ -1568,6 +1646,9 @@ def update(
     if latitude is not None:
         # "" clears the override back to inherit; an unknown value raises.
         latitude = _latitude.validate(latitude) or ""
+    # The MATCH filter. `set_assignee` is deliberately absent from this line:
+    # reassigning a ticket must not also narrow the search to tickets that already
+    # carry the new assignee, which is the whole bug.
     scope = assignee if assignee is not None else owner
     with _locked(root):
         tasks = _load(root)
@@ -1588,8 +1669,9 @@ def update(
         _held_by_worker = (found.get("status") == "doing"
                            and found.get("claim_token") is not None)
         _material_edit = any(v is not None for v in (
-            status, title, body, assignee, priority, depends_on, blocked_reason,
-            acceptance, max_attempts, effort, latitude, awaiting, blocked_request))
+            status, title, body, assignee, set_assignee, priority, depends_on,
+            blocked_reason, acceptance, max_attempts, effort, latitude, awaiting,
+            blocked_request))
         if status is not None:
             found["status"] = status
             # Leaving a waiting state clears the operator-input payload; nothing
@@ -1631,6 +1713,18 @@ def update(
         if assignee is not None:
             found["assignee"] = assignee
             found["owner"] = assignee
+        if set_assignee is not None:
+            # Written last of the two so an explicit reassign wins over the legacy
+            # parameter if a caller ever passes both.
+            #
+            # "" clears back to DEFAULT_OWNER rather than to None, because that is
+            # what the record means when nothing is delegated: `_assignee_from_legacy`
+            # reads a blank assignee as the operator, so storing None here would
+            # return None from this call and then read back as "operator" on the
+            # very next load. Same value in the return and in the store.
+            who = str(set_assignee).strip() or DEFAULT_OWNER
+            found["assignee"] = who
+            found["owner"] = who
         if priority is not None:
             found["priority"] = int(priority)
         if depends_on is not None:
@@ -1793,7 +1887,11 @@ def append_clarification(root: Path, task_id: str, *, question: str, answer: str
     else:
         body = f"{body.rstrip()}\n\n{CLARIFICATION_HEADING}\n{entry}" if body.strip() \
             else f"{CLARIFICATION_HEADING}\n{entry}"
-    return update(root, task_id, body=body, assignee=assignee)
+    # `owner=`, not `assignee=`: this parameter is the same delegate FILTER
+    # `get_task` above applies. Passing it as `assignee=` also WROTE it, so
+    # answering a question on an unassigned ticket silently assigned the ticket to
+    # whoever the caller happened to be scoping by.
+    return update(root, task_id, body=body, owner=assignee)
 
 
 def add_comment(root: Path, task_id: str, *, text: str, author: str = DEFAULT_OWNER,
@@ -1864,7 +1962,7 @@ def delete_comment(root: Path, task_id: str, comment_id: str, *,
 _STATUS_RANK = {"blocked": 0, "doing": 1, "in_review": 2, "todo": 3, "draft": 4,
                 "parked": 5, "done": 6, "cancelled": 7}
 
-SORT_KEYS = ("updated", "created", "priority", "title", "status")
+SORT_KEYS = ("updated", "created", "priority", "title", "status", "queue")
 
 
 def sort_tasks(items: list[dict], key: str = "updated",
@@ -1873,7 +1971,7 @@ def sort_tasks(items: list[dict], key: str = "updated",
 
     `desc` defaults per key to the direction that is useful rather than the one
     that is alphabetical: newest first for dates, biggest first for priority,
-    A-Z for title, and most-urgent first for status.
+    A-Z for title, most-urgent first for status, and next-to-run first for queue.
     """
     if key not in SORT_KEYS:
         key = "updated"
@@ -1890,6 +1988,15 @@ def sort_tasks(items: list[dict], key: str = "updated",
         def rank(t: dict):
             return (_STATUS_RANK.get(str(t.get("status")), 99),
                     str(t.get("updated") or ""))
+    elif key == "queue":
+        # The scheduler's own order: highest priority first, oldest first within
+        # a priority — the same key `next_ready` sorts candidates by, so "what
+        # would run next" is the top of this list rather than a guess. Negating
+        # priority folds the mixed directions into one ASCENDING key, which is
+        # why its useful default is ascending and why `desc=True` gives the exact
+        # inverse instead of a half-reversed order.
+        def rank(t: dict):
+            return (-_as_int(t.get("priority"), 0), str(t.get("created") or ""))
     else:
         def rank(t: dict):
             return (str(t.get(key) or ""), str(t.get("id") or ""))

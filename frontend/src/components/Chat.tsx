@@ -3,8 +3,7 @@ import { usePoll } from "../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import { WifiOff, ArrowDown, Paperclip, Unplug } from "lucide-react";
 import { StateBlock } from "@workshop/ui";
-import TaskPanel from "./TaskPanel";
-import InboxStrip from "./chat/InboxStrip";
+import WorkDrawer from "./chat/WorkDrawer";
 import { NoticeBar, type FiledNotice } from "./chat/FiledNotice";
 import ChatComposer from "./chat/ChatComposer";
 import { useAttachments, dragHasFiles, filesFromTransfer } from "./chat/useAttachments";
@@ -552,10 +551,14 @@ export default function Chat({
 
   // ---- Drawers, pickers, mentions ------------------------------------------
   const [drawer, setDrawer] = useState<ChatDrawer>(null);
-  const inboxOpen = drawer === "inbox";
-  const tasksOpen = drawer === "tasks";
-  const [inboxCount, setInboxCount] = useState(0);
-  const [openTaskCount, setOpenTaskCount] = useState(0);
+  const workOpen = drawer === "work";
+  // Inbox items waiting on the operator in this chat. The toolbar badge, and
+  // ONLY that: the drawer's ticket zone is ambient, so it does not count here.
+  const [needsYouCount, setNeedsYouCount] = useState(0);
+  // Stable, because the drawer holds it in an Escape-key effect and in a
+  // memoised callback; a fresh lambda per render would re-bind both every time
+  // a character is typed.
+  const closeDrawer = useCallback(() => setDrawer(null), []);
   const [ticketsOpen, setTicketsOpen] = useState(false);
   // The context breakdown, opened from the meter. It replaced /context, which
   // dumped sixty lines of table into the transcript.
@@ -828,9 +831,8 @@ export default function Chat({
       onChooseChatMode={thread.chooseChatMode}
       drawer={drawer}
       onSetDrawer={setDrawer}
-      inboxCount={inboxCount}
+      needsYouCount={needsYouCount}
       taskScope={taskScope}
-      openTaskCount={openTaskCount}
       onBack={back}
       onOpenWorkbench={() => navigate(`/agents/${slug}/chat`)}
       onFileTicket={() => setTicketsOpen(true)}
@@ -1012,16 +1014,6 @@ export default function Chat({
     />
   );
 
-  const taskPanel = taskScope ? (
-    <TaskPanel
-      scope={taskScope}
-      refetchKey={taskRefetchKey}
-      open={tasksOpen}
-      onCount={setOpenTaskCount}
-      variant="drawer"
-    />
-  ) : null;
-
   const composer = (
     <ChatComposer
       composerRef={composerRef}
@@ -1152,18 +1144,22 @@ export default function Chat({
       ) : (
       <>
       {notice && <NoticeBar notice={notice} onDismiss={() => setNotice(null)} />}
-      {taskPanel}
       <div className="chat-log-wrap">
         {/* Floats over the top of the log instead of pushing it down — it used
             to sit in flow and shove the whole transcript downward every time an
             agent raised something, which shifted the log out from under wherever
-            the operator was reading right as a new item arrived. */}
-        <InboxStrip
+            the operator was reading right as a new item arrived.
+
+            Always mounted, even closed: it owns the inbox poll that feeds the
+            toolbar badge. The ticket list inside it is read only while open. */}
+        <WorkDrawer
           chatId={activeId}
-          open={inboxOpen}
-          onCountChange={setInboxCount}
-          onClose={() => setDrawer(null)}
-          onOpenGlobal={() => navigate("/work?tab=inbox")}
+          scope={taskScope}
+          open={workOpen}
+          refetchKey={taskRefetchKey}
+          onCountChange={setNeedsYouCount}
+          onClose={closeDrawer}
+          onNavigate={navigate}
         />
         {logView}
         {jumpToLatest}

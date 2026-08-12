@@ -106,6 +106,50 @@ def _with_latitude(rec: dict, scope: str, cache: dict[str, str | None] | None = 
     return rec
 
 
+def _blocked_by(task: dict, index: dict[str, tuple[dict, str]]) -> list[dict]:
+    """Why this ticket is not runnable: the NON-TERMINAL subset of its resolved
+    `depends_on`, each stub carrying its own scope.
+
+    Resolved across scopes on purpose, and deliberately more honest than
+    `tasks.is_ready`, which matches the scheduler and treats a dependency it
+    cannot see as satisfied (see that docstring). So a row can read
+    `ready: true` with a non-empty `blocked_by`; that is the documented
+    scheduler gap, not a contradiction in this response.
+
+    A dependency id that resolves nowhere is omitted rather than rendered: the
+    detail route reports those under `links.missing`, and a list row has no
+    place to say "points at a ghost"."""
+    out: list[dict] = []
+    for dep in task.get("depends_on") or []:
+        hit = index.get(str(dep))
+        if hit is None:
+            continue
+        blocker, skey = hit
+        if blocker.get("status") in tasks.TERMINAL:
+            continue
+        out.append(_link_stub(blocker, skey))
+    return out
+
+
+def _with_triage(rec: dict, by_id: dict[str, dict],
+                 index: dict[str, tuple[dict, str]]) -> dict:
+    """Stamp the three derived triage fields onto an outgoing task.
+
+    HERE, not in the store. `tasks._for_storage` strips only `_PROJECTED_KEYS`
+    ("exec", "blocked_request"), so a derived field added inside `_normalize`
+    would be written straight into `.tasks.json` on the next persist and become
+    a second source of truth that a hand edit could put out of step with the
+    status it was derived from. Computing it on the way out means the record on
+    disk never carries it.
+
+    `by_id` indexes the ticket's OWN scope (what the scheduler sees); `index`
+    spans every scope loaded this request (what a human needs to see)."""
+    rec["state_type"] = tasks.state_type(rec.get("status"))
+    rec["ready"] = tasks.is_ready(rec, by_id)
+    rec["blocked_by"] = _blocked_by(rec, index)
+    return rec
+
+
 def _project_slugs() -> list[str]:
     if not _PROJECTS_REGISTRY.exists():
         return []
@@ -172,12 +216,39 @@ scope_roots = _scope_roots
 
 # ---- Aggregate list --------------------------------------------------------
 
+def _csv_filter(raw: str | None, allowed, label: str) -> set[str] | None:
+    """A comma-separated filter value, validated. None (or empty) means no filter.
+
+    A single value behaves exactly as it always did, so `?status=blocked` is
+    unchanged; the list form is what lets the UI ask for the four statuses of its
+    Active view in ONE request. Before this it could not express that, so it
+    fetched every ticket in every scope unpaged (bodies, comments and evidence
+    inline) on every sort, scope or search change and narrowed in the browser.
+
+    An unrecognised value is a 400 that NAMES it. Silently returning nothing is
+    the worse failure: a typo and an empty backlog look identical, and the caller
+    reads it as data rather than as a mistake."""
+    if raw is None:
+        return None
+    vals = [v.strip() for v in str(raw).split(",") if v.strip()]
+    if not vals:
+        return None
+    bad = sorted({v for v in vals if v not in allowed})
+    if bad:
+        raise HTTPException(
+            400, f"unknown {label}: {', '.join(bad)} (expected one of "
+                 f"{', '.join(sorted(allowed))})")
+    return set(vals)
+
+
 @router.get("")
 async def list_all(
     status: str | None = None,
+    state_type: str | None = None,
     scope: str | None = None,
     include_done: bool = True,
     q: str | None = None,
+    ready: bool | None = None,
     sort: str = "updated",
     desc: bool | None = None,
     limit: int | None = None,
@@ -185,29 +256,66 @@ async def list_all(
 ) -> dict:
     """Tasks across every scope, each tagged with its resolved `scope` key.
 
-    Filters: `status` (one of the eight task statuses), `scope` (restrict to a
-    single scope key), `q` (case-insensitive substring of title or body).
-    Ordering: `sort` (one of tasks.SORT_KEYS) + `desc`. Paging: `limit`/`offset`.
+    Filters: `status` (comma-separated, from the eight task statuses),
+    `state_type` (comma-separated, from tasks.STATE_TYPES — the coarse category
+    the UI's Active / Backlog / Done views actually mean, expanded to statuses
+    here), `scope` (restrict to a single scope key), `q` (case-insensitive
+    substring of title or body), `ready` (only what the scheduler could pick up,
+    or only what it could not). Ordering: `sort` (one of tasks.SORT_KEYS,
+    including `queue` = the scheduler's own order) + `desc`. Paging:
+    `limit`/`offset`.
+
+    `status` and `state_type` are independent and compose with AND, like every
+    other filter here: sending both narrows to their intersection rather than
+    letting one quietly win. Either alone is the normal case.
+
+    Every filter is applied BEFORE `sort` and BEFORE paging, so `total` is the
+    honest size of the filtered set and page 1 of a filtered list is its real
+    first page — not the first page of everything, narrowed afterwards.
+
+    Every row carries the derived `state_type`, `ready` and `blocked_by`
+    (`_with_triage`). None of the three is stored.
 
     `total` is the size of the filtered set BEFORE paging; `count` is how many
     are in this page. The list used to return raw file order with no way to page,
     so a caller that wanted the newest ticket got the oldest and a caller with
     more than a screenful got an arbitrary slice.
     """
+    want_status = _csv_filter(status, tasks.STATUSES, "status")
+    want_type = _csv_filter(state_type, tasks.STATE_TYPES, "state_type")
     out: list[dict] = []
     scopes = 0
     lat_cache: dict[str, str | None] = {}
     needle = (q or "").strip().casefold()
+    # ONE index per request, built while the scopes are being read anyway.
+    # Resolving `blocked_by` per row the way the detail route does would be
+    # O(rows x scopes) store loads.
+    by_scope: dict[str, dict[str, dict]] = {}
+    index: dict[str, tuple[dict, str]] = {}
     for skey, root in _scope_roots():
         if scope and skey != scope:
             continue
         scopes += 1
         try:
-            items = tasks.list_tasks(root, include_done=include_done)
+            # The FULL store, even when include_done is false: `ready` and
+            # `blocked_by` both have to see a FINISHED dependency to know it is
+            # satisfied, and filtering it out here would make every ticket that
+            # depends on completed work read as blocked. include_done is applied
+            # per row below instead, exactly as list_tasks would.
+            items = tasks.list_tasks(root)
         except Exception:
             continue
+        by_id = {t["id"]: t for t in items}
+        by_scope[skey] = by_id
         for t in items:
-            if status and t.get("status") != status:
+            index.setdefault(t["id"], (t, skey))
+        for t in items:
+            if not include_done and t.get("status") in tasks.TERMINAL:
+                continue
+            if want_status is not None and t.get("status") not in want_status:
+                continue
+            if want_type is not None and \
+                    tasks.state_type(t.get("status")) not in want_type:
                 continue
             if needle:
                 hay = f"{t.get('title') or ''}\n{t.get('body') or ''}".casefold()
@@ -216,6 +324,31 @@ async def list_all(
             rec = dict(t)
             rec["scope"] = skey
             out.append(_with_latitude(rec, skey, lat_cache))
+
+    # A `scope=` query loaded one store, so a dependency living elsewhere is not
+    # in the index yet. Pay for the other scopes only when a row actually points
+    # at an id nothing loaded resolved — the same trade `_resolve_links` makes.
+    unresolved = {str(d) for rec in out for d in (rec.get("depends_on") or [])
+                  if str(d) not in index}
+    if unresolved:
+        for skey, root in _scope_roots():
+            if skey in by_scope:
+                continue
+            try:
+                others = tasks.list_tasks(root)
+            except Exception:
+                continue
+            for o in others:
+                if o["id"] in unresolved:
+                    index.setdefault(o["id"], (o, skey))
+                    unresolved.discard(o["id"])
+            if not unresolved:
+                break
+
+    for rec in out:
+        _with_triage(rec, by_scope.get(rec["scope"], {}), index)
+    if ready is not None:
+        out = [rec for rec in out if rec["ready"] is bool(ready)]
     out = tasks.sort_tasks(out, sort, desc)
     total = len(out)
     start = max(0, int(offset or 0))
@@ -306,8 +439,7 @@ async def create(body: TaskCreateIn) -> dict:
         except ValueError as e:
             raise HTTPException(400, str(e))
     if task is not None:
-        task["scope"] = body.scope
-        _with_latitude(task, body.scope)
+        task = _detail(task, body.scope, root)
     # Signal the resident queue runner so it wakes immediately instead of
     # waiting out the full poll interval.
     try:
@@ -353,6 +485,50 @@ class TaskPatchIn(BaseModel):
     max_attempts: int | None = None
     depends_on: list[str] | None = None
     relates_to: list[str] | None = None
+    # WHY this transition, recorded as evidence. Triage's decline verb: cancelling
+    # a ticket has always been possible and has never had to say why, and an
+    # unexplained cancel is indistinguishable from a mistake three weeks later.
+    # Never required — readiness is a checklist here, never a veto — and only
+    # meaningful alongside a status change, which is what it describes.
+    reason: str | None = None
+
+
+def _detail(task: dict, scope: str, root: Path) -> dict:
+    """THE shape of a single task on the wire. Every route that returns one task
+    returns this, and nothing builds its own.
+
+    It exists because they used to. A mutating route hand-assembled
+    `dict(task) + scope + latitude` and stopped there, so the record a PATCH,
+    /approve, /split or /duplicate-of handed back was missing `state_type`,
+    `ready`, `blocked_by`, `links`, `readiness` and `origin` that the detail GET
+    had put there. `TicketDetail.saveEdits` does `setTask(await r.json())`, so a
+    save visibly emptied the resolved dependencies and the readiness report until
+    the next poll refilled them. One helper means the next route added here cannot
+    forget: forgetting now requires deliberately not calling it.
+
+    Reads the store again (`list_tasks`) because the caller has just written to
+    it; `reconcile` short-circuits on an unchanged export hash, so a read after a
+    write is cheap.
+    """
+    rec = dict(task)
+    rec["scope"] = scope
+    rec["origin"] = _origin_for(task)
+    # What this ticket does not yet say. Computed here rather than in the store so
+    # the store stays free of policy (and so `tasks` and `ticket_readiness` do not
+    # import each other). Advisory: only `blocking()` refuses a run.
+    siblings = tasks.list_tasks(root)
+    rec["readiness"] = ticket_readiness.check(
+        task, known_ids={x["id"] for x in siblings})
+    rec["links"] = _resolve_links(task, scope, siblings)
+    # Same three derived fields as the list rows, so a card and the page it opens
+    # never disagree. `links.depends_on` is already resolved across scopes here,
+    # so `blocked_by` is its non-terminal subset rather than a second resolution
+    # pass: `_resolve_links` has done the cross-scope scan this route pays for.
+    rec["state_type"] = tasks.state_type(rec.get("status"))
+    rec["ready"] = tasks.is_ready(task, {x["id"]: x for x in siblings})
+    rec["blocked_by"] = [d for d in rec["links"]["depends_on"]
+                         if d.get("status") not in tasks.TERMINAL]
+    return _with_latitude(rec, scope)
 
 
 @router.get("/{scope}/{task_id}")
@@ -361,17 +537,7 @@ async def get_one(scope: str, task_id: str) -> dict:
     t = tasks.get_task(root, task_id)
     if t is None:
         raise HTTPException(404, f"task not found: {task_id}")
-    rec = dict(t)
-    rec["scope"] = scope
-    rec["origin"] = _origin_for(t)
-    # What this ticket does not yet say. Computed here rather than in the store so
-    # the store stays free of policy (and so `tasks` and `ticket_readiness` do not
-    # import each other). Advisory: only `blocking()` refuses a run.
-    siblings = tasks.list_tasks(root)
-    rec["readiness"] = ticket_readiness.check(
-        t, known_ids={x["id"] for x in siblings})
-    rec["links"] = _resolve_links(t, scope, siblings)
-    return _with_latitude(rec, scope)
+    return _detail(t, scope, root)
 
 
 def _link_stub(t: dict, skey: str) -> dict:
@@ -517,9 +683,15 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
         body.status, body.title, body.body, body.text, body.labels,
         body.priority, body.assignee, body.effort,
         body.latitude, body.acceptance, body.max_attempts, body.depends_on,
-        body.relates_to,
+        body.relates_to, body.reason,
     )):
         raise HTTPException(400, "no fields to update")
+    # A reason explains a transition, so it needs one to explain. Refused rather
+    # than dropped: a decline reason that silently went nowhere is worse than no
+    # reason at all, because the operator believes it was recorded.
+    reason = (body.reason or "").strip()
+    if reason and body.status is None:
+        raise HTTPException(400, "reason describes a status change; send status too")
     # Acceptance: an empty/none kind clears it (falsy dict -> store sets None); a
     # real kind must be one of the three the store recognizes. tasks.update reads
     # None as "leave unchanged", so only forward a value when one was sent.
@@ -556,13 +728,25 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
             text=body.text,
             labels=body.labels,
             priority=body.priority,
-            assignee=body.assignee,
+            # `set_assignee`, never `assignee`: the legacy parameter is also the
+            # owner FILTER, so naming a new assignee here used to match nothing and
+            # 404 the whole patch — the operator's title, body and status edits went
+            # with it. This route is the operator's, so it filters by nothing.
+            set_assignee=body.assignee,
             effort=body.effort,
             latitude=body.latitude,
             acceptance=acceptance_arg,
             max_attempts=body.max_attempts,
             depends_on=body.depends_on,
             relates_to=body.relates_to,
+            # One write, so a ticket can never end up cancelled with the reason
+            # for it missing. `blocked_reason` is the field the list and the card
+            # already read for "why is this not moving", so a stopped status gets
+            # the sentence there too and not only in the evidence trail.
+            evidence=({"kind": "decision", "ref": f"{body.status}: {reason}"}
+                      if reason else None),
+            blocked_reason=(reason if reason and body.status in
+                            ("cancelled", "parked", "blocked") else None),
         )
     except ValueError as e:
         raise HTTPException(400, str(e))
@@ -578,9 +762,7 @@ async def patch_one(scope: str, task_id: str, body: TaskPatchIn) -> dict:
         # the pre-push copy.
         tracker_sync.push_status(scope, root, task_id)
         t = tasks.get_task(root, task_id) or t
-    rec = dict(t)
-    rec["scope"] = scope
-    return _with_latitude(rec, scope)
+    return _detail(t, scope, root)
 
 
 @router.delete("/{scope}/{task_id}")
@@ -614,9 +796,7 @@ async def add_task_comment(scope: str, task_id: str, body: TaskCommentIn) -> dic
                             author=(body.author or "operator").strip() or "operator")
     if rec is None:
         raise HTTPException(404, f"task not found: {task_id}")
-    out = dict(rec)
-    out["scope"] = scope
-    return out
+    return _detail(rec, scope, root)
 
 
 @router.delete("/{scope}/{task_id}/comments/{comment_id}")
@@ -625,9 +805,7 @@ async def delete_task_comment(scope: str, task_id: str, comment_id: str) -> dict
     rec = tasks.delete_comment(root, task_id, comment_id)
     if rec is None:
         raise HTTPException(404, "comment not found")
-    out = dict(rec)
-    out["scope"] = scope
-    return out
+    return _detail(rec, scope, root)
 
 
 @router.get("/{scope}/{task_id}/jobs")
@@ -821,10 +999,74 @@ async def review_task(scope: str, task_id: str, body: TaskReviewIn) -> dict:
 
     if updated is None:
         raise HTTPException(404, f"task not found: {task_id}")
-    rec = dict(updated)
-    rec["scope"] = scope
-    out["task"] = _with_latitude(rec, scope)
+    out["task"] = _detail(updated, scope, root)
     return out
+
+
+# ---- Triage: mark duplicate -------------------------------------------------
+
+class DuplicateOfIn(BaseModel):
+    target_id: str = Field(min_length=1)
+    # Defaults to this ticket's own scope, which is the common case: two takes on
+    # the same work usually get filed into the same box.
+    target_scope: str | None = None
+
+
+@router.post("/{scope}/{task_id}/duplicate-of")
+async def mark_duplicate(scope: str, task_id: str, body: DuplicateOfIn) -> dict:
+    """Fold this ticket into the canonical one: link, cancel, and say so.
+
+    Triage has had accept (`/approve`) and decline (cancel) and never had this,
+    even though the automatic dedup path (`task_dedup.dedup_add`) has recorded
+    merges as evidence since it shipped. This is the manual entry point that
+    machinery never had — the same three effects, driven by a person who can see
+    that two tickets are one piece of work when the embeddings could not.
+
+    The link is `relates_to`, not `depends_on`: a duplicate does not gate the
+    canonical ticket's readiness, and putting it in the scheduling graph would
+    make cancelling it look like unblocking work.
+    """
+    root = _require_root(scope)
+    target_scope = (body.target_scope or "").strip() or scope
+    target_root = _require_root(target_scope)
+    target_id = (body.target_id or "").strip()
+    if target_id == task_id and target_scope == scope:
+        raise HTTPException(400, "a ticket cannot be a duplicate of itself")
+    dup = tasks.get_task(root, task_id)
+    if dup is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+    canonical = tasks.get_task(target_root, target_id)
+    if canonical is None:
+        raise HTTPException(404, f"task not found: {target_id}")
+
+    where = "" if target_scope == scope else f" in {target_scope}"
+    ref = f"duplicate of {target_id}{where}: {canonical.get('title') or ''}".strip()
+    rel = list(dup.get("relates_to") or [])
+    if target_id not in rel:
+        rel.append(target_id)
+    # One write: the link, the cancellation and the record of why are a single
+    # act, and a ticket cancelled without the link would be a dead end.
+    updated = tasks.update(root, task_id, status="cancelled", relates_to=rel,
+                           blocked_reason=ref,
+                           evidence={"kind": "duplicate-of", "ref": ref})
+    if updated is None:
+        raise HTTPException(404, f"task not found: {task_id}")
+
+    # The back-link only when both tickets share a store. Cross-scope, this would
+    # be a second write to a second tree that can fail on its own, leaving one
+    # ticket cancelled and the other unlinked with nothing recording the gap.
+    # The forward link still resolves for display: `_resolve_links` scans scopes.
+    if target_scope == scope:
+        canon_rel = list(canonical.get("relates_to") or [])
+        if task_id not in canon_rel:
+            canon_rel.append(task_id)
+        tasks.update(root, target_id, relates_to=canon_rel,
+                     evidence={"kind": "duplicate-from",
+                               "ref": f"{task_id}: {dup.get('title') or ''}".strip()})
+        canonical = tasks.get_task(target_root, target_id) or canonical
+
+    return {"task": _detail(updated, scope, root),
+            "canonical": _link_stub(canonical, target_scope)}
 
 
 # ---- Promotion (prose that proved itself) ----------------------------------
@@ -1226,7 +1468,7 @@ async def split_task(scope: str, task_id: str, body: SplitIn) -> dict:
         evidence={"kind": "split",
                   "ref": f"split into {len(created)} sub-tickets: "
                          + ", ".join(c["id"] for c in created)})
-    return {"parent": _with_latitude(dict(updated or parent, scope=scope), scope),
+    return {"parent": _detail(updated or parent, scope, root),
             "subtickets": created}
 
 
@@ -1274,7 +1516,10 @@ async def approve_task(scope: str, task_id: str, body: TaskApproveIn | None = No
         if published is not None:
             updated = published
 
-    out: dict = {"task": _with_latitude(dict(updated, scope=scope), scope),
+    # `readiness` at the top level is the PRE-approval report the operator is being
+    # told about; `task.readiness` is the post-write one. They agree in every case
+    # but a concurrent edit, and the top-level key is the one this route promised.
+    out: dict = {"task": _detail(updated, scope, root),
                  "readiness": readiness}
     if body and body.run:
         out["run"] = launch_task_run(scope, task_id)

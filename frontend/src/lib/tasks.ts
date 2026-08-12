@@ -34,6 +34,78 @@ export const TASK_STATUSES: TaskStatus[] = [
   "cancelled",
 ];
 
+// ---- state type: the category above the status -------------------------------
+// Two-level status is the convention every tracker in the survey converged on
+// (Linear 6 types, Jira `statusCategory`, Shortcut 4, GitHub state+state_reason).
+// Workshop keeps its eight named statuses and adds the coarse category above
+// them, mirroring backend services/tasks.py `_STATE_TYPE` / `state_type()`.
+//
+// `blocked` is `started` because the work HAS begun and is stuck. `parked` is
+// `backlog` because it is out of the active plan but not finished. The type is
+// spelled `canceled` (one L) to match every tracker's API, while the status
+// value stays `cancelled` (two Ls) because it is persisted in live records.
+//
+// The server sends `state_type` on every row (route layer only, never stored).
+// The tables below exist anyway for two reasons: a payload cached before
+// 2026-08-12 carries no `state_type`, and the UI's groupings are DERIVED from
+// this one table rather than hand-listed once per surface.
+export type TaskStateType =
+  | "backlog"
+  | "unstarted"
+  | "started"
+  | "completed"
+  | "canceled";
+
+// Pipeline order: left to right is progress. This is the board's lane order.
+export const TASK_STATE_TYPES: TaskStateType[] = [
+  "backlog",
+  "unstarted",
+  "started",
+  "completed",
+  "canceled",
+];
+
+// THE one table. Every status grouping in the frontend derives from it; see the
+// header of lib/ticketGroups.ts for the three that must agree.
+export const STATUSES_BY_STATE_TYPE: Record<TaskStateType, TaskStatus[]> = {
+  backlog: ["draft", "parked"],
+  unstarted: ["todo"],
+  started: ["blocked", "doing", "in_review"],
+  completed: ["done"],
+  canceled: ["cancelled"],
+};
+
+const TASK_STATE_TYPE_OF: Record<string, TaskStateType> = Object.fromEntries(
+  TASK_STATE_TYPES.flatMap((type) =>
+    STATUSES_BY_STATE_TYPE[type].map((status) => [status, type] as const)),
+);
+
+// An unrecognised status reads as `backlog`, matching the backend's own bias
+// toward "not started yet" for a record it cannot classify: a board must never
+// drop a row.
+export const taskStateType = (status?: string): TaskStateType =>
+  TASK_STATE_TYPE_OF[status ?? ""] ?? "backlog";
+
+// Prefer what the server derived, fall back to deriving it from the status. The
+// two cannot disagree today; the fallback is for a row that predates the field.
+export const taskStateTypeOf = (
+  task: { state_type?: string | null; status?: string },
+): TaskStateType =>
+  TASK_STATE_TYPES.includes((task.state_type ?? "") as TaskStateType)
+    ? (task.state_type as TaskStateType)
+    : taskStateType(task.status);
+
+const TASK_STATE_TYPE_LABEL: Record<TaskStateType, string> = {
+  backlog: "Backlog",
+  unstarted: "Unstarted",
+  started: "Started",
+  completed: "Completed",
+  canceled: "Canceled",
+};
+
+export const taskStateTypeLabel = (type?: string): string =>
+  TASK_STATE_TYPE_LABEL[(type ?? "") as TaskStateType] ?? String(type ?? "");
+
 export type TaskEvidence = {
   kind?: string;
   ref?: string;
@@ -227,6 +299,18 @@ export type Task = {
   // Attached by the cross-scope API (routes/tasks_all): the resolved scope key
   // (e.g. "workshop", "project:birds", "agent:foo", "build:bar").
   scope?: string;
+  // ---- derived on the way out, never stored (routes/tasks_all._with_triage) --
+  // The coarse category above `status` (see TaskStateType).
+  state_type?: TaskStateType;
+  // Could the scheduler pick this up right now? A PURE predicate over stored
+  // state, matching `tasks.is_ready`, so it lags a crashed claim by one watchdog
+  // interval and treats a dependency it cannot see as satisfied.
+  ready?: boolean;
+  // Why not: the non-terminal subset of `depends_on`, resolved ACROSS scopes.
+  // Deliberately more honest than `ready`, so a row can read `ready: true` next
+  // to a non-empty `blocked_by`. That is the documented scheduler gap
+  // (ticket-system-consolidation-2026-08-12 §3.2), not a contradiction.
+  blocked_by?: TaskLink[];
   // Attached by the ticket detail endpoint only (it needs the scope's id set to
   // resolve dependencies), so it is absent on list rows.
   readiness?: TicketReadiness;
@@ -238,7 +322,8 @@ export type Task = {
 // Mirrors backend tasks.SORT_KEYS. The list endpoint sorts; the client only
 // names the key, so the two cannot drift into two different ideas of "priority".
 
-export type TaskSort = "updated" | "created" | "priority" | "title" | "status";
+export type TaskSort =
+  | "updated" | "created" | "priority" | "title" | "status" | "queue";
 
 export const TASK_SORTS: { value: TaskSort; label: string }[] = [
   { value: "updated", label: "Last updated" },
@@ -246,6 +331,9 @@ export const TASK_SORTS: { value: TaskSort; label: string }[] = [
   { value: "priority", label: "Priority" },
   { value: "status", label: "Status" },
   { value: "title", label: "Title" },
+  // The scheduler's own order (priority desc, then oldest first), so the top of
+  // the list is what a sweep would actually pick up next rather than a guess.
+  { value: "queue", label: "Next to run" },
 ];
 
 // The seven task statuses -> the five design status kinds. Meaning, never a new

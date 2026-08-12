@@ -10,16 +10,24 @@ describe("parseWorkTab", () => {
     expect(parseWorkTab("review")).toBe("review");
   });
 
+  // This used to assert the opposite: that "inbox" fell back to tickets. It was
+  // a pin on a dead link, not on a rule. Chat.tsx's inbox footer navigates to
+  // /work?tab=inbox, the backend has served the global inbox all along, and the
+  // tab now exists, so the link reaches it.
+  it("reaches the global inbox tab the chat links to", () => {
+    expect(parseWorkTab("inbox")).toBe("inbox");
+    expect(isWorkTab("inbox")).toBe(true);
+  });
+
   it("falls back rather than rendering an unknown tab", () => {
-    // Chat.tsx navigates to ?tab=inbox, which is not a tab on this page.
-    expect(parseWorkTab("inbox")).toBe(DEFAULT_WORK_TAB);
+    expect(parseWorkTab("archive")).toBe(DEFAULT_WORK_TAB);
     expect(parseWorkTab(null)).toBe(DEFAULT_WORK_TAB);
     expect(parseWorkTab("")).toBe(DEFAULT_WORK_TAB);
   });
 
-  it("isWorkTab narrows only the three real tabs", () => {
+  it("isWorkTab narrows only the four real tabs", () => {
     expect(isWorkTab("runs")).toBe(true);
-    expect(isWorkTab("inbox")).toBe(false);
+    expect(isWorkTab("archive")).toBe(false);
     expect(isWorkTab(undefined)).toBe(false);
   });
 });

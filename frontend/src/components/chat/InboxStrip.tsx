@@ -3,13 +3,17 @@ import { usePoll } from "../../lib/usePoll";
 import { useNavigate } from "react-router-dom";
 import {
   Check, X, MessageCircleQuestion, ClipboardCheck, Info, ChevronRight,
-  ListTodo, Play,
+  ListTodo, Play, Clock,
 } from "lucide-react";
 import { Button, Input } from "@workshop/ui";
 import { ticketHref } from "../../lib/tasks";
+import {
+  inboxElsewhere, inboxUrl, type InboxCounts, type InboxMode,
+} from "../../lib/inbox";
 import ChatProblemBlock from "./ChatProblemBlock";
 
-// Items an agent raised that need the operator.
+// Items an agent raised that need the operator: the "Needs you" zone of the
+// chat's one work drawer (WorkDrawer).
 //
 // NOT typed by entity. A finished run, a blocked agent and a proposal awaiting
 // approval are one kind of thing (something wants you) with three verbs, which
@@ -19,16 +23,19 @@ import ChatProblemBlock from "./ChatProblemBlock";
 //   review    the agent proposes something                           -> approve / reject
 //   notify    FYI, safe to ignore                                    -> dismiss
 //
-// SHAPE. This is a panel behind a toolbar toggle, not an inline banner. The
-// first cut rendered every open item inline at full size, always: on a phone
-// that pushed the log and the composer off-screen entirely, and with no cap it
-// grew without bound. An interrupt surface has to be bounded in every
+// SHAPE. This is a zone inside a panel behind a toolbar toggle, not an inline
+// banner. The first cut rendered every open item inline at full size, always:
+// on a phone that pushed the log and the composer off-screen entirely, and with
+// no cap it grew without bound. An interrupt surface has to be bounded in every
 // direction — count, height, and row height — or it stops being a signal and
 // becomes the page.
 //
-// Even when closed the component stays mounted, polling and reporting its count
-// upward, so the toolbar badge is live without the operator opening anything to
-// find out whether it should be.
+// STATE LIVES IN THE HOOK, NOT IN THIS COMPONENT. `useInboxItems` is called by
+// WorkDrawer, which stays mounted whether or not the drawer is open, so the
+// poll keeps running and the toolbar badge stays live without the operator
+// opening anything to find out whether it should. Expanded row and half-typed
+// answers live there for the same reason: closing the drawer must not throw an
+// answer away.
 export type InboxItem = {
   id: string;
   kind: "notify" | "question" | "review";
@@ -43,9 +50,15 @@ export type InboxItem = {
   // reason the old attention surfaces went unread.
   ticket_id: string | null;
   run_id: string | null;
+  // Deferred until this instant. The server filters snoozed rows out of the
+  // listing AND out of the counts, so this never arrives set on a live row; it
+  // is here because the row is the server's item and the type should say so.
+  snoozed_until: string | null;
 };
 
-type Counts = { notify: number; question: number; review: number };
+// How long "later" is. The server owns the arithmetic so every surface defers
+// by the same amount.
+type SnoozePreset = "hour" | "tomorrow";
 
 const KIND_ICON = {
   question: MessageCircleQuestion,
@@ -57,38 +70,68 @@ const KIND_ICON = {
 // footer link rather than by scrolling a list that has no natural end.
 const MAX_ROWS = 4;
 
-export default function InboxStrip({
-  chatId,
-  open,
-  onCountChange,
-  onClose,
-  onOpenGlobal,
-}: {
-  chatId: string | null;
-  open: boolean;
-  onCountChange: (n: number) => void;
-  onClose: () => void;
-  onOpenGlobal: () => void;
-}) {
+export type Inbox = {
+  // null until the first read lands, which is what separates "loading" from
+  // "nothing waiting".
+  items: InboxItem[] | null;
+  err: string | null;
+  busy: string | null;
+  // True while a read is in flight, including the polls after the first one.
+  // Distinct from `items === null`: that is "nothing has ever loaded".
+  loading: boolean;
+  // Rows on screen right now, optimistically short by one the moment the
+  // operator answers something.
+  total: number;
+  // The server's per-kind counts for THIS view, and how many more are open
+  // outside it. Counts are uncapped and lag an optimistic removal by one
+  // reload, so they answer "how much is there", never "what is on screen".
+  counts: InboxCounts | null;
+  elsewhere: number;
+  expanded: string | null;
+  setExpanded: (id: string | null) => void;
+  answers: Record<string, string>;
+  setAnswer: (id: string, text: string) => void;
+  reload: () => void;
+  resolve: (id: string, answer: string | null, dismissed: boolean) => Promise<void>;
+  snooze: (id: string, preset: SnoozePreset) => Promise<void>;
+};
+
+// `mode` defaults to "chat" so the drawer's call site reads as it always has.
+// "global" is the /work Inbox tab: every scope, no chat filter, which the
+// backend serves as `list_items(chat_scope=None)`. It is a MODE rather than a
+// null chat id because null already means "no thread yet, read nothing" — see
+// lib/inbox.
+export function useInboxItems(chatId: string | null, mode: InboxMode = "chat"): Inbox {
   const [items, setItems] = useState<InboxItem[] | null>(null);
-  const [globalCounts, setGlobalCounts] = useState<Counts | null>(null);
+  const [counts, setCounts] = useState<InboxCounts | null>(null);
+  const [globalCounts, setGlobalCounts] = useState<InboxCounts | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   // One row at a time is expanded. A collapsed row is one line; expanding is
   // how you read the detail and reach the actions. Without this every row
   // carries its body and its buttons and four of them fill a phone screen.
   const [expanded, setExpanded] = useState<string | null>(null);
-  const navigate = useNavigate();
+
+  const url = inboxUrl(chatId, mode);
 
   const load = useCallback(async () => {
-    const q = chatId ? `?chat_id=${encodeURIComponent(chatId)}` : "";
+    // No thread yet, nothing to scope to. Reading the unfiltered inbox here
+    // would count items belonging to conversations that are not on screen.
+    if (!url) { setItems(null); setCounts(null); setGlobalCounts(null); return; }
+    setLoading(true);
     try {
-      const r = await fetch(`/api/inbox${q}`);
-      if (!r.ok) { setErr(`/api/inbox → ${r.status}`); setItems([]); return; }
+      const r = await fetch(url);
+      if (!r.ok) {
+        setErr(`${r.status} ${await r.text().catch(() => "")}`.trim());
+        setItems((v) => v ?? []);
+        return;
+      }
       const j = await r.json();
       setErr(null);
       setItems(j.items || []);
+      setCounts(j.counts || null);
       setGlobalCounts(j.global_counts || null);
     } catch (e) {
       // A failed poll leaves the last good state on screen rather than blanking
@@ -96,25 +139,24 @@ export default function InboxStrip({
       // one that is briefly stale.
       setErr(String(e));
       setItems((v) => v ?? []);
+    } finally {
+      setLoading(false);
     }
-  }, [chatId]);
+  }, [url]);
 
   // Agents act on their own schedule, so this polls. 20s is under the point
   // where the operator would notice a lag; usePoll supplies the pause-while-
   // hidden and the catch-up read on return that this hand-rolled twice.
-  usePoll(load, 20000);
-
-  useEffect(() => { onCountChange(items ? items.length : 0); }, [items, onCountChange]);
-
-  // Escape closes, matching every other transient panel in the app.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  //
+  // `immediate: false` because usePoll reads `fn` through a ref and so cannot
+  // see the chat change; the effect below owns both the first read and the read
+  // after a blank chat becomes a real thread. Without it a freshly created
+  // thread showed "Loading…" for a full interval.
+  usePoll(load, 20000, { immediate: false });
+  useEffect(() => { void load(); }, [load]);
 
   const resolve = useCallback(async (id: string, answer: string | null, dismissed: boolean) => {
+    const what = dismissed ? "dismiss that" : "send that answer";
     setBusy(id);
     // Optimistic: the operator acted, so the row goes now. A re-fetch follows,
     // which corrects the rare case where the write failed.
@@ -130,33 +172,79 @@ export default function InboxStrip({
       // be refused (a proposal already granted, a task that moved on). Say so:
       // the re-fetch below puts the row back, and a row reappearing with no
       // explanation is the thing that made this surface untrustworthy.
-      if (!r.ok) setErr(`Couldn't send that answer: ${r.status} ${await r.text().catch(() => "")}`.trim());
+      if (!r.ok) setErr(`Couldn't ${what}: ${r.status} ${await r.text().catch(() => "")}`.trim());
       else setErr(null);
     } catch (e) {
-      setErr(`Couldn't send that answer: ${String(e)}`);
+      setErr(`Couldn't ${what}: ${String(e)}`);
     } finally {
       setBusy(null);
       void load();
     }
   }, [load]);
 
-  // Mounted-but-closed is the normal state: it keeps the badge count live and
-  // renders nothing.
-  if (!open) return null;
+  // Snooze is deferral, not closure: the item stays open on the server and
+  // comes back on its own, or sooner if the work it describes moves. The row
+  // goes now for the same reason a resolved one does, and the re-fetch below
+  // corrects the rare case where the write failed.
+  const snooze = useCallback(async (id: string, preset: SnoozePreset) => {
+    setBusy(id);
+    setItems((v) => (v || []).filter((i) => i.id !== id));
+    setExpanded((e) => (e === id ? null : e));
+    try {
+      const r = await fetch(`/api/inbox/${encodeURIComponent(id)}/snooze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preset }),
+      });
+      if (!r.ok) setErr(`Couldn't snooze that: ${r.status} ${await r.text().catch(() => "")}`.trim());
+      else setErr(null);
+    } catch (e) {
+      setErr(`Couldn't snooze that: ${String(e)}`);
+    } finally {
+      setBusy(null);
+      void load();
+    }
+  }, [load]);
+
+  const setAnswer = useCallback((id: string, text: string) => {
+    setAnswers((a) => ({ ...a, [id]: text }));
+  }, []);
+
+  const reload = useCallback(() => { void load(); }, [load]);
 
   const total = items?.length ?? 0;
+
+  return {
+    items, err, busy, loading, total, counts,
+    elsewhere: inboxElsewhere(counts, globalCounts, mode),
+    expanded, setExpanded, answers, setAnswer,
+    reload, resolve, snooze,
+  };
+}
+
+// The rows themselves. The drawer owns the panel, the heading and the layer it
+// floats on; this owns one zone inside it.
+export default function InboxStrip({
+  inbox,
+  onOpenGlobal,
+}: {
+  inbox: Inbox;
+  onOpenGlobal: () => void;
+}) {
+  const {
+    items, err, busy, total, elsewhere,
+    expanded, setExpanded, answers, setAnswer, reload, resolve, snooze,
+  } = inbox;
+  const navigate = useNavigate();
+
   const shown = (items || []).slice(0, MAX_ROWS);
   const overflow = total - shown.length;
-  const globalTotal = globalCounts
-    ? globalCounts.notify + globalCounts.question + globalCounts.review
-    : 0;
-  const elsewhere = Math.max(0, globalTotal - total);
 
   return (
-    <div className="chat-inbox" role="region" aria-label="Agents needing you">
+    <>
       {err && items && items.length === 0 ? (
         <ChatProblemBlock
-          problem={{ text: `Couldn't load the inbox: ${err}`, endpoint: "/api/inbox", retry: () => void load() }}
+          problem={{ text: `Couldn't load the inbox: ${err}`, endpoint: "/api/inbox", retry: reload }}
         />
       ) : items === null ? (
         <div className="chat-inbox__empty">Loading…</div>
@@ -172,9 +260,7 @@ export default function InboxStrip({
               with no endpoint and no retry. */}
           {err && (
             <li>
-              <ChatProblemBlock
-                problem={{ text: err, endpoint: "/api/inbox", retry: () => void load() }}
-              />
+              <ChatProblemBlock problem={{ text: err, endpoint: "/api/inbox", retry: reload }} />
             </li>
           )}
           {shown.map((it) => {
@@ -197,6 +283,16 @@ export default function InboxStrip({
                       aria-hidden
                       className={`chat-inbox__caret${isOpen ? " is-open" : ""}`}
                     />
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-inbox__dismiss"
+                    onClick={() => void snooze(it.id, "hour")}
+                    disabled={busy === it.id}
+                    title="Snooze for an hour"
+                    aria-label={`Snooze for an hour: ${it.title}`}
+                  >
+                    <Clock size={14} aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -247,7 +343,7 @@ export default function InboxStrip({
                           <>
                             <Input
                               value={answers[it.id] || ""}
-                              onChange={(e) => setAnswers((a) => ({ ...a, [it.id]: e.target.value }))}
+                              onChange={(e) => setAnswer(it.id, e.target.value)}
                               placeholder="Answer…"
                               onKeyDown={(e) => {
                                 if (e.key === "Enter" && (answers[it.id] || "").trim()) {
@@ -270,14 +366,32 @@ export default function InboxStrip({
 
                     {it.kind === "review" && (
                       <div className="chat-inbox__actions">
-                        <Button size="sm" variant="primary" onClick={() => void resolve(it.id, "approved", false)}>
+                        {/* "Approve", not "approved". The backend reads this
+                            answer to decide whether to perform the write the
+                            review proposed; when the two strings drifted apart
+                            the row closed and nothing was written. The backend
+                            accepts both spellings now, and a backend test pins
+                            it, but this is still the word the option lists
+                            elsewhere in the inbox use. */}
+                        <Button size="sm" variant="primary" onClick={() => void resolve(it.id, "Approve", false)}>
                           <Check size={14} aria-hidden /> Approve
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => void resolve(it.id, "rejected", false)}>
+                        <Button size="sm" variant="ghost" onClick={() => void resolve(it.id, "Reject", false)}>
                           Reject
                         </Button>
                       </div>
                     )}
+
+                    <div className="chat-inbox__actions">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy === it.id}
+                        onClick={() => void snooze(it.id, "tomorrow")}
+                      >
+                        <Clock size={14} aria-hidden /> Snooze until tomorrow
+                      </Button>
+                    </div>
                   </div>
                 )}
               </li>
@@ -294,6 +408,6 @@ export default function InboxStrip({
           <ChevronRight size={13} strokeWidth={1.8} aria-hidden />
         </button>
       )}
-    </div>
+    </>
   );
 }

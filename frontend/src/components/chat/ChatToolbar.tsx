@@ -1,5 +1,5 @@
 import {
-  Archive, Bell, ChevronLeft, ListPlus, ListTodo, Maximize2, MessagesSquare,
+  Archive, ChevronLeft, ListPlus, Maximize2, MessagesSquare,
   MoreVertical, PanelsTopLeft, Pencil, Plus, Ticket,
 } from "lucide-react";
 import { Menu, MenuItem, MenuLabel, MenuSeparator, Toggle } from "@workshop/ui";
@@ -34,16 +34,26 @@ import ScopeIcon from "./ScopeIcon";
 //    a boolean, rendered as two unlabelled icons sharing a busy lock — so while
 //    the first spun for 35-55s the second silently did nothing, and both filed
 //    blind. One button now opens a review step.
+//  - A second work button, and this is the same mistake twice. There used to be
+//    FOUR work affordances here: a bell (inbox drawer), a "Tasks" drawer, a
+//    "Tickets" menu that was not a list at all (it held the mode toggle plus
+//    file-as-ticket), and this overflow. "Tickets" and "Tasks" are synonyms on
+//    two different KINDS of control, wearing near-identical glyphs six pixels
+//    apart. The bell and the Tasks drawer are now ONE drawer named Tickets, and
+//    the mode toggle moved into the overflow below.
 //
-// The overflow menu holds only what is genuinely rare or destructive. Actions
-// you take ON a conversation stay on the row where you can see them.
+// The overflow menu holds only what is genuinely rare or destructive, plus what
+// is a property of the CONVERSATION rather than a thing you do to it: whether
+// this chat's work leaves as tickets is a setting, and a setting does not get a
+// toolbar icon. Actions you take ON a conversation stay on the row where you
+// can see them.
 
 export default function ChatToolbar({
   variant, mode, slug, hideExpand,
   activeId, activeThreadTitle,
   showProviderPicker, providers, activeProvider, onChooseProvider, runActive,
   chatMode, onChooseChatMode,
-  drawer, onSetDrawer, inboxCount, taskScope, openTaskCount,
+  drawer, onSetDrawer, needsYouCount, taskScope,
   onBack, onOpenWorkbench, onFileTicket, onEditTitle, onOpenThread,
   onNewChat, onArchive, onPopOut, onNavigate,
 }: {
@@ -71,9 +81,13 @@ export default function ChatToolbar({
   onChooseChatMode?: (mode: ChatModeId) => void;
   drawer: ChatDrawer;
   onSetDrawer: (next: (d: ChatDrawer) => ChatDrawer) => void;
-  inboxCount: number;
+  // The BADGE. Inbox items waiting on the operator in this chat, and nothing
+  // else. It deliberately does not count open tickets: a badge is an alarm, and
+  // forty open tickets is the normal state of a working queue.
+  needsYouCount: number;
+  // The task-store scope this chat maps to, or null when it has no queue. The
+  // drawer's second zone needs one; its first does not.
   taskScope: string | null;
-  openTaskCount: number;
   onBack: () => void;
   onOpenWorkbench: () => void;
   onFileTicket: () => void;
@@ -88,10 +102,10 @@ export default function ChatToolbar({
   onPopOut: () => void;
   onNavigate: (to: string) => void;
 }) {
-  const inboxOpen = drawer === "inbox";
-  const tasksOpen = drawer === "tasks";
+  const workOpen = drawer === "work";
   const toggle = (which: Exclude<ChatDrawer, null>) =>
     onSetDrawer((d) => (d === which ? null : which));
+  const orchestrated = chatModeDef(chatMode).id === "orchestrated";
 
   return (
     // Same rule as the composer's action row: with the keyboard up, a tap here
@@ -197,74 +211,20 @@ export default function ChatToolbar({
           just left of it has already given up the room instead. */}
       <span className="chat-tb__spacer" />
 
-      {activeId && (
+      {/* ONE work button. It opens the one drawer, which holds both zones:
+          what needs the operator, and what is under way in this scope. The
+          badge is the first zone only. Shown once there is a thread to have an
+          inbox for, or a scope to have a queue in. */}
+      {(activeId || taskScope) && (
         <button
-          className={`chat-tb__btn chat-tb__tasks${inboxOpen ? " is-active" : ""}`}
-          onClick={() => toggle("inbox")}
-          title={inboxCount ? `${inboxCount} waiting on you` : "Nothing waiting"}
-          aria-label="Agent inbox"
-          aria-expanded={inboxOpen}
+          className={`chat-tb__btn${workOpen ? " is-active" : ""}`}
+          onClick={() => toggle("work")}
+          title={needsYouCount ? `Tickets. ${needsYouCount} waiting on you` : "Tickets"}
+          aria-label="Tickets"
+          aria-expanded={workOpen}
         >
-          <Bell size={16} aria-hidden />
-          {inboxCount > 0 && <span className="chat-tb__badge">{inboxCount}</span>}
-        </button>
-      )}
-
-      {/* On/off, not a two-way choice: whether this chat's work leaves as
-          tickets run by agents, or stays in the conversation. Commits on
-          change — cheap, reversible, re-stated to the model every turn, so
-          flipping it takes effect mid-conversation. Shown on a BLANK chat too
-          (no `activeId` guard): the mode decides where the FIRST message's
-          work goes, so hiding the control until a thread exists would hide it
-          until after that decision had already been made — on a blank chat
-          the choice is held client-side and applied when the thread is
-          created. Filing this chat as a ticket is a one-off action on an
-          existing conversation, so that row only appears once one exists;
-          it folds in here instead of owning a second toolbar icon, which
-          used to sit right next to this one wearing an almost-identical
-          glyph. */}
-      {onChooseChatMode && (
-        <Menu
-          label="Tickets"
-          trigger={
-            <button
-              className={`chat-tb__btn${chatModeDef(chatMode).id === "orchestrated" ? " is-active" : ""}`}
-              title={
-                chatModeDef(chatMode).id === "orchestrated"
-                  ? "Tickets on. Work leaves as tickets run by agents"
-                  : "Tickets off. Work stays in this conversation"
-              }
-              aria-label="Tickets"
-            >
-              <Ticket size={16} aria-hidden />
-            </button>
-          }
-        >
-          <div className="ws-menu__row">
-            <span>Tickets</span>
-            <Toggle
-              checked={chatModeDef(chatMode).id === "orchestrated"}
-              onChange={(on) => onChooseChatMode(on ? "orchestrated" : "direct")}
-            />
-          </div>
-          {activeId && (
-            <MenuItem icon={<ListPlus size={14} aria-hidden />} onSelect={onFileTicket}>
-              File this chat as a ticket
-            </MenuItem>
-          )}
-        </Menu>
-      )}
-
-      {taskScope && (
-        <button
-          className={`chat-tb__btn chat-tb__tasks${tasksOpen ? " is-active" : ""}`}
-          onClick={() => toggle("tasks")}
-          title="Tasks"
-          aria-label="Tasks"
-          aria-expanded={tasksOpen}
-        >
-          <ListTodo size={16} aria-hidden />
-          {openTaskCount > 0 && <span className="chat-tb__badge">{openTaskCount}</span>}
+          <Ticket size={16} aria-hidden />
+          {needsYouCount > 0 && <span className="chat-tb__badge">{needsYouCount}</span>}
         </button>
       )}
       <button className="chat-tb__btn" onClick={onNewChat} title="Start a new chat" aria-label="New chat">
@@ -279,6 +239,38 @@ export default function ChatToolbar({
           </button>
         }
       >
+        {/* On/off, not a two-way choice: whether this chat's work leaves as
+            tickets run by agents, or stays in the conversation. Commits on
+            change — cheap, reversible, re-stated to the model every turn, so
+            flipping it takes effect mid-conversation. Shown on a BLANK chat too
+            (no `activeId` guard): the mode decides where the FIRST message's
+            work goes, so hiding the control until a thread exists would hide it
+            until after that decision had already been made — on a blank chat
+            the choice is held client-side and applied when the thread is
+            created.
+
+            It is worded as what it DOES rather than as "Tickets": that word now
+            belongs to the drawer that lists tickets, and two controls sharing a
+            name is the collision this pass exists to remove. */}
+        {onChooseChatMode && (
+          <>
+            <div className="ws-menu__row" title={chatModeDef(chatMode).title}>
+              <span>Run work as tickets</span>
+              <Toggle
+                checked={orchestrated}
+                onChange={(on) => onChooseChatMode(on ? "orchestrated" : "direct")}
+              />
+            </div>
+            {/* Filing this chat as a ticket is a one-off action on an existing
+                conversation, so it only appears once one exists. */}
+            {activeId && (
+              <MenuItem icon={<ListPlus size={14} aria-hidden />} onSelect={onFileTicket}>
+                File this chat as a ticket
+              </MenuItem>
+            )}
+            <MenuSeparator />
+          </>
+        )}
         <MenuItem icon={<MessagesSquare size={14} />} onSelect={() => onNavigate("/chats")}>
           All chats
         </MenuItem>

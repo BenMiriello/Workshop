@@ -1,19 +1,42 @@
-// How a ticket list is divided up: the pure rule behind the group-by control and
-// the board's lanes. Kept out of the page so it can be executed in a test (there
-// is no DOM harness; the target is always the rule, not the render).
+// How a ticket list is divided up: the pure rules behind the group-by control,
+// the board's lanes, and the status filter. Kept out of the page so they can be
+// executed in a test (there is no DOM harness; the target is always the rule,
+// not the render).
 //
-// Two different questions, deliberately not one:
+// Three questions, deliberately not one:
 //
 //   groupTickets  — the LIST's optional grouping. Buckets are whatever the data
 //                   has, in a fixed order, and an empty bucket does not exist.
 //   boardLanes    — the BOARD's columns. Buckets are FIXED and an empty one is
 //                   still rendered, because a column that vanishes when it
 //                   empties makes the board reshuffle as work moves.
+//   status filter — WHICH tickets the list asks the server for at all.
 //
-// The board folds eight statuses into four lanes on purpose. Three of the eight
-// are what live data actually uses, and eight columns of which five are
-// permanently empty is not a view, it is a wall.
-import { scopeLabel, taskStatusLabel, type Task, type TaskStatus } from "./tasks";
+// ---- three groupings must agree, and only two of them live here --------------
+//
+// 1. STATUS_ORDER below: the list's headings, most urgent first.
+// 2. The board's lanes: the five state types, in pipeline order.
+// 3. `_STATUS_RANK` in backend/services/tasks.py: the rank behind `sort=status`.
+//
+// The third is in another language in another process and cannot be imported,
+// so the first two are DERIVED from the single table in lib/tasks.ts
+// (`STATUSES_BY_STATE_TYPE`) and the derivation below reproduces `_STATUS_RANK`
+// exactly. Nothing here re-lists the eight statuses by hand. If the backend rank
+// changes, change `HEADING_TYPE_ORDER` here; do not hand-write a list next to
+// it, which is how the four ad-hoc lanes this file used to carry came about.
+import {
+  STATUSES_BY_STATE_TYPE,
+  TASK_STATE_TYPES,
+  TASK_STATUSES,
+  scopeLabel,
+  taskStateType,
+  taskStateTypeLabel,
+  taskStateTypeOf,
+  taskStatusLabel,
+  type Task,
+  type TaskStateType,
+  type TaskStatus,
+} from "./tasks";
 
 export type GroupBy = "none" | "status" | "scope";
 
@@ -23,12 +46,17 @@ export type TicketGroup = {
   tasks: Task[];
 };
 
-// The order buckets appear in when grouping by status: what is stuck, then what
-// is moving, then what is waiting, then what is finished. This is the same
-// intent as the backend's status sort rank, expressed for headings.
-const STATUS_ORDER: TaskStatus[] = [
-  "blocked", "doing", "in_review", "todo", "draft", "parked", "done", "cancelled",
+// Headings read by urgency, not by pipeline position: what is stuck and moving
+// first, then what is waiting, then what is finished. This is the ONE place the
+// two frontend orders differ, and it is the order the backend's status rank
+// already uses.
+const HEADING_TYPE_ORDER: TaskStateType[] = [
+  "started", "unstarted", "backlog", "completed", "canceled",
 ];
+
+// blocked, doing, in_review, todo, draft, parked, done, cancelled.
+const STATUS_ORDER: TaskStatus[] =
+  HEADING_TYPE_ORDER.flatMap((type) => STATUSES_BY_STATE_TYPE[type]);
 
 export function groupTickets(tasks: Task[], by: GroupBy): TicketGroup[] {
   if (by === "none") return [{ key: "all", label: "", tasks }];
@@ -62,8 +90,12 @@ export function groupTickets(tasks: Task[], by: GroupBy): TicketGroup[] {
 }
 
 // ---- board ------------------------------------------------------------------
+// One lane per state type. The lanes used to be four names invented here
+// (draft / open / running / done) that existed nowhere else in the system, so
+// the board, the backend rank and any future tracker sync each had their own
+// idea of what a column was.
 
-export type LaneId = "draft" | "open" | "running" | "done";
+export type LaneId = TaskStateType;
 
 export type Lane = {
   id: LaneId;
@@ -73,32 +105,114 @@ export type Lane = {
   tasks: Task[];
 };
 
-// Which lane each status lands in. `blocked` and `parked` sit in Open because
-// they are work that has not happened yet and still needs the operator; putting
-// them in their own lanes is what produced five empty columns.
-const LANE_OF: Record<TaskStatus, LaneId> = {
-  draft: "draft",
-  todo: "open",
-  blocked: "open",
-  parked: "open",
-  doing: "running",
-  in_review: "running",
-  done: "done",
-  cancelled: "done",
+const LANE_HINT: Record<TaskStateType, string> = {
+  backlog: "Proposed or parked. Nothing picks these up.",
+  unstarted: "Approved and waiting for a worker.",
+  started: "Being worked, in review, or stuck.",
+  completed: "Finished.",
+  canceled: "Dropped. The work did not happen.",
 };
 
-const LANE_META: { id: LaneId; label: string; hint: string }[] = [
-  { id: "draft", label: "Draft", hint: "Proposed, not approved yet." },
-  { id: "open", label: "Open", hint: "Approved and waiting, including blocked." },
-  { id: "running", label: "Running", hint: "Being worked, or waiting on review." },
-  { id: "done", label: "Done", hint: "Finished or cancelled." },
-];
-
-export const laneFor = (status?: string): LaneId =>
-  LANE_OF[(status ?? "") as TaskStatus] ?? "open";
-
 export function boardLanes(tasks: Task[]): Lane[] {
-  const byLane = new Map<LaneId, Task[]>(LANE_META.map((m) => [m.id, []]));
-  for (const t of tasks) byLane.get(laneFor(t.status))?.push(t);
-  return LANE_META.map((m) => ({ ...m, tasks: byLane.get(m.id) ?? [] }));
+  const byLane = new Map<LaneId, Task[]>(TASK_STATE_TYPES.map((id) => [id, []]));
+  for (const t of tasks) byLane.get(taskStateTypeOf(t))?.push(t);
+  return TASK_STATE_TYPES.map((id) => ({
+    id,
+    label: taskStateTypeLabel(id),
+    hint: LANE_HINT[id],
+    tasks: byLane.get(id) ?? [],
+  }));
 }
+
+// ---- status filter -----------------------------------------------------------
+// What the Open tab asks for. The default is ACTIVE (unstarted + started), not
+// "everything": that is the convergent default across Linear, Shortcut and
+// GitHub, and it is the answer to the question the list is actually asked.
+// Backlog, Done and All are each one change of this one control away.
+//
+// The endpoint filters by `status`, ONE value, so a filter naming several
+// statuses cannot be pushed down to it. `statusFilterQuery` says which of the
+// two happens; the page narrows locally when it must, and counts the narrowed
+// rows so the "Showing N of M" line stays true.
+
+export type StatusFilter = "all" | "active" | TaskStateType | TaskStatus;
+
+export const DEFAULT_STATUS_FILTER: StatusFilter = "active";
+
+// The state types "Active" stands for. Named once so the label, the filter and
+// any future default all mean the same thing.
+export const ACTIVE_STATE_TYPES: TaskStateType[] = ["unstarted", "started"];
+
+/** The statuses a filter admits, or null for "every status". */
+export function statusFilterStatuses(filter: StatusFilter): TaskStatus[] | null {
+  if (filter === "all") return null;
+  if (filter === "active") {
+    return ACTIVE_STATE_TYPES.flatMap((type) => STATUSES_BY_STATE_TYPE[type]);
+  }
+  if ((TASK_STATE_TYPES as string[]).includes(filter)) {
+    return STATUSES_BY_STATE_TYPE[filter as TaskStateType];
+  }
+  return [filter as TaskStatus];
+}
+
+export type StatusFilterQuery = {
+  // The `?status=` value to send, or null for no filter. Comma-separated when
+  // the filter admits several statuses.
+  //
+  // This used to be a SINGLE status plus a `clientSide` flag, because the
+  // endpoint took one value: "Active" (four statuses) could not be expressed,
+  // so the page fetched the entire cross-scope list unpaged and narrowed it
+  // itself. On this box that was a ~400KB payload re-fetched on every sort,
+  // scope and search change, for a default view showing 33 rows. The endpoint
+  // now accepts a comma-separated list, so every filter pushes down and paging
+  // and `total` are the server's again.
+  status: string | null;
+};
+
+export function statusFilterQuery(filter: StatusFilter): StatusFilterQuery {
+  const wanted = statusFilterStatuses(filter);
+  if (wanted === null) return { status: null };
+  return { status: wanted.join(",") };
+}
+
+export function matchesStatusFilter(
+  task: { status?: string }, filter: StatusFilter,
+): boolean {
+  const wanted = statusFilterStatuses(filter);
+  return wanted === null || wanted.includes((task.status ?? "") as TaskStatus);
+}
+
+/** True when the filter admits nothing but backlog work, i.e. the operator is
+ *  already looking at the drafts and parked tickets the strip would offer. */
+export function isBacklogOnlyFilter(filter: StatusFilter): boolean {
+  const wanted = statusFilterStatuses(filter);
+  return !!wanted && wanted.length > 0
+    && wanted.every((s) => taskStateType(s) === "backlog");
+}
+
+// The control's menu, built from the model so a new status or state type shows
+// up without being typed here.
+export const STATUS_FILTER_GROUPS: {
+  label: string;
+  options: { value: StatusFilter; label: string }[];
+}[] = [
+  {
+    label: "Views",
+    options: [
+      { value: "active", label: "Active" },
+      { value: "all", label: "All statuses" },
+    ],
+  },
+  {
+    label: "State",
+    options: TASK_STATE_TYPES.map((type) => ({
+      value: type as StatusFilter, label: taskStateTypeLabel(type),
+    })),
+  },
+  {
+    label: "Status",
+    options: TASK_STATUSES.map((status) => ({
+      value: status as StatusFilter, label: taskStatusLabel(status),
+    })),
+  },
+];

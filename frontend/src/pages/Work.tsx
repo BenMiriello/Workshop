@@ -3,11 +3,13 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   RefreshCw, Plus, Search,
   Check, X, KeyRound, BookOpen, EyeOff, ShieldCheck,
+  MessageCircleQuestion, ClipboardCheck, Info, Clock, ListTodo, Play,
 } from "lucide-react";
 import {
   Button,
   Card,
   CardGrid,
+  Checkbox,
   PageHeader,
   Row,
   Stack,
@@ -35,9 +37,7 @@ import {
   type BlockRequest,
   type Task,
   type TaskSort,
-  type TaskStatus,
   TASK_SORTS,
-  TASK_STATUSES,
   taskStatusKind,
   taskStatusLabel,
   title as taskTitle,
@@ -46,15 +46,41 @@ import {
   scopeLabel,
   ticketHref,
 } from "../lib/tasks";
-import { boardLanes, groupTickets, type GroupBy } from "../lib/ticketGroups";
+import {
+  DEFAULT_STATUS_FILTER,
+  STATUS_FILTER_GROUPS,
+  boardLanes,
+  groupTickets,
+  statusFilterQuery,
+  type GroupBy,
+  type StatusFilter,
+} from "../lib/ticketGroups";
+import {
+  NO_BACKLOG,
+  backlogCountQuery,
+  backlogStripCopy,
+  showBacklogStrip,
+  type BacklogCounts,
+  type BacklogStatus,
+} from "../lib/backlogStrip";
 import { orderScopes } from "../lib/devMode";
 import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
-import { ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkTab } from "../lib/workParams";
+import { inboxSummary, inboxTotal, inboxOverflow } from "../lib/inbox";
+import { useInboxItems, type InboxItem } from "../components/chat/InboxStrip";
+import {
+  ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkTab, type WorkTab,
+} from "../lib/workParams";
 
-// The Tickets surface: one nav item, three tabs.
+// The Tickets surface: one nav item, four tabs.
 //   Open   — the cross-scope ticket list (the primary surface), as a list or a board.
 //   Runs   — the existing Jobs feed, rendered from the shared JobsFeed.
 //   Review — work that stopped on its own, and the answers that release it.
+//   Inbox  — the GLOBAL agent inbox: what needs you, across every scope.
+//
+// Review and Inbox are not the same list. Review is the tickets a run stopped
+// on. Inbox is every request for attention a non-human actor raised, which
+// includes those and also finished runs, proposals, and notifications from
+// agents that have no ticket at all.
 //
 // A ticket IS a task; every identifier stays `task` (ADR 0001, and
 // entity-model-2026-07-18 §9.5 closes it). What changed on 2026-08-11 is the
@@ -68,12 +94,15 @@ import { ALL_SCOPES, nextWorkParams, parseWorkScope, parseWorkTab } from "../lib
 // Autonomy moved off here (C6): the canonical toggle lives on /settings; a
 // read-only pill on /agents shows current state.
 
-type Tab = "tickets" | "runs" | "review";
+// The tab set is owned by lib/workParams (it is a URL param before it is a
+// control), so a tab added there is a tab this page must render.
+type Tab = WorkTab;
 
 const TABS: SegmentedOption<Tab>[] = [
   { value: "tickets", label: "Open" },
   { value: "runs", label: "Runs" },
   { value: "review", label: "Review" },
+  { value: "inbox", label: "Inbox" },
 ];
 
 type View = "list" | "board";
@@ -119,6 +148,10 @@ function TicketCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
     (task.comments?.length ?? 0) > 0
       ? `${task.comments?.length} comment${task.comments?.length === 1 ? "" : "s"}` : null,
   ].filter(Boolean).join(" · ");
+  // Why this one is not moving. A count, not a list: the blockers are on the
+  // ticket page, and a card that names them stops being a card. The titles ride
+  // along as the tooltip so hovering answers "which" without a navigation.
+  const blockers = task.blocked_by ?? [];
 
   return (
     <Card interactive compact className="ws-ticket-card" onClick={onOpen} style={{ cursor: "pointer" }}>
@@ -132,7 +165,17 @@ function TicketCard({ task, onOpen }: { task: Task; onOpen: () => void }) {
         <StatusPill status={taskStatusKind(task.status)}>{taskStatusLabel(task.status)}</StatusPill>
         <Tag hue={catFor(task.scope || "workshop")}>{scopeLabel(task.scope)}</Tag>
       </div>
-      {meta && <span className="ws-ticket-card__meta">{meta}</span>}
+      {(meta || blockers.length > 0) && (
+        <span className="ws-ticket-card__meta">
+          {meta}
+          {meta && blockers.length > 0 ? " · " : ""}
+          {blockers.length > 0 && (
+            <span title={blockers.map((b) => `${b.title} (${b.status})`).join("\n")}>
+              blocked by {blockers.length}
+            </span>
+          )}
+        </span>
+      )}
     </Card>
   );
 }
@@ -150,7 +193,13 @@ function TicketsTab() {
   const [pickup, setPickup] = useState<PickupMap | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState<TaskStatus | "all">("all");
+  // ACTIVE, not "all". The list is asked "what is in flight", and answering it
+  // with 193 rows including every cancelled ticket from July is not an answer.
+  // Backlog, Done and All are each one change of this control away, and the
+  // strip below keeps drafts and parked work from vanishing behind the default.
+  const [status, setStatus] = useState<StatusFilter>(DEFAULT_STATUS_FILTER);
+  // The most useful query in the system: what a sweep could pick up right now.
+  const [readyOnly, setReadyOnly] = useState(false);
   // View preferences, so they commit on change (frontend/CLAUDE.md).
   const [sort, setSort] = useState<TaskSort>("updated");
   const [group, setGroup] = useState<GroupBy>("none");
@@ -158,6 +207,7 @@ function TicketsTab() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [limit, setLimit] = useState(PAGE_SIZE);
+  const [backlog, setBacklog] = useState<BacklogCounts>(NO_BACKLOG);
   const [open, setOpen] = useState<{ mode: "create" } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -169,19 +219,26 @@ function TicketsTab() {
 
   // A new filter starts at the first page again. Without this, narrowing the
   // list while paged in leaves an offset the new result set may not have.
-  useEffect(() => { setLimit(PAGE_SIZE); }, [status, scope, debouncedQuery, sort]);
+  useEffect(() => { setLimit(PAGE_SIZE); }, [status, readyOnly, scope, debouncedQuery, sort]);
+
+  // Every status filter pushes down now: `?status=` takes a comma-separated
+  // list, so "Active" is four statuses in one query rather than a full fetch
+  // narrowed here. Paging and `total` are the server's for every filter.
+  const { status: serverStatus } = statusFilterQuery(status);
+  // The board still is not paged: it needs every lane populated to be a board.
+  const fetchLimit = view === "list" ? limit : null;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setErr(null);
     try {
       const params = new URLSearchParams();
-      if (status !== "all") params.set("status", status);
+      if (serverStatus) params.set("status", serverStatus);
+      if (readyOnly) params.set("ready", "true");
       if (scope !== ALL_SCOPES) params.set("scope", scope);
       if (debouncedQuery) params.set("q", debouncedQuery);
       params.set("sort", sort);
-      // The board needs every lane populated to be a board, so it is not paged.
-      if (view === "list") params.set("limit", String(limit));
+      if (fetchLimit !== null) params.set("limit", String(fetchLimit));
       const r = await fetch(`/api/tasks?${params.toString()}`);
       if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
       setData(await r.json());
@@ -190,11 +247,37 @@ function TicketsTab() {
     } finally {
       setLoading(false);
     }
-  }, [status, scope, debouncedQuery, sort, limit, view]);
+  }, [serverStatus, readyOnly, scope, debouncedQuery, sort, fetchLimit]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // The drafts-and-parked counts, asked for on their own rather than counted off
+  // `rows`. See lib/backlogStrip: `rows` is whatever the current filter and page
+  // returned, so counting there made the strip vanish under every narrowed view
+  // and under-report under the paged one.
+  //
+  // Not in `refresh`: these move when the operator changes scope or writes
+  // something, never when he types in the search box.
+  const loadBacklog = useCallback(async () => {
+    const one = async (s: BacklogStatus) => {
+      const r = await fetch(`/api/tasks?${backlogCountQuery(s, scope)}`);
+      if (!r.ok) throw new Error(`${r.status}`);
+      const j: TasksResp = await r.json();
+      return j.total ?? 0;
+    };
+    try {
+      const [draft, parked] = await Promise.all([one("draft"), one("parked")]);
+      setBacklog({ draft, parked });
+    } catch {
+      // The strip is additive: the list below has its own error state, and a
+      // failed probe must not claim that nothing is waiting. Keep the last good
+      // counts and let the next scope change or write try again.
+    }
+  }, [scope]);
+
+  useEffect(() => { void loadBacklog(); }, [loadBacklog]);
 
   useEffect(() => {
     fetch("/api/tasks/scopes")
@@ -206,6 +289,8 @@ function TicketsTab() {
       .catch(() => { setScopes([]); setPickup(null); });
   }, []);
 
+  // The server filtered, sorted and paged, so `total` is the size of the
+  // filtered set and these rows are the page. Nothing is narrowed here.
   const tasks = data?.tasks ?? [];
   const total = data?.total ?? tasks.length;
   const more = tasks.length < total;
@@ -215,8 +300,11 @@ function TicketsTab() {
     (msg?: string) => {
       setNotice(msg ?? null);
       refresh();
+      // A write is the other thing that moves the backlog counts: approving a
+      // draft or requeuing a parked ticket empties the strip that offered it.
+      void loadBacklog();
     },
-    [refresh],
+    [refresh, loadBacklog],
   );
 
   const openTicket = useCallback((t: Task) => {
@@ -224,22 +312,18 @@ function TicketsTab() {
     nav(ticketHref(t.scope || "workshop", t.id));
   }, [nav]);
 
-  // Work the system proposed and nobody has agreed to yet. A draft is never
-  // picked up by a sweep and cannot be run, so if it is not surfaced it is
-  // simply lost — which is the failure the approval gate would otherwise cause
-  // rather than prevent. Hidden once the operator is already looking at drafts.
-  const draftCount = tasks.filter((t) => t.status === "draft").length;
-  const draftStrip = draftCount > 0 && status !== "draft" ? (
+  // Open work that no sweep will ever pick up: the backlog state type. The two
+  // statuses, the sentence and the visibility rule are lib/backlogStrip; the
+  // counts come from `backlog`, which is its own pair of requests rather than a
+  // tally of the rows this filter happened to return.
+  const backlogCopy = backlogStripCopy(backlog);
+  const draftStrip = showBacklogStrip(backlog, status) ? (
     <Card>
       <Row wrap style={{ gap: "var(--space-3)", alignItems: "center" }}>
-        <StatusDot status="warn">
-          {draftCount} proposed {draftCount === 1 ? "ticket is" : "tickets are"} waiting for you
-        </StatusDot>
-        <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>
-          Nothing runs them until you approve.
-        </span>
-        <Button size="sm" variant="ghost" onClick={() => setStatus("draft")}>
-          Review {draftCount === 1 ? "it" : "them"}
+        <StatusDot status="warn">{backlogCopy.what}</StatusDot>
+        <span className="ws-muted" style={{ fontSize: "var(--fs-sm)" }}>{backlogCopy.why}</span>
+        <Button size="sm" variant="ghost" onClick={() => setStatus("backlog")}>
+          {backlogCopy.verb}
         </Button>
       </Row>
     </Card>
@@ -285,14 +369,27 @@ function TicketsTab() {
             style={{ maxWidth: "16rem" }}
           />
         </Field>
+        {/* Three levels in one control: the two views, the five state types,
+            and the eight named statuses. All statuses is one change away from
+            the Active default, which is the whole reason the default is safe. */}
         <Field label="Status" inline>
-          <Select value={status} onChange={(e) => setStatus(e.target.value as TaskStatus | "all")} aria-label="Filter by status">
-            <option value="all">All statuses</option>
-            {TASK_STATUSES.map((s) => (
-              <option key={s} value={s}>{taskStatusLabel(s)}</option>
+          <Select
+            value={status}
+            onChange={(e) => setStatus(e.target.value as StatusFilter)}
+            aria-label="Filter by status"
+          >
+            {STATUS_FILTER_GROUPS.map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.options.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </optgroup>
             ))}
           </Select>
         </Field>
+        {/* What a sweep could claim right now: status todo with every blocker
+            closed, computed by the same predicate the scheduler uses. */}
+        <Checkbox checked={readyOnly} onChange={setReadyOnly} label="Ready to run" />
         <Field label="Scope" inline>
           <Select value={scope} onChange={(e) => setScope(e.target.value)} aria-label="Filter by scope">
             <option value="all">All scopes</option>
@@ -301,7 +398,11 @@ function TicketsTab() {
             ))}
           </Select>
         </Field>
-        <Button size="sm" onClick={refresh} loading={loading}>
+        <Button
+          size="sm"
+          onClick={() => { void refresh(); void loadBacklog(); }}
+          loading={loading}
+        >
           <RefreshCw aria-hidden /> Refresh
         </Button>
         <Button size="sm" variant="primary" onClick={() => { setNotice(null); setOpen({ mode: "create" }); }}>
@@ -371,20 +472,30 @@ function TicketsTab() {
       </CardGrid>
     );
   } else if (tasks.length === 0) {
-    const filtered = status !== "all" || scope !== ALL_SCOPES || !!debouncedQuery;
+    // The default IS a filter now, so an empty Active list says so rather than
+    // claiming there are no tickets at all.
+    const filtered = status !== "all" || readyOnly || scope !== ALL_SCOPES || !!debouncedQuery;
     body = (
       <StateBlock
         title={filtered ? "No tickets match these filters" : "No tickets yet"}
         hint={
           filtered ? (
-            <>Nothing matches. Clear <strong>Find</strong>, or reset <strong>Status</strong> and <strong>Scope</strong> to <strong>All</strong>.</>
+            <>Nothing matches. Clear <strong>Find</strong>, turn off <strong>Ready to run</strong>, or set <strong>Status</strong> and <strong>Scope</strong> to <strong>All</strong>.</>
           ) : (
             <>Create one with <strong>New ticket</strong>, or file one from a chat.</>
           )
         }
         action={
           filtered ? (
-            <Button size="sm" onClick={() => { setQuery(""); setStatus("all"); setScope(ALL_SCOPES); }}>
+            <Button
+              size="sm"
+              onClick={() => {
+                setQuery("");
+                setStatus("all");
+                setReadyOnly(false);
+                setScope(ALL_SCOPES);
+              }}
+            >
               <Search aria-hidden /> Clear filters
             </Button>
           ) : (
@@ -942,6 +1053,237 @@ function PromotionCandidates({ rows, onDone }: { rows: Candidate[] | null; onDon
   );
 }
 
+// ---- Inbox tab ---------------------------------------------------------------
+// The GLOBAL agent inbox: every open request for attention, across every scope.
+//
+// This tab is the other half of a link that has been dead since July. The chat's
+// inbox footer navigates to `/work?tab=inbox` to reach "the rest of them", the
+// backend has always served the global list (`inbox.list_items(chat_scope=None)`
+// via GET /api/inbox with no chat_id), and the page simply did not exist, so the
+// link silently landed on the ticket list.
+//
+// Items are NOT typed by entity (services/inbox.py): a finished run, a blocked
+// agent and a proposal are one kind of thing with three verbs.
+//   question  the agent is stuck and is asking      -> answer
+//   review    the agent proposes something          -> approve / reject
+//   notify    it happened, you should know          -> dismiss
+// Snooze applies to all three: deferral, not closure. The server keeps the item
+// open, hides it until then, and wakes it early if the work it describes moves.
+//
+// Unlike the chat strip this list is not capped or collapsed. It is the page you
+// opened to deal with the whole pile, so every row is expanded and the only
+// bound is the server's own limit, which the overflow line names.
+//
+// THE STATE MACHINE IS NOT HERE. Reading, polling, resolving, snoozing and the
+// optimistic removal are `useInboxItems`, shared with the chat's work drawer.
+// This tab used to hand-roll its own copy of all five against the same endpoint,
+// and the two had already drifted: only this one counted overflow, only the
+// other one tracked a loading state. One endpoint gets one implementation; this
+// file owns the page's LAYOUT of it, which is the part that legitimately differs.
+
+const INBOX_KIND_ICON = {
+  question: MessageCircleQuestion,
+  review: ClipboardCheck,
+  notify: Info,
+} as const;
+
+function InboxCard({
+  item,
+  busy,
+  answer,
+  onAnswer,
+  onResolve,
+  onSnooze,
+}: {
+  item: InboxItem;
+  busy: boolean;
+  answer: string;
+  onAnswer: (v: string) => void;
+  onResolve: (answer: string | null, dismissed: boolean) => void;
+  onSnooze: (preset: "hour" | "tomorrow") => void;
+}) {
+  const nav = useNavigate();
+  const Icon = INBOX_KIND_ICON[item.kind] ?? Info;
+  const typed = answer.trim();
+
+  return (
+    <Card>
+      <Stack gap="sm">
+        <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+          <Icon size={14} strokeWidth={1.8} aria-hidden />
+          <Tag hue={catFor(item.kind)}>{item.kind}</Tag>
+          <Tag hue={catFor(item.agent || "unknown")}>{item.agent || "unknown"}</Tag>
+          <Tag hue={catFor(item.scope || "workshop")}>{scopeLabel(item.scope)}</Tag>
+        </Row>
+
+        <span className="ws-wrap" style={{ fontWeight: 600 }}>{item.title}</span>
+        {item.body && (
+          <p className="ws-muted ws-wrap" style={{ margin: 0, fontSize: "var(--fs-sm)" }}>
+            {item.body}
+          </p>
+        )}
+
+        {/* Where the thing being asked about actually lives. An inbox row that
+            cannot reach its work makes the operator go find it by hand. */}
+        {(item.ticket_id || item.run_id) && (
+          <Row wrap style={{ gap: "var(--space-2)" }}>
+            {item.ticket_id && (
+              <Button size="sm" variant="ghost"
+                      onClick={() => nav(ticketHref(item.scope, item.ticket_id!))}>
+                <ListTodo aria-hidden /> Open ticket
+              </Button>
+            )}
+            {item.run_id && (
+              <Button size="sm" variant="ghost"
+                      onClick={() => nav(`/runs/${encodeURIComponent(item.run_id!)}`)}>
+                <Play aria-hidden /> Open run
+              </Button>
+            )}
+          </Row>
+        )}
+
+        {item.kind === "question" && (
+          <Row wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+            {item.options.length > 0 ? (
+              item.options.map((o) => (
+                <Button key={o} size="sm" disabled={busy} onClick={() => onResolve(o, false)}>
+                  {o}
+                </Button>
+              ))
+            ) : (
+              <>
+                <Input
+                  value={answer}
+                  onChange={(e) => onAnswer(e.target.value)}
+                  placeholder="Your answer"
+                  aria-label={`Answer: ${item.title}`}
+                  style={{ maxWidth: "24rem" }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && typed) onResolve(typed, false);
+                  }}
+                />
+                <Button size="sm" variant="primary" disabled={!typed || busy}
+                        onClick={() => onResolve(typed, false)}>
+                  Send
+                </Button>
+              </>
+            )}
+          </Row>
+        )}
+
+        {item.kind === "review" && (
+          <Row wrap style={{ gap: "var(--space-2)" }}>
+            {/* "Approve", the word the backend compares against. When this said
+                "approved" the row closed and the write never happened. */}
+            <Button size="sm" variant="primary" disabled={busy}
+                    onClick={() => onResolve("Approve", false)}>
+              <Check aria-hidden /> Approve
+            </Button>
+            <Button size="sm" disabled={busy} onClick={() => onResolve("Reject", false)}>
+              <X aria-hidden /> Reject
+            </Button>
+          </Row>
+        )}
+
+        <Row wrap style={{ gap: "var(--space-2)" }}>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => onSnooze("hour")}>
+            <Clock aria-hidden /> Snooze an hour
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => onSnooze("tomorrow")}>
+            <Clock aria-hidden /> Snooze until tomorrow
+          </Button>
+          <Button size="sm" variant="ghost" disabled={busy}
+                  onClick={() => onResolve(null, true)}>
+            <EyeOff aria-hidden /> Dismiss
+          </Button>
+        </Row>
+      </Stack>
+    </Card>
+  );
+}
+
+function InboxTab() {
+  // "global": no chat scope, so this is every scope at once. The same hook the
+  // chat's work drawer runs, in its other mode (lib/inbox).
+  const {
+    items, counts, err, busy, loading, answers, setAnswer, reload, resolve, snooze,
+  } = useInboxItems(null, "global");
+
+  const shown = items?.length ?? 0;
+  // The server returns the first 100 open items and counts all of them, so this
+  // is a real overflow rather than a guess about one.
+  const total = counts ? inboxTotal(counts) : shown;
+  const overflow = inboxOverflow(counts, shown);
+
+  let body: JSX.Element;
+  if (err && !shown) {
+    body = (
+      <StateBlock
+        variant="error"
+        title="Couldn't load the inbox"
+        hint={<><code>/api/inbox</code> ({err})</>}
+        action={<Button size="sm" onClick={reload}>Retry</Button>}
+      />
+    );
+  } else if (items === null) {
+    body = (
+      <Stack gap="sm">
+        {[0, 1].map((i) => (
+          <Card key={i}>
+            <Stack gap="sm"><Skeleton width="40%" /><Skeleton width="70%" /><Skeleton width="30%" /></Stack>
+          </Card>
+        ))}
+      </Stack>
+    );
+  } else if (shown === 0) {
+    body = (
+      <StateBlock
+        title="Nothing is waiting on you"
+        hint="Agents raise questions, proposals and notices here when they need you. This is every scope at once, not one chat."
+      />
+    );
+  } else {
+    body = (
+      <Stack>
+        {err && <p className="ws-field__error">{err}</p>}
+        {items.map((it) => (
+          <InboxCard
+            key={it.id}
+            item={it}
+            busy={busy === it.id}
+            answer={answers[it.id] ?? ""}
+            onAnswer={(v) => setAnswer(it.id, v)}
+            onResolve={(answer, dismissed) => void resolve(it.id, answer, dismissed)}
+            onSnooze={(preset) => void snooze(it.id, preset)}
+          />
+        ))}
+        {overflow > 0 && (
+          <p className="ws-muted" style={{ fontSize: "var(--fs-sm)", margin: 0 }}>
+            Showing {shown} of {total}. Answer or snooze some to see the rest.
+          </p>
+        )}
+      </Stack>
+    );
+  }
+
+  return (
+    <div>
+      <Row between wrap style={{ gap: "var(--space-3)", alignItems: "center", marginBottom: "var(--space-3)" }}>
+        <Row wrap style={{ gap: "var(--space-2)", alignItems: "baseline" }}>
+          <SectionLabel>Needs you</SectionLabel>
+          {total > 0 && (
+            <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{inboxSummary(counts)}</span>
+          )}
+        </Row>
+        <Button size="sm" onClick={reload} loading={loading}>
+          <RefreshCw aria-hidden /> Refresh
+        </Button>
+      </Row>
+      {body}
+    </div>
+  );
+}
+
 // ---- Page ------------------------------------------------------------------
 
 export default function Work() {
@@ -967,7 +1309,8 @@ export default function Work() {
       </div>
       {tab === "tickets" ? <TicketsTab />
         : tab === "runs" ? <JobsFeed />
-        : <ReviewTab />}
+        : tab === "review" ? <ReviewTab />
+        : <InboxTab />}
     </div>
   );
 }

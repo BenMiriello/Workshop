@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePoll } from "../lib/usePoll";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
@@ -15,10 +15,15 @@ import { Markdown } from "@workshop/ui/markdown";
 import {
   type Task, type TaskLink, TASK_STATUSES, taskStatusKind, taskStatusLabel,
   title as titleOf, description as descriptionOf, scopeLabel, scopeHref,
-  cleanTitle, isBlockingCheck, readinessLabel,
+  isBlockingCheck, readinessLabel,
   ticketHref, taskAcceptanceLabel,
   latitudeDesc, latitudeSourceLabel,
 } from "../lib/tasks";
+import {
+  EMPTY_TICKET_DRAFT, LATITUDE_INHERIT, TICKET_ACCEPTANCE_KINDS, TICKET_EFFORTS,
+  draftFromTask, ticketDirty, ticketPatch, ticketTitleMissing,
+  unresolvedIds, type TicketDraft,
+} from "../lib/ticketEdit";
 import { jobIsLive, jobStatusKind } from "../lib/jobs";
 import { pickupFor, pickupNote, type PickupMap } from "../lib/scopePickup";
 import { nextWorkParams } from "../lib/workParams";
@@ -104,6 +109,33 @@ function LinkRow({ link }: { link: TaskLink }) {
   );
 }
 
+// What the ids in an edge input actually point at, beside the input that holds
+// them. Not links: following one mid-edit would throw the draft away, and the
+// Links section below already offers the clickable version.
+function LinkKey({ links, missing }: { links: TaskLink[]; missing: string[] }) {
+  if (links.length === 0 && missing.length === 0) return null;
+  return (
+    <Stack gap="sm" style={{ marginTop: "var(--space-1)" }}>
+      {links.map((l) => (
+        <Row key={`${l.scope}:${l.id}`} wrap style={{ gap: "var(--space-2)", alignItems: "center" }}>
+          <span className="ws-mono ws-muted" style={{ fontSize: "var(--fs-xs)" }}>{l.id}</span>
+          <StatusDot status={taskStatusKind(l.status)}>{taskStatusLabel(l.status)}</StatusDot>
+          <span className="ws-truncate" style={{ fontSize: "var(--fs-xs)" }} title={l.title}>
+            {l.title || l.id}
+          </span>
+          <Tag hue={catFor(l.scope)}>{scopeLabel(l.scope)}</Tag>
+        </Row>
+      ))}
+      {missing.map((tid) => (
+        <StatusDot key={tid} status="warn">
+          <span className="ws-mono" style={{ fontSize: "var(--fs-xs)" }}>{tid}</span>
+          <span className="ws-muted" style={{ fontSize: "var(--fs-xs)" }}> resolves to no ticket</span>
+        </StatusDot>
+      ))}
+    </Stack>
+  );
+}
+
 // A ticket's detail. Everything the record already knew and never showed: the
 // family it belongs to, the answers already given to it, what has been attempted
 // and what the gate is. The URL is stable, so bookmarks and chat mentions
@@ -120,13 +152,12 @@ export default function TicketDetail() {
   const [err, setErr] = useState<string | null>(null);
   const [pickupMap, setPickupMap] = useState<PickupMap | null>(null);
   const [editing, setEditing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftDesc, setDraftDesc] = useState("");
-  // Status and latitude are ticket CONFIG, so they commit on Save with the rest
-  // of the ticket, not the instant the select moves (frontend/CLAUDE.md, "When
-  // does a control commit?"). They used to PATCH on change.
-  const [draftStatus, setDraftStatus] = useState("todo");
-  const [draftLatitude, setDraftLatitude] = useState("inherit");
+  // ONE draft for the whole ticket. Every field here is ticket CONFIG, so all of
+  // it commits on Save and none of it on change (frontend/CLAUDE.md, "When does
+  // a control commit?"). Status and latitude used to PATCH on change; priority,
+  // effort, assignee, the acceptance gate, the attempt cap, labels and the two
+  // edge lists could not be edited on this page at all.
+  const [draft, setDraft] = useState<TicketDraft>(EMPTY_TICKET_DRAFT);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [runOpen, setRunOpen] = useState(false);
@@ -194,16 +225,29 @@ export default function TicketDetail() {
       .catch(() => setPickupMap(null));
   }, []);
 
+  // What the record says right now, in the form's own vocabulary. The draft is
+  // compared against this to decide what changed, so a poll that lands while the
+  // operator is typing cannot quietly widen the patch.
+  const saved = useMemo(
+    () => (task ? draftFromTask(task) : EMPTY_TICKET_DRAFT), [task]);
+
   useEffect(() => {
-    if (task && !editing) {
-      setDraftTitle(titleOf(task));
-      setDraftDesc(descriptionOf(task));
-      setDraftStatus(task.status ?? "todo");
-      setDraftLatitude(task.latitude ?? "inherit");
-    }
+    if (task && !editing) setDraft(draftFromTask(task));
   }, [task, editing]);
 
-  const patch = useCallback(async (fields: Record<string, unknown>) => {
+  const setField = useCallback(
+    <K extends keyof TicketDraft>(key: K, value: TicketDraft[K]) =>
+      setDraft((d) => ({ ...d, [key]: value })),
+    []);
+
+  // Patches the canonical pair, not the joined blob: the store keeps title and
+  // body as separate fields, and sending `text` would make the server re-split
+  // an edit the operator already split by hand. Everything else the record holds
+  // rides along in the same explicit Save, and ONLY the fields that changed are
+  // sent (ticketEdit.ts explains why that matters for a tracker-linked ticket).
+  const saveEdits = useCallback(async () => {
+    const fields = ticketPatch(draft, saved);
+    if (Object.keys(fields).length === 0 || ticketTitleMissing(draft)) return;
     setSaving(true);
     setBanner(null);
     try {
@@ -212,28 +256,20 @@ export default function TicketDetail() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(fields),
       });
-      if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
+      if (!r.ok) {
+        const text = await r.text();
+        throw new Error(`${r.status} ${text}`);
+      }
       setTask(await r.json());
+      // Edit mode closes only on a save that landed. It used to close either
+      // way, which threw the operator's edit away on top of the error.
+      setEditing(false);
     } catch (e) {
       fail(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
-  }, [scope, id, fail]);
-
-  // Patches the canonical pair, not the joined blob: the store keeps title and
-  // body as separate fields, and sending `text` would make the server re-split
-  // an edit the operator already split by hand. Status and latitude ride along,
-  // because they are part of the same explicit Save.
-  const saveEdits = useCallback(async () => {
-    await patch({
-      title: cleanTitle(draftTitle),
-      body: draftDesc,
-      status: draftStatus,
-      latitude: draftLatitude === "inherit" ? null : draftLatitude,
-    });
-    setEditing(false);
-  }, [draftTitle, draftDesc, draftStatus, draftLatitude, patch]);
+  }, [draft, saved, scope, id, fail]);
 
   // A draft is a suggestion the system made. Approving is the operator agreeing
   // to it, and it is the only thing that makes a ticket eligible to run: the
@@ -441,12 +477,12 @@ export default function TicketDetail() {
     : !statusRunnable ? `Run is offered while a ticket is To do. This one is ${taskStatusLabel(task.status)}.`
     : "";
 
-  const dirty = !!task && editing && (
-    draftTitle !== titleOf(task)
-    || draftDesc !== descriptionOf(task)
-    || draftStatus !== (task.status ?? "todo")
-    || draftLatitude !== (task.latitude ?? "inherit")
-  );
+  const dirty = !!task && editing && ticketDirty(draft, saved);
+  const titleMissing = editing && ticketTitleMissing(draft);
+  // The ids in each edge input, resolved. `links.missing` covers the record as a
+  // whole, so each list works out its own dead ids by difference.
+  const dependsMissing = unresolvedIds(task?.depends_on, links?.depends_on);
+  const relatesMissing = unresolvedIds(task?.relates_to, links?.relates_to);
 
   // Sub-ticket roll-up, derived and never stored. A parent is finished when its
   // children are; showing the count is the whole point of splitting.
@@ -582,41 +618,104 @@ export default function TicketDetail() {
               ) : (
                 <Row style={{ gap: "var(--space-2)", alignItems: "center" }}>
                   {dirty && <Badge>unsaved</Badge>}
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={saving}>Cancel</Button>
-                  <Button size="sm" variant="primary" onClick={saveEdits} loading={saving} disabled={saving || !dirty}>Save</Button>
+                  <Button size="sm" variant="ghost"
+                          onClick={() => { setEditing(false); setDraft(draftFromTask(task)); }}
+                          disabled={saving}>Cancel</Button>
+                  <Button size="sm" variant="primary" onClick={saveEdits} loading={saving}
+                          disabled={saving || !dirty || titleMissing}>Save</Button>
                 </Row>
               )}
             </Row>
             <Card>
               {editing ? (
                 <Stack gap="sm">
-                  <Field label="Title">
-                    <Input value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} placeholder="Ticket title" />
+                  <Field label="Title" error={titleMissing ? "A ticket needs a title." : undefined}>
+                    <Input value={draft.title} onChange={(e) => setField("title", e.target.value)}
+                           placeholder="Ticket title" disabled={saving} />
                   </Field>
                   <Field label="Description">
-                    <Textarea rows={10} value={draftDesc} onChange={(e) => setDraftDesc(e.target.value)}
-                              placeholder="What needs to happen, and why." />
+                    <Textarea rows={10} value={draft.body} onChange={(e) => setField("body", e.target.value)}
+                              placeholder="What needs to happen, and why." disabled={saving} />
                   </Field>
-                  {/* Status and latitude live in the same Save as the text, so
-                      they are edited here rather than in a second card that
-                      commits on a different gesture. */}
-                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-end" }}>
+                  {/* Every field the record holds lives in the same Save as the
+                      text, so it is edited here rather than in a second card
+                      that commits on a different gesture. Before this, seven of
+                      them could only be set from the chat drawer. */}
+                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
                     <Field label="Status">
-                      <Select value={draftStatus} onChange={(e) => setDraftStatus(e.target.value)} disabled={saving}>
+                      <Select value={draft.status} onChange={(e) => setField("status", e.target.value)} disabled={saving}>
                         {TASK_STATUSES.map((s) => (
                           <option key={s} value={s}>{taskStatusLabel(s)}</option>
                         ))}
                       </Select>
                     </Field>
-                    <Field label="Latitude" help={latitudeDesc(draftLatitude) || "Inherited from the scope."}>
-                      <Select value={draftLatitude} onChange={(e) => setDraftLatitude(e.target.value)} disabled={saving}>
-                        <option value="inherit">inherit</option>
+                    <Field label="Latitude" help={latitudeDesc(draft.latitude) || "Inherited from the scope."}>
+                      <Select value={draft.latitude} onChange={(e) => setField("latitude", e.target.value)} disabled={saving}>
+                        <option value={LATITUDE_INHERIT}>inherit</option>
                         <option value="strict">strict</option>
                         <option value="standard">standard</option>
                         <option value="open">open</option>
                       </Select>
                     </Field>
+                    <Field label="Priority" help="Higher runs first. 0 is the default.">
+                      <Input type="number" value={draft.priority} disabled={saving}
+                             onChange={(e) => setField("priority", e.target.value)}
+                             style={{ maxWidth: "6rem" }} />
+                    </Field>
+                    <Field label="Effort" help="How deep the work is, not how urgent.">
+                      <Select value={draft.effort} onChange={(e) => setField("effort", e.target.value)} disabled={saving}>
+                        <option value="">none</option>
+                        {TICKET_EFFORTS.map((v) => <option key={v} value={v}>{v}</option>)}
+                      </Select>
+                    </Field>
+                    <Field label="Assignee" help="operator, or agent:slug. Leave empty for unassigned.">
+                      <Input value={draft.assignee} onChange={(e) => setField("assignee", e.target.value)}
+                             placeholder="operator" disabled={saving} style={{ maxWidth: "14rem" }} />
+                    </Field>
                   </Row>
+                  <Row wrap style={{ gap: "var(--space-3)", alignItems: "flex-start" }}>
+                    <Field label="Done when" help="The gate a worker must clear to finish.">
+                      <Select value={draft.acceptanceKind} disabled={saving}
+                              onChange={(e) => setField("acceptanceKind", e.target.value)}>
+                        <option value="">no gate</option>
+                        {TICKET_ACCEPTANCE_KINDS.map((k) => (
+                          <option key={k} value={k}>{taskAcceptanceLabel(k)}</option>
+                        ))}
+                      </Select>
+                    </Field>
+                    {draft.acceptanceKind === "command" && (
+                      <Field label="Command" help="Run from the scope root. It must exit 0.">
+                        <Input value={draft.acceptanceSpec} disabled={saving}
+                               onChange={(e) => setField("acceptanceSpec", e.target.value)}
+                               placeholder="npm test" style={{ maxWidth: "20rem" }} />
+                      </Field>
+                    )}
+                    <Field label="Attempt cap"
+                           help="Runs this ticket gets. 0 means no cap, and empty leaves it as it is.">
+                      <Input type="number" value={draft.maxAttempts} disabled={saving}
+                             onChange={(e) => setField("maxAttempts", e.target.value)}
+                             placeholder="none" style={{ maxWidth: "6rem" }} />
+                    </Field>
+                  </Row>
+                  <Field label="Labels" help="Comma separated.">
+                    <Input value={draft.labels} onChange={(e) => setField("labels", e.target.value)}
+                           placeholder="ui, chat" disabled={saving} />
+                  </Field>
+                  {/* Ticket ids, comma separated, with what they resolve to
+                      underneath: an id says nothing on its own, and this page
+                      already receives the resolved links. */}
+                  <Field label="Depends on"
+                         help="Ticket ids, comma separated. This ticket waits until they are done.">
+                    <Input value={draft.dependsOn} onChange={(e) => setField("dependsOn", e.target.value)}
+                           placeholder="Ticket ids" disabled={saving} className="ws-mono" />
+                  </Field>
+                  <LinkKey links={dependsOn} missing={dependsMissing} />
+                  <Field label="Relates to"
+                         help="Ticket ids, comma separated. A soft link, with no effect on scheduling.">
+                    <Input value={draft.relatesTo} onChange={(e) => setField("relatesTo", e.target.value)}
+                           placeholder="Ticket ids" disabled={saving} className="ws-mono" />
+                  </Field>
+                  <LinkKey links={relatesTo} missing={relatesMissing} />
                 </Stack>
               ) : (
                 <Stack gap="sm">
@@ -824,35 +923,41 @@ export default function TicketDetail() {
                     {task.effective_latitude?.value ?? "standard"}
                   </span>
                 </Field>
+                {/* The fields the Ticket card is editing right now are not
+                    repeated here while it is open: a saved value sitting under
+                    its own editor reads as a second, disagreeing answer. */}
                 {/* Every ticket defaults to priority 0, so rendering it always
                     put the word "Priority 0" on every ticket in the system.
                     Work's card already hid it; the two now agree. */}
-                {typeof task.priority === "number" && task.priority !== 0 && (
+                {!editing && typeof task.priority === "number" && task.priority !== 0 && (
                   <Field label="Priority">
                     <span style={{ fontSize: "var(--fs-sm)" }}>{task.priority}</span>
                   </Field>
                 )}
-                {task.effort && (
+                {!editing && task.effort && (
                   <Field label="Effort">
                     <span style={{ fontSize: "var(--fs-sm)" }}>{task.effort}</span>
                   </Field>
                 )}
                 {/* The completion gate. This is what decides whether the work is
                     accepted, and it was rendered nowhere. */}
-                {task.acceptance?.kind && (
+                {!editing && task.acceptance?.kind && (
                   <Field label="Done when" help={task.acceptance.spec || undefined}>
                     <span style={{ fontSize: "var(--fs-sm)" }}>
                       {taskAcceptanceLabel(task.acceptance.kind)}
                     </span>
                   </Field>
                 )}
-                {typeof task.attempts === "number" && task.attempts > 0 && (
+                {/* A cap with no attempts against it yet used to be invisible,
+                    so a ticket could be one run from its limit and not say so. */}
+                {((task.attempts ?? 0) > 0 || task.max_attempts != null) && (
                   <Field label="Attempts"
-                         help={task.max_attempts ? `Cap ${task.max_attempts}.` : undefined}>
-                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.attempts}</span>
+                         help={!editing && task.max_attempts != null
+                           ? `Cap ${task.max_attempts}.` : undefined}>
+                    <span style={{ fontSize: "var(--fs-sm)" }}>{task.attempts ?? 0}</span>
                   </Field>
                 )}
-                {task.assignee && task.assignee !== "operator" && (
+                {!editing && task.assignee && task.assignee !== "operator" && (
                   <Field label="Assignee">
                     <span className="ws-mono" style={{ fontSize: "var(--fs-sm)" }}>{task.assignee}</span>
                   </Field>
@@ -863,7 +968,7 @@ export default function TicketDetail() {
                   </Field>
                 )}
               </Row>
-              {(task.labels?.length ?? 0) > 0 && (
+              {!editing && (task.labels?.length ?? 0) > 0 && (
                 <Row wrap style={{ gap: "var(--space-2)", marginTop: "var(--space-3)" }}>
                   {(task.labels ?? []).map((l) => <Tag key={l} hue={catFor(l)}>{l}</Tag>)}
                 </Row>
