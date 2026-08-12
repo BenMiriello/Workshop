@@ -26,8 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from services import (agent_slots, build_agents, chat_attachments, chat_drain,
-                      chat_log, chat_store, llm_router, model_caps, ownership,
-                      turn_end)
+                      chat_log, chat_queue, chat_store, llm_router, model_caps,
+                      ownership, turn_end)
 
 log = logging.getLogger("workshop.build_streaming")
 
@@ -162,8 +162,15 @@ def answer_permission(turn_id: str, request_id: str, allow: bool,
     return _write_line(turn_id, line)
 
 
-def write_to_turn(turn_id: str, text: str, blocks: list[dict] | None = None) -> bool:
+def write_to_turn(turn_id: str, text: str, blocks: list[dict] | None = None,
+                  origin: list[dict] | None = None) -> bool:
     """Hand a message to a RUNNING turn. True if it was written.
+
+    `origin` is the operator send(s) this delivery stands for — text, client id
+    and send time, in the shape the thread queue holds. It is what goes BACK on
+    the queue if the CLI never reads this write. Omit it and the delivery is
+    still counted (the driver needs that either way), it simply has nothing to
+    recover.
 
     Non-blocking on purpose: opening a FIFO for writing blocks until a reader is
     present, and if the turn has already ended there is no reader and this would
@@ -191,6 +198,7 @@ def write_to_turn(turn_id: str, text: str, blocks: list[dict] | None = None) -> 
             t = TURNS.get(turn_id)
             if t is not None:
                 t.delivered += 1
+                t.unread.append({"origin": list(origin or [])})
             return True
         except OSError as e:
             # ENXIO = FIFO open for write with no reader: the turn's process is gone.
@@ -270,6 +278,14 @@ class Turn:
     # See services/turn_end.py — retiring the process on the wrong result is what
     # killed the request that was answering the operator's message.
     delivered: int = 0
+    # THE MESSAGES BEHIND THAT COUNT, oldest first, until the CLI echoes each
+    # one back. Whatever is still here when the turn ends was written to a
+    # process that never read it, and is put back on the thread's queue rather
+    # than lost (`_requeue_unread`). Each entry carries the ORIGINAL sends it
+    # stands for, so a requeue reuses their client ids and send times: the log
+    # is idempotent on client id, so the message is re-sent without being
+    # written to the transcript twice.
+    unread: list[dict] = field(default_factory=list)
     complete: bool = False
     error: str | None = None
     final_text: str = ""
@@ -1456,7 +1472,8 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
                      run_id: str | None = None,
                      effort: str | None = None,
                      permission_mode: str | None = None,
-                     attachments: list[dict] | None = None) -> Turn:
+                     attachments: list[dict] | None = None,
+                     origin: list[dict] | None = None) -> Turn:
     """Kick off a streaming turn. The claude subprocess is detached and streams
     to a disk journal so it survives a backend restart; the returned Turn is
     driven by tailing that journal. Returns immediately.
@@ -1510,6 +1527,12 @@ async def start_turn(*, thread_id: str, agent_slug: str, prompt: str, model: str
         "cwd": cwd, "model": model, "session_id": session_id, "resume": bool(resume),
         "speaker": speaker,
         "owner_id": owner_id, "prompt": prompt,
+        # The operator send(s) this prompt was assembled from: text, client id,
+        # send time. Carried so a prompt the CLI never reads can be put back on
+        # the thread queue as the messages it came from, rather than as this
+        # assembled blob. In meta, so a turn re-attached after a restart can
+        # still recover them. See _requeue_unread.
+        "origin": list(origin or []),
         # REFS, not bytes. The journal is written to disk and read back on every
         # restart-recovery pass, so a 12MB base64 image in here would be paid for
         # on each one. The blocks are built from the store at delivery instead.
@@ -1805,7 +1828,7 @@ async def _spawn_and_drive_inner(turn: Turn, meta: dict) -> None:
     att_blocks = chat_attachments.content_blocks(_atts, meta.get("owner_id"))
     _named = chat_attachments.describe(_atts)
     _prompt = f"{meta['prompt']}\n\n{_named}" if _named else meta["prompt"]
-    if not write_to_turn(turn.id, _prompt, att_blocks):
+    if not write_to_turn(turn.id, _prompt, att_blocks, origin=meta.get("origin")):
         turn.error = "could not deliver the prompt to the turn's input channel"
         _push(turn, "error", {"detail": turn.error})
         await _retire_turn_proc(proc.pid, proc)
@@ -1916,6 +1939,11 @@ async def _drive_turn(turn: Turn, meta: dict, proc=None) -> None:
                 if payload.get("parent") is None:
                     state["replays"] += 1
                     state["activity_at"] = time.time()
+                    # FIFO: stdin is read in order, so the oldest outstanding
+                    # delivery is the one this echo acknowledges. What is left
+                    # at the end was never read (`_requeue_unread`).
+                    if turn.unread:
+                        turn.unread.pop(0)
                 # DROPPED, ALWAYS. `--replay-user-messages` makes the CLI echo
                 # every stdin user message back: the turn's own prompt, its
                 # synthetic /compact turns, a subagent's prompt on the sidechain,
@@ -2214,6 +2242,60 @@ def resolve_permission(turn_id: str, request_id: str, allow: bool,
     return True, state
 
 
+def _requeue_unread(turn: Turn, *, stopped: bool) -> int:
+    """Put back anything we wrote that the CLI never read.
+
+    A message is the system's responsibility from the moment the server accepts
+    it (services/chat_queue). Writing it to a process that then never reads it
+    is not delivery, and until now it was the one path where an accepted message
+    could still vanish: the bytes went into the FIFO, the write succeeded, and
+    nothing ever noticed that the CLI had not picked it up. The turn ended, the
+    process was retired, and the text existed only in the transcript with
+    nothing coming for it.
+
+    So it goes back on the thread's queue, under its ORIGINAL client id and send
+    time. The log is idempotent on client id, so the drain re-sends it without
+    writing it to the transcript a second time, and it keeps its place in the
+    order by the time the operator hit enter rather than by the moment this
+    failed. `_finalize_turn` drains the thread immediately after this.
+
+    NOT AFTER A STOP. Stop is the operator taking the wheel back, and it holds
+    the queue on purpose; re-queueing here would clear that hold and send, which
+    is the opposite of what they just asked for. The message stays in the
+    transcript where they can send it again.
+
+    An entry with no client id is not requeued, because there would be no way to
+    recognise it as the same message: the drain would append a second copy of it
+    to the transcript, which is a worse failure than the one this fixes. Every
+    send from the app carries one; this is the internal callers.
+    """
+    if stopped or not turn.unread:
+        return 0
+    pending, turn.unread = turn.unread, []
+    sent = 0
+    for delivery in pending:
+        for entry in delivery.get("origin") or []:
+            cid = (entry.get("client_id") or "").strip()
+            text = (entry.get("text") or "").strip()
+            if not text:
+                continue
+            if not cid:
+                log.warning("turn %s: a message the CLI never read has no client id; "
+                            "it stays in the transcript unanswered", turn.id)
+                continue
+            try:
+                chat_queue.enqueue(turn.thread_id, text=text, client_id=cid,
+                                   ts=entry.get("ts") or None,
+                                   attachments=entry.get("attachments") or None)
+                sent += 1
+            except Exception as e:  # pragma: no cover — the queue is a file write
+                log.warning("turn %s: could not requeue an unread message: %s", turn.id, e)
+    if sent:
+        log.warning("turn %s: %d message(s) were never read by the CLI; "
+                    "requeued for the next turn", turn.id, sent)
+    return sent
+
+
 async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     """Commit the run and wake whoever is waiting on it.
 
@@ -2223,6 +2305,9 @@ async def _finalize_turn(turn: Turn, meta: dict, **kw) -> None:
     _stale_pending_approvals(turn)
     _close_open_tools(turn)
     _close_open_agents(turn, stopped=bool(kw.get("stopped")), lost=bool(kw.get("lost")))
+    # BEFORE the commit, because the drain fired in the `finally` below is what
+    # sends these, and it must find them already on the queue.
+    _requeue_unread(turn, stopped=bool(kw.get("stopped")))
     try:
         await _commit_turn(turn, meta, **kw)
     finally:
@@ -2740,7 +2825,8 @@ async def stop_turn(turn_id: str) -> dict:
             "committed": turn.committed is not None, "reason": ""}
 
 
-def inject(turn_id: str, text: str, attachments: list[dict] | None = None) -> bool:
+def inject(turn_id: str, text: str, attachments: list[dict] | None = None,
+           client_id: str | None = None, sent_at: str | None = None) -> bool:
     """Deliver a message into a turn that is currently running.
 
     A new message must not abort the work in flight. Writing it to the turn's
@@ -2769,7 +2855,12 @@ def inject(turn_id: str, text: str, attachments: list[dict] | None = None) -> bo
         return False
     blocks = chat_attachments.content_blocks(attachments or [])
     named = chat_attachments.describe(attachments or [])
-    ok = write_to_turn(turn_id, f"{text}\n\n{named}".strip() if named else text, blocks)
+    # `client_id` and `sent_at` are this message's own, so a delivery the CLI
+    # never reads goes back on the queue as the message the operator sent rather
+    # than as a new one. See _requeue_unread.
+    ok = write_to_turn(turn_id, f"{text}\n\n{named}".strip() if named else text, blocks,
+                       origin=[{"text": text, "client_id": client_id, "ts": sent_at,
+                                "attachments": list(attachments or [])}])
     # Remember that a command went in, so a turn whose only work was a locally
     # run slash command is not reported as having done nothing. Only on a
     # successful write: a refused injection never reached the CLI.

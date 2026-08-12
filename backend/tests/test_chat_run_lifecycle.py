@@ -158,7 +158,7 @@ class TestPersistBeforeDeliver:
         chat_store.begin_run(tid, "run-1")
         _live("run-1", tid, spawned=True)   # spawned, and no FIFO: it is ending
 
-        monkeypatch.setattr(build_streaming, "inject", lambda *a: False)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
         started = []
 
         async def fake_start(*, thread_id, t, provider, content, model, run_id, **kw):
@@ -184,7 +184,7 @@ class TestPersistBeforeDeliver:
         tid = thread["id"]
         chat_store.begin_run(tid, "run-1")
         _live("run-1", tid, spawned=False)
-        monkeypatch.setattr(build_streaming, "inject", lambda *a: False)
+        monkeypatch.setattr(build_streaming, "inject", lambda *a, **k: False)
 
         async def never(**kw):
             raise AssertionError("must not start a rival run")
@@ -205,7 +205,7 @@ class TestPersistBeforeDeliver:
         _live("run-1", tid)
         seen: list[list[str]] = []
 
-        def spy(run_id, text, attachments=None):
+        def spy(run_id, text, *a, **k):
             seen.append([m["content"] for m in chat_store.get_thread(tid)["messages"]])
             return True
         monkeypatch.setattr(build_streaming, "inject", spy)
@@ -233,7 +233,7 @@ class TestSameTickRivals:
             return turn
         monkeypatch.setattr(rc, "_start_assistant_turn", fake_start)
         monkeypatch.setattr(build_streaming, "inject",
-                            lambda rid, text, atts=None: delivered.append(text) or True)
+                            lambda rid, text, *a, **k: delivered.append(text) or True)
 
         async def main():
             return await asyncio.gather(

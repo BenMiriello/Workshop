@@ -12,10 +12,11 @@ answering it when the driver killed the process. Six turns in the log, six
 """
 import asyncio
 import json
+import os
 
 import pytest
 
-from services import build_streaming, chat_store, ownership
+from services import build_streaming, chat_drain, chat_queue, chat_store, ownership
 
 
 @pytest.fixture()
@@ -54,6 +55,19 @@ def _result() -> str:
     return json.dumps({"type": "result", "subtype": "success"})
 
 
+@pytest.fixture()
+def no_drain(monkeypatch):
+    """Hold the drain still so a test can read the queue.
+
+    `_finalize_turn` fires `drain_soon` the instant a turn ends, which is the
+    behaviour that makes a requeued message actually go out. Here it would
+    consume the entry before the assertion could see it."""
+    fired: list[str] = []
+    monkeypatch.setattr(chat_drain, "drain_soon",
+                        lambda thread_id, reason="": fired.append(reason))
+    return fired
+
+
 class Driver:
     """The drive loop over a journal this test appends to as it goes."""
 
@@ -75,6 +89,13 @@ class Driver:
                      "timeout_s": 0, "pid": 4243, "status": "running", "started": 0.0,
                      "allowed_tools": None, "disallowed_tools": None,
                      "mcp_servers": None, "tools_disabled": False}
+        # A REAL input channel, opened the way the spawn opens it (O_RDWR, so
+        # the fd is its own reader and a write never sees ENXIO). `inject` goes
+        # through the actual write path in these tests, because the bookkeeping
+        # under test lives in `write_to_turn`.
+        self.fifo = build_streaming._stdin_fifo(run_id)
+        os.mkfifo(self.fifo, 0o600)
+        self.in_fd = os.open(self.fifo, os.O_RDWR | os.O_NONBLOCK)
         self.proc = FakeProc()
         self.turn.proc, self.turn.pid = self.proc, self.proc.pid
 
@@ -88,6 +109,12 @@ class Driver:
 
     async def settle(self, seconds: float = 0.6) -> None:
         await asyncio.sleep(seconds)
+
+    def close(self) -> None:
+        try:
+            os.close(self.in_fd)
+        except OSError:
+            pass
 
 
 class TestTheFirstResultIsNotAlwaysTheEnd:
@@ -145,6 +172,80 @@ class TestTheFirstResultIsNotAlwaysTheEnd:
         assert d.retired is True
         assert chat_store.get_thread(thread["id"])["messages"][-1]["content"] == "the real answer"
 
+class TestAMessageTheCliNeverReadGoesBackOnTheQueue:
+    """A message is the system's responsibility from the moment the server
+    accepts it. Writing it into a FIFO that nothing ever reads is not delivery,
+    and it was the one remaining path where an accepted message could vanish:
+    the write succeeded, the turn ended, and the text sat in the transcript with
+    nothing coming for it."""
+
+    def test_an_unread_injection_is_requeued_under_its_own_id(
+            self, thread, monkeypatch, no_drain):
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=0)
+            build_streaming.inject(d.turn.id, "and also check the logs",
+                                   client_id="cid-1", sent_at="2026-08-12T20:00:00+00:00")
+            d.write(_assistant("done"), _result())
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await asyncio.sleep(0.3)
+            d.proc.returncode = 0        # the process is gone; it never read it
+            await asyncio.wait_for(task, 5)
+        # The turn's own prompt is not part of this: `delivered=0` starts it
+        # with nothing outstanding, so the injection is the only write.
+        asyncio.run(go())
+        q = chat_queue.read(thread["id"])
+        assert [e["text"] for e in q] == ["and also check the logs"]
+        # Its OWN id and send time, so the drain re-sends it without writing a
+        # second copy to the transcript and it keeps its place in the order.
+        assert q[0]["client_id"] == "cid-1"
+        assert q[0]["ts"] == "2026-08-12T20:00:00+00:00"
+        assert no_drain, "the thread was never told to drain"
+
+    def test_a_message_the_cli_did_read_is_not_requeued(
+            self, thread, monkeypatch, no_drain):
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=0)
+            build_streaming.inject(d.turn.id, "and also check the logs", client_id="cid-1")
+            d.write(_replay("and also check the logs"), _assistant("checked"), _result())
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await asyncio.wait_for(task, 5)
+            d.close()
+        asyncio.run(go())
+        assert chat_queue.read(thread["id"]) == []
+
+    def test_a_stopped_turn_does_not_requeue(self, thread, monkeypatch, no_drain):
+        """Stop is the operator taking the wheel back, and it holds the queue on
+        purpose. Re-queueing would clear that hold and send, which is the
+        opposite of what they just asked for."""
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=0)
+            build_streaming.inject(d.turn.id, "and also check the logs", client_id="cid-1")
+            d.turn.stop_requested = True
+            d.write(_result())
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await asyncio.wait_for(task, 5)
+            d.close()
+        asyncio.run(go())
+        assert chat_queue.read(thread["id"]) == []
+
+    def test_a_send_with_no_client_id_is_left_alone(self, thread, monkeypatch, no_drain):
+        """There would be no way to recognise it as the same message, so the
+        drain would append a SECOND copy of it to the transcript. That is a
+        worse failure than the one this fixes."""
+        async def go():
+            d = Driver(thread["id"], monkeypatch, delivered=0)
+            build_streaming.inject(d.turn.id, "no id on this one")
+            d.write(_result())
+            task = asyncio.create_task(build_streaming._drive_turn(d.turn, d.meta, proc=d.proc))
+            await asyncio.sleep(0.3)
+            d.proc.returncode = 0
+            await asyncio.wait_for(task, 5)
+            d.close()
+        asyncio.run(go())
+        assert chat_queue.read(thread["id"]) == []
+
+
+class TestTheEmptyTurnItself:
     def test_a_message_the_cli_never_read_is_reported_as_such(self, thread, monkeypatch):
         """The turn ends (the process died) with a delivery never acknowledged.
         The reply must say the message did not reach the model rather than
@@ -159,3 +260,32 @@ class TestTheFirstResultIsNotAlwaysTheEnd:
         asyncio.run(go())
         text = chat_store.get_thread(thread["id"])["messages"][-1]["content"]
         assert text == "Ended before this message reached the model. Nothing ran."
+
+
+class TestWhatRidesWithThePrompt:
+    """The sends a prompt was assembled from, in the shape the queue holds.
+
+    The prompt itself is an assembled blob (preamble, knowledge index, recent
+    conversation); putting THAT back on the queue would re-send the machinery
+    rather than the message. What goes back is what the operator actually sent,
+    under the ids the log already knows it by."""
+
+    def test_a_single_message_carries_its_own_id(self):
+        import routes.chat as rc
+        assert rc._sends_behind("look at the logs", None, "cid-9", None) == [
+            {"text": "look at the logs", "client_id": "cid-9", "ts": None,
+             "attachments": []},
+        ]
+
+    def test_a_drained_queue_carries_every_part_at_its_own_time(self):
+        """Each entry became its own log event at its own send time, so each
+        goes back as itself. Attachments rode on the first part, exactly as
+        `_record_user_turn` records them."""
+        import routes.chat as rc
+        parts = [rc.TurnPart(text="first", sent_at="2026-08-12T20:00:00+00:00", client_id="a"),
+                 rc.TurnPart(text="second", sent_at="2026-08-12T20:01:00+00:00", client_id="b")]
+        out = rc._sends_behind("first\n\nsecond", parts, "a", [{"id": "att-1"}])
+        assert [e["client_id"] for e in out] == ["a", "b"]
+        assert [e["ts"] for e in out] == ["2026-08-12T20:00:00+00:00",
+                                          "2026-08-12T20:01:00+00:00"]
+        assert out[0]["attachments"] == [{"id": "att-1"}] and out[1]["attachments"] == []

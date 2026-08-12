@@ -2061,6 +2061,30 @@ def _first_part_ts(parts: list[TurnPart] | None) -> str | None:
     return None
 
 
+def _sends_behind(content: str, parts: list[TurnPart] | None,
+                  client_id: str | None, attachments: list[dict] | None) -> list[dict]:
+    """The operator send(s) this turn's prompt was assembled from.
+
+    Mirrors what `_record_user_turn` writes to the log, in the shape the thread
+    queue holds, and rides with the prompt into the spawn. It is what goes back
+    on the queue if the CLI never reads that prompt: same client ids, same send
+    times, so the message is re-sent without being written to the transcript
+    twice. See build_streaming._requeue_unread."""
+    if parts and any(p.sent_at or p.client_id for p in parts):
+        out = []
+        for i, p in enumerate(parts):
+            out.append({
+                "text": (p.text or "").strip() or content,
+                "client_id": p.client_id or (client_id if i == 0 else None),
+                "ts": p.sent_at,
+                # Recorded on the first part, exactly as the log records them.
+                "attachments": list(attachments or []) if i == 0 else [],
+            })
+        return out
+    return [{"text": content, "client_id": client_id, "ts": None,
+             "attachments": list(attachments or [])}]
+
+
 def _record_user_turn(thread_id: str, content: str, parts: list[TurnPart] | None,
                       client_id: str | None = None,
                       attachments: list[dict] | None = None) -> None:
@@ -2146,7 +2170,8 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
                                     content: str, model: str, run_id: str,
                                     effort: str | None = None,
                                     permission_mode: str | None = None,
-                                    attachments: list[dict] | None = None):
+                                    attachments: list[dict] | None = None,
+                                    sends: list[dict] | None = None):
     """Run one turn AS the mentioned agent, inside the chat.
 
     The agent answers with its own definition, its own memory scope and its own
@@ -2269,7 +2294,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
             allowed_tools=agent_tools, disallowed_tools=agent_denied,
             mcp_servers=[], tools_disabled=not tools_active,
             speaker=slug, run_id=run_id, effort=effort,
-            permission_mode=permission_mode,
+            permission_mode=permission_mode, origin=sends,
         )
         _ = kscope  # the CHAT's scope; the agent read its own layers on turn one
         return turn
@@ -2321,7 +2346,7 @@ async def _start_agent_mention_turn(*, thread_id: str, thread: dict, agent: dict
         allowed_tools=agent_tools, disallowed_tools=agent_denied,
         mcp_servers=[], tools_disabled=not tools_active,
         speaker=slug, run_id=run_id, effort=effort,
-        permission_mode=permission_mode, attachments=attachments,
+        permission_mode=permission_mode, attachments=attachments, origin=sends,
     )
     _ = kscope  # the CHAT's scope; the agent reads its own layers above
     return turn
@@ -2475,15 +2500,18 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
         # assistant stays out of it. Resolution is scope-bounded and opt-in
         # (services/mentions); anything that does not resolve is ordinary text and
         # falls through, so an email address or a stray "@" can never fail a message.
+        sends = _sends_behind(content, parts, client_id, attachments)
         if _mentioned is not None:
             return await _start_agent_mention_turn(
                 thread_id=thread_id, thread=t, agent=_mentioned, content=content,
                 model=model, run_id=run_id, effort=effort,
-                permission_mode=permission_mode, attachments=attachments)
+                permission_mode=permission_mode, attachments=attachments,
+                sends=sends)
         return await _start_assistant_turn(
             thread_id=thread_id, t=t, provider=provider, content=content,
             model=model, run_id=run_id, effort=effort,
-            permission_mode=permission_mode, attachments=attachments)
+            permission_mode=permission_mode, attachments=attachments,
+            sends=sends)
     except Exception:
         # The claim outlives nothing. Give the thread back so the next message is
         # not told a run is in flight that never spawned.
@@ -2494,7 +2522,8 @@ async def _run_for_message(thread_id: str, t: dict, content: str,
 async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: str,
                                 model: str, run_id: str, effort: str | None = None,
                                 permission_mode: str | None = None,
-                                attachments: list[dict] | None = None):
+                                attachments: list[dict] | None = None,
+                                sends: list[dict] | None = None):
     """Spawn the turn for an ordinary (non-mention) message.
 
     Build-agent chats carry the AGENT's persistent Claude Code session; every
@@ -2565,6 +2594,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
             cwd=str(provider.dir), session_id=sid, resume=resume_flag,
             timeout_s=CHAT_TIMEOUT_S, run_id=run_id, effort=effort,
             permission_mode=permission_mode, mcp_selection=mcp_selection,
+            origin=sends,
         )
 
     is_project = chat_context.is_build_provider(provider)
@@ -2607,6 +2637,7 @@ async def _start_assistant_turn(*, thread_id: str, t: dict, provider, content: s
         # idempotent), load-bearing on the project branch, which sets
         # `allowed_tools=None` and would otherwise emit no MCP flags at all.
         mcp_selection=mcp_selection,
+        origin=sends,
     )
 
 
@@ -2729,7 +2760,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
     if run_id:
         at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id,
                                       attachments=attachments)
-        if build_streaming.inject(run_id, content, attachments):
+        if build_streaming.inject(run_id, content, attachments,
+                                  client_id=client_id, sent_at=sent_at):
             return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
         if not build_streaming.run_is_ending(run_id):
             # Claimed but not spawned yet: it is about to start and will read
@@ -2757,7 +2789,8 @@ async def _send(thread_id: str, content: str, model_in: str | None = None,
         at_segment = (_file_during_run(thread_id, e.run_id, content, client_id=client_id,
                                        attachments=attachments)
                       if not already_recorded else _at_segment(e.run_id, thread_id))
-        build_streaming.inject(e.run_id, content, attachments)
+        build_streaming.inject(e.run_id, content, attachments,
+                               client_id=client_id, sent_at=sent_at)
         return {"turn_id": e.run_id, "injected": True, "at_segment": at_segment}
     return {"turn_id": turn.id, "injected": False, "at_segment": None}
 
@@ -3120,7 +3153,7 @@ async def _deliver_or_take_over(thread_id: str, run_id: str, content: str,
     would not take it; start a fresh one for this message, which is ALREADY IN
     THE LOG". The caller must not record it a second time."""
     at_segment = _file_during_run(thread_id, run_id, content, client_id=client_id)
-    if build_streaming.inject(run_id, content):
+    if build_streaming.inject(run_id, content, client_id=client_id):
         return {"turn_id": run_id, "injected": True, "at_segment": at_segment}
     # It refused input: finishing, wedged, or its process is gone. Take the
     # thread back so the message it is holding can get a run of its own.
@@ -3221,7 +3254,7 @@ async def inject_into_turn(turn_id: str, body: InjectMessage):
     # sit wrong.
     at_segment = _file_during_run(turn.thread_id, turn_id, content,
                                   client_id=body.client_id)
-    delivered = build_streaming.inject(turn_id, content)
+    delivered = build_streaming.inject(turn_id, content, client_id=body.client_id)
     return {
         "delivered": delivered,
         "queued_for_turn": delivered,

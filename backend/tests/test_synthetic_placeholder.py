@@ -303,7 +303,7 @@ class TestAnInjectedSlashCommandStillCounts:
         "Command ran." instead of the empty-turn line."""
         t = bs._make_turn("thread-1", "general", turn_id="t-cmd2")
         bs.TURNS["t-cmd2"] = t
-        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text, blocks=None: True)
+        monkeypatch.setattr(bs, "write_to_turn", lambda *a, **k: True)
         try:
             assert bs.inject("t-cmd2", "/compact") is True
             assert t.injected_command is True
@@ -313,7 +313,7 @@ class TestAnInjectedSlashCommandStillCounts:
     def test_ordinary_injected_text_does_not_mark_it(self, monkeypatch):
         t = bs._make_turn("thread-1", "general", turn_id="t-msg")
         bs.TURNS["t-msg"] = t
-        monkeypatch.setattr(bs, "write_to_turn", lambda tid, text, blocks=None: True)
+        monkeypatch.setattr(bs, "write_to_turn", lambda *a, **k: True)
         try:
             assert bs.inject("t-msg", "stop, wrong file") is True
             assert t.injected_command is False
