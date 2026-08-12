@@ -42,16 +42,19 @@ export function contextReading(used: number, win: number): ContextReading | null
 // operator could not tell "this chat is 40% full" from "the server did not
 // answer and this is a guess about a prompt I cannot see".
 //
-//   server    — the backend's own count. Unmarked, because it is the truth.
+//   server    — the backend's own count. The truth.
 //   estimate  — no server count yet. Normal before a thread's first turn.
 //   unavailable — the server count could not be read. NOT normal, and said.
 //
-// Both estimate cases carry a leading "~" on the label. One character, no new
-// color, and it is the conventional mark for "about".
+// The label itself is a PLAIN percent in every case. The "~" the label used to
+// carry for an estimate read as clutter on every new chat (operator, 2026-08-11:
+// "why ~? why not just 0?"), and the meter already answers "measured or guessed"
+// where that question actually gets asked, in the tooltip. `source` still drives
+// the tooltip and the meter's own marking; it no longer decorates the number.
 export type ContextSource = "server" | "estimate" | "unavailable";
 
-export function contextLabel(reading: ContextReading, source: ContextSource): string {
-  return source === "server" ? reading.label : `~${reading.label}`;
+export function contextLabel(reading: ContextReading, _source: ContextSource): string {
+  return reading.label;
 }
 
 export function contextTooltip(used: number, win: number, source: ContextSource): string {
